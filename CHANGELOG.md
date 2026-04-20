@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.13 - 2026-04-20
+
+Changes since `v0.3.12` on 2026-04-19.
+
+### Fixed
+
+- Sleep, wake, and network-move recovery now clears stale peer path state, refreshes public signal endpoints, and reconnects relays immediately so peers stop sticking to obsolete public ports after resume.
+- Known peers now keep receiving handshake heartbeats and targeted private announce retries until a fresh WireGuard handshake lands, reducing multi-minute reconnect stalls after missed announces or daemon restarts.
+
 ## 0.3.12 - 2026-04-19
 
 Changes since `v0.3.11` on 2026-04-19.

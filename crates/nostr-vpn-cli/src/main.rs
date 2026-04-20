@@ -184,6 +184,8 @@ const PEER_SIGNAL_TIMEOUT_MULTIPLIER: u64 = 3;
 const MIN_PEER_PATH_CACHE_TIMEOUT_SECS: u64 = 60;
 const PEER_PATH_CACHE_TIMEOUT_MULTIPLIER: u64 = 3;
 const PEER_PATH_RETRY_AFTER_SECS: u64 = 5;
+const KNOWN_PEER_ANNOUNCE_RETRY_AFTER_SECS: u64 = 5;
+const MAJOR_LINK_CHANGE_TIME_JUMP_SECS: u64 = 30;
 // boringtun reports time since the last completed WireGuard handshake. Idle
 // sessions can stay healthy for roughly the reject-after window (~180s), so a
 // 20s cutoff misclassifies healthy peers as disconnected.
@@ -2156,7 +2158,13 @@ struct PendingRelayRequest {
 
 #[derive(Debug, Clone, Default)]
 struct OutboundAnnounceBook {
-    fingerprints: HashMap<String, String>,
+    entries: HashMap<String, OutboundAnnounceEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OutboundAnnounceEntry {
+    fingerprint: String,
+    sent_at: u64,
 }
 
 type RelayFailureCooldowns = HashMap<String, u64>;
@@ -2186,25 +2194,45 @@ struct RelayProviderVerification {
 }
 
 impl OutboundAnnounceBook {
-    fn needs_send(&self, participant: &str, fingerprint: &str) -> bool {
-        self.fingerprints.get(participant).map(String::as_str) != Some(fingerprint)
+    fn needs_send(
+        &self,
+        participant: &str,
+        fingerprint: &str,
+        now: u64,
+        retry_after_secs: Option<u64>,
+    ) -> bool {
+        let Some(entry) = self.entries.get(participant) else {
+            return true;
+        };
+        if entry.fingerprint != fingerprint {
+            return true;
+        }
+
+        retry_after_secs
+            .filter(|retry_after_secs| *retry_after_secs > 0)
+            .is_some_and(|retry_after_secs| now.saturating_sub(entry.sent_at) >= retry_after_secs)
     }
 
-    fn mark_sent(&mut self, participant: &str, fingerprint: &str) {
-        self.fingerprints
-            .insert(participant.to_string(), fingerprint.to_string());
+    fn mark_sent(&mut self, participant: &str, fingerprint: &str, sent_at: u64) {
+        self.entries.insert(
+            participant.to_string(),
+            OutboundAnnounceEntry {
+                fingerprint: fingerprint.to_string(),
+                sent_at,
+            },
+        );
     }
 
     fn forget(&mut self, participant: &str) {
-        self.fingerprints.remove(participant);
+        self.entries.remove(participant);
     }
 
     fn clear(&mut self) {
-        self.fingerprints.clear();
+        self.entries.clear();
     }
 
     fn retain_participants(&mut self, participants: &HashSet<String>) {
-        self.fingerprints
+        self.entries
             .retain(|participant, _| participants.contains(participant));
     }
 }
@@ -5041,6 +5069,18 @@ fn daemon_session_idle_status(
     }
 }
 
+fn wall_time_jump_detected(previous_observed_at: u64, now: u64, threshold_secs: u64) -> bool {
+    previous_observed_at > 0
+        && threshold_secs > 0
+        && now.saturating_sub(previous_observed_at) >= threshold_secs
+}
+
+fn observe_wall_time_jump(last_observed_at: &mut u64, now: u64, threshold_secs: u64) -> bool {
+    let jumped = wall_time_jump_detected(*last_observed_at, now, threshold_secs);
+    *last_observed_at = now;
+    jumped
+}
+
 fn persist_inbound_join_request(
     app: &mut AppConfig,
     config_path: &Path,
@@ -5242,6 +5282,7 @@ async fn publish_private_announce_to_participants(
     outbound_announces: &mut OutboundAnnounceBook,
     participants: &[String],
     peer_announcements: Option<&HashMap<String, PeerAnnouncement>>,
+    retry_after_secs: Option<u64>,
 ) -> Result<usize> {
     if participants.is_empty() {
         return Ok(0);
@@ -5261,6 +5302,7 @@ async fn publish_private_announce_to_participants(
     recipients.dedup();
 
     let mut sent = 0usize;
+    let now = unix_timestamp();
     for participant in recipients {
         let local_endpoint = peer_announcements
             .and_then(|announcements| announcements.get(&participant))
@@ -5290,7 +5332,7 @@ async fn publish_private_announce_to_participants(
             relay_fields,
         );
         let fingerprint = announcement_fingerprint(&announcement);
-        if !outbound_announces.needs_send(&participant, &fingerprint) {
+        if !outbound_announces.needs_send(&participant, &fingerprint, now, retry_after_secs) {
             continue;
         }
 
@@ -5301,7 +5343,7 @@ async fn publish_private_announce_to_participants(
             )
             .await
             .with_context(|| format!("failed to publish private announce to {participant}"))?;
-        outbound_announces.mark_sent(&participant, &fingerprint);
+        outbound_announces.mark_sent(&participant, &fingerprint, now);
         sent += 1;
     }
 
@@ -5330,6 +5372,7 @@ async fn publish_private_announce_to_active_peers(
         outbound_announces,
         &participants,
         Some(presence.active()),
+        None,
     )
     .await
 }
@@ -5358,6 +5401,24 @@ fn known_private_announce_participants(
         .collect()
 }
 
+fn known_private_announce_repair_participants(
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    presence: &PeerPresenceBook,
+    runtime_peers: Option<&HashMap<String, WireGuardPeerStatus>>,
+) -> Vec<String> {
+    app.participant_pubkeys_hex()
+        .into_iter()
+        .filter(|participant| Some(participant.as_str()) != own_pubkey)
+        .filter(|participant| {
+            let Some(announcement) = presence.announcement_for(participant) else {
+                return false;
+            };
+            !peer_runtime_lookup(announcement, runtime_peers).is_some_and(peer_has_recent_handshake)
+        })
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn publish_private_announce_to_known_peers(
     client: &NostrSignalingClient,
@@ -5380,6 +5441,40 @@ async fn publish_private_announce_to_known_peers(
         outbound_announces,
         &participants,
         Some(presence.known()),
+        Some(KNOWN_PEER_ANNOUNCE_RETRY_AFTER_SECS),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn publish_private_announce_repair_to_known_peers(
+    client: &NostrSignalingClient,
+    app: &AppConfig,
+    own_pubkey: Option<&str>,
+    presence: &PeerPresenceBook,
+    tunnel_runtime: &CliTunnelRuntime,
+    public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
+    relay_sessions: &HashMap<String, ActiveRelaySession>,
+    outbound_announces: &mut OutboundAnnounceBook,
+) -> Result<usize> {
+    let runtime_peers = tunnel_runtime.peer_status().ok();
+    let participants = known_private_announce_repair_participants(
+        app,
+        own_pubkey,
+        presence,
+        runtime_peers.as_ref(),
+    );
+
+    publish_private_announce_to_participants(
+        client,
+        app,
+        tunnel_runtime,
+        public_signal_endpoint,
+        relay_sessions,
+        outbound_announces,
+        &participants,
+        Some(presence.known()),
+        Some(KNOWN_PEER_ANNOUNCE_RETRY_AFTER_SECS),
     )
     .await
 }

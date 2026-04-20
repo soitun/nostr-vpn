@@ -124,6 +124,77 @@ fn successful_local_path_rotates_to_public_after_network_change() {
 }
 
 #[test]
+fn clearing_path_book_after_major_link_change_drops_recent_public_port_stickiness() {
+    let mut config = AppConfig::generated();
+    let participant = "11".repeat(32);
+    config.networks[0].participants = vec![participant.clone()];
+
+    let peer_keys = generate_keypair();
+    let initial = PeerAnnouncement {
+        node_id: "peer-a".to_string(),
+        public_key: peer_keys.public_key.clone(),
+        endpoint: "203.0.113.20:33063".to_string(),
+        local_endpoint: None,
+        public_endpoint: Some("203.0.113.20:33063".to_string()),
+        relay_endpoint: None,
+        relay_pubkey: None,
+        relay_expires_at: None,
+        tunnel_ip: "10.44.0.2/32".to_string(),
+        advertised_routes: Vec::new(),
+        timestamp: 10,
+    };
+    let refreshed = PeerAnnouncement {
+        endpoint: "203.0.113.20:51820".to_string(),
+        public_endpoint: Some("203.0.113.20:51820".to_string()),
+        timestamp: 11,
+        ..initial.clone()
+    };
+
+    let mut paths = PeerPathBook::default();
+    let initial_announcements = HashMap::from([(participant.clone(), initial)]);
+    let selected = planned_tunnel_peers(
+        &config,
+        None,
+        &initial_announcements,
+        &mut paths,
+        Some("198.19.241.3:51820"),
+        10,
+    )
+    .expect("initial tunnel peers");
+    assert_eq!(selected.len(), 1);
+    assert_eq!(selected[0].endpoint, "203.0.113.20:33063");
+    paths.note_selected(&participant, &selected[0].endpoint, 10);
+
+    let refreshed_announcements = HashMap::from([(participant.clone(), refreshed)]);
+    let selected = planned_tunnel_peers(
+        &config,
+        None,
+        &refreshed_announcements,
+        &mut paths,
+        Some("198.19.241.3:51820"),
+        11,
+    )
+    .expect("sticky tunnel peers");
+    assert_eq!(
+        selected[0].endpoint, "203.0.113.20:33063",
+        "the normal retry window keeps the most recently selected public port briefly"
+    );
+
+    paths.clear();
+
+    let selected = planned_tunnel_peers(
+        &config,
+        None,
+        &refreshed_announcements,
+        &mut paths,
+        Some("198.19.241.3:51820"),
+        11,
+    )
+    .expect("tunnel peers after path reset");
+    assert_eq!(selected[0].endpoint, "203.0.113.20:51820");
+}
+
+#[test]
 fn runtime_endpoint_refresh_requires_cross_subnet_local_drift() {
     let announcement = PeerAnnouncement {
         node_id: "peer-a".to_string(),

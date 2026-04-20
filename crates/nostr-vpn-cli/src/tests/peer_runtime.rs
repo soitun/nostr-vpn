@@ -99,6 +99,75 @@ fn known_private_announce_participants_include_cached_inactive_peers() {
 }
 
 #[test]
+fn known_private_announce_repair_participants_only_include_peers_without_recent_handshake() {
+    let mut config = AppConfig::generated();
+    let healthy_participant = "11".repeat(32);
+    let stale_participant = "22".repeat(32);
+    config.networks[0].participants = vec![healthy_participant.clone(), stale_participant.clone()];
+
+    let healthy_keys = generate_keypair();
+    let stale_keys = generate_keypair();
+    let healthy_announcement = PeerAnnouncement {
+        node_id: "peer-a".to_string(),
+        public_key: healthy_keys.public_key.clone(),
+        endpoint: "203.0.113.20:51820".to_string(),
+        local_endpoint: None,
+        public_endpoint: Some("203.0.113.20:51820".to_string()),
+        relay_endpoint: None,
+        relay_pubkey: None,
+        relay_expires_at: None,
+        tunnel_ip: "10.44.0.2/32".to_string(),
+        advertised_routes: Vec::new(),
+        timestamp: 1,
+    };
+    let stale_announcement = PeerAnnouncement {
+        node_id: "peer-b".to_string(),
+        public_key: stale_keys.public_key.clone(),
+        endpoint: "203.0.113.21:51820".to_string(),
+        local_endpoint: None,
+        public_endpoint: Some("203.0.113.21:51820".to_string()),
+        relay_endpoint: None,
+        relay_pubkey: None,
+        relay_expires_at: None,
+        tunnel_ip: "10.44.0.3/32".to_string(),
+        advertised_routes: Vec::new(),
+        timestamp: 1,
+    };
+
+    let mut presence = PeerPresenceBook::default();
+    assert!(presence.apply_signal(
+        healthy_participant.clone(),
+        SignalPayload::Announce(healthy_announcement),
+        100,
+    ));
+    assert!(presence.apply_signal(
+        stale_participant.clone(),
+        SignalPayload::Announce(stale_announcement),
+        100,
+    ));
+    assert_eq!(
+        presence.prune_stale(200, 20),
+        vec![healthy_participant.clone(), stale_participant.clone()]
+    );
+
+    let now = unix_timestamp();
+    let runtime_peers = HashMap::from([(
+        key_b64_to_hex(&healthy_keys.public_key).expect("healthy peer pubkey hex"),
+        WireGuardPeerStatus {
+            endpoint: Some("203.0.113.20:51820".to_string()),
+            last_handshake_sec: Some(now - 5),
+            last_handshake_nsec: Some(0),
+            ..WireGuardPeerStatus::default()
+        },
+    )]);
+
+    assert_eq!(
+        known_private_announce_repair_participants(&config, None, &presence, Some(&runtime_peers),),
+        vec![stale_participant]
+    );
+}
+
+#[test]
 fn idle_handshake_within_wireguard_session_window_counts_mesh_as_ready() {
     let now = unix_timestamp();
     let runtime_peer = WireGuardPeerStatus {

@@ -123,6 +123,7 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
     let mut last_nat_punch_attempt: Option<(String, Instant)> = None;
     let mut reconnect_attempt = 0u32;
     let mut reconnect_due = Instant::now();
+    let mut last_network_check_at = unix_timestamp();
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -222,13 +223,39 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                 if let Err(error) = heartbeat_pending_tunnel_peers(
                     &app,
                     own_pubkey.as_deref(),
-                    peer_announcements,
+                    presence.known(),
                     &tunnel_runtime,
                 ) {
                     eprintln!("tunnel: peer heartbeat failed: {error}");
                 }
+                if relay_connected
+                    && let Err(error) = publish_private_announce_repair_to_known_peers(
+                        &client,
+                        &app,
+                        own_pubkey.as_deref(),
+                        &presence,
+                        &tunnel_runtime,
+                        public_signal_endpoint.as_ref(),
+                        &relay_sessions,
+                        &mut outbound_announces,
+                    )
+                    .await
+                {
+                    eprintln!("signal: known peer announce repair failed: {error}");
+                }
             }
             _ = network_interval.tick() => {
+                let now = unix_timestamp();
+                let resumed_after_sleep = observe_wall_time_jump(
+                    &mut last_network_check_at,
+                    now,
+                    MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
+                );
+                if resumed_after_sleep {
+                    println!("connect: sleep/wake detected; resetting peer paths");
+                    path_book.clear();
+                    last_nat_punch_attempt = None;
+                }
                 #[cfg(target_os = "macos")]
                 let underlay_repaired =
                     match crate::macos_network::ensure_macos_underlay_default_route() {
@@ -257,8 +284,22 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                 let endpoint_changed = if network_changed {
                     network_snapshot = latest_snapshot.clone();
                     println!("connect: network change detected; refreshing paths");
+                    path_book.clear();
                     // A moved network invalidates the previous public endpoint; keep
                     // probing for a fresh one instead of reusing the stale address.
+                    public_signal_endpoint = None;
+                    refresh_public_signal_endpoint_with_port_mapping(
+                        &app,
+                        &network_snapshot,
+                        runtime_listen_port,
+                        &mut port_mapping_runtime,
+                        &mut public_signal_endpoint,
+                    )
+                    .await;
+                    public_signal_endpoint
+                        .as_ref()
+                        .is_some_and(|endpoint| endpoint.listen_port == runtime_listen_port)
+                } else if resumed_after_sleep {
                     public_signal_endpoint = None;
                     refresh_public_signal_endpoint_with_port_mapping(
                         &app,
@@ -294,14 +335,17 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                     }
                 };
 
-                if !network_changed && !endpoint_changed && !underlay_repaired {
+                if !network_changed && !endpoint_changed && !underlay_repaired && !resumed_after_sleep {
                     continue;
                 }
 
-                if network_changed || underlay_repaired {
+                if network_changed || underlay_repaired || resumed_after_sleep {
                     network_snapshot = latest_snapshot;
                     if network_changed {
                         println!("connect: network change detected; refreshing paths");
+                    }
+                    if resumed_after_sleep {
+                        println!("connect: sleep/wake detected; refreshing paths");
                     }
                     if underlay_repaired {
                         reset_tunnel_runtime_after_macos_underlay_repair(&mut tunnel_runtime);
@@ -320,9 +364,13 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                         eprintln!("connect: tunnel refresh after network change failed: {error}");
                     }
                 }
-                if network_changed {
+                if network_changed || resumed_after_sleep {
                     if relay_connected {
-                        println!("connect: reconnecting relays after network change");
+                        if network_changed {
+                            println!("connect: reconnecting relays after network change");
+                        } else {
+                            println!("connect: reconnecting relays after wake");
+                        }
                     }
                     client.disconnect().await;
                     relay_connected = false;
@@ -346,7 +394,7 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                 if let Err(error) = heartbeat_pending_tunnel_peers(
                     &app,
                     own_pubkey.as_deref(),
-                    peer_announcements,
+                    presence.known(),
                     &tunnel_runtime,
                 ) {
                     eprintln!("tunnel: peer heartbeat failed after network refresh: {error}");
@@ -517,6 +565,7 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                             &mut outbound_announces,
                             std::slice::from_ref(&sender_pubkey),
                             Some(presence.known()),
+                            None,
                         )
                         .await
                     {
@@ -550,7 +599,7 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                 if let Err(error) = heartbeat_pending_tunnel_peers(
                     &app,
                     own_pubkey.as_deref(),
-                    presence.active(),
+                    presence.known(),
                     &tunnel_runtime,
                 ) {
                     eprintln!("tunnel: peer heartbeat failed after peer signal: {error}");
@@ -575,6 +624,7 @@ pub(crate) async fn connect_session(args: ConnectArgs) -> Result<()> {
                         &mut outbound_announces,
                         std::slice::from_ref(&sender_pubkey),
                         Some(presence.known()),
+                        None,
                     )
                     .await
                 {
@@ -791,6 +841,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
     let mut reconnect_due = Instant::now();
     let mut last_mesh_count = 0_usize;
     let mut last_nat_punch_attempt: Option<(String, Instant)> = None;
+    let mut last_network_check_at = unix_timestamp();
     write_daemon_state(
         &state_file,
         &build_daemon_runtime_state(
@@ -1040,13 +1091,39 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 if let Err(error) = heartbeat_pending_tunnel_peers(
                     &app,
                     own_pubkey.as_deref(),
-                    peer_announcements,
+                    presence.known(),
                     &tunnel_runtime,
                 ) {
                     eprintln!("tunnel: peer heartbeat failed: {error}");
                 }
+                if relay_connected
+                    && let Err(error) = publish_private_announce_repair_to_known_peers(
+                        &client,
+                        &app,
+                        own_pubkey.as_deref(),
+                        &presence,
+                        &tunnel_runtime,
+                        public_signal_endpoint.as_ref(),
+                        &relay_sessions,
+                        &mut outbound_announces,
+                    )
+                    .await
+                {
+                    eprintln!("signal: known peer announce repair failed: {error}");
+                }
             }
             _ = network_interval.tick() => {
+                let now = unix_timestamp();
+                let resumed_after_sleep = observe_wall_time_jump(
+                    &mut last_network_check_at,
+                    now,
+                    MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
+                );
+                if resumed_after_sleep {
+                    eprintln!("daemon: sleep/wake detected; resetting peer paths");
+                    path_book.clear();
+                    last_nat_punch_attempt = None;
+                }
                 #[cfg(target_os = "macos")]
                 let underlay_repaired =
                     match crate::macos_network::ensure_macos_underlay_default_route() {
@@ -1077,6 +1154,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     network_snapshot = latest_snapshot.clone();
                     network_changed_at = Some(unix_timestamp());
                     captive_portal = detect_captive_portal(timeout).await;
+                    path_book.clear();
                     if session_active {
                         // A moved network invalidates the previous public endpoint; keep
                         // probing for a fresh one instead of reusing the stale address.
@@ -1090,6 +1168,26 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         )
                         .await;
                         true
+                    } else {
+                        port_mapping_runtime.stop().await;
+                        public_signal_endpoint = None;
+                        false
+                    }
+                } else if resumed_after_sleep {
+                    network_changed_at = Some(now);
+                    if session_active {
+                        public_signal_endpoint = None;
+                        refresh_public_signal_endpoint_with_port_mapping(
+                            &app,
+                            &network_snapshot,
+                            runtime_listen_port,
+                            &mut port_mapping_runtime,
+                            &mut public_signal_endpoint,
+                        )
+                        .await;
+                        public_signal_endpoint
+                            .as_ref()
+                            .is_some_and(|endpoint| endpoint.listen_port == runtime_listen_port)
                     } else {
                         port_mapping_runtime.stop().await;
                         public_signal_endpoint = None;
@@ -1120,15 +1218,19 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     false
                 };
 
-                if !network_changed && !endpoint_changed && !underlay_repaired {
+                if !network_changed && !endpoint_changed && !underlay_repaired && !resumed_after_sleep {
                     continue;
                 }
 
-                if network_changed || underlay_repaired {
+                if network_changed || underlay_repaired || resumed_after_sleep {
                     if network_changed {
                         network_snapshot = latest_snapshot;
                         network_changed_at = Some(unix_timestamp());
                         eprintln!("daemon: network change detected; refreshing peer paths");
+                    } else if resumed_after_sleep {
+                        network_snapshot = latest_snapshot;
+                        network_changed_at = Some(now);
+                        eprintln!("daemon: sleep/wake detected; refreshing peer paths");
                     } else {
                         network_snapshot = latest_snapshot;
                         eprintln!("daemon: refreshing tunnel after macOS underlay repair");
@@ -1166,7 +1268,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                         }
                     }
                 }
-                if network_changed
+                if (network_changed || resumed_after_sleep)
                     && relay_session_active(
                         session_enabled,
                         expected_peers,
@@ -1174,7 +1276,11 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     )
                 {
                     if relay_connected {
-                        eprintln!("daemon: reconnecting relays after network change");
+                        if network_changed {
+                            eprintln!("daemon: reconnecting relays after network change");
+                        } else {
+                            eprintln!("daemon: reconnecting relays after wake");
+                        }
                     }
                     client.disconnect().await;
                     service_client.disconnect().await;
@@ -1183,7 +1289,11 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     reconnect_attempt = 0;
                     reconnect_due = Instant::now();
                     outbound_announces.clear();
-                    session_status = "Reconnecting relays after network change".to_string();
+                    session_status = if network_changed {
+                        "Reconnecting relays after network change".to_string()
+                    } else {
+                        "Reconnecting relays after wake".to_string()
+                    };
                 }
 
                 if !daemon_session_active(session_enabled, expected_peers) {
@@ -1205,7 +1315,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                 if let Err(error) = heartbeat_pending_tunnel_peers(
                     &app,
                     own_pubkey.as_deref(),
-                    peer_announcements,
+                    presence.known(),
                     &tunnel_runtime,
                 ) {
                     eprintln!("tunnel: peer heartbeat failed after network refresh: {error}");
@@ -1269,6 +1379,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             &mut outbound_announces,
                             &changed_relay_participants,
                             Some(presence.known()),
+                            None,
                         )
                         .await
                     {
@@ -1899,6 +2010,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             &mut outbound_announces,
                             std::slice::from_ref(&sender_pubkey),
                             Some(presence.known()),
+                            None,
                         )
                         .await
                     {
@@ -1934,7 +2046,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                     if let Err(error) = heartbeat_pending_tunnel_peers(
                         &app,
                         own_pubkey.as_deref(),
-                        presence.active(),
+                        presence.known(),
                         &tunnel_runtime,
                     ) {
                         eprintln!("tunnel: peer heartbeat failed after peer signal: {error}");
@@ -1957,6 +2069,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                             &mut outbound_announces,
                             std::slice::from_ref(&sender_pubkey),
                             Some(presence.known()),
+                            None,
                         )
                         .await
                     {
@@ -2031,6 +2144,7 @@ pub(crate) async fn daemon_session(args: DaemonArgs) -> Result<()> {
                                     &mut outbound_announces,
                                     std::slice::from_ref(&participant),
                                     Some(presence.known()),
+                                    None,
                                 )
                                 .await
                                 {

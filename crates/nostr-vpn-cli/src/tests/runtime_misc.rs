@@ -42,6 +42,25 @@ fn daemon_reconnect_backoff_is_bounded_exponential() {
 }
 
 #[test]
+fn wall_time_jump_detection_flags_sleep_resume_after_threshold() {
+    assert!(!wall_time_jump_detected(
+        0,
+        1_000,
+        MAJOR_LINK_CHANGE_TIME_JUMP_SECS
+    ));
+    assert!(!wall_time_jump_detected(
+        1_000,
+        1_000 + MAJOR_LINK_CHANGE_TIME_JUMP_SECS - 1,
+        MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
+    ));
+    assert!(wall_time_jump_detected(
+        1_000,
+        1_000 + MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
+        MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
+    ));
+}
+
+#[test]
 fn reconnect_only_for_connection_class_errors() {
     assert!(publish_error_requires_reconnect(
         "client not connected to relays"
@@ -82,27 +101,36 @@ fn peer_path_cache_timeout_keeps_endpoint_memory_longer_than_presence_timeout() 
 #[test]
 fn outbound_announce_book_republishes_after_peer_forget() {
     let mut book = OutboundAnnounceBook::default();
-    assert!(book.needs_send("peer-a", "fp1"));
-    book.mark_sent("peer-a", "fp1");
-    assert!(!book.needs_send("peer-a", "fp1"));
-    assert!(book.needs_send("peer-a", "fp2"));
+    assert!(book.needs_send("peer-a", "fp1", 10, None));
+    book.mark_sent("peer-a", "fp1", 10);
+    assert!(!book.needs_send("peer-a", "fp1", 10, None));
+    assert!(book.needs_send("peer-a", "fp2", 10, None));
 
     book.forget("peer-a");
-    assert!(book.needs_send("peer-a", "fp1"));
+    assert!(book.needs_send("peer-a", "fp1", 10, None));
+}
+
+#[test]
+fn outbound_announce_book_retries_same_fingerprint_after_retry_window() {
+    let mut book = OutboundAnnounceBook::default();
+    book.mark_sent("peer-a", "fp1", 10);
+
+    assert!(!book.needs_send("peer-a", "fp1", 14, Some(5)));
+    assert!(book.needs_send("peer-a", "fp1", 15, Some(5)));
 }
 
 #[test]
 fn hello_signal_forces_targeted_private_announce_republish() {
     let mut book = OutboundAnnounceBook::default();
-    book.mark_sent("peer-a", "fp1");
+    book.mark_sent("peer-a", "fp1", 10);
     crate::maybe_reset_targeted_announce_cache_for_hello(
         &mut book,
         "peer-a",
         &SignalPayload::Hello,
     );
-    assert!(book.needs_send("peer-a", "fp1"));
+    assert!(book.needs_send("peer-a", "fp1", 10, None));
 
-    book.mark_sent("peer-a", "fp1");
+    book.mark_sent("peer-a", "fp1", 10);
     crate::maybe_reset_targeted_announce_cache_for_hello(
         &mut book,
         "peer-a",
@@ -120,7 +148,7 @@ fn hello_signal_forces_targeted_private_announce_republish() {
             timestamp: 1,
         }),
     );
-    assert!(!book.needs_send("peer-a", "fp1"));
+    assert!(!book.needs_send("peer-a", "fp1", 10, None));
 }
 
 #[cfg(target_os = "macos")]
