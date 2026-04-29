@@ -116,7 +116,7 @@ load_manual_profile_env() {
     return 0
   fi
 
-  "$ROOT/scripts/ios-profiles" ensure
+  "$ROOT/scripts/ios-profiles" ensure >&2
   if [[ -f "$IOS_PROFILES_ENV_PATH" ]]; then
     set -a
     # shellcheck disable=SC1090

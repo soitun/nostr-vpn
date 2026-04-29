@@ -16,6 +16,13 @@ const listPngs = async (dir) =>
     .filter((entry) => entry.endsWith('.png'))
     .sort((left, right) => left.localeCompare(right))
 
+const hasPngAlphaChannel = (bytes) => {
+  const pngSignature = '89504e470d0a1a0a'
+  assert.equal(bytes.subarray(0, 8).toString('hex'), pngSignature, 'expected PNG image')
+  assert.equal(bytes.subarray(12, 16).toString('ascii'), 'IHDR', 'expected PNG IHDR chunk')
+  return bytes[25] === 4 || bytes[25] === 6
+}
+
 test('bundled iOS AppIcon catalog matches the committed iOS source icons', async () => {
   const [sourceFiles, bundledFiles] = await Promise.all([listPngs(sourceDir), listPngs(bundledDir)])
 
@@ -37,6 +44,7 @@ test('bundled iOS AppIcon catalog matches the committed iOS source icons', async
         sourceBytes,
         `generated iOS app icon ${file} differs from src-tauri/icons/ios/${file}`,
       )
+      assert.equal(hasPngAlphaChannel(sourceBytes), false, `iOS app icon ${file} has an alpha channel`)
     }),
   )
 })
