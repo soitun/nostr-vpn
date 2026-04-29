@@ -61,6 +61,7 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
     entitlements:
       path: nostr-vpn-gui_iOS/nostr-vpn-gui_iOS.entitlements
       properties:
@@ -117,6 +118,7 @@ targets:
         CFBundleDisplayName: Nostr VPN Tunnel
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ITSAppUsesNonExemptEncryption: false
         NSExtension:
           NSExtensionPointIdentifier: com.apple.networkextension.packet-tunnel
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).PacketTunnelProvider

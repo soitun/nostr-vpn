@@ -18,10 +18,11 @@ ACTION="${1:-put}"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/testflight-internal <ensure-app|put|attach|wait|status|groups>
+usage: ./scripts/testflight-internal <ensure-app|compliance|put|attach|wait|status|groups>
 
 Commands:
   ensure-app   create the App Store Connect app record if it is missing
+  compliance   set export-compliance metadata on the uploaded build
   put          wait for the uploaded build, then attach it to internal TestFlight groups
   attach       attach the already-visible build to internal TestFlight groups
   wait         wait until the uploaded build is visible and valid
@@ -32,11 +33,16 @@ Environment:
   NVPN_TESTFLIGHT_GROUPS          optional comma-separated internal group names or IDs
   NVPN_TESTFLIGHT_WAIT_ATTEMPTS   default 40
   NVPN_TESTFLIGHT_WAIT_SECONDS    default 30
+  NVPN_TESTFLIGHT_USES_NONEXEMPT_ENCRYPTION
+                                   default false for internal-only builds that do not
+                                   require export-compliance documentation
+  NVPN_TESTFLIGHT_APP_ENCRYPTION_DECLARATION_ID
+                                   required when the build uses non-exempt encryption
 EOF
 }
 
 case "$ACTION" in
-  ensure-app|put|attach|wait|status|groups)
+  ensure-app|compliance|put|attach|wait|status|groups)
     ;;
   -h|--help|help)
     usage
@@ -92,6 +98,18 @@ VERSION_NAME = os.environ["NVPN_APP_VERSION_NAME"]
 BUILD_NUMBER = os.environ["NVPN_APP_VERSION_CODE"]
 WAIT_ATTEMPTS = int(os.environ.get("NVPN_TESTFLIGHT_WAIT_ATTEMPTS", "40"))
 WAIT_SECONDS = int(os.environ.get("NVPN_TESTFLIGHT_WAIT_SECONDS", "30"))
+USES_NONEXEMPT_ENCRYPTION_RAW = os.environ.get(
+    "NVPN_TESTFLIGHT_USES_NONEXEMPT_ENCRYPTION", "false"
+)
+USES_NONEXEMPT_ENCRYPTION = USES_NONEXEMPT_ENCRYPTION_RAW.strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+APP_ENCRYPTION_DECLARATION_ID = os.environ.get(
+    "NVPN_TESTFLIGHT_APP_ENCRYPTION_DECLARATION_ID", ""
+).strip()
 
 
 def fail(message, code=1):
@@ -264,6 +282,20 @@ def find_build():
     return builds[0] if builds else None
 
 
+def get_build(build_id):
+    status, body = request(
+        "GET",
+        f"builds/{build_id}",
+        {
+            "fields[builds]": (
+                "version,uploadedDate,processingState,buildAudienceType,"
+                "usesNonExemptEncryption"
+            )
+        },
+    )
+    return require_ok(status, body, f"GET builds/{build_id}").get("data")
+
+
 def wait_for_valid_build():
     for attempt in range(1, WAIT_ATTEMPTS + 1):
         build = find_build()
@@ -287,6 +319,91 @@ def wait_for_valid_build():
         if attempt < WAIT_ATTEMPTS:
             time.sleep(WAIT_SECONDS)
     fail(f"Build {BUILD_NUMBER} did not become VALID in time")
+
+
+def build_beta_detail(build):
+    status, body = request("GET", f"builds/{build['id']}/buildBetaDetail")
+    return require_ok(status, body, "Read build beta detail").get("data")
+
+
+def internal_beta_state(build):
+    detail = build_beta_detail(build)
+    return detail.get("attributes", {}).get("internalBuildState")
+
+
+def patch_build_compliance(build, *, uses_nonexempt_encryption, declaration_id=None):
+    data = {
+        "type": "builds",
+        "id": build["id"],
+        "attributes": {
+            "usesNonExemptEncryption": uses_nonexempt_encryption,
+        },
+    }
+    if declaration_id:
+        data["relationships"] = {
+            "appEncryptionDeclaration": {
+                "data": {
+                    "type": "appEncryptionDeclarations",
+                    "id": declaration_id,
+                }
+            }
+        }
+
+    status, body = request("PATCH", f"builds/{build['id']}", body={"data": data})
+    require_ok(status, body, "Set build export compliance")
+    return get_build(build["id"])
+
+
+def ensure_export_compliance(build):
+    build = get_build(build["id"])
+    current = build.get("attributes", {}).get("usesNonExemptEncryption")
+    if USES_NONEXEMPT_ENCRYPTION:
+        if not APP_ENCRYPTION_DECLARATION_ID:
+            fail(
+                "Build uses non-exempt encryption. Set "
+                "NVPN_TESTFLIGHT_APP_ENCRYPTION_DECLARATION_ID to an approved "
+                "App Store Connect app encryption declaration, or set "
+                "NVPN_TESTFLIGHT_USES_NONEXEMPT_ENCRYPTION=false only if export "
+                "compliance documentation is not required."
+            )
+        build = patch_build_compliance(
+            build,
+            uses_nonexempt_encryption=True,
+            declaration_id=APP_ENCRYPTION_DECLARATION_ID,
+        )
+        print(
+            "Linked export-compliance declaration "
+            f"{APP_ENCRYPTION_DECLARATION_ID} to build {BUILD_NUMBER}"
+        )
+        return build
+
+    if current is False:
+        print(f"Build {BUILD_NUMBER} export compliance is already set.")
+        return build
+
+    build = patch_build_compliance(build, uses_nonexempt_encryption=False)
+    print(
+        f"Set build {BUILD_NUMBER} export compliance: "
+        "no non-exempt encryption documentation required."
+    )
+    return build
+
+
+def wait_for_internal_testable_build(build):
+    for attempt in range(1, WAIT_ATTEMPTS + 1):
+        state = internal_beta_state(build)
+        print(
+            f"Internal TestFlight state for build {BUILD_NUMBER}: {state} "
+            f"(attempt {attempt}/{WAIT_ATTEMPTS})",
+            flush=True,
+        )
+        if state in {"READY_FOR_BETA_TESTING", "IN_BETA_TESTING"}:
+            return build
+        if state in {"PROCESSING_EXCEPTION", "EXPIRED", "MISSING_EXPORT_COMPLIANCE"}:
+            fail(f"Build {BUILD_NUMBER} is not internally testable: {state}")
+        if attempt < WAIT_ATTEMPTS:
+            time.sleep(WAIT_SECONDS)
+    fail(f"Build {BUILD_NUMBER} did not become internally testable in time")
 
 
 def groups():
@@ -365,12 +482,26 @@ def group_has_build(group_id, build):
     return False
 
 
+def group_testers(group_id):
+    return get_all(
+        f"betaGroups/{group_id}/betaTesters",
+        {
+            "fields[betaTesters]": "firstName,lastName,email,inviteType,state",
+            "limit": "200",
+        },
+    )
+
+
 def summarize_build(build, selected_groups=None):
     attrs = build["attributes"]
+    detail = build_beta_detail(build)
+    detail_attrs = detail.get("attributes", {})
     print(f"Nostr VPN {VERSION_NAME} ({BUILD_NUMBER})")
     print(f"Build: {build['id']}")
     print(f"State: {attrs.get('processingState')}")
     print(f"Audience: {attrs.get('buildAudienceType')}")
+    print(f"Uses Non-Exempt Encryption: {attrs.get('usesNonExemptEncryption')}")
+    print(f"Internal Beta State: {detail_attrs.get('internalBuildState')}")
     print(f"Uploaded: {attrs.get('uploadedDate')}")
 
     selected = selected_groups or select_internal_groups(groups())
@@ -378,7 +509,12 @@ def summarize_build(build, selected_groups=None):
     for group in selected:
         group_attrs = group.get("attributes", {})
         attached = group_has_build(group["id"], build)
-        print(f"  - {group_attrs.get('name', group['id'])}: {'attached' if attached else 'not attached'}")
+        tester_count = len(group_testers(group["id"]))
+        print(
+            f"  - {group_attrs.get('name', group['id'])}: "
+            f"{'attached' if attached else 'not attached'}, "
+            f"{tester_count} tester(s)"
+        )
 
 
 def attach_build(build, selected_groups):
@@ -414,7 +550,11 @@ if ACTION == "groups":
     for group in groups():
         attrs = group.get("attributes", {})
         kind = "internal" if attrs.get("isInternalGroup") else "external"
-        print(f"  - {attrs.get('name', group['id'])} [{kind}] {group['id']}")
+        tester_count = len(group_testers(group["id"]))
+        print(
+            f"  - {attrs.get('name', group['id'])} "
+            f"[{kind}] {group['id']} ({tester_count} tester(s))"
+        )
     raise SystemExit(0)
 
 if ACTION in {"put", "wait"}:
@@ -426,8 +566,18 @@ else:
     if ACTION == "attach" and build["attributes"].get("processingState") != "VALID":
         fail(f"Build {BUILD_NUMBER} is {build['attributes'].get('processingState')}, not VALID")
 
+if ACTION in {"put", "attach", "compliance"}:
+    build = ensure_export_compliance(build)
+else:
+    build = get_build(build["id"])
+
+if ACTION == "compliance":
+    summarize_build(build)
+    raise SystemExit(0)
+
 selected_groups = select_internal_groups(groups())
 if ACTION in {"put", "attach"}:
+    build = wait_for_internal_testable_build(build)
     attach_build(build, selected_groups)
 else:
     summarize_build(build, selected_groups)
