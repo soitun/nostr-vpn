@@ -53,6 +53,20 @@ pub(crate) fn apply_windows_subprocess_flags(command: &mut ProcessCommand) -> &m
 }
 
 #[tauri::command]
+pub(crate) async fn get_state(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> Result<UiState, String> {
+    let ui = with_backend_async(state, |backend| {
+        backend.refresh_runtime_state();
+        Ok(backend.ui_state())
+    })
+    .await?;
+    refresh_tray_menu(&app);
+    Ok(ui)
+}
+
+#[tauri::command]
 pub(crate) async fn tick(
     app: tauri::AppHandle,
     state: State<'_, AppState>,

@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte'
 
   export let waitForNextPaint: (targetWindow: Window) => Promise<void>
+  export let loadInitialState: () => Promise<void>
   export let refresh: () => Promise<void>
   export let initializeDeepLinkHandling: () => Promise<void>
   export let markBootReady: () => void
@@ -21,7 +22,9 @@
         return
       }
 
-      await refresh()
+      markBootReady()
+
+      await loadInitialState()
       if (disposed) {
         return
       }
@@ -31,7 +34,6 @@
         return
       }
 
-      markBootReady()
       await refreshAutostart()
       if (disposed) {
         return

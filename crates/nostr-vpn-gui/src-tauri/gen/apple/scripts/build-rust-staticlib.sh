@@ -46,7 +46,7 @@ mkdir -p "${artifact_dir}"
 
 cd "${repo_root}"
 if [ "${profile_dir}" = "release" ]; then
-  cargo build -p nostr-vpn-gui --target "${rust_target}" --release
+  cargo build -p nostr-vpn-gui --target "${rust_target}" --release --features custom-protocol
 else
   cargo build -p nostr-vpn-gui --target "${rust_target}"
 fi

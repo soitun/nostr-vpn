@@ -104,6 +104,7 @@ export const listenTauriEvent = <T>(
 export const getCurrentDeepLinks = () =>
   invokeTauri<string[] | null>('plugin:deep-link|get_current')
 
+export const getState = () => callUi('get_state', tickMock)
 export const tick = () => callUi('tick', tickMock)
 export const connectSession = () => callUi('connect_session', connectSessionMock)
 export const disconnectSession = () => callUi('disconnect_session', disconnectSessionMock)

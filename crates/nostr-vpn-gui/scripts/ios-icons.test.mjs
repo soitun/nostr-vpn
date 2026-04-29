@@ -14,6 +14,11 @@ const iosInfoPlistPath = path.resolve(
   scriptDir,
   '../src-tauri/gen/apple/nostr-vpn-gui_iOS/Info.plist',
 )
+const iosRustBuildScriptPath = path.resolve(
+  scriptDir,
+  '../src-tauri/gen/apple/scripts/build-rust-staticlib.sh',
+)
+const cargoManifestPath = path.resolve(scriptDir, '../src-tauri/Cargo.toml')
 
 const listPngs = async (dir) =>
   (await readdir(dir))
@@ -58,4 +63,17 @@ test('generated iOS Info.plist registers nvpn invite links', async () => {
 
   assert.match(infoPlist, /<key>CFBundleURLTypes<\/key>/)
   assert.match(infoPlist, /<string>nvpn<\/string>/)
+})
+
+test('iOS Release builds enable Tauri custom protocol assets', async () => {
+  const [buildScript, cargoManifest] = await Promise.all([
+    readFile(iosRustBuildScriptPath, 'utf8'),
+    readFile(cargoManifestPath, 'utf8'),
+  ])
+
+  assert.match(cargoManifest, /\[features\][\s\S]*custom-protocol = \["tauri\/custom-protocol"\]/)
+  assert.match(
+    buildScript,
+    /cargo build -p nostr-vpn-gui --target "\$\{rust_target\}" --release --features custom-protocol/,
+  )
 })

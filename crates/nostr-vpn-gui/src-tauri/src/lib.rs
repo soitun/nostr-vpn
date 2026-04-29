@@ -148,7 +148,7 @@ use tokio::runtime::Runtime;
 pub(crate) use tauri_commands::{
     accept_join_request, add_admin, add_network, add_participant, add_relay,
     apply_windows_subprocess_flags, connect_session, disable_system_service, disconnect_session,
-    enable_system_service, import_network_invite, install_cli, install_system_service,
+    enable_system_service, get_state, import_network_invite, install_cli, install_system_service,
     remove_admin, remove_network, remove_participant, remove_relay, rename_network,
     request_network_join, run_blocking_mutex_action, set_network_enabled,
     set_network_join_requests_enabled, set_network_mesh_id, set_participant_alias,
@@ -1069,6 +1069,10 @@ impl NvpnBackend {
         self.refresh_lan_pairing();
         self.clear_connected_join_requests();
         self.maybe_perform_pending_launch_action();
+        self.refresh_runtime_state();
+    }
+
+    fn refresh_runtime_state(&mut self) {
         self.sync_daemon_state();
         self.refresh_relay_operator_state();
         self.clear_connected_join_requests();
@@ -1389,19 +1393,29 @@ pub fn run() {
                 if matches!(payload.event(), PageLoadEvent::Finished) {
                     let app_handle = webview.app_handle().clone();
                     if let Some(state) = app_handle.try_state::<AppState>() {
-                        match tauri_commands::with_backend(state, |backend| {
-                            backend.tick();
-                            Ok(())
-                        }) {
-                            Ok(()) => {
-                                write_ios_probe("page_load: initial backend tick complete");
+                        let backend = state.backend.clone();
+                        tauri::async_runtime::spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(1_000)).await;
+                            match tauri_commands::run_blocking_mutex_action(
+                                backend,
+                                "backend",
+                                |backend| {
+                                    backend.tick();
+                                    Ok(())
+                                },
+                            )
+                            .await
+                            {
+                                Ok(()) => {
+                                    write_ios_probe("page_load: initial backend tick complete");
+                                }
+                                Err(error) => {
+                                    write_ios_probe(format!(
+                                        "page_load: initial backend tick failed: {error}"
+                                    ));
+                                }
                             }
-                            Err(error) => {
-                                write_ios_probe(format!(
-                                    "page_load: initial backend tick failed: {error}"
-                                ));
-                            }
-                        }
+                        });
                     } else {
                         write_ios_probe("page_load: initial backend tick skipped: no state");
                     }
@@ -1659,6 +1673,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            get_state,
             tick,
             connect_session,
             disconnect_session,

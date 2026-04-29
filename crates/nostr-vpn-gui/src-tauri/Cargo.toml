@@ -10,6 +10,10 @@ default-run = "nostr-vpn-gui"
 name = "nostr_vpn_gui_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+default = []
+custom-protocol = ["tauri/custom-protocol"]
+
 [build-dependencies]
 tauri-build = { version = "2.3", features = [] }
 

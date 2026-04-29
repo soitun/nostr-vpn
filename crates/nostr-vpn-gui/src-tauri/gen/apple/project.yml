@@ -164,3 +164,25 @@ targets:
           /usr/libexec/PlistBuddy -c "Add :NSExtension:NSExtensionPrincipalClass string ${PRODUCT_MODULE_NAME}.PacketTunnelProvider" "${plist}"
         name: Patch Extension Info
         basedOnDependencyAnalysis: false
+  NostrVPNUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: NostrVPNUITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.nvpn.uitests
+        DEVELOPMENT_TEAM: J8PPJKD7TA
+        GENERATE_INFOPLIST_FILE: true
+        TEST_TARGET_NAME: nostr-vpn-gui_iOS
+    dependencies:
+      - target: nostr-vpn-gui_iOS
+schemes:
+  NostrVPNUITests:
+    build:
+      targets:
+        nostr-vpn-gui_iOS: all
+        NostrVPNUITests: [test]
+    test:
+      targets:
+        - NostrVPNUITests

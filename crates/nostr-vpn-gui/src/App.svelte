@@ -50,6 +50,7 @@
     importNetworkInvite,
     installCli,
     installSystemService,
+    getState,
     getCurrentDeepLinks,
     isAutostartEnabled,
     isTauriRuntime,
@@ -207,6 +208,20 @@
     refreshInFlight = true
     try {
       applyUiState(await tick())
+    } catch (err) {
+      error = String(err)
+    } finally {
+      refreshInFlight = false
+    }
+  }
+
+  async function loadInitialState() {
+    if (refreshInFlight || actionInFlight) {
+      return
+    }
+    refreshInFlight = true
+    try {
+      applyUiState(await getState())
     } catch (err) {
       error = String(err)
     } finally {
@@ -997,6 +1012,7 @@
 
 <AppBootstrap
   {waitForNextPaint}
+  {loadInitialState}
   {refresh}
   {initializeDeepLinkHandling}
   {markBootReady}
