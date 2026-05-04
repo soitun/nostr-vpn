@@ -2387,7 +2387,9 @@ checksum = "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100"
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.44"
+version = "0.2.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bf4eab2ae929020d1937a684f113a5bad3259f046873b02a723858ff37f3b92"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2405,7 +2407,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-config"
-version = "0.2.44"
+version = "0.2.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d92fd845752d8c701de746a3f1f59026e4b33748e90b9a23f66f79cd1b4f9d49"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -2415,7 +2419,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.44"
+version = "0.2.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b13346ff3d297dbedcd09545e089997ebb52ae10b003df2e02c22da1f0c59e9"
 dependencies = [
  "aes-gcm 0.10.3",
  "async-trait",
@@ -2434,7 +2440,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.44"
+version = "0.2.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "935423a23326f0f3abca1b9f151e0327e49c735a8914066153f176d3977fdd55"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2446,7 +2454,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.44"
+version = "0.2.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73da055900918b97c2baccc2938b049a479f8e0149ec89a5d6c959fccf7e310b"
 dependencies = [
  "flate2",
  "hashtree-core",
@@ -3608,7 +3618,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-cli"
-version = "0.3.14"
+version = "0.3.15"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3635,7 +3645,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "0.3.14"
+version = "0.3.15"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3663,7 +3673,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-gui"
-version = "0.3.14"
+version = "0.3.15"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3687,7 +3697,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-relay"
-version = "0.3.14"
+version = "0.3.15"
 dependencies = [
  "anyhow",
  "axum",
@@ -3702,7 +3712,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "0.3.14"
+version = "0.3.15"
 dependencies = [
  "anyhow",
  "axum",
@@ -3721,7 +3731,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "0.3.14"
+version = "0.3.15"
 dependencies = [
  "anyhow",
  "wintun",
@@ -5993,7 +6003,9 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-hashtree-updater"
-version = "0.2.44"
+version = "0.2.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ed54cab239acdf20892b9149bb7c639e28f24e6d1b67ec618879bec5fa2c3dc"
 dependencies = [
  "hashtree-blossom",
  "hashtree-core",

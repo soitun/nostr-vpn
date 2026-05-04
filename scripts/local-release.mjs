@@ -856,8 +856,10 @@ function buildMacosArtifacts({ env, pnpmInvocation, tag, dryRun, builtLines, all
   builtLines.push('Built Apple Silicon CLI locally.')
 
   const macosZipPath = join(distDir, `nostr-vpn-${tag}-macos-arm64.zip`)
+  const macosAppTarPath = join(distDir, `nostr-vpn-${tag}-macos-arm64.app.tar.gz`)
   if (!dryRun) {
     rmSync(macosZipPath, { force: true })
+    rmSync(macosAppTarPath, { force: true })
   }
 
   const capabilities = detectLocalMacosReleaseCapabilities(env)
@@ -911,6 +913,12 @@ function buildMacosArtifacts({ env, pnpmInvocation, tag, dryRun, builtLines, all
     ['-c', '-k', '--sequesterRsrc', '--keepParent', appPathForZip, macosZipPath],
     { dryRun },
   )
+
+  // hashtree-updater installs AppBundle assets by gunzipping + untarring,
+  // so the .app.tar.gz must be a real tar.gz (ditto -c -k makes a zip).
+  if (appPath) {
+    run('tar', ['-czf', macosAppTarPath, '-C', dirname(appPath), basename(appPath)], { dryRun })
+  }
 
   verifyPackagedMacosArtifact({ zipPath: macosZipPath, signed, notarized, dryRun })
 

@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.15 - 2026-05-04
+
+Changes since `0.3.14` on 2026-04-29.
+
+### Changed
+
+- Tauri desktop app pulls `tauri-plugin-hashtree-updater` from crates.io (`0.2`) instead of a local path checkout, so release builds no longer need the `~/src/hashtree` clone alongside the repo.
+- macOS release pipeline now produces a real `.app.tar.gz` (gzipped tar of the signed/notarized `.app`) alongside the existing `.zip`, which lets the in-app hashtree updater install AppBundle updates.
+
 ## 0.3.14 - 2026-04-29
 
 Changes since `0.3.13` on 2026-04-20.

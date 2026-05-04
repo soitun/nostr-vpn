@@ -113,6 +113,9 @@ export function describeAsset(name) {
   if (/^nostr-vpn-.*-macos-arm64\.zip$/.test(name)) {
     return 'macOS Apple Silicon app'
   }
+  if (/^nostr-vpn-.*-macos-arm64\.app\.tar\.gz$/.test(name)) {
+    return 'macOS Apple Silicon updater archive'
+  }
   if (/^nostr-vpn-.*-linux-x64\.AppImage$/.test(name)) {
     return 'Linux x64 AppImage'
   }
