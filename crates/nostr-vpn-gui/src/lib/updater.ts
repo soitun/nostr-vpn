@@ -1,7 +1,12 @@
+import { writable } from 'svelte/store'
 import { check as pluginCheck, Update, type DownloadEvent } from './updater-api'
 
 const PREFS_KEY = 'nostr-vpn.updater.prefs.v1'
 const DEFAULT_AUTO_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000 // 6h
+
+// Shared across UpdateBanner and SystemPanel so a manual check or launch
+// check immediately surfaces in both places.
+export const latestUpdate = writable<Update | null>(null)
 
 export interface UpdaterPrefs {
   autoCheck: boolean
@@ -46,7 +51,22 @@ export function patchPrefs(patch: Partial<UpdaterPrefs>): UpdaterPrefs {
 }
 
 export async function checkForUpdate(): Promise<Update | null> {
-  return pluginCheck()
+  const update = await pluginCheck()
+  patchPrefs({ lastCheckMs: Date.now() })
+  latestUpdate.set(update?.updateAvailable ? update : null)
+  return update
+}
+
+// Called once per app launch. Always hits the network when autoCheck is on
+// — the 6h throttle in maybeAutoCheck would otherwise skip launch checks
+// whenever the user clicked "Check for updates" in the last 6h.
+export async function launchCheck(): Promise<Update | null> {
+  if (!loadPrefs().autoCheck) return null
+  try {
+    return await checkForUpdate()
+  } catch {
+    return null
+  }
 }
 
 export async function maybeAutoCheck(
@@ -56,9 +76,7 @@ export async function maybeAutoCheck(
   if (!prefs.autoCheck) return null
   if (Date.now() - prefs.lastCheckMs < intervalMs) return null
   try {
-    const update = await pluginCheck()
-    patchPrefs({ lastCheckMs: Date.now() })
-    return update
+    return await checkForUpdate()
   } catch {
     return null
   }
@@ -70,6 +88,9 @@ export async function downloadAndInstall(
 ): Promise<void> {
   await update.downloadAndInstall(onEvent)
   patchPrefs({ lastNotifiedVersion: update.version })
+  // Restart applies it; clear the in-memory available-update state so the
+  // banner and panel don't keep prompting after install completes.
+  latestUpdate.set(null)
 }
 
 export type { Update, DownloadEvent }

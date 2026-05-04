@@ -5,6 +5,7 @@
     type Update,
     checkForUpdate,
     downloadAndInstall,
+    latestUpdate,
     loadPrefs,
     patchPrefs,
   } from './lib/updater'
@@ -35,6 +36,12 @@
     | { kind: 'installing'; pct: number | null }
     | { kind: 'installed'; version: string }
     | { kind: 'error'; message: string } = { kind: 'idle' }
+
+  // Reflect the shared store on mount and after the banner's launch check —
+  // so reopening this panel shows "Available" without forcing a re-check.
+  $: if (updateStatus.kind === 'idle' && $latestUpdate?.updateAvailable) {
+    updateStatus = { kind: 'available', update: $latestUpdate }
+  }
 
   function applyPrefs(patch: Parameters<typeof patchPrefs>[0]) {
     updaterPrefs = patchPrefs(patch)

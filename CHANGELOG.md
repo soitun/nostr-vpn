@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.17 - 2026-05-04
+
+Changes since `0.3.16` earlier on 2026-05-04.
+
+### Fixed
+
+- Update banner now actually appears when an update is available. The banner used to call a 6h-throttled auto-check on mount, so once the SystemPanel "Check for updates" button had run, every subsequent launch would silently skip the check and stay hidden. Banner and SystemPanel now share a single in-memory `latestUpdate` store, the launch-time check is unthrottled (still gated on the "Check for updates automatically" pref), and SystemPanel reflects the same state — so reopening the panel after a launch check shows the available version without forcing a manual re-check. The available-update payload itself is intentionally not persisted across launches; only `lastCheckMs` and `dismissedVersion` are.
+
 ## 0.3.16 - 2026-05-04
 
 Changes since `0.3.15` earlier on 2026-05-04.

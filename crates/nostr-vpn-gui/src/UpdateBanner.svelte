@@ -4,8 +4,9 @@
     type DownloadEvent,
     type Update,
     downloadAndInstall,
+    latestUpdate,
+    launchCheck,
     loadPrefs,
-    maybeAutoCheck,
     patchPrefs,
   } from './lib/updater'
 
@@ -17,16 +18,26 @@
   let total: number | undefined = $state(undefined)
   let error: string | null = $state(null)
   let autoInstall = $state(loadPrefs().autoInstall)
+  let dismissedVersion = $state(loadPrefs().dismissedVersion)
 
-  onMount(async () => {
-    const found = await maybeAutoCheck()
-    if (!found || !found.updateAvailable) return
-    const prefs = loadPrefs()
-    if (prefs.dismissedVersion === found.version) return
-    update = found
-    if (prefs.autoInstall) {
-      void install(found)
+  // Banner reflects whatever the shared store holds — populated by both the
+  // launch check below and SystemPanel's manual check — minus anything the
+  // user has dismissed in this localStorage profile.
+  $effect(() => {
+    const store = $latestUpdate
+    if (store && store.updateAvailable && store.version !== dismissedVersion) {
+      const wasNull = update === null
+      update = store
+      if (wasNull && loadPrefs().autoInstall) {
+        void install(store)
+      }
+    } else {
+      update = null
     }
+  })
+
+  onMount(() => {
+    void launchCheck()
   })
 
   async function install(target: Update) {
@@ -51,7 +62,10 @@
   }
 
   function dismiss() {
-    if (update) patchPrefs({ dismissedVersion: update.version })
+    if (update) {
+      dismissedVersion = update.version
+      patchPrefs({ dismissedVersion: update.version })
+    }
     update = null
   }
 
