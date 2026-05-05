@@ -4,6 +4,14 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 0.3.22 - 2026-05-05
+
+Changes since `0.3.21` earlier on 2026-05-05.
+
+### Fixed
+
+- Linux Docker step: invoking the inner build with `bash -lc` made it a login shell, which re-sourced `/etc/profile` and dropped the rust:bookworm image's `/usr/local/cargo/bin` from PATH. `pnpm install` worked (pnpm is in /usr/bin) but the subsequent `tauri build` ran `cargo metadata` and got `bash: line 1: cargo: command not found`, surfaced by tauri-cli as the cryptic `failed to run 'cargo metadata' command…` line. Switched to `bash -c` so the Dockerfile-set PATH wins and cargo is reachable.
+
 ## 0.3.21 - 2026-05-05
 
 Changes since `0.3.20` earlier on 2026-05-05.

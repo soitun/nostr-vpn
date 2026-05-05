@@ -757,7 +757,7 @@ function buildLinuxArtifacts({ env, tag, dryRun, builtLines }) {
       '/work',
       imageName,
       'bash',
-      '-lc',
+      '-c',
       innerScript,
     ],
     { dryRun },
