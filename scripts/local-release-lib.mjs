@@ -72,6 +72,26 @@ export function linuxReleaseTargetsForDockerPlatform(platform) {
   throw new Error(`Unsupported Linux Docker architecture: ${dockerArch}`)
 }
 
+export function shouldBlockLocalLinuxAmd64Qemu({ platform, hostPlatform, hostArch, allowQemu = false }) {
+  if (allowQemu) {
+    return false
+  }
+
+  return platform === 'linux/amd64' && hostPlatform === 'darwin' && hostArch === 'arm64'
+}
+
+export function validateReleaseAssetSet(assetNames, { allowLinuxArm64DesktopOnly = false } = {}) {
+  const names = [...assetNames]
+  const hasLinuxX64Desktop = names.some((name) => /^nostr-vpn-.*-linux-x64\.(AppImage|deb)$/.test(name))
+  const hasLinuxArm64Desktop = names.some((name) => /^nostr-vpn-.*-linux-arm64\.(AppImage|deb)$/.test(name))
+
+  if (hasLinuxArm64Desktop && !hasLinuxX64Desktop && !allowLinuxArm64DesktopOnly) {
+    throw new Error(
+      'Release has Linux ARM64 desktop artifacts but no Linux x64 desktop artifacts. Build Linux x64 on a native amd64 builder, remove the ARM64 desktop artifacts, or set NVPN_ALLOW_LINUX_ARM64_DESKTOP_ONLY=1.',
+    )
+  }
+}
+
 export function readWorkspaceVersionTag(cargoTomlText) {
   const match = cargoTomlText.match(
     /^\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"\n]+)"/m,

@@ -26,7 +26,9 @@ import {
   parseEnvFile,
   readWorkspaceVersionTag,
   renderReleaseNotes,
+  shouldBlockLocalLinuxAmd64Qemu,
   splitCsv,
+  validateReleaseAssetSet,
 } from './local-release-lib.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -708,14 +710,25 @@ function buildLinuxArtifacts({ env, tag, dryRun, builtLines }) {
     throw new SkipStepError('Skipping Linux artifacts because docker is not on PATH.')
   }
 
-  // Default to the host arch so docker doesn't run x86_64 under QEMU
-  // (tauri-cli panics under emulation: Option::unwrap on None at
-  // rust.rs:1142 → SIGABRT). Apple Silicon hosts get a native arm64
-  // build; x86_64 hosts get amd64. Override with NVPN_LINUX_DOCKER_PLATFORM
-  // if you need a different target and have working emulation or a
-  // native cross host.
-  const hostPlatform = process.arch === 'arm64' ? 'linux/arm64' : 'linux/amd64'
-  const platform = env.NVPN_LINUX_DOCKER_PLATFORM || hostPlatform
+  // Linux desktop releases should be x64 by default. Docker Desktop's amd64
+  // emulation on Apple Silicon currently crashes rustc, which makes tauri-cli
+  // panic while detecting the Rust host triple. Build x64 on a native amd64
+  // Docker host, or explicitly opt into linux/arm64 when producing an extra
+  // ARM64 Linux artifact.
+  const platform = env.NVPN_LINUX_DOCKER_PLATFORM || 'linux/amd64'
+  if (
+    shouldBlockLocalLinuxAmd64Qemu({
+      platform,
+      hostPlatform: process.platform,
+      hostArch: process.arch,
+      allowQemu: envFlagEnabled(env.NVPN_ALLOW_DOCKER_QEMU_LINUX_AMD64),
+    })
+  ) {
+    throw new Error(
+      'Linux x64 desktop artifacts need a native amd64 Docker host. Docker/QEMU on Apple Silicon segfaults rustc; run this step on amd64 Linux or set NVPN_LINUX_DOCKER_PLATFORM=linux/arm64 to explicitly build optional ARM64 Linux artifacts.',
+    )
+  }
+
   const {
     linuxArchSuffix,
     muslTriple,
@@ -732,10 +745,21 @@ function buildLinuxArtifacts({ env, tag, dryRun, builtLines }) {
   const linuxDebName = `nostr-vpn-${tag}-linux-${linuxArchSuffix}.deb`
   const linuxCliTarball = `nvpn-${tag}-${muslTriple}.tar.gz`
 
-  if (!dryRun) {
-    rmSync(join(distDir, linuxAppImageName), { force: true })
-    rmSync(join(distDir, linuxDebName), { force: true })
-    rmSync(join(distDir, linuxCliTarball), { force: true })
+  if (!dryRun && existsSync(distDir)) {
+    const linuxAssetNamesForTag = new Set([
+      `nostr-vpn-${tag}-linux-x64.AppImage`,
+      `nostr-vpn-${tag}-linux-x64.deb`,
+      `nostr-vpn-${tag}-linux-arm64.AppImage`,
+      `nostr-vpn-${tag}-linux-arm64.deb`,
+      `nvpn-${tag}-x86_64-unknown-linux-musl.tar.gz`,
+      `nvpn-${tag}-aarch64-unknown-linux-musl.tar.gz`,
+    ])
+
+    for (const entry of readdirSync(distDir, { withFileTypes: true }).filter((entry) => entry.isFile())) {
+      if (linuxAssetNamesForTag.has(entry.name)) {
+        rmSync(join(distDir, entry.name), { force: true })
+      }
+    }
   }
 
   // The repo's node_modules and target/ are populated for the host platform
@@ -1093,8 +1117,21 @@ function collectReleaseAssetPaths(tag) {
   return paths
 }
 
-function stageRelease({ tag, commit, stageDir, builtLines, skippedLines, dryRun }) {
+function stageRelease({
+  tag,
+  commit,
+  stageDir,
+  builtLines,
+  skippedLines,
+  dryRun,
+  allowLinuxArm64DesktopOnly = false,
+}) {
   const assetPaths = collectReleaseAssetPaths(tag)
+  const assetNames = assetPaths.map((assetPath) => basename(assetPath))
+  validateReleaseAssetSet(assetNames, {
+    allowLinuxArm64DesktopOnly,
+  })
+
   if (dryRun) {
     console.log(`Would stage ${assetPaths.length} currently visible asset(s) into ${stageDir}`)
     return { assetPaths, stageDir }
@@ -1191,6 +1228,7 @@ function main() {
   const allowUnsignedMacos = options.allowUnsignedMacos || envFlagEnabled(env.NVPN_ALLOW_UNSIGNED_MACOS)
   const allowPartial = options.allowPartial || envFlagEnabled(env.NVPN_RELEASE_ALLOW_PARTIAL)
   const publishZapstore = options.publishZapstore || envFlagEnabled(env.NVPN_PUBLISH_ZAPSTORE)
+  const allowLinuxArm64DesktopOnly = envFlagEnabled(env.NVPN_ALLOW_LINUX_ARM64_DESKTOP_ONLY)
 
   console.log(`Release tag: ${tag}`)
   console.log(`Release tree: ${releaseTree}`)
@@ -1253,6 +1291,7 @@ function main() {
     builtLines,
     skippedLines,
     dryRun: options.dryRun,
+    allowLinuxArm64DesktopOnly,
   })
 
   if (options.publish) {

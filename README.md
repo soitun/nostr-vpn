@@ -119,7 +119,7 @@ Additional automation:
 - `.github/workflows/windows-smoke.yml` can manually build the Windows CLI and GUI on `windows-latest`
 - `.github/workflows/release.yml` publishes Apple Silicon macOS, Windows x64, and Android arm64 APK/AAB app artifacts, links the iOS public TestFlight beta, and publishes CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64
 - `scripts/publish-zapstore-android.sh` builds a signed Android APK locally and publishes it with `zsp` using `zapstore.yaml`
-- `scripts/local-release.mjs` builds whatever this machine can produce locally, stages a hashtree-style release directory, can publish it to `releases/nostr-vpn`, and can hand the signed Android APK off to Zapstore
+- `scripts/local-release.mjs` builds local release artifacts, stages a hashtree-style release directory, can publish it to `releases/nostr-vpn`, and can hand the signed Android APK off to Zapstore
 
 ### Local release
 
@@ -139,6 +139,7 @@ Notes:
 - the script auto-loads `.env.release.local` and `.env.zapstore.local` when present
 - shell environment variables override values from those files
 - on Apple Silicon macOS it can build the macOS app/CLI locally, Android APK/AAB when the Android toolchain is configured, and Windows artifacts through a running Parallels VM
+- Linux desktop release artifacts are x64 by default and should be built on native amd64 Linux; Docker/QEMU on Apple Silicon currently crashes `rustc`. Set `NVPN_LINUX_DOCKER_PLATFORM=linux/arm64` only when intentionally building optional ARM64 Linux artifacts.
 - add `--publish-zapstore` or set `NVPN_PUBLISH_ZAPSTORE=1` when the release should also publish the signed Android APK to Zapstore
 - Windows VM selection can be forced with `NVPN_WINDOWS_VM_NAME`; otherwise the script auto-detects a single running Windows guest
 - by default it runs the same frontend build, `cargo fmt --check`, `cargo clippy`, and `cargo test` verification steps as the release workflow

@@ -14,7 +14,9 @@ import {
   parseEnvFile,
   readWorkspaceVersionTag,
   renderReleaseNotes,
+  shouldBlockLocalLinuxAmd64Qemu,
   splitCsv,
+  validateReleaseAssetSet,
 } from './local-release-lib.mjs'
 
 test('parseEnvFile reads basic dotenv syntax', () => {
@@ -70,6 +72,55 @@ test('linuxReleaseTargetsForDockerPlatform maps Docker platforms to release targ
   assert.throws(
     () => linuxReleaseTargetsForDockerPlatform('linux/arm/v7'),
     /Unsupported Linux Docker architecture/,
+  )
+})
+
+test('shouldBlockLocalLinuxAmd64Qemu protects Apple Silicon Docker Desktop releases', () => {
+  assert.equal(
+    shouldBlockLocalLinuxAmd64Qemu({
+      platform: 'linux/amd64',
+      hostPlatform: 'darwin',
+      hostArch: 'arm64',
+    }),
+    true,
+  )
+  assert.equal(
+    shouldBlockLocalLinuxAmd64Qemu({
+      platform: 'linux/amd64',
+      hostPlatform: 'linux',
+      hostArch: 'x64',
+    }),
+    false,
+  )
+  assert.equal(
+    shouldBlockLocalLinuxAmd64Qemu({
+      platform: 'linux/arm64',
+      hostPlatform: 'darwin',
+      hostArch: 'arm64',
+    }),
+    false,
+  )
+})
+
+test('validateReleaseAssetSet rejects ARM64-only Linux desktop releases', () => {
+  assert.throws(
+    () =>
+      validateReleaseAssetSet([
+        'nostr-vpn-v0.3.23-linux-arm64.AppImage',
+        'nostr-vpn-v0.3.23-linux-arm64.deb',
+      ]),
+    /no Linux x64 desktop artifacts/,
+  )
+  assert.doesNotThrow(() =>
+    validateReleaseAssetSet([
+      'nostr-vpn-v0.3.23-linux-x64.AppImage',
+      'nostr-vpn-v0.3.23-linux-arm64.AppImage',
+    ]),
+  )
+  assert.doesNotThrow(() =>
+    validateReleaseAssetSet(['nostr-vpn-v0.3.23-linux-arm64.AppImage'], {
+      allowLinuxArm64DesktopOnly: true,
+    }),
   )
 })
 
