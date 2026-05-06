@@ -11,7 +11,7 @@ native shells while keeping product truth in Rust.
 
 | Layer | macOS | Windows | Linux | Android | iPhone |
 | --- | --- | --- | --- | --- | --- |
-| Shared core | Rust app core exposed through UniFFI | Rust app core exposed through explicit C ABI JSON bridge | Rust app core used directly or through UniFFI | Rust app core exposed through UniFFI | Rust app core exposed through UniFFI |
+| Shared core | Rust app core exposed through UniFFI | Rust app core exposed through explicit C ABI JSON bridge | Rust app core used directly or through UniFFI | Rust app core exposed through explicit C ABI JSON bridge over JNI | Rust app core exposed through UniFFI |
 | Native shell | SwiftUI/AppKit | WPF/.NET | GTK4/libadwaita Rust | Kotlin/Jetpack Compose | SwiftUI/UIKit |
 | App state owner | Rust | Rust | Rust | Rust | Rust |
 | Rendering owner | Native | Native | Native | Native | Native |
@@ -205,6 +205,23 @@ and Linux native shells.
 | Tray/status area | Ready | Uses native `System.Windows.Forms.NotifyIcon` with open, VPN toggle, exit toggle, this-device copy, network devices, exit-node selection, refresh, and quit. | Add single-instance tray activation routing for already-running deep links. |
 | Deep links/startup | Partial | Registers `nvpn://` under HKCU, handles startup invite URLs, and writes HKCU Run startup entries. | Route deep links into an already-running instance. |
 | Build/run harness | Ready | `scripts/windows-build.ps1` builds Rust DLL/CLI plus WPF and `just run-windows` runs it on Windows. Verified in the Windows 11 Parallels VM with `dotnet build`, Rust build, and an app-window screenshot. | Add packaged installer/MSIX/NSIS target. |
+
+## Android App Parity Status
+
+This table tracks the Kotlin/Jetpack Compose shell under `android/` against the
+current native shell contract.
+
+| Feature group | Android status | Native Android coverage | Remaining parity work |
+| --- | --- | --- | --- |
+| Rust core boundary | Ready | The Android app cross-compiles `nostr-vpn-app-core` to `arm64-v8a` and calls the shared JSON C ABI through JNI exports for state, refresh, action dispatch, invite QR generation, and QR image decode. | Add generated UniFFI Kotlin only if it becomes simpler than the explicit JNI bridge. |
+| Build/install harness | Ready | `just android-build` builds a debug APK and `just android-install` installs it on a connected device; verified on a physical Android device with an app screenshot. | Add release signing/AAB/Zapstore packaging. |
+| Main shell hierarchy | Partial | Compose renders Devices, Share, Routing, and Settings with the same simple top-level flow as the desktop native shells. | Add tablet/landscape layouts and compact accessibility passes. |
+| Mobile app-core startup | Ready | Android now uses mobile app-core status and no longer shells out to the desktop `nvpn` binary during startup or config-only refreshes. | Replace polling with a core/mobile runtime update stream later. |
+| Device roster | Partial | Shows local/peer identity, tunnel IP, reachability, admin/exit badges, npub copy, join requests, and manual add-device. | Add alias/admin/remove controls and richer traffic/path detail parity. |
+| Invite share/import | Partial | Renders invite QR through Rust, copies/imports invite text, handles `nvpn://` deep links, and exposes LAN pairing rows. | Add Android share sheet, camera live scan, and image picker QR import UI. |
+| Routing | Partial | Direct/exit-node selection, advertised routes, and offer-exit toggle dispatch core actions. | Add search/filter polish and mobile-specific route constraints. |
+| Settings/diagnostics/relays | Partial | Device settings, saved network activation, join-request toggle, relays, runtime detail, MagicDNS, app version, and health rows are visible. | Add destructive actions, richer diagnostics, and mobile storage/keystore policy. |
+| VPN runtime | Partial | Android `VpnService` permission surface and service declaration are present; app-core reports mobile session state without desktop CLI dependency. | Wire the packet tunnel data-plane loop to FIPS endpoint delivery before calling the mobile VPN path complete. |
 
 ## Linux App Parity Status
 

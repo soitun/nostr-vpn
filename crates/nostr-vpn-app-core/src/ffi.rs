@@ -100,6 +100,7 @@ struct NativeAppRuntime {
     config_path: PathBuf,
     config: AppConfig,
     nvpn_bin: Option<PathBuf>,
+    mobile_runtime: bool,
     startup_error: Option<String>,
     last_error: String,
     daemon_running: bool,
@@ -169,12 +170,14 @@ impl NativeAppRuntime {
         maybe_autoconfigure_node(&mut config);
         config.save(&config_path)?;
 
+        let capabilities = current_runtime_capabilities();
         let mut runtime = Self {
             rev: 0,
             app_version,
             config_path,
             config,
             nvpn_bin: resolve_nvpn_cli_path().ok(),
+            mobile_runtime: capabilities.mobile,
             startup_error: None,
             last_error: String::new(),
             daemon_running: false,
@@ -182,8 +185,8 @@ impl NativeAppRuntime {
             relay_connected: false,
             session_status: "Disconnected".to_string(),
             daemon_state: None,
-            service_supported: desktop_service_supported(),
-            service_enablement_supported: desktop_service_supported(),
+            service_supported: !capabilities.mobile && desktop_service_supported(),
+            service_enablement_supported: !capabilities.mobile && desktop_service_supported(),
             service_installed: false,
             service_disabled: false,
             service_running: false,
@@ -194,7 +197,11 @@ impl NativeAppRuntime {
             lan_pairing_expires_at: None,
             lan_peers: HashMap::new(),
         };
-        let _ = runtime.refresh_status();
+        if runtime.mobile_runtime {
+            let _ = runtime.refresh_mobile_status();
+        } else {
+            let _ = runtime.refresh_status();
+        }
         Ok(runtime)
     }
 
@@ -206,6 +213,7 @@ impl NativeAppRuntime {
             config_path: default_config_path(),
             config: AppConfig::generated(),
             nvpn_bin: resolve_nvpn_cli_path().ok(),
+            mobile_runtime: current_runtime_capabilities().mobile,
             startup_error: Some(error.clone()),
             last_error: error,
             daemon_running: false,
@@ -341,7 +349,13 @@ impl NativeAppRuntime {
     #[allow(clippy::too_many_lines)]
     fn apply_action(&mut self, action: NativeAppAction) -> Result<()> {
         match action {
-            NativeAppAction::GetState | NativeAppAction::Tick => self.refresh_status(),
+            NativeAppAction::GetState | NativeAppAction::Tick => {
+                if self.mobile_runtime {
+                    self.refresh_mobile_status()
+                } else {
+                    self.refresh_status()
+                }
+            }
             NativeAppAction::ConnectSession => self.connect_session(),
             NativeAppAction::DisconnectSession => self.disconnect_session(),
             NativeAppAction::InstallCli => {
@@ -746,6 +760,13 @@ impl NativeAppRuntime {
 
     fn connect_session(&mut self) -> Result<()> {
         self.save_config()?;
+        if self.mobile_runtime {
+            self.session_active = true;
+            self.daemon_running = true;
+            self.relay_connected = false;
+            self.session_status = "Android tunnel pending".to_string();
+            return self.refresh_mobile_status();
+        }
         let output = self.run_nvpn_elevated([
             "start",
             "--daemon",
@@ -758,9 +779,43 @@ impl NativeAppRuntime {
     }
 
     fn disconnect_session(&mut self) -> Result<()> {
+        if self.mobile_runtime {
+            self.session_active = false;
+            self.daemon_running = false;
+            self.relay_connected = false;
+            self.session_status = "Disconnected".to_string();
+            return self.refresh_mobile_status();
+        }
         let output = self.run_nvpn(["pause", "--config", self.config_path_str()?])?;
         ensure_success("nvpn pause", &output)?;
         self.refresh_status()
+    }
+
+    fn refresh_mobile_status(&mut self) -> Result<()> {
+        self.reload_config_from_disk()?;
+        self.refresh_lan_pairing();
+        self.daemon_state = None;
+        self.relay_connected = false;
+        self.service_supported = false;
+        self.service_enablement_supported = false;
+        self.service_installed = false;
+        self.service_disabled = false;
+        self.service_running = false;
+        self.service_binary_version.clear();
+        self.service_status_detail = "Background service unsupported on mobile".to_string();
+        if self.session_active {
+            self.daemon_running = true;
+            if self.session_status.trim().is_empty()
+                || self.session_status == "CLI unavailable"
+                || self.session_status.starts_with("nvpn CLI binary not found")
+            {
+                self.session_status = "Android tunnel pending".to_string();
+            }
+        } else {
+            self.daemon_running = false;
+            self.session_status = "Disconnected".to_string();
+        }
+        Ok(())
     }
 
     fn refresh_status(&mut self) -> Result<()> {
@@ -825,6 +880,9 @@ impl NativeAppRuntime {
 
     fn save_reload_and_refresh(&mut self) -> Result<()> {
         self.save_config()?;
+        if self.mobile_runtime {
+            return self.refresh_mobile_status();
+        }
         if self.daemon_running {
             let output = self.run_nvpn(["reload", "--config", self.config_path_str()?])?;
             ensure_success("nvpn reload", &output)?;

@@ -11,6 +11,7 @@ info:
     @echo "  just run-macos"
     @echo "  just run-linux"
     @echo "  just run-windows"
+    @echo "  just run-android"
     @echo
     @echo "Build"
     @echo "  just build"
@@ -29,6 +30,10 @@ info:
     @echo
     @echo "Windows"
     @echo "  just windows-build"
+    @echo
+    @echo "Android"
+    @echo "  just android-build"
+    @echo "  just android-install"
     @echo
     @echo "Checks"
     @echo "  just test"
@@ -56,6 +61,9 @@ run-linux:
 run-windows:
     ./tools/run-windows
 
+run-android:
+    ./tools/run-android install
+
 build:
     @case "$(uname -s)" in \
         Darwin) just macos-build ;; \
@@ -69,6 +77,12 @@ linux-build:
 
 windows-build:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-build.ps1
+
+android-build:
+    ./tools/run-android build
+
+android-install:
+    ./tools/run-android install
 
 macos-gen-swift:
     ./scripts/macos-build macos-gen-swift

@@ -4,6 +4,12 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use image::ImageReader;
+#[cfg(target_os = "android")]
+use jni::JNIEnv;
+#[cfg(target_os = "android")]
+use jni::objects::{JClass, JString};
+#[cfg(target_os = "android")]
+use jni::sys::{jlong, jstring};
 use qrcode::QrCode;
 use serde::Serialize;
 
@@ -125,11 +131,131 @@ pub extern "C" fn nostr_vpn_string_free(value: *mut c_char) {
     }
 }
 
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_appNew(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+    app_version: JString<'_>,
+) -> jlong {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    let app_version = jni_string_lossy(&mut env, &app_version);
+    Box::into_raw(Box::new(NvpnAppHandle {
+        app: FfiApp::new(data_dir, app_version),
+    })) as jlong
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_appFree(
+    _env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) {
+    if handle == 0 {
+        return;
+    }
+    unsafe {
+        drop(Box::from_raw(handle as *mut NvpnAppHandle));
+    }
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_stateJson(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jstring {
+    jni_state_json(env, handle, |handle| handle.app.state())
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_refreshJson(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jstring {
+    jni_state_json(env, handle, |handle| handle.app.refresh())
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_dispatchJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    action_json: JString<'_>,
+) -> jstring {
+    let state = app_from_jlong(handle).map_or_else(
+        |error| error_state(error.to_string()),
+        |handle| {
+            let action_json = jni_string_lossy(&mut env, &action_json);
+            match serde_json::from_str::<NativeAppAction>(&action_json) {
+                Ok(action) => handle.app.dispatch(action),
+                Err(error) => {
+                    let mut state = handle.app.state();
+                    state.error = format!("invalid native action JSON: {error}");
+                    state
+                }
+            }
+        },
+    );
+    jni_json_string(env, &state)
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_qrMatrixJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    text: JString<'_>,
+) -> jstring {
+    let text = jni_string_lossy(&mut env, &text);
+    let result = qr_matrix(&text).unwrap_or_else(|error| QrMatrixResult {
+        width: 0,
+        cells: Vec::new(),
+        error: error.to_string(),
+    });
+    jni_json_string(env, &result)
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_decodeQrImageJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    path: JString<'_>,
+) -> jstring {
+    let path = jni_string_lossy(&mut env, &path);
+    let result = decode_qr_image(&path).map_or_else(
+        |error| QrDecodeResult {
+            value: String::new(),
+            error: error.to_string(),
+        },
+        |value| QrDecodeResult {
+            value,
+            error: String::new(),
+        },
+    );
+    jni_json_string(env, &result)
+}
+
 fn app_from_handle<'a>(handle: *const NvpnAppHandle) -> Result<&'a NvpnAppHandle> {
     if handle.is_null() {
         return Err(anyhow!("native app handle is null"));
     }
     Ok(unsafe { &*handle })
+}
+
+#[cfg(target_os = "android")]
+fn app_from_jlong<'a>(handle: jlong) -> Result<&'a NvpnAppHandle> {
+    if handle == 0 {
+        return Err(anyhow!("native app handle is null"));
+    }
+    Ok(unsafe { &*(handle as *const NvpnAppHandle) })
 }
 
 fn c_string_lossy(value: *const c_char) -> String {
@@ -139,6 +265,35 @@ fn c_string_lossy(value: *const c_char) -> String {
     unsafe { CStr::from_ptr(value) }
         .to_string_lossy()
         .into_owned()
+}
+
+#[cfg(target_os = "android")]
+fn jni_string_lossy(env: &mut JNIEnv<'_>, value: &JString<'_>) -> String {
+    env.get_string(value).map_or_else(
+        |_| String::new(),
+        |value| value.to_string_lossy().into_owned(),
+    )
+}
+
+#[cfg(target_os = "android")]
+fn jni_state_json(
+    env: JNIEnv<'_>,
+    handle: jlong,
+    state: impl FnOnce(&NvpnAppHandle) -> NativeAppState,
+) -> jstring {
+    let state = app_from_jlong(handle).map_or_else(
+        |error| error_state(error.to_string()),
+        |handle| state(handle),
+    );
+    jni_json_string(env, &state)
+}
+
+#[cfg(target_os = "android")]
+fn jni_json_string(env: JNIEnv<'_>, value: &impl Serialize) -> jstring {
+    let json =
+        serde_json::to_string(value).unwrap_or_else(|error| format!(r#"{{"error":"{error}"}}"#));
+    env.new_string(json)
+        .map_or(ptr::null_mut(), |value| value.into_raw())
 }
 
 fn json_string(value: &impl Serialize) -> *mut c_char {
