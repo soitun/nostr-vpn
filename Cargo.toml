@@ -8,6 +8,7 @@ members = [
   "crates/nostr-vpn-wintun",
   "crates/nostr-vpn-relay",
 ]
+exclude = ["linux"]
 resolver = "2"
 
 [workspace.package]

@@ -1,13 +1,28 @@
 # Linux Native Shell
 
-Target shell: Rust GTK4/libadwaita.
+Rust GTK4/libadwaita shell over `nostr-vpn-app-core`.
 
-Responsibilities:
+Run it from the repo root:
 
-- use `nostr-vpn-app-core` directly or through UniFFI-compatible types
-- render `UiState` with native GTK/libadwaita widgets
-- dispatch `NativeAppAction` values into the shared Rust core
-- own Secret Service fallback, desktop startup registration, status notifier/tray integration, file/camera QR scanning, and package-specific update/install UX
-- preserve current service, deep-link, invite, LAN pairing, diagnostics, relay, and exit-node behavior
+```bash
+just run-linux
+```
 
-The parity checklist is in `docs/native-ui-parity-matrix.md`.
+The dev target runs inside Docker with a small Xvfb/Fluxbox desktop and VNC on
+`localhost:5902`. The VNC password is `nostrvpn`.
+
+Useful commands:
+
+```bash
+just linux-build
+./tools/run-linux cargo check
+./tools/run-linux cargo run
+```
+
+The shell currently owns the same core flows as the Swift UI: connect/disconnect,
+roster presence, invite QR/import, LAN pairing, exit-node selection, advertised
+routes, relays, service install, and diagnostics. Remaining Linux-native work is
+desktop portal integration, file/camera QR scanning, tray/status notifier support,
+and packaged update UX.
+
+The parity checklist is in `../docs/native-ui-parity-matrix.md`.

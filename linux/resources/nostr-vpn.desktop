@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Nostr VPN
+Exec=nostr-vpn
+Icon=nostr-vpn
+Terminal=false
+Categories=Network;Security;
+StartupNotify=true

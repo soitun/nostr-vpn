@@ -305,7 +305,8 @@ Native app work is split into a Rust-owned state/action core and platform shells
 
 The native UI rewrite parity target is tracked in [`docs/native-ui-parity-matrix.md`](docs/native-ui-parity-matrix.md).
 The shared native app contract lives in [`crates/nostr-vpn-app-core`](crates/nostr-vpn-app-core), with native shell targets under [`macos`](macos), [`windows`](windows), [`linux`](linux), [`android`](android), and [`ios`](ios).
-The macOS native shell can be built with `just build` and launched with `just run`.
+The local native shell can be built with `just build` and launched with `just run`.
+Use `just run-macos` or `just run-linux` when you want a specific desktop target.
 
 Notes:
 

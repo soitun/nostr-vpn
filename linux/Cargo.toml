@@ -1,0 +1,38 @@
+[package]
+name = "nostr-vpn-linux"
+version = "0.3.23"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "nostr-vpn"
+path = "src/main.rs"
+
+[dependencies]
+adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
+gio = "0.20"
+glib = "0.20"
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+nostr-vpn-app-core = { path = "../crates/nostr-vpn-app-core" }
+qrcode = { version = "0.14", default-features = false }
+
+[package.metadata.deb]
+name = "nostr-vpn"
+maintainer = "Nostr VPN"
+copyright = "Nostr VPN"
+extended-description = "Simple private networks over FIPS and Nostr."
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/nostr-vpn", "usr/bin/", "755"],
+    ["resources/nostr-vpn-16.png", "usr/share/icons/hicolor/16x16/apps/nostr-vpn.png", "644"],
+    ["resources/nostr-vpn-22.png", "usr/share/icons/hicolor/22x22/apps/nostr-vpn.png", "644"],
+    ["resources/nostr-vpn-24.png", "usr/share/icons/hicolor/24x24/apps/nostr-vpn.png", "644"],
+    ["resources/nostr-vpn-32.png", "usr/share/icons/hicolor/32x32/apps/nostr-vpn.png", "644"],
+    ["resources/nostr-vpn-48.png", "usr/share/icons/hicolor/48x48/apps/nostr-vpn.png", "644"],
+    ["resources/nostr-vpn-64.png", "usr/share/icons/hicolor/64x64/apps/nostr-vpn.png", "644"],
+    ["resources/nostr-vpn-128.png", "usr/share/icons/hicolor/128x128/apps/nostr-vpn.png", "644"],
+    ["resources/nostr-vpn-256.png", "usr/share/icons/hicolor/256x256/apps/nostr-vpn.png", "644"],
+    ["resources/nostr-vpn-512.png", "usr/share/icons/hicolor/512x512/apps/nostr-vpn.png", "644"],
+    ["resources/nostr-vpn.desktop", "usr/share/applications/nostr-vpn.desktop", "644"],
+]

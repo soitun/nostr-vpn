@@ -9,6 +9,7 @@ info:
     @echo "Run"
     @echo "  just run"
     @echo "  just run-macos"
+    @echo "  just run-linux"
     @echo
     @echo "Build"
     @echo "  just build"
@@ -22,6 +23,9 @@ info:
     @echo "  just macos-xcodeproj"
     @echo "  just macos-build"
     @echo
+    @echo "Linux"
+    @echo "  just linux-build"
+    @echo
     @echo "Checks"
     @echo "  just test"
     @echo "  just e2e"
@@ -34,17 +38,25 @@ info:
 run:
     @case "$(uname -s)" in \
         Darwin) just run-macos ;; \
+        Linux) just run-linux ;; \
         *) echo "No local run target for $(uname -s). Use just --list for available commands." >&2; exit 1 ;; \
     esac
 
 run-macos:
     ./tools/run-macos
 
+run-linux:
+    ./tools/run-linux
+
 build:
     @case "$(uname -s)" in \
         Darwin) just macos-build ;; \
+        Linux) just linux-build ;; \
         *) cargo build -p nostr-vpn-cli -p nostr-vpn-relay ;; \
     esac
+
+linux-build:
+    ./tools/run-linux cargo build
 
 macos-gen-swift:
     ./scripts/macos-build macos-gen-swift

@@ -1,0 +1,33 @@
+services:
+  nostr-vpn-linux:
+    build:
+      context: ..
+      dockerfile: linux/Dockerfile
+    image: nostr-vpn-linux-dev
+    container_name: nostr-vpn-linux-dev
+    environment:
+      DISPLAY: :99
+      GDK_BACKEND: x11
+      GTK_A11Y: none
+      RUST_BACKTRACE: "1"
+      NVPN_CLI_PATH: /workspace/nostr-vpn/target/debug/nvpn
+    ports:
+      - "5902:5900"
+    volumes:
+      - ..:/workspace/nostr-vpn
+      - ../../fips:/workspace/fips
+      - nostr_vpn_linux_cargo_registry:/root/.cargo/registry
+      - nostr_vpn_linux_cargo_git:/root/.cargo/git
+      - nostr_vpn_linux_target:/workspace/nostr-vpn/linux/target
+      - nostr_vpn_core_target:/workspace/nostr-vpn/target
+      - nostr_vpn_linux_data:/root/.local/share/nostr-vpn
+    working_dir: /workspace/nostr-vpn/linux
+    stdin_open: true
+    tty: true
+
+volumes:
+  nostr_vpn_linux_cargo_registry:
+  nostr_vpn_linux_cargo_git:
+  nostr_vpn_linux_target:
+  nostr_vpn_core_target:
+  nostr_vpn_linux_data:
