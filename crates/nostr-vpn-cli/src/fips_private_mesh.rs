@@ -490,6 +490,8 @@ fn fips_endpoint_config(
     transport: Option<&FipsEndpointTransportConfig>,
 ) -> Config {
     let mut config = Config::new();
+    config.node.control.enabled = false;
+    config.dns.enabled = false;
     config.node.discovery.nostr.enabled = !relays.is_empty();
     config.node.discovery.nostr.advertise =
         !relays.is_empty() && transport.is_some_and(|transport| transport.advertise_endpoint);
@@ -1464,8 +1466,24 @@ impl FipsPrivateTunnelRuntime {
             let mesh = Arc::clone(&mesh);
             tokio::spawn(async move {
                 while let Some(packet) = packet_rx.recv().await {
-                    if let Err(error) = mesh.send_tunnel_packet(&packet).await {
-                        eprintln!("fips: failed to send Windows tunnel packet: {error}");
+                    let debug = windows_fips_packet_debug_enabled();
+                    if debug {
+                        eprintln!(
+                            "fips: Windows Wintun -> mesh {} bytes {}",
+                            packet.len(),
+                            describe_ip_packet(&packet)
+                        );
+                    }
+                    match mesh.send_tunnel_packet(&packet).await {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            if debug {
+                                eprintln!("fips: Windows mesh route miss");
+                            }
+                        }
+                        Err(error) => {
+                            eprintln!("fips: failed to send Windows tunnel packet: {error}");
+                        }
                     }
                 }
             })
@@ -1645,6 +1663,13 @@ fn spawn_windows_fips_tun_read_thread(
             };
             let payload = packet.bytes().to_vec();
             drop(packet);
+            if windows_fips_packet_debug_enabled() {
+                eprintln!(
+                    "fips: Windows Wintun read {} bytes {}",
+                    payload.len(),
+                    describe_ip_packet(&payload)
+                );
+            }
             if packet_tx.blocking_send(payload).is_err() {
                 break;
             }
@@ -1663,6 +1688,13 @@ fn spawn_windows_fips_mesh_recv_task(
             match mesh.recv_mesh_event().await {
                 Ok(Some(FipsPrivateMeshEvent::Packet(packet))) => {
                     let bytes = packet.bytes.clone();
+                    if windows_fips_packet_debug_enabled() {
+                        eprintln!(
+                            "fips: Windows mesh -> Wintun {} bytes {}",
+                            bytes.len(),
+                            describe_ip_packet(&bytes)
+                        );
+                    }
                     if let Err(error) =
                         crate::windows_tunnel::write_tunnel_packets(&session, &[bytes])
                     {
@@ -1689,6 +1721,25 @@ fn spawn_windows_fips_mesh_recv_task(
             }
         }
     })
+}
+
+#[cfg(target_os = "windows")]
+fn windows_fips_packet_debug_enabled() -> bool {
+    std::env::var_os("NVPN_FIPS_PACKET_DEBUG").is_some()
+}
+
+#[cfg(target_os = "windows")]
+fn describe_ip_packet(packet: &[u8]) -> String {
+    match packet.first().map(|byte| byte >> 4) {
+        Some(4) if packet.len() >= 20 => format!(
+            "{} -> {}",
+            std::net::Ipv4Addr::new(packet[12], packet[13], packet[14], packet[15]),
+            std::net::Ipv4Addr::new(packet[16], packet[17], packet[18], packet[19])
+        ),
+        Some(6) if packet.len() >= 40 => "IPv6".to_string(),
+        Some(version) => format!("IPv{version} malformed"),
+        None => "empty packet".to_string(),
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -2104,6 +2155,8 @@ mod tests {
         let endpoint_peers = fips_endpoint_peers_from_mesh(&relays, &[peer], Vec::new());
         let config = fips_endpoint_config("nostr-vpn:test", &relays, &endpoint_peers, None);
 
+        assert!(!config.node.control.enabled);
+        assert!(!config.dns.enabled);
         assert!(config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);
         assert_eq!(

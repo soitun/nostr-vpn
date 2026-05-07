@@ -38,6 +38,7 @@ pub(crate) fn windows_add_route_args(prefix: &str, interface_index: u32) -> Resu
         "route".to_string(),
         prefix.trim().to_string(),
         format!("interface={interface_index}"),
+        "metric=1".to_string(),
         "store=active".to_string(),
     ])
 }
@@ -682,6 +683,7 @@ mod tests {
                 "route".to_string(),
                 "10.44.0.0/16".to_string(),
                 "interface=7".to_string(),
+                "metric=1".to_string(),
                 "store=active".to_string(),
             ]
         );
