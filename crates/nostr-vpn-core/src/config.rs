@@ -301,6 +301,7 @@ impl AppConfig {
             .with_context(|| format!("failed to read config {}", path.display()))?;
         let mut config: AppConfig =
             toml::from_str(&raw).with_context(|| "failed to parse config TOML")?;
+        config.apply_load_migrations();
         config.ensure_defaults();
         Ok(config)
     }
@@ -460,6 +461,14 @@ impl AppConfig {
         self.normalize_selected_exit_node();
         self.normalize_fips_peer_endpoints();
         self.normalize_peer_aliases();
+    }
+
+    fn apply_load_migrations(&mut self) {
+        // Release migration: private meshes moved from WireGuard to FIPS;
+        // WireGuard remains the default data plane for exit traffic.
+        if self.private_data_plane == PrivateDataPlane::WireGuard {
+            self.private_data_plane = PrivateDataPlane::Fips;
+        }
     }
 
     fn canonicalize_user_facing_pubkeys(&mut self) {

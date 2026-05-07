@@ -17,7 +17,7 @@ macOS and then Linux.
 
 ## Overview
 
-`nostr-vpn` is a Rust workspace for a Tailscale-style mesh VPN control plane built on Nostr signaling and userspace WireGuard. It includes the `nvpn` CLI, a shared native app core, and native platform shells.
+`nostr-vpn` is a Rust workspace for a Tailscale-style mesh VPN control plane built on Nostr signaling, a FIPS-backed private data plane, and userspace WireGuard exit support. It includes the `nvpn` CLI, a shared native app core, and native platform shells.
 
 <p align="center">
   <img src="docs/images/desktop-gui-overview.png" alt="Nostr VPN desktop app showing a connected network, device identity, status badges, and join controls." width="900">
@@ -38,6 +38,8 @@ It currently ships:
 
 For the current protocol-level description of invites, signaling, admin roster sync, NAT traversal, and the WireGuard data plane, see [docs/protocol.md](docs/protocol.md).
 
+Private mesh traffic defaults to [FIPS](https://github.com/mmalmi/fips). `nvpn` uses the configured VPN participants as the overlay route map, but FIPS connectivity is a separate underlay: FIPS peers can be found through Nostr discovery or supplied as configured `fips_peer_endpoints`, and those FIPS peers may relay packets even when they are not members of the same VPN. `nvpn` still only admits private traffic for the active network roster.
+
 ## Platform status
 
 | Platform | Current status |
@@ -53,7 +55,7 @@ For the current protocol-level description of invites, signaling, admin roster s
 - Generates both Nostr identity keys and WireGuard keys automatically
 - Stores a single app config with one or more named networks, each with participant allowlists and its own stable mesh ID
 - Publishes and consumes private peer announcements over Nostr relays
-- Brings up userspace WireGuard tunnels via `boringtun`
+- Brings up FIPS private mesh tunnels and keeps userspace WireGuard available for exit traffic
 - Tracks peer endpoints, including NAT-discovered public endpoints and hole-punch attempts
 - Supports route advertisement and exit-node selection
 - Exposes JSON status, relay checks, network diagnostics, and doctor bundles

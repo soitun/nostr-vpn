@@ -7,6 +7,7 @@ use nostr_vpn_core::config::{
     derive_network_id_from_participants, maybe_autoconfigure_node, needs_endpoint_autoconfig,
     needs_tunnel_ip_autoconfig, normalize_nostr_pubkey,
 };
+use nostr_vpn_core::data_plane::{ExitDataPlane, PrivateDataPlane};
 
 fn set_default_network_participants(config: &mut AppConfig, participants: Vec<String>) {
     config.ensure_defaults();

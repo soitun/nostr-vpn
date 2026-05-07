@@ -28,6 +28,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::mpsc;
 
 const FIPS_PEER_ONLINE_GRACE_SECS: u64 = 45;
+const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use boringtun::device::{Error as TunError, tun::TunSocket};
@@ -430,7 +431,7 @@ struct FipsEndpointPeerTransportConfig {
 }
 
 fn fips_endpoint_config(
-    scope: &str,
+    _scope: &str,
     relays: &[String],
     peers: &[FipsEndpointPeerTransportConfig],
     transport: Option<&FipsEndpointTransportConfig>,
@@ -439,8 +440,12 @@ fn fips_endpoint_config(
     config.node.discovery.nostr.enabled = !relays.is_empty();
     config.node.discovery.nostr.advertise =
         !relays.is_empty() && transport.is_some_and(|transport| transport.advertise_endpoint);
-    config.node.discovery.nostr.policy = NostrDiscoveryPolicy::ConfiguredOnly;
-    config.node.discovery.nostr.app = scope.to_string();
+    config.node.discovery.nostr.policy = if relays.is_empty() {
+        NostrDiscoveryPolicy::ConfiguredOnly
+    } else {
+        NostrDiscoveryPolicy::Open
+    };
+    config.node.discovery.nostr.app = FIPS_NOSTR_DISCOVERY_APP.to_string();
     if !relays.is_empty() {
         config.node.discovery.nostr.advert_relays = relays.to_vec();
         config.node.discovery.nostr.dm_relays = relays.to_vec();
@@ -1419,8 +1424,9 @@ fn unix_timestamp() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        FipsEndpointTransportConfig, FipsPrivateMeshRuntime, FipsPrivateTunnelConfig,
-        control_frame_source_pubkey, fips_endpoint_config, fips_endpoint_peers_from_mesh,
+        FIPS_NOSTR_DISCOVERY_APP, FipsEndpointTransportConfig, FipsPrivateMeshRuntime,
+        FipsPrivateTunnelConfig, control_frame_source_pubkey, fips_endpoint_config,
+        fips_endpoint_peers_from_mesh,
     };
     use fips_endpoint::{
         Config, ConnectPolicy, PeerConfig as FipsPeerConfig, TransportInstances, UdpConfig,
@@ -1738,7 +1744,7 @@ mod tests {
     }
 
     #[test]
-    fn endpoint_config_uses_client_posture_and_configured_peers_only() {
+    fn endpoint_config_uses_client_posture_and_open_fips_discovery() {
         let keys = Keys::generate();
         let participant_pubkey = keys.public_key().to_hex();
         let peer = FipsMeshPeerConfig::from_participant_pubkey(
@@ -1755,9 +1761,9 @@ mod tests {
         assert!(!config.node.discovery.nostr.advertise);
         assert_eq!(
             config.node.discovery.nostr.policy,
-            fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly
+            fips_endpoint::NostrDiscoveryPolicy::Open
         );
-        assert_eq!(config.node.discovery.nostr.app, "nostr-vpn:test");
+        assert_eq!(config.node.discovery.nostr.app, FIPS_NOSTR_DISCOVERY_APP);
         let udp = match config.transports.udp {
             fips_endpoint::TransportInstances::Single(udp) => udp,
             _ => panic!("expected one UDP transport"),
@@ -1794,8 +1800,9 @@ mod tests {
         assert!(config.node.discovery.nostr.advertise);
         assert_eq!(
             config.node.discovery.nostr.policy,
-            fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly
+            fips_endpoint::NostrDiscoveryPolicy::Open
         );
+        assert_eq!(config.node.discovery.nostr.app, FIPS_NOSTR_DISCOVERY_APP);
         assert_eq!(
             config.node.discovery.nostr.stun_servers,
             vec!["stun:stun.example.org:3478".to_string()]

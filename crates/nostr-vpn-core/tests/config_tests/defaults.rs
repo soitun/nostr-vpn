@@ -49,6 +49,22 @@ fn generated_config_auto_populates_keys() {
 }
 
 #[test]
+fn load_migrates_legacy_wireguard_private_mesh_to_fips() {
+    let path = unique_temp_config_path("legacy-wireguard-private-migration");
+    let raw = r#"
+private_data_plane = "wireguard"
+exit_data_plane = "wireguard"
+"#;
+
+    fs::write(&path, raw).expect("write config");
+    let config = AppConfig::load(&path).expect("load config");
+    let _ = fs::remove_file(&path);
+
+    assert_eq!(config.private_data_plane, PrivateDataPlane::Fips);
+    assert_eq!(config.exit_data_plane, ExitDataPlane::WireGuard);
+}
+
+#[test]
 fn default_routes_promote_to_exit_node_toggle() {
     let mut config = AppConfig::generated();
     config.node.advertised_routes = vec![
