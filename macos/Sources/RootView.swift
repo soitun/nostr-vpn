@@ -63,10 +63,6 @@ struct RootView: View {
         HStack(spacing: 18) {
             headerIdentity
             Spacer(minLength: 0)
-            HStack(spacing: 16) {
-                headerIconButton(.sharing, "qrcode", "Share")
-                headerIconButton(.settings, "slider.horizontal.3", "Settings")
-            }
             headerSessionControl
         }
         .padding(.leading, 104)
@@ -120,25 +116,11 @@ struct RootView: View {
         .accessibilityValue(state.sessionActive ? "On" : "Off")
     }
 
-    private func headerIconButton(_ item: SidebarItem, _ systemImage: String, _ help: String) -> some View {
-        let selected = (selectedSidebarItem ?? .devices) == item
-        return Button {
-            selectedSidebarItem = item
-        } label: {
-            Image(systemName: systemImage)
-                .font(.system(size: 16, weight: .semibold))
-                .frame(width: 24, height: 24)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-        .help(help)
-    }
-
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 5) {
             sidebarButton(.devices, "Devices", "circle.grid.2x2.fill")
             sidebarButton(.routing, "Exit Nodes", "arrow.triangle.branch")
+            sidebarButton(.settings, "Settings", "gearshape")
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 10)
