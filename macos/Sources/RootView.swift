@@ -293,6 +293,9 @@ struct RootView: View {
                         .font(.subheadline.weight(.semibold))
                         .lineLimit(1)
                     Spacer(minLength: 8)
+                    if isSelf(participant) {
+                        badge("Self", style: selected ? .selected : .ok)
+                    }
                     if participant.isAdmin {
                         badge("Admin", style: selected ? .selected : .muted)
                     }
@@ -357,9 +360,24 @@ struct RootView: View {
     private func deviceDetailHeader(_ participant: NativeParticipantState, network: NativeNetworkState) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                Text(deviceName(participant))
-                    .font(.system(size: 24, weight: .semibold))
-                    .lineLimit(2)
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(deviceName(participant))
+                        .font(.system(size: 24, weight: .semibold))
+                        .lineLimit(2)
+                    if isSelf(participant) || participant.isAdmin || participant.offersExitNode {
+                        HStack(spacing: 6) {
+                            if isSelf(participant) {
+                                badge("Self", style: .ok)
+                            }
+                            if participant.isAdmin {
+                                badge("Admin", style: .muted)
+                            }
+                            if participant.offersExitNode {
+                                badge("Exit", style: .warn)
+                            }
+                        }
+                    }
+                }
                 Spacer()
                 HStack(spacing: 7) {
                     connectivityDot(participant, size: 8)
@@ -1278,9 +1296,6 @@ struct RootView: View {
     }
 
     private func deviceSubtitle(_ participant: NativeParticipantState) -> String {
-        if isSelf(participant) {
-            return "This device"
-        }
         return ""
     }
 
@@ -1300,7 +1315,7 @@ struct RootView: View {
     private func deviceRoleText(_ participant: NativeParticipantState) -> String {
         var roles: [String] = []
         if isSelf(participant) {
-            roles.append("This device")
+            roles.append("Self")
         }
         if participant.isAdmin {
             roles.append("Admin")
@@ -1314,9 +1329,6 @@ struct RootView: View {
     private func deviceStatusText(_ participant: NativeParticipantState) -> String {
         if participant.state == "off" {
             return "Off"
-        }
-        if isSelf(participant) {
-            return "Self"
         }
         switch participant.state {
         case "local", "online":
