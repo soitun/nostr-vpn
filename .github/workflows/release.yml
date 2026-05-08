@@ -247,6 +247,9 @@ jobs:
           NVPN_MACOS_REQUIRE_NOTARIZATION: '1'
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
           MACOS_NOTARY_PROFILE: ${{ secrets.MACOS_NOTARY_PROFILE }}
+          MACOS_NOTARIZE_APPLE_ID: ${{ secrets.MACOS_NOTARIZE_APPLE_ID }}
+          MACOS_NOTARIZE_APP_PASSWORD: ${{ secrets.MACOS_NOTARIZE_APP_PASSWORD }}
+          MACOS_NOTARIZE_TEAM_ID: ${{ secrets.MACOS_NOTARIZE_TEAM_ID }}
         run: ./scripts/macos-build macos-release-artifacts
 
       - name: Upload native macOS app

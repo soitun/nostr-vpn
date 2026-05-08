@@ -90,6 +90,9 @@ release signing env:
   NVPN_ASC_AUTH_KEY_PATH       App Store Connect API key .p8 path
   NVPN_ASC_AUTH_KEY_ID         App Store Connect API key id
   NVPN_ASC_AUTH_KEY_ISSUER_ID  App Store Connect issuer id
+  MACOS_NOTARIZE_APPLE_ID      Apple ID for notarytool app-password auth
+  MACOS_NOTARIZE_APP_PASSWORD  App-specific password for notarytool
+  MACOS_NOTARIZE_TEAM_ID       Apple developer team id for notarytool
 EOF
 }
 
@@ -372,14 +375,17 @@ has_notary_credentials() {
   fi
   [[ -n "${NVPN_ASC_AUTH_KEY_PATH:-}" \
     && -n "${NVPN_ASC_AUTH_KEY_ID:-}" \
-    && -n "${NVPN_ASC_AUTH_KEY_ISSUER_ID:-}" ]]
+    && -n "${NVPN_ASC_AUTH_KEY_ISSUER_ID:-}" ]] && return 0
+  [[ -n "${MACOS_NOTARIZE_APPLE_ID:-}" \
+    && -n "${MACOS_NOTARIZE_APP_PASSWORD:-}" \
+    && -n "${MACOS_NOTARIZE_TEAM_ID:-}" ]]
 }
 
 require_notary_credentials() {
   if has_notary_credentials; then
     return 0
   fi
-  echo "Notarization credentials are required. Set MACOS_NOTARY_PROFILE or NVPN_ASC_AUTH_KEY_PATH/NVPN_ASC_AUTH_KEY_ID/NVPN_ASC_AUTH_KEY_ISSUER_ID." >&2
+  echo "Notarization credentials are required. Set MACOS_NOTARY_PROFILE, NVPN_ASC_AUTH_KEY_PATH/NVPN_ASC_AUTH_KEY_ID/NVPN_ASC_AUTH_KEY_ISSUER_ID, or MACOS_NOTARIZE_APPLE_ID/MACOS_NOTARIZE_APP_PASSWORD/MACOS_NOTARIZE_TEAM_ID." >&2
   exit 1
 }
 
@@ -394,13 +400,31 @@ submit_notarization() {
     return 0
   fi
 
+  if [[ -n "${NVPN_ASC_AUTH_KEY_PATH:-}" \
+    && -n "${NVPN_ASC_AUTH_KEY_ID:-}" \
+    && -n "${NVPN_ASC_AUTH_KEY_ISSUER_ID:-}" ]]; then
+    xcrun notarytool submit "$item_path" \
+      --key "$NVPN_ASC_AUTH_KEY_PATH" \
+      --key-id "$NVPN_ASC_AUTH_KEY_ID" \
+      --issuer "$NVPN_ASC_AUTH_KEY_ISSUER_ID" \
+      --wait \
+      --output-format json
+    return 0
+  fi
+
+  if [[ -n "${MACOS_NOTARIZE_APPLE_ID:-}" \
+    && -n "${MACOS_NOTARIZE_APP_PASSWORD:-}" \
+    && -n "${MACOS_NOTARIZE_TEAM_ID:-}" ]]; then
+    xcrun notarytool submit "$item_path" \
+      --apple-id "$MACOS_NOTARIZE_APPLE_ID" \
+      --password "$MACOS_NOTARIZE_APP_PASSWORD" \
+      --team-id "$MACOS_NOTARIZE_TEAM_ID" \
+      --wait \
+      --output-format json
+    return 0
+  fi
+
   require_notary_credentials
-  xcrun notarytool submit "$item_path" \
-    --key "$NVPN_ASC_AUTH_KEY_PATH" \
-    --key-id "$NVPN_ASC_AUTH_KEY_ID" \
-    --issuer "$NVPN_ASC_AUTH_KEY_ISSUER_ID" \
-    --wait \
-    --output-format json
 }
 
 app_is_stapled() {

@@ -18,6 +18,7 @@ All notable changes to this project are documented in this file.
 ### Fixed
 
 - macOS release artifacts are signed/notarized `.dmg` downloads plus signed/notarized `.app.tar.gz` updater archives again; local and GitHub release paths now fail before publishing if signing or notarization is missing.
+- GitHub macOS release builds now use the same Apple ID notarization secrets as the local release path when App Store Connect API key secrets are not configured.
 - Linux, Windows, and Android GUI release artifacts are first-class release outputs again, and public release staging now fails if the app artifacts are incomplete or Android artifacts are unsigned.
 - Desktop update stripes now restore the auto-install checkbox.
 - Android and iOS now show the active network name outside the device rows, keep VPN on/off in the top bar, and list this device as a normal participant row instead of treating the first peer as a hero.
