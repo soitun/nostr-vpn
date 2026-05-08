@@ -5,7 +5,7 @@ import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 
-private let defaultUpdateManifestUrl = URL(string: "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases/nostr-vpn/latest/release.json")!
+private let defaultUpdateManifestUrl = URL(string: "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json")!
 
 @MainActor
 final class AppManager: ObservableObject {

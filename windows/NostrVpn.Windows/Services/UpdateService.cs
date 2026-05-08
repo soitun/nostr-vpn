@@ -5,7 +5,7 @@ namespace NostrVpn.Windows.Services;
 
 public sealed class UpdateService
 {
-    private static readonly Uri DefaultManifestUri = new("https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases/nostr-vpn/latest/release.json");
+    private static readonly Uri DefaultManifestUri = new("https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json");
     private static readonly HttpClient Http = new();
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 

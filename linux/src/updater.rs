@@ -7,7 +7,7 @@ use std::thread;
 
 use serde::Deserialize;
 
-const DEFAULT_MANIFEST_URL: &str = "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases/nostr-vpn/latest/release.json";
+const DEFAULT_MANIFEST_URL: &str = "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json";
 
 #[derive(Clone, Debug, Default)]
 pub struct UpdateState {
