@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.2 - 2026-05-08
+
+### Changed
+
+- FIPS-backed private meshes now use the updated scoped discovery defaults, so same-LAN peers can share local candidates and prefer direct local underlay paths before routed internet paths.
+
+### Fixed
+
+- LAN invite broadcast remains active for 15 minutes or until cancelled, with reusable multicast sockets for multiple local app instances and Linux Docker e2e coverage for looped multicast invite exchange.
+
 ## 4.0.1 - 2026-05-08
 
 ### Added
