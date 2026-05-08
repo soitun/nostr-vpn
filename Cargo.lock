@@ -1437,7 +1437,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 [[package]]
 name = "fips-core"
 version = "0.3.0-dev"
-source = "git+https://github.com/mmalmi/fips.git?rev=5899c7ce848356abc8b52ff27bacdd83b2cb58aa#5899c7ce848356abc8b52ff27bacdd83b2cb58aa"
+source = "git+https://github.com/mmalmi/fips.git?rev=2258b1c2850f3fb4ea5d3988b703b934a756b1c6#2258b1c2850f3fb4ea5d3988b703b934a756b1c6"
 dependencies = [
  "bluer",
  "chacha20poly1305",
@@ -1471,7 +1471,7 @@ dependencies = [
 [[package]]
 name = "fips-endpoint"
 version = "0.3.0-dev"
-source = "git+https://github.com/mmalmi/fips.git?rev=5899c7ce848356abc8b52ff27bacdd83b2cb58aa#5899c7ce848356abc8b52ff27bacdd83b2cb58aa"
+source = "git+https://github.com/mmalmi/fips.git?rev=2258b1c2850f3fb4ea5d3988b703b934a756b1c6#2258b1c2850f3fb4ea5d3988b703b934a756b1c6"
 dependencies = [
  "fips-core",
 ]
@@ -1479,7 +1479,7 @@ dependencies = [
 [[package]]
 name = "fips-identity"
 version = "0.3.0-dev"
-source = "git+https://github.com/mmalmi/fips.git?rev=5899c7ce848356abc8b52ff27bacdd83b2cb58aa#5899c7ce848356abc8b52ff27bacdd83b2cb58aa"
+source = "git+https://github.com/mmalmi/fips.git?rev=2258b1c2850f3fb4ea5d3988b703b934a756b1c6#2258b1c2850f3fb4ea5d3988b703b934a756b1c6"
 dependencies = [
  "bech32",
  "hex",

@@ -12,7 +12,8 @@ use nostr_vpn_core::config::{
 };
 use nostr_vpn_core::data_plane::{MeshPeerStatus, PrivatePacket};
 use nostr_vpn_core::fips_control::{
-    FipsControlFrame, NetworkRoster, decode_fips_control_frame, encode_fips_control_frame,
+    FipsControlFrame, NetworkRoster, PeerCapabilities, decode_fips_control_frame,
+    encode_fips_control_frame,
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
 use nostr_vpn_core::join_requests::MeshJoinRequest;
@@ -38,6 +39,7 @@ const FIPS_PEER_ONLINE_GRACE_SECS: u64 = 45;
 const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 const FIPS_ENDPOINT_CACHE_VERSION: u8 = 1;
 const FIPS_ENDPOINT_CACHE_MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
+const FIPS_PEER_CAPS_GRACE_SECS: u64 = 600;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use boringtun::device::{Error as TunError, tun::TunSocket};
@@ -55,6 +57,7 @@ pub(crate) struct FipsPrivateMeshRuntime {
     mesh: RwLock<FipsMeshRuntime>,
     presence: RwLock<HashMap<String, FipsPeerPresence>>,
     link_status: RwLock<HashMap<String, FipsEndpointPeer>>,
+    peer_capabilities: RwLock<HashMap<String, PeerCapabilitiesEntry>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -63,6 +66,12 @@ struct FipsPeerPresence {
     tx_bytes: u64,
     rx_bytes: u64,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct PeerCapabilitiesEntry {
+    capabilities: PeerCapabilities,
+    received_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -391,6 +400,11 @@ pub(crate) enum FipsPrivateMeshEvent {
         network_id: String,
         roster: NetworkRoster,
     },
+    Capabilities {
+        sender_pubkey: String,
+        network_id: String,
+        capabilities: PeerCapabilities,
+    },
 }
 
 impl FipsPrivateMeshRuntime {
@@ -427,6 +441,7 @@ impl FipsPrivateMeshRuntime {
             mesh: RwLock::new(FipsMeshRuntime::with_local_routes(peers, local_allowed_ips)),
             presence: RwLock::new(HashMap::new()),
             link_status: RwLock::new(HashMap::new()),
+            peer_capabilities: RwLock::new(HashMap::new()),
         })
     }
 
@@ -514,6 +529,17 @@ impl FipsPrivateMeshRuntime {
                             sender_pubkey: source_pubkey,
                             network_id,
                             roster,
+                        }));
+                    }
+                    FipsControlFrame::Capabilities {
+                        network_id,
+                        capabilities,
+                    } => {
+                        self.record_peer_capabilities(&source_pubkey, &capabilities, now)?;
+                        return Ok(Some(FipsPrivateMeshEvent::Capabilities {
+                            sender_pubkey: source_pubkey,
+                            network_id,
+                            capabilities,
                         }));
                     }
                 }
@@ -656,6 +682,53 @@ impl FipsPrivateMeshRuntime {
             .write()
             .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?
             .retain(|participant, _| configured.iter().any(|value| value == participant));
+        self.peer_capabilities
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh peer capabilities lock poisoned"))?
+            .retain(|participant, _| configured.iter().any(|value| value == participant));
+        Ok(())
+    }
+
+    pub(crate) fn peer_advertised_routes(&self, participant: &str) -> Vec<String> {
+        let normalized = match normalize_nostr_pubkey(participant) {
+            Ok(value) => value,
+            Err(_) => return Vec::new(),
+        };
+        let now = unix_timestamp();
+        let caps = match self.peer_capabilities.read() {
+            Ok(guard) => guard,
+            Err(_) => return Vec::new(),
+        };
+        caps.get(&normalized)
+            .filter(|entry| now.saturating_sub(entry.received_at) <= FIPS_PEER_CAPS_GRACE_SECS)
+            .map(|entry| entry.capabilities.advertised_routes.clone())
+            .unwrap_or_default()
+    }
+
+    fn record_peer_capabilities(
+        &self,
+        participant: &str,
+        capabilities: &PeerCapabilities,
+        now: u64,
+    ) -> Result<()> {
+        let normalized = normalize_nostr_pubkey(participant)?;
+        let mut caps = self
+            .peer_capabilities
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh peer capabilities lock poisoned"))?;
+        match caps.get(&normalized) {
+            Some(existing) if existing.capabilities.signed_at > capabilities.signed_at => {
+                return Ok(());
+            }
+            _ => {}
+        }
+        caps.insert(
+            normalized,
+            PeerCapabilitiesEntry {
+                capabilities: capabilities.clone(),
+                received_at: now,
+            },
+        );
         Ok(())
     }
 
@@ -697,6 +770,18 @@ impl FipsPrivateMeshRuntime {
             },
         )
         .await
+    }
+
+    pub(crate) async fn broadcast_capabilities(
+        &self,
+        network_id: &str,
+        capabilities: PeerCapabilities,
+    ) -> Result<usize> {
+        let frame = FipsControlFrame::Capabilities {
+            network_id: network_id.to_string(),
+            capabilities,
+        };
+        self.broadcast_control_frame(&frame).await
     }
 
     async fn broadcast_control_frame(&self, frame: &FipsControlFrame) -> Result<usize> {
@@ -1225,6 +1310,20 @@ impl FipsPrivateTunnelRuntime {
         roster: NetworkRoster,
     ) -> Result<()> {
         self.mesh.send_roster(participant, network_id, roster).await
+    }
+
+    pub(crate) async fn broadcast_capabilities(
+        &self,
+        network_id: &str,
+        capabilities: PeerCapabilities,
+    ) -> Result<usize> {
+        self.mesh
+            .broadcast_capabilities(network_id, capabilities)
+            .await
+    }
+
+    pub(crate) fn peer_advertised_routes(&self, participant: &str) -> Vec<String> {
+        self.mesh.peer_advertised_routes(participant)
     }
 
     pub(crate) fn drain_events(&mut self) -> Vec<FipsPrivateMeshEvent> {
@@ -2081,6 +2180,20 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.send_roster(participant, network_id, roster).await
     }
 
+    pub(crate) async fn broadcast_capabilities(
+        &self,
+        network_id: &str,
+        capabilities: PeerCapabilities,
+    ) -> Result<usize> {
+        self.mesh
+            .broadcast_capabilities(network_id, capabilities)
+            .await
+    }
+
+    pub(crate) fn peer_advertised_routes(&self, participant: &str) -> Vec<String> {
+        self.mesh.peer_advertised_routes(participant)
+    }
+
     pub(crate) fn drain_events(&mut self) -> Vec<FipsPrivateMeshEvent> {
         let mut events = Vec::new();
         while let Ok(event) = self.event_rx.try_recv() {
@@ -2303,6 +2416,18 @@ impl FipsPrivateTunnelRuntime {
         _roster: NetworkRoster,
     ) -> Result<()> {
         Ok(())
+    }
+
+    pub(crate) async fn broadcast_capabilities(
+        &self,
+        _network_id: &str,
+        _capabilities: PeerCapabilities,
+    ) -> Result<usize> {
+        Ok(0)
+    }
+
+    pub(crate) fn peer_advertised_routes(&self, _participant: &str) -> Vec<String> {
+        Vec::new()
     }
 
     pub(crate) fn drain_events(&mut self) -> Vec<FipsPrivateMeshEvent> {

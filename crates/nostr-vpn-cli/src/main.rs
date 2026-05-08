@@ -42,16 +42,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use clap::{Args, Parser, Subcommand};
 use nostr_vpn_core::config::{
-    AppConfig, derive_mesh_tunnel_ip, exit_node_default_routes, maybe_autoconfigure_node,
-    normalize_advertised_route, normalize_nostr_pubkey, normalize_runtime_network_id,
-    parse_wireguard_exit_config,
+    AppConfig, derive_mesh_tunnel_ip, maybe_autoconfigure_node, normalize_advertised_route,
+    normalize_nostr_pubkey, normalize_runtime_network_id, parse_wireguard_exit_config,
 };
 use nostr_vpn_core::control::PeerAnnouncement;
 use nostr_vpn_core::data_plane::MeshPeerStatus;
 use nostr_vpn_core::diagnostics::{
     HealthIssue, HealthSeverity, NetworkSummary, PortMappingStatus, ProbeState,
 };
-use nostr_vpn_core::fips_control::NetworkRoster;
+use nostr_vpn_core::fips_control::{NetworkRoster, PeerCapabilities};
 use nostr_vpn_core::magic_dns::{
     MagicDnsResolverConfig, MagicDnsServer, build_magic_dns_records, install_system_resolver,
     uninstall_system_resolver,
@@ -1266,13 +1265,6 @@ fn configured_fips_peer_announcements(app: &AppConfig, network_id: &str) -> Vec<
     peers
 }
 
-fn fips_peer_advertised_routes(app: &AppConfig, participant: &str) -> Vec<String> {
-    if !app.exit_node.is_empty() && app.exit_node == participant {
-        return exit_node_default_routes();
-    }
-    Vec::new()
-}
-
 pub(crate) fn shared_roster_publish_allowed(
     app: &AppConfig,
     network_id: &str,
@@ -2196,6 +2188,13 @@ fn drain_fips_mesh_events(
                     eprintln!("daemon: ignoring invalid FIPS roster from {sender_pubkey}: {error}");
                 }
             },
+            crate::fips_private_mesh::FipsPrivateMeshEvent::Capabilities {
+                sender_pubkey,
+                network_id,
+                capabilities,
+            } => {
+                let _ = (sender_pubkey, network_id, capabilities);
+            }
         }
     }
     Ok(roster_changed)
@@ -2385,6 +2384,21 @@ async fn publish_fips_active_network_roster(
     app: &AppConfig,
 ) -> Result<usize> {
     publish_fips_active_network_roster_to(runtime, app, &[]).await
+}
+
+#[cfg(feature = "embedded-fips")]
+async fn broadcast_local_fips_capabilities(
+    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+    app: &AppConfig,
+) -> Result<usize> {
+    let network = app.active_network();
+    let capabilities = PeerCapabilities {
+        advertised_routes: app.effective_advertised_routes(),
+        signed_at: unix_timestamp(),
+    };
+    runtime
+        .broadcast_capabilities(&network.id, capabilities)
+        .await
 }
 
 #[cfg(feature = "embedded-fips")]

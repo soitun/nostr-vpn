@@ -18,6 +18,32 @@ macro_rules! current_fips_peer_statuses {
 }
 
 #[cfg(feature = "embedded-fips")]
+macro_rules! current_fips_advertised_routes {
+    ($runtime:expr, $app:expr) => {
+        $runtime
+            .as_ref()
+            .map(|runtime| {
+                let mut map = std::collections::HashMap::<String, Vec<String>>::new();
+                for participant in $app.participant_pubkeys_hex() {
+                    let routes = runtime.peer_advertised_routes(&participant);
+                    if !routes.is_empty() {
+                        map.insert(participant, routes);
+                    }
+                }
+                map
+            })
+            .unwrap_or_default()
+    };
+}
+
+#[cfg(not(feature = "embedded-fips"))]
+macro_rules! current_fips_advertised_routes {
+    ($runtime:expr, $app:expr) => {
+        std::collections::HashMap::<String, Vec<String>>::new()
+    };
+}
+
+#[cfg(feature = "embedded-fips")]
 fn fips_peer_count(
     app: &AppConfig,
     own_pubkey: Option<&str>,
@@ -197,10 +223,13 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
             }
             _ = announce_interval.tick() => {
                 #[cfg(feature = "embedded-fips")]
-                if let Some(runtime) = fips_tunnel_runtime.as_ref()
-                    && let Err(error) = publish_fips_active_network_roster(runtime, &app).await
-                {
-                    eprintln!("fips: roster publish failed: {error}");
+                if let Some(runtime) = fips_tunnel_runtime.as_ref() {
+                    if let Err(error) = publish_fips_active_network_roster(runtime, &app).await {
+                        eprintln!("fips: roster publish failed: {error}");
+                    }
+                    if let Err(error) = broadcast_local_fips_capabilities(runtime, &app).await {
+                        eprintln!("fips: capabilities broadcast failed: {error}");
+                    }
                 }
             }
         }
@@ -355,6 +384,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         .unwrap_or_default();
     #[cfg(not(feature = "embedded-fips"))]
     let fips_peer_statuses = Vec::new();
+    let fips_advertised_routes =
+        current_fips_advertised_routes!(fips_tunnel_runtime, &app);
     write_daemon_state(
         &state_file,
         &build_daemon_runtime_state(
@@ -364,6 +395,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             expected_peers,
             &tunnel_runtime,
             &fips_peer_statuses,
+            &fips_advertised_routes,
             public_signal_endpoint.as_ref(),
             &vpn_status,
             &network_snapshot.summary(network_changed_at, captive_portal),
@@ -390,10 +422,13 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             }
             _ = announce_interval.tick() => {
                 #[cfg(feature = "embedded-fips")]
-                if let Some(runtime) = fips_tunnel_runtime.as_ref()
-                    && let Err(error) = publish_fips_active_network_roster(runtime, &app).await
-                {
-                    eprintln!("fips: roster publish failed: {error}");
+                if let Some(runtime) = fips_tunnel_runtime.as_ref() {
+                    if let Err(error) = publish_fips_active_network_roster(runtime, &app).await {
+                        eprintln!("fips: roster publish failed: {error}");
+                    }
+                    if let Err(error) = broadcast_local_fips_capabilities(runtime, &app).await {
+                        eprintln!("fips: capabilities broadcast failed: {error}");
+                    }
                 }
             }
             _ = tunnel_heartbeat_interval.tick() => {
@@ -800,9 +835,18 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     #[cfg(feature = "embedded-fips")]
                     if publish_fips_roster_after_control
                         && let Some(runtime) = fips_tunnel_runtime.as_ref()
-                        && let Err(error) = publish_fips_active_network_roster(runtime, &app).await
                     {
-                        eprintln!("fips: roster publish failed after control request: {error}");
+                        if let Err(error) = publish_fips_active_network_roster(runtime, &app).await
+                        {
+                            eprintln!(
+                                "fips: roster publish failed after control request: {error}"
+                            );
+                        }
+                        if let Err(error) = broadcast_local_fips_capabilities(runtime, &app).await {
+                            eprintln!(
+                                "fips: capabilities broadcast failed after control request: {error}"
+                            );
+                        }
                     }
                     let _ = persist_daemon_runtime_state(
                         &state_file,
@@ -811,6 +855,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         expected_peers,
                         &tunnel_runtime,
                         &current_fips_peer_statuses!(fips_tunnel_runtime),
+                        &current_fips_advertised_routes!(fips_tunnel_runtime, &app),
                         public_signal_endpoint.as_ref(),
                         &vpn_status,
                         &network_snapshot.summary(network_changed_at, captive_portal),
@@ -865,6 +910,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         }
                     }
                 }
+                let fips_advertised_routes =
+                    current_fips_advertised_routes!(fips_tunnel_runtime, &app);
                 let _ = persist_daemon_runtime_state(
                     &state_file,
                     &app,
@@ -872,6 +919,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     expected_peers,
                     &tunnel_runtime,
                     &fips_peer_statuses,
+                    &fips_advertised_routes,
                     public_signal_endpoint.as_ref(),
                     &vpn_status,
                     &network_snapshot.summary(network_changed_at, captive_portal),
@@ -1022,6 +1070,7 @@ pub(crate) fn build_daemon_runtime_state(
     expected_peers: usize,
     tunnel_runtime: &CliTunnelRuntime,
     fips_peer_statuses: &[MeshPeerStatus],
+    advertised_routes_by_participant: &HashMap<String, Vec<String>>,
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
     vpn_status: &str,
     network: &NetworkSummary,
@@ -1076,7 +1125,10 @@ pub(crate) fn build_daemon_runtime_state(
             tx_bytes: status.map(|status| status.tx_bytes).unwrap_or(0),
             rx_bytes: status.map(|status| status.rx_bytes).unwrap_or(0),
             public_key: String::new(),
-            advertised_routes: fips_peer_advertised_routes(app, participant),
+            advertised_routes: advertised_routes_by_participant
+                .get(participant)
+                .cloned()
+                .unwrap_or_default(),
             last_mesh_seen_at: last_seen_at.unwrap_or(0),
             last_fips_seen_at: last_seen_at,
             reachable,
@@ -1134,6 +1186,7 @@ pub(crate) fn persist_daemon_runtime_state(
     expected_peers: usize,
     tunnel_runtime: &CliTunnelRuntime,
     fips_peer_statuses: &[MeshPeerStatus],
+    advertised_routes_by_participant: &HashMap<String, Vec<String>>,
     public_signal_endpoint: Option<&DiscoveredPublicSignalEndpoint>,
     vpn_status: &str,
     network: &NetworkSummary,
@@ -1148,6 +1201,7 @@ pub(crate) fn persist_daemon_runtime_state(
             expected_peers,
             tunnel_runtime,
             fips_peer_statuses,
+            advertised_routes_by_participant,
             public_signal_endpoint,
             vpn_status,
             network,

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -13,6 +13,14 @@ pub struct NetworkRoster {
     pub admins: Vec<String>,
     #[serde(default)]
     pub aliases: HashMap<String, String>,
+    #[serde(default)]
+    pub signed_at: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerCapabilities {
+    #[serde(default)]
+    pub advertised_routes: Vec<String>,
     #[serde(default)]
     pub signed_at: u64,
 }
@@ -40,6 +48,10 @@ pub enum FipsControlFrame {
         network_id: String,
         roster: NetworkRoster,
     },
+    Capabilities {
+        network_id: String,
+        capabilities: PeerCapabilities,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,14 +76,12 @@ pub fn decode_fips_control_frame(data: &[u8]) -> Result<Option<FipsControlFrame>
     let Some(payload) = data.strip_prefix(FIPS_CONTROL_MAGIC) else {
         return Ok(None);
     };
-    let envelope: FipsControlEnvelope =
-        serde_json::from_slice(payload).context("failed to decode FIPS control frame")?;
+    let envelope: FipsControlEnvelope = match serde_json::from_slice(payload) {
+        Ok(envelope) => envelope,
+        Err(_) => return Ok(None),
+    };
     if envelope.v != FIPS_CONTROL_VERSION {
-        return Err(anyhow!(
-            "unsupported FIPS control frame version {}; expected {}",
-            envelope.v,
-            FIPS_CONTROL_VERSION
-        ));
+        return Ok(None);
     }
     Ok(Some(envelope.frame))
 }
@@ -83,6 +93,16 @@ pub fn roster_control_frame(
     FipsControlFrame::Roster {
         network_id: network_id.into(),
         roster,
+    }
+}
+
+pub fn peer_capabilities_control_frame(
+    network_id: impl Into<String>,
+    capabilities: PeerCapabilities,
+) -> FipsControlFrame {
+    FipsControlFrame::Capabilities {
+        network_id: network_id.into(),
+        capabilities,
     }
 }
 
@@ -131,5 +151,40 @@ mod tests {
                 .expect("decode")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn capabilities_frame_roundtrips() {
+        let frame = FipsControlFrame::Capabilities {
+            network_id: "mesh".to_string(),
+            capabilities: PeerCapabilities {
+                advertised_routes: vec!["0.0.0.0/0".to_string(), "::/0".to_string()],
+                signed_at: 99,
+            },
+        };
+
+        let encoded = encode_fips_control_frame(&frame).expect("encode");
+        let decoded = decode_fips_control_frame(&encoded)
+            .expect("decode")
+            .expect("control frame");
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn unknown_kind_is_dropped_silently() {
+        let mut bytes = Vec::from(FIPS_CONTROL_MAGIC);
+        bytes.extend_from_slice(br#"{"v":1,"frame":{"kind":"future_kind","x":1}}"#);
+
+        assert!(decode_fips_control_frame(&bytes).expect("decode").is_none());
+    }
+
+    #[test]
+    fn future_version_is_dropped_silently() {
+        let mut bytes = Vec::from(FIPS_CONTROL_MAGIC);
+        bytes.extend_from_slice(
+            br#"{"v":99,"frame":{"kind":"ping","network_id":"x","sent_at":1}}"#,
+        );
+
+        assert!(decode_fips_control_frame(&bytes).expect("decode").is_none());
     }
 }
