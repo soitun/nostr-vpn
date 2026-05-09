@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.6 - 2026-05-09
+
+### Fixed
+
+- NAT-traversed sessions no longer drop full-sized tunnel datagrams. The recent 1320 B tunnel MTU bump (encrypted wire ~1426 B) silently broke any session promoted onto a NAT-traversed link, because `Node::adopt_established_traversal` was creating the adopted UDP transport with `UdpConfig::default()` (MTU 1280) and oversized packets were dropped at the socket layer. Reverted nostr-vpn-core constants to `MESH_TUNNEL_MTU=1150` / `MESH_UNDERLAY_UDP_MTU=1280`, and bumped fips-endpoint to `4031be2` so adopted transports inherit the operator's primary `[transports.udp]` config (defensive — both ends now match at 1280 regardless).
+
 ## 4.0.5 - 2026-05-09
 
 ### Fixed
