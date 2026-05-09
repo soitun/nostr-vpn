@@ -1643,20 +1643,57 @@ impl FipsPrivateTunnelRuntime {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn spawn_tun_read_task(tun: Arc<TunSocket>, packet_tx: mpsc::Sender<Vec<u8>>) -> JoinHandle<()> {
+    use std::os::unix::io::{AsRawFd, RawFd};
+    use tokio::io::Interest;
+    use tokio::io::unix::AsyncFd;
+
+    // Wrapper so AsyncFd can borrow the tun fd without taking ownership. Closing
+    // is the responsibility of the underlying TunSocket via its own Drop impl;
+    // AsyncFd only registers/deregisters the fd in the kernel reactor.
+    struct BorrowedTunFd(RawFd);
+    impl AsRawFd for BorrowedTunFd {
+        fn as_raw_fd(&self) -> RawFd {
+            self.0
+        }
+    }
+
     tokio::spawn(async move {
+        let async_fd =
+            match AsyncFd::with_interest(BorrowedTunFd(tun.as_raw_fd()), Interest::READABLE) {
+                Ok(fd) => fd,
+                Err(error) => {
+                    eprintln!("fips: failed to register tun fd with reactor: {error}");
+                    return;
+                }
+            };
         let mut buf = vec![0_u8; 65_535];
         loop {
+            let mut guard = match async_fd.readable().await {
+                Ok(guard) => guard,
+                Err(error) => {
+                    eprintln!("fips: tun reactor await failed: {error}");
+                    return;
+                }
+            };
+
             match tun.read(&mut buf) {
                 Ok([]) => {
-                    sleep(Duration::from_millis(10)).await;
+                    // 0-byte read on a readable fd means "no packet right now";
+                    // clear ready so the next readable().await blocks on the
+                    // kernel instead of busy-looping.
+                    guard.clear_ready();
                 }
                 Ok(packet) => {
-                    if packet_tx.send(packet.to_vec()).await.is_err() {
+                    let bytes = packet.to_vec();
+                    if packet_tx.send(bytes).await.is_err() {
                         break;
                     }
+                    // Don't clear_ready: kernel may have queued more packets.
+                    // Next iteration's read either drains them or returns
+                    // EWOULDBLOCK and clears below.
                 }
                 Err(error) if temporary_tun_read_error(&error) => {
-                    sleep(Duration::from_millis(10)).await;
+                    guard.clear_ready();
                 }
                 Err(error) => {
                     eprintln!("fips: tunnel read failed: {error}");
