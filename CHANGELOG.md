@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.3 - 2026-05-09
+
+### Fixed
+
+- FIPS spanning-tree: nodes whose only smaller-NodeAddr parent disappeared no longer advertise an ancestry whose advertised root is not the path's minimum entry. Previously such announces were rejected by recipients with `invalid ancestry: advertised root X is not the minimum path entry Y`, blocking mesh transit (e.g. mini→ubuntu-dev / mini→win11 through a shared mac peer).
+
 ## 4.0.2 - 2026-05-08
 
 ### Changed
