@@ -107,7 +107,7 @@
                           <TextBlock Text="Routed" Margin="8,0,0,0" Foreground="{StaticResource TextSecondary}" Visibility="{Binding IsFipsRouted, Converter={StaticResource BoolToVisibility}}" />
                         </StackPanel>
                         <TextBlock Foreground="{StaticResource TextSecondary}" TextTrimming="CharacterEllipsis">
-                          <Run Text="{Binding TunnelIp}" /><Run Text="  " /><Run Text="{Binding StatusText}" /><Run Text="  " /><Run Text="{Binding FipsPathText}" />
+                          <Run Text="{Binding TunnelIp, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding StatusText, Mode=OneWay}" /><Run Text="  " /><Run Text="{Binding FipsPathText, Mode=OneWay}" />
                         </TextBlock>
                       </StackPanel>
                       <Button Grid.Column="2" Content="Copy" Tag="{Binding Npub}" Click="CopyPeer_Click" />
