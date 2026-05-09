@@ -115,10 +115,13 @@ impl FipsMeshRuntime {
             return None;
         }
 
-        let source_pubkey = normalize_nostr_pubkey(source_npub).ok()?;
+        // Hot path. peer.endpoint_npub is already in canonical bech32 form
+        // (`normalize_endpoint_npub` runs at construction time). Compare
+        // bech32-to-bech32 instead of EC-parsing the source npub on every
+        // received tunnel packet.
         let packet_source = packet_source(data)?;
         let peer = self.select_peer_for_ip(packet_source)?;
-        if peer.endpoint_pubkey.as_deref() != Some(source_pubkey.as_str()) {
+        if peer.endpoint_npub.as_str() != source_npub {
             return None;
         }
         if !self.local_routes.is_empty() {

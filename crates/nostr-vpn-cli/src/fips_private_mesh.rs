@@ -174,15 +174,9 @@ impl FipsPrivateMeshRuntime {
             return Ok(false);
         };
 
-        // Bulk tunnel data: fire-and-forget. The synchronous `send` path
-        // awaits a per-packet oneshot round-trip with the node task to
-        // surface send-side errors, which dominates throughput on every
-        // platform. TCP and the upper layer handle loss recovery anyway,
-        // and per-packet errors here would only manifest as silently
-        // dropped packets — exactly what `send` does, just slower.
         let bytes_len = outgoing.bytes.len();
         self.endpoint
-            .send_oneway(outgoing.endpoint_npub, outgoing.bytes)
+            .send(outgoing.endpoint_npub, outgoing.bytes)
             .await
             .context("failed to send private packet over FIPS endpoint data")?;
         self.note_tx(&outgoing.participant_pubkey, bytes_len)?;
@@ -537,26 +531,46 @@ impl FipsPrivateMeshRuntime {
     }
 
     fn note_tx(&self, participant: &str, len: usize) -> Result<()> {
-        let participant = normalize_nostr_pubkey(participant)?;
+        // Hot path. Caller passes a hex pubkey that was normalized at config
+        // load time (see fips_mesh.rs `normalize_participant_pubkey`); a
+        // round-trip through `normalize_nostr_pubkey` here would re-parse
+        // the secp256k1 point and burn 30%+ of CPU under load just to
+        // produce a hashmap key. Trust the caller; allocate only on first
+        // sight of a key.
         let mut presence = self
             .presence
             .write()
             .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
-        let entry = presence.entry(participant).or_default();
-        entry.tx_bytes = entry.tx_bytes.saturating_add(len as u64);
+        if let Some(entry) = presence.get_mut(participant) {
+            entry.tx_bytes = entry.tx_bytes.saturating_add(len as u64);
+        } else {
+            let mut entry = FipsPeerPresence::default();
+            entry.tx_bytes = len as u64;
+            presence.insert(participant.to_string(), entry);
+        }
         Ok(())
     }
 
     fn note_rx(&self, participant: &str, len: usize, now: u64) -> Result<()> {
-        let participant = normalize_nostr_pubkey(participant)?;
+        // Hot path; see note_tx for why the EC-point normalize is omitted
+        // and why we side-step the entry API to avoid per-packet allocs.
         let mut presence = self
             .presence
             .write()
             .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
-        let entry = presence.entry(participant).or_default();
-        entry.last_seen_at = Some(now);
-        entry.rx_bytes = entry.rx_bytes.saturating_add(len as u64);
-        entry.error = None;
+        if let Some(entry) = presence.get_mut(participant) {
+            entry.last_seen_at = Some(now);
+            entry.rx_bytes = entry.rx_bytes.saturating_add(len as u64);
+            entry.error = None;
+        } else {
+            let entry = FipsPeerPresence {
+                last_seen_at: Some(now),
+                tx_bytes: 0,
+                rx_bytes: len as u64,
+                error: None,
+            };
+            presence.insert(participant.to_string(), entry);
+        }
         Ok(())
     }
 
