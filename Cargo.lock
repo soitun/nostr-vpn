@@ -1173,7 +1173,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 [[package]]
 name = "fips-core"
 version = "0.3.0-dev"
-source = "git+https://github.com/mmalmi/fips.git?rev=32dfb214ec8dc6c73a4d956a46a473f936803ff6#32dfb214ec8dc6c73a4d956a46a473f936803ff6"
+source = "git+https://github.com/mmalmi/fips.git?rev=06bb40fe0fb3d80325498774d8ae93f0bbcb9d97#06bb40fe0fb3d80325498774d8ae93f0bbcb9d97"
 dependencies = [
  "bluer",
  "chacha20poly1305",
@@ -1207,7 +1207,7 @@ dependencies = [
 [[package]]
 name = "fips-endpoint"
 version = "0.3.0-dev"
-source = "git+https://github.com/mmalmi/fips.git?rev=32dfb214ec8dc6c73a4d956a46a473f936803ff6#32dfb214ec8dc6c73a4d956a46a473f936803ff6"
+source = "git+https://github.com/mmalmi/fips.git?rev=06bb40fe0fb3d80325498774d8ae93f0bbcb9d97#06bb40fe0fb3d80325498774d8ae93f0bbcb9d97"
 dependencies = [
  "fips-core",
 ]
@@ -1215,7 +1215,7 @@ dependencies = [
 [[package]]
 name = "fips-identity"
 version = "0.3.0-dev"
-source = "git+https://github.com/mmalmi/fips.git?rev=32dfb214ec8dc6c73a4d956a46a473f936803ff6#32dfb214ec8dc6c73a4d956a46a473f936803ff6"
+source = "git+https://github.com/mmalmi/fips.git?rev=06bb40fe0fb3d80325498774d8ae93f0bbcb9d97#06bb40fe0fb3d80325498774d8ae93f0bbcb9d97"
 dependencies = [
  "bech32",
  "hex",
@@ -2492,7 +2492,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "anyhow",
  "base64",
@@ -2513,7 +2513,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-cli"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "anyhow",
  "base64",
@@ -2541,7 +2541,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2568,7 +2568,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -2587,7 +2587,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.0.3"
+version = "4.0.4"
 dependencies = [
  "anyhow",
  "wintun",
