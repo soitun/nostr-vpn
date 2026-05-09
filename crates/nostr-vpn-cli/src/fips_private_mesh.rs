@@ -1739,8 +1739,14 @@ fn spawn_mesh_recv_task(
         loop {
             match mesh.recv_mesh_event().await {
                 Ok(Some(FipsPrivateMeshEvent::Packet(packet))) => {
+                    // Hot path. Write to TUN inline and DON'T forward the
+                    // Packet event upstream — the only consumer in
+                    // drain_events discards `let _ = packet.source_pubkey`,
+                    // so forwarding it costs a per-packet mpsc.send().await
+                    // (full tokio task wakeup) for nothing. Control-frame
+                    // events still propagate so daemon control logic sees
+                    // them.
                     write_packet_to_tun(&tun, &packet.bytes);
-                    let _ = event_tx.send(FipsPrivateMeshEvent::Packet(packet)).await;
                 }
                 Ok(Some(event)) => {
                     if event_tx.send(event).await.is_err() {
@@ -2064,25 +2070,19 @@ fn spawn_windows_fips_mesh_recv_task(
         loop {
             match mesh.recv_mesh_event().await {
                 Ok(Some(FipsPrivateMeshEvent::Packet(packet))) => {
-                    let bytes = packet.bytes.clone();
+                    // Hot path; write to Wintun inline and don't forward
+                    // upstream — see linux/macos branch for rationale.
                     if windows_fips_packet_debug_enabled() {
                         eprintln!(
                             "fips: Windows mesh -> Wintun {} bytes {}",
-                            bytes.len(),
-                            describe_ip_packet(&bytes)
+                            packet.bytes.len(),
+                            describe_ip_packet(&packet.bytes)
                         );
                     }
                     if let Err(error) =
-                        crate::windows_tunnel::write_tunnel_packets(&session, &[bytes])
+                        crate::windows_tunnel::write_tunnel_packets(&session, &[packet.bytes])
                     {
                         eprintln!("fips: failed to write Windows tunnel packet: {error}");
-                    }
-                    if event_tx
-                        .send(FipsPrivateMeshEvent::Packet(packet))
-                        .await
-                        .is_err()
-                    {
-                        break;
                     }
                 }
                 Ok(Some(event)) => {
