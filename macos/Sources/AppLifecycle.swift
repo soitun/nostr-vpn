@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private weak var manager: AppManager?
     private var pendingUrls: [URL] = []
     private var startsHidden = false
+    private var trayController: TrayController?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         singleInstance.onOpen = { [weak self] urls in
@@ -36,6 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         self.manager = manager
         startsHidden = manager.launchedHidden && !Self.launchArgumentsContainDeepLink
         observeWindows()
+        if trayController == nil {
+            trayController = TrayController(manager: manager) { [weak self] in
+                self?.showMainWindow()
+            }
+        }
         route(urls: pendingUrls, activate: !startsHidden)
         pendingUrls.removeAll()
         if startsHidden {

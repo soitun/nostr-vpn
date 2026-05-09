@@ -34,42 +34,8 @@ struct NostrVpnMacApp: App {
         .defaultSize(width: 1100, height: 760)
         .windowResizability(.automatic)
 
-        MenuBarExtra {
-            StatusMenuView(manager: manager) {
-                openWindow(id: "main")
-                appDelegate.showMainWindow()
-                NSApp.activate(ignoringOtherApps: true)
-            }
-        } label: {
-            TrayIconLabel(state: manager.state)
-        }
-    }
-}
-
-private struct TrayIconLabel: View {
-    let state: NativeAppState
-
-    var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Image("TrayIcon")
-                .renderingMode(.template)
-            if state.exitNodeBlocked {
-                Circle()
-                    .fill(Color.red)
-                    .frame(width: 7, height: 7)
-                    .offset(x: 2, y: -2)
-            }
-        }
-        .help(trayHelpText)
-    }
-
-    private var trayHelpText: String {
-        if !state.exitNodeStatusText.isEmpty {
-            return state.exitNodeStatusText
-        }
-        if !state.vpnStatus.isEmpty {
-            return state.vpnStatus
-        }
-        return "Nostr VPN"
+        // The menubar tray is owned by AppDelegate (NSStatusItem-based) so
+        // submenus stay open across AppManager state refreshes — SwiftUI's
+        // MenuBarExtra would tear down the menu hierarchy on every publish.
     }
 }

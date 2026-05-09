@@ -8,7 +8,6 @@
 
 /* Begin PBXBuildFile section */
 		3835C93F8EE9E893E9E7D177 /* preview-state.json in Resources */ = {isa = PBXBuildFile; fileRef = E4B7E42E9F2147628CB8D05C /* preview-state.json */; };
-		4A5B4BA06B77EF141FC4111E /* StatusMenuView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E9B97970F7B2C02CFF63D54 /* StatusMenuView.swift */; };
 		4D7D864A20FB82CA270FF92B /* NostrVpnAppCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDD28FC1F1336837C61955C1 /* NostrVpnAppCore.swift */; };
 		5A0C2B850E75C11412CE8833 /* AppManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 93B8ACCA4B0D1E131227B6DB /* AppManager.swift */; };
 		5CE5ACBB50FA30430340AB02 /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70F9EAC8173DD49E1B488249 /* QRCodeScannerView.swift */; };
@@ -17,6 +16,7 @@
 		A6FE74EA26F6B11DB0807665 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB5956B2DC39CF6AF9008CA2 /* RootView.swift */; };
 		B38E814AD929D2F36F027727 /* nvpn in Resources */ = {isa = PBXBuildFile; fileRef = A17940199A911308E9E99BAB /* nvpn */; };
 		BB8824C1B11E41396D5245D7 /* NostrVpnMacApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = D52F97412C0CE07E04C2D8E1 /* NostrVpnMacApp.swift */; };
+		C17EDC5F51A82A977D64CDA0 /* TrayController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 46326DE323959D2B560058B9 /* TrayController.swift */; };
 		D8298A41C095805F2410F1E2 /* .gitkeep in Resources */ = {isa = PBXBuildFile; fileRef = 3F1160699FA7E0B240102124 /* .gitkeep */; };
 		DBBFA25AF9505FC4BB9541E8 /* NostrVpnAppCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 15E39397BF43B7A318613026 /* NostrVpnAppCore.xcframework */; };
 /* End PBXBuildFile section */
@@ -24,8 +24,8 @@
 /* Begin PBXFileReference section */
 		1501E9AC6FA4FD40D3382268 /* AppLifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLifecycle.swift; sourceTree = "<group>"; };
 		15E39397BF43B7A318613026 /* NostrVpnAppCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = NostrVpnAppCore.xcframework; path = Frameworks/NostrVpnAppCore.xcframework; sourceTree = "<group>"; };
-		1E9B97970F7B2C02CFF63D54 /* StatusMenuView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusMenuView.swift; sourceTree = "<group>"; };
 		3F1160699FA7E0B240102124 /* .gitkeep */ = {isa = PBXFileReference; path = .gitkeep; sourceTree = "<group>"; };
+		46326DE323959D2B560058B9 /* TrayController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TrayController.swift; sourceTree = "<group>"; };
 		70F9EAC8173DD49E1B488249 /* QRCodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScannerView.swift; sourceTree = "<group>"; };
 		93B8ACCA4B0D1E131227B6DB /* AppManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppManager.swift; sourceTree = "<group>"; };
 		A17940199A911308E9E99BAB /* nvpn */ = {isa = PBXFileReference; path = nvpn; sourceTree = "<group>"; };
@@ -76,7 +76,7 @@
 				D52F97412C0CE07E04C2D8E1 /* NostrVpnMacApp.swift */,
 				70F9EAC8173DD49E1B488249 /* QRCodeScannerView.swift */,
 				CB5956B2DC39CF6AF9008CA2 /* RootView.swift */,
-				1E9B97970F7B2C02CFF63D54 /* StatusMenuView.swift */,
+				46326DE323959D2B560058B9 /* TrayController.swift */,
 			);
 			path = Sources;
 			sourceTree = "<group>";
@@ -196,7 +196,7 @@
 				BB8824C1B11E41396D5245D7 /* NostrVpnMacApp.swift in Sources */,
 				5CE5ACBB50FA30430340AB02 /* QRCodeScannerView.swift in Sources */,
 				A6FE74EA26F6B11DB0807665 /* RootView.swift in Sources */,
-				4A5B4BA06B77EF141FC4111E /* StatusMenuView.swift in Sources */,
+				C17EDC5F51A82A977D64CDA0 /* TrayController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

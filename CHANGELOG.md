@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- macOS tray submenus stay open across state refreshes. The previous SwiftUI `MenuBarExtra` rebuilt its menu hierarchy every time the daemon state was republished (~1.5s), dismissing any open submenu within ~1s. The tray is now an `NSStatusItem` with `NSMenu` items mutated in place.
+
 ## 4.0.3 - 2026-05-09
 
 ### Fixed
