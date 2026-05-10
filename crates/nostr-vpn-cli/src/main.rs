@@ -271,6 +271,27 @@ struct WgUpstreamTestArgs {
     /// Maximum time to wait for the WG handshake to complete.
     #[arg(long, default_value_t = 30)]
     timeout_secs: u64,
+    /// If set, in addition to the handshake probe, bring up a userspace
+    /// tun device, install a single host route to this IP via the tun
+    /// (default route is **not** modified — the rest of the host's
+    /// internet stays alive), wait for the WG handshake, ping the host
+    /// through the tunnel, then tear everything back down. Requires
+    /// root / sudo because it touches the tun and the routing table.
+    #[arg(long)]
+    scoped_host: Option<std::net::IpAddr>,
+    /// Number of pings to send to `--scoped-host` after the handshake.
+    /// Ignored when `--scoped-host` is not set.
+    #[arg(long, default_value_t = 5)]
+    ping_count: u8,
+    /// After pings complete, hold the tunnel up for this many seconds
+    /// before tearing it down (lets you inspect routes / tcpdump).
+    /// Ignored when `--scoped-host` is not set.
+    #[arg(long, default_value_t = 0)]
+    hold_secs: u64,
+    /// Override the tun device name. macOS picks utunN automatically
+    /// when this is empty; Linux picks `nvpn-wg-test`.
+    #[arg(long)]
+    tun_name: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1120,7 +1141,9 @@ async fn run_command(command: Command) -> Result<()> {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn run_wg_upstream_test(args: WgUpstreamTestArgs) -> Result<()> {
-    use crate::wg_upstream_runtime::WgUpstreamRuntime;
+    use crate::wg_upstream_runtime::{WgUpstreamRuntime, apply_scoped_host_route};
+    use boringtun::device::tun::TunSocket;
+    use std::sync::Arc;
     use std::time::Duration;
 
     let raw = std::fs::read_to_string(&args.config_file)
@@ -1128,25 +1151,136 @@ async fn run_wg_upstream_test(args: WgUpstreamTestArgs) -> Result<()> {
     let cfg = parse_wireguard_exit_config(&raw)
         .with_context(|| format!("parse WG config file {}", args.config_file.display()))?;
 
-    let runtime = WgUpstreamRuntime::start_handshake_only(&cfg)
+    let timeout = Duration::from_secs(args.timeout_secs);
+
+    let Some(scoped_host) = args.scoped_host else {
+        // Handshake-only mode: no tun, no route changes.
+        let runtime = WgUpstreamRuntime::start_handshake_only(&cfg)
+            .await
+            .context("start userspace WG runtime")?;
+        let upstream = runtime.upstream();
+        println!("wg-upstream-test: probing handshake to {upstream}");
+        let ok = runtime.wait_for_handshake(timeout).await;
+        runtime.shutdown().await;
+        return if ok {
+            println!("wg-upstream-test: handshake completed");
+            Ok(())
+        } else {
+            Err(anyhow!(
+                "wg-upstream-test: no handshake from {upstream} within {}s",
+                args.timeout_secs
+            ))
+        };
+    };
+
+    // Scoped-host mode: bring up a tun, install a single host route
+    // through it, then send real pings through the WG tunnel.
+
+    // Refuse to scope the upstream endpoint itself — that would make
+    // the encrypted UDP loop back into the WG iface and never escape.
+    if let Some(endpoint_host) = cfg.endpoint.split(':').next()
+        && let Ok(endpoint_ip) = endpoint_host.parse::<std::net::IpAddr>()
+        && endpoint_ip == scoped_host
+    {
+        return Err(anyhow!(
+            "--scoped-host {scoped_host} matches the WG upstream endpoint; \
+             that would route the encrypted UDP back into the tunnel"
+        ));
+    }
+
+    let tun_name = args
+        .tun_name
+        .clone()
+        .unwrap_or_else(default_wg_test_tun_name);
+    let tun = TunSocket::new(&tun_name)
+        .with_context(|| format!("create tun device {tun_name}"))?
+        .set_non_blocking()
+        .context("set tun non-blocking")?;
+    let actual_iface = tun
+        .name()
+        .context("read assigned tun interface name (probably needs root)")?;
+    let tun = Arc::new(tun);
+
+    let mtu = if cfg.mtu > 0 { cfg.mtu } else { 1420 };
+    let _route = apply_scoped_host_route(&actual_iface, &cfg.address, scoped_host, mtu)
+        .with_context(|| {
+            format!(
+                "install scoped host route for {scoped_host} via {actual_iface} \
+                 (probably needs root)"
+            )
+        })?;
+    println!(
+        "wg-upstream-test: tun {actual_iface} up at {} mtu {mtu}, \
+         host route {scoped_host} via {actual_iface} installed",
+        cfg.address.trim_end_matches("/32")
+    );
+
+    let runtime = WgUpstreamRuntime::start_with_tun(&cfg, tun.clone())
         .await
-        .context("start userspace WG runtime")?;
+        .context("start userspace WG runtime with tun")?;
     let upstream = runtime.upstream();
     println!("wg-upstream-test: probing handshake to {upstream}");
 
-    let timeout = Duration::from_secs(args.timeout_secs);
-    let ok = runtime.wait_for_handshake(timeout).await;
-    runtime.shutdown().await;
+    let handshake_ok = runtime.wait_for_handshake(timeout).await;
+    if !handshake_ok {
+        runtime.shutdown().await;
+        return Err(anyhow!(
+            "wg-upstream-test: no handshake from {upstream} within {}s",
+            args.timeout_secs
+        ));
+    }
+    println!("wg-upstream-test: handshake completed, pinging {scoped_host}…");
 
-    if ok {
-        println!("wg-upstream-test: handshake completed");
+    let mut ping = tokio::process::Command::new("ping");
+    ping.arg("-c").arg(args.ping_count.to_string());
+    #[cfg(target_os = "linux")]
+    ping.arg("-W").arg("2");
+    #[cfg(target_os = "macos")]
+    ping.arg("-W").arg("2000"); // macOS ping -W is in milliseconds
+    ping.arg(scoped_host.to_string());
+    let status = ping
+        .status()
+        .await
+        .context("spawn ping")?;
+    let ping_ok = status.success();
+
+    if args.hold_secs > 0 {
+        println!("wg-upstream-test: holding tunnel up for {}s…", args.hold_secs);
+        tokio::time::sleep(Duration::from_secs(args.hold_secs)).await;
+    }
+
+    runtime.shutdown().await;
+    drop(_route);
+    // tun (Arc<TunSocket>) drops here when the last ref goes; on macOS
+    // closing the utun fd auto-removes the device. Linux's tun device
+    // hangs around if anyone else has it open, so name collisions on a
+    // re-run will surface as ENXIO from TunSocket::new.
+
+    if ping_ok {
+        println!(
+            "wg-upstream-test: pinged {scoped_host} successfully through {actual_iface} \
+             via WG upstream {upstream}"
+        );
         Ok(())
     } else {
         Err(anyhow!(
-            "wg-upstream-test: no handshake from {upstream} within {}s",
-            args.timeout_secs
+            "wg-upstream-test: ping {scoped_host} failed (handshake completed, \
+             but no replies came back through the tunnel)"
         ))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn default_wg_test_tun_name() -> String {
+    "nvpn-wg-test".to_string()
+}
+
+#[cfg(target_os = "macos")]
+fn default_wg_test_tun_name() -> String {
+    // Empty string lets boringtun's TunSocket pick the next available
+    // utunN automatically. The actual name is read back via
+    // tun.name() after creation.
+    String::new()
 }
 
 fn runtime_effective_advertised_routes(app: &AppConfig) -> Vec<String> {

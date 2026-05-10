@@ -23,7 +23,8 @@
 //!   * timer: every 250ms call `Tunn::update_timers` so the handshake +
 //!     keepalive state machine can re-key / re-init on schedule.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
+use std::process::Command as ProcessCommand;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -53,7 +54,6 @@ pub struct WgUpstreamRuntime {
     pump: Option<JoinHandle<()>>,
     tun_reader: Option<JoinHandle<()>>,
     handshake: Arc<HandshakeState>,
-    iface_name: Option<String>,
     upstream: SocketAddr,
 }
 
@@ -127,13 +127,10 @@ impl WgUpstreamRuntime {
             handshake.clone(),
         ));
 
-        let iface_name = None; // assigned by the caller; we don't own it here
-
         Ok(Self {
             pump: Some(pump),
             tun_reader,
             handshake,
-            iface_name,
             upstream,
         })
     }
@@ -169,10 +166,6 @@ impl WgUpstreamRuntime {
 
     pub fn upstream(&self) -> SocketAddr {
         self.upstream
-    }
-
-    pub fn iface_name(&self) -> Option<&str> {
-        self.iface_name.as_deref()
     }
 
     /// Stop the pump and drop the tunnel state. Idempotent.
@@ -470,6 +463,156 @@ fn decode_key_bytes(encoded: &str) -> Result<[u8; 32]> {
         .map_err(|_| anyhow!("base64 decode failed"))?;
     raw.try_into()
         .map_err(|_| anyhow!("WG key must be exactly 32 bytes"))
+}
+
+/// Bring up a userspace WG tun interface and install **only** a single
+/// host route via it. Default route is not touched, so this is safe to
+/// run on a host with live internet — even if the WG handshake fails,
+/// the worst case is that the one scoped target becomes unreachable.
+///
+/// Returns a `ScopedHostRoute` guard that, when dropped, removes the
+/// route. The caller should also drop the `TunSocket` to delete the
+/// tun device (utun on macOS auto-vanishes when the fd closes).
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub fn apply_scoped_host_route(
+    iface: &str,
+    address: &str,
+    target: IpAddr,
+    mtu: u16,
+) -> Result<ScopedHostRoute> {
+    let target_str = target.to_string();
+    let address_ip = address
+        .split('/')
+        .next()
+        .ok_or_else(|| anyhow!("empty WG tunnel address"))?
+        .to_string();
+    let mtu_str = mtu.to_string();
+
+    #[cfg(target_os = "linux")]
+    {
+        run_checked(
+            ProcessCommand::new("ip")
+                .arg("address")
+                .arg("replace")
+                .arg(format!("{address_ip}/32"))
+                .arg("dev")
+                .arg(iface),
+        )?;
+        run_checked(
+            ProcessCommand::new("ip")
+                .arg("link")
+                .arg("set")
+                .arg("mtu")
+                .arg(&mtu_str)
+                .arg("up")
+                .arg("dev")
+                .arg(iface),
+        )?;
+        run_checked(
+            ProcessCommand::new("ip")
+                .arg("route")
+                .arg("replace")
+                .arg(format!("{target_str}/32"))
+                .arg("dev")
+                .arg(iface),
+        )?;
+        return Ok(ScopedHostRoute {
+            iface: iface.to_string(),
+            target,
+        });
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        // ifconfig <iface> inet <addr> <addr> netmask 255.255.255.255 mtu N up
+        run_checked(
+            ProcessCommand::new("ifconfig")
+                .arg(iface)
+                .arg("inet")
+                .arg(&address_ip)
+                .arg(&address_ip)
+                .arg("netmask")
+                .arg("255.255.255.255")
+                .arg("mtu")
+                .arg(&mtu_str)
+                .arg("up"),
+        )?;
+        // route add -host <target> -interface <iface>
+        run_checked(
+            ProcessCommand::new("route")
+                .arg("-n")
+                .arg("add")
+                .arg("-host")
+                .arg(&target_str)
+                .arg("-interface")
+                .arg(iface),
+        )?;
+        return Ok(ScopedHostRoute {
+            iface: iface.to_string(),
+            target,
+        });
+    }
+
+    #[allow(unreachable_code)]
+    Err(anyhow!(
+        "scoped host route is only implemented on Linux and macOS"
+    ))
+}
+
+/// Drop guard that removes the host route installed by
+/// [`apply_scoped_host_route`]. Idempotent and best-effort: if the
+/// route was already gone (or the tun device disappeared first, taking
+/// its routes with it), this just logs.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub struct ScopedHostRoute {
+    iface: String,
+    target: IpAddr,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for ScopedHostRoute {
+    fn drop(&mut self) {
+        let target = self.target.to_string();
+        #[cfg(target_os = "linux")]
+        {
+            let _ = ProcessCommand::new("ip")
+                .arg("route")
+                .arg("del")
+                .arg(format!("{target}/32"))
+                .arg("dev")
+                .arg(&self.iface)
+                .status();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = ProcessCommand::new("route")
+                .arg("-n")
+                .arg("delete")
+                .arg("-host")
+                .arg(&target)
+                .arg("-interface")
+                .arg(&self.iface)
+                .status();
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn run_checked(command: &mut ProcessCommand) -> Result<()> {
+    let status = command
+        .status()
+        .with_context(|| format!("spawn {:?}", command.get_program()))?;
+    if !status.success() {
+        return Err(anyhow!(
+            "{:?} {:?} failed: {status}",
+            command.get_program(),
+            command
+                .get_args()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        ));
+    }
+    Ok(())
 }
 
 async fn resolve_endpoint(endpoint: &str) -> Result<SocketAddr> {
