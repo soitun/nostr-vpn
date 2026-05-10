@@ -6,6 +6,8 @@ services:
       additional_contexts:
         fips: ../fips
     entrypoint: ["sleep", "infinity"]
+    environment:
+      FIPS_PEER_ACTOR: "${FIPS_PEER_ACTOR:-0}"
     cap_add:
       - NET_ADMIN
     devices:
@@ -21,6 +23,8 @@ services:
       additional_contexts:
         fips: ../fips
     entrypoint: ["sleep", "infinity"]
+    environment:
+      FIPS_PEER_ACTOR: "${FIPS_PEER_ACTOR:-0}"
     cap_add:
       - NET_ADMIN
     devices:
@@ -36,6 +40,8 @@ services:
       additional_contexts:
         fips: ../fips
     entrypoint: ["sleep", "infinity"]
+    environment:
+      FIPS_PEER_ACTOR: "${FIPS_PEER_ACTOR:-0}"
     cap_add:
       - NET_ADMIN
     devices:
