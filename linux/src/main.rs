@@ -81,6 +81,9 @@ struct AppModel {
     sidebar: gtk::Box,
     update_bar: gtk::Box,
     content: gtk::Box,
+    header_status_label: gtk::Label,
+    header_status_dot: gtk::Box,
+    header_vpn_switch: gtk::Switch,
     drafts: Drafts,
     notice: String,
     tray: tray::TrayRuntime,
@@ -97,6 +100,9 @@ impl AppModel {
         sidebar: gtk::Box,
         update_bar: gtk::Box,
         content: gtk::Box,
+        header_status_label: gtk::Label,
+        header_status_dot: gtk::Box,
+        header_vpn_switch: gtk::Switch,
     ) -> Self {
         // Pass empty so the FFI falls back to its own CARGO_PKG_VERSION
         // (workspace-inherited). The linux crate is excluded from the workspace
@@ -117,6 +123,9 @@ impl AppModel {
             sidebar,
             update_bar,
             content,
+            header_status_label,
+            header_status_dot,
+            header_vpn_switch,
             drafts,
             notice: String::new(),
             tray,
@@ -302,6 +311,24 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
     refresh_button.set_tooltip_text(Some("Refresh"));
     header.pack_end(&refresh_button);
 
+    let header_vpn_switch = gtk::Switch::new();
+    header_vpn_switch.set_valign(gtk::Align::Center);
+    header_vpn_switch.set_tooltip_text(Some("Toggle VPN"));
+    header.pack_end(&header_vpn_switch);
+
+    let header_status_dot = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    header_status_dot.add_css_class("nvpn-header-dot");
+    header_status_dot.set_valign(gtk::Align::Center);
+    header_status_dot.set_visible(false);
+    header.pack_end(&header_status_dot);
+
+    let header_status_label = gtk::Label::new(None);
+    header_status_label.add_css_class("nvpn-header-status");
+    header_status_label.add_css_class("dim-label");
+    header_status_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    header_status_label.set_max_width_chars(28);
+    header.pack_end(&header_status_label);
+
     let sidebar = gtk::Box::new(gtk::Orientation::Vertical, 10);
     sidebar.add_css_class("nvpn-sidebar");
     sidebar.set_width_request(210);
@@ -340,12 +367,33 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
         sidebar.clone(),
         update_bar.clone(),
         content.clone(),
+        header_status_label.clone(),
+        header_status_dot.clone(),
+        header_vpn_switch.clone(),
     )));
     *runtime.model.borrow_mut() = Some(model.clone());
 
     {
         let model = model.clone();
         refresh_button.connect_clicked(move |_| refresh_now(&model));
+    }
+    {
+        let model = model.clone();
+        header_vpn_switch.connect_active_notify(move |sw| {
+            let target = sw.is_active();
+            let current = model.borrow().state.vpn_enabled;
+            if target == current {
+                return;
+            }
+            dispatch(
+                &model,
+                if target {
+                    NativeAppAction::ConnectVpn
+                } else {
+                    NativeAppAction::DisconnectVpn
+                },
+            );
+        });
     }
     {
         let model = model.clone();
@@ -705,6 +753,38 @@ fn set_page(app: &AppRef, page: Page) {
     render(app);
 }
 
+fn refresh_header(app: &AppRef, state: &NativeAppState) {
+    let (label, dot, switch) = {
+        let model = app.borrow();
+        (
+            model.header_status_label.clone(),
+            model.header_status_dot.clone(),
+            model.header_vpn_switch.clone(),
+        )
+    };
+
+    label.set_text(&tray::vpn_status_text(state));
+
+    let dot_visible =
+        state.exit_node_blocked || state.exit_node_active || state.vpn_active || state.vpn_enabled;
+    dot.set_visible(dot_visible);
+    for class in ["ok", "warn", "bad"] {
+        dot.remove_css_class(class);
+    }
+    if state.exit_node_blocked {
+        dot.add_css_class("bad");
+    } else if state.exit_node_active || state.vpn_active {
+        dot.add_css_class("ok");
+    } else if state.vpn_enabled {
+        dot.add_css_class("warn");
+    }
+
+    switch.set_sensitive(state.vpn_control_supported);
+    if switch.is_active() != state.vpn_enabled {
+        switch.set_active(state.vpn_enabled);
+    }
+}
+
 fn render(app: &AppRef) {
     let (sidebar, update_bar, content, state, page) = {
         let model = app.borrow();
@@ -717,6 +797,7 @@ fn render(app: &AppRef) {
         )
     };
 
+    refresh_header(app, &state);
     clear_box(&sidebar);
     clear_box(&update_bar);
     clear_box(&content);
@@ -1004,41 +1085,41 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             }
             participant_row.append(&save);
 
-            let admin = gtk::Button::from_icon_name(if participant.is_admin {
-                "starred-symbolic"
-            } else {
-                "non-starred-symbolic"
-            });
-            admin.set_tooltip_text(Some(if participant.is_admin {
-                "Remove admin"
-            } else {
-                "Make admin"
-            }));
-            {
-                let app = app.clone();
-                let network_id = network.id.clone();
-                let npub = participant.npub.clone();
-                let is_admin = participant.is_admin;
-                admin.connect_clicked(move |_| {
-                    dispatch(
-                        &app,
-                        if is_admin {
-                            NativeAppAction::RemoveAdmin {
-                                network_id: network_id.clone(),
-                                npub: npub.clone(),
-                            }
-                        } else {
-                            NativeAppAction::AddAdmin {
-                                network_id: network_id.clone(),
-                                npub: npub.clone(),
-                            }
-                        },
-                    );
-                });
-            }
-            participant_row.append(&admin);
-
             if !is_self(participant, state) {
+                let admin = gtk::Button::from_icon_name(if participant.is_admin {
+                    "starred-symbolic"
+                } else {
+                    "non-starred-symbolic"
+                });
+                admin.set_tooltip_text(Some(if participant.is_admin {
+                    "Remove admin"
+                } else {
+                    "Make admin"
+                }));
+                {
+                    let app = app.clone();
+                    let network_id = network.id.clone();
+                    let npub = participant.npub.clone();
+                    let is_admin = participant.is_admin;
+                    admin.connect_clicked(move |_| {
+                        dispatch(
+                            &app,
+                            if is_admin {
+                                NativeAppAction::RemoveAdmin {
+                                    network_id: network_id.clone(),
+                                    npub: npub.clone(),
+                                }
+                            } else {
+                                NativeAppAction::AddAdmin {
+                                    network_id: network_id.clone(),
+                                    npub: npub.clone(),
+                                }
+                            },
+                        );
+                    });
+                }
+                participant_row.append(&admin);
+
                 let remove = gtk::Button::from_icon_name("edit-delete-symbolic");
                 remove.set_tooltip_text(Some("Remove device"));
                 remove.add_css_class("destructive-action");
@@ -3018,6 +3099,29 @@ const CSS: &str = r#"
     border-radius: 8px;
     background: @card_bg_color;
     box-shadow: inset 0 0 0 1px alpha(@window_fg_color, 0.08);
+}
+
+.nvpn-header-dot {
+    min-width: 8px;
+    min-height: 8px;
+    border-radius: 999px;
+    background: alpha(@window_fg_color, 0.4);
+}
+
+.nvpn-header-dot.ok {
+    background: #16a34a;
+}
+
+.nvpn-header-dot.warn {
+    background: #d97706;
+}
+
+.nvpn-header-dot.bad {
+    background: #dc2626;
+}
+
+.nvpn-header-status {
+    font-size: 0.85em;
 }
 
 .nvpn-update-stripe {
