@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -674,15 +675,26 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             return;
         }
         ActionInFlight = true;
-        Notice = status;
+        // Defer the in-progress notice so fast actions (broadcast/listen toggle,
+        // copy, etc.) never flash the notice card. The card collapses when empty,
+        // so showing it for ~50ms shifts the entire content below — that's what
+        // looked like a flicker on the Share page when toggling broadcast/listen.
+        using var noticeCts = new CancellationTokenSource();
+        _ = Task.Delay(TimeSpan.FromMilliseconds(250), noticeCts.Token).ContinueWith(
+            _ => Notice = status,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnRanToCompletion,
+            TaskScheduler.FromCurrentSynchronizationContext());
         try
         {
             var state = await Task.Run(() => _core.Dispatch(actionJson));
+            noticeCts.Cancel();
             ApplyState(state, syncDrafts: true);
             Notice = string.IsNullOrWhiteSpace(state.Error) ? "" : state.Error;
         }
         catch (Exception error)
         {
+            noticeCts.Cancel();
             Notice = error.Message;
         }
         finally
