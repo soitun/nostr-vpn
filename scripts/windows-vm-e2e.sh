@@ -28,8 +28,11 @@ run_ps() {
 # used by scripts/local-release.mjs; both sides see the same archive format.
 sync_repo() {
   run_ps "New-Item -ItemType Directory -Force -Path '$GUEST_REPO' | Out-Null"
+  run_ps "Get-ChildItem -LiteralPath '$GUEST_REPO' -Recurse -Force -Filter '._*' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue"
   local guest_repo_unix="${GUEST_REPO//\\//}"
-  tar \
+  COPYFILE_DISABLE=1 tar \
+    --exclude='._*' \
+    --exclude='*/._*' \
     --exclude=./target \
     --exclude=./dist \
     --exclude=./.git \

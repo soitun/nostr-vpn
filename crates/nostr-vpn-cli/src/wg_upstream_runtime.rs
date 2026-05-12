@@ -20,9 +20,10 @@ use boringtun::device::tun::TunSocket;
 use wintun::Session as WintunSession;
 
 use nostr_vpn_core::config::WireGuardExitConfig;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use nostr_vpn_core::wg_upstream::MAX_WG_PACKET;
 pub use nostr_vpn_core::wg_upstream::{
-    DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT, MAX_WG_PACKET, WgUpstreamRuntime,
-    WireGuardExitFingerprint,
+    DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT, WgUpstreamRuntime, WireGuardExitFingerprint,
 };
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -123,15 +124,18 @@ fn spawn_wintun_reader(
     session: Arc<WintunSession>,
     tun_tx: mpsc::Sender<Vec<u8>>,
 ) -> JoinHandle<()> {
-    tokio::task::spawn_blocking(move || {
+    tokio::spawn(async move {
         loop {
-            match session.receive_blocking() {
-                Ok(packet) => {
+            match session.try_receive() {
+                Ok(Some(packet)) => {
                     let bytes = packet.bytes().to_vec();
                     drop(packet);
-                    if tun_tx.blocking_send(bytes).is_err() {
+                    if tun_tx.send(bytes).await.is_err() {
                         return;
                     }
+                }
+                Ok(None) => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
                 }
                 Err(error) => {
                     tracing::warn!(?error, "wg-upstream: wintun receive failed");
@@ -147,8 +151,8 @@ fn spawn_wintun_writer(
     session: Arc<WintunSession>,
     mut rx: mpsc::Receiver<Vec<u8>>,
 ) -> JoinHandle<()> {
-    tokio::task::spawn_blocking(move || {
-        while let Some(packet) = rx.blocking_recv() {
+    tokio::spawn(async move {
+        while let Some(packet) = rx.recv().await {
             let Ok(size) = u16::try_from(packet.len()) else {
                 tracing::warn!(
                     "wg-upstream: wintun packet too large to send ({} bytes)",
@@ -1017,10 +1021,12 @@ fn capture_windows_default_route() -> Result<WindowsDefaultRoute> {
 struct ParsedWindowsDefaultRoute {
     gateway: String,
     interface_ip: String,
+    metric: u32,
 }
 
 #[cfg(any(test, target_os = "windows"))]
 fn parse_windows_default_route_columns(output: &str) -> Option<ParsedWindowsDefaultRoute> {
+    let mut best: Option<ParsedWindowsDefaultRoute> = None;
     for line in output.lines() {
         let tokens: Vec<&str> = line.split_whitespace().collect();
         if tokens.len() < 5 {
@@ -1033,13 +1039,21 @@ fn parse_windows_default_route_columns(output: &str) -> Option<ParsedWindowsDefa
             if tokens[2].eq_ignore_ascii_case("on-link") {
                 continue;
             }
-            return Some(ParsedWindowsDefaultRoute {
+            let metric = tokens[4].parse::<u32>().unwrap_or(u32::MAX);
+            let candidate = ParsedWindowsDefaultRoute {
                 gateway: tokens[2].to_string(),
                 interface_ip: tokens[3].to_string(),
-            });
+                metric,
+            };
+            if best
+                .as_ref()
+                .is_none_or(|current| candidate.metric < current.metric)
+            {
+                best = Some(candidate);
+            }
         }
     }
-    None
+    best
 }
 
 #[cfg(target_os = "windows")]
@@ -1060,10 +1074,56 @@ fn resolve_windows_interface_index_for_address(interface_ip: &str) -> Result<u32
         return Err(anyhow!("netsh show ipaddresses failed: {}", output.status));
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
+    match parse_windows_ipaddresses_interface(&stdout, target) {
+        Some(WindowsAddressInterface::Index(idx)) => return Ok(idx),
+        Some(WindowsAddressInterface::Alias(alias)) => {
+            let output = ProcessCommand::new("netsh")
+                .args(["interface", "ipv4", "show", "interfaces"])
+                .output()
+                .context("spawn `netsh interface ipv4 show interfaces`")?;
+            if !output.status.success() {
+                return Err(anyhow!("netsh show interfaces failed: {}", output.status));
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Some(idx) = parse_windows_interface_index_for_alias(&stdout, &alias) {
+                return Ok(idx);
+            }
+            return Err(anyhow!(
+                "no Windows interface index found for alias {alias:?} with IPv4 address {target}"
+            ));
+        }
+        None => {}
+    }
+    Err(anyhow!(
+        "no Windows interface found with IPv4 address {target}"
+    ))
+}
+
+#[cfg(any(test, target_os = "windows"))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WindowsAddressInterface {
+    Index(u32),
+    Alias(String),
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn parse_windows_ipaddresses_interface(
+    output: &str,
+    target: std::net::Ipv4Addr,
+) -> Option<WindowsAddressInterface> {
     let mut current_index: Option<u32> = None;
-    for line in stdout.lines() {
+    let mut current_address_matches = false;
+    for line in output.lines() {
         let trimmed = line.trim();
-        if let Some(rest) = trimmed.strip_prefix("Interface ") {
+        if current_address_matches
+            && let Some((_, alias)) = trimmed.split_once(':')
+            && trimmed.starts_with("Interface Luid")
+        {
+            let alias = alias.trim();
+            if !alias.is_empty() {
+                return Some(WindowsAddressInterface::Alias(alias.to_string()));
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("Interface ") {
             // "Interface 7: ..."
             if let Some((idx_str, _)) = rest.split_once(':')
                 && let Ok(idx) = idx_str.trim().parse::<u32>()
@@ -1071,18 +1131,40 @@ fn resolve_windows_interface_index_for_address(interface_ip: &str) -> Result<u32
                 current_index = Some(idx);
             }
         } else if let Some(rest) = trimmed.strip_prefix("Address ") {
-            if let Some((addr_str, _)) = rest.split_once(' ')
-                && let Ok(addr) = addr_str.parse::<Ipv4Addr>()
+            current_address_matches = false;
+            let Some(addr_str) = rest.split_whitespace().next() else {
+                continue;
+            };
+            if let Ok(addr) = addr_str.parse::<std::net::Ipv4Addr>()
                 && addr == target
-                && let Some(idx) = current_index
             {
-                return Ok(idx);
+                if let Some(idx) = current_index {
+                    return Some(WindowsAddressInterface::Index(idx));
+                }
+                current_address_matches = true;
             }
         }
     }
-    Err(anyhow!(
-        "no Windows interface found with IPv4 address {target}"
-    ))
+    None
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn parse_windows_interface_index_for_alias(output: &str, alias: &str) -> Option<u32> {
+    for line in output.lines() {
+        let trimmed = line.trim();
+        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+        if tokens.len() < 5 {
+            continue;
+        }
+        let Ok(idx) = tokens[0].parse::<u32>() else {
+            continue;
+        };
+        let name = tokens[4..].join(" ");
+        if name.eq_ignore_ascii_case(alias.trim()) {
+            return Some(idx);
+        }
+    }
+    None
 }
 
 #[cfg(target_os = "windows")]
@@ -1148,7 +1230,6 @@ pub async fn apply_daemon_wg_upstream(
             .start_session(wintun::MAX_RING_CAPACITY)
             .with_context(|| format!("start wintun session for {adapter_name}"))?,
     );
-    let adapter = Arc::new(adapter);
 
     let runtime = start_wg_runtime_with_wintun(config, session.clone())
         .await
@@ -1210,6 +1291,7 @@ Network Destination        Netmask          Gateway       Interface  Metric
         let parsed = parse_windows_default_route_columns(sample).expect("default route parsed");
         assert_eq!(parsed.gateway, "192.168.1.1");
         assert_eq!(parsed.interface_ip, "192.168.1.42");
+        assert_eq!(parsed.metric, 25);
     }
 
     #[test]
@@ -1224,11 +1306,63 @@ Network Destination        Netmask          Gateway       Interface  Metric
             parse_windows_default_route_columns(sample).expect("non-On-link default parsed");
         assert_eq!(parsed.gateway, "192.168.1.1");
         assert_eq!(parsed.interface_ip, "192.168.1.42");
+        assert_eq!(parsed.metric, 25);
+    }
+
+    #[test]
+    fn chooses_lowest_metric_windows_default_route() {
+        let sample = "\
+Active Routes:
+Network Destination        Netmask          Gateway       Interface  Metric
+          0.0.0.0          0.0.0.0      172.20.0.1    172.20.0.22     75
+          0.0.0.0          0.0.0.0      192.168.1.1   192.168.1.42     25
+";
+        let parsed = parse_windows_default_route_columns(sample).expect("default route parsed");
+        assert_eq!(parsed.gateway, "192.168.1.1");
+        assert_eq!(parsed.interface_ip, "192.168.1.42");
+        assert_eq!(parsed.metric, 25);
     }
 
     #[test]
     fn returns_none_when_no_default_route_present() {
         let sample = "Active Routes:\n      127.0.0.0  255.0.0.0  On-link  127.0.0.1  331\n";
         assert!(parse_windows_default_route_columns(sample).is_none());
+    }
+
+    #[test]
+    fn parses_windows_ipaddress_alias_from_verbose_netsh() {
+        let sample = "\
+Address 127.0.0.1 Parameters
+---------------------------------------------------------
+Interface Luid     : Loopback Pseudo-Interface 1
+
+Address 192.168.122.147 Parameters
+---------------------------------------------------------
+Interface Luid     : Ethernet
+Scope Id           : 0.0
+";
+        assert_eq!(
+            parse_windows_ipaddresses_interface(sample, "192.168.122.147".parse().expect("ip")),
+            Some(WindowsAddressInterface::Alias("Ethernet".to_string()))
+        );
+    }
+
+    #[test]
+    fn parses_windows_interface_index_for_alias() {
+        let sample = "\
+Idx     Met         MTU          State                Name
+---  ----------  ----------  ------------  ---------------------------
+  1          75  4294967295  connected     Loopback Pseudo-Interface 1
+  3          25        1500  connected     Ethernet
+ 11           5        1150  connected     nvpn
+";
+        assert_eq!(
+            parse_windows_interface_index_for_alias(sample, "Ethernet"),
+            Some(3)
+        );
+        assert_eq!(
+            parse_windows_interface_index_for_alias(sample, "Loopback Pseudo-Interface 1"),
+            Some(1)
+        );
     }
 }

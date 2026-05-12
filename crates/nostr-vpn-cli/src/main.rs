@@ -11,7 +11,7 @@ mod network_signaling;
 mod platform_routing;
 mod service_management;
 mod session_runtime;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod wg_upstream_runtime;
 #[cfg(any(target_os = "windows", test))]
 mod windows_tunnel;
@@ -251,12 +251,9 @@ enum Command {
     Whois(WhoisArgs),
     /// Probe a WireGuard upstream config (Mullvad/Proton-style) by running
     /// the userspace WG state machine against it and reporting whether
-    /// the handshake completes. Does not create a tun device, does not
-    /// modify routes — safe to run on a host with live internet because
-    /// it can never blackhole anything. Useful as a first integration
-    /// test for the userspace WG path on platforms (like macOS) that
-    /// don't yet have a kernel WG implementation wired into the daemon.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    /// the handshake completes. Without --replace-default or --scoped-host,
+    /// this does not create a tun device and does not modify routes.
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     WgUpstreamTest(WgUpstreamTestArgs),
     /// Internal config import helper for elevated GUI writes.
     #[command(hide = true)]
@@ -269,7 +266,7 @@ enum Command {
     Daemon(DaemonArgs),
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Debug, Args)]
 struct WgUpstreamTestArgs {
     /// Path to a WireGuard config file (the same `[Interface]` /
@@ -316,6 +313,7 @@ struct WgUpstreamTestArgs {
     hold_secs: u64,
     /// Override the tun device name. macOS picks utunN automatically
     /// when this is empty; Linux picks `nvpn-wg-test`.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[arg(long)]
     tun_name: Option<String>,
 }
@@ -1198,7 +1196,7 @@ async fn run_command(command: Command) -> Result<()> {
                 println!("timestamp={}", peer.timestamp);
             }
         }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         Command::WgUpstreamTest(args) => {
             run_wg_upstream_test(args).await?;
         }
@@ -1216,11 +1214,8 @@ async fn run_command(command: Command) -> Result<()> {
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 async fn run_wg_upstream_test(args: WgUpstreamTestArgs) -> Result<()> {
-    use crate::wg_upstream_runtime::{WgUpstreamRuntime, apply_scoped_host_route};
-    use boringtun::device::tun::TunSocket;
-    use std::sync::Arc;
     use std::time::Duration;
 
     let raw = std::fs::read_to_string(&args.config_file)
@@ -1231,32 +1226,68 @@ async fn run_wg_upstream_test(args: WgUpstreamTestArgs) -> Result<()> {
     let timeout = Duration::from_secs(args.timeout_secs);
 
     if args.replace_default {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         return run_wg_upstream_replace_default(&cfg, &args, timeout).await;
+        #[cfg(target_os = "windows")]
+        return run_wg_upstream_windows_replace_default(&cfg, &args, timeout).await;
     }
 
-    let Some(scoped_host) = args.scoped_host else {
-        // Handshake-only mode: no tun, no route changes.
-        let runtime = WgUpstreamRuntime::start_handshake_only(&cfg)
-            .await
-            .context("start userspace WG runtime")?;
-        let upstream = runtime.upstream();
-        println!("wg-upstream-test: probing handshake to {upstream}");
-        let ok = runtime.wait_for_handshake(timeout).await;
-        runtime.shutdown().await;
-        return if ok {
-            println!("wg-upstream-test: handshake completed");
-            Ok(())
-        } else {
-            Err(anyhow!(
-                "wg-upstream-test: no handshake from {upstream} within {}s",
-                args.timeout_secs
-            ))
-        };
-    };
+    if let Some(scoped_host) = args.scoped_host {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        return run_wg_upstream_scoped_host(&cfg, &args, timeout, scoped_host).await;
+
+        #[cfg(target_os = "windows")]
+        {
+            let _ = scoped_host;
+            return Err(anyhow!(
+                "--scoped-host is not implemented on Windows; use --replace-default \
+                 with --probe-target to verify the Windows WinTun data plane"
+            ));
+        }
+    }
+
+    run_wg_upstream_handshake_only(&cfg, timeout, args.timeout_secs).await
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+async fn run_wg_upstream_handshake_only(
+    cfg: &nostr_vpn_core::config::WireGuardExitConfig,
+    timeout: std::time::Duration,
+    timeout_secs: u64,
+) -> Result<()> {
+    use crate::wg_upstream_runtime::WgUpstreamRuntime;
+
+    let runtime = WgUpstreamRuntime::start_handshake_only(cfg)
+        .await
+        .context("start userspace WG runtime")?;
+    let upstream = runtime.upstream();
+    println!("wg-upstream-test: probing handshake to {upstream}");
+    let ok = runtime.wait_for_handshake(timeout).await;
+    runtime.shutdown().await;
+    if ok {
+        println!("wg-upstream-test: handshake completed");
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "wg-upstream-test: no handshake from {upstream} within {timeout_secs}s"
+        ))
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn run_wg_upstream_scoped_host(
+    cfg: &nostr_vpn_core::config::WireGuardExitConfig,
+    args: &WgUpstreamTestArgs,
+    timeout: std::time::Duration,
+    scoped_host: std::net::IpAddr,
+) -> Result<()> {
+    use crate::wg_upstream_runtime::apply_scoped_host_route;
+    use boringtun::device::tun::TunSocket;
+    use std::sync::Arc;
+    use std::time::Duration;
 
     // Scoped-host mode: bring up a tun, install a single host route
     // through it, then send real pings through the WG tunnel.
-
     // Refuse to scope the upstream endpoint itself — that would make
     // the encrypted UDP loop back into the WG iface and never escape.
     if let Some(endpoint_host) = cfg.endpoint.split(':').next()
@@ -1296,7 +1327,7 @@ async fn run_wg_upstream_test(args: WgUpstreamTestArgs) -> Result<()> {
         cfg.address.trim_end_matches("/32")
     );
 
-    let runtime = crate::wg_upstream_runtime::start_wg_runtime_with_posix_tun(&cfg, tun.clone())
+    let runtime = crate::wg_upstream_runtime::start_wg_runtime_with_posix_tun(cfg, tun.clone())
         .await
         .context("start userspace WG runtime with tun")?;
     let upstream = runtime.upstream();
@@ -1349,6 +1380,85 @@ async fn run_wg_upstream_test(args: WgUpstreamTestArgs) -> Result<()> {
              but no replies came back through the tunnel)"
         ))
     }
+}
+
+#[cfg(target_os = "windows")]
+async fn run_wg_upstream_windows_replace_default(
+    cfg: &nostr_vpn_core::config::WireGuardExitConfig,
+    args: &WgUpstreamTestArgs,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    use crate::wg_upstream_runtime::apply_daemon_wg_upstream;
+    use std::time::Duration;
+
+    let handle = apply_daemon_wg_upstream(cfg, timeout)
+        .await
+        .context("bring up Windows WG upstream and swap default route")?;
+    println!(
+        "wg-upstream-test: handshake completed, default route now via {}, \
+         bypass for {} via captured underlay",
+        handle.iface,
+        handle.upstream.ip()
+    );
+
+    let probe_result = if let Some(probe) = args.probe_target {
+        let mut result = Ok(false);
+        for attempt in 1..=3 {
+            if attempt > 1 {
+                println!("wg-upstream-test: retrying probe ping through the WG tunnel...");
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            } else {
+                println!("wg-upstream-test: pinging {probe} through the WG tunnel...");
+            }
+            let mut ping = tokio::process::Command::new("ping");
+            ping.arg("-n")
+                .arg(args.ping_count.to_string())
+                .arg("-w")
+                .arg("3000")
+                .arg(probe.to_string());
+            let status = match ping.status().await.context("spawn ping") {
+                Ok(status) => status,
+                Err(error) => {
+                    result = Err(error);
+                    break;
+                }
+            };
+            if status.success() {
+                result = Ok(true);
+                break;
+            }
+        }
+        result
+    } else {
+        Ok(true)
+    };
+
+    if args.hold_secs > 0 {
+        println!(
+            "wg-upstream-test: holding the tunnel up for {}s - Ctrl-C to revert sooner",
+            args.hold_secs
+        );
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_secs(args.hold_secs)) => {}
+            _ = tokio::signal::ctrl_c() => {
+                println!("wg-upstream-test: Ctrl-C received, reverting now");
+            }
+        }
+    }
+
+    handle.cleanup().await;
+
+    if !probe_result? {
+        return Err(anyhow!(
+            "wg-upstream-test: probe ping failed (handshake completed and \
+             default route swapped, but no replies came back through the tunnel)"
+        ));
+    }
+    println!(
+        "wg-upstream-test: Windows full default-route mode worked end-to-end. \
+         Default route restored."
+    );
+    Ok(())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -3200,7 +3310,7 @@ fn print_daemon_peer_line(peer: &DaemonPeerState, now: u64) {
     ) {
         ("", "") if peer.reachable => "relayed".to_string(),
         ("", "") => "pending".to_string(),
-        (kind, addr) if addr.is_empty() => kind.to_string(),
+        (kind, "") => kind.to_string(),
         (kind, addr) => format!("{kind} {addr}"),
     };
     let srtt = peer
