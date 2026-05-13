@@ -23,8 +23,16 @@ Result:
   still did not hand the lookup to that target if it was not a tree neighbor.
 - FIPS `e6662e7` forwards lookup requests to direct non-tree targets, allowing
   asymmetric paths such as mini -> MacBook -> VM.
+- After that fix, mini could route at least one VM peer through FIPS, but two
+  VM peers still remained `fips link pending`. The remaining gap was the
+  origin/transit fallback still being limited to tree peers.
+- FIPS `83fbf03` keeps tree/bloom routing as the primary lookup path, then
+  lets reply-learned fallback ask any authenticated sendable peer when no
+  tree/bloom candidate exists. Transit fallback excludes the previous hop and
+  originator so the request ID still distinguishes originator from relay.
 - Added unit coverage for both endpoint-data and TUN-packet branches, including
-  the stale direct-route case, plus direct non-tree lookup forwarding.
+  the stale direct-route case, direct non-tree target forwarding, origin fallback
+  to a non-tree sendable peer, and transit fallback without origin echo.
 
 Decision:
 - Keep the explicit routed-FIPS Docker e2e in the nvpn release gate, and keep
