@@ -287,7 +287,10 @@ pub(crate) fn windows_service_install_config_path(
 }
 
 pub(crate) fn load_or_default_config(path: &Path) -> Result<AppConfig> {
-    if path.exists() {
+    if path
+        .try_exists()
+        .with_context(|| format!("failed to inspect config {}", path.display()))?
+    {
         return AppConfig::load(path);
     }
 

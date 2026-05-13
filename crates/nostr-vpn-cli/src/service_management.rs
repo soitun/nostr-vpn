@@ -29,10 +29,7 @@ fn service_install(args: ServiceInstallArgs) -> Result<()> {
         }
     }
 
-    let mut config = load_or_default_config(&config_path)?;
-    config.ensure_defaults();
-    maybe_autoconfigure_node(&mut config);
-    config.save(&config_path)?;
+    ensure_service_config_exists(&config_path)?;
 
     let executable = std::env::current_exe().context("failed to resolve current executable")?;
     let executable = fs::canonicalize(&executable)
@@ -94,6 +91,62 @@ fn service_install(args: ServiceInstallArgs) -> Result<()> {
             "system service install is not implemented on this platform"
         ))
     }
+}
+
+pub(crate) fn ensure_service_config_exists(config_path: &Path) -> Result<()> {
+    if config_path
+        .try_exists()
+        .with_context(|| format!("failed to inspect config {}", config_path.display()))?
+    {
+        AppConfig::load(config_path)?;
+        repair_service_config_ownership(config_path)?;
+        return Ok(());
+    }
+
+    let mut config = AppConfig::generated();
+    config.ensure_defaults();
+    maybe_autoconfigure_node(&mut config);
+    config.save(config_path)
+}
+
+#[cfg(unix)]
+fn repair_service_config_ownership(config_path: &Path) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = fs::metadata(config_path)
+        .with_context(|| format!("failed to inspect config {}", config_path.display()))?;
+    if metadata.uid() != 0 {
+        return Ok(());
+    }
+
+    let Some(parent) = config_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    else {
+        return Ok(());
+    };
+    let parent_metadata = fs::metadata(parent)
+        .with_context(|| format!("failed to inspect config directory {}", parent.display()))?;
+    if parent_metadata.uid() == 0 {
+        return Ok(());
+    }
+
+    std::os::unix::fs::chown(
+        config_path,
+        Some(parent_metadata.uid()),
+        Some(parent_metadata.gid()),
+    )
+    .with_context(|| {
+        format!(
+            "failed to restore user ownership on config {}",
+            config_path.display()
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn repair_service_config_ownership(_config_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 fn service_uninstall(args: ServiceUninstallArgs) -> Result<()> {

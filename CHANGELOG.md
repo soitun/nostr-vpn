@@ -2,6 +2,18 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.14 - 2026-05-13
+
+### Fixed
+
+- macOS service repair no longer rewrites an existing config just to reinstall
+  launchd. It validates the config, repairs stale root ownership when the config
+  lives in a user-owned config directory, and leaves the config contents alone.
+- The macOS GUI no longer displays a generated fallback network as if it were
+  the user's real config after a startup config-load failure. Config-mutating
+  actions now reload the real config first and refuse to save over an unreadable
+  or invalid config.
+
 ## 4.0.13 - 2026-05-13
 
 ### Added

@@ -250,16 +250,19 @@ struct ExitNodeUiStatus {
 impl NativeAppRuntime {
     fn new(data_dir: &str, app_version: String) -> Result<Self> {
         let config_path = native_config_path(data_dir);
-        let mut config = if config_path.exists() {
+        let config_exists = config_path
+            .try_exists()
+            .with_context(|| format!("failed to inspect config {}", config_path.display()))?;
+        let mut config = if config_exists {
             AppConfig::load(&config_path)?
         } else {
-            let generated = AppConfig::generated();
-            generated.save(&config_path)?;
-            generated
+            AppConfig::generated()
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
-        config.save(&config_path)?;
+        if !config_exists {
+            config.save(&config_path)?;
+        }
 
         let capabilities = current_runtime_capabilities();
         let mut runtime = Self {
@@ -342,6 +345,7 @@ impl NativeAppRuntime {
     #[allow(clippy::too_many_lines)]
     fn state(&self) -> NativeAppState {
         let capabilities = current_runtime_capabilities();
+        let config_unavailable = self.startup_error.is_some();
         let own_pubkey_hex = self.config.own_nostr_pubkey_hex().unwrap_or_default();
         let active_network = self.config.active_network();
         let daemon_state = self.daemon_state.as_ref();
@@ -416,16 +420,56 @@ impl NativeAppRuntime {
                 .unwrap_or_default(),
             service_binary_version: self.service_binary_version.clone(),
             expected_service_binary_version: self.expected_service_binary_version.clone(),
-            own_npub: to_npub(&own_pubkey_hex),
-            own_pubkey_hex: own_pubkey_hex.clone(),
-            node_id: self.config.node.id.clone(),
-            node_name: self.config.node_name.clone(),
-            self_magic_dns_name: self.config.self_magic_dns_name().unwrap_or_default(),
-            endpoint,
-            tunnel_ip: self.config.node.tunnel_ip.clone(),
-            listen_port: u32::from(listen_port),
-            network_id: self.config.effective_network_id(),
-            active_network_invite: active_network_invite_code(&self.config).unwrap_or_default(),
+            own_npub: if config_unavailable {
+                String::new()
+            } else {
+                to_npub(&own_pubkey_hex)
+            },
+            own_pubkey_hex: if config_unavailable {
+                String::new()
+            } else {
+                own_pubkey_hex.clone()
+            },
+            node_id: if config_unavailable {
+                String::new()
+            } else {
+                self.config.node.id.clone()
+            },
+            node_name: if config_unavailable {
+                String::new()
+            } else {
+                self.config.node_name.clone()
+            },
+            self_magic_dns_name: if config_unavailable {
+                String::new()
+            } else {
+                self.config.self_magic_dns_name().unwrap_or_default()
+            },
+            endpoint: if config_unavailable {
+                String::new()
+            } else {
+                endpoint
+            },
+            tunnel_ip: if config_unavailable {
+                String::new()
+            } else {
+                self.config.node.tunnel_ip.clone()
+            },
+            listen_port: if config_unavailable {
+                0
+            } else {
+                u32::from(listen_port)
+            },
+            network_id: if config_unavailable {
+                String::new()
+            } else {
+                self.config.effective_network_id()
+            },
+            active_network_invite: if config_unavailable {
+                String::new()
+            } else {
+                active_network_invite_code(&self.config).unwrap_or_default()
+            },
             exit_node: if self.config.exit_node.trim().is_empty() {
                 String::new()
             } else {
@@ -435,45 +479,103 @@ impl NativeAppRuntime {
             exit_node_active: exit_node_status.active,
             exit_node_blocked: exit_node_status.blocked,
             exit_node_status_text: exit_node_status.text,
-            advertise_exit_node: self.config.node.advertise_exit_node,
-            advertised_routes: self.config.node.advertised_routes.clone(),
-            effective_advertised_routes: self.config.effective_advertised_routes(),
-            wireguard_exit_enabled: self.config.wireguard_exit.enabled,
-            wireguard_exit_configured: self.config.wireguard_exit.configured(),
-            wireguard_exit_interface: self.config.wireguard_exit.interface.clone(),
-            wireguard_exit_address: self.config.wireguard_exit.address.clone(),
-            wireguard_exit_private_key: self.config.wireguard_exit.private_key.clone(),
-            wireguard_exit_peer_public_key: self.config.wireguard_exit.peer_public_key.clone(),
-            wireguard_exit_peer_preshared_key: self
-                .config
-                .wireguard_exit
-                .peer_preshared_key
-                .clone(),
-            wireguard_exit_endpoint: self.config.wireguard_exit.endpoint.clone(),
-            wireguard_exit_allowed_ips: self.config.wireguard_exit.allowed_ips.join(", "),
-            wireguard_exit_dns: self.config.wireguard_exit.dns.join(", "),
-            wireguard_exit_mtu: self.config.wireguard_exit.mtu,
-            wireguard_exit_persistent_keepalive_secs: self
-                .config
-                .wireguard_exit
-                .persistent_keepalive_secs,
-            wireguard_exit_config: wireguard_exit_config_text(&self.config.wireguard_exit),
-            magic_dns_suffix: self.config.magic_dns_suffix.clone(),
-            magic_dns_status: self.magic_dns_status(),
-            autoconnect: self.config.autoconnect,
+            advertise_exit_node: !config_unavailable && self.config.node.advertise_exit_node,
+            advertised_routes: if config_unavailable {
+                Vec::new()
+            } else {
+                self.config.node.advertised_routes.clone()
+            },
+            effective_advertised_routes: if config_unavailable {
+                Vec::new()
+            } else {
+                self.config.effective_advertised_routes()
+            },
+            wireguard_exit_enabled: !config_unavailable && self.config.wireguard_exit.enabled,
+            wireguard_exit_configured: !config_unavailable
+                && self.config.wireguard_exit.configured(),
+            wireguard_exit_interface: if config_unavailable {
+                String::new()
+            } else {
+                self.config.wireguard_exit.interface.clone()
+            },
+            wireguard_exit_address: if config_unavailable {
+                String::new()
+            } else {
+                self.config.wireguard_exit.address.clone()
+            },
+            wireguard_exit_private_key: if config_unavailable {
+                String::new()
+            } else {
+                self.config.wireguard_exit.private_key.clone()
+            },
+            wireguard_exit_peer_public_key: if config_unavailable {
+                String::new()
+            } else {
+                self.config.wireguard_exit.peer_public_key.clone()
+            },
+            wireguard_exit_peer_preshared_key: if config_unavailable {
+                String::new()
+            } else {
+                self.config.wireguard_exit.peer_preshared_key.clone()
+            },
+            wireguard_exit_endpoint: if config_unavailable {
+                String::new()
+            } else {
+                self.config.wireguard_exit.endpoint.clone()
+            },
+            wireguard_exit_allowed_ips: if config_unavailable {
+                String::new()
+            } else {
+                self.config.wireguard_exit.allowed_ips.join(", ")
+            },
+            wireguard_exit_dns: if config_unavailable {
+                String::new()
+            } else {
+                self.config.wireguard_exit.dns.join(", ")
+            },
+            wireguard_exit_mtu: if config_unavailable {
+                0
+            } else {
+                self.config.wireguard_exit.mtu
+            },
+            wireguard_exit_persistent_keepalive_secs: if config_unavailable {
+                0
+            } else {
+                self.config.wireguard_exit.persistent_keepalive_secs
+            },
+            wireguard_exit_config: if config_unavailable {
+                String::new()
+            } else {
+                wireguard_exit_config_text(&self.config.wireguard_exit)
+            },
+            magic_dns_suffix: if config_unavailable {
+                String::new()
+            } else {
+                self.config.magic_dns_suffix.clone()
+            },
+            magic_dns_status: if config_unavailable {
+                String::new()
+            } else {
+                self.magic_dns_status()
+            },
+            autoconnect: !config_unavailable && self.config.autoconnect,
             invite_broadcast_active: self.invite_broadcast_active(),
             invite_broadcast_remaining_secs: self.invite_broadcast_remaining_secs(),
             nearby_discovery_active: self.nearby_discovery_active(),
             nearby_discovery_remaining_secs: self.nearby_discovery_remaining_secs(),
-            launch_on_startup: self.config.launch_on_startup,
-            close_to_tray_on_close: self.config.close_to_tray_on_close,
+            launch_on_startup: !config_unavailable && self.config.launch_on_startup,
+            close_to_tray_on_close: !config_unavailable && self.config.close_to_tray_on_close,
             connected_peer_count: connected_peer_count as u64,
             expected_peer_count: expected_peer_count as u64,
             mesh_ready: vpn_active && daemon_state.is_some_and(|state| state.mesh_ready),
             health,
             network,
             port_mapping,
-            networks: self.network_states(&own_pubkey_hex, vpn_active),
+            networks: if config_unavailable {
+                Vec::new()
+            } else {
+                self.network_states(&own_pubkey_hex, vpn_active)
+            },
             lan_peers: self.lan_peer_states(),
         }
     }
@@ -489,6 +591,18 @@ impl NativeAppRuntime {
 
     #[allow(clippy::too_many_lines)]
     fn apply_action(&mut self, action: NativeAppAction) -> Result<()> {
+        if self.startup_error.is_some() {
+            match &action {
+                NativeAppAction::GetState => return Ok(()),
+                NativeAppAction::InstallCli
+                | NativeAppAction::UninstallCli
+                | NativeAppAction::InstallSystemService => {}
+                _ => self.recover_from_startup_error().with_context(
+                    || "cannot modify VPN config until the config file is readable",
+                )?,
+            }
+        }
+
         match action {
             NativeAppAction::GetState | NativeAppAction::Tick => {
                 if self.mobile_runtime {
@@ -517,6 +631,7 @@ impl NativeAppRuntime {
                 ])?;
                 ensure_success("nvpn service install", &output)?;
                 self.invalidate_service_status();
+                self.recover_from_startup_error()?;
                 self.refresh_service_status()
             }
             NativeAppAction::UninstallSystemService => {
@@ -1202,11 +1317,47 @@ impl NativeAppRuntime {
     }
 
     fn reload_config_from_disk(&mut self) -> Result<()> {
-        if self.config_path.exists() {
-            self.config = AppConfig::load(&self.config_path)?;
-            self.config.ensure_defaults();
-            maybe_autoconfigure_node(&mut self.config);
+        if !self
+            .config_path
+            .try_exists()
+            .with_context(|| format!("failed to inspect config {}", self.config_path.display()))?
+        {
+            return Err(anyhow!(
+                "config file disappeared: {}",
+                self.config_path.display()
+            ));
         }
+
+        self.config = AppConfig::load(&self.config_path)?;
+        self.config.ensure_defaults();
+        maybe_autoconfigure_node(&mut self.config);
+        Ok(())
+    }
+
+    fn recover_from_startup_error(&mut self) -> Result<()> {
+        if self.startup_error.is_none() {
+            return Ok(());
+        }
+
+        let config_exists = self
+            .config_path
+            .try_exists()
+            .with_context(|| format!("failed to inspect config {}", self.config_path.display()))?;
+        let mut config = if config_exists {
+            AppConfig::load(&self.config_path)?
+        } else {
+            AppConfig::generated()
+        };
+        config.ensure_defaults();
+        maybe_autoconfigure_node(&mut config);
+        if !config_exists {
+            config.save(&self.config_path)?;
+        }
+
+        self.config = config;
+        self.startup_error = None;
+        self.last_error.clear();
+        self.refresh_expected_service_binary_version();
         Ok(())
     }
 
@@ -2102,24 +2253,85 @@ mod tests {
     }
 
     #[test]
-    fn native_state_initializes_from_generated_config() {
+    fn startup_error_state_does_not_expose_generated_config_as_real_config() {
         let error = anyhow!("boom");
         let runtime = NativeAppRuntime::from_startup_error(&error);
         let state = runtime.state();
 
         assert_eq!(state.error, "boom");
-        assert!(!state.own_pubkey_hex.is_empty());
+        assert!(state.own_pubkey_hex.is_empty());
+        assert!(state.node_name.is_empty());
+        assert!(state.tunnel_ip.is_empty());
+        assert!(state.network_id.is_empty());
         assert_eq!(state.expected_peer_count, 0);
         assert_eq!(state.connected_peer_count, 0);
-        assert_eq!(state.networks[0].expected_count, 1);
-        assert_eq!(state.networks[0].online_count, 0);
-        assert_eq!(state.networks[0].participants.len(), 1);
+        assert!(state.networks.is_empty());
+    }
+
+    #[test]
+    fn startup_error_blocks_config_mutation_until_real_config_loads() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-startup-guard-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let config_path = dir.join("config.toml");
+        fs::write(&config_path, "not valid toml").expect("write invalid config");
+
+        let error = anyhow!("startup failed");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.config_path = config_path.clone();
+        runtime.dispatch(NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                node_name: Some("should-not-save".to_string()),
+                ..SettingsPatch::default()
+            },
+        });
+
+        assert!(runtime.last_error.contains("cannot modify VPN config"));
+        assert_eq!(
+            fs::read_to_string(&config_path).expect("read config"),
+            "not valid toml"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn startup_error_recovers_after_config_becomes_readable() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-startup-recover-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let config_path = dir.join("config.toml");
+        let config = AppConfig {
+            node_name: "real-config".to_string(),
+            ..AppConfig::default()
+        };
+        config.save(&config_path).expect("save config");
+
+        let error = anyhow!("startup failed");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.mobile_runtime = true;
+        runtime.config_path = config_path;
+        runtime.dispatch(NativeAppAction::Tick);
+        let state = runtime.state();
+
+        assert!(state.error.is_empty(), "{}", state.error);
+        assert_eq!(state.node_name, "real-config");
+        assert!(!state.networks.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn native_counts_keep_peer_and_device_totals_separate() {
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
         let own_pubkey = runtime
             .config
             .own_nostr_pubkey_hex()
@@ -2255,6 +2467,7 @@ mod tests {
 
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
         runtime.mobile_runtime = true;
         runtime.config_path = dir.join("config.toml");
 
@@ -2277,6 +2490,7 @@ mod tests {
     fn lan_pairing_runs_for_fifteen_minutes_until_cancelled() {
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
 
         runtime.dispatch(NativeAppAction::StartInviteBroadcast);
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
@@ -2366,6 +2580,7 @@ mod tests {
     fn native_state_hides_reachable_peers_when_vpn_is_paused() {
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
         let own_pubkey = runtime
             .config
             .own_nostr_pubkey_hex()
@@ -2683,6 +2898,10 @@ exit 0
         runtime.startup_error = None;
         runtime.last_error.clear();
         runtime.config_path = dir.join("config.toml");
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("save test config");
         runtime.nvpn_bin = Some(script_path);
 
         runtime.dispatch(NativeAppAction::ConnectVpn);
@@ -2746,6 +2965,10 @@ exit 0
         runtime.startup_error = None;
         runtime.last_error.clear();
         runtime.config_path = dir.join("config.toml");
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("save test config");
         runtime.nvpn_bin = Some(script_path);
 
         runtime.dispatch(NativeAppAction::ConnectVpn);

@@ -1,6 +1,9 @@
+use std::fs;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::CommandFactory;
+use nostr_vpn_core::config::AppConfig;
 
 use crate::*;
 
@@ -129,6 +132,57 @@ fn macos_service_activation_enables_before_bootstrap() {
             ],
         ]
     );
+}
+
+#[test]
+fn service_config_guard_leaves_existing_config_contents_unchanged() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-service-config-guard-{nonce}"));
+    fs::create_dir_all(&dir).expect("create test dir");
+    let config_path = dir.join("config.toml");
+    let config = AppConfig {
+        node_name: "existing-config".to_string(),
+        ..AppConfig::default()
+    };
+    config.save(&config_path).expect("save config");
+    let before = fs::read_to_string(&config_path).expect("read config before guard");
+
+    crate::service_management::ensure_service_config_exists(&config_path)
+        .expect("existing config should validate");
+
+    let after = fs::read_to_string(&config_path).expect("read config after guard");
+    assert_eq!(after, before);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn service_config_guard_does_not_replace_invalid_existing_config() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-service-config-invalid-{nonce}"));
+    fs::create_dir_all(&dir).expect("create test dir");
+    let config_path = dir.join("config.toml");
+    fs::write(&config_path, "not valid toml").expect("write invalid config");
+
+    let err = crate::service_management::ensure_service_config_exists(&config_path)
+        .expect_err("invalid existing config should fail");
+
+    assert!(
+        err.to_string().contains("failed to parse config TOML"),
+        "{err}"
+    );
+    assert_eq!(
+        fs::read_to_string(&config_path).expect("read invalid config"),
+        "not valid toml"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]

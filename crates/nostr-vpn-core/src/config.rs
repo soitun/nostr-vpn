@@ -1851,6 +1851,10 @@ fn write_config_file(path: &Path, raw: &[u8]) -> std::io::Result<()> {
     let existing_owner = fs::metadata(path)
         .ok()
         .map(|metadata| (metadata.uid(), metadata.gid()));
+    let parent_owner = fs::metadata(parent)
+        .ok()
+        .map(|metadata| (metadata.uid(), metadata.gid()));
+    let desired_owner = preferred_config_owner(existing_owner, parent_owner);
     let file_name = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -1900,13 +1904,32 @@ fn write_config_file(path: &Path, raw: &[u8]) -> std::io::Result<()> {
         let _ = fs::remove_file(&temp_path);
         return Err(error);
     }
-    if let Some((uid, gid)) = existing_owner {
+    if let Some((uid, gid)) = desired_owner {
         let metadata = fs::metadata(path)?;
         if metadata.uid() != uid || metadata.gid() != gid {
-            std::os::unix::fs::chown(path, Some(uid), Some(gid))?;
+            match std::os::unix::fs::chown(path, Some(uid), Some(gid)) {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+                Err(error) => return Err(error),
+            }
         }
     }
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+}
+
+#[cfg(unix)]
+fn preferred_config_owner(
+    existing_owner: Option<(u32, u32)>,
+    parent_owner: Option<(u32, u32)>,
+) -> Option<(u32, u32)> {
+    match (existing_owner, parent_owner) {
+        (Some((0, _)), Some((parent_uid, parent_gid))) if parent_uid != 0 => {
+            Some((parent_uid, parent_gid))
+        }
+        (Some(owner), _) => Some(owner),
+        (None, Some((parent_uid, parent_gid))) if parent_uid != 0 => Some((parent_uid, parent_gid)),
+        (None, _) => None,
+    }
 }
 
 #[cfg(not(unix))]
@@ -2047,5 +2070,23 @@ mod tests {
             vec![(peer_public_key, vec!["10.203.0.12:51820".to_string()])]
         );
         assert!(config.has_fips_static_peer_endpoints());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_save_prefers_user_owned_parent_over_stale_root_owned_file() {
+        assert_eq!(
+            super::preferred_config_owner(Some((0, 0)), Some((501, 20))),
+            Some((501, 20))
+        );
+        assert_eq!(
+            super::preferred_config_owner(Some((502, 20)), Some((501, 20))),
+            Some((502, 20))
+        );
+        assert_eq!(
+            super::preferred_config_owner(None, Some((501, 20))),
+            Some((501, 20))
+        );
+        assert_eq!(super::preferred_config_owner(None, Some((0, 0))), None);
     }
 }
