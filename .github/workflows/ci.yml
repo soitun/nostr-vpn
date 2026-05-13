@@ -28,6 +28,8 @@ jobs:
 
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
+        with:
+          cache-bin: false
 
       - name: Run release gate
         run: ./scripts/release-gate.sh
