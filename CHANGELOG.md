@@ -9,9 +9,10 @@ All notable changes to this project are documented in this file.
 - Private FIPS mesh endpoint traffic now uses reply-learned routing so a peer
   whose direct UDP/NAT path is down can still be reached through established
   FIPS neighbors. This is covered by the routed-FIPS Docker e2e release gate.
-- Bumped FIPS to `c1c71eb` so queued endpoint and TUN traffic on a stale
-  half-open session also starts reply-learned discovery, letting peers fall
-  back through the mesh even when a direct route still appears sendable.
+- Bumped FIPS to `e6662e7` so queued endpoint and TUN traffic on a stale
+  half-open session starts reply-learned discovery, and transit peers forward
+  lookups to direct non-tree targets. This lets peers fall back through the
+  mesh even when direct routes or NAT traversal are asymmetric.
 - The macOS GUI refreshes participant alias edit drafts when the backend alias
   changes, so a renamed peer no longer appears under an old draft name in the
   Manage Device panel.

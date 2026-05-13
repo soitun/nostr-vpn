@@ -10,6 +10,8 @@ Setup:
 - Regression modeled a destination that still has a sendable direct peer route
   while its end-to-end FSP session is stuck in `Initiating`.
 - App endpoint bytes and TUN packets were both queued behind that stale session.
+- Live MacBook could see VM peers directly, while mini could not complete
+  direct NAT traversal to those same VM peers.
 
 Result:
 - Before FIPS `c1c71eb`, queued traffic returned without starting discovery,
@@ -17,8 +19,12 @@ Result:
   mesh neighbors.
 - FIPS `c1c71eb` now kicks reply-learned discovery for queued endpoint and TUN
   traffic whenever the existing session is not established.
+- Before FIPS `e6662e7`, a transit node that had the target as a direct peer
+  still did not hand the lookup to that target if it was not a tree neighbor.
+- FIPS `e6662e7` forwards lookup requests to direct non-tree targets, allowing
+  asymmetric paths such as mini -> MacBook -> VM.
 - Added unit coverage for both endpoint-data and TUN-packet branches, including
-  the stale direct-route case.
+  the stale direct-route case, plus direct non-tree lookup forwarding.
 
 Decision:
 - Keep the explicit routed-FIPS Docker e2e in the nvpn release gate, and keep
