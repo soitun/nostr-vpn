@@ -174,6 +174,10 @@ fn current_target() -> &'static str {
     {
         "aarch64-unknown-linux-musl"
     }
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    {
+        "arm-unknown-linux-musleabihf"
+    }
     #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
     {
         "x86_64-pc-windows-msvc"
@@ -182,6 +186,7 @@ fn current_target() -> &'static str {
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "arm"),
         all(target_os = "windows", target_arch = "x86_64"),
     )))]
     {

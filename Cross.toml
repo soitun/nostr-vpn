@@ -15,6 +15,12 @@ pre-build = [
 ]
 
 [target.arm-unknown-linux-musleabihf]
+# The stock arm-unknown-linux-musleabihf image has the correct linker for
+# Raspberry Pi Zero-class ARMv6 devices, but its target sysroot has older
+# nftables headers. Build the local image from docker/cross first.
+image = "nvpn-cross-arm-unknown-linux-musleabihf:headers"
+
+[target.armv7-unknown-linux-musleabihf]
 pre-build = [
   "cp -r /usr/include/linux/. /usr/local/arm-linux-musleabihf/include/linux/",
 ]

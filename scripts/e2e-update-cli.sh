@@ -17,6 +17,9 @@ case "$(uname -s):$(uname -m)" in
   Linux:aarch64|Linux:arm64)
     TARGET="aarch64-unknown-linux-musl"
     ;;
+  Linux:armv6l|Linux:armv7l|Linux:arm*)
+    TARGET="arm-unknown-linux-musleabihf"
+    ;;
   *)
     TARGET="unsupported"
     ;;
