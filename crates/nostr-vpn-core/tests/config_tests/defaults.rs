@@ -39,6 +39,19 @@ fn generated_config_auto_populates_keys() {
 }
 
 #[test]
+fn generated_config_can_start_without_networks() {
+    let mut config = AppConfig::generated_without_networks();
+
+    assert!(config.networks.is_empty());
+    config.ensure_defaults();
+
+    assert!(config.networks.is_empty());
+    assert!(config.effective_network_id().is_empty());
+    assert!(config.enabled_network_meshes().is_empty());
+    assert!(config.participant_pubkeys_hex().is_empty());
+}
+
+#[test]
 fn default_routes_promote_to_exit_node_toggle() {
     let mut config = AppConfig::generated();
     config.node.advertised_routes = vec![

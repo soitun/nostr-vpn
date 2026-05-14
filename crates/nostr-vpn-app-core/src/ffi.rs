@@ -41,7 +41,6 @@ use crate::state::{
 
 const NVPN_BIN_ENV: &str = "NVPN_CLI_PATH";
 const SERVICE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
-const FIRST_RUN_NETWORK_NAME: &str = "Private network";
 
 #[derive(uniffi::Object, Debug)]
 pub struct FfiApp {
@@ -257,7 +256,7 @@ impl NativeAppRuntime {
         let mut config = if config_exists {
             AppConfig::load(&config_path)?
         } else {
-            AppConfig::generated()
+            AppConfig::generated_without_networks()
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
@@ -306,9 +305,9 @@ impl NativeAppRuntime {
     fn from_startup_error(error: &anyhow::Error) -> Self {
         let error = error.to_string();
         #[cfg(not(test))]
-        let config = AppConfig::generated();
+        let config = AppConfig::generated_without_networks();
         #[cfg(test)]
-        let mut config = AppConfig::generated();
+        let mut config = AppConfig::generated_without_networks();
         #[cfg(test)]
         {
             config.node.endpoint = "198.51.100.10:51820".to_string();
@@ -348,7 +347,7 @@ impl NativeAppRuntime {
         let capabilities = current_runtime_capabilities();
         let config_unavailable = self.startup_error.is_some();
         let own_pubkey_hex = self.config.own_nostr_pubkey_hex().unwrap_or_default();
-        let active_network = self.config.active_network();
+        let active_network = self.config.active_network_opt();
         let network_setup_required =
             !config_unavailable && network_setup_required_for_config(&self.config);
         let daemon_state = self.daemon_state.as_ref();
@@ -364,7 +363,11 @@ impl NativeAppRuntime {
             0
         } else {
             daemon_state.map_or_else(
-                || remote_network_participant_count(active_network, &own_pubkey_hex),
+                || {
+                    active_network
+                        .map(|network| remote_network_participant_count(network, &own_pubkey_hex))
+                        .unwrap_or(0)
+                },
                 |state| state.expected_peer_count,
             )
         };
@@ -391,7 +394,11 @@ impl NativeAppRuntime {
         let exit_node_status = if network_setup_required {
             ExitNodeUiStatus::default()
         } else {
-            self.exit_node_ui_status(vpn_enabled, vpn_active, daemon_state, active_network)
+            active_network
+                .map(|network| {
+                    self.exit_node_ui_status(vpn_enabled, vpn_active, daemon_state, network)
+                })
+                .unwrap_or_default()
         };
 
         NativeAppState {
@@ -583,7 +590,7 @@ impl NativeAppRuntime {
             health,
             network,
             port_mapping,
-            networks: if config_unavailable || network_setup_required {
+            networks: if config_unavailable {
                 Vec::new()
             } else {
                 self.network_states(&own_pubkey_hex, vpn_active)
@@ -680,11 +687,7 @@ impl NativeAppRuntime {
                 self.refresh_service_status()
             }
             NativeAppAction::AddNetwork { name } => {
-                if network_setup_required_for_config(&self.config) {
-                    self.claim_starter_network(&name)?;
-                } else {
-                    self.config.add_network(&name);
-                }
+                self.config.add_network(&name);
                 self.save_reload_and_refresh()
             }
             NativeAppAction::RenameNetwork { network_id, name } => {
@@ -783,7 +786,12 @@ impl NativeAppRuntime {
     fn import_network_invite(&mut self, invite: &str) -> Result<()> {
         let parsed = parse_network_invite(invite)?;
         apply_network_invite_to_active_network(&mut self.config, &parsed)?;
-        let network_id = self.config.active_network().id.clone();
+        let network_id = self
+            .config
+            .active_network_opt()
+            .ok_or_else(|| anyhow!("network not found"))?
+            .id
+            .clone();
         self.queue_network_join_request(&network_id)?;
         self.save_reload_and_refresh()
     }
@@ -935,11 +943,7 @@ impl NativeAppRuntime {
 
     fn build_lan_pairing_announcement(&self) -> Result<LanPairingAnnouncement> {
         let own_npub = to_npub(&self.config.own_nostr_pubkey_hex()?);
-        let invite = if network_setup_required_for_config(&self.config) {
-            String::new()
-        } else {
-            active_network_invite_code(&self.config).unwrap_or_default()
-        };
+        let invite = active_network_invite_code(&self.config).unwrap_or_default();
         let endpoint = self
             .daemon_state
             .as_ref()
@@ -1375,7 +1379,7 @@ impl NativeAppRuntime {
         let mut config = if config_exists {
             AppConfig::load(&self.config_path)?
         } else {
-            AppConfig::generated()
+            AppConfig::generated_without_networks()
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
@@ -1396,17 +1400,6 @@ impl NativeAppRuntime {
             .iter()
             .map(|network| self.network_state(network, own_pubkey_hex, vpn_active))
             .collect()
-    }
-
-    fn claim_starter_network(&mut self, name: &str) -> Result<()> {
-        self.config.ensure_defaults();
-        let name = starter_network_name(name);
-        {
-            let network = self.config.active_network_mut();
-            network.name = name;
-            network.enabled = true;
-        }
-        self.config.note_active_network_roster_local_change()
     }
 
     fn exit_node_ui_status(
@@ -1925,26 +1918,7 @@ fn remote_network_participant_count(network: &NetworkConfig, own_pubkey_hex: &st
 }
 
 fn network_setup_required_for_config(config: &AppConfig) -> bool {
-    config
-        .networks
-        .first()
-        .is_some_and(unclaimed_starter_network)
-        && config.networks.len() == 1
-}
-
-fn unclaimed_starter_network(network: &NetworkConfig) -> bool {
-    let name = network.name.trim();
-    network.participants.is_empty()
-        && network.invite_inviter.trim().is_empty()
-        && network.outbound_join_request.is_none()
-        && network.inbound_join_requests.is_empty()
-        && network.shared_roster_updated_at == 0
-        && network.shared_roster_signed_by.trim().is_empty()
-        && (name.is_empty() || name.starts_with("Network "))
-}
-
-fn starter_network_name(name: &str) -> String {
-    non_empty(name).unwrap_or_else(|| FIRST_RUN_NETWORK_NAME.to_string())
+    config.active_network_opt().is_none()
 }
 
 fn native_health_issues(issues: &[HealthIssue]) -> Vec<NativeHealthIssue> {
@@ -2300,6 +2274,10 @@ mod tests {
     use super::*;
     use nostr_sdk::prelude::{Keys, ToBech32};
 
+    fn create_test_network(runtime: &mut NativeAppRuntime, name: &str) -> String {
+        runtime.config.add_network(name)
+    }
+
     #[test]
     fn advertised_routes_are_normalized_and_deduplicated() {
         assert_eq!(
@@ -2372,7 +2350,7 @@ mod tests {
         let config_path = dir.join("config.toml");
         let config = AppConfig {
             node_name: "real-config".to_string(),
-            ..AppConfig::default()
+            ..AppConfig::generated_without_networks()
         };
         config.save(&config_path).expect("save config");
 
@@ -2393,12 +2371,12 @@ mod tests {
     }
 
     #[test]
-    fn starter_network_is_hidden_until_created() {
+    fn fresh_config_has_no_network_until_created() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-starter-create-{nonce}"));
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-create-network-{nonce}"));
         fs::create_dir_all(&dir).expect("create test dir");
 
         let error = anyhow!("boom");
@@ -2408,6 +2386,7 @@ mod tests {
         runtime.config_path = dir.join("config.toml");
 
         let state = runtime.state();
+        assert!(runtime.config.networks.is_empty());
         assert!(state.networks.is_empty());
         assert!(state.network_id.is_empty());
         assert!(state.active_network_invite.is_empty());
@@ -2453,6 +2432,7 @@ mod tests {
             .own_nostr_pubkey_hex()
             .expect("generated config should have own pubkey");
         let peer_pubkey = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
+        create_test_network(&mut runtime, "Home");
         runtime.config.networks[0].admins = vec![own_pubkey.clone()];
         runtime.config.networks[0].participants = vec![peer_pubkey.to_string()];
 
@@ -2486,6 +2466,7 @@ mod tests {
         runtime.vpn_active = true;
         runtime.config.exit_node = exit_pubkey.to_string();
         runtime.config.exit_node_leak_protection = true;
+        create_test_network(&mut runtime, "Home");
         runtime.config.networks[0].admins = vec![own_pubkey];
         runtime.config.networks[0].participants = vec![exit_pubkey.to_string()];
         runtime
@@ -2532,6 +2513,7 @@ mod tests {
         runtime.vpn_active = true;
         runtime.config.exit_node = exit_pubkey.to_string();
         runtime.config.exit_node_leak_protection = true;
+        create_test_network(&mut runtime, "Home");
         runtime.config.networks[0].admins = vec![own_pubkey];
         runtime.config.networks[0].participants = vec![exit_pubkey.to_string()];
         runtime
@@ -2610,9 +2592,7 @@ mod tests {
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
-        runtime
-            .claim_starter_network("Home")
-            .expect("create network");
+        create_test_network(&mut runtime, "Home");
 
         runtime.dispatch(NativeAppAction::StartInviteBroadcast);
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
@@ -2663,6 +2643,7 @@ mod tests {
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
         runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Home");
         let network_id = runtime.config.networks[0].id.clone();
         runtime.config.networks[0]
             .inbound_join_requests
@@ -2708,6 +2689,7 @@ mod tests {
             .own_nostr_pubkey_hex()
             .expect("generated config should have own pubkey");
         let peer_pubkey = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
+        create_test_network(&mut runtime, "Home");
         runtime.config.networks[0].admins = vec![own_pubkey.clone()];
         runtime.config.networks[0].participants = vec![peer_pubkey.to_string()];
         runtime.daemon_running = true;
@@ -2754,9 +2736,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("nvpn-app-core-mobile-connect-{nonce}"));
         fs::create_dir_all(&dir).expect("create test dir");
         runtime.config_path = dir.join("config.toml");
-        runtime
-            .claim_starter_network("Home")
-            .expect("create network");
+        create_test_network(&mut runtime, "Home");
         runtime
             .config
             .save(&runtime.config_path)
@@ -2854,7 +2834,7 @@ mod tests {
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
         runtime.config_path = dir.join("config.toml");
-        runtime.config.ensure_defaults();
+        create_test_network(&mut runtime, "Home");
         // Add the peer as a participant in the active network so the
         // ensure_defaults pass at save time doesn't clear our chosen
         // exit_node as "not a participant".
@@ -3023,9 +3003,7 @@ exit 0
         runtime.startup_error = None;
         runtime.last_error.clear();
         runtime.config_path = dir.join("config.toml");
-        runtime
-            .claim_starter_network("Home")
-            .expect("create network");
+        create_test_network(&mut runtime, "Home");
         runtime
             .config
             .save(&runtime.config_path)
@@ -3093,9 +3071,7 @@ exit 0
         runtime.startup_error = None;
         runtime.last_error.clear();
         runtime.config_path = dir.join("config.toml");
-        runtime
-            .claim_starter_network("Home")
-            .expect("create network");
+        create_test_network(&mut runtime, "Home");
         runtime
             .config
             .save(&runtime.config_path)

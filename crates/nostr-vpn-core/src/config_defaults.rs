@@ -146,7 +146,8 @@ pub fn maybe_autoconfigure_node(config: &mut crate::config::AppConfig) {
     }
 
     let network_id = config.effective_network_id();
-    if needs_tunnel_ip_autoconfig(&config.node.tunnel_ip)
+    if !network_id.is_empty()
+        && needs_tunnel_ip_autoconfig(&config.node.tunnel_ip)
         && let Ok(own_pubkey) = config.own_nostr_pubkey_hex()
         && let Some(tunnel_ip) = derive_mesh_tunnel_ip(&network_id, &own_pubkey)
     {

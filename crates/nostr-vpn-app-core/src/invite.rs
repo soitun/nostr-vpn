@@ -7,7 +7,9 @@ pub(crate) use nostr_vpn_core::invite::{
 };
 
 pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
-    let active_network = config.active_network();
+    let active_network = config
+        .active_network_opt()
+        .ok_or_else(|| anyhow!("create or join a network first"))?;
     let roster = config.shared_network_roster(&active_network.id)?;
     if roster.admins.is_empty() {
         return Err(anyhow!("active network has no admin configured"));
@@ -105,8 +107,10 @@ fn target_network_for_invite(
     }) {
         return (existing.id.clone(), false);
     }
-    if network_should_adopt_invite(config.active_network()) {
-        return (config.active_network().id.clone(), true);
+    if let Some(active_network) = config.active_network_opt()
+        && network_should_adopt_invite(active_network)
+    {
+        return (active_network.id.clone(), true);
     }
     (config.add_network(&invite.network_name), true)
 }

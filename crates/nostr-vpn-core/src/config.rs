@@ -691,6 +691,12 @@ impl AppConfig {
         Self::default()
     }
 
+    pub fn generated_without_networks() -> Self {
+        let mut config = Self::default();
+        config.networks.clear();
+        config
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
             .with_context(|| format!("failed to read config {}", path.display()))?;
@@ -773,23 +779,6 @@ impl AppConfig {
             && self.exit_node == own_pubkey
         {
             self.exit_node.clear();
-        }
-
-        if self.networks.is_empty() {
-            self.networks.push(NetworkConfig {
-                id: default_network_entry_id(1),
-                name: default_network_name(1),
-                enabled: true,
-                network_id: default_network_id(),
-                participants: Vec::new(),
-                admins: Vec::new(),
-                listen_for_join_requests: default_listen_for_join_requests(),
-                invite_inviter: String::new(),
-                outbound_join_request: None,
-                inbound_join_requests: Vec::new(),
-                shared_roster_updated_at: 0,
-                shared_roster_signed_by: String::new(),
-            });
         }
 
         let mut used_ids = HashSet::new();
@@ -891,11 +880,15 @@ impl AppConfig {
     }
 
     pub fn effective_network_id(&self) -> String {
-        normalize_runtime_network_id(&self.active_network().network_id)
+        self.active_network_opt()
+            .map(|network| normalize_runtime_network_id(&network.network_id))
+            .unwrap_or_default()
     }
 
     pub fn enabled_network_meshes(&self) -> Vec<EnabledNetworkMesh> {
-        let network = self.active_network();
+        let Some(network) = self.active_network_opt() else {
+            return Vec::new();
+        };
         let mut participants = network.participants.clone();
         participants.sort();
         participants.dedup();
@@ -909,7 +902,10 @@ impl AppConfig {
     }
 
     pub fn participant_pubkeys_hex(&self) -> Vec<String> {
-        let mut participants = self.active_network().participants.clone();
+        let Some(network) = self.active_network_opt() else {
+            return Vec::new();
+        };
+        let mut participants = network.participants.clone();
         participants.sort();
         participants.dedup();
         participants
@@ -951,21 +947,31 @@ impl AppConfig {
     }
 
     pub fn active_network(&self) -> &NetworkConfig {
+        self.active_network_opt()
+            .expect("config has no active network")
+    }
+
+    pub fn active_network_opt(&self) -> Option<&NetworkConfig> {
         let index = self
             .networks
             .iter()
             .position(|network| network.enabled)
             .unwrap_or(0);
-        &self.networks[index]
+        self.networks.get(index)
     }
 
     pub fn active_network_mut(&mut self) -> &mut NetworkConfig {
+        self.active_network_mut_opt()
+            .expect("config has no active network")
+    }
+
+    pub fn active_network_mut_opt(&mut self) -> Option<&mut NetworkConfig> {
         let index = self
             .networks
             .iter()
             .position(|network| network.enabled)
             .unwrap_or(0);
-        &mut self.networks[index]
+        self.networks.get_mut(index)
     }
 
     pub fn network_by_id(&self, network_id: &str) -> Option<&NetworkConfig> {
@@ -994,10 +1000,11 @@ impl AppConfig {
             name.trim().to_string()
         };
 
+        let enabled = self.networks.is_empty();
         self.networks.push(NetworkConfig {
             id: id.clone(),
             name,
-            enabled: false,
+            enabled,
             network_id: default_network_id(),
             participants: Vec::new(),
             admins: Vec::new(),
@@ -1169,7 +1176,11 @@ impl AppConfig {
     }
 
     pub fn set_active_network_id(&mut self, network_id: &str) -> Result<()> {
-        let active_network_entry_id = self.active_network().id.clone();
+        let active_network_entry_id = self
+            .active_network_opt()
+            .ok_or_else(|| anyhow::anyhow!("network not found"))?
+            .id
+            .clone();
         self.set_network_mesh_id(&active_network_entry_id, network_id)
     }
 
@@ -1305,15 +1316,21 @@ impl AppConfig {
     }
 
     pub fn active_network_admin_pubkeys_hex(&self) -> Vec<String> {
-        let mut admins = self.active_network().admins.clone();
+        let Some(network) = self.active_network_opt() else {
+            return Vec::new();
+        };
+        let mut admins = network.admins.clone();
         admins.sort();
         admins.dedup();
         admins
     }
 
     pub fn active_network_signal_pubkeys_hex(&self) -> Vec<String> {
-        let mut members = self.active_network().participants.clone();
-        members.extend(self.active_network().admins.iter().cloned());
+        let Some(network) = self.active_network_opt() else {
+            return Vec::new();
+        };
+        let mut members = network.participants.clone();
+        members.extend(network.admins.iter().cloned());
         members.sort();
         members.dedup();
         members
@@ -1812,7 +1829,11 @@ impl AppConfig {
     }
 
     pub fn note_active_network_roster_local_change(&mut self) -> Result<()> {
-        let network_id = self.active_network().id.clone();
+        let network_id = self
+            .active_network_opt()
+            .ok_or_else(|| anyhow::anyhow!("network not found"))?
+            .id
+            .clone();
         self.note_network_roster_local_change(&network_id)
     }
 

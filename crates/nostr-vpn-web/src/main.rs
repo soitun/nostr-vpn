@@ -367,10 +367,11 @@ async fn import_network_invite(
     update_config_and_reload(&state, |config| {
         let invite = parse_network_invite(&request.invite)?;
         apply_network_invite_to_active_network(config, &invite)?;
-        Ok(format!(
-            "Invite imported for {}.",
-            config.active_network().name
-        ))
+        let network_name = config
+            .active_network_opt()
+            .map(|network| network.name.clone())
+            .unwrap_or_else(|| "network".to_string());
+        Ok(format!("Invite imported for {network_name}."))
     })
 }
 

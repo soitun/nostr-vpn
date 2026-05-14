@@ -50,8 +50,14 @@ pub(crate) fn apply_network_invite_to_active_network(
             normalize_runtime_network_id(&network.network_id) == normalized_invite_network_id
         }) {
         (existing.id.clone(), false)
-    } else if network_should_adopt_invite(config.active_network()) {
-        (config.active_network().id.clone(), true)
+    } else if let Some(active_network) = config.active_network_opt() {
+        if network_should_adopt_invite(active_network) {
+            (active_network.id.clone(), true)
+        } else {
+            let network_id = config.add_network(&invite.network_name);
+            config.set_network_enabled(&network_id, true)?;
+            (network_id, true)
+        }
     } else {
         let network_id = config.add_network(&invite.network_name);
         config.set_network_enabled(&network_id, true)?;
@@ -144,7 +150,10 @@ pub(crate) fn apply_network_invite_to_active_network(
 }
 
 pub(crate) fn queue_active_network_join_request(config: &mut AppConfig) -> Result<bool> {
-    let network = config.active_network().clone();
+    let network = config
+        .active_network_opt()
+        .ok_or_else(|| anyhow!("create or join a network first"))?
+        .clone();
     if network_contains_own_identity(config, &network) {
         return Ok(false);
     }
@@ -232,7 +241,9 @@ pub(crate) enum RosterEditAction {
 }
 
 pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
-    let active_network = config.active_network();
+    let active_network = config
+        .active_network_opt()
+        .ok_or_else(|| anyhow!("create or join a network first"))?;
     let roster = config.shared_network_roster(&active_network.id)?;
     if roster.admins.is_empty() {
         return Err(anyhow!("active network has no admin configured"));
@@ -263,7 +274,11 @@ pub(crate) async fn update_active_network_roster(
     if let Some(network_id) = args.network_id {
         app.set_active_network_id(&network_id)?;
     }
-    let active_network_id = app.active_network().id.clone();
+    let active_network_id = app
+        .active_network_opt()
+        .ok_or_else(|| anyhow!("create or join a network first"))?
+        .id
+        .clone();
 
     let mut changed = Vec::new();
     for participant in &args.participants {
@@ -296,12 +311,15 @@ pub(crate) async fn update_active_network_roster(
     let published = 0usize;
 
     if args.json {
+        let active_network = app
+            .active_network_opt()
+            .ok_or_else(|| anyhow!("create or join a network first"))?;
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "network_id": app.effective_network_id(),
-                "participants": app.active_network().participants,
-                "admins": app.active_network().admins,
+                "participants": active_network.participants,
+                "admins": active_network.admins,
                 "changed": changed,
                 "published_recipients": published,
                 "published": args.publish,

@@ -27,7 +27,9 @@ pub(crate) struct NetworkInvite {
 }
 
 pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
-    let active_network = config.active_network();
+    let active_network = config
+        .active_network_opt()
+        .ok_or_else(|| anyhow!("create or join a network first"))?;
     let roster = config.shared_network_roster(&active_network.id)?;
     if roster.admins.is_empty() {
         return Err(anyhow!("active network has no admin configured"));
@@ -144,8 +146,14 @@ pub(crate) fn apply_network_invite_to_active_network(
             normalize_runtime_network_id(&network.network_id) == normalized_invite_network_id
         }) {
         (existing.id.clone(), false)
-    } else if network_should_adopt_invite(config.active_network()) {
-        (config.active_network().id.clone(), true)
+    } else if let Some(active_network) = config.active_network_opt() {
+        if network_should_adopt_invite(active_network) {
+            (active_network.id.clone(), true)
+        } else {
+            let network_id = config.add_network(&invite.network_name);
+            config.set_network_enabled(&network_id, true)?;
+            (network_id, true)
+        }
     } else {
         let network_id = config.add_network(&invite.network_name);
         config.set_network_enabled(&network_id, true)?;

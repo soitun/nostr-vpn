@@ -74,7 +74,7 @@ impl MobileTunnelConfig {
         let mut app = if config_path.exists() {
             AppConfig::load(&config_path)?
         } else {
-            let generated = AppConfig::generated();
+            let generated = AppConfig::generated_without_networks();
             generated.save(&config_path)?;
             generated
         };
