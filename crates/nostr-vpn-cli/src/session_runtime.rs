@@ -116,6 +116,23 @@ fn prefer_nonself_tunnel_snapshot(
     }
 }
 
+async fn capture_network_snapshot_for_daemon() -> crate::diagnostics::NetworkSnapshot {
+    match tokio::task::spawn_blocking(capture_network_snapshot).await {
+        Ok(snapshot) => snapshot,
+        Err(error) => {
+            eprintln!("daemon: network snapshot task failed: {error}");
+            crate::diagnostics::NetworkSnapshot::default()
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+async fn ensure_macos_underlay_default_route_for_daemon() -> Result<bool> {
+    tokio::task::spawn_blocking(crate::macos_network::ensure_macos_underlay_default_route)
+        .await
+        .context("macOS underlay route check task failed")?
+}
+
 pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     if args.iface.trim().is_empty() {
         return Err(anyhow!("--iface must not be empty"));
@@ -491,7 +508,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 }
                 #[cfg(target_os = "macos")]
                 let underlay_repaired =
-                    match crate::macos_network::ensure_macos_underlay_default_route() {
+                    match ensure_macos_underlay_default_route_for_daemon().await {
                         Ok(true) => {
                             eprintln!("daemon: restored missing macOS underlay default route");
                             true
@@ -509,7 +526,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 let latest_snapshot = prefer_nonself_tunnel_snapshot(
                     &tunnel_runtime,
                     &network_snapshot,
-                    capture_network_snapshot(),
+                    capture_network_snapshot_for_daemon().await,
                 );
                 let runtime_listen_port =
                     tunnel_runtime.active_listen_port.unwrap_or(app.node.listen_port);

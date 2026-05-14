@@ -782,6 +782,27 @@ Change:
   Alice and Bob's direct UDP path is blocked and packets must pass both
   directions through Charlie.
 
+## 2026-05-14: macOS lag without link loss traced to daemon bookkeeping
+
+Observation:
+- MacBook-to-mini screen sharing briefly lagged again while both nvpn daemons
+  stayed running and reported fresh direct UDP links. Short pings over nvpn had
+  no loss but showed bursts up to roughly 100-400 ms, while the same LAN
+  underlay stayed around 5-13 ms.
+
+Finding:
+- `sample(1)` on both daemons showed active time in the daemon async loop
+  writing runtime JSON state with `sync_all`/`fcntl`/`rename` and running macOS
+  route/snapshot probes through `netstat`/`ipconfig`. This points at event-loop
+  stalls and queueing, not FIPS crypto, MTU, or a broken direct link.
+
+Change:
+- Runtime status/control files now remain atomic but skip per-update fsync; the
+  durable user config writer still fsyncs separately.
+- Periodic macOS underlay route repair and network snapshot probes now run on
+  Tokio's blocking pool so shell command latency does not occupy a runtime
+  worker that is also servicing tunnel work.
+
 ## Bench commands
 
 Use both directions and record both TCP and UDP:

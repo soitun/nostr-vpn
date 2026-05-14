@@ -904,11 +904,9 @@ pub(crate) fn write_runtime_file_atomically(path: &Path, contents: &[u8]) -> Res
         return Err(error)
             .with_context(|| format!("failed to write temp runtime file {}", temp_path.display()));
     }
-    if let Err(error) = file.sync_all() {
-        let _ = fs::remove_file(&temp_path);
-        return Err(error)
-            .with_context(|| format!("failed to sync temp runtime file {}", temp_path.display()));
-    }
+    // These files are runtime status/control files. Keeping the replace atomic
+    // matters for readers, but forcing every status update to durable storage
+    // adds visible latency on macOS and is not needed for crash recovery.
     drop(file);
     fs::rename(&temp_path, path).with_context(|| {
         format!(
