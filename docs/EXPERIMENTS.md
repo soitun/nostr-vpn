@@ -803,6 +803,34 @@ Change:
   Tokio's blocking pool so shell command latency does not occupy a runtime
   worker that is also servicing tunnel work.
 
+## 2026-05-14: macOS sender batching after bookkeeping fix
+
+Observation:
+- With the daemon-loop stalls removed, the MacBook Wi-Fi sender still lagged
+  Tailscale and one instrumented run collapsed to about 37 Mbit/s with 1194 TCP
+  retransmits. Tailscale in the same window was about 272/348 Mbit/s.
+
+Finding:
+- FIPS perf counters showed AEAD work was small. The sender instead showed
+  multi-millisecond outbound worker queue waits and occasional hundred-ms UDP
+  send outliers; the receiver path was clean. This points at bursty Darwin UDP
+  sending and kernel/radio pacing, not crypto or MTU.
+- MTU was not the reason: nvpn utun was 1290 and Tailscale utun was 1280.
+- Connected UDP still matters: disabling it with the same batch setting dropped
+  MacBook-to-mini to about 149 Mbit/s. Ordered-sender mode stayed around
+  218 Mbit/s with more retransmits, so it remains opt-in.
+
+Result:
+- Runtime small-batch tests with connected UDP enabled recovered the collapse
+  mode. Final no-perf 20 second forward sweeps were close: batch 8 about
+  215 Mbit/s, batch 32 about 214 Mbit/s, and batch 2 about 210 Mbit/s. A prior
+  batch 2 run reached about 205 Mbit/s with 1 retransmit and about 356 Mbit/s
+  mini-to-MacBook.
+- FIPS core now defaults macOS direct-worker batches to 8 instead of 32. This
+  shortens Darwin send bursts without forcing one worker wake per datagram.
+  Forward is still below the best same-window Tailscale result, but the severe
+  collapse mode is reduced and reverse remains at Tailscale level.
+
 ## Bench commands
 
 Use both directions and record both TCP and UDP:
