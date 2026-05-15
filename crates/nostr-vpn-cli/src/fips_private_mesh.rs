@@ -368,11 +368,7 @@ impl FipsPrivateMeshRuntime {
     ) -> Result<Self> {
         let scope = format!("nostr-vpn:{}", network_id.as_ref().trim());
         let endpoint_peers = fips_endpoint_peers_from_mesh(&peers, Vec::new());
-        let config = fips_endpoint_config(
-            &endpoint_peers,
-            None,
-            private_mesh_mtu_from_app(None),
-        );
+        let config = fips_endpoint_config(&endpoint_peers, None, private_mesh_mtu_from_app(None));
         Self::bind_with_config(identity_nsec, scope, peers, config, Vec::new()).await
     }
 
@@ -681,6 +677,23 @@ impl FipsPrivateMeshRuntime {
             .read()
             .map(|mesh| mesh.peer_pubkeys())
             .unwrap_or_default()
+    }
+
+    /// Snapshot `(participant_pubkey, transport_addr)` pairs for peers that
+    /// currently have an authenticated link. Used by the daemon heartbeat
+    /// to update the on-disk recent-peers cache.
+    pub(crate) fn authenticated_peer_transport_addrs(&self) -> Vec<(String, String)> {
+        let Ok(link_status) = self.link_status.read() else {
+            return Vec::new();
+        };
+        link_status
+            .iter()
+            .filter_map(|(participant, peer)| {
+                peer.transport_addr
+                    .as_ref()
+                    .map(|addr| (participant.clone(), addr.clone()))
+            })
+            .collect()
     }
 
     #[cfg(target_os = "linux")]
@@ -1130,6 +1143,16 @@ impl FipsPrivateTunnelConfig {
         iface: impl Into<String>,
         own_pubkey: Option<&str>,
     ) -> Result<Self> {
+        Self::from_app_with_extra_static_endpoints(app, network_id, iface, own_pubkey, &[])
+    }
+
+    pub(crate) fn from_app_with_extra_static_endpoints(
+        app: &AppConfig,
+        network_id: &str,
+        iface: impl Into<String>,
+        own_pubkey: Option<&str>,
+        extra_static_peer_endpoints: &[(String, Vec<String>)],
+    ) -> Result<Self> {
         let mut peers = Vec::new();
         let mut route_targets = Vec::new();
         let participants = app.participant_pubkeys_hex();
@@ -1174,8 +1197,17 @@ impl FipsPrivateTunnelConfig {
         }
         peers.sort_by(|left, right| left.participant_pubkey.cmp(&right.participant_pubkey));
         peers.dedup_by(|left, right| left.participant_pubkey == right.participant_pubkey);
-        let endpoint_peers =
-            fips_endpoint_peers_from_mesh(&peers, app.fips_static_peer_endpoints());
+        let mut combined_static = app.fips_static_peer_endpoints();
+        // Recently-successful endpoints from disk are merged alongside the
+        // operator-configured `fips_peer_endpoints` list. FIPS dedupes
+        // addresses per-peer inside `fips_endpoint_peers_from_mesh`, so
+        // overlap with manual entries is harmless. The retry path
+        // (`initiate_peer_retry_connection`) prefers fresh Nostr adverts
+        // over either source when a relay is reachable, so stale recent
+        // entries can't wedge a peer the way the historical
+        // daemon.fips-cache.json did.
+        combined_static.extend(extra_static_peer_endpoints.iter().cloned());
+        let endpoint_peers = fips_endpoint_peers_from_mesh(&peers, combined_static);
         route_targets.sort();
         route_targets.dedup();
 
@@ -1283,11 +1315,8 @@ impl FipsPrivateTunnelRuntime {
             nostr_relays: config.nostr_relays.clone(),
             share_local_candidates: config.share_local_candidates,
         };
-        let endpoint_config = fips_endpoint_config(
-            &config.endpoint_peers,
-            Some(&transport),
-            config.mesh_mtu,
-        );
+        let endpoint_config =
+            fips_endpoint_config(&config.endpoint_peers, Some(&transport), config.mesh_mtu);
         let local_allowed_ips = config.local_allowed_ips();
         let mesh = Arc::new(
             FipsPrivateMeshRuntime::bind_with_config(
@@ -1376,6 +1405,10 @@ impl FipsPrivateTunnelRuntime {
 
     pub(crate) fn peer_pubkeys(&self) -> Vec<String> {
         self.mesh.peer_pubkeys()
+    }
+
+    pub(crate) fn authenticated_peer_transport_addrs(&self) -> Vec<(String, String)> {
+        self.mesh.authenticated_peer_transport_addrs()
     }
 
     pub(crate) fn requires_endpoint_restart(&self, config: &FipsPrivateTunnelConfig) -> bool {
@@ -2379,11 +2412,8 @@ impl FipsPrivateTunnelRuntime {
             nostr_relays: config.nostr_relays.clone(),
             share_local_candidates: config.share_local_candidates,
         };
-        let endpoint_config = fips_endpoint_config(
-            &config.endpoint_peers,
-            Some(&transport),
-            config.mesh_mtu,
-        );
+        let endpoint_config =
+            fips_endpoint_config(&config.endpoint_peers, Some(&transport), config.mesh_mtu);
         let mesh = Arc::new(
             FipsPrivateMeshRuntime::bind_with_config(
                 config.identity_nsec.clone(),
@@ -2468,6 +2498,10 @@ impl FipsPrivateTunnelRuntime {
 
     pub(crate) fn peer_pubkeys(&self) -> Vec<String> {
         self.mesh.peer_pubkeys()
+    }
+
+    pub(crate) fn authenticated_peer_transport_addrs(&self) -> Vec<(String, String)> {
+        self.mesh.authenticated_peer_transport_addrs()
     }
 
     pub(crate) fn requires_endpoint_restart(&self, config: &FipsPrivateTunnelConfig) -> bool {
@@ -2812,6 +2846,10 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) fn peer_pubkeys(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    pub(crate) fn authenticated_peer_transport_addrs(&self) -> Vec<(String, String)> {
         Vec::new()
     }
 
@@ -3507,10 +3545,8 @@ mod tests {
             vec!["10.44.1.2/32".to_string()],
         )
         .expect("roster peer config");
-        let endpoint_peers = fips_endpoint_peers_from_mesh(
-            std::slice::from_ref(&mesh_peer),
-            Vec::new(),
-        );
+        let endpoint_peers =
+            fips_endpoint_peers_from_mesh(std::slice::from_ref(&mesh_peer), Vec::new());
         let config = fips_endpoint_config(
             &endpoint_peers,
             None,

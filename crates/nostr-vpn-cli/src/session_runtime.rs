@@ -91,6 +91,37 @@ async fn flush_pending_fips_roster_recipients(
     }
 }
 
+/// Snapshot the runtime's authenticated peer transport addresses and update
+/// the on-disk recent peers cache. Public (non-LAN) endpoints get rotated in;
+/// the FIPS layer filters out LAN addresses before they reach disk.
+#[cfg(feature = "embedded-fips")]
+fn update_recent_peers_from_runtime(
+    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+    recent_peers: &mut nostr_vpn_core::recent_peers::RecentPeerEndpoints,
+    recent_peers_path: &std::path::Path,
+    now: u64,
+) {
+    let snapshot = runtime.authenticated_peer_transport_addrs();
+    let mut changed = false;
+    for (participant, addr) in snapshot {
+        if recent_peers.note_success(&participant, &addr, now) {
+            changed = true;
+        }
+    }
+    if recent_peers.prune_stale(now, crate::recent_peers_store::RECENT_PEERS_TTL_SECS) {
+        changed = true;
+    }
+    if changed
+        && let Err(error) =
+            crate::recent_peers_store::write_recent_peers(recent_peers_path, recent_peers)
+    {
+        eprintln!(
+            "daemon: failed to write recent peers cache {}: {error}",
+            recent_peers_path.display()
+        );
+    }
+}
+
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn reset_tunnel_runtime_after_macos_underlay_repair(
     tunnel_runtime: &mut CliTunnelRuntime,
@@ -318,6 +349,20 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     crate::fips_private_mesh::purge_legacy_fips_endpoint_cache(&config_path);
     let _ = fs::remove_file(daemon_control_file_path(&config_path));
     #[cfg(feature = "embedded-fips")]
+    let recent_peers_path = crate::recent_peers_store::recent_peers_file_path(&config_path);
+    #[cfg(feature = "embedded-fips")]
+    let mut recent_peers =
+        match crate::recent_peers_store::load_recent_peers(&recent_peers_path, unix_timestamp()) {
+            Ok(state) => state,
+            Err(error) => {
+                eprintln!(
+                    "daemon: failed to load recent peers cache {}: {error}",
+                    recent_peers_path.display()
+                );
+                nostr_vpn_core::recent_peers::RecentPeerEndpoints::default()
+            }
+        };
+    #[cfg(feature = "embedded-fips")]
     let mut fips_join_request_sends: HashMap<String, u64> = HashMap::new();
     #[cfg(feature = "embedded-fips")]
     let mut pending_fips_roster_recipients: HashSet<String> = HashSet::new();
@@ -339,10 +384,20 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     }
     #[cfg(feature = "embedded-fips")]
     let mut fips_tunnel_runtime = if fips_private_runtime_active(&app, true, expected_peers) {
-        let config =
-            fips_tunnel_config_from_app(&app, &network_id, iface.clone(), own_pubkey.as_deref())?;
+        let extra_static = recent_peers.as_static_peer_endpoints();
+        let config = fips_tunnel_config_from_app_with_extra_static(
+            &app,
+            &network_id,
+            iface.clone(),
+            own_pubkey.as_deref(),
+            &extra_static,
+        )?;
         let runtime = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
-        eprintln!("daemon: FIPS private mesh on {}", runtime.iface());
+        eprintln!(
+            "daemon: FIPS private mesh on {} (seeded {} recently-connected peer endpoint(s))",
+            runtime.iface(),
+            extra_static.iter().map(|(_, eps)| eps.len()).sum::<usize>(),
+        );
         Some(runtime)
     } else {
         None
@@ -448,6 +503,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         if let Err(error) = runtime.refresh_link_statuses().await {
                             eprintln!("fips: peer link snapshot failed: {error}");
                         }
+                        update_recent_peers_from_runtime(
+                            runtime,
+                            &mut recent_peers,
+                            &recent_peers_path,
+                            now,
+                        );
                         flush_pending_fips_roster_recipients(
                             runtime,
                             &app,
@@ -477,6 +538,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if let Err(error) = runtime.refresh_link_statuses().await {
                         eprintln!("fips: peer link snapshot failed: {error}");
                     }
+                    update_recent_peers_from_runtime(
+                        runtime,
+                        &mut recent_peers,
+                        &recent_peers_path,
+                        now,
+                    );
                     flush_pending_fips_roster_recipients(
                         runtime,
                         &app,

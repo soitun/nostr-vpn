@@ -14,6 +14,8 @@ mod network_signaling;
 ))]
 mod pipeline_profile;
 mod platform_routing;
+#[cfg(feature = "embedded-fips")]
+mod recent_peers_store;
 mod service_management;
 mod session_runtime;
 mod updater;
@@ -2630,9 +2632,25 @@ fn fips_tunnel_config_from_app(
     iface: impl Into<String>,
     own_pubkey: Option<&str>,
 ) -> Result<crate::fips_private_mesh::FipsPrivateTunnelConfig> {
-    let mut config = crate::fips_private_mesh::FipsPrivateTunnelConfig::from_app(
-        app, network_id, iface, own_pubkey,
-    )?;
+    fips_tunnel_config_from_app_with_extra_static(app, network_id, iface, own_pubkey, &[])
+}
+
+#[cfg(feature = "embedded-fips")]
+fn fips_tunnel_config_from_app_with_extra_static(
+    app: &AppConfig,
+    network_id: &str,
+    iface: impl Into<String>,
+    own_pubkey: Option<&str>,
+    extra_static_peer_endpoints: &[(String, Vec<String>)],
+) -> Result<crate::fips_private_mesh::FipsPrivateTunnelConfig> {
+    let mut config =
+        crate::fips_private_mesh::FipsPrivateTunnelConfig::from_app_with_extra_static_endpoints(
+            app,
+            network_id,
+            iface,
+            own_pubkey,
+            extra_static_peer_endpoints,
+        )?;
     // Daemon no longer pre-discovers a public endpoint. fips-core's
     // build_overlay_advert performs its own STUN observation and advertises
     // <reflexive_ip>:<listen_port> directly; if that's wrong (e.g. symmetric
