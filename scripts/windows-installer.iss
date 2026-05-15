@@ -27,7 +27,11 @@ UninstallDisplayIcon={app}\NostrVpn.Windows.exe
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Nostr VPN"; Filename: "{app}\NostrVpn.Windows.exe"; IconFilename: "{app}\nostr-vpn.ico"
+Name: "{autoprograms}\Nostr VPN"; Filename: "{app}\NostrVpn.Windows.exe"; IconFilename: "{app}\Assets\nostr-vpn.ico"
+Name: "{autodesktop}\Nostr VPN"; Filename: "{app}\NostrVpn.Windows.exe"; IconFilename: "{app}\Assets\nostr-vpn.ico"; Tasks: desktopicon
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Run]
 Filename: "{app}\NostrVpn.Windows.exe"; Description: "Launch Nostr VPN"; Flags: nowait postinstall skipifsilent

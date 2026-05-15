@@ -417,26 +417,26 @@
               <StackPanel>
                 <TextBlock Text="Exit Node" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
                 <Button Click="DirectExit_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,8">
-                  <DockPanel>
+                  <DockPanel LastChildFill="False">
+                    <TextBlock DockPanel.Dock="Right" Text="No exit node — your own internet" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
                     <TextBlock Text="{Binding DirectExitMarker}" Margin="0,0,8,0" />
                     <TextBlock Text="Direct" FontWeight="SemiBold" />
-                    <TextBlock DockPanel.Dock="Right" Text="No exit node — your own internet" Foreground="{StaticResource TextSecondary}" />
                   </DockPanel>
                 </Button>
                 <Button Click="WireguardExit_Click" IsEnabled="{Binding State.WireguardExitConfigured}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,8">
-                  <DockPanel>
+                  <DockPanel LastChildFill="False">
+                    <TextBlock DockPanel.Dock="Right" Text="{Binding WireguardExitSubtitle}" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
                     <TextBlock Text="{Binding WireguardExitMarker}" Margin="0,0,8,0" />
                     <TextBlock Text="WireGuard upstream" FontWeight="SemiBold" />
-                    <TextBlock DockPanel.Dock="Right" Text="{Binding WireguardExitSubtitle}" Foreground="{StaticResource TextSecondary}" />
                   </DockPanel>
                 </Button>
                 <ItemsControl ItemsSource="{Binding ActiveNetwork.Participants}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
                       <Button Tag="{Binding Npub}" Click="SetExitNode_Click" Margin="0,0,0,8" HorizontalContentAlignment="Stretch">
-                        <DockPanel>
+                        <DockPanel LastChildFill="False">
+                          <TextBlock DockPanel.Dock="Right" Text="{Binding StatusText}" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
                           <TextBlock Text="{Binding MagicDnsName}" FontWeight="SemiBold" />
-                          <TextBlock DockPanel.Dock="Right" Text="{Binding StatusText}" Foreground="{StaticResource TextSecondary}" />
                         </DockPanel>
                       </Button>
                     </DataTemplate>
