@@ -159,7 +159,9 @@ struct NativeAppRuntime {
 }
 
 #[derive(Clone)]
-struct PrivilegedCommandRunnerHandle(Arc<dyn PrivilegedCommandRunner>);
+struct PrivilegedCommandRunnerHandle(
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] Arc<dyn PrivilegedCommandRunner>,
+);
 
 impl std::fmt::Debug for PrivilegedCommandRunnerHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
