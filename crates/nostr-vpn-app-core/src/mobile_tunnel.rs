@@ -75,6 +75,8 @@ pub(crate) struct MobileTunnelConfig {
     pub(crate) listen_port: u16,
     pub(crate) mtu: u16,
     pub(crate) peers: Vec<FipsMeshPeerConfig>,
+    #[serde(default)]
+    peer_hints: HashMap<String, Vec<FipsPeerAddressHint>>,
     pub(crate) route_targets: Vec<String>,
     #[serde(default)]
     pub(crate) nostr_relays: Vec<String>,
@@ -233,6 +235,7 @@ impl MobileTunnelConfig {
             listen_port: app.node.listen_port,
             mtu: DEFAULT_MOBILE_MTU,
             peers,
+            peer_hints: mobile_static_peer_hints(app),
             route_targets,
             nostr_relays: app.nostr.relays.clone(),
             stun_servers: app.nat.stun_servers.clone(),
@@ -351,9 +354,7 @@ impl MobileTunnel {
             local_routes,
         )));
         let mesh_peers = Arc::new(RwLock::new(initial_peers));
-        let peer_hints = Arc::new(RwLock::new(
-            HashMap::<String, Vec<FipsPeerAddressHint>>::new(),
-        ));
+        let peer_hints = Arc::new(RwLock::new(config.peer_hints.clone()));
         let (outbound_tx, mut outbound_rx) =
             tokio_mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
         let (inbound_tx, inbound_rx) = mpsc::sync_channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
@@ -682,7 +683,7 @@ impl Drop for MobileTunnel {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct FipsPeerAddressHint {
     addr: String,
     seen_at_ms: Option<u64>,
@@ -743,6 +744,9 @@ async fn handle_mobile_control_frame(
         }
         FipsControlFrame::Capabilities { capabilities, .. } => {
             if update_mobile_peer_hints(peer_hints, &source_pubkey, &capabilities)? {
+                if let Some(config_path) = config_path {
+                    persist_mobile_peer_hints(config_path, &source_pubkey, &capabilities)?;
+                }
                 refresh_mobile_endpoint_peers(endpoint, mesh_peers, peer_hints).await?;
             }
         }
@@ -863,6 +867,30 @@ fn update_mobile_peer_hints(
     Ok(true)
 }
 
+fn persist_mobile_peer_hints(
+    config_path: &Path,
+    source_pubkey: &str,
+    capabilities: &PeerCapabilities,
+) -> Result<()> {
+    let mut endpoints = capabilities
+        .endpoint_hints
+        .iter()
+        .filter_map(peer_endpoint_hint_addr)
+        .collect::<Vec<_>>();
+    endpoints.sort();
+    endpoints.dedup();
+    if endpoints.is_empty() {
+        return Ok(());
+    }
+
+    let mut app = AppConfig::load(config_path)?;
+    app.fips_peer_endpoints
+        .insert(source_pubkey.to_string(), endpoints);
+    app.ensure_defaults();
+    app.save(config_path)?;
+    Ok(())
+}
+
 async fn refresh_mobile_endpoint_peers(
     endpoint: &FipsEndpoint,
     mesh_peers: &Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
@@ -961,27 +989,76 @@ fn fips_peer_configs_from_mesh(
     peers: &[FipsMeshPeerConfig],
     peer_hints: &HashMap<String, Vec<FipsPeerAddressHint>>,
 ) -> Vec<FipsPeerConfig> {
-    peers
-        .iter()
-        .map(|peer| {
-            let addresses = peer_hints
-                .get(&peer.participant_pubkey)
+    let mut configs = Vec::new();
+    let mut included = std::collections::HashSet::new();
+
+    for peer in peers {
+        included.insert(peer.participant_pubkey.clone());
+        configs.push(fips_peer_config_from_hint(
+            &peer.endpoint_npub,
+            peer_hints.get(&peer.participant_pubkey),
+        ));
+    }
+
+    for (participant, hints) in peer_hints {
+        if included.contains(participant) || hints.is_empty() {
+            continue;
+        }
+        if let Ok(peer) = FipsMeshPeerConfig::from_participant_pubkey(participant, Vec::new()) {
+            configs.push(fips_peer_config_from_hint(&peer.endpoint_npub, Some(hints)));
+        }
+    }
+
+    configs.sort_by(|left, right| left.npub.cmp(&right.npub));
+    configs.dedup_by(|left, right| left.npub == right.npub);
+    configs
+}
+
+fn fips_peer_config_from_hint(
+    endpoint_npub: &str,
+    hints: Option<&Vec<FipsPeerAddressHint>>,
+) -> FipsPeerConfig {
+    let addresses = hints
+        .into_iter()
+        .flatten()
+        .map(|hint| {
+            let mut addr = PeerAddress::new("udp", hint.addr.clone());
+            if let Some(seen_at_ms) = hint.seen_at_ms {
+                addr = addr.with_seen_at_ms(seen_at_ms);
+            }
+            addr
+        })
+        .collect();
+    FipsPeerConfig {
+        npub: endpoint_npub.to_string(),
+        alias: None,
+        addresses,
+        connect_policy: ConnectPolicy::AutoConnect,
+        auto_reconnect: true,
+    }
+}
+
+fn mobile_static_peer_hints(app: &AppConfig) -> HashMap<String, Vec<FipsPeerAddressHint>> {
+    app.fips_static_peer_endpoints()
+        .into_iter()
+        .filter_map(|(participant, endpoints)| {
+            let participant = normalize_nostr_pubkey(&participant).ok()?;
+            let mut hints = endpoints
                 .into_iter()
-                .flatten()
-                .map(|hint| {
-                    let mut addr = PeerAddress::new("udp", hint.addr.clone());
-                    if let Some(seen_at_ms) = hint.seen_at_ms {
-                        addr = addr.with_seen_at_ms(seen_at_ms);
-                    }
-                    addr
+                .filter_map(|endpoint| {
+                    let hint = PeerEndpointHint::udp(endpoint.trim().to_string());
+                    peer_endpoint_hint_addr(&hint).map(|addr| FipsPeerAddressHint {
+                        addr,
+                        seen_at_ms: None,
+                    })
                 })
-                .collect();
-            FipsPeerConfig {
-                npub: peer.endpoint_npub.clone(),
-                alias: None,
-                addresses,
-                connect_policy: ConnectPolicy::AutoConnect,
-                auto_reconnect: true,
+                .collect::<Vec<_>>();
+            hints.sort_by(|left, right| left.addr.cmp(&right.addr));
+            hints.dedup_by(|left, right| left.addr == right.addr);
+            if hints.is_empty() {
+                None
+            } else {
+                Some((participant, hints))
             }
         })
         .collect()
@@ -1075,7 +1152,7 @@ fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig 
         public: Some(false),
         ..UdpConfig::default()
     });
-    config.peers = fips_peer_configs_from_mesh(&mobile.peers, &HashMap::new());
+    config.peers = fips_peer_configs_from_mesh(&mobile.peers, &mobile.peer_hints);
     config
 }
 
@@ -1194,6 +1271,7 @@ fn empty_config() -> MobileTunnelConfig {
         listen_port: 0,
         mtu: DEFAULT_MOBILE_MTU,
         peers: Vec::new(),
+        peer_hints: HashMap::new(),
         route_targets: Vec::new(),
         nostr_relays: Vec::new(),
         stun_servers: Vec::new(),
@@ -1255,6 +1333,45 @@ mod tests {
                 .route_targets
                 .iter()
                 .any(|route| route == "0.0.0.0/0")
+        );
+    }
+
+    #[test]
+    fn mobile_config_includes_static_peer_hints_from_app() {
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        let own = app.own_nostr_pubkey_hex().expect("own pubkey");
+        let peer = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
+        app.networks = vec![NetworkConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            enabled: true,
+            network_id: "test".to_string(),
+            participants: vec![peer.to_string()],
+            admins: vec![own],
+            listen_for_join_requests: true,
+            invite_inviter: String::new(),
+            outbound_join_request: None,
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        }];
+        app.fips_peer_endpoints
+            .insert(peer.to_string(), vec!["192.168.50.10:51820".to_string()]);
+        app.ensure_defaults();
+
+        let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
+        let hints = config
+            .peer_hints
+            .get(peer)
+            .expect("static peer hint should be serialized into mobile config");
+
+        assert_eq!(
+            hints,
+            &vec![FipsPeerAddressHint {
+                addr: "192.168.50.10:51820".to_string(),
+                seen_at_ms: None,
+            }]
         );
     }
 
@@ -1425,6 +1542,77 @@ mod tests {
             MOBILE_MAX_FIPS_CONNECTIONS
         );
         assert_eq!(config.node.limits.max_links, MOBILE_MAX_FIPS_LINKS);
+    }
+
+    #[test]
+    fn mobile_fips_config_uses_static_peer_hints() {
+        let peer = FipsMeshPeerConfig::from_participant_pubkey(
+            "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc",
+            vec!["10.44.22.44/32".to_string()],
+        )
+        .expect("peer");
+        let mut peer_hints = HashMap::new();
+        peer_hints.insert(
+            peer.participant_pubkey.clone(),
+            vec![FipsPeerAddressHint {
+                addr: "192.168.50.10:51820".to_string(),
+                seen_at_ms: None,
+            }],
+        );
+        let mobile = MobileTunnelConfig {
+            peers: vec![peer.clone()],
+            peer_hints,
+            nostr_relays: vec!["wss://relay.example".to_string()],
+            ..empty_config()
+        };
+        let config = fips_endpoint_config("nostr-vpn:test", &mobile);
+        let peer_config = config
+            .peers
+            .iter()
+            .find(|candidate| candidate.npub == peer.endpoint_npub)
+            .expect("seeded peer");
+
+        assert_eq!(peer_config.addresses.len(), 1);
+        assert_eq!(peer_config.addresses[0].transport, "udp");
+        assert_eq!(peer_config.addresses[0].addr, "192.168.50.10:51820");
+    }
+
+    #[test]
+    fn mobile_fips_config_keeps_hinted_non_roster_peers() {
+        let roster_peer = FipsMeshPeerConfig::from_participant_pubkey(
+            "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc",
+            vec!["10.44.22.44/32".to_string()],
+        )
+        .expect("roster peer");
+        let transit_peer = AppConfig::generated()
+            .own_nostr_pubkey_hex()
+            .expect("transit pubkey");
+        let transit = FipsMeshPeerConfig::from_participant_pubkey(transit_peer, Vec::new())
+            .expect("transit peer");
+        let mut peer_hints = HashMap::new();
+        peer_hints.insert(
+            transit.participant_pubkey.clone(),
+            vec![FipsPeerAddressHint {
+                addr: "192.168.50.33:51820".to_string(),
+                seen_at_ms: Some(1234),
+            }],
+        );
+        let mobile = MobileTunnelConfig {
+            peers: vec![roster_peer],
+            peer_hints,
+            ..empty_config()
+        };
+        let config = fips_endpoint_config("nostr-vpn:test", &mobile);
+        let transit_config = config
+            .peers
+            .iter()
+            .find(|candidate| candidate.npub == transit.endpoint_npub)
+            .expect("hinted non-roster peer should seed FIPS");
+
+        assert_eq!(transit_config.addresses.len(), 1);
+        assert_eq!(transit_config.addresses[0].transport, "udp");
+        assert_eq!(transit_config.addresses[0].addr, "192.168.50.33:51820");
+        assert_eq!(transit_config.addresses[0].seen_at_ms, Some(1234));
     }
 
     #[test]
