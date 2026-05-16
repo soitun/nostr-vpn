@@ -13,12 +13,12 @@ case "$TARGET" in
   x86_64-unknown-linux-musl)
     DEFAULT_IMAGE=messense/rust-musl-cross:x86_64-musl
     BINDGEN_INCLUDE=/usr/local/musl/x86_64-unknown-linux-musl/include
-    TARGET_LINKER=
+    TARGET_LINKER=x86_64-unknown-linux-musl-gcc
     ;;
   aarch64-unknown-linux-musl)
     DEFAULT_IMAGE=messense/rust-musl-cross:aarch64-musl
     BINDGEN_INCLUDE=/usr/local/musl/aarch64-unknown-linux-musl/include
-    TARGET_LINKER=
+    TARGET_LINKER=aarch64-unknown-linux-musl-gcc
     ;;
   arm-unknown-linux-musleabihf)
     DEFAULT_IMAGE=messense/rust-musl-cross:arm-musleabihf
