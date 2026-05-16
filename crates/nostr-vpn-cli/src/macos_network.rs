@@ -137,15 +137,17 @@ pub(crate) fn macos_underlay_default_route_from_system() -> Result<Option<MacosR
             || iface == "lo0"
             || iface == "gif0"
             || iface == "stf0"
-            || iface == "anpi0"
+            || iface.starts_with("anpi")
+            || iface.starts_with("awdl")
+            || iface.starts_with("llw")
         {
             continue;
         }
 
-        let Some(_ipv4) = macos_ipconfig_ipv4_for_interface(&iface)? else {
+        let Ok(Some(_ipv4)) = macos_ipconfig_ipv4_for_interface(&iface) else {
             continue;
         };
-        let Some(router) = macos_ipconfig_router_for_interface(&iface)? else {
+        let Ok(Some(router)) = macos_ipconfig_router_for_interface(&iface) else {
             continue;
         };
 
@@ -156,6 +158,25 @@ pub(crate) fn macos_underlay_default_route_from_system() -> Result<Option<MacosR
     }
 
     Ok(None)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_unscoped_default_route_works() -> bool {
+    let Ok(output) = ProcessCommand::new("route")
+        .arg("-n")
+        .arg("get")
+        .arg("1.1.1.1")
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    !stderr.to_ascii_lowercase().contains("not in table")
+        && (stdout.contains("gateway:") || stdout.contains("interface:"))
 }
 
 #[cfg(target_os = "macos")]
@@ -191,7 +212,9 @@ pub(crate) fn ensure_macos_underlay_default_route() -> Result<bool> {
             .arg("-f")
             .arg("inet"),
     )?;
-    if macos_has_underlay_default_route(&output) || macos_has_tunnel_split_default_routes(&output) {
+    if macos_has_tunnel_split_default_routes(&output)
+        || (macos_has_underlay_default_route(&output) && macos_unscoped_default_route_works())
+    {
         return Ok(false);
     }
 
@@ -299,6 +322,13 @@ pub(super) fn apply_macos_default_route(
 ) -> Result<()> {
     if let Some(ifscope) = ifscope {
         let _ = delete_macos_default_route_for_interface(ifscope);
+        let _ = ProcessCommand::new("route")
+            .arg("-n")
+            .arg("delete")
+            .arg("default")
+            .arg("-ifscope")
+            .arg(ifscope)
+            .status();
     }
 
     if gateway.is_none() {
