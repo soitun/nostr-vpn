@@ -34,7 +34,10 @@
           <DockPanel LastChildFill="True">
             <TextBlock DockPanel.Dock="Right" FontFamily="Segoe MDL2 Assets" Text="&#xE70D;" FontSize="10" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="6,0,0,0" />
             <StackPanel>
-              <TextBlock Text="{Binding ActiveNetworkName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+              <StackPanel Orientation="Horizontal">
+                <Ellipse Width="7" Height="7" Fill="{Binding ShownNetworkStatusBrush}" VerticalAlignment="Center" Margin="0,0,7,0" Visibility="{Binding ShowNetworkStatusDot, Converter={StaticResource BoolToVisibility}}" />
+                <TextBlock Text="{Binding ActiveNetworkName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+              </StackPanel>
               <TextBlock Text="{Binding HeroSubtitle}" Foreground="{StaticResource TextSecondary}" FontSize="12" Margin="0,3,0,0" />
             </StackPanel>
           </DockPanel>
@@ -50,7 +53,10 @@
             <ColumnDefinition Width="Auto" />
           </Grid.ColumnDefinitions>
           <StackPanel VerticalAlignment="Center">
-            <TextBlock Text="{Binding ActiveNetworkName}" FontSize="26" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" />
+            <StackPanel Orientation="Horizontal">
+              <Ellipse Width="10" Height="10" Fill="{Binding ShownNetworkStatusBrush}" VerticalAlignment="Center" Margin="0,0,10,0" Visibility="{Binding ShowNetworkStatusDot, Converter={StaticResource BoolToVisibility}}" />
+              <TextBlock Text="{Binding ActiveNetworkName}" FontSize="26" FontWeight="SemiBold" Foreground="{StaticResource TextPrimary}" />
+            </StackPanel>
             <TextBlock Text="{Binding VpnStatusText}" Foreground="{Binding VpnStatusBrush}" TextTrimming="CharacterEllipsis" />
           </StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -427,7 +433,7 @@
           </StackPanel>
 
           <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=AddDevice}">
-            <Border Style="{StaticResource Card}" Visibility="{Binding HasActiveNetwork, Converter={StaticResource BoolToVisibility}}">
+            <Border Style="{StaticResource Card}" Visibility="{Binding ShowActiveNetworkInviteCard, Converter={StaticResource BoolToVisibility}}">
               <Grid>
                 <Grid.ColumnDefinitions>
                   <ColumnDefinition Width="170" />

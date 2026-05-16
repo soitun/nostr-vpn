@@ -94,14 +94,16 @@ internal fun NostrVpnApp(
     var showAddDevice by remember { mutableStateOf(false) }
     var showAddNetwork by remember { mutableStateOf(false) }
     var pendingNetworkRemoval by remember { mutableStateOf<NetworkState?>(null) }
-    val network = state.activeNetwork
+    var shownNetworkId by remember { mutableStateOf<String?>(null) }
+    val activeNetwork = state.activeNetwork
+    val network = state.networks.firstOrNull { it.id == shownNetworkId } ?: activeNetwork
     Scaffold(
         containerColor = Color(0xFFF6F7F8),
         topBar = {
             MobileTopBar(
                 state = state,
                 network = network,
-                dispatch = dispatch,
+                onSelectNetwork = { shownNetworkId = it },
                 onAddNetwork = { showAddNetwork = true },
             )
         },
@@ -200,11 +202,10 @@ internal fun NostrVpnApp(
 private fun MobileTopBar(
     state: AppState,
     network: NetworkState?,
-    dispatch: (JSONObject) -> Unit,
+    onSelectNetwork: (String) -> Unit,
     onAddNetwork: () -> Unit,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    val inactive = state.networks.filter { !it.enabled }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -219,6 +220,10 @@ private fun MobileTopBar(
                 modifier = Modifier.clickable { menuExpanded = true },
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                if (state.networks.size > 1) {
+                    NetworkStatusDot(network)
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
                     networkTitle(network),
                     style = MaterialTheme.typography.titleLarge,
@@ -230,16 +235,24 @@ private fun MobileTopBar(
                 Text("▾", color = Muted)
             }
             DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                inactive.forEach { saved ->
+                state.networks.forEach { saved ->
                     DropdownMenuItem(
-                        text = { Text(saved.name.ifBlank { "Private network" }) },
+                        text = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (state.networks.size > 1) {
+                                    NetworkStatusDot(saved)
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                Text(networkTitle(saved))
+                            }
+                        },
                         onClick = {
                             menuExpanded = false
-                            dispatch(NativeActions.setNetworkEnabled(saved.id, true))
+                            onSelectNetwork(saved.id)
                         },
                     )
                 }
-                if (inactive.isNotEmpty()) {
+                if (state.networks.isNotEmpty()) {
                     HorizontalDivider()
                 }
                 DropdownMenuItem(
@@ -264,6 +277,13 @@ private fun MobileTopBar(
                 )
             },
         )
+    }
+}
+
+@Composable
+private fun NetworkStatusDot(network: NetworkState?) {
+    Canvas(modifier = Modifier.size(8.dp)) {
+        drawCircle(if (network?.enabled == true) Color(0xFF16A34A) else Color(0xFF9CA3AF))
     }
 }
 
@@ -603,32 +623,34 @@ private fun AddDevicesDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Invite to my network", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Share this code with another device to give it access to your network.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Muted,
-                )
-                if (state.activeNetworkInvite.isNotBlank()) {
-                    QrCode(invite = state.activeNetworkInvite, qrJson = qrJson)
-                    CopyLine(state.activeNetworkInvite)
-                }
-                Button(onClick = {
-                    dispatch(
-                        if (state.inviteBroadcastActive) {
-                            NativeActions.stopInviteBroadcast()
-                        } else {
-                            NativeActions.startInviteBroadcast()
-                        },
-                    )
-                }) {
+                if (network.enabled) {
+                    Text("Invite to my network", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        if (state.inviteBroadcastActive) {
-                            "Broadcasting · ${formatDialogRemaining(state.inviteBroadcastRemainingSecs)}"
-                        } else {
-                            "Broadcast invite"
-                        },
+                        "Share this code with another device to give it access to your network.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Muted,
                     )
+                    if (state.activeNetworkInvite.isNotBlank()) {
+                        QrCode(invite = state.activeNetworkInvite, qrJson = qrJson)
+                        CopyLine(state.activeNetworkInvite)
+                    }
+                    Button(onClick = {
+                        dispatch(
+                            if (state.inviteBroadcastActive) {
+                                NativeActions.stopInviteBroadcast()
+                            } else {
+                                NativeActions.startInviteBroadcast()
+                            },
+                        )
+                    }) {
+                        Text(
+                            if (state.inviteBroadcastActive) {
+                                "Broadcasting · ${formatDialogRemaining(state.inviteBroadcastRemainingSecs)}"
+                            } else {
+                                "Broadcast invite"
+                            },
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))

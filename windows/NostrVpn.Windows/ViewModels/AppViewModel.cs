@@ -32,6 +32,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private NativeAppState _state = new();
     private AppPage _page = AppPage.Devices;
     private string _selectedParticipantKey = "";
+    private string _shownNetworkId = "";
     private bool _actionInFlight;
     private string _notice = "";
     private string _inviteInput = "";
@@ -61,6 +62,8 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private static readonly TimeSpan UpdatePollInterval = LoadUpdatePollInterval();
     private static readonly Brush HeaderDangerBrush = new SolidColorBrush(Color.FromRgb(220, 38, 38));
     private static readonly Brush TextSecondaryBrush = new SolidColorBrush(Color.FromRgb(104, 113, 124));
+    private static readonly Brush ActiveNetworkBrush = new SolidColorBrush(Color.FromRgb(22, 163, 74));
+    private static readonly Brush InactiveNetworkBrush = new SolidColorBrush(Color.FromRgb(156, 163, 175));
 
     public AppViewModel()
     {
@@ -418,7 +421,10 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         private set => SetField(ref _inviteQr, value);
     }
 
-    public NativeNetworkState? ActiveNetwork => State.Networks.FirstOrDefault(network => network.Enabled) ?? State.Networks.FirstOrDefault();
+    private NativeNetworkState? RuntimeActiveNetwork => State.Networks.FirstOrDefault(network => network.Enabled) ?? State.Networks.FirstOrDefault();
+    public NativeNetworkState? ActiveNetwork =>
+        State.Networks.FirstOrDefault(network => network.Id == _shownNetworkId)
+        ?? RuntimeActiveNetwork;
     public bool HasActiveNetwork => ActiveNetwork is not null;
     public string OfferExitNodeLabel
     {
@@ -451,6 +457,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public bool SelectedParticipantCanManage => ActiveNetwork?.LocalIsAdmin == true
         && SelectedParticipant is { IsSelf: false };
     public string ActiveNetworkName => DisplayNetworkName(ActiveNetwork);
+    public Brush ShownNetworkStatusBrush => ActiveNetwork?.Enabled == true ? ActiveNetworkBrush : InactiveNetworkBrush;
+    public bool ShowNetworkStatusDot => State.Networks.Count > 1;
+    public bool ShowActiveNetworkInviteCard => ActiveNetwork?.Enabled == true;
     public string HeroSubtitle => $"{State.ConnectedPeerCount} of {State.ExpectedPeerCount} connected";
     public string VpnButtonText => State.VpnEnabled ? "On" : "Off";
     /// Mirrors `AppManager.vpnStatusText` on macOS so the header and the tray
@@ -727,6 +736,19 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public Task ActivateNetworkAsync(string networkId)
     {
         return DispatchAsync(NativeActions.SetNetworkEnabled(networkId, true), "Activating network");
+    }
+
+    public void SelectShownNetwork(string networkId)
+    {
+        if (_shownNetworkId == networkId)
+        {
+            return;
+        }
+        _shownNetworkId = networkId;
+        NormalizeSelectedParticipant(State);
+        SyncDrafts(State);
+        RaiseDerivedStateChanged();
+        CommandManager.InvalidateRequerySuggested();
     }
 
     public Task RemoveNetworkAsync(string networkId)
@@ -1085,7 +1107,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 
     private void SyncDrafts(NativeAppState state)
     {
-        var active = state.Networks.FirstOrDefault(network => network.Enabled) ?? state.Networks.FirstOrDefault();
+        var active = state.Networks.FirstOrDefault(network => network.Id == _shownNetworkId)
+            ?? state.Networks.FirstOrDefault(network => network.Enabled)
+            ?? state.Networks.FirstOrDefault();
         NodeName = state.NodeName;
         Endpoint = state.Endpoint;
         TunnelIp = state.TunnelIp;
@@ -1107,6 +1131,11 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 
     private void RaiseDerivedStateChanged()
     {
+        if (!string.IsNullOrWhiteSpace(_shownNetworkId)
+            && State.Networks.All(network => network.Id != _shownNetworkId))
+        {
+            _shownNetworkId = "";
+        }
         OnPropertyChanged(nameof(ActiveNetwork));
         OnPropertyChanged(nameof(HasActiveNetwork));
         OnPropertyChanged(nameof(OfferExitNodeLabel));
@@ -1114,6 +1143,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(SelectedParticipant));
         RaiseSelectedParticipantChanged();
         OnPropertyChanged(nameof(ActiveNetworkName));
+        OnPropertyChanged(nameof(ShownNetworkStatusBrush));
+        OnPropertyChanged(nameof(ShowNetworkStatusDot));
+        OnPropertyChanged(nameof(ShowActiveNetworkInviteCard));
         OnPropertyChanged(nameof(HeroSubtitle));
         OnPropertyChanged(nameof(VpnButtonText));
         OnPropertyChanged(nameof(VpnStatusText));
@@ -1146,7 +1178,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 
     private void NormalizeSelectedParticipant(NativeAppState state)
     {
-        var network = state.Networks.FirstOrDefault(network => network.Enabled) ?? state.Networks.FirstOrDefault();
+        var network = state.Networks.FirstOrDefault(network => network.Id == _shownNetworkId)
+            ?? state.Networks.FirstOrDefault(network => network.Enabled)
+            ?? state.Networks.FirstOrDefault();
         if (network is null || network.Participants.Count == 0)
         {
             _selectedParticipantKey = "";

@@ -24,6 +24,7 @@ struct RootView: View {
     @State private var diagnosticsExpanded = false
     @State private var showingQrScanner = false
     @State private var selectedSidebarItem: SidebarItem? = .devices
+    @State private var shownNetworkId: String?
     @State private var addNetworkPresented = false
     @State private var addDevicePresented = false
     @State private var manualJoinExpanded = false
@@ -43,6 +44,14 @@ struct RootView: View {
 
     private var activeNetwork: NativeNetworkState? {
         manager.activeNetwork
+    }
+
+    private var shownNetwork: NativeNetworkState? {
+        if let shownNetworkId,
+           let network = state.networks.first(where: { $0.id == shownNetworkId }) {
+            return network
+        }
+        return activeNetwork
     }
 
     var body: some View {
@@ -77,7 +86,7 @@ struct RootView: View {
             addNetworkSheetContent
         }
         .sheet(isPresented: $addDevicePresented) {
-            if let network = activeNetwork {
+            if let network = shownNetwork {
                 addDeviceSheetContent(network)
             }
         }
@@ -249,14 +258,20 @@ struct RootView: View {
 
     private var headerIdentity: some View {
         Menu {
-            ForEach(manager.inactiveNetworks, id: \.id) { network in
+            ForEach(state.networks, id: \.id) { network in
                 Button {
-                    manager.setNetworkEnabled(networkId: network.id, enabled: true)
+                    shownNetworkId = network.id
+                    selectedSidebarItem = .devices
                 } label: {
-                    Label(displayName(network), systemImage: "rectangle.stack")
+                    HStack {
+                        if state.networks.count > 1 {
+                            networkStatusDot(network)
+                        }
+                        Text(displayName(network))
+                    }
                 }
             }
-            if !manager.inactiveNetworks.isEmpty {
+            if !state.networks.isEmpty {
                 Divider()
             }
             Button {
@@ -266,7 +281,10 @@ struct RootView: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(activeNetwork.map(displayName) ?? "Nostr VPN")
+                if let shownNetwork, state.networks.count > 1 {
+                    networkStatusDot(shownNetwork)
+                }
+                Text(shownNetwork.map(displayName) ?? "Nostr VPN")
                     .font(.caption.weight(.semibold))
                     .lineLimit(1)
                     .truncationMode(.tail)
@@ -278,6 +296,12 @@ struct RootView: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: 200, alignment: .leading)
+    }
+
+    private func networkStatusDot(_ network: NativeNetworkState) -> some View {
+        Circle()
+            .fill(network.enabled ? Color.green : Color.secondary.opacity(0.55))
+            .frame(width: 7, height: 7)
     }
 
     private var headerVpnControl: some View {
@@ -358,16 +382,16 @@ struct RootView: View {
     private var detailPane: some View {
         switch selectedSidebarItem ?? .devices {
         case .devices:
-            if let activeNetwork {
-                devicesPane(activeNetwork)
+            if let shownNetwork {
+                devicesPane(shownNetwork)
             } else {
                 setupPane
             }
         case .routing:
             pageScroll {
                 pageTitle("Exit Nodes", "arrow.triangle.branch")
-                if let activeNetwork {
-                    routingSection(activeNetwork)
+                if let shownNetwork {
+                    routingSection(shownNetwork)
                 }
             }
         case .settings:
@@ -719,9 +743,10 @@ struct RootView: View {
     }
 
     private func inviteSection(_ network: NativeNetworkState) -> some View {
+        let invite = network.enabled ? state.activeNetworkInvite : ""
         surface {
             HStack(alignment: .top, spacing: 18) {
-                InviteQRCodeView(invite: state.activeNetworkInvite)
+                InviteQRCodeView(invite: invite)
                     .frame(width: 150, height: 150)
                 VStack(alignment: .leading, spacing: 12) {
                     sectionHeader("Invite Devices", systemImage: "qrcode")
@@ -729,7 +754,7 @@ struct RootView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack(spacing: 8) {
-                        Text(state.activeNetworkInvite.isEmpty ? "No invite" : state.activeNetworkInvite)
+                        Text(invite.isEmpty ? "No invite" : invite)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .textSelection(.enabled)
@@ -737,14 +762,14 @@ struct RootView: View {
                             .frame(height: 32)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
-                        copyButton(value: state.activeNetworkInvite, copied: .invite, systemImage: "doc.on.doc")
-                            .disabled(state.activeNetworkInvite.isEmpty)
+                        copyButton(value: invite, copied: .invite, systemImage: "doc.on.doc")
+                            .disabled(invite.isEmpty)
                         Button {
-                            manager.share(state.activeNetworkInvite)
+                            manager.share(invite)
                         } label: {
                             Label("Share", systemImage: "square.and.arrow.up")
                         }
-                        .disabled(state.activeNetworkInvite.isEmpty)
+                        .disabled(invite.isEmpty)
                     }
                     HStack {
                         Toggle("Join requests", isOn: Binding(
@@ -765,7 +790,7 @@ struct RootView: View {
                                 systemImage: state.inviteBroadcastActive ? "stop.circle" : "dot.radiowaves.left.and.right"
                             )
                         }
-                        .disabled(manager.actionInFlight)
+                        .disabled(manager.actionInFlight || !network.enabled)
                     }
                 }
             }
@@ -1021,7 +1046,7 @@ struct RootView: View {
                 Divider()
 
                 Toggle(
-                    "Offer this device as an exit node in \(activeNetworkLabel)",
+                    "Offer this device as an exit node in \(shownNetworkLabel)",
                     isOn: Binding(
                         get: { state.advertiseExitNode },
                         set: { manager.setAdvertiseExitNode($0) }
@@ -1033,8 +1058,8 @@ struct RootView: View {
         }
     }
 
-    private var activeNetworkLabel: String {
-        activeNetwork.map(displayName) ?? "this network"
+    private var shownNetworkLabel: String {
+        shownNetwork.map(displayName) ?? "this network"
     }
 
     private var wireguardUpstreamSubtitle: String {
@@ -1178,10 +1203,10 @@ struct RootView: View {
                 .disabled(networkNameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || manager.actionInFlight)
             }
 
-            if let network = activeNetwork {
+            if let network = shownNetwork {
                 Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
                     GridRow {
-                        label("Active")
+                        label(network.enabled ? "Active" : "Shown")
                         TextField("Name", text: networkNameBinding(network))
                         Button {
                             manager.renameNetwork(networkId: network.id, name: networkNameDrafts[network.id] ?? network.name)
@@ -1525,6 +1550,10 @@ struct RootView: View {
     }
 
     private func syncDrafts() {
+        if let shownNetworkId,
+           !state.networks.contains(where: { $0.id == shownNetworkId }) {
+            self.shownNetworkId = nil
+        }
         if state.nodeName != lastSyncedNodeName {
             nodeName = state.nodeName
             lastSyncedNodeName = state.nodeName
@@ -1565,7 +1594,7 @@ struct RootView: View {
             }
         }
 
-        if let network = activeNetwork {
+        if let network = shownNetwork {
             let participants = sortedParticipants(network)
             if let selectedDevicePubkeyHex,
                participants.contains(where: { $0.pubkeyHex == selectedDevicePubkeyHex }) {

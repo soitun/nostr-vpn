@@ -49,14 +49,14 @@ public partial class MainWindow : Window
             PlacementTarget = anchor,
             Placement = PlacementMode.Top,
         };
-        foreach (var network in ViewModel.InactiveNetworks)
+        foreach (var network in ViewModel.State.Networks)
         {
             var item = new MenuItem
             {
-                Header = string.IsNullOrWhiteSpace(network.Name) ? "Private network" : network.Name,
+                Header = NetworkMenuHeader(network),
             };
             var networkId = network.Id;
-            item.Click += (_, _) => ViewModel.ActivateInactiveNetworkCommand.Execute(networkId);
+            item.Click += (_, _) => ViewModel.SelectShownNetwork(networkId);
             menu.Items.Add(item);
         }
         if (menu.Items.Count > 0)
@@ -67,6 +67,27 @@ public partial class MainWindow : Window
         addItem.Click += (_, _) => ViewModel.ShowAddNetworkCommand.Execute(null);
         menu.Items.Add(addItem);
         menu.IsOpen = true;
+    }
+
+    private StackPanel NetworkMenuHeader(NativeNetworkState network)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal };
+        if (ViewModel.State.Networks.Count > 1)
+        {
+            row.Children.Add(new TextBlock
+            {
+                Text = "●",
+                Foreground = network.Enabled ? Brushes.SeaGreen : Brushes.DarkGray,
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+        }
+        row.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(network.Name) ? "Private network" : network.Name,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        return row;
     }
 
     private async void ToggleAdmin_Click(object sender, RoutedEventArgs e)

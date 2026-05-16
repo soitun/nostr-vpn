@@ -3,6 +3,15 @@ import SwiftUI
 struct RootView: View {
     @ObservedObject var model: AppModel
     @State private var addNetworkPresented = false
+    @State private var shownNetworkId: String?
+
+    private var shownNetwork: NetworkState? {
+        if let shownNetworkId,
+           let network = model.state.networks.first(where: { $0.id == shownNetworkId }) {
+            return network
+        }
+        return model.activeNetwork
+    }
 
     var body: some View {
         Group {
@@ -15,13 +24,13 @@ struct RootView: View {
             } else {
                 TabView {
                     NavigationStack {
-                        DevicesPage(model: model)
+                        DevicesPage(model: model, network: shownNetwork)
                             .toolbar { networkSwitcherToolbar }
                     }
                     .tabItem { Label("Devices", systemImage: "circle.grid.2x2.fill") }
 
                     NavigationStack {
-                        ExitNodesPage(model: model)
+                        ExitNodesPage(model: model, network: shownNetwork)
                             .navigationTitle("Exit Nodes")
                             .toolbar { networkSwitcherToolbar }
                     }
@@ -49,12 +58,23 @@ struct RootView: View {
                     }
             }
         }
+        .onChange(of: model.state.rev) { _, _ in
+            if let shownNetworkId,
+               !model.state.networks.contains(where: { $0.id == shownNetworkId }) {
+                self.shownNetworkId = nil
+            }
+        }
     }
 
     @ToolbarContentBuilder
     private var networkSwitcherToolbar: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            NetworkSwitcher(model: model, addNetworkPresented: $addNetworkPresented)
+            NetworkSwitcher(
+                model: model,
+                shownNetwork: shownNetwork,
+                shownNetworkId: $shownNetworkId,
+                addNetworkPresented: $addNetworkPresented
+            )
         }
         ToolbarItem(placement: .topBarTrailing) {
             ToolbarVpnSwitch(model: model)
@@ -68,23 +88,25 @@ struct RootView: View {
 /// to switch to.
 private struct NetworkSwitcher: View {
     @ObservedObject var model: AppModel
+    let shownNetwork: NetworkState?
+    @Binding var shownNetworkId: String?
     @Binding var addNetworkPresented: Bool
 
     var body: some View {
-        let active = model.activeNetwork
-        let inactive = model.state.networks.filter { !$0.enabled }
         Menu {
-            ForEach(inactive) { network in
+            ForEach(model.state.networks) { network in
                 Button {
-                    model.dispatch(
-                        NativeActions.setNetworkEnabled(network.id, true),
-                        status: "Switching to \(network.displayName)"
-                    )
+                    shownNetworkId = network.id
                 } label: {
-                    Label(network.displayName, systemImage: "rectangle.stack")
+                    HStack {
+                        if model.state.networks.count > 1 {
+                            NetworkStatusDot(network: network)
+                        }
+                        Text(network.displayName)
+                    }
                 }
             }
-            if !inactive.isEmpty {
+            if !model.state.networks.isEmpty {
                 Divider()
             }
             Button {
@@ -94,7 +116,10 @@ private struct NetworkSwitcher: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Text(active?.displayName ?? "Nostr VPN")
+                if let shownNetwork, model.state.networks.count > 1 {
+                    NetworkStatusDot(network: shownNetwork)
+                }
+                Text(shownNetwork?.displayName ?? "Nostr VPN")
                     .font(.headline)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
@@ -102,6 +127,16 @@ private struct NetworkSwitcher: View {
             }
             .foregroundStyle(.primary)
         }
+    }
+}
+
+private struct NetworkStatusDot: View {
+    let network: NetworkState
+
+    var body: some View {
+        Circle()
+            .fill(network.enabled ? Color.green : Color.secondary.opacity(0.55))
+            .frame(width: 7, height: 7)
     }
 }
 
@@ -134,6 +169,7 @@ private struct AddNetworkPage: View {
 
 private struct DevicesPage: View {
     @ObservedObject var model: AppModel
+    let network: NetworkState?
     @State private var addDevicePresented = false
     @State private var pendingNetworkRemoval: NetworkState?
 
@@ -143,7 +179,7 @@ private struct DevicesPage: View {
                 if !model.state.error.isEmpty || !model.statusMessage.isEmpty {
                     NoticeCard(text: model.state.error.isEmpty ? model.statusMessage : model.state.error)
                 }
-                if let network = model.activeNetwork {
+                if let network {
                     if network.localIsAdmin {
                         Button {
                             addDevicePresented = true
@@ -154,7 +190,7 @@ private struct DevicesPage: View {
                         .buttonStyle(.bordered)
                     }
                     ForEach(sortedParticipants(network.participants, state: model.state)) { participant in
-                        ParticipantRow(model: model, participant: participant)
+                        ParticipantRow(model: model, network: network, participant: participant)
                     }
                     ForEach(network.inboundJoinRequests) { request in
                         JoinRequestRow(request: request) {
@@ -183,17 +219,19 @@ private struct DevicesPage: View {
         }
         .background(AppColors.background)
         .sheet(isPresented: $addDevicePresented) {
-            NavigationStack {
-                AddDeviceSheet(model: model)
-                    .navigationTitle("Add Device")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Done") {
-                                addDevicePresented = false
+            if let network {
+                NavigationStack {
+                    AddDeviceSheet(model: model, network: network)
+                        .navigationTitle("Add Device")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") {
+                                    addDevicePresented = false
+                                }
                             }
                         }
-                    }
+                }
             }
         }
         .confirmationDialog(
@@ -422,20 +460,20 @@ func manualInviteJSON(adminNpub: String, meshId: String) -> String? {
 /// MY network".
 private struct AddDeviceSheet: View {
     @ObservedObject var model: AppModel
+    let network: NetworkState
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
-                InviteToMyNetworkCard(model: model)
-
-                if let network = model.activeNetwork {
-                    ManualPairingInfoCard(model: model, network: network)
-                    AddDeviceCard(network: network) { npub, alias in
-                        model.dispatch(
-                            NativeActions.addParticipant(networkId: network.id, npub: npub, alias: alias),
-                            status: "Adding device"
-                        )
-                    }
+                if network.enabled {
+                    InviteToMyNetworkCard(model: model)
+                }
+                ManualPairingInfoCard(model: model, network: network)
+                AddDeviceCard(network: network) { npub, alias in
+                    model.dispatch(
+                        NativeActions.addParticipant(networkId: network.id, npub: npub, alias: alias),
+                        status: "Adding device"
+                    )
                 }
             }
             .padding()
@@ -528,6 +566,7 @@ private struct InviteToMyNetworkCard: View {
 
 private struct ExitNodesPage: View {
     @ObservedObject var model: AppModel
+    let network: NetworkState?
 
     private var directSelected: Bool {
         !model.state.wireguardExitEnabled && model.state.exitNode.isEmpty
@@ -591,7 +630,7 @@ private struct ExitNodesPage: View {
                         enabled: model.state.wireguardExitConfigured,
                         action: selectWireGuard
                     )
-                    if let network = model.activeNetwork {
+                    if let network {
                         ForEach(network.participants.filter(\.offersExitNode)) { participant in
                             ExitNodeRow(
                                 title: participant.displayName,
@@ -684,6 +723,7 @@ private struct SettingsPage: View {
 
 private struct ParticipantRow: View {
     @ObservedObject var model: AppModel
+    let network: NetworkState
     let participant: ParticipantState
     @State private var detailPresented = false
 
@@ -730,7 +770,7 @@ private struct ParticipantRow: View {
         .buttonStyle(.plain)
         .sheet(isPresented: $detailPresented) {
             NavigationStack {
-                DeviceDetailSheet(model: model, participant: participant)
+                DeviceDetailSheet(model: model, network: network, participant: participant)
                     .navigationTitle(deviceName(participant, state: model.state))
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
@@ -745,13 +785,13 @@ private struct ParticipantRow: View {
 
 private struct DeviceDetailSheet: View {
     @ObservedObject var model: AppModel
+    let network: NetworkState
     let participant: ParticipantState
     @State private var aliasDraft: String = ""
     @State private var pendingRemove = false
 
     private var isMe: Bool { isSelf(participant, state: model.state) }
-    private var network: NetworkState? { model.activeNetwork }
-    private var localIsAdmin: Bool { network?.localIsAdmin ?? false }
+    private var localIsAdmin: Bool { network.localIsAdmin }
 
     var body: some View {
         ScrollView {
@@ -792,7 +832,7 @@ private struct DeviceDetailSheet: View {
                     }
                 }
 
-                if localIsAdmin && !isMe, let network {
+                if localIsAdmin && !isMe {
                     AppCard {
                         Text("Manage")
                             .font(.headline)
