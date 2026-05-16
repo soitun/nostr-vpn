@@ -54,6 +54,10 @@ const MOBILE_MAX_FIPS_CONNECTIONS: usize = 64;
 /// Active-link cap on mobile (matches `MOBILE_MAX_FIPS_CONNECTIONS`).
 const MOBILE_MAX_FIPS_LINKS: usize = 64;
 const MOBILE_CAPABILITIES_BROADCAST_SECS: u64 = 30;
+const MOBILE_CAPABILITIES_STARTUP_BURST_COUNT: usize = 4;
+const MOBILE_CAPABILITIES_STARTUP_BURST_INTERVAL_MS: u64 = 750;
+const MOBILE_HANDSHAKE_RESEND_INTERVAL_MS: u64 = 300;
+const MOBILE_HANDSHAKE_RESEND_BACKOFF: f64 = 1.5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -530,6 +534,7 @@ impl MobileTunnel {
             let mesh_peers = Arc::clone(&mesh_peers);
             let network_id = config.network_id.clone();
             tasks.push(tokio::spawn(async move {
+                let mut startup_broadcasts_remaining = MOBILE_CAPABILITIES_STARTUP_BURST_COUNT;
                 loop {
                     if let Err(error) = broadcast_mobile_capabilities(
                         &endpoint,
@@ -541,8 +546,14 @@ impl MobileTunnel {
                     {
                         tracing::warn!(?error, "mobile: failed to broadcast capabilities");
                     }
-                    tokio::time::sleep(Duration::from_secs(MOBILE_CAPABILITIES_BROADCAST_SECS))
-                        .await;
+                    let sleep_duration = if startup_broadcasts_remaining > 1 {
+                        startup_broadcasts_remaining -= 1;
+                        Duration::from_millis(MOBILE_CAPABILITIES_STARTUP_BURST_INTERVAL_MS)
+                    } else {
+                        startup_broadcasts_remaining = 0;
+                        Duration::from_secs(MOBILE_CAPABILITIES_BROADCAST_SECS)
+                    };
+                    tokio::time::sleep(sleep_duration).await;
                 }
             }));
         }
@@ -1000,6 +1011,8 @@ fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig 
     config.node.discovery.backoff_base_secs = FIPS_DISCOVERY_BACKOFF_BASE_SECS;
     config.node.discovery.backoff_max_secs = FIPS_DISCOVERY_BACKOFF_MAX_SECS;
     config.node.discovery.forward_min_interval_secs = FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS;
+    config.node.rate_limit.handshake_resend_interval_ms = MOBILE_HANDSHAKE_RESEND_INTERVAL_MS;
+    config.node.rate_limit.handshake_resend_backoff = MOBILE_HANDSHAKE_RESEND_BACKOFF;
     // Cap concurrent FIPS peers on mobile. With Open discovery the global
     // overlay can keep introducing new peers; on phones we'd rather drop
     // ambient connection attempts than burn battery talking to strangers
@@ -1348,6 +1361,14 @@ mod tests {
         assert_eq!(
             config.node.discovery.forward_min_interval_secs,
             FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS
+        );
+        assert_eq!(
+            config.node.rate_limit.handshake_resend_interval_ms,
+            MOBILE_HANDSHAKE_RESEND_INTERVAL_MS
+        );
+        assert_eq!(
+            config.node.rate_limit.handshake_resend_backoff,
+            MOBILE_HANDSHAKE_RESEND_BACKOFF
         );
         assert!(config.node.discovery.nostr.enabled);
         assert!(config.node.discovery.nostr.advertise);
