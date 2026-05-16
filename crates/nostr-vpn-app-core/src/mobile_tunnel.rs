@@ -1232,8 +1232,7 @@ fn parse_ipv4(value: &str) -> Option<Ipv4Addr> {
 fn unix_timestamp() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|elapsed| elapsed.as_secs())
-        .unwrap_or(0)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 /// Append-once-per-line packet diagnostic to the same `tmp/nvpn-wg.log`
@@ -1483,9 +1482,10 @@ mod tests {
             config.node.rate_limit.handshake_resend_interval_ms,
             MOBILE_HANDSHAKE_RESEND_INTERVAL_MS
         );
-        assert_eq!(
-            config.node.rate_limit.handshake_resend_backoff,
-            MOBILE_HANDSHAKE_RESEND_BACKOFF
+        assert!(
+            (config.node.rate_limit.handshake_resend_backoff - MOBILE_HANDSHAKE_RESEND_BACKOFF)
+                .abs()
+                < f64::EPSILON
         );
         assert!(config.node.discovery.nostr.enabled);
         assert!(config.node.discovery.nostr.advertise);

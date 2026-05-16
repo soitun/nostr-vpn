@@ -95,6 +95,13 @@ async fn flush_pending_fips_roster_recipients(
 type EndpointPeerSignature = Vec<(String, Vec<String>)>;
 
 #[cfg(feature = "embedded-fips")]
+struct RecentPeerRefresh<'a> {
+    recent_peers: &'a mut nostr_vpn_core::recent_peers::RecentPeerEndpoints,
+    recent_peers_path: &'a std::path::Path,
+    last_endpoint_peer_signature: &'a mut EndpointPeerSignature,
+}
+
+#[cfg(feature = "embedded-fips")]
 fn endpoint_peer_signature(
     endpoint_peers: &[crate::fips_private_mesh::FipsEndpointPeerTransportConfig],
 ) -> EndpointPeerSignature {
@@ -126,9 +133,7 @@ async fn update_recent_peers_from_runtime(
     app: &nostr_vpn_core::config::AppConfig,
     network_id: &str,
     own_pubkey: Option<&str>,
-    recent_peers: &mut nostr_vpn_core::recent_peers::RecentPeerEndpoints,
-    recent_peers_path: &std::path::Path,
-    last_endpoint_peer_signature: &mut EndpointPeerSignature,
+    refresh: RecentPeerRefresh<'_>,
     now: u64,
 ) {
     let snapshot = match runtime.authenticated_peer_transport_addrs().await {
@@ -140,20 +145,25 @@ async fn update_recent_peers_from_runtime(
     };
     let mut changed = false;
     for (participant, addr) in snapshot {
-        if recent_peers.note_success(&participant, &addr, now) {
+        if refresh.recent_peers.note_success(&participant, &addr, now) {
             changed = true;
         }
     }
-    if recent_peers.prune_stale(now, crate::recent_peers_store::RECENT_PEERS_TTL_SECS) {
+    if refresh
+        .recent_peers
+        .prune_stale(now, crate::recent_peers_store::RECENT_PEERS_TTL_SECS)
+    {
         changed = true;
     }
     if changed
-        && let Err(error) =
-            crate::recent_peers_store::write_recent_peers(recent_peers_path, recent_peers)
+        && let Err(error) = crate::recent_peers_store::write_recent_peers(
+            refresh.recent_peers_path,
+            refresh.recent_peers,
+        )
     {
         eprintln!(
             "daemon: failed to write recent peers cache {}: {error}",
-            recent_peers_path.display()
+            refresh.recent_peers_path.display()
         );
     }
     let live_peer_endpoints = runtime.peer_endpoint_hints();
@@ -162,18 +172,18 @@ async fn update_recent_peers_from_runtime(
         network_id,
         runtime.iface().to_string(),
         own_pubkey,
-        Some(recent_peers),
+        Some(refresh.recent_peers),
         &live_peer_endpoints,
     ) {
         Ok(refreshed) => {
             let signature = endpoint_peer_signature(&refreshed.endpoint_peers);
-            if signature == *last_endpoint_peer_signature {
+            if signature == *refresh.last_endpoint_peer_signature {
                 return;
             }
             if let Err(error) = runtime.update_peers(&refreshed.endpoint_peers).await {
                 eprintln!("fips: update_peers (cache refresh) failed: {error}");
             } else {
-                *last_endpoint_peer_signature = signature;
+                *refresh.last_endpoint_peer_signature = signature;
             }
         }
         Err(error) => {
@@ -581,9 +591,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             &app,
                             &network_id,
                             own_pubkey.as_deref(),
-                            &mut recent_peers,
-                            &recent_peers_path,
-                            &mut last_fips_endpoint_peer_signature,
+                            RecentPeerRefresh {
+                                recent_peers: &mut recent_peers,
+                                recent_peers_path: &recent_peers_path,
+                                last_endpoint_peer_signature: &mut last_fips_endpoint_peer_signature,
+                            },
                             now,
                         )
                         .await;
@@ -621,9 +633,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &app,
                         &network_id,
                         own_pubkey.as_deref(),
-                        &mut recent_peers,
-                        &recent_peers_path,
-                        &mut last_fips_endpoint_peer_signature,
+                        RecentPeerRefresh {
+                            recent_peers: &mut recent_peers,
+                            recent_peers_path: &recent_peers_path,
+                            last_endpoint_peer_signature: &mut last_fips_endpoint_peer_signature,
+                        },
                         now,
                     )
                     .await;

@@ -54,7 +54,7 @@ mod tests {
     #[test]
     fn startup_check_fires_once_when_enabled() {
         let start = Instant::now();
-        let mut policy = UpdateAutoCheckPolicy::new(Duration::from_secs(60));
+        let mut policy = UpdateAutoCheckPolicy::new(Duration::from_mins(1));
 
         assert!(policy.should_start_check(true, start));
         assert!(!policy.should_start_check(true, start + Duration::from_secs(59)));
@@ -63,17 +63,17 @@ mod tests {
     #[test]
     fn interval_check_fires_after_cadence() {
         let start = Instant::now();
-        let mut policy = UpdateAutoCheckPolicy::new(Duration::from_secs(60));
+        let mut policy = UpdateAutoCheckPolicy::new(Duration::from_mins(1));
 
         assert!(policy.should_start_check(true, start));
         assert!(!policy.should_start_check(true, start + Duration::from_secs(59)));
-        assert!(policy.should_start_check(true, start + Duration::from_secs(60)));
+        assert!(policy.should_start_check(true, start + Duration::from_mins(1)));
     }
 
     #[test]
     fn disabled_auto_check_never_fires() {
         let start = Instant::now();
-        let mut policy = UpdateAutoCheckPolicy::new(Duration::from_secs(60));
+        let mut policy = UpdateAutoCheckPolicy::new(Duration::from_mins(1));
 
         assert!(!policy.should_start_check(false, start));
     }
@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn manual_check_resets_interval() {
         let start = Instant::now();
-        let mut policy = UpdateAutoCheckPolicy::new(Duration::from_secs(60));
+        let mut policy = UpdateAutoCheckPolicy::new(Duration::from_mins(1));
 
         assert!(policy.should_start_check(true, start));
         policy.note_manual_check_started(start + Duration::from_secs(50));
