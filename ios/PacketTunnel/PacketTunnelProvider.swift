@@ -13,21 +13,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         completionHandler: @escaping (Error?) -> Void
     ) {
         NSLog("nvpn-pkt: startTunnel entered")
+        packetDebugLog("startTunnel entered options=\(options?.keys.map(String.init).sorted() ?? [])")
         let configuration = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration ?? [:]
+        packetDebugLog("providerConfiguration keys=\(configuration.keys.map(String.init).sorted())")
         let configJson = configuration["mobileTunnelConfigJson"] as? String ?? ""
         let parsedConfig = MobileTunnelConfig(json: configJson)
         if let error = parsedConfig.errorText {
             NSLog("nvpn-pkt: config parse failed: \(error)")
+            packetDebugLog("config parse failed: \(error)")
             completionHandler(error)
             return
         }
         NSLog("nvpn-pkt: calling nostr_vpn_mobile_tunnel_new (configLen=\(configJson.count))")
+        packetDebugLog("calling nostr_vpn_mobile_tunnel_new configLen=\(configJson.count)")
         guard let handle = configJson.withCString({ nostr_vpn_mobile_tunnel_new($0) }) else {
             NSLog("nvpn-pkt: nostr_vpn_mobile_tunnel_new returned NULL")
+            packetDebugLog("nostr_vpn_mobile_tunnel_new returned NULL")
             completionHandler(PacketTunnelError.startFailed)
             return
         }
         NSLog("nvpn-pkt: rust runtime up, handle=\(handle)")
+        packetDebugLog("rust runtime up")
         tunnelLock.lock()
         tunnelHandle = handle
         tunnelRunning = true
@@ -81,16 +87,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
 
         NSLog("nvpn-pkt: calling setTunnelNetworkSettings")
+        packetDebugLog("calling setTunnelNetworkSettings")
         setTunnelNetworkSettings(settings) { [weak self] error in
             if let error {
                 NSLog("nvpn-pkt: setTunnelNetworkSettings failed: \(error)")
+                packetDebugLog("setTunnelNetworkSettings failed: \(error)")
                 self?.stopRustTunnel()
                 completionHandler(error)
                 return
             }
             NSLog("nvpn-pkt: setTunnelNetworkSettings succeeded — starting packet loops")
+            packetDebugLog("setTunnelNetworkSettings succeeded")
             self?.startPacketLoops()
             NSLog("nvpn-pkt: completionHandler(nil) — VPN should transition to connected")
+            packetDebugLog("completionHandler nil")
             completionHandler(nil)
         }
     }
@@ -99,6 +109,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         with reason: NEProviderStopReason,
         completionHandler: @escaping () -> Void
     ) {
+        packetDebugLog("stopTunnel reason=\(reason.rawValue)")
         stopRustTunnel()
         completionHandler()
     }
@@ -272,6 +283,27 @@ private func packetFamily(_ packet: Data) -> NSNumber {
         return NSNumber(value: AF_INET)
     }
     return NSNumber(value: (first >> 4) == 6 ? AF_INET6 : AF_INET)
+}
+
+private func packetDebugLog(_ message: String) {
+    #if DEBUG
+    let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+        .first ?? FileManager.default.temporaryDirectory
+    let logUrl = cachesDir.appendingPathComponent("nvpn-pkt-debug.log")
+    let line = "[\(Date())] \(message)\n"
+    guard let data = line.data(using: .utf8) else {
+        return
+    }
+    if FileManager.default.fileExists(atPath: logUrl.path),
+       let handle = try? FileHandle(forWritingTo: logUrl)
+    {
+        handle.seekToEndOfFile()
+        handle.write(data)
+        try? handle.close()
+    } else {
+        try? data.write(to: logUrl)
+    }
+    #endif
 }
 
 private func ipv4Mask(prefixLength: Int) -> String {
