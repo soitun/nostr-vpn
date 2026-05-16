@@ -81,25 +81,14 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
-      - name: Install cross
-        if: ${{ matrix.cross }}
-        run: cargo install cross --git https://github.com/cross-rs/cross
-
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
         with:
           cache-bin: false
 
-      - name: Build Pi Zero cross image
-        if: ${{ matrix.target == 'arm-unknown-linux-musleabihf' }}
-        run: docker build -t nvpn-cross-arm-unknown-linux-musleabihf:headers -f docker/cross/arm-unknown-linux-musleabihf.Dockerfile .
-
-      - name: Build CLI with cross
+      - name: Build Linux musl CLI with Docker
         if: ${{ matrix.cross }}
-        env:
-          BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_musl: -I/usr/include --sysroot=/usr/local/aarch64-linux-musl
-          BINDGEN_EXTRA_CLANG_ARGS_x86_64_unknown_linux_musl: -I/usr/include --sysroot=/usr/local/x86_64-linux-musl
-        run: cross build --release --target ${{ matrix.target }} -p nvpn
+        run: ./scripts/build-nvpn-linux-musl ${{ matrix.target }}
 
       - name: Build CLI natively
         if: ${{ !matrix.cross }}

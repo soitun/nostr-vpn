@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TARGET=${1:-${NVPN_LINUX_MUSL_TARGET:-x86_64-unknown-linux-musl}}
+WORKSPACE=$(git rev-parse --show-toplevel)
+BUILD_ROOT=${NVPN_LINUX_MUSL_BUILD_ROOT:-${TMPDIR:-/tmp}}
+TARGET_DIR=${NVPN_LINUX_MUSL_TARGET_DIR:-$WORKSPACE/target}
+WORK_DIR=$(mktemp -d "$BUILD_ROOT/nvpn-linux-musl.XXXXXX")
+FIPS_REPO_PATH=${NVPN_FIPS_REPO_PATH:-}
+DOCKER_ENV=()
+
+case "$TARGET" in
+  x86_64-unknown-linux-musl)
+    DEFAULT_IMAGE=messense/rust-musl-cross:x86_64-musl
+    BINDGEN_INCLUDE=/usr/local/musl/x86_64-unknown-linux-musl/include
+    TARGET_LINKER=
+    ;;
+  aarch64-unknown-linux-musl)
+    DEFAULT_IMAGE=messense/rust-musl-cross:aarch64-musl
+    BINDGEN_INCLUDE=/usr/local/musl/aarch64-unknown-linux-musl/include
+    TARGET_LINKER=
+    ;;
+  arm-unknown-linux-musleabihf)
+    DEFAULT_IMAGE=messense/rust-musl-cross:arm-musleabihf
+    BINDGEN_INCLUDE=/usr/local/musl/arm-unknown-linux-musleabihf/include
+    TARGET_LINKER=arm-unknown-linux-musleabihf-gcc
+    ;;
+  *)
+    echo "unsupported Linux musl target: $TARGET" >&2
+    exit 1
+    ;;
+esac
+
+IMAGE=${NVPN_LINUX_MUSL_IMAGE:-$DEFAULT_IMAGE}
+BINDGEN_ENV_NAME="BINDGEN_EXTRA_CLANG_ARGS_$(printf '%s' "$TARGET" | tr '-' '_')"
+LINKER_ENV_NAME="CARGO_TARGET_$(printf '%s' "$TARGET" | tr '[:lower:]-' '[:upper:]_')_LINKER"
+DOCKER_ENV+=(-e "$BINDGEN_ENV_NAME=-I$BINDGEN_INCLUDE")
+if [[ -n "$TARGET_LINKER" ]]; then
+  DOCKER_ENV+=(-e "$LINKER_ENV_NAME=$TARGET_LINKER")
+fi
+
+cleanup() {
+  if [[ ${NVPN_LINUX_MUSL_KEEP_WORK:-0} != 1 ]]; then
+    rm -rf "$WORK_DIR"
+  fi
+}
+trap cleanup EXIT
+
+git -C "$WORKSPACE" archive --format=tar HEAD | tar -x -C "$WORK_DIR"
+mkdir -p "$TARGET_DIR"
+
+if [[ -n "$FIPS_REPO_PATH" ]]; then
+  FIPS_PATCH_DIR="$WORK_DIR/.fips-patch"
+  mkdir -p "$FIPS_PATCH_DIR"
+  git -C "$FIPS_REPO_PATH" archive --format=tar HEAD | tar -x -C "$FIPS_PATCH_DIR"
+
+  if [[ -f "$FIPS_PATCH_DIR/crates/fips-endpoint/Cargo.toml" ]]; then
+    DOCKER_ENV+=(-e NVPN_FIPS_ENDPOINT_PATCH_PATH=/home/rust/src/.fips-patch/crates/fips-endpoint)
+  elif [[ -f "$FIPS_PATCH_DIR/Cargo.toml" ]]; then
+    DOCKER_ENV+=(-e NVPN_FIPS_ENDPOINT_PATCH_PATH=/home/rust/src/.fips-patch)
+  else
+    echo "NVPN_FIPS_REPO_PATH does not contain fips-endpoint sources" >&2
+    exit 1
+  fi
+fi
+
+docker run --rm -i \
+  -u "$(id -u):$(id -g)" \
+  -v "$WORK_DIR":/home/rust/src \
+  -v "$TARGET_DIR":/home/rust/src/target \
+  -e CARGO_HOME=/home/rust/src/.cargo-docker \
+  -e HOME=/home/rust/src \
+  "${DOCKER_ENV[@]}" \
+  "$IMAGE" \
+  bash -se -- "$TARGET" <<'CONTAINER'
+set -euo pipefail
+
+TARGET=$1
+cd /home/rust/src
+
+cargo_config_args=()
+if [[ -n ${NVPN_FIPS_ENDPOINT_PATCH_PATH:-} ]]; then
+  cargo_config_args+=(--config "patch.crates-io.fips-endpoint.path=\"${NVPN_FIPS_ENDPOINT_PATCH_PATH}\"")
+fi
+
+cargo "${cargo_config_args[@]}" fetch --target "$TARGET"
+
+rustables_src=$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -maxdepth 3 -type d -name rustables-0.8.7 -print -quit)
+if [[ -z "$rustables_src" ]]; then
+  echo "rustables-0.8.7 was not found in the cargo registry after cargo fetch" >&2
+  exit 1
+fi
+
+mkdir -p vendor
+cp -a "$rustables_src" vendor/rustables-0.8.7
+
+if ! grep -q '^rustables = { path = "vendor/rustables-0.8.7" }' Cargo.toml; then
+  if grep -q '^\[patch.crates-io\]' Cargo.toml; then
+    sed -i '/^\[patch.crates-io\]/a rustables = { path = "vendor/rustables-0.8.7" }' Cargo.toml
+  else
+    cat >> Cargo.toml <<'PATCH'
+
+[patch.crates-io]
+rustables = { path = "vendor/rustables-0.8.7" }
+PATCH
+  fi
+fi
+
+if ! grep -q 'NFTA_CHAIN_FLAGS' vendor/rustables-0.8.7/build.rs; then
+  python3 - <<'PATCH'
+from pathlib import Path
+
+path = Path("vendor/rustables-0.8.7/build.rs")
+text = path.read_text()
+old = '    let s = bindings.to_string().replace(" ; ", ";\\n");\n    let s = reformat_units(&s);\n'
+new = '''    let mut s = bindings.to_string().replace(" ; ", ";\\n");
+    if !s.contains("NFTA_CHAIN_FLAGS") {
+        s = s.replace(
+            "pub const __NFTA_CHAIN_MAX: nft_chain_attributes = 10;\\n",
+            concat!(
+                "pub const NFTA_CHAIN_FLAGS: nft_chain_attributes = 10;\\n",
+                "pub const NFTA_CHAIN_ID: nft_chain_attributes = 11;\\n",
+                "pub const NFTA_CHAIN_USERDATA: nft_chain_attributes = 12;\\n",
+                "pub const __NFTA_CHAIN_MAX: nft_chain_attributes = 13;\\n",
+            ),
+        );
+    }
+    let s = reformat_units(&s);
+'''
+if old not in text:
+    raise SystemExit("expected rustables build.rs binding line was not found")
+path.write_text(text.replace(old, new))
+PATCH
+fi
+
+cargo "${cargo_config_args[@]}" build -p nvpn --bin nvpn --release --target "$TARGET"
+CONTAINER
+
+BIN="$TARGET_DIR/$TARGET/release/nvpn"
+if [[ ! -x "$BIN" ]]; then
+  echo "expected output binary missing: $BIN" >&2
+  exit 1
+fi
+
+if [[ -n ${NVPN_SMOKE_HOST:-} ]]; then
+  REMOTE_PATH=${NVPN_SMOKE_PATH:-/tmp/nvpn-musl-smoke}
+  scp "$BIN" "$NVPN_SMOKE_HOST:$REMOTE_PATH"
+  ssh "$NVPN_SMOKE_HOST" "chmod +x '$REMOTE_PATH' && '$REMOTE_PATH' --help >/dev/null"
+fi
+
+printf '%s\n' "$BIN"
