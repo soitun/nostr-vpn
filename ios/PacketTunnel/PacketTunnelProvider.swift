@@ -3,11 +3,12 @@ import NetworkExtension
 import Darwin
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
-    private static let nextPacketPollTimeoutMs: UInt32 = 10
+    private static let nextPacketPollTimeoutMs: UInt32 = 100
 
     private var tunnelHandle: OpaquePointer?
     private var tunnelRunning = false
-    private let tunnelLock = NSLock()
+    private var activeTunnelCalls = 0
+    private let tunnelCondition = NSCondition()
     private let packetQueue = DispatchQueue(label: "to.iris.nvpn.packet-tunnel", qos: .userInitiated)
 
     override func startTunnel(
@@ -36,10 +37,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         NSLog("nvpn-pkt: rust runtime up, handle=\(handle)")
         packetDebugLog("rust runtime up")
-        tunnelLock.lock()
+        tunnelCondition.lock()
         tunnelHandle = handle
         tunnelRunning = true
-        tunnelLock.unlock()
+        activeTunnelCalls = 0
+        tunnelCondition.unlock()
 
         // tunnelRemoteAddress is what iOS shows in Settings → VPN
         // and uses to decide "where the tunnel goes". wireguard-apple
@@ -179,11 +181,14 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func stopRustTunnel() {
-        tunnelLock.lock()
+        tunnelCondition.lock()
         tunnelRunning = false
         let handle = tunnelHandle
         tunnelHandle = nil
-        tunnelLock.unlock()
+        while activeTunnelCalls > 0 {
+            tunnelCondition.wait()
+        }
+        tunnelCondition.unlock()
 
         if let handle {
             nostr_vpn_mobile_tunnel_free(handle)
@@ -191,18 +196,30 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func isTunnelRunning() -> Bool {
-        tunnelLock.lock()
-        defer { tunnelLock.unlock() }
+        tunnelCondition.lock()
+        defer { tunnelCondition.unlock() }
         return tunnelRunning
     }
 
     private func withTunnelHandle<T>(_ body: (OpaquePointer) -> T) -> T? {
-        tunnelLock.lock()
-        defer { tunnelLock.unlock() }
-        guard tunnelRunning, let tunnelHandle else {
+        tunnelCondition.lock()
+        guard tunnelRunning, let handle = tunnelHandle else {
+            tunnelCondition.unlock()
             return nil
         }
-        return body(tunnelHandle)
+        activeTunnelCalls += 1
+        tunnelCondition.unlock()
+
+        defer {
+            tunnelCondition.lock()
+            activeTunnelCalls -= 1
+            if activeTunnelCalls == 0 {
+                tunnelCondition.broadcast()
+            }
+            tunnelCondition.unlock()
+        }
+
+        return body(handle)
     }
 }
 
