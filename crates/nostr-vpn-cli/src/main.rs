@@ -2611,12 +2611,12 @@ fn drain_fips_mesh_events(
                 network_id,
                 capabilities,
             } => {
-                let _ = (sender_pubkey, network_id);
-                if !capabilities.endpoint_hints.is_empty()
-                    || !capabilities.advertised_routes.is_empty()
-                {
-                    roster_changed = true;
-                }
+                let _ = (sender_pubkey, network_id, capabilities);
+                // The FIPS receive path records capabilities before queuing
+                // this event. The daemon heartbeat applies fresh endpoint
+                // hints with a signature guard, and the status tick reads
+                // advertised routes from the same cache, so a capability frame
+                // should not force a full FIPS config refresh by itself.
             }
         }
     }

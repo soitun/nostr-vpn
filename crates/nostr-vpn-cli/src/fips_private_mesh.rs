@@ -71,6 +71,8 @@ const MESH_MAX_MTU: u16 = 9000;
 const FIPS_TUN_READ_BURST: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const FIPS_MESH_SEND_BURST: usize = 64;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const FIPS_MESH_EVENT_DRAIN_LIMIT: usize = 256;
 #[cfg(target_os = "windows")]
 const WINDOWS_FIPS_TUN_READ_BURST: usize = 64;
 #[cfg(target_os = "windows")]
@@ -391,6 +393,21 @@ pub(crate) enum FipsPrivateMeshEvent {
         network_id: String,
         capabilities: PeerCapabilities,
     },
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn drain_event_batch(
+    event_rx: &mut mpsc::Receiver<FipsPrivateMeshEvent>,
+    limit: usize,
+) -> Vec<FipsPrivateMeshEvent> {
+    let mut events = Vec::new();
+    for _ in 0..limit {
+        let Ok(event) = event_rx.try_recv() else {
+            break;
+        };
+        events.push(event);
+    }
+    events
 }
 
 impl FipsPrivateMeshRuntime {
@@ -1792,11 +1809,7 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) fn drain_events(&mut self) -> Vec<FipsPrivateMeshEvent> {
-        let mut events = Vec::new();
-        while let Ok(event) = self.event_rx.try_recv() {
-            events.push(event);
-        }
-        events
+        drain_event_batch(&mut self.event_rx, FIPS_MESH_EVENT_DRAIN_LIMIT)
     }
 
     pub(crate) async fn stop(self) -> Result<()> {
@@ -2954,11 +2967,7 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) fn drain_events(&mut self) -> Vec<FipsPrivateMeshEvent> {
-        let mut events = Vec::new();
-        while let Ok(event) = self.event_rx.try_recv() {
-            events.push(event);
-        }
-        events
+        drain_event_batch(&mut self.event_rx, FIPS_MESH_EVENT_DRAIN_LIMIT)
     }
 
     pub(crate) async fn stop(self) -> Result<()> {
@@ -3276,11 +3285,12 @@ mod tests {
     use super::{
         ControlFragmentBuffer, FIPS_DISCOVERY_BACKOFF_BASE_SECS, FIPS_DISCOVERY_BACKOFF_MAX_SECS,
         FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS, FIPS_LAN_DISCOVERY_SCOPE_PREFIX,
-        FIPS_NOSTR_DISCOVERY_APP, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
+        FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
         FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
-        FipsEndpointTransportConfig, FipsPrivateMeshRuntime, FipsPrivateTunnelConfig,
-        control_frame_destination_npub, control_frame_source_pubkey, fips_endpoint_config,
-        fips_endpoint_peers_from_mesh, fips_lan_discovery_scope, strip_cidr,
+        FipsEndpointTransportConfig, FipsPrivateMeshEvent, FipsPrivateMeshRuntime,
+        FipsPrivateTunnelConfig, control_frame_destination_npub, control_frame_source_pubkey,
+        drain_event_batch, fips_endpoint_config, fips_endpoint_peers_from_mesh,
+        fips_lan_discovery_scope, strip_cidr,
     };
     use fips_endpoint::{
         Config, ConnectPolicy, PeerConfig as FipsPeerConfig, RoutingMode, TransportInstances,
@@ -3311,6 +3321,24 @@ mod tests {
         packet[16..20].copy_from_slice(&destination.octets());
         packet[20..].copy_from_slice(&payload);
         packet
+    }
+
+    #[test]
+    fn drain_event_batch_respects_limit() {
+        let (tx, mut rx) =
+            tokio::sync::mpsc::channel::<FipsPrivateMeshEvent>(FIPS_MESH_EVENT_DRAIN_LIMIT + 8);
+        for index in 0..(FIPS_MESH_EVENT_DRAIN_LIMIT + 5) {
+            tx.try_send(FipsPrivateMeshEvent::Presence {
+                participant_pubkey: format!("peer-{index}"),
+                last_seen_at: index as u64,
+            })
+            .expect("queue test event");
+        }
+
+        let drained = drain_event_batch(&mut rx, FIPS_MESH_EVENT_DRAIN_LIMIT);
+
+        assert_eq!(drained.len(), FIPS_MESH_EVENT_DRAIN_LIMIT);
+        assert_eq!(rx.len(), 5);
     }
 
     fn mesh_peer_status(
