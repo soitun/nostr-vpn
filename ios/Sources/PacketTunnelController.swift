@@ -60,6 +60,40 @@ final class PacketTunnelController {
         debugLog("stopVPNTunnel returned status=\(manager.connection.status.rawValue)")
     }
 
+    func runtimeStateJson() async -> String? {
+        await providerMessage("runtimeState")
+    }
+
+    func takeAppConfigToml() async -> String? {
+        await providerMessage("takeAppConfig")
+    }
+
+    private func providerMessage(_ message: String) async -> String? {
+        do {
+            let manager = try await loadOrCreateManager()
+            guard let session = manager.connection as? NETunnelProviderSession else {
+                return nil
+            }
+            let data = message.data(using: .utf8) ?? Data()
+            return try await withCheckedThrowingContinuation { continuation in
+                do {
+                    try session.sendProviderMessage(data) { response in
+                        guard let response, let json = String(data: response, encoding: .utf8) else {
+                            continuation.resume(returning: nil)
+                            return
+                        }
+                        continuation.resume(returning: json)
+                    }
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        } catch {
+            debugLog("providerMessage \(message) failed: \(String(describing: error))")
+            return nil
+        }
+    }
+
     private func loadOrCreateManager() async throws -> NETunnelProviderManager {
         let managers = try await loadAllManagers()
         debugLog("loaded managers count=\(managers.count)")
@@ -112,10 +146,7 @@ final class PacketTunnelController {
 
     private func debugLog(_ message: String) {
         #if DEBUG
-        guard let supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first?
-            .appendingPathComponent("Nostr VPN", isDirectory: true)
-        else {
+        guard let supportDir = AppModel.supportDirectory() else {
             return
         }
         try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)

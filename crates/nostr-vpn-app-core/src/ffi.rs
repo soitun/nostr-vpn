@@ -42,6 +42,8 @@ use crate::state::{
 
 const NVPN_BIN_ENV: &str = "NVPN_CLI_PATH";
 const SERVICE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
+const MOBILE_RUNTIME_STATE_FILE: &str = "mobile-runtime-state.json";
+const MOBILE_RUNTIME_STATE_STALE_SECS: u64 = 10;
 
 /// Output of running a privileged command from foreign code.
 ///
@@ -1394,12 +1396,32 @@ impl NativeAppRuntime {
             {
                 self.vpn_status = "VPN on".to_string();
             }
+            if let Some(state) = self.load_mobile_runtime_state() {
+                self.daemon_state = Some(state.clone());
+                self.daemon_running = state.vpn_enabled;
+                self.vpn_active = state.vpn_active;
+                self.vpn_status = state.vpn_status;
+            }
         } else {
             self.daemon_running = false;
             self.vpn_active = false;
             self.vpn_status = "Disconnected".to_string();
         }
         Ok(())
+    }
+
+    fn load_mobile_runtime_state(&self) -> Option<DaemonRuntimeState> {
+        let path = self
+            .config_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())?
+            .join(MOBILE_RUNTIME_STATE_FILE);
+        let raw = fs::read_to_string(path).ok()?;
+        let state = serde_json::from_str::<DaemonRuntimeState>(&raw).ok()?;
+        if age_secs_since(state.updated_at) > MOBILE_RUNTIME_STATE_STALE_SECS {
+            return None;
+        }
+        Some(state)
     }
 
     fn refresh_status(&mut self) -> Result<()> {

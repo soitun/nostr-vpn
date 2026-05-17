@@ -4,6 +4,9 @@ import UIKit
 
 @MainActor
 final class AppModel: ObservableObject {
+    nonisolated static let appGroupIdentifier = "group.to.iris.nvpn"
+    private static let configFileName = "config.toml"
+    private static let mobileRuntimeStateFileName = "mobile-runtime-state.json"
     static let vpnDisclosureAcceptedKey = "vpnDisclosureAccepted"
     static let vpnDisclosurePromptMessage = "Review VPN data use before turning VPN on."
 
@@ -19,11 +22,10 @@ final class AppModel: ObservableObject {
     private var refreshTask: Task<Void, Never>?
     private var copyClearTask: Task<Void, Never>?
     private var launchAutomationHandled = false
+    private var tunnelStateRefreshInFlight = false
 
     init() {
-        supportDir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first?
-            .appendingPathComponent("Nostr VPN", isDirectory: true)
+        supportDir = Self.supportDirectory()
         if let supportDir {
             try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
             Self.seedMobileConfig(in: supportDir, deviceName: Self.deviceName())
@@ -68,6 +70,7 @@ final class AppModel: ObservableObject {
 
     func refresh() {
         state = core.refresh()
+        refreshTunnelSidecarState()
     }
 
     func dispatch(_ action: [String: Any], status: String = "") {
@@ -370,7 +373,7 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let config = supportDir.appendingPathComponent("config.toml")
+        let config = supportDir.appendingPathComponent(configFileName)
         guard !FileManager.default.fileExists(atPath: config.path) else {
             return
         }
@@ -379,6 +382,110 @@ final class AppModel: ObservableObject {
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
         try? "node_name = \"\(escaped)\"\n".write(to: config, atomically: true, encoding: .utf8)
+    }
+
+    private func refreshTunnelSidecarState() {
+        guard state.vpnEnabled, !tunnelStateRefreshInFlight else {
+            return
+        }
+        tunnelStateRefreshInFlight = true
+        Task { [weak self] in
+            let runtimeJson = await self?.vpnController.runtimeStateJson()
+            let appConfigToml = await self?.vpnController.takeAppConfigToml()
+            await MainActor.run {
+                guard let self else {
+                    return
+                }
+                self.tunnelStateRefreshInFlight = false
+                var wrote = false
+                if let appConfigToml, self.writeTunnelAppConfigIfNeeded(appConfigToml) {
+                    wrote = true
+                }
+                if let runtimeJson, self.writeTunnelRuntimeStateIfNeeded(runtimeJson) {
+                    wrote = true
+                }
+                if wrote {
+                    self.state = self.core.refresh()
+                }
+            }
+        }
+    }
+
+    private func writeTunnelRuntimeStateIfNeeded(_ json: String) -> Bool {
+        let trimmed = json.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let data = trimmed.data(using: .utf8),
+              (try? JSONSerialization.jsonObject(with: data)) != nil
+        else {
+            return false
+        }
+        return writeSupportFileIfChanged(data, name: Self.mobileRuntimeStateFileName)
+    }
+
+    private func writeTunnelAppConfigIfNeeded(_ toml: String) -> Bool {
+        let trimmed = toml.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.hasPrefix("# failed") else {
+            return false
+        }
+        guard let data = toml.data(using: .utf8) else {
+            return false
+        }
+        return writeSupportFileIfChanged(data, name: Self.configFileName)
+    }
+
+    private func writeSupportFileIfChanged(_ data: Data, name: String) -> Bool {
+        guard let supportDir else {
+            return false
+        }
+        try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
+        let url = supportDir.appendingPathComponent(name)
+        if let existing = try? Data(contentsOf: url), existing == data {
+            return false
+        }
+        do {
+            try data.write(to: url, options: .atomic)
+            debugLog("wrote tunnel sidecar file \(name)")
+            return true
+        } catch {
+            debugLog("failed to write tunnel sidecar file \(name): \(String(describing: error))")
+            return false
+        }
+    }
+
+    nonisolated static func supportDirectory() -> URL? {
+        let legacy = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
+            .first?
+            .appendingPathComponent("Nostr VPN", isDirectory: true)
+        guard let shared = FileManager.default
+            .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
+            .appendingPathComponent("Nostr VPN", isDirectory: true)
+        else {
+            return legacy
+        }
+        migrateLegacySupportDirectory(from: legacy, to: shared)
+        return shared
+    }
+
+    nonisolated private static func migrateLegacySupportDirectory(from legacy: URL?, to shared: URL) {
+        guard let legacy, legacy.path != shared.path else {
+            return
+        }
+        let manager = FileManager.default
+        guard manager.fileExists(atPath: legacy.path) else {
+            return
+        }
+        try? manager.createDirectory(at: shared, withIntermediateDirectories: true)
+        guard let items = try? manager.contentsOfDirectory(at: legacy, includingPropertiesForKeys: nil)
+        else {
+            return
+        }
+        for item in items {
+            let destination = shared.appendingPathComponent(item.lastPathComponent)
+            guard !manager.fileExists(atPath: destination.path) else {
+                continue
+            }
+            try? manager.copyItem(at: item, to: destination)
+        }
     }
 
     private static func deviceName() -> String {

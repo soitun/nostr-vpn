@@ -2,6 +2,8 @@ import Foundation
 import NetworkExtension
 import Darwin
 
+private let appGroupIdentifier = "group.to.iris.nvpn"
+
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let nextPacketPollTimeoutMs: UInt32 = 100
 
@@ -116,6 +118,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         packetDebugLog("stopTunnel reason=\(reason.rawValue)")
         stopRustTunnel()
         completionHandler()
+    }
+
+    override func handleAppMessage(
+        _ messageData: Data,
+        completionHandler: ((Data?) -> Void)?
+    ) {
+        let message = String(data: messageData, encoding: .utf8) ?? ""
+        switch message {
+        case "runtimeState":
+            let json = withTunnelHandle { handle in
+                consumeCString(nostr_vpn_mobile_tunnel_runtime_state_json(handle))
+            } ?? #"{"error":"mobile tunnel stopped"}"#
+            completionHandler?(json.data(using: .utf8))
+        case "takeAppConfig":
+            let toml = withTunnelHandle { handle in
+                consumeCString(nostr_vpn_mobile_tunnel_take_app_config_toml(handle))
+            } ?? ""
+            completionHandler?(toml.data(using: .utf8))
+        default:
+            completionHandler?(nil)
+        }
     }
 
     private func startPacketLoops() {
@@ -309,11 +332,24 @@ private func packetFamily(_ packet: Data) -> NSNumber {
     return NSNumber(value: (first >> 4) == 6 ? AF_INET6 : AF_INET)
 }
 
+private func consumeCString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
+    guard let pointer else {
+        return ""
+    }
+    defer { nostr_vpn_string_free(pointer) }
+    return String(cString: pointer)
+}
+
 private func packetDebugLog(_ message: String) {
     #if DEBUG
-    let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
-        .first ?? FileManager.default.temporaryDirectory
-    let logUrl = cachesDir.appendingPathComponent("nvpn-pkt-debug.log")
+    let logDir = FileManager.default
+        .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
+        .appendingPathComponent("Nostr VPN", isDirectory: true)
+        ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
+            .first
+        ?? FileManager.default.temporaryDirectory
+    try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+    let logUrl = logDir.appendingPathComponent("nvpn-pkt-debug.log")
     let line = "[\(Date())] \(message)\n"
     guard let data = line.data(using: .utf8) else {
         return

@@ -138,6 +138,43 @@ pub extern "C" fn nostr_vpn_mobile_tunnel_config_json(data_dir: *const c_char) -
     json_raw_string(&config_json)
 }
 
+/// # Safety
+///
+/// `handle` must be a live mobile tunnel handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_runtime_state_json(
+    handle: *const NvpnMobileTunnelHandle,
+) -> *mut c_char {
+    if handle.is_null() {
+        return json_raw_string(r#"{"error":"mobile tunnel stopped"}"#);
+    }
+    let tunnel = unsafe { &*handle };
+    match tunnel.tunnel.runtime_state_json() {
+        Ok(json) => json_raw_string(&json),
+        Err(error) => {
+            let json = serde_json::json!({ "error": error.to_string() }).to_string();
+            json_raw_string(&json)
+        }
+    }
+}
+
+/// # Safety
+///
+/// `handle` must be a live mobile tunnel handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_take_app_config_toml(
+    handle: *const NvpnMobileTunnelHandle,
+) -> *mut c_char {
+    if handle.is_null() {
+        return json_raw_string("");
+    }
+    let tunnel = unsafe { &*handle };
+    match tunnel.tunnel.take_app_config_toml() {
+        Ok(toml) => json_raw_string(&toml),
+        Err(error) => json_raw_string(&format!("# failed to read mobile app config: {error}\n")),
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn nostr_vpn_mobile_tunnel_new(
     config_json: *const c_char,

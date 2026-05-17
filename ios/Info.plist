@@ -35,6 +35,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan Nostr VPN invite QR codes.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Connect directly to nearby Nostr VPN devices on your local network.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Select invite QR images to join networks.</string>
 	<key>UILaunchScreen</key>

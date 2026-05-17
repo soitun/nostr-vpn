@@ -19,6 +19,8 @@ char *nostr_vpn_decode_qr_image_json(const char *path);
 
 char *nostr_vpn_mobile_tunnel_config_json(const char *data_dir);
 NvpnMobileTunnelHandle *nostr_vpn_mobile_tunnel_new(const char *config_json);
+char *nostr_vpn_mobile_tunnel_runtime_state_json(const NvpnMobileTunnelHandle *handle);
+char *nostr_vpn_mobile_tunnel_take_app_config_toml(const NvpnMobileTunnelHandle *handle);
 void nostr_vpn_mobile_tunnel_free(NvpnMobileTunnelHandle *handle);
 bool nostr_vpn_mobile_tunnel_send_packet(
     const NvpnMobileTunnelHandle *handle,
