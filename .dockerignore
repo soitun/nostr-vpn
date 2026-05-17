@@ -1,6 +1,8 @@
 .git
 target
 dist
+node_modules
+**/node_modules
 .claude
 .codex_tmp*
 

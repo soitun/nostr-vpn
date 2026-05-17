@@ -23,6 +23,9 @@ curl http://localhost:38080/api/health
 curl -X POST http://localhost:38080/api/tick
 ```
 
+The image builds the responsive Svelte control panel from
+`web/control-panel` and serves it from `/usr/share/nostr-vpn/web`.
+
 ## Release bundle
 
 Umbrel app submissions need a pinned remote image reference, not a local build

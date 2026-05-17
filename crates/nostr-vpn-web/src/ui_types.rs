@@ -282,3 +282,16 @@ pub(crate) struct AliasRequest {
     pub npub: String,
     pub alias: String,
 }
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QrMatrixRequest {
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct QrMatrixResponse {
+    pub width: usize,
+    pub cells: Vec<bool>,
+}

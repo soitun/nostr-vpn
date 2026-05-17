@@ -38,9 +38,10 @@ use crate::ui_models::{
 use crate::ui_types::{
     AliasRequest, InviteRequest, JoinRequestAction, NameRequest, NetworkEnabledRequest,
     NetworkIdRequest, NetworkMeshRequest, NetworkNameRequest, NetworkPeerRequest,
-    ParticipantRequest, SettingsPatch, UiState,
+    ParticipantRequest, QrMatrixRequest, QrMatrixResponse, SettingsPatch, UiState,
 };
 use nostr_vpn_core::config::{AppConfig, PendingOutboundJoinRequest, normalize_nostr_pubkey};
+use qrcode::QrCode;
 
 const NVPN_BIN_ENV: &str = "NVPN_CLI_PATH";
 const NETWORK_INVITE_PREFIX: &str = "nvpn://invite/";
@@ -166,6 +167,7 @@ async fn main() -> Result<()> {
         .route("/api/accept_join_request", post(accept_join_request))
         .route("/api/reject_join_request", post(reject_join_request))
         .route("/api/set_participant_alias", post(set_participant_alias))
+        .route("/api/qr_matrix", post(qr_matrix))
         .route("/api/update_settings", post(update_settings))
         .with_state(state.clone());
 
@@ -540,6 +542,29 @@ async fn update_settings(
     })
 }
 
+async fn qr_matrix(Json(request): Json<QrMatrixRequest>) -> ApiResult<Json<QrMatrixResponse>> {
+    Ok(Json(build_qr_matrix(&request.text).map_err(bad_request)?))
+}
+
+fn build_qr_matrix(text: &str) -> Result<QrMatrixResponse> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(QrMatrixResponse {
+            width: 0,
+            cells: Vec::new(),
+        });
+    }
+
+    let code = QrCode::new(trimmed.as_bytes())?;
+    let width = code.width();
+    let cells = code
+        .to_colors()
+        .into_iter()
+        .map(|color| matches!(color, qrcode::Color::Dark))
+        .collect();
+    Ok(QrMatrixResponse { width, cells })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,5 +575,14 @@ mod tests {
 
         assert!(args.listen.ip().is_loopback());
         assert_eq!(args.listen.port(), 8081);
+    }
+
+    #[test]
+    fn qr_matrix_encodes_invite_text() {
+        let matrix = build_qr_matrix("nvpn://invite/example").expect("qr matrix");
+
+        assert!(matrix.width > 0);
+        assert_eq!(matrix.cells.len(), matrix.width * matrix.width);
+        assert!(matrix.cells.iter().any(|cell| *cell));
     }
 }

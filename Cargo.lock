@@ -2619,6 +2619,7 @@ dependencies = [
  "dirs",
  "nostr-sdk 0.35.0",
  "nostr-vpn-core",
+ "qrcode",
  "serde",
  "serde_json",
  "tokio",
