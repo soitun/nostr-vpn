@@ -546,6 +546,24 @@ fn activating_one_network_disables_the_others() {
 }
 
 #[test]
+fn removing_the_last_network_leaves_setup_empty() {
+    let mut config = AppConfig::generated();
+    let network_id = config.networks[0].id.clone();
+    config.exit_node = Keys::generate().public_key().to_hex();
+
+    config
+        .remove_network(&network_id)
+        .expect("last network can be removed");
+
+    assert!(config.networks.is_empty());
+    assert_eq!(config.enabled_network_count(), 0);
+    assert!(config.active_network_opt().is_none());
+    assert!(config.effective_network_id().is_empty());
+    assert!(config.participant_pubkeys_hex().is_empty());
+    assert!(config.exit_node.is_empty());
+}
+
+#[test]
 fn cannot_disable_the_last_active_network() {
     let mut config = AppConfig::generated();
     let active_id = config.networks[0].id.clone();
@@ -554,7 +572,7 @@ fn cannot_disable_the_last_active_network() {
         .set_network_enabled(&active_id, false)
         .expect_err("last active network should stay active");
 
-    assert!(error.to_string().contains("active network"));
+    assert!(error.to_string().contains("activate another network"));
     assert_eq!(config.enabled_network_count(), 1);
     assert!(
         config

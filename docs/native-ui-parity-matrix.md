@@ -83,7 +83,7 @@ Legend:
 | Saved networks list | `SavedNetworksPanel.svelte` | All networks with enabled flag | Required | Required | Required | Required | Required | Active network separate; inactive networks collapsible/listed. |
 | Add saved network | `add_network` | Add network action | Required | Required | Required | Required | Required | Optional name. |
 | Activate saved network | `set_network_enabled` | Set active network action | Required | Required | Required | Required | Required | Ensure daemon reload/VPN state is correct. |
-| Delete saved network | `remove_network` | Remove network action | Required | Required | Required | Required | Required | Current button is disabled when only one inactive network remains; revisit rule in core. |
+| Delete saved network | `remove_network` | Remove network action | Required | Required | Required | Required | Required | Deleting the final network returns the app to setup. |
 | Edit saved network profile | `SavedNetworkCard.svelte` | Same name/mesh/admin actions as active network | Required | Required | Required | Required | Required | Inactive networks still receive join requests. |
 | Saved network participants | `SavedNetworkParticipantRow.svelte` | Participant list and alias actions | Required | Required | Required | Required | Required | Minimal status for inactive profiles. |
 | Exit Nodes mode summary | `Exit NodesPanel.svelte` | Derived exit-node status text | Required | Required | Required | Required | Required | Direct mesh, remote exit, local exit, or both. |
@@ -163,7 +163,7 @@ Status legend:
 | LAN pairing | `start_lan_pairing`, `stop_lan_pairing`, `lanPeers` | Ready | Native UI exposes LAN pair start/stop and nearby-peer rows; app-core owns the multicast runtime, countdown, stale-peer pruning, and invite metadata decoding. | None. |
 | Saved networks list | `SavedNetworksPanel.svelte` | Ready | Sidebar and saved-networks disclosure support add, activate, rename, delete, mesh edit, participant preview, and participant removal. | Add inactive invite/import and join-request detail expansion if needed. |
 | Activate saved network | `set_network_enabled` | Ready | Inactive network rows dispatch typed activation and daemon reload handling from Rust. | None. |
-| Delete saved network | `remove_network` | Ready | Native saved-network delete dispatches typed core removal and core preserves the last-network rule. | Add confirmation if needed. |
+| Delete saved network | `remove_network` | Ready | Native saved-network delete dispatches typed core removal; deleting the final network returns the app to setup. | Add confirmation if needed. |
 | Exit Nodes summary | Exit-node page | Ready | Native exit-node section shows direct/exit mode, offer-exit toggle, and exit candidates. | Add richer route helper text from core if desired. |
 | Advertise exit node | `advertiseExitNode` | Ready | Toggle dispatches typed settings patch from exit-node and menu bar surfaces. | None. |
 | Advanced route advertisement | `advertisedRoutes` | Deferred | Native shells hide the CIDR string editor; Rust still normalizes and validates config values. | Reintroduce only behind an advanced affordance if needed. |
@@ -255,7 +255,7 @@ flow like the Swift app rather than the removed Svelte UI.
 | LAN pairing | Ready | Start/stop pairing, countdown, nearby peer rows, and invite import are wired through app-core actions. | Mobile permission parity is out of scope for Linux. |
 | Exit Nodes | Ready | Direct route, searchable exit-node candidates, exit-node offer toggle, and offer-exit toggle mirror the macOS Exit Nodes page. | Add richer route helper text from core if added. |
 | Active network settings | Ready | Settings exposes active network name, editable/copyable network ID, and admin-gated join-request toggle. | Add blur/Enter commit polish. |
-| Saved networks | Ready | Saved Networks disclosure lists inactive networks with counts, activate action, and delete action guarded by the last-network rule. | Expand inactive profiles if Linux needs the full macOS saved-network detail surface. |
+| Saved networks | Ready | Saved Networks disclosure lists inactive networks with counts, activate action, and delete action. | Expand inactive profiles if Linux needs the full macOS saved-network detail surface. |
 | Device/system settings | Ready | Name, tunnel IP, endpoint, listen port, MagicDNS suffix, autoconnect, startup desktop-entry registration, and tray preferences dispatch typed settings patches. | None. |
 | CLI and service controls | Ready | Shows CLI/service status badges and install/reinstall/uninstall plus enable/disable service actions when supported; service actions show settlement progress and stale-version repair state. | Add a richer polkit prompt only if the CLI stops being launched through an already-elevated context. |
 | Diagnostics | Ready | Advanced diagnostics shows interface/IP/gateway/mapping metrics, identity/config/runtime fields, MagicDNS, and health issue rows. | Auto-open diagnostics on new health issues if users need parity with macOS. |

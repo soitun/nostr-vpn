@@ -1035,10 +1035,6 @@ impl AppConfig {
     }
 
     pub fn remove_network(&mut self, network_id: &str) -> Result<()> {
-        if self.networks.len() <= 1 {
-            return Err(anyhow::anyhow!("at least one network is required"));
-        }
-
         let previous_len = self.networks.len();
         self.networks.retain(|network| network.id != network_id);
         if self.networks.len() == previous_len {
@@ -1072,7 +1068,7 @@ impl AppConfig {
 
         if self.networks[index].enabled {
             return Err(anyhow::anyhow!(
-                "at least one active network is required; activate another network first"
+                "activate another network before disabling this one"
             ));
         }
 

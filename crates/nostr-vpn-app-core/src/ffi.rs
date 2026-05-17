@@ -2680,6 +2680,40 @@ mod tests {
     }
 
     #[test]
+    fn remove_network_allows_returning_to_setup() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-remove-last-network-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+        runtime.dispatch(NativeAppAction::AddNetwork {
+            name: "Home".to_string(),
+        });
+        let network_id = runtime.config.networks[0].id.clone();
+
+        runtime.dispatch(NativeAppAction::RemoveNetwork { network_id });
+
+        let state = runtime.state();
+        assert!(state.error.is_empty(), "{}", state.error);
+        assert!(state.networks.is_empty());
+        assert!(state.network_id.is_empty());
+        assert!(state.active_network_invite.is_empty());
+        assert_eq!(state.expected_peer_count, 0);
+
+        let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
+        assert!(saved.networks.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn connect_vpn_requires_created_or_joined_network() {
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
