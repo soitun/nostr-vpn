@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- iOS now persists the generated Nostr identity when first-run device-name
+  seeding creates a partial config file, avoiding a fresh install that shows no
+  saved identity until another config write happens.
+
 ## 4.0.26 - 2026-05-17
 
 ### Added

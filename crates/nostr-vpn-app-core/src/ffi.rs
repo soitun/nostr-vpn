@@ -297,6 +297,13 @@ impl NativeAppRuntime {
         let config_exists = config_path
             .try_exists()
             .with_context(|| format!("failed to inspect config {}", config_path.display()))?;
+        let persist_identity_defaults = config_exists
+            && config_file_missing_persisted_identity(&config_path).with_context(|| {
+                format!(
+                    "failed to inspect persisted identity in {}",
+                    config_path.display()
+                )
+            })?;
         let mut config = if config_exists {
             AppConfig::load(&config_path)?
         } else {
@@ -304,7 +311,7 @@ impl NativeAppRuntime {
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
-        if !config_exists {
+        if !config_exists || persist_identity_defaults {
             config.save(&config_path)?;
         }
 
@@ -2233,6 +2240,28 @@ fn native_config_path(data_dir: &str) -> PathBuf {
     }
 }
 
+fn config_file_missing_persisted_identity(path: &Path) -> Result<bool> {
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let value: toml::Value = toml::from_str(&raw).context("failed to parse config TOML")?;
+    let Some(nostr) = value.get("nostr").and_then(toml::Value::as_table) else {
+        return Ok(true);
+    };
+
+    let secret_key = nostr
+        .get("secret_key")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    let public_key = nostr
+        .get("public_key")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default()
+        .trim();
+
+    Ok(secret_key.is_empty() || public_key.is_empty())
+}
+
 fn default_config_path() -> PathBuf {
     dirs::config_dir().map_or_else(
         || PathBuf::from("nvpn.toml"),
@@ -2436,6 +2465,30 @@ mod tests {
         let path = default_config_path();
 
         assert!(path.ends_with(Path::new("nvpn").join("config.toml")));
+    }
+
+    #[test]
+    fn startup_persists_identity_defaults_for_seeded_mobile_config() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-seeded-config-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let config_path = dir.join("config.toml");
+        fs::write(&config_path, "node_name = \"iPhone\"\n").expect("write seeded config");
+
+        let runtime = NativeAppRuntime::new(dir.to_str().expect("utf8 temp dir"), String::new())
+            .expect("runtime starts");
+        let saved = AppConfig::load(&config_path).expect("saved config loads");
+
+        assert_eq!(runtime.config.node_name, "iPhone");
+        assert_eq!(saved.node_name, "iPhone");
+        assert!(saved.networks.is_empty());
+        assert!(!saved.nostr.secret_key.trim().is_empty());
+        assert!(!saved.nostr.public_key.trim().is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
