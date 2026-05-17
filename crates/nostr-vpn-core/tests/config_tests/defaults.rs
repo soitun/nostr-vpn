@@ -22,9 +22,31 @@ fn generated_config_auto_populates_keys() {
     assert!(config.nat.enabled);
     assert!(!config.nat.stun_servers.is_empty());
     assert!(config.exit_node.is_empty());
+    assert!(config.exit_node_leak_protection);
     assert!(!config.node.advertise_exit_node);
     assert!(config.node.advertised_routes.is_empty());
     assert!(config.effective_advertised_routes().is_empty());
+}
+
+#[test]
+fn exit_node_leak_protection_defaults_on_when_missing() {
+    let config: AppConfig = toml::from_str("").expect("parse empty config");
+
+    assert!(config.exit_node_leak_protection);
+}
+
+#[test]
+fn exit_node_leak_protection_off_is_preserved() {
+    let config = AppConfig {
+        exit_node_leak_protection: false,
+        ..AppConfig::default()
+    };
+
+    let encoded = toml::to_string(&config).expect("serialize config");
+    assert!(encoded.contains("exit_node_leak_protection = false"));
+
+    let decoded: AppConfig = toml::from_str(&encoded).expect("parse config");
+    assert!(!decoded.exit_node_leak_protection);
 }
 
 #[test]

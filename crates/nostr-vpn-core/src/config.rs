@@ -98,7 +98,10 @@ pub struct AppConfig {
     pub mesh_tunnel_mtu: u16,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub exit_node: String,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(
+        default = "default_exit_node_leak_protection",
+        skip_serializing_if = "is_true"
+    )]
     pub exit_node_leak_protection: bool,
     #[serde(default = "default_close_to_tray_on_close")]
     pub close_to_tray_on_close: bool,
@@ -490,6 +493,10 @@ fn wireguard_exit_persistent_keepalive_secs_is_default(value: &u16) -> bool {
     *value == default_wireguard_exit_persistent_keepalive_secs()
 }
 
+fn default_exit_node_leak_protection() -> bool {
+    true
+}
+
 fn is_zero_u16(value: &u16) -> bool {
     *value == 0
 }
@@ -633,7 +640,7 @@ impl Default for AppConfig {
             mesh_underlay_udp_mtu: 0,
             mesh_tunnel_mtu: 0,
             exit_node: String::new(),
-            exit_node_leak_protection: false,
+            exit_node_leak_protection: default_exit_node_leak_protection(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             magic_dns_suffix: default_magic_dns_suffix(),
             wireguard_exit: WireGuardExitConfig::default(),
