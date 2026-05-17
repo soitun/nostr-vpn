@@ -388,17 +388,22 @@
   }
 
   function deviceStatusText(participant: ParticipantView): string {
-    if (isSelf(participant) || participant.state === 'local' || participant.meshState === 'local') {
-      return 'Online';
-    }
     const pathState = `${participant.state} ${participant.meshState}`.toLowerCase();
-    if (pathState.includes('online') || pathState.includes('present')) {
+    if (
+      participant.state === 'local' ||
+      participant.meshState === 'local' ||
+      pathState.includes('online') ||
+      pathState.includes('present')
+    ) {
       return 'Online';
     }
     if (pathState.includes('pending')) {
       return 'Connecting';
     }
-    if (pathState.includes('offline') || pathState.includes('absent') || pathState.includes('off')) {
+    if (pathState.includes('off')) {
+      return 'Off';
+    }
+    if (pathState.includes('offline') || pathState.includes('absent')) {
       return 'Offline';
     }
     return nonEmpty(participant.state, 'Unknown');
@@ -751,7 +756,11 @@
           <span class="status-dot {heroTone(state)}"></span>
           <div>
             <strong>{state.vpnEnabled ? 'VPN on' : 'VPN off'}</strong>
-            <span>{state.connectedPeerCount}/{state.expectedPeerCount} devices</span>
+            <span>
+              {shownNetwork
+                ? `${shownNetwork.onlineCount}/${shownNetwork.expectedCount} online`
+                : `${state.connectedPeerCount}/${state.expectedPeerCount} online`}
+            </span>
           </div>
         </div>
       {/if}

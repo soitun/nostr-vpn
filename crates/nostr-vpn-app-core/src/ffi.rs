@@ -1716,7 +1716,7 @@ impl NativeAppRuntime {
             })
         });
         let is_local = participant == own_pubkey_hex;
-        let reachable = is_local || (vpn_active && daemon_peer.is_some_and(|peer| peer.reachable));
+        let reachable = vpn_active && (is_local || daemon_peer.is_some_and(|peer| peer.reachable));
         let access_pending = Self::network_access_pending(network, own_pubkey_hex) && !is_local;
         let magic_dns_alias = if is_local {
             self.config.self_magic_dns_label().unwrap_or_default()
@@ -1928,11 +1928,11 @@ impl NativeAppRuntime {
         is_local: bool,
         vpn_active: bool,
     ) -> String {
-        if is_local {
-            return "local".to_string();
-        }
         if !vpn_active {
             return "off".to_string();
+        }
+        if is_local {
+            return "local".to_string();
         }
         if peer.is_some_and(|peer| peer.reachable) {
             return "online".to_string();
@@ -1958,11 +1958,11 @@ impl NativeAppRuntime {
     }
 
     fn peer_mesh_label(peer: Option<&DaemonPeerState>, is_local: bool, vpn_active: bool) -> String {
-        if is_local {
-            return "local".to_string();
-        }
         if !vpn_active {
             return "off".to_string();
+        }
+        if is_local {
+            return "local".to_string();
         }
         if peer.is_some_and(|peer| peer.reachable)
             || peer
@@ -2748,13 +2748,13 @@ mod tests {
         assert_eq!(state.expected_peer_count, 1);
         assert_eq!(state.connected_peer_count, 0);
         assert_eq!(network.expected_count, 2);
-        assert_eq!(network.online_count, 1);
+        assert_eq!(network.online_count, 0);
         assert_eq!(network.participants.len(), 2);
         assert!(network.participants.iter().any(|participant| {
             participant.pubkey_hex == own_pubkey
-                && participant.reachable
-                && participant.state == "local"
-                && participant.mesh_state == "local"
+                && !participant.reachable
+                && participant.state == "off"
+                && participant.mesh_state == "off"
         }));
     }
 
@@ -3181,19 +3181,13 @@ mod tests {
 
         assert!(!state.vpn_active);
         assert_eq!(state.connected_peer_count, 0);
-        assert_eq!(network.online_count, 1);
+        assert_eq!(network.online_count, 0);
         assert!(
             network
                 .participants
                 .iter()
-                .filter(|participant| participant.pubkey_hex != own_pubkey)
                 .all(|participant| { !participant.reachable && participant.state == "off" })
         );
-        assert!(network.participants.iter().any(|participant| {
-            participant.pubkey_hex == own_pubkey
-                && participant.reachable
-                && participant.state == "local"
-        }));
     }
 
     #[test]

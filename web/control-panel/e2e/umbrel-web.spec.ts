@@ -22,6 +22,8 @@ type NetworkView = {
 type UiState = {
   platform: string;
   daemonRunning: boolean;
+  vpnEnabled: boolean;
+  vpnActive: boolean;
   serviceSupported: boolean;
   serviceStatusDetail: string;
   vpnStatus: string;
@@ -40,7 +42,7 @@ type QrMatrix = {
   cells: boolean[];
 };
 
-test.describe.configure({ mode: 'serial' });
+test.describe.configure({ mode: 'serial', timeout: 60_000 });
 
 async function postJson<T>(
   request: APIRequestContext,
@@ -50,6 +52,14 @@ async function postJson<T>(
   const response = await request.post(path, data === undefined ? undefined : { data });
   expect(response.ok(), `${path} returned ${response.status()}`).toBeTruthy();
   return (await response.json()) as T;
+}
+
+async function tryPostJson<T>(
+  request: APIRequestContext,
+  path: string,
+  data?: unknown,
+): Promise<T | null> {
+  return postJson<T>(request, path, data).catch(() => null);
 }
 
 function activeNetwork(state: UiState): NetworkView {
@@ -83,7 +93,7 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
     const initialState = await postJson<UiState>(request, '/api/tick');
     expect(initialState.selfMagicDnsName).toMatch(/\.nvpn$/);
     const initialNetwork = activeNetwork(initialState);
-    expect(initialNetwork.onlineCount).toBeGreaterThanOrEqual(1);
+    expect(initialNetwork.onlineCount).toBe(0);
 
     await page.goto('/');
     await expect(page).toHaveTitle('Nostr VPN');
@@ -100,10 +110,13 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
     await expect(page.locator('.device-list-column .list-header p')).toContainText(
       `${initialNetwork.onlineCount}/${initialNetwork.expectedCount} online`,
     );
+    await expect(page.locator('.sidebar-summary')).toContainText(
+      `${initialNetwork.onlineCount}/${initialNetwork.expectedCount} online`,
+    );
     await expect(page.locator('.device-list-row').first()).toContainText(
       initialState.selfMagicDnsName,
     );
-    await expect(page.locator('.device-list-row').first()).toContainText('Online');
+    await expect(page.locator('.device-list-row').first()).toContainText('Off');
 
     await page.getByRole('button', { name: 'Add Device' }).click();
     await expect(page.getByRole('heading', { name: 'Add Device' })).toBeVisible();
@@ -157,9 +170,11 @@ test('API supports the Umbrel web config action surface', async ({ request }) =>
   expect(state.platform).toBe('umbrel');
   expect(state.serviceSupported).toBeFalsy();
   expect(state.serviceStatusDetail).toBe('Managed directly by the Umbrel app');
-  expect(state.daemonRunning).toBeFalsy();
-  expect(state.vpnStatus).toBe('VPN off');
+  expect(state.vpnEnabled).toBeFalsy();
+  expect(state.vpnActive).toBeFalsy();
   expect(state.vpnStatus).not.toContain('Daemon');
+  expect(state.vpnStatus.toLowerCase()).not.toContain('failed');
+  expect(state.vpnStatus.toLowerCase()).not.toContain('error');
   const originalNetwork = activeNetwork(state);
   expect(originalNetwork.networkId).not.toBe('nostr-vpn');
   expect(originalNetwork.networkId).toMatch(/^[0-9a-f]{16}$/);
@@ -263,4 +278,60 @@ test('API supports the Umbrel web config action surface', async ({ request }) =>
     networkId: workNetwork.id,
   });
   expect(state.networks.some((network) => network.id === workNetwork.id)).toBeFalsy();
+});
+
+test('VPN switch starts the Umbrel daemon without tunnel setup errors', async ({ page, request }) => {
+  await expectNoConsoleErrors(page, async () => {
+    await page.goto('/');
+    await expect(page.locator('.app-header')).toBeVisible();
+    await expect(page.locator('.vpn-switch')).toBeVisible();
+
+    await page.getByRole('button', { name: 'Turn VPN on' }).click();
+    await expect
+      .poll(
+        async () => {
+          const state = await tryPostJson<UiState>(request, '/api/tick');
+          if (!state) {
+            return null;
+          }
+          return {
+            vpnEnabled: state.vpnEnabled,
+            daemonRunning: state.daemonRunning,
+            vpnStatus: state.vpnStatus,
+          };
+        },
+        { timeout: 20_000 },
+      )
+      .toEqual({
+        vpnEnabled: true,
+        daemonRunning: true,
+        vpnStatus: 'Waiting for participants',
+      });
+    await expect(page.locator('.header-vpn-text')).toHaveText('Waiting for participants');
+    await expect(page.locator('.notice-row.error')).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Turn VPN off' }).click();
+    await expect
+      .poll(
+        async () => {
+          const state = await tryPostJson<UiState>(request, '/api/tick');
+          if (!state) {
+            return null;
+          }
+          return {
+            vpnEnabled: state.vpnEnabled,
+            vpnActive: state.vpnActive,
+          };
+        },
+        { timeout: 20_000 },
+      )
+      .toEqual({
+        vpnEnabled: false,
+        vpnActive: false,
+      });
+    const pausedState = await postJson<UiState>(request, '/api/tick');
+    expect(pausedState.vpnStatus.toLowerCase()).not.toContain('failed');
+    expect(pausedState.vpnStatus.toLowerCase()).not.toContain('error');
+    await expect(page.locator('.header-vpn-text')).toHaveText(pausedState.vpnStatus);
+  });
 });

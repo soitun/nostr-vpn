@@ -5,6 +5,10 @@ services:
       context: ..
       dockerfile: umbrel/Dockerfile
     restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     ports:
       - 127.0.0.1:${NOSTR_VPN_WEB_PORT:-38080}:38080
     environment:
