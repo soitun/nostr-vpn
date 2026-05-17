@@ -4,6 +4,8 @@ use std::fs;
 use std::fs::OpenOptions;
 #[cfg(debug_assertions)]
 use std::io::Write;
+#[cfg(test)]
+use std::net::UdpSocket;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
@@ -2246,6 +2248,262 @@ mod tests {
             1_778_998_000
         );
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn available_udp_port() -> u16 {
+        UdpSocket::bind("127.0.0.1:0")
+            .expect("bind test port")
+            .local_addr()
+            .expect("local addr")
+            .port()
+    }
+
+    fn local_mobile_fips_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig {
+        let mut config = fips_endpoint_config(scope, mobile);
+        config.node.discovery.nostr.enabled = false;
+        config.node.discovery.nostr.advertise = false;
+        config.node.discovery.lan.enabled = false;
+        config.transports.udp = TransportInstances::Single(UdpConfig {
+            bind_addr: Some(format!("127.0.0.1:{}", mobile.listen_port)),
+            outbound_only: Some(false),
+            accept_connections: Some(true),
+            advertise_on_nostr: Some(false),
+            public: Some(false),
+            ..UdpConfig::default()
+        });
+        config
+    }
+
+    async fn bind_local_mobile_endpoint(scope: &str, mobile: &MobileTunnelConfig) -> FipsEndpoint {
+        FipsEndpoint::builder()
+            .config(local_mobile_fips_config(scope, mobile))
+            .identity_nsec(mobile.identity_nsec.clone())
+            .discovery_scope(scope.to_string())
+            .without_system_tun()
+            .bind()
+            .await
+            .expect("bind local mobile FIPS endpoint")
+    }
+
+    fn admin_join_request_app(admin_nsec: &str, admin_pubkey: &str, network_id: &str) -> AppConfig {
+        let mut admin_app = AppConfig::generated();
+        admin_app.nostr.secret_key = admin_nsec.to_string();
+        admin_app.networks = vec![NetworkConfig {
+            id: "test".to_string(),
+            name: "Home".to_string(),
+            enabled: true,
+            network_id: network_id.to_string(),
+            participants: vec![admin_pubkey.to_string()],
+            admins: vec![admin_pubkey.to_string()],
+            listen_for_join_requests: true,
+            invite_inviter: String::new(),
+            outbound_join_request: None,
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        }];
+        admin_app.ensure_defaults();
+        admin_app
+    }
+
+    fn admin_mobile_join_request_config(
+        admin_nsec: String,
+        network_id: &str,
+        listen_port: u16,
+    ) -> MobileTunnelConfig {
+        MobileTunnelConfig {
+            identity_nsec: admin_nsec,
+            node_name: "admin".to_string(),
+            network_id: network_id.to_string(),
+            local_address: "10.44.10.1/32".to_string(),
+            listen_port,
+            join_requests_enabled: true,
+            ..empty_config()
+        }
+    }
+
+    fn requester_mobile_join_request_config(
+        requester_nsec: String,
+        admin_pubkey: String,
+        admin_port: u16,
+        requester_port: u16,
+        network_id: &str,
+        requested_at: u64,
+    ) -> MobileTunnelConfig {
+        let admin_peer = FipsMeshPeerConfig::from_participant_pubkey(&admin_pubkey, Vec::new())
+            .expect("admin control peer");
+        let mut requester_peer_hints = HashMap::new();
+        requester_peer_hints.insert(
+            admin_pubkey.clone(),
+            vec![FipsPeerAddressHint {
+                addr: format!("127.0.0.1:{admin_port}"),
+                seen_at_ms: None,
+            }],
+        );
+        MobileTunnelConfig {
+            identity_nsec: requester_nsec,
+            node_name: "iPhone".to_string(),
+            network_id: network_id.to_string(),
+            local_address: "10.44.10.2/32".to_string(),
+            listen_port: requester_port,
+            peers: vec![admin_peer],
+            peer_hints: requester_peer_hints,
+            pending_join_request_recipient: admin_pubkey,
+            pending_join_requested_at: requested_at,
+            ..empty_config()
+        }
+    }
+
+    async fn send_pending_mobile_join_request(
+        requester_endpoint: &FipsEndpoint,
+        admin_endpoint: &FipsEndpoint,
+        requester_mobile: &MobileTunnelConfig,
+    ) -> FipsEndpointMessage {
+        let (recipient_npub, frame) = pending_mobile_join_request_frame(requester_mobile)
+            .expect("pending join request frame")
+            .expect("pending join request should exist");
+        let encoded = encode_fips_control_frame(&frame).expect("encode join request");
+
+        for _ in 0..50 {
+            requester_endpoint
+                .send(recipient_npub.clone(), encoded.clone())
+                .await
+                .expect("send join request over FIPS");
+            if let Ok(Some(message)) =
+                tokio::time::timeout(Duration::from_millis(100), admin_endpoint.recv()).await
+            {
+                return message;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("admin should receive mobile join request over FIPS");
+    }
+
+    async fn handle_admin_mobile_join_request(
+        admin_endpoint: &FipsEndpoint,
+        admin_app: AppConfig,
+        admin_mobile: MobileTunnelConfig,
+        config_path: &Path,
+        network_id: &str,
+        message: &FipsEndpointMessage,
+    ) -> (Arc<RwLock<AppConfig>>, AtomicBool) {
+        let admin_app_config = Arc::new(RwLock::new(admin_app));
+        let app_config_dirty = AtomicBool::new(false);
+        let mesh = Arc::new(RwLock::new(FipsMeshRuntime::with_local_routes(
+            Vec::new(),
+            vec![admin_mobile.local_address.clone()],
+        )));
+        let mesh_peers = Arc::new(RwLock::new(Vec::new()));
+        let peer_hints = Arc::new(RwLock::new(HashMap::new()));
+        let presence = Arc::new(RwLock::new(HashMap::new()));
+        let config_state = Arc::new(RwLock::new(admin_mobile));
+        let join_request_active = AtomicBool::new(false);
+        let mut control_fragments = FipsControlFragmentBuffer::default();
+
+        let handled = handle_mobile_control_frame(
+            admin_endpoint,
+            &mesh,
+            &mesh_peers,
+            &peer_hints,
+            &presence,
+            &config_state,
+            &admin_app_config,
+            &app_config_dirty,
+            Some(config_path),
+            network_id,
+            &join_request_active,
+            &mut control_fragments,
+            message,
+        )
+        .await
+        .expect("handle mobile join request frame");
+
+        assert!(handled);
+        (admin_app_config, app_config_dirty)
+    }
+
+    #[tokio::test]
+    async fn mobile_join_request_sends_and_records_over_real_fips_endpoint() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-mobile-fips-join-request-{nonce}"));
+        std::fs::create_dir_all(&dir).expect("create test dir");
+        let config_path = dir.join("config.toml");
+
+        let admin_keys = Keys::generate();
+        let requester_keys = Keys::generate();
+        let admin_nsec = admin_keys.secret_key().to_bech32().expect("admin nsec");
+        let requester_nsec = requester_keys
+            .secret_key()
+            .to_bech32()
+            .expect("requester nsec");
+        let admin_pubkey = admin_keys.public_key().to_hex();
+        let requester_pubkey = requester_keys.public_key().to_hex();
+        let network_id = format!("mobile-fips-join-{nonce}");
+        let requested_at = 1_778_998_000;
+        let scope = format!("nostr-vpn:{network_id}");
+
+        let admin_app = admin_join_request_app(&admin_nsec, &admin_pubkey, &network_id);
+        let admin_mobile =
+            admin_mobile_join_request_config(admin_nsec, &network_id, available_udp_port());
+        let admin_endpoint = bind_local_mobile_endpoint(&scope, &admin_mobile).await;
+        let requester_mobile = requester_mobile_join_request_config(
+            requester_nsec,
+            admin_pubkey,
+            admin_mobile.listen_port,
+            available_udp_port(),
+            &network_id,
+            requested_at,
+        );
+        let requester_endpoint = bind_local_mobile_endpoint(&scope, &requester_mobile).await;
+
+        let message = send_pending_mobile_join_request(
+            &requester_endpoint,
+            &admin_endpoint,
+            &requester_mobile,
+        )
+        .await;
+        assert_eq!(
+            message.source_npub.as_deref(),
+            Some(requester_endpoint.npub())
+        );
+        let (admin_app_config, app_config_dirty) = handle_admin_mobile_join_request(
+            &admin_endpoint,
+            admin_app,
+            admin_mobile,
+            &config_path,
+            &network_id,
+            &message,
+        )
+        .await;
+
+        assert!(app_config_dirty.load(Ordering::Relaxed));
+        {
+            let saved = admin_app_config.read().expect("admin app config");
+            let inbound = &saved.networks[0].inbound_join_requests;
+            assert_eq!(inbound.len(), 1);
+            assert_eq!(inbound[0].requester, requester_pubkey);
+            assert_eq!(inbound[0].requester_node_name, "iPhone");
+            assert_eq!(inbound[0].requested_at, requested_at);
+        }
+        let saved = AppConfig::load(&config_path).expect("load persisted admin config");
+        assert_eq!(saved.networks[0].inbound_join_requests.len(), 1);
+        assert_eq!(
+            saved.networks[0].inbound_join_requests[0].requester,
+            requester_pubkey
+        );
+
+        requester_endpoint
+            .shutdown()
+            .await
+            .expect("shutdown requester endpoint");
+        admin_endpoint
+            .shutdown()
+            .await
+            .expect("shutdown admin endpoint");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
