@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.31 - 2026-05-18
+
+### Changed
+
+- FIPS peers without a direct endpoint are now labeled as `via mesh` across the
+  native and web device UIs.
+- Incoming join requests are now visible from the Add Device flow as well as
+  the Devices list, with a Devices tab attention dot when requests are waiting.
+
+### Fixed
+
+- Routed FIPS peers now retain control-channel RTT on desktop and mobile, so
+  cellular/mesh paths can show live latency instead of falling back to only
+  `seen N seconds ago`.
+- Importing an invite for a different network now creates and activates that
+  network instead of mutating an existing named active network.
+- FIPS endpoint hints now ignore placeholder, documentation, localhost, and
+  public-key-shaped values before saving or advertising them.
+
 ## 4.0.30 - 2026-05-18
 
 ### Fixed

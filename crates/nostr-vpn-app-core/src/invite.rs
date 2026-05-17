@@ -1,6 +1,6 @@
 use anyhow::{Result, anyhow};
 use nostr_vpn_core::config::{
-    AppConfig, NetworkConfig, maybe_autoconfigure_node, needs_endpoint_autoconfig,
+    AppConfig, NetworkConfig, maybe_autoconfigure_node, normalize_fips_peer_endpoint_hint,
     normalize_nostr_pubkey, normalize_runtime_network_id,
 };
 pub(crate) use nostr_vpn_core::invite::{
@@ -74,10 +74,9 @@ fn active_inviter_endpoints(config: &AppConfig) -> Vec<String> {
     let mut configured = config.clone();
     maybe_autoconfigure_node(&mut configured);
     let endpoint = configured.node.endpoint.trim();
-    if endpoint.is_empty() || needs_endpoint_autoconfig(endpoint) {
-        return Vec::new();
-    }
-    vec![endpoint.to_string()]
+    normalize_fips_peer_endpoint_hint(endpoint)
+        .into_iter()
+        .collect()
 }
 
 struct PreparedNetworkInvite {

@@ -14,7 +14,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc,
 };
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use fips_endpoint::{
@@ -67,6 +67,9 @@ const MOBILE_CAPABILITIES_STARTUP_BURST_INTERVAL_MS: u64 = 750;
 const MOBILE_RUNTIME_STATE_REFRESH_SECS: u64 = 2;
 const MOBILE_RUNTIME_STATE_FILE: &str = "mobile-runtime-state.json";
 const MOBILE_PEER_ONLINE_GRACE_SECS: u64 = 45;
+const MOBILE_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 10;
+const MOBILE_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 120;
+const MOBILE_CONTROL_RTT_MAX_ACCEPT_MS: u128 = 10_000;
 const MOBILE_HANDSHAKE_RESEND_INTERVAL_MS: u64 = 300;
 const MOBILE_HANDSHAKE_RESEND_BACKOFF: f64 = 1.5;
 
@@ -654,6 +657,24 @@ impl MobileTunnel {
             }));
         }
 
+        if !config.network_id.trim().is_empty() {
+            let endpoint = Arc::clone(&endpoint);
+            let mesh = Arc::clone(&mesh);
+            let presence = Arc::clone(&presence);
+            let network_id = config.network_id.clone();
+            tasks.push(tokio::spawn(async move {
+                loop {
+                    if let Err(error) =
+                        mobile_ping_peers(&endpoint, &mesh, &presence, &network_id).await
+                    {
+                        tracing::warn!(?error, "mobile: failed to ping FIPS peers");
+                    }
+                    tokio::time::sleep(Duration::from_secs(MOBILE_RUNTIME_STATE_REFRESH_SECS))
+                        .await;
+                }
+            }));
+        }
+
         let recv_task = {
             let endpoint = Arc::clone(&endpoint);
             let mesh = Arc::clone(&mesh);
@@ -855,6 +876,10 @@ struct FipsPeerAddressHint {
 #[derive(Debug, Clone, Default)]
 struct MobilePeerPresence {
     last_seen_at: Option<u64>,
+    last_ping_sent_at: Option<u64>,
+    last_ping_started_at: Option<Instant>,
+    rtt_ms: Option<u64>,
+    tx_bytes: u64,
     rx_bytes: u64,
 }
 
@@ -889,48 +914,21 @@ async fn handle_mobile_control_frame(
 
     match frame {
         FipsControlFrame::Roster { network_id, roster } => {
-            let Some(updated) = apply_mobile_roster(
+            apply_mobile_roster_frame(
+                endpoint,
+                mesh,
+                mesh_peers,
+                peer_hints,
+                config_state,
                 app_config,
                 app_config_dirty,
                 config_path,
+                join_request_active,
                 &source_pubkey,
                 &network_id,
                 &roster,
-            )?
-            else {
-                return Ok(true);
-            };
-            let local_routes = vec![updated.local_address.clone()];
-            let updated_peers = updated.peers.clone();
-            let updated_hints = updated.peer_hints.clone();
-            {
-                let mut mesh = mesh
-                    .write()
-                    .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))?;
-                *mesh = FipsMeshRuntime::with_local_routes(updated_peers.clone(), local_routes);
-            }
-            {
-                let mut peers = mesh_peers
-                    .write()
-                    .map_err(|_| anyhow!("mobile FIPS peer lock poisoned"))?;
-                *peers = updated_peers;
-            }
-            {
-                let mut hints = peer_hints
-                    .write()
-                    .map_err(|_| anyhow!("mobile FIPS peer hint lock poisoned"))?;
-                *hints = updated_hints;
-            }
-            {
-                let mut config = config_state
-                    .write()
-                    .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
-                *config = updated.clone();
-            }
-            if updated.pending_join_request_recipient.trim().is_empty() {
-                join_request_active.store(false, Ordering::Relaxed);
-            }
-            refresh_mobile_endpoint_peers(endpoint, mesh_peers, peer_hints).await?;
+            )
+            .await?;
         }
         FipsControlFrame::Capabilities { capabilities, .. } => {
             if update_mobile_peer_hints(peer_hints, &source_pubkey, &capabilities)? {
@@ -970,9 +968,71 @@ async fn handle_mobile_control_frame(
                 &request,
             )?;
         }
-        FipsControlFrame::Pong { .. } | FipsControlFrame::Fragment { .. } => {}
+        FipsControlFrame::Pong { sent_at, .. } => {
+            note_mobile_peer_pong(presence, &source_pubkey, sent_at);
+        }
+        FipsControlFrame::Fragment { .. } => {}
     }
     Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply_mobile_roster_frame(
+    endpoint: &FipsEndpoint,
+    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    mesh_peers: &Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
+    peer_hints: &Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
+    config_state: &Arc<RwLock<MobileTunnelConfig>>,
+    app_config: &Arc<RwLock<AppConfig>>,
+    app_config_dirty: &AtomicBool,
+    config_path: Option<&Path>,
+    join_request_active: &AtomicBool,
+    source_pubkey: &str,
+    network_id: &str,
+    roster: &NetworkRoster,
+) -> Result<()> {
+    let Some(updated) = apply_mobile_roster(
+        app_config,
+        app_config_dirty,
+        config_path,
+        source_pubkey,
+        network_id,
+        roster,
+    )?
+    else {
+        return Ok(());
+    };
+    let local_routes = vec![updated.local_address.clone()];
+    let updated_peers = updated.peers.clone();
+    let updated_hints = updated.peer_hints.clone();
+    {
+        let mut mesh = mesh
+            .write()
+            .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))?;
+        *mesh = FipsMeshRuntime::with_local_routes(updated_peers.clone(), local_routes);
+    }
+    {
+        let mut peers = mesh_peers
+            .write()
+            .map_err(|_| anyhow!("mobile FIPS peer lock poisoned"))?;
+        *peers = updated_peers;
+    }
+    {
+        let mut hints = peer_hints
+            .write()
+            .map_err(|_| anyhow!("mobile FIPS peer hint lock poisoned"))?;
+        *hints = updated_hints;
+    }
+    {
+        let mut config = config_state
+            .write()
+            .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
+        *config = updated.clone();
+    }
+    if updated.pending_join_request_recipient.trim().is_empty() {
+        join_request_active.store(false, Ordering::Relaxed);
+    }
+    refresh_mobile_endpoint_peers(endpoint, mesh_peers, peer_hints).await
 }
 
 async fn reply_mobile_ping(
@@ -1227,12 +1287,14 @@ fn mobile_runtime_state(
                 fips_transport_type: link
                     .and_then(|peer| peer.transport_type.clone())
                     .unwrap_or_default(),
-                fips_srtt_ms: link.and_then(|peer| peer.srtt_ms),
+                fips_srtt_ms: link
+                    .and_then(|peer| peer.srtt_ms)
+                    .or_else(|| peer_presence.and_then(|presence| presence.rtt_ms)),
                 fips_packets_sent: link.map_or(0, |peer| peer.packets_sent),
                 fips_packets_recv: link.map_or(0, |peer| peer.packets_recv),
                 fips_bytes_sent: link.map_or(0, |peer| peer.bytes_sent),
                 fips_bytes_recv: link.map_or(0, |peer| peer.bytes_recv),
-                tx_bytes: 0,
+                tx_bytes: peer_presence.map_or(0, |presence| presence.tx_bytes),
                 rx_bytes: peer_presence.map_or(0, |presence| presence.rx_bytes),
                 public_key: status.pubkey,
                 advertised_routes,
@@ -1285,6 +1347,122 @@ fn note_mobile_peer_rx(
     let entry = presence.entry(participant.to_string()).or_default();
     entry.last_seen_at = Some(now);
     entry.rx_bytes = entry.rx_bytes.saturating_add(len as u64);
+}
+
+fn note_mobile_peer_tx(
+    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+    participant: &str,
+    len: usize,
+) {
+    let Ok(mut presence) = presence.write() else {
+        return;
+    };
+    let entry = presence.entry(participant.to_string()).or_default();
+    entry.tx_bytes = entry.tx_bytes.saturating_add(len as u64);
+}
+
+fn note_mobile_peer_ping_attempt(
+    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+    participant: &str,
+    now: u64,
+) {
+    let Ok(mut presence) = presence.write() else {
+        return;
+    };
+    let entry = presence.entry(participant.to_string()).or_default();
+    entry.last_ping_sent_at = Some(now);
+    entry.last_ping_started_at = Some(Instant::now());
+}
+
+fn note_mobile_peer_pong(
+    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+    participant: &str,
+    sent_at: u64,
+) {
+    let Ok(mut presence) = presence.write() else {
+        return;
+    };
+    let Some(entry) = presence.get_mut(participant) else {
+        return;
+    };
+    if entry.last_ping_sent_at == Some(sent_at)
+        && let Some(started_at) = entry.last_ping_started_at.take()
+    {
+        let elapsed_ms = started_at.elapsed().as_millis();
+        if elapsed_ms <= MOBILE_CONTROL_RTT_MAX_ACCEPT_MS {
+            let Ok(elapsed_ms) = u64::try_from(elapsed_ms) else {
+                return;
+            };
+            entry.rtt_ms = Some(elapsed_ms);
+        } else {
+            entry.last_ping_sent_at = None;
+        }
+    }
+}
+
+fn mobile_peer_ping_due(
+    last_seen_at: Option<u64>,
+    last_ping_sent_at: Option<u64>,
+    now: u64,
+) -> bool {
+    let interval = if last_seen_at.is_some_and(|last_seen_at| {
+        now.saturating_sub(last_seen_at) <= MOBILE_PEER_ONLINE_GRACE_SECS
+    }) {
+        MOBILE_PEER_ACTIVE_PING_INTERVAL_SECS
+    } else {
+        MOBILE_PEER_DISCOVERY_PROBE_INTERVAL_SECS
+    };
+    last_ping_sent_at.is_none_or(|sent_at| now.saturating_sub(sent_at) >= interval)
+}
+
+async fn mobile_ping_peers(
+    endpoint: &FipsEndpoint,
+    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+    network_id: &str,
+) -> Result<usize> {
+    let now = unix_timestamp();
+    let peers = {
+        let mesh = mesh
+            .read()
+            .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))?;
+        mesh.peer_statuses()
+    };
+    let participants = {
+        let presence = presence
+            .read()
+            .map_err(|_| anyhow!("mobile FIPS presence lock poisoned"))?;
+        peers
+            .into_iter()
+            .filter(|peer| !peer.endpoint_npub.trim().is_empty())
+            .filter(|peer| {
+                let peer_presence = presence.get(&peer.pubkey);
+                mobile_peer_ping_due(
+                    peer_presence.and_then(|value| value.last_seen_at),
+                    peer_presence.and_then(|value| value.last_ping_sent_at),
+                    now,
+                )
+            })
+            .map(|peer| (peer.pubkey, peer.endpoint_npub))
+            .collect::<Vec<_>>()
+    };
+    if participants.is_empty() {
+        return Ok(0);
+    }
+    let frame = FipsControlFrame::Ping {
+        network_id: network_id.to_string(),
+        sent_at: now,
+    };
+    let encoded = encode_fips_control_frame(&frame)?;
+    let mut sent = 0usize;
+    for (participant, endpoint_npub) in participants {
+        note_mobile_peer_ping_attempt(presence, &participant, now);
+        if endpoint.send(endpoint_npub, encoded.clone()).await.is_ok() {
+            note_mobile_peer_tx(presence, &participant, encoded.len());
+            sent += 1;
+        }
+    }
+    Ok(sent)
 }
 
 fn write_mobile_runtime_state(path: &Path, state: &DaemonRuntimeState) -> Result<()> {
@@ -2592,7 +2770,10 @@ mod tests {
             peer.to_string(),
             MobilePeerPresence {
                 last_seen_at: Some(now - 10),
+                rtt_ms: Some(91),
+                tx_bytes: 32,
                 rx_bytes: 64,
+                ..MobilePeerPresence::default()
             },
         );
 
@@ -2602,6 +2783,8 @@ mod tests {
         assert_eq!(state.connected_peer_count, 1);
         assert!(state.mesh_ready);
         assert!(state.peers[0].reachable);
+        assert_eq!(state.peers[0].fips_srtt_ms, Some(91));
+        assert_eq!(state.peers[0].tx_bytes, 32);
         assert_eq!(state.peers[0].rx_bytes, 64);
         assert_eq!(state.peers[0].last_fips_seen_at, Some(now - 10));
     }

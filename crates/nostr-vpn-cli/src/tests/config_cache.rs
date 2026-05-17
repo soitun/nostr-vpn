@@ -199,6 +199,22 @@ fn active_network_invite_code_roundtrips_current_roster() {
 }
 
 #[test]
+fn active_network_invite_omits_non_transport_inviter_endpoint() {
+    let inviter_hex = Keys::generate().public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
+    config.networks[0].admins = vec![inviter_hex.clone()];
+    config.networks[0].invite_inviter = inviter_hex;
+    config.node.endpoint = "fips".to_string();
+
+    let invite = active_network_invite_code(&config).expect("invite should encode");
+    let parsed = parse_network_invite(&invite).expect("invite should decode");
+
+    assert!(parsed.inviter_endpoints.is_empty());
+}
+
+#[test]
 fn importing_current_invite_queues_join_request_to_admin() {
     let admin_npub = Keys::generate()
         .public_key()
@@ -208,7 +224,7 @@ fn importing_current_invite_queues_join_request_to_admin() {
     let invite = serde_json::json!({
         "v": 3,
         "networkId": "8d4f34f5425bc50e",
-        "inviterEndpoints": [" 192.168.50.20:51820 "],
+        "inviterEndpoints": [" 192.168.50.20:51820 ", "fips", "198.51.100.10:51820", admin_npub],
         "admins": [admin_npub],
         "relays": ["wss://temp.iris.to"]
     })

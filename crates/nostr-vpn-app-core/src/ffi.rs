@@ -2324,13 +2324,32 @@ fn shorten_middle(value: &str, prefix: usize, suffix: usize) -> String {
 }
 
 fn peer_link_text(peer: &DaemonPeerState) -> Option<String> {
-    let addr = non_empty(&peer.fips_transport_addr)?;
-    let transport = non_empty(&peer.fips_transport_type).unwrap_or_else(|| "fips".to_string());
-    let mut text = format!("{transport} {}", shorten_middle(&addr, 22, 10));
-    if let Some(srtt_ms) = peer.fips_srtt_ms {
-        let _ = write!(text, " ({srtt_ms} ms)");
+    if let Some(addr) = non_empty(&peer.fips_transport_addr) {
+        let transport = non_empty(&peer.fips_transport_type).unwrap_or_else(|| "fips".to_string());
+        let mut text = format!("{transport} {}", shorten_middle(&addr, 22, 10));
+        if let Some(srtt_ms) = peer.fips_srtt_ms.filter(|value| *value > 0) {
+            let _ = write!(text, " ({srtt_ms} ms)");
+        }
+        return Some(text);
     }
-    Some(text)
+
+    let is_fips_peer = !peer.fips_endpoint_npub.trim().is_empty()
+        || peer.endpoint.trim().eq_ignore_ascii_case("fips")
+        || peer
+            .runtime_endpoint
+            .as_deref()
+            .is_some_and(|endpoint| endpoint.trim().eq_ignore_ascii_case("fips"));
+    let recently_seen =
+        peer.reachable || peer_last_fips_seen_secs(peer).is_some_and(within_presence_grace);
+    if is_fips_peer && recently_seen {
+        let mut text = "mesh".to_string();
+        if let Some(srtt_ms) = peer.fips_srtt_ms.filter(|value| *value > 0) {
+            let _ = write!(text, " ({srtt_ms} ms)");
+        }
+        return Some(text);
+    }
+
+    None
 }
 
 fn native_config_path(data_dir: &str) -> PathBuf {
@@ -2991,6 +3010,54 @@ mod tests {
     }
 
     #[test]
+    fn native_state_reports_routed_fips_peer_latency() {
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        let own_pubkey = runtime
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("generated config should have own pubkey");
+        let peer_pubkey = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
+        runtime.startup_error = None;
+        runtime.daemon_running = true;
+        runtime.vpn_enabled = true;
+        runtime.vpn_active = true;
+        create_test_network(&mut runtime, "Home");
+        runtime.config.networks[0].admins = vec![own_pubkey];
+        runtime.config.networks[0].participants = vec![peer_pubkey.to_string()];
+        let now = unix_timestamp();
+        runtime.daemon_state = Some(DaemonRuntimeState {
+            vpn_enabled: true,
+            vpn_active: true,
+            expected_peer_count: 1,
+            connected_peer_count: 1,
+            mesh_ready: true,
+            peers: vec![DaemonPeerState {
+                participant_pubkey: peer_pubkey.to_string(),
+                endpoint: "fips".to_string(),
+                runtime_endpoint: Some("fips".to_string()),
+                fips_endpoint_npub: "npub1peer".to_string(),
+                fips_srtt_ms: Some(112),
+                last_fips_seen_at: Some(now),
+                last_handshake_at: Some(now),
+                reachable: true,
+                ..DaemonPeerState::default()
+            }],
+            ..DaemonRuntimeState::default()
+        });
+
+        let state = runtime.state();
+        let peer = state.networks[0]
+            .participants
+            .iter()
+            .find(|participant| participant.pubkey_hex == peer_pubkey)
+            .expect("peer participant");
+
+        assert_eq!(peer.status_text, "online via mesh (112 ms)");
+        assert_eq!(peer.fips_srtt_ms, 112);
+    }
+
+    #[test]
     fn invite_import_queues_join_request_to_invite_admin() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -3037,6 +3104,50 @@ mod tests {
         let state = runtime.state();
         assert_eq!(state.networks.len(), 1);
         assert_eq!(state.networks[0].network_id, "8d4f34f5425bc50e");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invite_import_creates_new_network_when_active_network_is_named() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-named-active-invite-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let admin_npub = "npub1akgu9lxldpt32lnjf97k005a4kgasewmvsrmkpzqeff398ssev0ssd6t3u";
+        let admin_hex = normalize_nostr_pubkey(admin_npub).expect("normalize admin");
+        let invite = "nvpn://invite/eyJ2IjozLCJuZXR3b3JrSWQiOiI3YTYwMTQ4MzVkNDA0Y2IwIiwiYWRtaW5zIjpbIm5wdWIxYWtndTlseGxkcHQzMmxuamY5N2swMDVhNGtnYXNld212c3Jta3B6cWVmZjM5OHNzZXYwc3NkNnQzdSJdfQ";
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+
+        let old_network_id = create_test_network(&mut runtime, "Home");
+        runtime.config.networks[0].network_id = "5a249444c4254f98".to_string();
+        runtime.config.networks[0].admins = vec![admin_hex.clone()];
+
+        runtime
+            .import_network_invite(invite)
+            .expect("import invite");
+
+        assert_eq!(runtime.config.networks.len(), 2);
+        let old_network = runtime
+            .config
+            .network_by_id(&old_network_id)
+            .expect("old network should remain");
+        assert_eq!(old_network.network_id, "5a249444c4254f98");
+        assert!(!old_network.enabled);
+
+        let network = runtime.config.active_network();
+        assert_eq!(network.network_id, "7a6014835d404cb0");
+        assert_eq!(network.admins, vec![admin_hex.clone()]);
+        assert_eq!(network.invite_inviter, admin_hex);
+        assert!(network.outbound_join_request.is_some());
 
         let _ = fs::remove_dir_all(&dir);
     }

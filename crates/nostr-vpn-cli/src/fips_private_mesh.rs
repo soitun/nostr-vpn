@@ -41,7 +41,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, RwLock};
 #[cfg(target_os = "windows")]
 use std::thread::{self, JoinHandle as ThreadJoinHandle};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use tokio::io::Interest;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -62,6 +62,7 @@ const FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS: u64 = 300;
 const FIPS_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 10;
 const FIPS_PEER_LINK_PING_INTERVAL_SECS: u64 = 15;
 const FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 120;
+const FIPS_CONTROL_RTT_MAX_ACCEPT_MS: u128 = 10_000;
 const MESH_LAN_UNDERLAY_UDP_MTU: u16 = 1420;
 const MESH_LAN_TUNNEL_MTU: u16 = 1290;
 const MESH_MIN_UNDERLAY_UDP_MTU: u16 = 1280;
@@ -138,6 +139,8 @@ impl TunPipelinePacket {
 struct FipsPeerPresence {
     last_seen_at: Option<u64>,
     last_ping_sent_at: Option<u64>,
+    last_ping_started_at: Option<Instant>,
+    rtt_ms: Option<u64>,
     tx_bytes: u64,
     rx_bytes: u64,
     error: Option<String>,
@@ -580,7 +583,8 @@ impl FipsPrivateMeshRuntime {
                         last_seen_at: now,
                     }));
                 }
-                FipsControlFrame::Pong { .. } => {
+                FipsControlFrame::Pong { sent_at, .. } => {
+                    self.note_pong(&source_pubkey, sent_at)?;
                     return Ok(Some(FipsPrivateMeshEvent::Presence {
                         participant_pubkey: source_pubkey,
                         last_seen_at: now,
@@ -703,6 +707,9 @@ impl FipsPrivateMeshRuntime {
                 status.link_packets_recv = peer_link.packets_recv;
                 status.link_bytes_sent = peer_link.bytes_sent;
                 status.link_bytes_recv = peer_link.bytes_recv;
+            }
+            if status.srtt_ms.is_none() {
+                status.srtt_ms = peer_presence.and_then(|value| value.rtt_ms);
             }
             let link_connected = peer_link.is_some();
             let (connected, error) = fips_peer_liveness(
@@ -1050,12 +1057,35 @@ impl FipsPrivateMeshRuntime {
             .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
         if let Some(entry) = presence.get_mut(participant) {
             entry.last_ping_sent_at = Some(now);
+            entry.last_ping_started_at = Some(Instant::now());
         } else {
             let entry = FipsPeerPresence {
                 last_ping_sent_at: Some(now),
+                last_ping_started_at: Some(Instant::now()),
                 ..Default::default()
             };
             presence.insert(participant.to_string(), entry);
+        }
+        Ok(())
+    }
+
+    fn note_pong(&self, participant: &str, sent_at: u64) -> Result<()> {
+        let mut presence = self
+            .presence
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
+        let Some(entry) = presence.get_mut(participant) else {
+            return Ok(());
+        };
+        if entry.last_ping_sent_at == Some(sent_at)
+            && let Some(started_at) = entry.last_ping_started_at.take()
+        {
+            let elapsed_ms = started_at.elapsed().as_millis();
+            if elapsed_ms <= FIPS_CONTROL_RTT_MAX_ACCEPT_MS {
+                entry.rtt_ms = Some(elapsed_ms.min(u128::from(u64::MAX)) as u64);
+            } else {
+                entry.last_ping_sent_at = None;
+            }
         }
         Ok(())
     }
@@ -3551,11 +3581,22 @@ mod tests {
             None
         );
         assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("198.51.100.10:51820")),
+            None
+        );
+        assert_eq!(
             super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("0.0.0.0:51820")),
             None
         );
         assert_eq!(
             super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("localhost:51820")),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp(format!(
+                "{}:51820",
+                "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+            ))),
             None
         );
     }

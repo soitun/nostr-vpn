@@ -194,7 +194,7 @@ enum ScreenshotFixtures {
                 reachable: true,
                 offersExitNode: true,
                 state: "online",
-                status: "Online via routed path"
+                status: "Online via mesh"
             ),
             participant(
                 npub: androidNpub,

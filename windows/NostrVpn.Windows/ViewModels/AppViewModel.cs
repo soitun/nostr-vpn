@@ -461,6 +461,8 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public string ActiveNetworkName => DisplayNetworkName(ActiveNetwork);
     public Brush ShownNetworkStatusBrush => ActiveNetwork?.Enabled == true ? ActiveNetworkBrush : InactiveNetworkBrush;
     public bool ShowNetworkStatusDot => State.Networks.Count > 1;
+    public bool HasIncomingJoinRequests => State.Networks.Any(network => network.InboundJoinRequests.Count > 0);
+    public bool ActiveNetworkHasIncomingJoinRequests => ActiveNetwork?.InboundJoinRequests.Count > 0;
     public bool ShowActiveNetworkInviteCard => ActiveNetwork?.Enabled == true;
     public string HeroSubtitle => $"{State.ConnectedPeerCount} of {State.ExpectedPeerCount} connected";
     public string VpnButtonText => State.VpnEnabled ? "On" : "Off";
@@ -1157,6 +1159,8 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(ActiveNetworkName));
         OnPropertyChanged(nameof(ShownNetworkStatusBrush));
         OnPropertyChanged(nameof(ShowNetworkStatusDot));
+        OnPropertyChanged(nameof(HasIncomingJoinRequests));
+        OnPropertyChanged(nameof(ActiveNetworkHasIncomingJoinRequests));
         OnPropertyChanged(nameof(ShowActiveNetworkInviteCard));
         OnPropertyChanged(nameof(HeroSubtitle));
         OnPropertyChanged(nameof(VpnButtonText));

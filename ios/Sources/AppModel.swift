@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
     private let fixtureMode: Bool
     private var refreshTask: Task<Void, Never>?
     private var copyClearTask: Task<Void, Never>?
+    private var tunnelConfigSyncTask: Task<Void, Never>?
     private var launchAutomationHandled = false
     private var tunnelStateRefreshInFlight = false
 
@@ -50,6 +51,7 @@ final class AppModel: ObservableObject {
 
     deinit {
         refreshTask?.cancel()
+        tunnelConfigSyncTask?.cancel()
         core?.close()
     }
 
@@ -94,6 +96,7 @@ final class AppModel: ObservableObject {
         guard !actionInFlight else {
             return
         }
+        let actionType = action["type"] as? String ?? ""
         actionInFlight = true
         statusMessage = status
         if fixtureMode {
@@ -103,6 +106,12 @@ final class AppModel: ObservableObject {
         }
         actionInFlight = false
         statusMessage = state.error
+        debugLog(
+            "dispatch action=\(actionType) error=\(!state.error.isEmpty) vpn=\(state.vpnEnabled)/\(state.vpnActive) network=\(activeNetwork?.id ?? "nil")"
+        )
+        if state.error.isEmpty && actionRequiresPacketTunnelConfigSync(actionType) {
+            schedulePacketTunnelConfigSync(reason: actionType)
+        }
     }
 
     func toggleVpn() {
@@ -182,11 +191,84 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func schedulePacketTunnelConfigSync(reason: String) {
+        guard !fixtureMode else {
+            return
+        }
+        guard state.vpnEnabled || state.vpnActive else {
+            debugLog("PacketTunnel config sync skipped reason=\(reason) vpn off")
+            return
+        }
+        tunnelConfigSyncTask?.cancel()
+        tunnelConfigSyncTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            await self?.syncPacketTunnelConfig(reason: reason)
+        }
+    }
+
+    private func syncPacketTunnelConfig(reason: String) async {
+        guard let core else {
+            statusMessage = "Native core unavailable"
+            return
+        }
+        guard state.vpnEnabled || state.vpnActive else {
+            debugLog("PacketTunnel config sync aborted reason=\(reason) vpn off")
+            return
+        }
+        let tunnelConfigJson = core.mobileTunnelConfigJson()
+        debugLog(
+            "PacketTunnel config sync begin reason=\(reason) configLen=\(tunnelConfigJson.count) network=\(activeNetwork?.id ?? "nil")"
+        )
+        statusMessage = "Updating VPN"
+        do {
+            try await vpnController.stop()
+            debugLog("PacketTunnel config sync stop returned")
+        } catch {
+            debugLog("PacketTunnel config sync stop failed: \(String(describing: error))")
+        }
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        do {
+            try await vpnController.start(
+                state: state,
+                network: activeNetwork,
+                tunnelConfigJson: tunnelConfigJson
+            )
+            debugLog("PacketTunnel config sync start returned")
+            refresh()
+            statusMessage = state.error
+        } catch {
+            dispatch(NativeActions.disconnectVpn(), status: "Turning VPN off")
+            statusMessage = error.localizedDescription
+            debugLog("PacketTunnel config sync start failed: \(String(describing: error))")
+        }
+    }
+
+    private func actionRequiresPacketTunnelConfigSync(_ type: String) -> Bool {
+        switch type {
+        case "import_network_invite",
+             "request_network_join",
+             "manual_add_network",
+             "set_network_enabled",
+             "set_network_mesh_id",
+             "set_network_join_requests_enabled",
+             "add_participant",
+             "add_admin",
+             "remove_participant",
+             "remove_admin",
+             "accept_join_request",
+             "reject_join_request":
+            return true
+        default:
+            return false
+        }
+    }
+
     func importInvite(_ invite: String) {
         let trimmed = invite.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return
         }
+        debugLog("importInvite len=\(trimmed.count)")
         dispatch(NativeActions.importInvite(trimmed), status: "Importing")
     }
 

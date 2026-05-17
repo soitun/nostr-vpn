@@ -355,10 +355,14 @@ function syncRepoToWindowsHost({ host, guestRepo, dryRun }) {
     '--exclude=./umbrel',
   ].join(' ')
 
-  // Ensure the destination exists first.
+  // Start from a clean destination. The Windows project uses broad wildcard
+  // globs, so stale files from earlier sync attempts can break later builds.
   runWindowsPowerShell(
     host,
-    `New-Item -ItemType Directory -Force -Path ${psQuote(guestRepo)} | Out-Null`,
+    `
+Remove-Item -Recurse -Force -Path ${psQuote(guestRepo)} -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path ${psQuote(guestRepo)} | Out-Null
+`,
     { dryRun },
   )
   // COPYFILE_DISABLE=1 stops macOS bsdtar from emitting AppleDouble `._*`

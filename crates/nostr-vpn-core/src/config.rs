@@ -38,6 +38,7 @@ use crate::config_magic_dns::{
     default_peer_aliases, detected_hostname, normalize_network_entry_id, uniquify_magic_dns_label,
     uniquify_network_entry_id, uses_default_node_name,
 };
+use crate::fips_control::{PeerEndpointHint, peer_endpoint_hint_addr};
 use crate::network_roster::{
     canonical_npub_key, canonicalize_inbound_join_requests, canonicalize_outbound_join_request,
     normalize_inbound_join_requests, normalize_network_admins, normalize_npub_key,
@@ -47,6 +48,10 @@ use crate::network_routes::is_exit_node_route;
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_RELAYS: &[&str] = &[];
+
+pub fn normalize_fips_peer_endpoint_hint(endpoint: &str) -> Option<String> {
+    peer_endpoint_hint_addr(&PeerEndpointHint::udp(endpoint.trim()))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NostrConfig {
@@ -1569,9 +1574,7 @@ impl AppConfig {
         entry.extend(
             endpoints
                 .iter()
-                .map(|endpoint| endpoint.trim())
-                .filter(|endpoint| !endpoint.is_empty())
-                .map(ToString::to_string),
+                .filter_map(|endpoint| normalize_fips_peer_endpoint_hint(endpoint)),
         );
         entry.sort();
         entry.dedup();
@@ -1612,8 +1615,7 @@ impl AppConfig {
             }
             let mut endpoints = endpoints
                 .into_iter()
-                .map(|endpoint| endpoint.trim().to_string())
-                .filter(|endpoint| !endpoint.is_empty())
+                .filter_map(|endpoint| normalize_fips_peer_endpoint_hint(&endpoint))
                 .collect::<Vec<_>>();
             endpoints.sort();
             endpoints.dedup();
@@ -2167,6 +2169,9 @@ mod tests {
             vec![
                 " 10.203.0.12:51820 ".to_string(),
                 "10.203.0.12:51820".to_string(),
+                "198.51.100.10:51820".to_string(),
+                format!("{peer_public_key}:51820"),
+                "fips".to_string(),
             ],
         );
         config

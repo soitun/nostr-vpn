@@ -17,6 +17,12 @@ struct RootView: View {
         return model.activeNetwork
     }
 
+    private var incomingJoinRequestCount: Int {
+        model.state.networks.reduce(0) { count, network in
+            count + network.inboundJoinRequests.count
+        }
+    }
+
     var body: some View {
         Group {
             if model.activeNetwork == nil {
@@ -38,6 +44,7 @@ struct RootView: View {
                     }
                     .tabItem { Label("Devices", systemImage: "circle.grid.2x2.fill") }
                     .tag(AppTab.devices)
+                    .badge(incomingJoinRequestCount > 0 ? Text("") : nil)
 
                     NavigationStack {
                         ExitNodesPage(model: model, network: shownNetwork)
@@ -591,6 +598,25 @@ private struct AddDeviceSheet: View {
                 if network.enabled {
                     InviteToMyNetworkCard(model: model, network: network)
                 }
+                ForEach(network.inboundJoinRequests) { request in
+                    JoinRequestRow(request: request) {
+                        model.dispatch(
+                            NativeActions.acceptJoinRequest(
+                                networkId: network.id,
+                                requesterNpub: request.requesterNpub
+                            ),
+                            status: "Accepting request"
+                        )
+                    } reject: {
+                        model.dispatch(
+                            NativeActions.rejectJoinRequest(
+                                networkId: network.id,
+                                requesterNpub: request.requesterNpub
+                            ),
+                            status: "Rejecting request"
+                        )
+                    }
+                }
                 ManualPairingInfoCard(model: model, network: network)
                 AddDeviceCard(network: network) { npub, alias in
                     model.dispatch(
@@ -655,7 +681,11 @@ private struct InviteToMyNetworkCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     CopyLine(value: model.state.activeNetworkInvite, model: model)
-                    if !model.state.activeNetworkInvite.isEmpty {
+                    if let inviteUrl = URL(string: model.state.activeNetworkInvite) {
+                        ShareLink(item: inviteUrl) {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+                    } else if !model.state.activeNetworkInvite.isEmpty {
                         ShareLink(item: model.state.activeNetworkInvite) {
                             Label("Share", systemImage: "square.and.arrow.up")
                         }
@@ -887,7 +917,7 @@ private struct ParticipantRow: View {
                                 Pill("Exit", tint: .orange)
                             }
                             if isFipsRouted(participant, state: model.state) {
-                                Pill("Routed", tint: .secondary)
+                                Pill("via mesh", tint: .secondary)
                             }
                         }
                         Text(deviceSubtitle(participant, state: model.state))
@@ -963,6 +993,7 @@ private struct DeviceDetailSheet: View {
                     if !participant.tunnelIp.isEmpty {
                         labelValueRow("Tunnel IP", participant.tunnelIp, copyable: true)
                     }
+                    labelValueRow("FIPS path", fipsPath(participant, state: model.state))
                     if !participant.fipsTransportAddr.isEmpty {
                         labelValueRow("Endpoint", participant.fipsTransportAddr)
                     }
@@ -1562,6 +1593,31 @@ private func deviceDetailStatus(_ participant: ParticipantState, state: AppState
         return participant.statusText
     }
     return deviceStatus(participant, state: state)
+}
+
+private func fipsPath(_ participant: ParticipantState, state: AppState) -> String {
+    if isSelf(participant, state: state) {
+        return "This device"
+    }
+    if participant.reachable
+        && !participant.fipsTransportAddr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    {
+        let transport = participant.fipsTransportType.isEmpty ? "" : " (\(participant.fipsTransportType.uppercased()))"
+        if participant.fipsSrttMs > 0 {
+            return "Direct connection\(transport), \(participant.fipsSrttMs) ms"
+        }
+        return "Direct connection\(transport)"
+    }
+    if participant.reachable {
+        if participant.fipsSrttMs > 0 {
+            return "Via mesh, \(participant.fipsSrttMs) ms"
+        }
+        return "Via mesh"
+    }
+    if participant.state == "pending" {
+        return "Connecting"
+    }
+    return "Offline"
 }
 
 private func connectivityTint(_ participant: ParticipantState, state: AppState) -> Color {
