@@ -4,12 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.29 - 2026-05-17
+
 ### Changed
 
 - MagicDNS no longer invents aliases for unnamed roster members;
   devices can be in a roster without an `.nvpn` name until an admin names them.
 - Pending join requests seed only temporary local `self.nvpn` and `admin.nvpn`
   names until the accepted shared roster provides real aliases.
+- Pending FIPS join requests now use the same 10-second retry cadence on
+  desktop and mobile.
 
 ### Fixed
 
@@ -21,6 +25,8 @@ All notable changes to this project are documented in this file.
   and the Docker e2e no longer pre-seeds admin config by editing TOML.
 - Mobile join-request listeners and pending senders now enable FIPS discovery
   even before any accepted roster peer exists.
+- Mobile join requests now have an app-core integration test that sends the
+  request through real FIPS endpoints and records it on the admin side.
 
 ## 4.0.28 - 2026-05-17
 
