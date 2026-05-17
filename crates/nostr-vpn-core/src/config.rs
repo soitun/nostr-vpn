@@ -994,6 +994,11 @@ impl AppConfig {
             .find(|network| network.id == network_id)
     }
 
+    pub fn add_owned_network(&mut self, name: &str) -> String {
+        self.seed_self_magic_dns_alias_for_first_owned_network();
+        self.add_network(name)
+    }
+
     pub fn add_network(&mut self, name: &str) -> String {
         let ordinal = self.networks.len() + 1;
         let mut used_ids = self
@@ -1025,6 +1030,21 @@ impl AppConfig {
         });
         let _ = self.note_network_roster_local_change(&id);
         id
+    }
+
+    fn seed_self_magic_dns_alias_for_first_owned_network(&mut self) {
+        if !self.networks.is_empty() {
+            return;
+        }
+
+        let Some(label) = normalize_magic_dns_label(&self.node_name) else {
+            return;
+        };
+        let Ok(own_pubkey_hex) = self.own_nostr_pubkey_hex() else {
+            return;
+        };
+        let own_npub = npub_for_pubkey_hex(&own_pubkey_hex);
+        self.peer_aliases.insert(own_npub, label);
     }
 
     pub fn rename_network(&mut self, network_id: &str, name: &str) -> Result<()> {
@@ -1664,11 +1684,17 @@ impl AppConfig {
         }
 
         let mut used_aliases = HashSet::new();
-        if let Some(self_alias) = self.preferred_self_magic_dns_label() {
-            used_aliases.insert(self_alias);
-        }
         let mut final_aliases = HashMap::new();
-        for participant in &self.all_network_member_pubkeys_hex() {
+        let mut members = self.all_network_member_pubkeys_hex();
+        if let Ok(own_pubkey_hex) = self.own_nostr_pubkey_hex()
+            && let Some(index) = members
+                .iter()
+                .position(|participant| participant == &own_pubkey_hex)
+        {
+            let own = members.remove(index);
+            members.insert(0, own);
+        }
+        for participant in &members {
             let participant_npub = npub_for_pubkey_hex(participant);
             let preferred = normalized_aliases
                 .remove(&participant_npub)
@@ -1693,23 +1719,9 @@ impl AppConfig {
         }
     }
 
-    fn preferred_self_magic_dns_label(&self) -> Option<String> {
-        normalize_magic_dns_label(&self.node_name)
-    }
-
     pub fn self_magic_dns_label(&self) -> Option<String> {
-        let preferred = self.preferred_self_magic_dns_label()?;
-        let own_npub = self
-            .own_nostr_pubkey_hex()
-            .ok()
-            .map(|pubkey_hex| npub_for_pubkey_hex(&pubkey_hex));
-        let mut used_aliases = self
-            .peer_aliases
-            .iter()
-            .filter(|(participant, _)| Some(*participant) != own_npub.as_ref())
-            .map(|(_, alias)| alias.clone())
-            .collect::<HashSet<String>>();
-        Some(uniquify_magic_dns_label(preferred, &mut used_aliases))
+        let own_pubkey_hex = self.own_nostr_pubkey_hex().ok()?;
+        self.peer_alias(&own_pubkey_hex)
     }
 
     pub fn self_magic_dns_name(&self) -> Option<String> {

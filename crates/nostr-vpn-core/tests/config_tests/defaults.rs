@@ -360,6 +360,9 @@ fn shared_network_roster_includes_network_aliases() {
     config.networks[0].participants = vec![peer_hex.clone()];
     config.ensure_defaults();
     config
+        .set_peer_alias(&own_hex, "helios-admin")
+        .expect("own alias");
+    config
         .set_peer_alias(&peer_hex, "garden-node")
         .expect("peer alias");
 

@@ -785,7 +785,7 @@ impl NativeAppRuntime {
                 self.refresh_service_status()
             }
             NativeAppAction::AddNetwork { name } => {
-                self.config.add_network(&name);
+                self.config.add_owned_network(&name);
                 self.save_reload_and_refresh()
             }
             NativeAppAction::RenameNetwork { network_id, name } => {
@@ -1718,17 +1718,20 @@ impl NativeAppRuntime {
         let is_local = participant == own_pubkey_hex;
         let reachable = vpn_active && (is_local || daemon_peer.is_some_and(|peer| peer.reachable));
         let access_pending = Self::network_access_pending(network, own_pubkey_hex) && !is_local;
-        let magic_dns_alias = if is_local {
+        let assigned_magic_dns_alias = self.config.peer_alias(participant).unwrap_or_default();
+        let magic_dns_alias = if assigned_magic_dns_alias.is_empty() && is_local {
             self.config.self_magic_dns_label().unwrap_or_default()
         } else {
-            self.config.peer_alias(participant).unwrap_or_default()
+            assigned_magic_dns_alias
         };
-        let magic_dns_name = if is_local {
+        let assigned_magic_dns_name = self
+            .config
+            .magic_dns_name_for_participant(participant)
+            .unwrap_or_default();
+        let magic_dns_name = if assigned_magic_dns_name.is_empty() && is_local {
             self.config.self_magic_dns_name().unwrap_or_default()
         } else {
-            self.config
-                .magic_dns_name_for_participant(participant)
-                .unwrap_or_default()
+            assigned_magic_dns_name
         };
         let alias = non_empty(&magic_dns_alias).unwrap_or_else(|| short_pubkey(participant));
         let tunnel_ip = daemon_peer
