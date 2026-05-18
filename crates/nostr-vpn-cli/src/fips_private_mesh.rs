@@ -3,8 +3,8 @@
 use anyhow::{Context, Result, anyhow};
 use fips_endpoint::{
     Config, ConnectPolicy, FipsEndpoint, FipsEndpointError, FipsEndpointMessage, FipsEndpointPeer,
-    FipsEndpointRelayStatus, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
-    RoutingMode, TransportInstances, UdpConfig,
+    NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig, RoutingMode,
+    TransportInstances, UdpConfig,
 };
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
@@ -394,6 +394,12 @@ pub(crate) fn purge_legacy_fips_endpoint_cache(config_path: &Path) {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct FipsRelayStatus {
+    pub(crate) url: String,
+    pub(crate) status: String,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) enum FipsPrivateMeshEvent {
     Packet(PrivatePacket),
     Presence {
@@ -747,18 +753,12 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
-    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsEndpointRelayStatus>> {
-        self.endpoint
-            .relay_statuses()
-            .await
-            .context("failed to snapshot FIPS relay statuses")
+    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
+        Ok(Vec::new())
     }
 
-    pub(crate) async fn update_relays(&self, relays: &[String]) -> Result<()> {
-        self.endpoint
-            .update_relays(relays.to_vec(), relays.to_vec())
-            .await
-            .context("fips: update_relays rejected by endpoint")
+    pub(crate) async fn update_relays(&self, _relays: &[String]) -> Result<()> {
+        Ok(())
     }
 
     pub(crate) fn peer_pubkeys(&self) -> Vec<String> {
@@ -1760,7 +1760,7 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.peer_statuses()
     }
 
-    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsEndpointRelayStatus>> {
+    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
         self.mesh.relay_statuses().await
     }
 
@@ -1811,6 +1811,7 @@ impl FipsPrivateTunnelRuntime {
             || self.config.advertised_endpoint != config.advertised_endpoint
             || self.config.advertise_endpoint != config.advertise_endpoint
             || self.config.stun_servers != config.stun_servers
+            || self.config.nostr_relays != config.nostr_relays
             || self.config.share_local_candidates != config.share_local_candidates
             || self.config.mesh_mtu.underlay_udp != config.mesh_mtu.underlay_udp
     }
@@ -2904,7 +2905,7 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.peer_statuses()
     }
 
-    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsEndpointRelayStatus>> {
+    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
         self.mesh.relay_statuses().await
     }
 
@@ -2948,6 +2949,7 @@ impl FipsPrivateTunnelRuntime {
             || self.config.advertised_endpoint != config.advertised_endpoint
             || self.config.advertise_endpoint != config.advertise_endpoint
             || self.config.stun_servers != config.stun_servers
+            || self.config.nostr_relays != config.nostr_relays
             || self.config.mesh_mtu.underlay_udp != config.mesh_mtu.underlay_udp
     }
 
@@ -3292,9 +3294,7 @@ impl FipsPrivateTunnelRuntime {
         Vec::new()
     }
 
-    pub(crate) async fn relay_statuses(
-        &self,
-    ) -> Result<Vec<fips_endpoint::FipsEndpointRelayStatus>> {
+    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
         Ok(Vec::new())
     }
 

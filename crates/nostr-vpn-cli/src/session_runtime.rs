@@ -1,5 +1,7 @@
 use super::*;
 
+const DAEMON_STATE_PERSIST_INTERVAL_SECS: u64 = 5;
+
 #[cfg(feature = "embedded-fips")]
 macro_rules! current_fips_peer_statuses {
     ($runtime:expr) => {
@@ -529,9 +531,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         };
     let magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
 
-    let mut announce_interval =
-        tokio::time::interval(Duration::from_secs(args.mesh_refresh_interval_secs.max(5)));
+    let mesh_refresh_interval = Duration::from_secs(args.mesh_refresh_interval_secs.max(5));
+    let mut announce_interval = tokio::time::interval(mesh_refresh_interval);
     announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut recent_peer_refresh_interval = tokio::time::interval(mesh_refresh_interval);
+    recent_peer_refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut state_interval = tokio::time::interval(Duration::from_secs(1));
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
@@ -583,6 +587,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             &port_mapping_runtime.status(),
         ),
     )?;
+    let mut last_state_persisted_at = Instant::now();
+    let daemon_state_persist_interval = Duration::from_secs(DAEMON_STATE_PERSIST_INTERVAL_SECS);
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let supervised_service_executable = if args.service {
@@ -616,6 +622,24 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     }
                 }
             }
+            _ = recent_peer_refresh_interval.tick() => {
+                #[cfg(feature = "embedded-fips")]
+                if let Some(runtime) = fips_tunnel_runtime.as_ref() {
+                    update_recent_peers_from_runtime(
+                        runtime,
+                        &app,
+                        &network_id,
+                        own_pubkey.as_deref(),
+                        RecentPeerRefresh {
+                            recent_peers: &mut recent_peers,
+                            recent_peers_path: &recent_peers_path,
+                            last_endpoint_peer_signature: &mut last_fips_endpoint_peer_signature,
+                        },
+                        unix_timestamp(),
+                    )
+                    .await;
+                }
+            }
             _ = tunnel_heartbeat_interval.tick() => {
                 if !daemon_vpn_active(vpn_enabled, expected_peers) {
                     #[cfg(feature = "embedded-fips")]
@@ -629,19 +653,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         if let Err(error) = runtime.refresh_link_statuses().await {
                             eprintln!("fips: peer link snapshot failed: {error}");
                         }
-                        update_recent_peers_from_runtime(
-                            runtime,
-                            &app,
-                            &network_id,
-                            own_pubkey.as_deref(),
-                            RecentPeerRefresh {
-                                recent_peers: &mut recent_peers,
-                                recent_peers_path: &recent_peers_path,
-                                last_endpoint_peer_signature: &mut last_fips_endpoint_peer_signature,
-                            },
-                            now,
-                        )
-                        .await;
                         flush_pending_fips_roster_recipients(
                             runtime,
                             &app,
@@ -671,19 +682,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if let Err(error) = runtime.refresh_link_statuses().await {
                         eprintln!("fips: peer link snapshot failed: {error}");
                     }
-                    update_recent_peers_from_runtime(
-                        runtime,
-                        &app,
-                        &network_id,
-                        own_pubkey.as_deref(),
-                        RecentPeerRefresh {
-                            recent_peers: &mut recent_peers,
-                            recent_peers_path: &recent_peers_path,
-                            last_endpoint_peer_signature: &mut last_fips_endpoint_peer_signature,
-                        },
-                        now,
-                    )
-                    .await;
                     flush_pending_fips_roster_recipients(
                         runtime,
                         &app,
@@ -1059,7 +1057,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             );
                         }
                     }
-                    let _ = persist_daemon_runtime_state(
+                    match persist_daemon_runtime_state(
                         &state_file,
                         &app,
                         vpn_enabled,
@@ -1071,7 +1069,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &vpn_status,
                         &network_snapshot.summary(network_changed_at, captive_portal),
                         &port_mapping_runtime.status(),
-                    );
+                    ) {
+                        Ok(()) => last_state_persisted_at = Instant::now(),
+                        Err(error) => {
+                            eprintln!("daemon: failed to persist runtime state: {error}");
+                        }
+                    }
                     if let Err(error) =
                         persist_daemon_network_cleanup_state(&config_path, &tunnel_runtime)
                     {
@@ -1096,27 +1099,35 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         }
                     }
                 }
-                let fips_peer_statuses = current_fips_peer_statuses!(fips_tunnel_runtime);
-                let fips_relay_statuses = current_fips_relay_statuses(&fips_tunnel_runtime).await;
-                let fips_advertised_routes =
-                    current_fips_advertised_routes!(fips_tunnel_runtime, &app);
-                let _ = persist_daemon_runtime_state(
-                    &state_file,
-                    &app,
-                    vpn_enabled,
-                    expected_peers,
-                    &tunnel_runtime,
-                    &fips_peer_statuses,
-                    &fips_relay_statuses,
-                    &fips_advertised_routes,
-                    &vpn_status,
-                    &network_snapshot.summary(network_changed_at, captive_portal),
-                    &port_mapping_runtime.status(),
-                );
-                if let Err(error) =
-                    persist_daemon_network_cleanup_state(&config_path, &tunnel_runtime)
-                {
-                    eprintln!("daemon: failed to persist network cleanup state: {error}");
+                if last_state_persisted_at.elapsed() >= daemon_state_persist_interval {
+                    let fips_peer_statuses = current_fips_peer_statuses!(fips_tunnel_runtime);
+                    let fips_relay_statuses =
+                        current_fips_relay_statuses(&fips_tunnel_runtime).await;
+                    let fips_advertised_routes =
+                        current_fips_advertised_routes!(fips_tunnel_runtime, &app);
+                    match persist_daemon_runtime_state(
+                        &state_file,
+                        &app,
+                        vpn_enabled,
+                        expected_peers,
+                        &tunnel_runtime,
+                        &fips_peer_statuses,
+                        &fips_relay_statuses,
+                        &fips_advertised_routes,
+                        &vpn_status,
+                        &network_snapshot.summary(network_changed_at, captive_portal),
+                        &port_mapping_runtime.status(),
+                    ) {
+                        Ok(()) => last_state_persisted_at = Instant::now(),
+                        Err(error) => {
+                            eprintln!("daemon: failed to persist runtime state: {error}");
+                        }
+                    }
+                    if let Err(error) =
+                        persist_daemon_network_cleanup_state(&config_path, &tunnel_runtime)
+                    {
+                        eprintln!("daemon: failed to persist network cleanup state: {error}");
+                    }
                 }
             }
         }
