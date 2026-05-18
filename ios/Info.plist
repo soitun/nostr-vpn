@@ -35,6 +35,10 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Scan Nostr VPN invite QR codes.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_fips._udp</string>
+	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect directly to nearby Nostr VPN devices on your local network.</string>
 	<key>NSPhotoLibraryUsageDescription</key>

@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
             var state by remember { mutableStateOf(core.state()) }
             var androidError by remember { mutableStateOf("") }
             var pendingVpnStart by remember { mutableStateOf(false) }
+            var pendingLocalNetworkAction by remember { mutableStateOf<JSONObject?>(null) }
             fun showAndroidError(message: String, fallback: String = "Android action failed") {
                 androidError = message.trim().ifBlank { fallback }
             }
@@ -87,7 +88,7 @@ class MainActivity : ComponentActivity() {
                     vpnPermissionLauncher.launch(intent)
                 }
             }
-            val dispatch: (JSONObject) -> Unit = { action ->
+            fun dispatchNow(action: JSONObject) {
                 val wasEnabled = state.vpnEnabled
                 try {
                     applyUserActionState(core.dispatch(action))
@@ -101,6 +102,50 @@ class MainActivity : ComponentActivity() {
                         Intent(this, NostrVpnService::class.java)
                             .setAction(NostrVpnService.ACTION_DISCONNECT),
                     )
+                }
+            }
+            fun requiredLocalNetworkPermission(): String? =
+                when {
+                    Build.VERSION.SDK_INT >= ANDROID_ACCESS_LOCAL_NETWORK_API -> ACCESS_LOCAL_NETWORK_PERMISSION
+                    Build.VERSION.SDK_INT >= ANDROID_LOCAL_NETWORK_OPT_IN_API -> Manifest.permission.NEARBY_WIFI_DEVICES
+                    else -> null
+                }
+
+            fun requiresLocalNetworkPermission(action: JSONObject): Boolean =
+                when (action.optString("type")) {
+                    "connect_vpn", "start_invite_broadcast", "start_nearby_discovery" -> true
+                    else -> false
+                }
+
+            fun localNetworkPermissionMessage() =
+                "Local network permission is needed for nearby device discovery."
+
+            val localNetworkPermissionLauncher = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission(),
+            ) { granted ->
+                val action = pendingLocalNetworkAction
+                pendingLocalNetworkAction = null
+                if (granted && action != null) {
+                    dispatchNow(action)
+                } else {
+                    showAndroidError(localNetworkPermissionMessage())
+                }
+            }
+            val dispatch: (JSONObject) -> Unit = { action ->
+                val permission = requiredLocalNetworkPermission()
+                if (
+                    permission != null &&
+                    requiresLocalNetworkPermission(action) &&
+                    checkSelfPermission(permission) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    pendingLocalNetworkAction = action
+                    runCatching { localNetworkPermissionLauncher.launch(permission) }
+                        .onFailure {
+                            pendingLocalNetworkAction = null
+                            showAndroidError(localNetworkPermissionMessage())
+                        }
+                } else {
+                    dispatchNow(action)
                 }
             }
             val qrScanLauncher = rememberLauncherForActivityResult(
@@ -269,5 +314,8 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_DEBUG_ACTION = "org.nostrvpn.app.DEBUG_ACTION"
         const val DEBUG_ACTION_CONNECT = "connect"
         const val DEBUG_ACTION_DISCONNECT = "disconnect"
+        private const val ANDROID_LOCAL_NETWORK_OPT_IN_API = 36
+        private const val ANDROID_ACCESS_LOCAL_NETWORK_API = 37
+        private const val ACCESS_LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
     }
 }
