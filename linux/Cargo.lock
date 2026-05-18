@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.34"
+version = "4.0.35"
 dependencies = [
  "anyhow",
  "base64",
@@ -2580,7 +2580,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.34"
+version = "4.0.35"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2604,7 +2604,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-linux"
-version = "4.0.34"
+version = "4.0.35"
 dependencies = [
  "gio",
  "glib",

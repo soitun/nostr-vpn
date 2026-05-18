@@ -82,7 +82,12 @@ pub struct DaemonPeerState {
         alias = "presenceTimestamp"
     )]
     pub last_mesh_seen_at: u64,
-    #[serde(default, alias = "last_signal_seen_at", alias = "lastSignalSeenAt")]
+    #[serde(
+        default,
+        alias = "last_signal_seen_at",
+        alias = "lastSignalSeenAt",
+        alias = "last_fips_seen_at"
+    )]
     pub last_fips_seen_at: Option<u64>,
     pub reachable: bool,
     #[serde(alias = "last_handshake_at")]
@@ -248,7 +253,12 @@ pub struct UiState {
 pub struct RelayView {
     pub url: String,
     pub status: String,
+    #[serde(default = "default_true")]
     pub enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -402,6 +412,10 @@ mod tests {
                 "natPmp": { "state": "unknown" },
                 "pcp": { "state": "unknown" }
             },
+            "relays": [{
+                "url": "wss://temp.iris.to",
+                "status": "connected"
+            }],
             "peers": [{
                 "participant_pubkey": "67c745be74407dd6d3427c0c2815fcf924313aed9416fd0d10806571c674cd08",
                 "node_id": "",
@@ -425,7 +439,11 @@ mod tests {
         assert!(state.vpn_enabled);
         assert_eq!(state.connected_peer_count, 1);
         assert_eq!(state.port_mapping.active_protocol, None);
+        assert_eq!(state.relays[0].url, "wss://temp.iris.to");
+        assert_eq!(state.relays[0].status, "connected");
+        assert!(state.relays[0].enabled);
         assert_eq!(state.peers[0].runtime_endpoint.as_deref(), Some("fips"));
+        assert_eq!(state.peers[0].last_fips_seen_at, Some(1_778_104_080));
         assert_eq!(state.peers[0].last_mesh_seen_at, 1_778_104_080);
         assert!(state.peers[0].reachable);
     }

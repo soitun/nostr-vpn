@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.35 - 2026-05-18
+
+### Fixed
+
+- Native apps now accept daemon relay status entries that omit UI-only enabled
+  flags, fixing `nvpn status --json` parse failures when FIPS reports live relay
+  connectivity.
+- Native apps now read the daemon's snake_case `last_fips_seen_at` timestamp so
+  live FIPS peer presence updates correctly.
+
 ## 4.0.34 - 2026-05-18
 
 ### Added
