@@ -41,6 +41,7 @@ use crate::state::{
 };
 
 const NVPN_BIN_ENV: &str = "NVPN_CLI_PATH";
+const EXTERNAL_DAEMON_ENV: &str = "NVPN_EXTERNAL_DAEMON";
 const SERVICE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(5);
 const MOBILE_RUNTIME_STATE_FILE: &str = "mobile-runtime-state.json";
 const MOBILE_RUNTIME_STATE_STALE_SECS: u64 = 10;
@@ -1362,6 +1363,12 @@ impl NativeAppRuntime {
             ensure_success("nvpn resume", &output)?;
             return self.refresh_status();
         }
+        if external_daemon_mode() {
+            self.vpn_enabled = false;
+            self.vpn_active = false;
+            self.vpn_status = "VPN service starting".to_string();
+            return Err(anyhow!(self.vpn_status.clone()));
+        }
         #[cfg(target_os = "macos")]
         {
             self.refresh_service_status_if_due();
@@ -2257,6 +2264,15 @@ fn desktop_service_supported() -> bool {
 
 fn cli_binary_installed() -> bool {
     resolve_nvpn_cli_path().is_ok()
+}
+
+fn external_daemon_mode() -> bool {
+    env::var(EXTERNAL_DAEMON_ENV)
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(normalized.as_str(), "1" | "true" | "yes")
+        })
+        .unwrap_or(false)
 }
 
 fn peer_offers_exit_node(routes: &[String]) -> bool {

@@ -43,8 +43,13 @@ test('renderUmbrelCompose includes the pinned image and tunnel access', () => {
   )
 
   assert.match(compose, /image: ghcr\.io\/example\/nostr-vpn-umbrel:v0\.3\.4@sha256:c+/)
+  assert.match(compose, /app_proxy:/)
+  assert.match(compose, /APP_HOST: nostr-vpn_web_1/)
+  assert.match(compose, /daemon:/)
   assert.match(compose, /network_mode: "host"/)
   assert.match(compose, /\/dev\/net\/tun:\/dev\/net\/tun/)
+  assert.match(compose, /NVPN_DAEMON_STATUS_MODE: state-file/)
+  assert.match(compose, /NVPN_EXTERNAL_DAEMON: "true"/)
 })
 
 test('renderUmbrelManifest syncs version and release notes', () => {

@@ -405,6 +405,20 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         Ok(false) => {}
         Err(error) => eprintln!("daemon: failed to ensure macOS underlay default route: {error}"),
     }
+    let pid_file = daemon_pid_file_path(&config_path);
+    if let Err(error) = write_daemon_pid_record(
+        &pid_file,
+        &DaemonPidRecord {
+            pid: std::process::id(),
+            config_path: config_path.display().to_string(),
+            started_at: unix_timestamp(),
+        },
+    ) {
+        eprintln!(
+            "daemon: failed to write pid file {}: {error}",
+            pid_file.display()
+        );
+    }
     let network_override = args.network_id.clone();
     let participants_override = args.participants.clone();
     let (mut app, mut network_id) = load_config_with_overrides(
@@ -449,7 +463,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let timeout = network_probe_timeout(&app);
     let mut captive_portal = detect_captive_portal(timeout).await;
     let mut port_mapping_runtime = PortMappingRuntime::default();
-    if daemon_vpn_active(true, expected_peers) {
+    let mut vpn_enabled = !args.paused;
+    if daemon_vpn_active(vpn_enabled, expected_peers) {
         refresh_port_mapping(
             &app,
             &network_snapshot,
@@ -460,7 +475,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     }
     #[cfg(feature = "embedded-fips")]
     let (mut fips_tunnel_runtime, mut last_fips_endpoint_peer_signature) =
-        if fips_private_runtime_active(&app, true, expected_peers) {
+        if fips_private_runtime_active(&app, vpn_enabled, expected_peers) {
             let seeded_endpoint_count = recent_peers
                 .as_static_peer_endpoints_with_seen_at()
                 .iter()
@@ -509,7 +524,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let terminate_wait = std::future::pending::<()>();
     tokio::pin!(terminate_wait);
 
-    let mut vpn_enabled = true;
     let mut vpn_status = if !daemon_vpn_active(vpn_enabled, expected_peers) {
         daemon_vpn_idle_status(vpn_enabled, expected_peers, app.join_requests_enabled()).to_string()
     } else {
@@ -1106,8 +1120,23 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         peers: Vec::new(),
     };
     let _ = write_daemon_state(&state_file, &final_state);
+    remove_current_daemon_pid_record(&pid_file);
 
     Ok(())
+}
+
+fn remove_current_daemon_pid_record(pid_file: &Path) {
+    let current_pid = std::process::id();
+    match read_daemon_pid_record(pid_file) {
+        Ok(Some(record)) if record.pid == current_pid => {
+            let _ = fs::remove_file(pid_file);
+        }
+        Ok(_) => {}
+        Err(error) => eprintln!(
+            "daemon: failed to inspect pid file {} before cleanup: {error}",
+            pid_file.display()
+        ),
+    }
 }
 
 #[cfg(target_os = "windows")]

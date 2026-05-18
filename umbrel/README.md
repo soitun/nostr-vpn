@@ -2,10 +2,12 @@
 
 This directory contains:
 
-- `docker-compose.yml`: template for the real Umbrel app, using host networking
-  and `/dev/net/tun`
+- `docker-compose.yml`: template for the real Umbrel app. The browser-facing
+  web service sits behind Umbrel's app proxy while a separate daemon service
+  uses host networking and `/dev/net/tun`.
 - `docker-compose.local.yml`: local-only Compose file that builds the same image
-  in an ordinary bridged Docker network for safer UI and API testing
+  with the same web/daemon split in an ordinary bridged Docker network for
+  safer UI and API testing
 - `umbrel-app.yml`: app metadata template
 
 ## Local validation

@@ -136,6 +136,22 @@ fn daemon_control_request_projects_desired_vpn_state_immediately() {
 }
 
 #[test]
+fn daemon_state_freshness_allows_pid_namespace_status() {
+    let state = DaemonRuntimeState {
+        updated_at: 100,
+        ..DaemonRuntimeState::default()
+    };
+
+    assert!(daemon_state_is_fresh(&state, 105, 10));
+    assert!(!daemon_state_is_fresh(&state, 111, 10));
+    assert!(!daemon_state_is_fresh(
+        &DaemonRuntimeState::default(),
+        105,
+        10
+    ));
+}
+
+#[test]
 fn daemon_log_compaction_leaves_small_log_untouched() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

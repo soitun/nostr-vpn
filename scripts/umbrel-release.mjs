@@ -197,10 +197,12 @@ Files:
 - \`icon.svg\`: app icon
 - \`IMAGE.txt\`: pinned container image reference used for this bundle
 
-To validate the compose file outside Umbrel, provide an app data directory:
+The real app compose uses Umbrel's built-in \`app_proxy\` service, so validate
+the app inside umbrelOS. For ordinary Docker validation, use the repo's local
+Compose file:
 
 \`\`\`sh
-APP_DATA_DIR=/tmp/nvpn-umbrel docker compose -f docker-compose.yml config
+docker compose -f umbrel/docker-compose.local.yml config
 \`\`\`
 `
 }
@@ -210,7 +212,12 @@ export function renderUmbrelCompose(imageRef) {
   return `version: "3.7"
 
 services:
-  web:
+  app_proxy:
+    environment:
+      APP_HOST: nostr-vpn_web_1
+      APP_PORT: 38080
+
+  daemon:
     image: ${pinnedRef}
     restart: on-failure
     stop_grace_period: 1m
@@ -219,10 +226,32 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
+    entrypoint:
+      - /usr/local/bin/nvpn
+    command:
+      - daemon
+      - --paused
+      - --config
+      - /data/config/nvpn/config.toml
+    environment:
+      HOME: /data/home
+      XDG_CONFIG_HOME: /data/config
+      RUST_LOG: info
+    volumes:
+      - \${APP_DATA_DIR}:/data
+
+  web:
+    image: ${pinnedRef}
+    restart: on-failure
+    stop_grace_period: 1m
+    depends_on:
+      - daemon
     environment:
       HOME: /data/home
       XDG_CONFIG_HOME: /data/config
       NVPN_CLI_PATH: /usr/local/bin/nvpn
+      NVPN_DAEMON_STATUS_MODE: state-file
+      NVPN_EXTERNAL_DAEMON: "true"
       RUST_LOG: info
     volumes:
       - \${APP_DATA_DIR}:/data

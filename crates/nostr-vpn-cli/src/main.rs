@@ -130,6 +130,10 @@ const DAEMON_CONTROL_STOP_REQUEST: &str = "stop";
 const DAEMON_CONTROL_RELOAD_REQUEST: &str = "reload";
 const DAEMON_CONTROL_PAUSE_REQUEST: &str = "pause";
 const DAEMON_CONTROL_RESUME_REQUEST: &str = "resume";
+const DAEMON_STATUS_MODE_ENV: &str = "NVPN_DAEMON_STATUS_MODE";
+const DAEMON_STATUS_MODE_STATE_FILE: &str = "state-file";
+const DAEMON_STATE_RUNNING_MAX_AGE_SECS_ENV: &str = "NVPN_DAEMON_STATE_RUNNING_MAX_AGE_SECS";
+const DEFAULT_DAEMON_STATE_RUNNING_MAX_AGE_SECS: u64 = 10;
 const MAJOR_LINK_CHANGE_TIME_JUMP_SECS: u64 = 30;
 const WAITING_FOR_PARTICIPANTS_STATUS: &str = "Waiting for participants";
 const LISTENING_FOR_JOIN_REQUESTS_STATUS: &str = "Listening for join requests";
@@ -456,6 +460,8 @@ struct DaemonArgs {
     iface: String,
     #[arg(long, alias = "announce-interval-secs", default_value_t = 20)]
     mesh_refresh_interval_secs: u64,
+    #[arg(long, hide = true, default_value_t = false)]
+    paused: bool,
     #[arg(long, hide = true, default_value_t = false)]
     service: bool,
 }
@@ -3499,10 +3505,10 @@ fn daemon_status(config_path: &Path) -> Result<DaemonStatus> {
     let running_pid = daemon_candidate_pids(config_path, std::process::id())?
         .into_iter()
         .next();
-    let running = running_pid.is_some();
 
     let pid = running_pid.or(pid_from_record);
     let state = read_daemon_state(&state_file)?;
+    let running = running_pid.is_some() || daemon_state_file_counts_as_running(state.as_ref());
 
     if let Some(pid) = running_pid
         && pid_from_record != Some(pid)
@@ -3523,6 +3529,40 @@ fn daemon_status(config_path: &Path) -> Result<DaemonStatus> {
         state_file,
         state,
     })
+}
+
+fn daemon_state_file_counts_as_running(state: Option<&DaemonRuntimeState>) -> bool {
+    if !daemon_state_file_status_mode_enabled() {
+        return false;
+    }
+    let Some(state) = state else {
+        return false;
+    };
+    daemon_state_is_fresh(state, unix_timestamp(), daemon_state_running_max_age_secs())
+}
+
+fn daemon_state_file_status_mode_enabled() -> bool {
+    std::env::var(DAEMON_STATUS_MODE_ENV)
+        .map(|value| {
+            let normalized = value.trim().to_ascii_lowercase();
+            matches!(
+                normalized.as_str(),
+                DAEMON_STATUS_MODE_STATE_FILE | "1" | "true" | "yes"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn daemon_state_running_max_age_secs() -> u64 {
+    std::env::var(DAEMON_STATE_RUNNING_MAX_AGE_SECS_ENV)
+        .ok()
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_DAEMON_STATE_RUNNING_MAX_AGE_SECS)
+}
+
+fn daemon_state_is_fresh(state: &DaemonRuntimeState, now: u64, max_age_secs: u64) -> bool {
+    state.updated_at > 0 && now.saturating_sub(state.updated_at) <= max_age_secs
 }
 
 fn daemon_status_json_value(status: &DaemonStatus) -> serde_json::Value {

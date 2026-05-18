@@ -431,7 +431,8 @@ fn umbrel_state_value(state: NativeAppState) -> ApiResult<Value> {
         && (vpn_status.is_empty()
             || vpn_status == "Disconnected"
             || vpn_status == "Daemon running"
-            || vpn_status == "Daemon not running")
+            || vpn_status == "Daemon not running"
+            || vpn_status == "Paused")
     {
         object.insert("vpnStatus".to_string(), json!("VPN off"));
     }
@@ -592,7 +593,7 @@ mod tests {
             service_enablement_supported: true,
             service_installed: true,
             service_running: true,
-            vpn_status: "Disconnected".to_string(),
+            vpn_status: "Paused".to_string(),
             ..NativeAppState::default()
         };
 
