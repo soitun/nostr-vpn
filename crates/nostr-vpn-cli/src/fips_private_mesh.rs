@@ -754,6 +754,13 @@ impl FipsPrivateMeshRuntime {
             .context("failed to snapshot FIPS relay statuses")
     }
 
+    pub(crate) async fn update_relays(&self, relays: &[String]) -> Result<()> {
+        self.endpoint
+            .update_relays(relays.to_vec(), relays.to_vec())
+            .await
+            .context("fips: update_relays rejected by endpoint")
+    }
+
     pub(crate) fn peer_pubkeys(&self) -> Vec<String> {
         self.mesh
             .read()
@@ -1780,6 +1787,10 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.update_peers(endpoint_peers).await
     }
 
+    pub(crate) async fn update_relays(&self, relays: &[String]) -> Result<()> {
+        self.mesh.update_relays(relays).await
+    }
+
     pub(crate) fn requires_endpoint_restart(&self, config: &FipsPrivateTunnelConfig) -> bool {
         // `endpoint_peers` is deliberately NOT in this list. Its `addresses`
         // field is fed from the recent-peers cache, which the same daemon
@@ -1800,7 +1811,6 @@ impl FipsPrivateTunnelRuntime {
             || self.config.advertised_endpoint != config.advertised_endpoint
             || self.config.advertise_endpoint != config.advertise_endpoint
             || self.config.stun_servers != config.stun_servers
-            || self.config.nostr_relays != config.nostr_relays
             || self.config.share_local_candidates != config.share_local_candidates
             || self.config.mesh_mtu.underlay_udp != config.mesh_mtu.underlay_udp
     }
@@ -1810,6 +1820,9 @@ impl FipsPrivateTunnelRuntime {
             .replace_peers(config.peers.clone(), config.local_allowed_ips())?;
         if let Err(error) = self.mesh.update_peers(&config.endpoint_peers).await {
             eprintln!("fips: update_peers during apply_config failed: {error}");
+        }
+        if self.config.nostr_relays != config.nostr_relays {
+            self.mesh.update_relays(&config.nostr_relays).await?;
         }
         self.apply_interface_config(&config).await?;
         self.config = config;
@@ -2918,6 +2931,10 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.update_peers(endpoint_peers).await
     }
 
+    pub(crate) async fn update_relays(&self, relays: &[String]) -> Result<()> {
+        self.mesh.update_relays(relays).await
+    }
+
     pub(crate) fn requires_endpoint_restart(&self, config: &FipsPrivateTunnelConfig) -> bool {
         // See `requires_endpoint_restart` on the unix tunnel runtime for
         // why `endpoint_peers` is not in this list — address hints flow
@@ -2939,6 +2956,9 @@ impl FipsPrivateTunnelRuntime {
             .replace_peers(config.peers.clone(), config.local_allowed_ips())?;
         if let Err(error) = self.mesh.update_peers(&config.endpoint_peers).await {
             eprintln!("fips: update_peers during apply_config failed: {error}");
+        }
+        if self.config.nostr_relays != config.nostr_relays {
+            self.mesh.update_relays(&config.nostr_relays).await?;
         }
         if self.config.route_targets != config.route_targets {
             crate::windows_tunnel::remove_windows_routes(self.interface_index, &self.route_targets)
@@ -3295,6 +3315,10 @@ impl FipsPrivateTunnelRuntime {
         _endpoint_peers: &[FipsEndpointPeerTransportConfig],
     ) -> Result<fips_endpoint::UpdatePeersOutcome> {
         Ok(fips_endpoint::UpdatePeersOutcome::default())
+    }
+
+    pub(crate) async fn update_relays(&self, _relays: &[String]) -> Result<()> {
+        Ok(())
     }
 
     pub(crate) fn requires_endpoint_restart(&self, _config: &FipsPrivateTunnelConfig) -> bool {
