@@ -708,12 +708,11 @@ impl NativeAppRuntime {
 
         match action {
             NativeAppAction::GetState | NativeAppAction::Tick => {
-                let result = if self.mobile_runtime {
+                if self.mobile_runtime {
                     self.refresh_mobile_status()
                 } else {
                     self.refresh_status()
-                };
-                result
+                }
             }
             NativeAppAction::ConnectVpn => self.connect_vpn(),
             NativeAppAction::DisconnectVpn => self.disconnect_vpn(),
@@ -1539,7 +1538,7 @@ impl NativeAppRuntime {
 
     fn save_reload_and_refresh(&mut self) -> Result<()> {
         self.save_config()?;
-        let result = if self.mobile_runtime {
+        if self.mobile_runtime {
             self.refresh_mobile_status()
         } else {
             if self.daemon_running {
@@ -1547,8 +1546,7 @@ impl NativeAppRuntime {
                 ensure_success("nvpn reload", &output)?;
             }
             self.refresh_status()
-        };
-        result
+        }
     }
 
     fn relay_views(&self) -> Vec<NativeRelayState> {
@@ -2300,12 +2298,10 @@ fn cli_binary_installed() -> bool {
 }
 
 fn external_daemon_mode() -> bool {
-    env::var(EXTERNAL_DAEMON_ENV)
-        .map(|value| {
-            let normalized = value.trim().to_ascii_lowercase();
-            matches!(normalized.as_str(), "1" | "true" | "yes")
-        })
-        .unwrap_or(false)
+    env::var(EXTERNAL_DAEMON_ENV).is_ok_and(|value| {
+        let normalized = value.trim().to_ascii_lowercase();
+        matches!(normalized.as_str(), "1" | "true" | "yes")
+    })
 }
 
 fn peer_offers_exit_node(routes: &[String]) -> bool {

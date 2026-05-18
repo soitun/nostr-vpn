@@ -2330,7 +2330,7 @@ mod tests {
         assert!(config.node.discovery.nostr.advertise);
         assert_eq!(
             config.node.discovery.nostr.policy,
-            NostrDiscoveryPolicy::ConfiguredOnly
+            NostrDiscoveryPolicy::Open
         );
         assert!(config.peers.is_empty());
     }
@@ -3162,7 +3162,7 @@ mod tests {
         assert!(config.node.discovery.nostr.advertise);
         assert_eq!(
             config.node.discovery.nostr.policy,
-            NostrDiscoveryPolicy::ConfiguredOnly
+            NostrDiscoveryPolicy::Open
         );
         assert!(config.peers.is_empty());
     }

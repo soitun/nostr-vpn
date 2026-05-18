@@ -4,6 +4,20 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.33 - 2026-05-18
+
+### Added
+
+- Relay settings are now editable across desktop, mobile, and web surfaces,
+  with live gray/green relay status indicators fed by the FIPS endpoint.
+
+### Changed
+
+- Updated the embedded FIPS endpoint stack to `fips-endpoint` 0.3.13, which
+  hot-applies Nostr relay changes without rebuilding the running endpoint.
+- iOS TestFlight exports now honor `NVPN_IOS_INTERNAL_ONLY=false` so public
+  beta uploads are not accidentally marked internal-only.
+
 ## 4.0.32 - 2026-05-18
 
 ### Changed

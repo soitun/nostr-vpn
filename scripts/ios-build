@@ -23,6 +23,7 @@ TEAM_ID="${NVPN_IOS_TEAM_ID:-J8PPJKD7TA}"
 BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-to.iris.nvpn}"
 PACKET_TUNNEL_BUNDLE_ID="${NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID:-to.iris.nvpn.PacketTunnel}"
 PROVISIONING_ENV="$DIST_DIR/provisioning.env"
+IOS_INTERNAL_ONLY="${NVPN_IOS_INTERNAL_ONLY:-true}"
 
 usage() {
   cat <<'EOF'
@@ -71,6 +72,12 @@ ensure_profiles() {
 write_export_options() {
   local app_uuid="$1"
   local tunnel_uuid="$2"
+  local testflight_internal_only
+  if bool_is_true "$IOS_INTERNAL_ONLY"; then
+    testflight_internal_only="<true/>"
+  else
+    testflight_internal_only="<false/>"
+  fi
   cat >"$EXPORT_OPTIONS" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -90,6 +97,8 @@ write_export_options() {
   <true/>
   <key>uploadBitcode</key>
   <false/>
+  <key>testFlightInternalTestingOnly</key>
+  $testflight_internal_only
   <key>provisioningProfiles</key>
   <dict>
     <key>$BUNDLE_ID</key>
