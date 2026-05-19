@@ -34,7 +34,17 @@ android {
         }
     }
 
+    val updateManifestUrl =
+        providers.environmentVariable("NVPN_UPDATE_MANIFEST_URL").orNull?.takeIf { it.isNotBlank() } ?: ""
+    val updatePollSeconds =
+        providers.environmentVariable("NVPN_UPDATE_POLL_SECONDS").orNull?.toLongOrNull() ?: 0L
+
     buildTypes {
+        debug {
+            buildConfigField("String", "UPDATE_MANIFEST_URL", "\"${updateManifestUrl}\"")
+            buildConfigField("long", "UPDATE_POLL_SECONDS", "${updatePollSeconds}L")
+            buildConfigField("boolean", "SELF_UPDATE_ENABLED", "false")
+        }
         release {
             isMinifyEnabled = false
             if (hasReleaseSigning) {
@@ -49,6 +59,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            buildConfigField("String", "UPDATE_MANIFEST_URL", "\"${updateManifestUrl}\"")
+            buildConfigField("long", "UPDATE_POLL_SECONDS", "${updatePollSeconds}L")
+            buildConfigField("boolean", "SELF_UPDATE_ENABLED", "true")
         }
     }
 

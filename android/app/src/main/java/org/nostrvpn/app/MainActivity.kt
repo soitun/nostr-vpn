@@ -13,21 +13,27 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 import org.nostrvpn.app.core.AppCoreClient
 import org.nostrvpn.app.core.AppState
 import org.nostrvpn.app.core.NativeActions
+import org.nostrvpn.app.update.AndroidSelfUpdateManager
+import org.nostrvpn.app.update.AndroidSelfUpdateState
 import org.nostrvpn.app.vpn.NostrVpnService
 import java.io.File
 
 class MainActivity : ComponentActivity() {
     private var deepLink by mutableStateOf<String?>(null)
     private var debugAction by mutableStateOf<String?>(null)
+    private lateinit var selfUpdateManager: AndroidSelfUpdateManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,6 +45,13 @@ class MainActivity : ComponentActivity() {
         // (workspace-inherited). Avoids drift between BuildConfig.VERSION_NAME
         // and the bundled nvpn binary's version.
         val core = AppCoreClient(dataDir.absolutePath, "")
+        selfUpdateManager =
+            AndroidSelfUpdateManager(
+                context = this,
+                scope = lifecycleScope,
+                ioDispatcher = Dispatchers.IO,
+            )
+        selfUpdateManager.startAutomaticChecks()
 
         setContent {
             var state by remember { mutableStateOf(core.state()) }
@@ -246,6 +259,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            val selfUpdateState by selfUpdateManager.state.collectAsState()
+            val updateActions = remember {
+                SelfUpdateActions(
+                    check = { selfUpdateManager.check(manual = true) },
+                    download = { selfUpdateManager.download() },
+                    install = { selfUpdateManager.install(this@MainActivity) },
+                    setAutoCheck = { enabled -> selfUpdateManager.setAutoCheckEnabled(enabled) },
+                )
+            }
+
             NostrVpnTheme {
                 val displayState = if (state.error.isBlank() && androidError.isNotBlank()) {
                     state.copy(error = androidError)
@@ -257,6 +280,8 @@ class MainActivity : ComponentActivity() {
                     qrJson = { invite -> core.qrMatrix(invite) },
                     scanQr = { requestQrScan() },
                     dispatch = dispatch,
+                    selfUpdateState = selfUpdateState,
+                    selfUpdateActions = updateActions,
                 )
             }
         }

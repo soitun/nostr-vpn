@@ -61,6 +61,14 @@ import org.nostrvpn.app.core.NativeActions
 import org.nostrvpn.app.core.NetworkState
 import org.nostrvpn.app.core.ParticipantState
 import org.nostrvpn.app.core.activeNetwork
+import org.nostrvpn.app.update.AndroidSelfUpdateState
+
+internal data class SelfUpdateActions(
+    val check: () -> Unit,
+    val download: () -> Unit,
+    val install: () -> Unit,
+    val setAutoCheck: (Boolean) -> Unit,
+)
 
 private enum class Page(val title: String) {
     Devices("Devices"),
@@ -91,6 +99,8 @@ internal fun NostrVpnApp(
     qrJson: (String) -> JSONObject,
     scanQr: () -> Unit,
     dispatch: (JSONObject) -> Unit,
+    selfUpdateState: AndroidSelfUpdateState,
+    selfUpdateActions: SelfUpdateActions,
 ) {
     var page by remember { mutableStateOf(Page.Devices) }
     var showAddDevice by remember { mutableStateOf(false) }
@@ -158,7 +168,7 @@ internal fun NostrVpnApp(
                         onDeleteNetwork = { pendingNetworkRemoval = network },
                     )
                     Page.ExitNodes -> exitNodesPage(state, network, dispatch)
-                    Page.Settings -> settingsPage(state, network, dispatch)
+                    Page.Settings -> settingsPage(state, network, dispatch, selfUpdateState, selfUpdateActions)
                 }
             }
         }
@@ -847,6 +857,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsPage(
     state: AppState,
     @Suppress("UNUSED_PARAMETER") network: NetworkState?,
     dispatch: (JSONObject) -> Unit,
+    selfUpdateState: AndroidSelfUpdateState,
+    selfUpdateActions: SelfUpdateActions,
 ) {
     item { DeviceSettingsCard(state, dispatch) }
     item { RelaySettingsCard(state, dispatch) }
@@ -863,5 +875,51 @@ private fun androidx.compose.foundation.lazy.LazyListScope.settingsPage(
             }
         }
     }
+    if (selfUpdateState.supported) {
+        item { SelfUpdateCard(selfUpdateState, selfUpdateActions) }
+    }
     item { DiagnosticsCard(state) }
 }
+
+@Composable
+private fun SelfUpdateCard(
+    state: AndroidSelfUpdateState,
+    actions: SelfUpdateActions,
+) {
+    AppCard {
+        Text("Updates", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(
+                checked = state.autoCheckEnabled,
+                onCheckedChange = actions.setAutoCheck,
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("Check automatically")
+        }
+        if (state.status.isNotBlank()) {
+            Text(state.status, color = Muted, style = MaterialTheme.typography.bodySmall)
+        }
+        Button(
+            enabled = !state.busy,
+            onClick = {
+                when {
+                    state.downloaded -> actions.install()
+                    state.available -> actions.download()
+                    else -> actions.check()
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(selfUpdateButtonText(state))
+        }
+    }
+}
+
+private fun selfUpdateButtonText(state: AndroidSelfUpdateState): String =
+    when {
+        state.checking -> "Checking…"
+        state.downloading -> "Downloading…"
+        state.downloaded -> "Install update"
+        state.available -> "Download update"
+        else -> "Check for updates"
+    }
