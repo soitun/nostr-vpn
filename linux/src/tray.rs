@@ -785,12 +785,11 @@ fn tray_icon_pixmap(bytes: &[u8], blocked: bool) -> glib::Variant {
     for pixel in data.chunks_exact_mut(4) {
         pixel.rotate_right(1);
     }
-    let icon = glib::Variant::tuple_from_iter([
+    glib::Variant::tuple_from_iter([
         (width as i32).to_variant(),
         (height as i32).to_variant(),
         data.to_variant(),
-    ]);
-    icon
+    ])
 }
 
 fn draw_blocked_dot(image: &mut image::DynamicImage) {

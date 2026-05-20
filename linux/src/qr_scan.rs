@@ -94,7 +94,7 @@ where
         let dialog = dialog.clone();
         let stop = stop_flag.clone();
         glib::timeout_add_local(Duration::from_millis(150), move || {
-            while let Ok(event) = event_rx.try_recv() {
+            if let Ok(event) = event_rx.try_recv() {
                 match event {
                     CameraEvent::Found(text) => {
                         stop.store(true, Ordering::SeqCst);

@@ -37,6 +37,34 @@ enum Page {
     Settings,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct PageScrollOffsets {
+    devices: f64,
+    share: f64,
+    exit_nodes: f64,
+    settings: f64,
+}
+
+impl PageScrollOffsets {
+    fn get(self, page: Page) -> f64 {
+        match page {
+            Page::Devices => self.devices,
+            Page::Share => self.share,
+            Page::ExitNodes => self.exit_nodes,
+            Page::Settings => self.settings,
+        }
+    }
+
+    fn set(&mut self, page: Page, offset: f64) {
+        match page {
+            Page::Devices => self.devices = offset,
+            Page::Share => self.share = offset,
+            Page::ExitNodes => self.exit_nodes = offset,
+            Page::Settings => self.settings = offset,
+        }
+    }
+}
+
 #[derive(Clone, Default)]
 struct Drafts {
     invite: String,
@@ -80,6 +108,8 @@ struct AppModel {
     state: NativeAppState,
     window: adw::ApplicationWindow,
     page: Page,
+    rendered_page: Page,
+    scroll_offsets: PageScrollOffsets,
     sidebar: gtk::Box,
     update_bar: gtk::Box,
     content: gtk::Box,
@@ -117,8 +147,10 @@ impl AppModel {
         drafts.sync_from_state(&state);
         let tray = tray::TrayRuntime::start(&state);
         let (update_sender, update_receiver) = mpsc::channel();
-        let mut update = updater::UpdateState::default();
-        update.auto_install = load_auto_install_updates();
+        let update = updater::UpdateState {
+            auto_install: load_auto_install_updates(),
+            ..updater::UpdateState::default()
+        };
         let update_policy =
             UpdateAutoCheckPolicy::new(Duration::from_secs(update_poll_interval_secs() as u64));
         Self {
@@ -126,6 +158,8 @@ impl AppModel {
             state,
             window,
             page: Page::Devices,
+            rendered_page: Page::Devices,
+            scroll_offsets: PageScrollOffsets::default(),
             sidebar,
             update_bar,
             content,
@@ -448,10 +482,16 @@ fn build_ui(app: &adw::Application, runtime: &AppRuntime, present: bool) {
 }
 
 fn refresh_now(app: &AppRef) {
-    let core = app.borrow().core.clone();
+    let (core, previous_state) = {
+        let model = app.borrow();
+        (model.core.clone(), model.state.clone())
+    };
     let state = core.refresh();
+    let should_render = state_needs_render(&previous_state, &state);
     set_state(app, state);
-    render(app);
+    if should_render {
+        render(app);
+    }
 }
 
 fn dispatch(app: &AppRef, action: NativeAppAction) -> NativeAppState {
@@ -485,6 +525,15 @@ fn set_state(app: &AppRef, state: NativeAppState) {
     let mut model = app.borrow_mut();
     model.tray.update(&state);
     model.state = state;
+}
+
+fn state_needs_render(previous: &NativeAppState, next: &NativeAppState) -> bool {
+    if previous == next {
+        return false;
+    }
+    let mut previous = previous.clone();
+    previous.rev = next.rev;
+    previous != *next
 }
 
 fn drain_tray_commands(app: &AppRef) {
@@ -825,7 +874,7 @@ fn refresh_header(app: &AppRef, state: &NativeAppState) {
 fn render(app: &AppRef) {
     sync_selected_device(app);
 
-    let (sidebar, update_bar, content, state, page) = {
+    let (sidebar, update_bar, content, state, page, rendered_page) = {
         let model = app.borrow();
         (
             model.sidebar.clone(),
@@ -833,7 +882,17 @@ fn render(app: &AppRef) {
             model.content.clone(),
             model.state.clone(),
             model.page,
+            model.rendered_page,
         )
+    };
+    let current_scroll_offset = current_content_scroll_offset(&content);
+    let scroll_offset = {
+        let mut model = app.borrow_mut();
+        model
+            .scroll_offsets
+            .set(rendered_page, current_scroll_offset);
+        model.rendered_page = page;
+        model.scroll_offsets.get(page)
     };
 
     refresh_header(app, &state);
@@ -866,6 +925,7 @@ fn render(app: &AppRef) {
 
     scroll.set_child(Some(&page_box));
     content.append(&scroll);
+    restore_scroll_offset(&scroll, scroll_offset);
 }
 
 fn build_update_stripe(app: &AppRef, parent: &gtk::Box, state: &NativeAppState) {
@@ -3411,6 +3471,82 @@ fn badge(text: &str, style: &str) -> gtk::Label {
 fn clear_box(parent: &gtk::Box) {
     while let Some(child) = parent.first_child() {
         parent.remove(&child);
+    }
+}
+
+fn current_content_scroll_offset(content: &gtk::Box) -> f64 {
+    content
+        .first_child()
+        .and_then(|child| child.downcast::<gtk::ScrolledWindow>().ok())
+        .map(|scroll| scroll.vadjustment().value())
+        .unwrap_or(0.0)
+}
+
+fn restore_scroll_offset(scroll: &gtk::ScrolledWindow, offset: f64) {
+    if !offset.is_finite() || offset <= 0.0 {
+        return;
+    }
+    let adjustment = scroll.vadjustment();
+    set_scroll_adjustment_value(&adjustment, offset);
+    glib::idle_add_local_once(move || {
+        set_scroll_adjustment_value(&adjustment, offset);
+    });
+}
+
+fn set_scroll_adjustment_value(adjustment: &gtk::Adjustment, offset: f64) {
+    let lower = adjustment.lower();
+    let max = (adjustment.upper() - adjustment.page_size()).max(lower);
+    adjustment.set_value(offset.clamp(lower, max));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_scroll_offsets_track_pages_independently() {
+        let mut offsets = PageScrollOffsets::default();
+
+        offsets.set(Page::Settings, 640.0);
+        offsets.set(Page::Devices, 120.0);
+        offsets.set(Page::ExitNodes, 260.0);
+
+        assert_eq!(offsets.get(Page::Settings), 640.0);
+        assert_eq!(offsets.get(Page::Devices), 120.0);
+        assert_eq!(offsets.get(Page::ExitNodes), 260.0);
+        assert_eq!(offsets.get(Page::Share), 0.0);
+    }
+
+    #[test]
+    fn state_needs_render_ignores_revision_only_refreshes() {
+        let previous = NativeAppState {
+            rev: 40,
+            vpn_status: "Connected".to_string(),
+            ..NativeAppState::default()
+        };
+        let next = NativeAppState {
+            rev: 41,
+            vpn_status: "Connected".to_string(),
+            ..previous.clone()
+        };
+
+        assert!(!state_needs_render(&previous, &next));
+    }
+
+    #[test]
+    fn state_needs_render_detects_visible_changes() {
+        let previous = NativeAppState {
+            rev: 40,
+            vpn_status: "Connected".to_string(),
+            ..NativeAppState::default()
+        };
+        let next = NativeAppState {
+            rev: 41,
+            vpn_status: "Disconnected".to_string(),
+            ..previous.clone()
+        };
+
+        assert!(state_needs_render(&previous, &next));
     }
 }
 
