@@ -236,7 +236,7 @@ export function renderUmbrelCompose(imageRef) {
       XDG_CONFIG_HOME: /data/config
       RUST_LOG: info
     volumes:
-      - \${APP_DATA_DIR}:/data
+      - \${APP_DATA_DIR}/data:/data
 
   web:
     image: ${pinnedRef}
@@ -252,7 +252,7 @@ export function renderUmbrelCompose(imageRef) {
       NVPN_EXTERNAL_DAEMON: "true"
       RUST_LOG: info
     volumes:
-      - \${APP_DATA_DIR}:/data
+      - \${APP_DATA_DIR}/data:/data
 `
 }
 

@@ -5,7 +5,7 @@ services:
       APP_PORT: 38080
 
   daemon:
-    image: ${NOSTR_VPN_IMAGE:-nostr-vpn-umbrel:local}
+    image: nostr-vpn-umbrel:local
     restart: on-failure
     stop_grace_period: 1m
     network_mode: "host"
@@ -25,10 +25,10 @@ services:
       XDG_CONFIG_HOME: /data/config
       RUST_LOG: info
     volumes:
-      - ${APP_DATA_DIR:-./.data}:/data
+      - ${APP_DATA_DIR}/data:/data
 
   web:
-    image: ${NOSTR_VPN_IMAGE:-nostr-vpn-umbrel:local}
+    image: nostr-vpn-umbrel:local
     restart: on-failure
     stop_grace_period: 1m
     depends_on:
@@ -41,4 +41,4 @@ services:
       NVPN_EXTERNAL_DAEMON: "true"
       RUST_LOG: info
     volumes:
-      - ${APP_DATA_DIR:-./.data}:/data
+      - ${APP_DATA_DIR}/data:/data

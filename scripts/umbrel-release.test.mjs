@@ -54,6 +54,7 @@ test('renderUmbrelCompose includes the pinned image and tunnel access', () => {
   assert.doesNotMatch(compose, /^version:/m)
   assert.match(compose, /network_mode: "host"/)
   assert.match(compose, /\/dev\/net\/tun:\/dev\/net\/tun/)
+  assert.match(compose, /\$\{APP_DATA_DIR\}\/data:\/data/)
   assert.match(compose, /NVPN_DAEMON_STATUS_MODE: state-file/)
   assert.match(compose, /NVPN_EXTERNAL_DAEMON: "true"/)
 })
