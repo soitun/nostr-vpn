@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Nostr VPN">
+  <rect width="512" height="512" rx="112" fill="#171923"/>
+  <path d="M256 88 398 170v120c0 74-59 125-142 169-83-44-142-95-142-169V170z" fill="#8b5cf6"/>
+  <path d="M164 230h184v58H164z" fill="#fff"/>
+  <path d="M224 171h64v170h-64z" fill="#fff"/>
+</svg>

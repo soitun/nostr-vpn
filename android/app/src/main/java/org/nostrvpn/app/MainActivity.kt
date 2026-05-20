@@ -3,7 +3,6 @@ package org.nostrvpn.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Bitmap
 import android.os.Build
 import android.os.Bundle
 import android.net.VpnService
@@ -58,6 +57,7 @@ class MainActivity : ComponentActivity() {
             var androidError by remember { mutableStateOf("") }
             var pendingVpnStart by remember { mutableStateOf(false) }
             var pendingLocalNetworkAction by remember { mutableStateOf<JSONObject?>(null) }
+            var showQrScanner by remember { mutableStateOf(false) }
             fun showAndroidError(message: String, fallback: String = "Android action failed") {
                 androidError = message.trim().ifBlank { fallback }
             }
@@ -161,58 +161,9 @@ class MainActivity : ComponentActivity() {
                     dispatchNow(action)
                 }
             }
-            val qrScanLauncher = rememberLauncherForActivityResult(
-                ActivityResultContracts.TakePicturePreview(),
-            ) { bitmap ->
-                if (bitmap == null) {
-                    return@rememberLauncherForActivityResult
-                }
-                try {
-                    val qrFile = cacheDir.resolve("nvpn-invite-qr.png")
-                    qrFile.outputStream().use { output ->
-                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
-                    }
-                    val result = core.decodeQrImage(qrFile.absolutePath)
-                    val error = result.optString("error")
-                    val value = result.optString("value").trim()
-                    if (error.isNotBlank()) {
-                        showAndroidError(error, "QR scan failed")
-                    } else if (value.isNotBlank()) {
-                        dispatch(NativeActions.importInvite(value))
-                    }
-                } catch (error: Exception) {
-                    showAndroidError(error, "QR scan failed")
-                }
-            }
-            fun launchQrScan() {
-                runCatching { qrScanLauncher.launch(null) }
-                    .onFailure { error ->
-                        if (error is SecurityException) {
-                            showAndroidError("Camera permission is needed to scan invites.")
-                        } else {
-                            showAndroidError("Could not open the camera.")
-                        }
-                    }
-            }
-            val cameraPermissionLauncher = rememberLauncherForActivityResult(
-                ActivityResultContracts.RequestPermission(),
-            ) { granted ->
-                if (granted) {
-                    launchQrScan()
-                } else {
-                    showAndroidError("Camera permission is needed to scan invites.")
-                }
-            }
             fun requestQrScan() {
                 androidError = ""
-                if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                    launchQrScan()
-                } else {
-                    runCatching { cameraPermissionLauncher.launch(Manifest.permission.CAMERA) }
-                        .onFailure {
-                            showAndroidError("Camera permission is needed to scan invites.")
-                        }
-                }
+                showQrScanner = true
             }
 
             DisposableEffect(core) {
@@ -283,6 +234,21 @@ class MainActivity : ComponentActivity() {
                     selfUpdateState = selfUpdateState,
                     selfUpdateActions = updateActions,
                 )
+                if (showQrScanner) {
+                    QrScannerDialog(
+                        onDismiss = { showQrScanner = false },
+                        onScanned = { value ->
+                            val invite = value.trim()
+                            if (!invite.startsWith("nvpn://invite/", ignoreCase = true)) {
+                                "Not a Nostr VPN invite."
+                            } else {
+                                showQrScanner = false
+                                dispatch(NativeActions.importInvite(invite))
+                                null
+                            }
+                        },
+                    )
+                }
             }
         }
     }

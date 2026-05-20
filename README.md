@@ -157,6 +157,21 @@ Additional automation:
 - `scripts/local-release.mjs` builds local release artifacts and stages a hashtree-style release directory that can be published to `releases/nostr-vpn`
 - `just release-gate` also runs version sync, CLI update e2e, routed-[FIPS] Docker e2e, and safe-MTU Docker e2e
 
+### StartOS package
+
+The StartOS package entrypoint lives in [`startos`](startos) and builds the
+same daemon + web-control-panel container used by the Umbrel package.
+
+```bash
+npm install
+npm run check
+npm run build
+make
+```
+
+`make` requires the StartOS `start-cli` tooling and emits architecture-specific
+`.s9pk` files for x86_64 and aarch64.
+
 ### Local release
 
 Typical flow:

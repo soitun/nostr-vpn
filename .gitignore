@@ -3,6 +3,8 @@
 node_modules/
 **/node_modules/
 dist/
+javascript/
+*.s9pk
 .claude/
 .codex_tmp*
 umbrel/.data
