@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- macOS device search, exit-node search, and admin device rename fields no
+  longer rebuild the whole root view on each keystroke, improving text input
+  responsiveness on large rosters.
+
 ## 4.0.38 - 2026-05-20
 
 ### Fixed

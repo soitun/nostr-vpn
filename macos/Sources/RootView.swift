@@ -13,11 +13,8 @@ struct RootView: View {
     @State private var magicDnsSuffix = ""
     @State private var wireguardExitConfig = ""
     @State private var networkNameInput = ""
-    @State private var deviceSearch = ""
-    @State private var exitNodeSearch = ""
     @State private var selectedDevicePubkeyHex: String?
     @State private var networkNameDrafts: [String: String] = [:]
-    @State private var participantAliasDrafts: [String: String] = [:]
     @State private var savedNetworksExpanded = false
     @State private var pendingNetworkRemoval: NativeNetworkState?
     @State private var pendingParticipantRemoval: PendingParticipantRemoval?
@@ -38,9 +35,6 @@ struct RootView: View {
     @State private var lastSyncedListenPort: UInt32 = 0
     @State private var lastSyncedMagicDnsSuffix = ""
     @State private var lastSyncedWireguardExitConfig: String? = nil
-    @State private var lastSyncedParticipantAliases: [String: String] = [:]
-    @State private var participantEndpointHintDrafts: [String: String] = [:]
-    @State private var lastSyncedParticipantEndpointHints: [String: String] = [:]
 
     private var state: NativeAppState {
         manager.state
@@ -462,6 +456,12 @@ struct RootView: View {
     }
 
     private func deviceListColumn(_ network: NativeNetworkState) -> some View {
+        LocalSearchScope { search in
+            deviceListColumn(network, search: search)
+        }
+    }
+
+    private func deviceListColumn(_ network: NativeNetworkState, search: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
@@ -476,7 +476,7 @@ struct RootView: View {
                     Spacer()
                     deviceHeaderActions(network)
                 }
-                TextField("Search", text: $deviceSearch)
+                TextField("Search", text: search)
                     .textFieldStyle(.roundedBorder)
             }
             .padding(.horizontal, 20)
@@ -485,7 +485,8 @@ struct RootView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    let participants = visibleParticipants(network)
+                    let participants = visibleParticipants(network, search: search.wrappedValue)
+                    let selectedPubkeyHex = selectedParticipant(in: network)?.pubkeyHex
                     if participants.isEmpty {
                         emptyRow("No matching devices", systemImage: "circle.dotted")
                     } else {
@@ -496,7 +497,11 @@ struct RootView: View {
                                 .lineLimit(1)
                                 .padding(.horizontal, 10)
                             ForEach(participants, id: \.pubkeyHex) { participant in
-                                deviceListRow(participant, network: network)
+                                deviceListRow(
+                                    participant,
+                                    network: network,
+                                    selected: selectedPubkeyHex == participant.pubkeyHex
+                                )
                             }
                         }
                     }
@@ -559,9 +564,12 @@ struct RootView: View {
         }
     }
 
-    private func deviceListRow(_ participant: NativeParticipantState, network: NativeNetworkState) -> some View {
-        let selected = selectedParticipant(in: network)?.pubkeyHex == participant.pubkeyHex
-        return Button {
+    private func deviceListRow(
+        _ participant: NativeParticipantState,
+        network: NativeNetworkState,
+        selected: Bool
+    ) -> some View {
+        Button {
             selectedDevicePubkeyHex = participant.pubkeyHex
         } label: {
             VStack(alignment: .leading, spacing: 4) {
@@ -679,33 +687,33 @@ struct RootView: View {
         surface {
             sectionHeader("Manage Device", systemImage: "person.badge.key")
 
-            HStack(spacing: 8) {
-                label("Name")
-                TextField("Name", text: participantAliasBinding(participant))
-                Button {
-                    manager.setParticipantAlias(
-                        npub: participant.npub,
-                        alias: participantAliasDrafts[participant.pubkeyHex] ?? participant.magicDnsAlias
-                    )
-                } label: {
-                    Label("Save", systemImage: "checkmark")
-                }
-                .disabled(manager.actionInFlight)
+            SyncedTextFieldRow(
+                title: "Name",
+                placeholder: "Name",
+                identity: participant.pubkeyHex,
+                value: participant.magicDnsAlias,
+                systemImage: "checkmark",
+                disabled: manager.actionInFlight
+            ) { draft in
+                manager.setParticipantAlias(
+                    npub: participant.npub,
+                    alias: draft
+                )
             }
 
             if !isSelf(participant) {
-                HStack(spacing: 8) {
-                    label("Hints")
-                    TextField("host:port", text: participantEndpointHintsBinding(participant))
-                    Button {
-                        manager.setParticipantEndpointHints(
-                            npub: participant.npub,
-                            endpointHints: endpointHints(from: participantEndpointHintDrafts[participant.pubkeyHex] ?? "")
-                        )
-                    } label: {
-                        Label("Save", systemImage: "network")
-                    }
-                    .disabled(manager.actionInFlight)
+                SyncedTextFieldRow(
+                    title: "Hints",
+                    placeholder: "host:port",
+                    identity: participant.pubkeyHex,
+                    value: participant.fipsEndpointHints.joined(separator: ", "),
+                    systemImage: "network",
+                    disabled: manager.actionInFlight
+                ) { draft in
+                    manager.setParticipantEndpointHints(
+                        npub: participant.npub,
+                        endpointHints: endpointHints(from: draft)
+                    )
                 }
                 deviceActionButtons(participant, network: network)
             }
@@ -1116,10 +1124,16 @@ struct RootView: View {
     }
 
     private func routingSection(_ network: NativeNetworkState) -> some View {
+        LocalSearchScope { search in
+            routingSection(network, search: search)
+        }
+    }
+
+    private func routingSection(_ network: NativeNetworkState, search: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             surface {
                 sectionHeader("Exit Nodes", systemImage: "arrow.triangle.branch")
-                TextField("Search devices", text: $exitNodeSearch)
+                TextField("Search devices", text: search)
                     .textFieldStyle(.roundedBorder)
 
                 VStack(spacing: 8) {
@@ -1141,10 +1155,10 @@ struct RootView: View {
                         manager.selectWireGuardUpstreamExit()
                     }
 
-                    let peerExitCandidates = exitNodeCandidates(network)
+                    let peerExitCandidates = exitNodeCandidates(network, search: search.wrappedValue)
                     if peerExitCandidates.isEmpty {
                         emptyRow(
-                            exitNodeSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            search.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                 ? "No exit nodes offered"
                                 : "No exit nodes found",
                             systemImage: "tray"
@@ -1720,23 +1734,6 @@ struct RootView: View {
         manager.setNetworkEnabled(networkId: network.id, enabled: true)
     }
 
-    private func participantAliasBinding(_ participant: NativeParticipantState) -> Binding<String> {
-        Binding(
-            get: { participantAliasDrafts[participant.pubkeyHex] ?? participant.magicDnsAlias },
-            set: { participantAliasDrafts[participant.pubkeyHex] = $0 }
-        )
-    }
-
-    private func participantEndpointHintsBinding(_ participant: NativeParticipantState) -> Binding<String> {
-        Binding(
-            get: {
-                participantEndpointHintDrafts[participant.pubkeyHex]
-                    ?? participant.fipsEndpointHints.joined(separator: ", ")
-            },
-            set: { participantEndpointHintDrafts[participant.pubkeyHex] = $0 }
-        )
-    }
-
     private func endpointHints(from value: String) -> [String] {
         value
             .components(separatedBy: CharacterSet(charactersIn: ", \n\r\t"))
@@ -1783,23 +1780,6 @@ struct RootView: View {
         for network in state.networks {
             if networkNameDrafts[network.id] == nil {
                 networkNameDrafts[network.id] = network.name
-            }
-            for participant in network.participants {
-                let key = participant.pubkeyHex
-                let alias = participant.magicDnsAlias
-                let previousAlias = lastSyncedParticipantAliases[key]
-                if participantAliasDrafts[key] == nil || participantAliasDrafts[key] == previousAlias {
-                    participantAliasDrafts[key] = alias
-                }
-                lastSyncedParticipantAliases[key] = alias
-
-                let endpointHints = participant.fipsEndpointHints.joined(separator: ", ")
-                let previousEndpointHints = lastSyncedParticipantEndpointHints[key]
-                if participantEndpointHintDrafts[key] == nil
-                    || participantEndpointHintDrafts[key] == previousEndpointHints {
-                    participantEndpointHintDrafts[key] = endpointHints
-                }
-                lastSyncedParticipantEndpointHints[key] = endpointHints
             }
         }
 
@@ -1880,8 +1860,8 @@ struct RootView: View {
         }
     }
 
-    private func visibleParticipants(_ network: NativeNetworkState) -> [NativeParticipantState] {
-        let needle = deviceSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    private func visibleParticipants(_ network: NativeNetworkState, search: String) -> [NativeParticipantState] {
+        let needle = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !needle.isEmpty else {
             return sortedParticipants(network)
         }
@@ -2037,8 +2017,8 @@ struct RootView: View {
         }
     }
 
-    private func exitNodeCandidates(_ network: NativeNetworkState) -> [NativeParticipantState] {
-        let needle = exitNodeSearch.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    private func exitNodeCandidates(_ network: NativeNetworkState, search: String) -> [NativeParticipantState] {
+        let needle = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return network.participants.filter { participant in
             if isSelf(participant) || !participant.offersExitNode {
                 return false
@@ -2087,6 +2067,66 @@ private struct PendingParticipantRemoval {
     let networkId: String
     let npub: String
     let deviceName: String
+}
+
+private struct LocalSearchScope<Content: View>: View {
+    @State private var search = ""
+    private let content: (Binding<String>) -> Content
+
+    init(@ViewBuilder content: @escaping (Binding<String>) -> Content) {
+        self.content = content
+    }
+
+    var body: some View {
+        content($search)
+    }
+}
+
+private struct SyncedTextFieldRow: View {
+    let title: String
+    let placeholder: String
+    let identity: String
+    let value: String
+    let systemImage: String
+    let disabled: Bool
+    let onSave: (String) -> Void
+
+    @State private var draft = ""
+    @State private var syncedIdentity = ""
+    @State private var syncedValue = ""
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .foregroundStyle(.secondary)
+                .frame(width: 86, alignment: .leading)
+            TextField(placeholder, text: $draft)
+            Button {
+                onSave(draft)
+            } label: {
+                Label("Save", systemImage: systemImage)
+            }
+            .disabled(disabled)
+        }
+        .onAppear {
+            syncDraft(force: true)
+        }
+        .onChange(of: identity) { _, _ in
+            syncDraft(force: true)
+        }
+        .onChange(of: value) { _, _ in
+            syncDraft(force: false)
+        }
+    }
+
+    private func syncDraft(force: Bool) {
+        let identityChanged = syncedIdentity != identity
+        if force || identityChanged || draft == syncedValue {
+            draft = value
+        }
+        syncedIdentity = identity
+        syncedValue = value
+    }
 }
 
 struct InviteQRCodeView: View {
