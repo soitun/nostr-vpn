@@ -59,11 +59,13 @@ export const main = sdk.setupMain(async ({ effects }) => {
       subcontainer: webSub,
       exec: {
         command: [
-          '/usr/local/bin/nvpn-web',
-          '--listen',
-          `0.0.0.0:${uiPort}`,
-          '--config',
-          '/data/config/nvpn/config.toml',
+          'sh',
+          '-ec',
+          [
+            'bind_ip="$(ip -4 -o addr show dev eth0 scope global | awk \'{ split($4, a, "/"); print a[1]; exit }\')"',
+            'test -n "$bind_ip"',
+            `exec /usr/local/bin/nvpn-web --listen "$bind_ip:${uiPort}" --config /data/config/nvpn/config.toml`,
+          ].join('\n'),
         ],
         env: {
           ...commonEnv,
@@ -75,14 +77,10 @@ export const main = sdk.setupMain(async ({ effects }) => {
       ready: {
         display: i18n('Web Interface'),
         fn: () =>
-          sdk.healthCheck.checkWebUrl(
-            effects,
-            `http://localhost:${uiPort}/api/health`,
-            {
-              successMessage: i18n('The web interface is ready'),
-              errorMessage: i18n('The web interface is not ready'),
-            },
-          ),
+          sdk.healthCheck.runHealthScript(['pgrep', '-x', 'nvpn-web'], webSub, {
+            message: () => i18n('The web interface is ready'),
+            errorMessage: i18n('The web interface is not ready'),
+          }),
       },
       requires: ['daemon'],
     })

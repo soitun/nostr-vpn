@@ -181,7 +181,9 @@ StartOS package details:
 - Volume layout: the `main` volume is mounted at `/data`; config is stored under
   `/data/config/nvpn`, and home/runtime state is under `/data/home`.
 - Network access: one HTTP UI interface is exported through StartOS as `Web UI`;
-  the internal web service listens on port 38080.
+  the internal web service listens on port 38080 on the StartOS container
+  interface only, so it is meant to be opened through StartOS rather than
+  directly over Nostr VPN.
 - Actions: no custom StartOS actions are currently exposed.
 - Backups: the `main` volume is included in StartOS backups.
 - Health checks: StartOS checks the `nvpn` daemon process and the web health
