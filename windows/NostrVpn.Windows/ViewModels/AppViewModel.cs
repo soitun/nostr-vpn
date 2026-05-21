@@ -338,10 +338,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public string WireguardExitMarker => State.WireguardExitEnabled ? "●" : "○";
 
     public IEnumerable<NativeParticipantState> ExitNodeParticipants =>
-        ActiveNetwork?.Participants
+        (ActiveNetwork?.Participants ?? [])
             .Where(participant => participant.OffersExitNode && !participant.IsSelf)
-            .OrderBy(participant => participant.DisplayName, StringComparer.OrdinalIgnoreCase)
-        ?? [];
+            .OrderBy(participant => participant.DisplayName, StringComparer.OrdinalIgnoreCase);
 
     public string WireguardExitSubtitle
     {
