@@ -1,3 +1,10 @@
+use anyhow::{Context, Result, anyhow};
+use fips_core::config::{
+    IdentityConfig, NostrDiscoveryPolicy, RoutingMode, TcpConfig, TransportInstances, UdpConfig,
+};
+use fips_core::upper::tun::TunState;
+use fips_core::{Config, Identity, Node};
+use nostr_vpn_core::config::AppConfig;
 use std::fs;
 #[cfg(target_os = "linux")]
 use std::io::Write;
@@ -5,21 +12,14 @@ use std::net::Ipv6Addr;
 use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::process::{Command as ProcessCommand, Stdio};
-use std::sync::Arc;
-
-use anyhow::{Context, Result, anyhow};
-use fips_core::config::{
-    IdentityConfig, NostrDiscoveryPolicy, RoutingMode, TcpConfig, TransportInstances, UdpConfig,
-};
-use fips_core::{Config, FipsAddress, Identity, Node, NodeDeliveredPacket};
-use nostr_vpn_core::config::AppConfig;
-use tokio::sync::{Mutex as AsyncMutex, mpsc, oneshot};
+use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
 pub(crate) const FIPS_HOST_ROUTE_TARGET: &str = "fd00::/8";
+const FIPS_HOST_IFACE: &str = "nvpnfips0";
+const FIPS_HOST_MTU: u16 = 1280;
 const FIPS_HOST_DNS_BIND_ADDR: &str = "::1";
 const FIPS_HOST_DNS_PORT: u16 = 5354;
-const FIPS_HOST_PACKET_CHANNEL_CAPACITY: usize = 1024;
 #[cfg(any(test, target_os = "linux"))]
 const NFT_TABLE_NAME: &str = "nvpn_fips_host";
 
@@ -59,11 +59,7 @@ impl FipsHostTunnelConfig {
         }))
     }
 
-    pub(crate) fn interface_address(&self) -> String {
-        format!("{}/128", self.fips_address)
-    }
-
-    fn fips_config(&self, iface: &str) -> Config {
+    fn fips_config(&self) -> Config {
         let mut config = Config::new();
         config.node.identity = IdentityConfig {
             nsec: Some(self.identity_nsec.clone()),
@@ -72,8 +68,9 @@ impl FipsHostTunnelConfig {
         config.node.system_files_enabled = false;
         config.node.control.enabled = false;
         config.node.routing.mode = RoutingMode::ReplyLearned;
-        config.tun.enabled = false;
-        config.tun.name = Some(iface.to_string());
+        config.tun.enabled = true;
+        config.tun.name = Some(FIPS_HOST_IFACE.to_string());
+        config.tun.mtu = Some(FIPS_HOST_MTU);
         config.dns.enabled = true;
         config.dns.bind_addr = Some(self.dns_bind_addr.clone());
         config.dns.port = Some(self.dns_port);
@@ -100,28 +97,8 @@ impl FipsHostTunnelConfig {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct FipsHostPacketIo {
-    outbound_tx: fips_core::upper::tun::TunOutboundTx,
-    inbound_rx: AsyncMutex<mpsc::Receiver<NodeDeliveredPacket>>,
-}
-
-impl FipsHostPacketIo {
-    pub(crate) async fn send_ip_packet(&self, packet: Vec<u8>) -> Result<()> {
-        self.outbound_tx
-            .send(packet)
-            .await
-            .map_err(|_| anyhow!(".fips host node packet channel closed"))
-    }
-
-    pub(crate) async fn recv_ip_packet(&self) -> Option<NodeDeliveredPacket> {
-        self.inbound_rx.lock().await.recv().await
-    }
-}
-
 pub(crate) struct FipsHostTunnelRuntime {
     config: FipsHostTunnelConfig,
-    packet_io: Arc<FipsHostPacketIo>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     node_task: JoinHandle<Result<()>>,
     resolver: Option<SystemResolverGuard>,
@@ -129,20 +106,18 @@ pub(crate) struct FipsHostTunnelRuntime {
 }
 
 impl FipsHostTunnelRuntime {
-    pub(crate) async fn start(config: FipsHostTunnelConfig, iface: &str) -> Result<Self> {
-        let mut node =
-            Node::new(config.fips_config(iface)).context("failed to create .fips node")?;
-        let external_io = node
-            .attach_external_packet_io(FIPS_HOST_PACKET_CHANNEL_CAPACITY)
-            .context("failed to attach .fips packet io")?;
+    pub(crate) async fn start(config: FipsHostTunnelConfig) -> Result<Self> {
+        let mut node = Node::new(config.fips_config()).context("failed to create .fips node")?;
         node.start().await.context("failed to start .fips node")?;
+        if node.tun_state() != TunState::Active {
+            let tun_state = node.tun_state();
+            let _ = node.stop().await;
+            return Err(anyhow!(".fips TUN did not become active: {tun_state}"));
+        }
+        let iface = node.tun_name().unwrap_or(FIPS_HOST_IFACE).to_string();
 
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let node_task = spawn_fips_node_task(node, shutdown_rx);
-        let packet_io = Arc::new(FipsHostPacketIo {
-            outbound_tx: external_io.outbound_tx,
-            inbound_rx: AsyncMutex::new(external_io.inbound_rx),
-        });
 
         let resolver = match SystemResolverGuard::install(&config) {
             Ok(guard) => guard,
@@ -151,7 +126,7 @@ impl FipsHostTunnelRuntime {
                 None
             }
         };
-        let firewall = match LinuxFirewallGuard::install(iface, &config.inbound_tcp_ports) {
+        let firewall = match LinuxFirewallGuard::install(&iface, &config.inbound_tcp_ports) {
             Ok(guard) => guard,
             Err(error) => {
                 eprintln!("fips-host: failed to install .fips firewall: {error}");
@@ -161,16 +136,11 @@ impl FipsHostTunnelRuntime {
 
         Ok(Self {
             config,
-            packet_io,
             shutdown_tx: Some(shutdown_tx),
             node_task,
             resolver,
             firewall,
         })
-    }
-
-    pub(crate) fn packet_io(&self) -> Arc<FipsHostPacketIo> {
-        Arc::clone(&self.packet_io)
     }
 
     pub(crate) fn requires_restart(&self, config: &FipsHostTunnelConfig) -> bool {
@@ -208,13 +178,6 @@ fn spawn_fips_node_task(
         loop_result?;
         stop_result
     })
-}
-
-pub(crate) fn packet_destination_is_fips(packet: &[u8]) -> bool {
-    if packet.len() < 40 || packet[0] >> 4 != 6 {
-        return false;
-    }
-    FipsAddress::from_slice(&packet[24..40]).is_ok()
 }
 
 struct SystemResolverGuard {
@@ -450,7 +413,7 @@ pub(crate) fn render_nft_firewall_rules(iface: &str, inbound_tcp_ports: &[u16]) 
              type filter hook input priority 0; policy accept;\n\
              iifname != \"{iface}\" return\n\
              meta nfproto != ipv6 return\n\
-             ip6 saddr != fd00::/8 return\n\
+             ip6 saddr != {FIPS_HOST_ROUTE_TARGET} return\n\
              ct state established,related accept\n\
          {inbound_tcp_rule}\
              counter drop\n\
@@ -459,7 +422,7 @@ pub(crate) fn render_nft_firewall_rules(iface: &str, inbound_tcp_ports: &[u16]) 
              type filter hook output priority 0; policy accept;\n\
              oifname != \"{iface}\" return\n\
              meta nfproto != ipv6 return\n\
-             ip6 daddr != fd00::/8 return\n\
+             ip6 daddr != {FIPS_HOST_ROUTE_TARGET} return\n\
              ct state established,related accept\n\
              meta l4proto tcp accept\n\
              counter drop\n\
@@ -475,6 +438,8 @@ fn apply_nft_rules(rules: &str) -> Result<()> {
         .arg("table")
         .arg("inet")
         .arg(NFT_TABLE_NAME)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .status();
     let mut child = ProcessCommand::new("nft")
         .arg("-f")
@@ -508,24 +473,6 @@ fn command_exists(command: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn ipv6_packet_to(destination: Ipv6Addr) -> Vec<u8> {
-        let mut packet = vec![0u8; 40];
-        packet[0] = 0x60;
-        packet[24..40].copy_from_slice(&destination.octets());
-        packet
-    }
-
-    #[test]
-    fn detects_fips_ipv6_destination() {
-        assert!(packet_destination_is_fips(&ipv6_packet_to(
-            "fd00::1234".parse().unwrap()
-        )));
-        assert!(!packet_destination_is_fips(&ipv6_packet_to(
-            "2001:db8::1".parse().unwrap()
-        )));
-        assert!(!packet_destination_is_fips(&[0x45, 0, 0, 0]));
-    }
-
     #[test]
     fn nft_rules_default_to_outbound_tcp_only() {
         let rules = render_nft_firewall_rules("nvpn0", &[]);
@@ -553,13 +500,17 @@ mod tests {
             .expect("enabled by default");
         assert_eq!(config.inbound_tcp_ports, vec![22, 443]);
         assert_eq!(
-            config.interface_address(),
-            format!("{}/128", config.fips_address)
+            config.fips_address,
+            Identity::from_secret_str(&app.nostr.secret_key)
+                .expect("app identity")
+                .address()
+                .to_ipv6()
         );
 
-        let fips = config.fips_config("nvpn0");
-        assert!(!fips.tun.enabled);
-        assert_eq!(fips.tun.name.as_deref(), Some("nvpn0"));
+        let fips = config.fips_config();
+        assert!(fips.tun.enabled);
+        assert_eq!(fips.tun.name.as_deref(), Some(FIPS_HOST_IFACE));
+        assert_eq!(fips.tun.mtu, Some(FIPS_HOST_MTU));
         assert!(fips.dns.enabled);
         assert_eq!(fips.dns.bind_addr.as_deref(), Some("::1"));
         assert_eq!(fips.dns.port, Some(5354));

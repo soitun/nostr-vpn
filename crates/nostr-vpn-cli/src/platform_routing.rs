@@ -930,17 +930,11 @@ pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
                     .status();
             }
             let mut command = ProcessCommand::new("ip");
-            command
-                .arg("route")
-                .arg("replace")
-                .arg(target)
-                .arg("dev")
-                .arg(iface);
-            if linux_route_target_is_ipv4(target)
-                && let Some(source) = ipv4_route_source.as_deref()
-            {
-                command.arg("src").arg(source);
-            }
+            command.args(linux_route_replace_args(
+                target,
+                iface,
+                ipv4_route_source.as_deref(),
+            ));
             run_checked(&mut command)?;
             if target == "fd00::/8" {
                 let _ = ProcessCommand::new("ip")
@@ -1027,6 +1021,34 @@ pub(crate) fn linux_ipv4_route_source(address: &str) -> Option<String> {
         .map(|ip| ip.to_string())
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn linux_route_replace_args(
+    target: &str,
+    iface: &str,
+    ipv4_route_source: Option<&str>,
+) -> Vec<String> {
+    let mut args = Vec::new();
+    if linux_route_target_is_ipv6(target) {
+        args.push("-6".to_string());
+    } else if linux_route_target_is_ipv4(target) {
+        args.push("-4".to_string());
+    }
+    args.extend([
+        "route".to_string(),
+        "replace".to_string(),
+        target.to_string(),
+        "dev".to_string(),
+        iface.to_string(),
+    ]);
+    if linux_route_target_is_ipv4(target)
+        && let Some(source) = ipv4_route_source
+    {
+        args.push("src".to_string());
+        args.push(source.to_string());
+    }
+    args
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 pub(crate) fn linux_tunnel_address_is_ipv4(address: &str) -> bool {
     strip_cidr(address).parse::<Ipv4Addr>().is_ok()
@@ -1092,6 +1114,27 @@ mod tests {
         assert!(!linux_route_target_is_ipv4("::/0"));
         assert!(linux_route_target_is_ipv6("::/0"));
         assert!(!linux_route_target_is_ipv6("10.44.0.0/16"));
+    }
+
+    #[test]
+    fn linux_route_replace_args_selects_address_family() {
+        assert_eq!(
+            linux_route_replace_args("fd00::/8", "utun100", Some("10.44.0.1")),
+            vec!["-6", "route", "replace", "fd00::/8", "dev", "utun100"]
+        );
+        assert_eq!(
+            linux_route_replace_args("10.44.0.2/32", "utun100", Some("10.44.0.1")),
+            vec![
+                "-4",
+                "route",
+                "replace",
+                "10.44.0.2/32",
+                "dev",
+                "utun100",
+                "src",
+                "10.44.0.1"
+            ]
+        );
     }
 
     #[test]
