@@ -12,6 +12,7 @@ FIPS_HOST_TCP_PORT="18080"
 FIPS_HOST_BLOCKED_TCP_PORT="18081"
 FIPS_HOST_TCP_PAYLOAD="alice-to-bob-fips-tcp"
 FIPS_HOST_BLOCKED_TCP_PAYLOAD="blocked-fips-tcp"
+FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -72,6 +73,20 @@ wait_for_fips_dns_aaaa() {
     sleep 1
   done
   return 1
+}
+
+start_nvpn_connect() {
+  local service="$1"
+  local reset_log="${2:-false}"
+  local command="nvpn connect > /tmp/connect.log 2>&1"
+
+  if [[ "$reset_log" == "true" ]]; then
+    command="rm -f /tmp/connect.log; $command"
+  fi
+
+  "${COMPOSE[@]}" exec -d \
+    -e "NVPN_FIPS_NOSTR_DISCOVERY_POLICY=$FIPS_NOSTR_DISCOVERY_POLICY" \
+    "$service" sh -lc "$command"
 }
 
 assert_fips_host_tunnel() {
@@ -289,8 +304,8 @@ fi
 ALICE_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip | tr -d '\r')"
 BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip | tr -d '\r')"
 
-"${COMPOSE[@]}" exec -d node-a sh -lc "nvpn connect > /tmp/connect.log 2>&1"
-"${COMPOSE[@]}" exec -d node-b sh -lc "nvpn connect > /tmp/connect.log 2>&1"
+start_nvpn_connect node-a
+start_nvpn_connect node-b
 
 for _ in $(seq 1 30); do
   ALICE_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
@@ -333,7 +348,7 @@ for _ in $(seq 1 10); do
   fi
   sleep 1
 done
-"${COMPOSE[@]}" exec -d node-a sh -lc "rm -f /tmp/connect.log; nvpn connect > /tmp/connect.log 2>&1"
+start_nvpn_connect node-a true
 for _ in $(seq 1 30); do
   ALICE_CONNECT_LOGS="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
   if grep -q "mesh: 1/1 peers connected" <<<"$ALICE_CONNECT_LOGS"; then
