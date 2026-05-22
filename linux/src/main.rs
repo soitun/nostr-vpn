@@ -2754,6 +2754,30 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             },
         },
     );
+    switch_row(
+        app,
+        &system,
+        "Find peers over relays",
+        state.fips_nostr_discovery_enabled,
+        |enabled| NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                fips_nostr_discovery_enabled: Some(enabled),
+                ..SettingsPatch::default()
+            },
+        },
+    );
+    switch_row(
+        app,
+        &system,
+        "Use bootstrap servers",
+        state.fips_bootstrap_enabled,
+        |enabled| NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                fips_bootstrap_enabled: Some(enabled),
+                ..SettingsPatch::default()
+            },
+        },
+    );
     if state.startup_settings_supported {
         switch_row(
             app,

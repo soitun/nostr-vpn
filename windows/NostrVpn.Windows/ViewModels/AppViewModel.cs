@@ -774,6 +774,20 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             "Saving FIPS option");
     }
 
+    public Task SetFipsNostrDiscoveryEnabledAsync(bool enabled)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { FipsNostrDiscoveryEnabled = enabled }),
+            "Saving FIPS option");
+    }
+
+    public Task SetFipsBootstrapEnabledAsync(bool enabled)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { FipsBootstrapEnabled = enabled }),
+            "Saving FIPS option");
+    }
+
     public Task RemoveParticipantAsync(NativeParticipantState participant)
     {
         var network = ActiveNetwork;

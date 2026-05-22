@@ -67,6 +67,8 @@
     advertisedRoutes: '',
     fipsHostTunnelEnabled: true,
     connectToNonRosterFipsPeers: true,
+    fipsNostrDiscoveryEnabled: true,
+    fipsBootstrapEnabled: true,
     fipsHostInboundTcpPorts: '',
     autoconnect: false,
   };
@@ -173,6 +175,8 @@
       advertisedRoutes: next.advertisedRoutes.join(', '),
       fipsHostTunnelEnabled: next.fipsHostTunnelEnabled,
       connectToNonRosterFipsPeers: next.connectToNonRosterFipsPeers,
+      fipsNostrDiscoveryEnabled: next.fipsNostrDiscoveryEnabled,
+      fipsBootstrapEnabled: next.fipsBootstrapEnabled,
       fipsHostInboundTcpPorts: next.fipsHostInboundTcpPorts,
       autoconnect: next.autoconnect,
     };
@@ -799,6 +803,8 @@
         advertisedRoutes: settingsDraft.advertisedRoutes,
         fipsHostTunnelEnabled: settingsDraft.fipsHostTunnelEnabled,
         connectToNonRosterFipsPeers: settingsDraft.connectToNonRosterFipsPeers,
+        fipsNostrDiscoveryEnabled: settingsDraft.fipsNostrDiscoveryEnabled,
+        fipsBootstrapEnabled: settingsDraft.fipsBootstrapEnabled,
         fipsHostInboundTcpPorts: settingsDraft.fipsHostInboundTcpPorts,
         autoconnect: settingsDraft.autoconnect,
       },
@@ -1770,6 +1776,24 @@
               <input
                 type="checkbox"
                 bind:checked={settingsDraft.connectToNonRosterFipsPeers}
+                on:change={() => (settingsDirty = true)}
+              />
+            </label>
+
+            <label class="switch-row">
+              <span>Find peers over relays</span>
+              <input
+                type="checkbox"
+                bind:checked={settingsDraft.fipsNostrDiscoveryEnabled}
+                on:change={() => (settingsDirty = true)}
+              />
+            </label>
+
+            <label class="switch-row">
+              <span>Use bootstrap servers</span>
+              <input
+                type="checkbox"
+                bind:checked={settingsDraft.fipsBootstrapEnabled}
                 on:change={() => (settingsDirty = true)}
               />
             </label>

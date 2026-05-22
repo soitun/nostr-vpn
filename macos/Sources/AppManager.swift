@@ -501,6 +501,14 @@ final class AppManager: ObservableObject {
         dispatch(.updateSettings(patch: settingsPatch(connectToNonRosterFipsPeers: enabled)), status: "Saving FIPS option")
     }
 
+    func setFipsNostrDiscoveryEnabled(_ enabled: Bool) {
+        dispatch(.updateSettings(patch: settingsPatch(fipsNostrDiscoveryEnabled: enabled)), status: "Saving FIPS option")
+    }
+
+    func setFipsBootstrapEnabled(_ enabled: Bool) {
+        dispatch(.updateSettings(patch: settingsPatch(fipsBootstrapEnabled: enabled)), status: "Saving FIPS option")
+    }
+
     func setLaunchOnStartup(_ enabled: Bool) {
         do {
             try configureLaunchAgent(enabled: enabled, loadCurrentSession: true)
@@ -1216,6 +1224,8 @@ final class AppManager: ObservableObject {
             wireguardExitConfig: "",
             fipsHostTunnelEnabled: true,
             connectToNonRosterFipsPeers: true,
+            fipsNostrDiscoveryEnabled: true,
+            fipsBootstrapEnabled: true,
             fipsHostInboundTcpPorts: "",
             magicDnsSuffix: "nvpn",
             magicDnsStatus: "Serving .nvpn names",
@@ -1724,6 +1734,8 @@ func settingsPatch(
     wireguardExitConfig: String? = nil,
     fipsHostTunnelEnabled: Bool? = nil,
     connectToNonRosterFipsPeers: Bool? = nil,
+    fipsNostrDiscoveryEnabled: Bool? = nil,
+    fipsBootstrapEnabled: Bool? = nil,
     fipsHostInboundTcpPorts: String? = nil,
     autoconnect: Bool? = nil,
     launchOnStartup: Bool? = nil,
@@ -1754,6 +1766,8 @@ func settingsPatch(
         wireguardExitConfig: wireguardExitConfig,
         fipsHostTunnelEnabled: fipsHostTunnelEnabled,
         connectToNonRosterFipsPeers: connectToNonRosterFipsPeers,
+        fipsNostrDiscoveryEnabled: fipsNostrDiscoveryEnabled,
+        fipsBootstrapEnabled: fipsBootstrapEnabled,
         fipsHostInboundTcpPorts: fipsHostInboundTcpPorts,
         autoconnect: autoconnect,
         launchOnStartup: launchOnStartup,

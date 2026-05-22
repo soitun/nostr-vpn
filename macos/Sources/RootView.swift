@@ -1362,6 +1362,14 @@ struct RootView: View {
                     get: { state.connectToNonRosterFipsPeers },
                     set: { manager.setConnectToNonRosterFipsPeers($0) }
                 ))
+                settingsToggleRow("Find peers over relays", isOn: Binding(
+                    get: { state.fipsNostrDiscoveryEnabled },
+                    set: { manager.setFipsNostrDiscoveryEnabled($0) }
+                ))
+                settingsToggleRow("Use bootstrap servers", isOn: Binding(
+                    get: { state.fipsBootstrapEnabled },
+                    set: { manager.setFipsBootstrapEnabled($0) }
+                ))
                 settingsToggleRow("Launch on startup", isOn: Binding(
                     get: { state.launchOnStartup },
                     set: { manager.setLaunchOnStartup($0) }

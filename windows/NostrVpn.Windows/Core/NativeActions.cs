@@ -61,6 +61,8 @@ public sealed class SettingsPatch
     public string? WireguardExitConfig { get; set; }
     public bool? FipsHostTunnelEnabled { get; set; }
     public bool? ConnectToNonRosterFipsPeers { get; set; }
+    public bool? FipsNostrDiscoveryEnabled { get; set; }
+    public bool? FipsBootstrapEnabled { get; set; }
     public string? FipsHostInboundTcpPorts { get; set; }
     public bool? Autoconnect { get; set; }
     public bool? LaunchOnStartup { get; set; }

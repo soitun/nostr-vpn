@@ -235,6 +235,22 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void FipsNostrDiscoveryEnabled_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox checkBox)
+        {
+            await ViewModel.SetFipsNostrDiscoveryEnabledAsync(checkBox.IsChecked == true);
+        }
+    }
+
+    private async void FipsBootstrapEnabled_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox checkBox)
+        {
+            await ViewModel.SetFipsBootstrapEnabledAsync(checkBox.IsChecked == true);
+        }
+    }
+
     private async void LaunchOnStartup_Click(object sender, RoutedEventArgs e)
     {
         if (sender is CheckBox checkBox)

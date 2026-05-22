@@ -63,6 +63,8 @@ enum ScreenshotFixtures {
         state.magicDnsStatus = "Ready"
         state.autoconnect = true
         state.connectToNonRosterFipsPeers = true
+        state.fipsNostrDiscoveryEnabled = true
+        state.fipsBootstrapEnabled = true
         state.inviteBroadcastActive = false
         state.nearbyDiscoveryActive = true
         state.nearbyDiscoveryRemainingSecs = 112
@@ -295,6 +297,12 @@ enum ScreenshotFixtures {
         }
         if let connectToNonRosterFipsPeers = patch["connectToNonRosterFipsPeers"] as? Bool {
             state.connectToNonRosterFipsPeers = connectToNonRosterFipsPeers
+        }
+        if let fipsNostrDiscoveryEnabled = patch["fipsNostrDiscoveryEnabled"] as? Bool {
+            state.fipsNostrDiscoveryEnabled = fipsNostrDiscoveryEnabled
+        }
+        if let fipsBootstrapEnabled = patch["fipsBootstrapEnabled"] as? Bool {
+            state.fipsBootstrapEnabled = fipsBootstrapEnabled
         }
         if let nodeName = patch["nodeName"] as? String {
             state.nodeName = nodeName

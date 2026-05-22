@@ -684,6 +684,8 @@
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Start VPN automatically" IsChecked="{Binding State.Autoconnect, Mode=OneWay}" Click="Autoconnect_Click" />
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Route to non-VPN .fips" IsChecked="{Binding State.FipsHostTunnelEnabled, Mode=OneWay}" Click="FipsHostTunnel_Click" />
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Connect to non-roster FIPS peers" IsChecked="{Binding State.ConnectToNonRosterFipsPeers, Mode=OneWay}" Click="ConnectToNonRosterFipsPeers_Click" />
+                  <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Find peers over relays" IsChecked="{Binding State.FipsNostrDiscoveryEnabled, Mode=OneWay}" Click="FipsNostrDiscoveryEnabled_Click" />
+                  <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Use bootstrap servers" IsChecked="{Binding State.FipsBootstrapEnabled, Mode=OneWay}" Click="FipsBootstrapEnabled_Click" />
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Launch on startup" IsChecked="{Binding State.LaunchOnStartup, Mode=OneWay}" Click="LaunchOnStartup_Click" />
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Tray on close" IsChecked="{Binding State.CloseToTrayOnClose, Mode=OneWay}" Click="CloseToTray_Click" />
                 </StackPanel>

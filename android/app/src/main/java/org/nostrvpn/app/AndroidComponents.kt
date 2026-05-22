@@ -367,6 +367,24 @@ internal fun DeviceSettingsCard(state: AppState, dispatch: (JSONObject) -> Unit)
             )
             Text("Connect to non-roster FIPS peers")
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = state.fipsNostrDiscoveryEnabled,
+                onCheckedChange = { enabled ->
+                    dispatch(NativeActions.updateSettings("fipsNostrDiscoveryEnabled" to enabled))
+                },
+            )
+            Text("Find peers over relays")
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = state.fipsBootstrapEnabled,
+                onCheckedChange = { enabled ->
+                    dispatch(NativeActions.updateSettings("fipsBootstrapEnabled" to enabled))
+                },
+            )
+            Text("Use bootstrap servers")
+        }
         Button(onClick = {
             dispatch(
                 NativeActions.updateSettings(
