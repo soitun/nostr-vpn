@@ -1290,6 +1290,7 @@ impl NativeAppRuntime {
         })
     }
 
+    #[allow(clippy::too_many_lines)]
     fn apply_settings_patch(&mut self, patch: SettingsPatch) -> Result<()> {
         let parsed_wireguard_exit_config = patch
             .wireguard_exit_config
@@ -3072,6 +3073,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn inactive_saved_network_actions_are_real_config_mutations() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

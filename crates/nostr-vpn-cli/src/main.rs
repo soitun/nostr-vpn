@@ -2561,6 +2561,7 @@ fn observe_wall_time_jump(
     jumped
 }
 
+#[allow(clippy::too_many_arguments)]
 fn persist_inbound_join_request(
     app: &mut AppConfig,
     config_path: &Path,

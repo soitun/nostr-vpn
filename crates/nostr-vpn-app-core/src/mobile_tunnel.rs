@@ -166,6 +166,7 @@ impl MobileTunnelConfig {
         Self::from_app_with_config_path(app, Path::new(""))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn from_app_with_config_path(app: &AppConfig, config_path: &Path) -> Result<Self> {
         let own_pubkey = app.own_nostr_pubkey_hex()?;
         let network_id = app.effective_network_id();

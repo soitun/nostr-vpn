@@ -213,13 +213,11 @@ impl SystemResolverGuard {
     fn install(config: &FipsHostTunnelConfig) -> Result<Option<Self>> {
         #[cfg(target_os = "macos")]
         {
-            return install_macos_resolver(config)
-                .map(|backend| backend.map(|backend| Self { backend }));
+            install_macos_resolver(config).map(|backend| backend.map(|backend| Self { backend }))
         }
         #[cfg(target_os = "linux")]
         {
-            return install_linux_resolver(config)
-                .map(|backend| backend.map(|backend| Self { backend }));
+            install_linux_resolver(config).map(|backend| backend.map(|backend| Self { backend }))
         }
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {

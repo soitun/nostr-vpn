@@ -4431,11 +4431,10 @@ mod tests {
             }))) =
                 tokio::time::timeout(Duration::from_millis(50), alice_runtime.recv_mesh_event())
                     .await
+                && participant_pubkey == carol_pubkey
             {
-                if participant_pubkey == carol_pubkey {
-                    alice_saw_carol = true;
-                    break;
-                }
+                alice_saw_carol = true;
+                break;
             }
         }
 
