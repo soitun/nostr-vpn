@@ -1,5 +1,6 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, Timestamp};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -18,6 +19,222 @@ pub struct NetworkRoster {
     pub aliases: HashMap<String, String>,
     #[serde(default)]
     pub signed_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedRoster {
+    pub event: Event,
+}
+
+const SIGNED_ROSTER_KIND: u16 = 30_388;
+const SIGNED_ROSTER_VERSION: &str = "1";
+const SIGNED_ROSTER_APP: &str = "nostr-vpn/shared-roster";
+
+impl SignedRoster {
+    pub fn sign(network_id: impl Into<String>, roster: NetworkRoster, keys: &Keys) -> Result<Self> {
+        let event = EventBuilder::new(
+            Kind::Custom(SIGNED_ROSTER_KIND),
+            "",
+            signed_roster_tags(&network_id.into(), &roster)?,
+        )
+        .custom_created_at(Timestamp::from(roster.signed_at))
+        .to_event(keys)
+        .map_err(|error| anyhow!("failed to sign roster event: {error}"))?;
+        let signed = Self { event };
+        signed.verify()?;
+        Ok(signed)
+    }
+
+    pub fn from_event(event: Event) -> Result<Self> {
+        let signed = Self { event };
+        signed.verify()?;
+        Ok(signed)
+    }
+
+    pub fn verify(&self) -> Result<()> {
+        if u16::from(self.event.kind) != SIGNED_ROSTER_KIND {
+            return Err(anyhow!(
+                "unexpected roster event kind {}",
+                u16::from(self.event.kind)
+            ));
+        }
+        if !self.event.content.is_empty() {
+            return Err(anyhow!("signed roster event content must be empty"));
+        }
+        self.event
+            .verify()
+            .map_err(|error| anyhow!("invalid roster event signature: {error}"))?;
+        let _ = self.to_network_roster()?;
+        Ok(())
+    }
+
+    pub fn signer_pubkey_hex(&self) -> Result<String> {
+        Ok(self.event.pubkey.to_hex())
+    }
+
+    pub fn network_id(&self) -> Result<String> {
+        Ok(self.to_network_roster()?.0)
+    }
+
+    pub fn roster(&self) -> Result<NetworkRoster> {
+        Ok(self.to_network_roster()?.1)
+    }
+
+    pub fn signed_at(&self) -> u64 {
+        self.event.created_at.as_u64()
+    }
+
+    pub fn content_hash(&self) -> String {
+        self.event.id.to_hex()
+    }
+
+    pub fn artifact_hash(&self) -> String {
+        self.event.id.to_hex()
+    }
+
+    fn to_network_roster(&self) -> Result<(String, NetworkRoster)> {
+        signed_roster_from_tags(&self.event.tags, self.event.created_at.as_u64())
+    }
+}
+
+fn signed_roster_tags(network_id: &str, roster: &NetworkRoster) -> Result<Vec<Tag>> {
+    let mut tags = vec![
+        Tag::identifier(network_id.trim().to_string()),
+        roster_tag(&["app", SIGNED_ROSTER_APP])?,
+        roster_tag(&["v", SIGNED_ROSTER_VERSION])?,
+    ];
+
+    if !roster.network_name.trim().is_empty() {
+        tags.push(roster_tag(&["name", roster.network_name.trim()])?);
+    }
+
+    let mut participants = normalize_roster_pubkeys(&roster.participants, "participant")?;
+    participants.sort();
+    participants.dedup();
+    for participant in participants {
+        tags.push(roster_tag(&["member", &participant])?);
+    }
+
+    let mut admins = normalize_roster_pubkeys(&roster.admins, "admin")?;
+    admins.sort();
+    admins.dedup();
+    for admin in admins {
+        tags.push(roster_tag(&["admin", &admin])?);
+    }
+
+    let mut aliases = roster
+        .aliases
+        .iter()
+        .map(|(pubkey, alias)| {
+            Ok((
+                normalize_roster_pubkey(pubkey, "alias")?,
+                alias.trim().to_string(),
+            ))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    aliases.sort_by(|left, right| left.0.cmp(&right.0));
+    aliases.dedup_by(|left, right| left.0 == right.0);
+    for (pubkey, alias) in aliases {
+        if !alias.is_empty() {
+            tags.push(roster_tag(&["alias", &pubkey, &alias])?);
+        }
+    }
+
+    Ok(tags)
+}
+
+fn signed_roster_from_tags(tags: &[Tag], signed_at: u64) -> Result<(String, NetworkRoster)> {
+    let mut app_ok = false;
+    let mut version_ok = false;
+    let mut network_id = None;
+    let mut network_name = String::new();
+    let mut participants = Vec::new();
+    let mut admins = Vec::new();
+    let mut aliases = HashMap::new();
+
+    for tag in tags {
+        let parts = tag.as_slice();
+        let Some(kind) = parts.first().map(String::as_str) else {
+            continue;
+        };
+        match kind {
+            "d" => network_id = parts.get(1).map(|value| value.trim().to_string()),
+            "app" => app_ok |= parts.get(1).is_some_and(|value| value == SIGNED_ROSTER_APP),
+            "v" => {
+                version_ok |= parts
+                    .get(1)
+                    .is_some_and(|value| value == SIGNED_ROSTER_VERSION)
+            }
+            "name" => {
+                if let Some(value) = parts.get(1) {
+                    network_name = value.trim().to_string();
+                }
+            }
+            "member" => {
+                if let Some(value) = parts.get(1) {
+                    participants.push(normalize_roster_pubkey(value, "participant")?);
+                }
+            }
+            "admin" => {
+                if let Some(value) = parts.get(1) {
+                    admins.push(normalize_roster_pubkey(value, "admin")?);
+                }
+            }
+            "alias" => {
+                if let (Some(pubkey), Some(alias)) = (parts.get(1), parts.get(2)) {
+                    let pubkey = normalize_roster_pubkey(pubkey, "alias")?;
+                    let alias = alias.trim();
+                    if !alias.is_empty() {
+                        aliases.insert(pubkey, alias.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !app_ok {
+        return Err(anyhow!("signed roster event is missing app tag"));
+    }
+    if !version_ok {
+        return Err(anyhow!("signed roster event has unsupported version"));
+    }
+
+    participants.sort();
+    participants.dedup();
+    admins.sort();
+    admins.dedup();
+
+    let network_id = network_id
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow!("signed roster event is missing network identifier"))?;
+    Ok((
+        network_id,
+        NetworkRoster {
+            network_name,
+            participants,
+            admins,
+            aliases,
+            signed_at,
+        },
+    ))
+}
+
+fn roster_tag(parts: &[&str]) -> Result<Tag> {
+    Tag::parse(parts).map_err(|error| anyhow!("invalid roster event tag: {error}"))
+}
+
+fn normalize_roster_pubkeys(values: &[String], role: &str) -> Result<Vec<String>> {
+    values
+        .iter()
+        .map(|value| normalize_roster_pubkey(value, role))
+        .collect()
+}
+
+fn normalize_roster_pubkey(value: &str, role: &str) -> Result<String> {
+    PublicKey::parse(value.trim())
+        .map(|pubkey| pubkey.to_hex())
+        .map_err(|error| anyhow!("invalid roster {role} pubkey: {error}"))
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +294,8 @@ pub enum FipsControlFrame {
     Roster {
         network_id: String,
         roster: NetworkRoster,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signed_roster: Option<SignedRoster>,
     },
     Capabilities {
         network_id: String,
@@ -363,6 +582,23 @@ pub fn roster_control_frame(
     FipsControlFrame::Roster {
         network_id: network_id.into(),
         roster,
+        signed_roster: None,
+    }
+}
+
+pub fn signed_roster_control_frame(signed_roster: SignedRoster) -> FipsControlFrame {
+    let network_id = signed_roster.network_id().unwrap_or_default();
+    let roster = signed_roster.roster().unwrap_or_else(|_| NetworkRoster {
+        network_name: String::new(),
+        participants: Vec::new(),
+        admins: Vec::new(),
+        aliases: HashMap::new(),
+        signed_at: signed_roster.signed_at(),
+    });
+    FipsControlFrame::Roster {
+        network_id,
+        roster,
+        signed_roster: Some(signed_roster),
     }
 }
 
@@ -453,6 +689,85 @@ mod tests {
     }
 
     #[test]
+    fn signed_roster_verifies_independent_of_alias_map_order() {
+        let admin = Keys::generate();
+        let alice = Keys::generate().public_key().to_hex();
+        let bob = Keys::generate().public_key().to_hex();
+        let mut aliases = HashMap::new();
+        aliases.insert(bob.clone(), "bob".to_string());
+        aliases.insert(alice.clone(), "alice".to_string());
+        let roster = NetworkRoster {
+            network_name: "Home".to_string(),
+            participants: vec![bob.clone(), alice.clone()],
+            admins: vec![admin.public_key().to_hex()],
+            aliases,
+            signed_at: 123,
+        };
+
+        let signed = SignedRoster::sign("mesh", roster, &admin).expect("sign roster");
+
+        signed.verify().expect("verify signed roster");
+        assert_eq!(
+            signed.signer_pubkey_hex().unwrap(),
+            admin.public_key().to_hex()
+        );
+        assert_eq!(signed.network_id().unwrap(), "mesh");
+        assert_eq!(signed.roster().unwrap().network_name, "Home");
+        assert_eq!(signed.content_hash().len(), 64);
+        assert_eq!(signed.artifact_hash().len(), 64);
+    }
+
+    #[test]
+    fn signed_roster_puts_roster_fields_in_tags() {
+        let admin = Keys::generate();
+        let member = Keys::generate().public_key().to_hex();
+        let mut aliases = HashMap::new();
+        aliases.insert(member.clone(), "phone".to_string());
+        let roster = NetworkRoster {
+            network_name: "Home".to_string(),
+            participants: vec![member.clone()],
+            admins: vec![admin.public_key().to_hex()],
+            aliases,
+            signed_at: 123,
+        };
+
+        let signed = SignedRoster::sign("mesh", roster, &admin).expect("sign roster");
+        let tags = signed
+            .event
+            .tags
+            .iter()
+            .map(Tag::as_slice)
+            .collect::<Vec<_>>();
+
+        assert!(signed.event.content.is_empty());
+        assert!(tags.contains(&vec!["d".to_string(), "mesh".to_string()].as_slice()));
+        assert!(tags.contains(&vec!["member".to_string(), member].as_slice()));
+        assert!(
+            tags.iter()
+                .any(|tag| tag.first().is_some_and(|tag| tag == "alias"))
+        );
+    }
+
+    #[test]
+    fn signed_roster_rejects_tampered_content() {
+        let admin = Keys::generate();
+        let member = Keys::generate().public_key().to_hex();
+        let roster = NetworkRoster {
+            network_name: "Home".to_string(),
+            participants: vec![member],
+            admins: vec![admin.public_key().to_hex()],
+            aliases: HashMap::new(),
+            signed_at: 123,
+        };
+        let signed = SignedRoster::sign("mesh", roster, &admin).expect("sign roster");
+        let mut event = signed.event.clone();
+        event.tags.push(roster_tag(&["name", "Office"]).unwrap());
+        let signed = SignedRoster { event };
+
+        assert!(signed.verify().is_err());
+    }
+
+    #[test]
     fn endpoint_hints_default_to_udp_transport() {
         let hint: PeerEndpointHint =
             serde_json::from_str(r#"{"addr":"192.168.50.22:51820"}"#).expect("decode hint");
@@ -533,6 +848,7 @@ mod tests {
         let frame = FipsControlFrame::Roster {
             network_id: "mesh".to_string(),
             roster,
+            signed_roster: None,
         };
 
         let messages = encode_fips_control_messages(&frame).expect("fragment");
@@ -561,6 +877,7 @@ mod tests {
         let frame = FipsControlFrame::Roster {
             network_id: "mesh".to_string(),
             roster,
+            signed_roster: None,
         };
         let messages = encode_fips_control_messages(&frame).expect("fragment messages");
         let mut buffer = FipsControlFragmentBuffer::default();

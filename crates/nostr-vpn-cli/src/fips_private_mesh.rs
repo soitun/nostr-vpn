@@ -14,7 +14,8 @@ use nostr_vpn_core::config::{
 use nostr_vpn_core::data_plane::{MeshPeerStatus, PrivatePacket};
 use nostr_vpn_core::fips_control::{
     FipsControlFragmentBuffer, FipsControlFrame, NetworkRoster, PeerCapabilities, PeerEndpointHint,
-    decode_fips_control_frame, encode_fips_control_frame, encode_fips_control_messages,
+    SignedRoster, decode_fips_control_frame, encode_fips_control_frame,
+    encode_fips_control_messages,
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
 use nostr_vpn_core::join_requests::MeshJoinRequest;
@@ -475,6 +476,7 @@ pub(crate) enum FipsPrivateMeshEvent {
         sender_pubkey: String,
         network_id: String,
         roster: NetworkRoster,
+        signed_roster: Option<SignedRoster>,
     },
     Capabilities {
         sender_pubkey: String,
@@ -667,11 +669,16 @@ impl FipsPrivateMeshRuntime {
                         request,
                     }));
                 }
-                FipsControlFrame::Roster { network_id, roster } => {
+                FipsControlFrame::Roster {
+                    network_id,
+                    roster,
+                    signed_roster,
+                } => {
                     return Ok(Some(FipsPrivateMeshEvent::Roster {
                         sender_pubkey: source_pubkey,
                         network_id,
                         roster,
+                        signed_roster,
                     }));
                 }
                 FipsControlFrame::Capabilities {
@@ -1045,14 +1052,16 @@ impl FipsPrivateMeshRuntime {
     pub(crate) async fn send_roster(
         &self,
         participant: &str,
-        network_id: &str,
-        roster: NetworkRoster,
+        signed_roster: SignedRoster,
     ) -> Result<()> {
+        let network_id = signed_roster.network_id()?;
+        let roster = signed_roster.roster()?;
         self.send_control_frame(
             participant,
             &FipsControlFrame::Roster {
-                network_id: network_id.to_string(),
+                network_id,
                 roster,
+                signed_roster: Some(signed_roster),
             },
         )
         .await
@@ -2054,10 +2063,9 @@ impl FipsPrivateTunnelRuntime {
     pub(crate) async fn send_roster(
         &self,
         participant: &str,
-        network_id: &str,
-        roster: NetworkRoster,
+        signed_roster: SignedRoster,
     ) -> Result<()> {
-        self.mesh.send_roster(participant, network_id, roster).await
+        self.mesh.send_roster(participant, signed_roster).await
     }
 
     pub(crate) async fn send_capabilities(
@@ -3322,10 +3330,9 @@ impl FipsPrivateTunnelRuntime {
     pub(crate) async fn send_roster(
         &self,
         participant: &str,
-        network_id: &str,
-        roster: NetworkRoster,
+        signed_roster: SignedRoster,
     ) -> Result<()> {
-        self.mesh.send_roster(participant, network_id, roster).await
+        self.mesh.send_roster(participant, signed_roster).await
     }
 
     pub(crate) async fn send_capabilities(
@@ -3632,8 +3639,7 @@ impl FipsPrivateTunnelRuntime {
     pub(crate) async fn send_roster(
         &self,
         _participant: &str,
-        _network_id: &str,
-        _roster: NetworkRoster,
+        _signed_roster: SignedRoster,
     ) -> Result<()> {
         Ok(())
     }
@@ -3924,6 +3930,7 @@ mod tests {
         let frame = FipsControlFrame::Roster {
             network_id: "mesh".to_string(),
             roster,
+            signed_roster: None,
         };
         let messages = encode_fips_control_messages(&frame).expect("fragment messages");
         let mut buffer = ControlFragmentBuffer::default();
@@ -4129,6 +4136,7 @@ mod tests {
                 aliases: HashMap::new(),
                 signed_at: 42,
             },
+            signed_roster: None,
         };
         let join_request = FipsControlFrame::JoinRequest {
             requested_at: 42,

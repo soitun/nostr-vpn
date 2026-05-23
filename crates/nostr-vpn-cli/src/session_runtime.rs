@@ -110,12 +110,13 @@ fn maybe_log_fips_mesh_count(
 async fn flush_pending_fips_roster_recipients(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
+    config_path: &Path,
     pending_recipients: &mut HashSet<String>,
 ) {
     if pending_recipients.is_empty() {
         return;
     }
-    match publish_fips_active_network_roster(runtime, app, pending_recipients).await {
+    match publish_fips_active_network_roster(runtime, app, config_path, pending_recipients).await {
         Ok(_) => {}
         Err(error) => eprintln!("fips: queued roster publish failed: {error}"),
     }
@@ -339,6 +340,8 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     #[cfg(feature = "embedded-fips")]
     let mut pending_fips_roster_recipients: HashSet<String> = HashSet::new();
     #[cfg(feature = "embedded-fips")]
+    let mut fips_roster_sync_state = FipsRosterSyncState::default();
+    #[cfg(feature = "embedded-fips")]
     let mut connect_status = String::new();
 
     let mut last_mesh_count = 0_usize;
@@ -357,9 +360,20 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                     if let Err(error) = runtime.refresh_link_statuses().await {
                         eprintln!("fips: peer link snapshot failed: {error}");
                     }
+                    if let Err(error) = sync_fips_roster_with_connected_peers(
+                        runtime,
+                        &app,
+                        &config_path,
+                        &mut fips_roster_sync_state,
+                    )
+                    .await
+                    {
+                        eprintln!("fips: roster peer sync failed: {error}");
+                    }
                     flush_pending_fips_roster_recipients(
                         runtime,
                         &app,
+                        &config_path,
                         &mut pending_fips_roster_recipients,
                     )
                     .await;
@@ -407,6 +421,7 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                     if let Err(error) = publish_fips_active_network_roster(
                         runtime,
                         &app,
+                        &config_path,
                         &mut pending_fips_roster_recipients,
                     ).await {
                         eprintln!("fips: roster publish failed: {error}");
@@ -509,6 +524,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let mut fips_join_request_sends: HashMap<String, u64> = HashMap::new();
     #[cfg(feature = "embedded-fips")]
     let mut pending_fips_roster_recipients: HashSet<String> = HashSet::new();
+    #[cfg(feature = "embedded-fips")]
+    let mut fips_roster_sync_state = FipsRosterSyncState::default();
     let iface = args.iface.clone();
     let mut tunnel_runtime = CliTunnelRuntime::new(iface.clone());
     let mut network_snapshot = capture_network_snapshot();
@@ -637,6 +654,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if let Err(error) = publish_fips_active_network_roster(
                         runtime,
                         &app,
+                        &config_path,
                         &mut pending_fips_roster_recipients,
                     ).await {
                         eprintln!("fips: roster publish failed: {error}");
@@ -677,9 +695,20 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         if let Err(error) = runtime.refresh_link_statuses().await {
                             eprintln!("fips: peer link snapshot failed: {error}");
                         }
+                        if let Err(error) = sync_fips_roster_with_connected_peers(
+                            runtime,
+                            &app,
+                            &config_path,
+                            &mut fips_roster_sync_state,
+                        )
+                        .await
+                        {
+                            eprintln!("fips: roster peer sync failed: {error}");
+                        }
                         flush_pending_fips_roster_recipients(
                             runtime,
                             &app,
+                            &config_path,
                             &mut pending_fips_roster_recipients,
                         )
                         .await;
@@ -706,9 +735,20 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if let Err(error) = runtime.refresh_link_statuses().await {
                         eprintln!("fips: peer link snapshot failed: {error}");
                     }
+                    if let Err(error) = sync_fips_roster_with_connected_peers(
+                        runtime,
+                        &app,
+                        &config_path,
+                        &mut fips_roster_sync_state,
+                    )
+                    .await
+                    {
+                        eprintln!("fips: roster peer sync failed: {error}");
+                    }
                     flush_pending_fips_roster_recipients(
                         runtime,
                         &app,
+                        &config_path,
                         &mut pending_fips_roster_recipients,
                     )
                     .await;
@@ -1037,6 +1077,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         && let Err(error) = publish_fips_active_network_roster_to(
                             runtime,
                             &app,
+                            &config_path,
                             &pre_sync_fips_roster_recipients,
                             &mut pending_fips_roster_recipients,
                         )
@@ -1067,6 +1108,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         if let Err(error) = publish_fips_active_network_roster(
                             runtime,
                             &app,
+                            &config_path,
                             &mut pending_fips_roster_recipients,
                         )
                         .await

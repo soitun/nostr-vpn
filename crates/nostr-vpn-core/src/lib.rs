@@ -17,6 +17,7 @@ pub mod paths;
 pub mod platform_paths;
 pub mod process_ext;
 pub mod recent_peers;
+pub mod signed_rosters;
 pub mod wg_upstream;
 
 pub use config::DEFAULT_RELAYS;

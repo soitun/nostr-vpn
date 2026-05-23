@@ -29,10 +29,12 @@ use nostr_vpn_core::config::{
 };
 use nostr_vpn_core::fips_control::{
     FipsControlFragmentBuffer, FipsControlFrame, NetworkRoster, PeerCapabilities, PeerEndpointHint,
-    decode_fips_control_frame, encode_fips_control_frame, peer_endpoint_hint_addr,
+    SignedRoster, decode_fips_control_frame, encode_fips_control_frame,
+    encode_fips_control_messages, peer_endpoint_hint_addr,
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
 use nostr_vpn_core::join_requests::{FIPS_JOIN_REQUEST_RETRY_SECS, MeshJoinRequest};
+use nostr_vpn_core::signed_rosters::{signed_rosters_file_path, upsert_signed_roster};
 use nostr_vpn_core::wg_upstream::{DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT, WgUpstreamRuntime};
 use serde::{Deserialize, Serialize};
 
@@ -720,6 +722,32 @@ impl MobileTunnel {
             }));
         }
 
+        if let Some(config_path) = config_path.clone() {
+            let endpoint = Arc::clone(&endpoint);
+            let mesh = Arc::clone(&mesh);
+            let presence = Arc::clone(&presence);
+            let app_config = Arc::clone(&app_config);
+            tasks.push(tokio::spawn(async move {
+                let mut sent_hash_by_peer = HashMap::<String, String>::new();
+                loop {
+                    if let Err(error) = sync_mobile_signed_roster_with_connected_peers(
+                        &endpoint,
+                        &mesh,
+                        &presence,
+                        &app_config,
+                        &config_path,
+                        &mut sent_hash_by_peer,
+                    )
+                    .await
+                    {
+                        tracing::warn!(?error, "mobile: failed to sync signed roster");
+                    }
+                    tokio::time::sleep(Duration::from_secs(MOBILE_RUNTIME_STATE_REFRESH_SECS))
+                        .await;
+                }
+            }));
+        }
+
         let recv_task = {
             let endpoint = Arc::clone(&endpoint);
             let mesh = Arc::clone(&mesh);
@@ -976,7 +1004,11 @@ async fn handle_mobile_control_frame(
     note_mobile_peer_rx(presence, &source_pubkey, message.data.len());
 
     match frame {
-        FipsControlFrame::Roster { network_id, roster } => {
+        FipsControlFrame::Roster {
+            network_id,
+            roster,
+            signed_roster,
+        } => {
             apply_mobile_roster_frame(
                 endpoint,
                 mesh,
@@ -990,6 +1022,7 @@ async fn handle_mobile_control_frame(
                 &source_pubkey,
                 &network_id,
                 &roster,
+                signed_roster.as_ref(),
             )
             .await?;
         }
@@ -1054,6 +1087,7 @@ async fn apply_mobile_roster_frame(
     source_pubkey: &str,
     network_id: &str,
     roster: &NetworkRoster,
+    signed_roster: Option<&SignedRoster>,
 ) -> Result<()> {
     let Some(updated) = apply_mobile_roster(
         app_config,
@@ -1062,6 +1096,7 @@ async fn apply_mobile_roster_frame(
         source_pubkey,
         network_id,
         roster,
+        signed_roster,
     )?
     else {
         return Ok(());
@@ -1178,20 +1213,47 @@ fn apply_mobile_roster(
     sender_pubkey: &str,
     network_id: &str,
     roster: &NetworkRoster,
+    signed_roster: Option<&SignedRoster>,
 ) -> Result<Option<MobileTunnelConfig>> {
     let mut app = app_config
         .write()
         .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
     app.ensure_defaults();
+    let (apply_network_id, apply_roster, signed_by) = if let Some(signed_roster) = signed_roster {
+        signed_roster.verify()?;
+        (
+            signed_roster.network_id()?,
+            signed_roster.roster()?,
+            signed_roster.signer_pubkey_hex()?,
+        )
+    } else {
+        (
+            network_id.to_string(),
+            roster.clone(),
+            sender_pubkey.to_string(),
+        )
+    };
     let changed = app.apply_admin_signed_shared_roster(
-        network_id,
-        &roster.network_name,
-        roster.participants.clone(),
-        roster.admins.clone(),
-        roster.aliases.clone(),
-        roster.signed_at,
-        sender_pubkey,
+        &apply_network_id,
+        &apply_roster.network_name,
+        apply_roster.participants.clone(),
+        apply_roster.admins.clone(),
+        apply_roster.aliases.clone(),
+        apply_roster.signed_at,
+        &signed_by,
     )?;
+    if let (Some(config_path), Some(signed_roster)) = (config_path, signed_roster)
+        && mobile_signed_roster_is_current_for_app(&app, &apply_network_id, signed_roster)
+        && let Err(error) = upsert_signed_roster(
+            &signed_rosters_file_path(config_path),
+            signed_roster.clone(),
+        )
+    {
+        mobile_debug_log(format!(
+            "mobile: signed roster saved in config but artifact save failed: {error:#}"
+        ));
+        tracing::warn!(?error, "mobile: signed roster artifact save failed");
+    }
     if !changed {
         return Ok(None);
     }
@@ -1210,6 +1272,23 @@ fn apply_mobile_roster(
     app_config_dirty.store(true, Ordering::Relaxed);
     let config_path = config_path.unwrap_or_else(|| Path::new(""));
     MobileTunnelConfig::from_app_with_config_path(&app, config_path).map(Some)
+}
+
+fn mobile_signed_roster_is_current_for_app(
+    app: &AppConfig,
+    network_id: &str,
+    signed_roster: &SignedRoster,
+) -> bool {
+    let Ok(signed_by) = signed_roster.signer_pubkey_hex() else {
+        return false;
+    };
+    app.networks.iter().any(|network| {
+        normalize_runtime_network_id(&network.network_id)
+            == normalize_runtime_network_id(network_id)
+            && network.shared_roster_updated_at == signed_roster.signed_at()
+            && normalize_nostr_pubkey(&network.shared_roster_signed_by)
+                .is_ok_and(|value| value == signed_by)
+    })
 }
 
 fn record_mobile_join_request(
@@ -1722,6 +1801,112 @@ async fn broadcast_mobile_capabilities(
         }
     }
     Ok(sent)
+}
+
+async fn sync_mobile_signed_roster_with_connected_peers(
+    endpoint: &FipsEndpoint,
+    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+    app_config: &Arc<RwLock<AppConfig>>,
+    config_path: &Path,
+    sent_hash_by_peer: &mut HashMap<String, String>,
+) -> Result<usize> {
+    let Some(signed_roster) = mobile_current_signed_roster_from_store(app_config, config_path)?
+    else {
+        sent_hash_by_peer.clear();
+        return Ok(0);
+    };
+    let roster_hash = signed_roster.content_hash();
+    let frame = FipsControlFrame::Roster {
+        network_id: signed_roster.network_id()?,
+        roster: signed_roster.roster()?,
+        signed_roster: Some(signed_roster),
+    };
+    let messages = encode_fips_control_messages(&frame)?;
+    let connected = mobile_connected_roster_peers(mesh, presence)?;
+    sent_hash_by_peer.retain(|peer, _| connected.contains_key(peer));
+
+    let mut sent = 0usize;
+    for (participant, endpoint_npub) in connected {
+        if sent_hash_by_peer
+            .get(&participant)
+            .is_some_and(|sent_hash| sent_hash == &roster_hash)
+        {
+            continue;
+        }
+        let mut all_sent = true;
+        for message in &messages {
+            if endpoint
+                .send(endpoint_npub.clone(), message.clone())
+                .await
+                .is_err()
+            {
+                all_sent = false;
+                break;
+            }
+        }
+        if all_sent {
+            sent_hash_by_peer.insert(participant, roster_hash.clone());
+            sent += 1;
+        }
+    }
+    Ok(sent)
+}
+
+fn mobile_current_signed_roster_from_store(
+    app_config: &Arc<RwLock<AppConfig>>,
+    config_path: &Path,
+) -> Result<Option<SignedRoster>> {
+    let app = app_config
+        .read()
+        .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+    let Some(network) = app.active_network_opt() else {
+        return Ok(None);
+    };
+    let network_id = normalize_runtime_network_id(&network.network_id);
+    let signed_by = normalize_nostr_pubkey(&network.shared_roster_signed_by).unwrap_or_default();
+    if network_id.is_empty() || signed_by.is_empty() || network.shared_roster_updated_at == 0 {
+        return Ok(None);
+    }
+    let store = nostr_vpn_core::signed_rosters::load_signed_rosters(&signed_rosters_file_path(
+        config_path,
+    ))?;
+    let Some(signed_roster) = store.latest_for(&network_id).cloned() else {
+        return Ok(None);
+    };
+    if signed_roster.signed_at() != network.shared_roster_updated_at {
+        return Ok(None);
+    }
+    if signed_roster.signer_pubkey_hex()? != signed_by {
+        return Ok(None);
+    }
+    Ok(Some(signed_roster))
+}
+
+fn mobile_connected_roster_peers(
+    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+) -> Result<HashMap<String, String>> {
+    let now = unix_timestamp();
+    let peers = mesh
+        .read()
+        .map_err(|_| anyhow!("mobile FIPS mesh lock poisoned"))?
+        .peer_statuses();
+    let presence = presence
+        .read()
+        .map_err(|_| anyhow!("mobile FIPS presence lock poisoned"))?;
+    Ok(peers
+        .into_iter()
+        .filter(|peer| {
+            presence
+                .get(&peer.pubkey)
+                .and_then(|entry| entry.last_seen_at)
+                .is_some_and(|last_seen_at| {
+                    now.saturating_sub(last_seen_at) <= MOBILE_PEER_ONLINE_GRACE_SECS
+                })
+        })
+        .map(|peer| (peer.pubkey, peer.endpoint_npub))
+        .collect())
 }
 
 fn pending_mobile_join_request_frame(
