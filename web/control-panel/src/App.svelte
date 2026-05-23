@@ -1788,64 +1788,70 @@
               <textarea bind:value={settingsDraft.relays} on:input={() => (settingsDirty = true)} rows="4"></textarea>
             </label>
 
-            <label class="switch-row">
-              <span>Start VPN automatically</span>
-              <input
-                type="checkbox"
-                bind:checked={settingsDraft.autoconnect}
-                on:change={() => (settingsDirty = true)}
-              />
-            </label>
-
-            <label class="switch-row">
-              <span>Route to non-VPN .fips</span>
-              <input
-                type="checkbox"
-                bind:checked={settingsDraft.fipsHostTunnelEnabled}
-                on:change={() => (settingsDirty = true)}
-              />
-            </label>
-
-            <label class="switch-row">
-              <span>Connect to non-roster FIPS peers</span>
-              <input
-                type="checkbox"
-                bind:checked={settingsDraft.connectToNonRosterFipsPeers}
-                on:change={() => (settingsDirty = true)}
-              />
-            </label>
-
-            <label class="switch-row">
-              <span>Find peers over relays</span>
-              <input
-                type="checkbox"
-                bind:checked={settingsDraft.fipsNostrDiscoveryEnabled}
-                on:change={() => (settingsDirty = true)}
-              />
-            </label>
-
-            <label class="switch-row">
-              <span>Use bootstrap servers</span>
-              <input
-                type="checkbox"
-                bind:checked={settingsDraft.fipsBootstrapEnabled}
-                on:change={() => (settingsDirty = true)}
-              />
-            </label>
-
-            {#if settingsDraft.fipsBootstrapEnabled}
-              <label>
-                <span>Bootstrap servers</span>
-                <textarea
-                  rows="4"
-                  bind:value={settingsDraft.fipsBootstrapPeers}
-                  on:input={() => (settingsDirty = true)}
-                ></textarea>
+            <div class="settings-toggle-group">
+              <div class="settings-toggle-group-title">General</div>
+              <label class="switch-row">
+                <span>Start VPN automatically</span>
+                <input
+                  type="checkbox"
+                  bind:checked={settingsDraft.autoconnect}
+                  on:change={() => (settingsDirty = true)}
+                />
               </label>
-              <button type="button" class="secondary-button" on:click={resetBootstrapPeers}>
-                Reset to defaults
-              </button>
-            {/if}
+            </div>
+
+            <div class="settings-toggle-group">
+              <div class="settings-toggle-group-title">FIPS</div>
+              <label class="switch-row">
+                <span>Route to non-VPN .fips</span>
+                <input
+                  type="checkbox"
+                  bind:checked={settingsDraft.fipsHostTunnelEnabled}
+                  on:change={() => (settingsDirty = true)}
+                />
+              </label>
+
+              <label class="switch-row">
+                <span>Connect to non-roster FIPS peers</span>
+                <input
+                  type="checkbox"
+                  bind:checked={settingsDraft.connectToNonRosterFipsPeers}
+                  on:change={() => (settingsDirty = true)}
+                />
+              </label>
+
+              <label class="switch-row">
+                <span>Find peers over relays</span>
+                <input
+                  type="checkbox"
+                  bind:checked={settingsDraft.fipsNostrDiscoveryEnabled}
+                  on:change={() => (settingsDirty = true)}
+                />
+              </label>
+
+              <label class="switch-row">
+                <span>Use bootstrap servers</span>
+                <input
+                  type="checkbox"
+                  bind:checked={settingsDraft.fipsBootstrapEnabled}
+                  on:change={() => (settingsDirty = true)}
+                />
+              </label>
+
+              {#if settingsDraft.fipsBootstrapEnabled}
+                <label>
+                  <span>Bootstrap servers</span>
+                  <textarea
+                    rows="4"
+                    bind:value={settingsDraft.fipsBootstrapPeers}
+                    on:input={() => (settingsDirty = true)}
+                  ></textarea>
+                </label>
+                <button type="button" class="secondary-button" on:click={resetBootstrapPeers}>
+                  Reset to defaults
+                </button>
+              {/if}
+            </div>
 
             <div class="button-row">
               <button type="submit" class="secondary-button" disabled={Boolean(busyAction)}>

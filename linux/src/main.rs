@@ -2718,6 +2718,17 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         }
         system.append(&row);
     }
+    let (service_settling, tray_error, update, tray_available) = {
+        let model = app.borrow();
+        (
+            model.service_settling,
+            model.tray_error.clone(),
+            model.update.clone(),
+            model.tray_available,
+        )
+    };
+
+    settings_toggle_group_label(&system, "General");
     switch_row(
         app,
         &system,
@@ -2730,6 +2741,36 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             },
         },
     );
+    if state.startup_settings_supported {
+        switch_row(
+            app,
+            &system,
+            "Launch on startup",
+            state.launch_on_startup,
+            |enabled| NativeAppAction::UpdateSettings {
+                patch: SettingsPatch {
+                    launch_on_startup: Some(enabled),
+                    ..SettingsPatch::default()
+                },
+            },
+        );
+    }
+    if state.tray_behavior_supported {
+        switch_row_enabled(
+            app,
+            &system,
+            "Tray on close",
+            state.close_to_tray_on_close,
+            tray_available,
+            |enabled| NativeAppAction::UpdateSettings {
+                patch: SettingsPatch {
+                    close_to_tray_on_close: Some(enabled),
+                    ..SettingsPatch::default()
+                },
+            },
+        );
+    }
+    settings_toggle_group_label(&system, "FIPS");
     switch_row(
         app,
         &system,
@@ -2778,45 +2819,6 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             },
         },
     );
-    if state.startup_settings_supported {
-        switch_row(
-            app,
-            &system,
-            "Launch on startup",
-            state.launch_on_startup,
-            |enabled| NativeAppAction::UpdateSettings {
-                patch: SettingsPatch {
-                    launch_on_startup: Some(enabled),
-                    ..SettingsPatch::default()
-                },
-            },
-        );
-    }
-    let (service_settling, tray_error, update, tray_available) = {
-        let model = app.borrow();
-        (
-            model.service_settling,
-            model.tray_error.clone(),
-            model.update.clone(),
-            model.tray_available,
-        )
-    };
-
-    if state.tray_behavior_supported {
-        switch_row_enabled(
-            app,
-            &system,
-            "Tray on close",
-            state.close_to_tray_on_close,
-            tray_available,
-            |enabled| NativeAppAction::UpdateSettings {
-                patch: SettingsPatch {
-                    close_to_tray_on_close: Some(enabled),
-                    ..SettingsPatch::default()
-                },
-            },
-        );
-    }
 
     let status_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     status_row.append(&badge(
@@ -3837,6 +3839,14 @@ where
     F: Fn(bool) -> NativeAppAction + 'static,
 {
     switch_row_enabled(app, parent, title, active, true, action);
+}
+
+fn settings_toggle_group_label(parent: &gtk::Box, title: &str) {
+    let label = gtk::Label::new(Some(title));
+    label.add_css_class("dim-label");
+    label.set_xalign(0.0);
+    label.set_margin_top(6);
+    parent.append(&label);
 }
 
 fn switch_row_enabled<F>(

@@ -965,6 +965,20 @@ input.invalid {
   white-space: nowrap;
 }
 
+.settings-toggle-group {
+  margin-top: 14px;
+}
+
+.settings-toggle-group-title {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.settings-toggle-group .switch-row {
+  margin-top: 8px;
+}
+
 .switch-row {
   display: flex;
   align-items: center;

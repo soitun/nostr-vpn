@@ -1350,10 +1350,25 @@ struct RootView: View {
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
+                settingsToggleGroupLabel("General")
                 settingsToggleRow("Start VPN automatically", isOn: Binding(
                     get: { state.autoconnect },
                     set: { manager.setAutoconnect($0) }
                 ))
+                settingsToggleRow("Launch on startup", isOn: Binding(
+                    get: { state.launchOnStartup },
+                    set: { manager.setLaunchOnStartup($0) }
+                ), disabled: !state.startupSettingsSupported)
+                settingsToggleRow("Menu bar on close", isOn: Binding(
+                    get: { state.closeToTrayOnClose },
+                    set: { manager.setCloseToTray($0) }
+                ), disabled: !state.trayBehaviorSupported)
+                settingsToggleRow("Block internet if exit node disconnects", isOn: Binding(
+                    get: { state.exitNodeLeakProtection },
+                    set: { manager.setExitNodeLeakProtection($0) }
+                ), disabled: manager.actionInFlight)
+
+                settingsToggleGroupLabel("FIPS")
                 settingsToggleRow("Route to non-VPN .fips", isOn: Binding(
                     get: { state.fipsHostTunnelEnabled },
                     set: { manager.setFipsHostTunnel($0) }
@@ -1370,20 +1385,8 @@ struct RootView: View {
                     get: { state.fipsBootstrapEnabled },
                     set: { manager.setFipsBootstrapEnabled($0) }
                 ))
-                settingsToggleRow("Launch on startup", isOn: Binding(
-                    get: { state.launchOnStartup },
-                    set: { manager.setLaunchOnStartup($0) }
-                ), disabled: !state.startupSettingsSupported)
-                settingsToggleRow("Menu bar on close", isOn: Binding(
-                    get: { state.closeToTrayOnClose },
-                    set: { manager.setCloseToTray($0) }
-                ), disabled: !state.trayBehaviorSupported)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            settingsToggleRow("Block internet if exit node disconnects", isOn: Binding(
-                get: { state.exitNodeLeakProtection },
-                set: { manager.setExitNodeLeakProtection($0) }
-            ), disabled: manager.actionInFlight)
             Button {
                 manager.saveNodeSettings(
                     nodeName: nodeName,
@@ -1397,6 +1400,13 @@ struct RootView: View {
             }
             .disabled(manager.actionInFlight)
         }
+    }
+
+    private func settingsToggleGroupLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
     }
 
     private func settingsToggleRow(_ title: String, isOn: Binding<Bool>, disabled: Bool = false) -> some View {

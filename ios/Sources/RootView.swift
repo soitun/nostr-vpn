@@ -1343,12 +1343,14 @@ private struct DeviceSettingsCard: View {
             TextField("Listen Port", text: $port)
                 .keyboardType(.numberPad)
                 .textFieldStyle(.roundedBorder)
+            SettingsToggleGroupLabel("General")
             Toggle("Start VPN automatically", isOn: Binding(
                 get: { model.state.autoconnect },
                 set: { value in
                     model.dispatch(NativeActions.updateSettings(["autoconnect": value]), status: "Saving")
                 }
             ))
+            SettingsToggleGroupLabel("FIPS")
             Toggle("Connect to non-roster FIPS peers", isOn: Binding(
                 get: { model.state.connectToNonRosterFipsPeers },
                 set: { value in
@@ -1392,6 +1394,21 @@ private struct DeviceSettingsCard: View {
             endpoint = model.state.endpoint
             port = String(model.state.listenPort)
         }
+    }
+}
+
+private struct SettingsToggleGroupLabel: View {
+    let title: String
+
+    init(_ title: String) {
+        self.title = title
+    }
+
+    var body: some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .padding(.top, 4)
     }
 }
 
