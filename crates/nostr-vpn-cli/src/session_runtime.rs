@@ -133,6 +133,16 @@ struct RecentPeerRefresh<'a> {
 }
 
 #[cfg(feature = "embedded-fips")]
+struct FipsRestartContext<'a> {
+    app: &'a nostr_vpn_core::config::AppConfig,
+    network_id: &'a str,
+    fallback_iface: &'a str,
+    own_pubkey: Option<&'a str>,
+    recent_peers: Option<&'a nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
+    last_endpoint_peer_signature: &'a mut EndpointPeerSignature,
+}
+
+#[cfg(feature = "embedded-fips")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FipsLinkEventRefresh {
     None,
@@ -250,28 +260,23 @@ async fn update_recent_peers_from_runtime(
 #[cfg(feature = "embedded-fips")]
 async fn restart_fips_tunnel_runtime_after_link_event(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
-    app: &nostr_vpn_core::config::AppConfig,
-    network_id: &str,
-    fallback_iface: &str,
-    own_pubkey: Option<&str>,
-    recent_peers: Option<&nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
-    last_endpoint_peer_signature: &mut EndpointPeerSignature,
+    context: FipsRestartContext<'_>,
     reason: &str,
 ) -> Result<()> {
     let config_iface = runtime
         .as_ref()
         .map(|runtime| runtime.iface().to_string())
-        .unwrap_or_else(|| fallback_iface.to_string());
+        .unwrap_or_else(|| context.fallback_iface.to_string());
     let live_peer_endpoints = runtime
         .as_ref()
         .map(|runtime| runtime.peer_endpoint_hints())
         .unwrap_or_default();
     let config = fips_tunnel_config_from_app(
-        app,
-        network_id,
+        context.app,
+        context.network_id,
         config_iface,
-        own_pubkey,
-        recent_peers,
+        context.own_pubkey,
+        context.recent_peers,
         &live_peer_endpoints,
     )?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
@@ -284,7 +289,7 @@ async fn restart_fips_tunnel_runtime_after_link_event(
         restarted.iface()
     );
     *runtime = Some(restarted);
-    *last_endpoint_peer_signature = endpoint_peer_signature;
+    *context.last_endpoint_peer_signature = endpoint_peer_signature;
     Ok(())
 }
 
@@ -960,12 +965,15 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             {
                                 restart_fips_tunnel_runtime_after_link_event(
                                     &mut fips_tunnel_runtime,
-                                    &app,
-                                    &network_id,
-                                    &iface,
-                                    own_pubkey.as_deref(),
-                                    Some(&recent_peers),
-                                    &mut last_fips_endpoint_peer_signature,
+                                    FipsRestartContext {
+                                        app: &app,
+                                        network_id: &network_id,
+                                        fallback_iface: &iface,
+                                        own_pubkey: own_pubkey.as_deref(),
+                                        recent_peers: Some(&recent_peers),
+                                        last_endpoint_peer_signature:
+                                            &mut last_fips_endpoint_peer_signature,
+                                    },
                                     refresh_reason,
                                 )
                                 .await
