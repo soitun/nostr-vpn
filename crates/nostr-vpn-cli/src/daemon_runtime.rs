@@ -399,7 +399,7 @@ pub(crate) fn apply_config_via_running_daemon(
     if !status.running {
         #[cfg(target_os = "windows")]
         {
-            let service_status = service_management::windows_query_service_status()?;
+            let service_status = service_management::windows_query_service_status(false)?;
             if windows_should_apply_config_via_service(&service_status) {
                 apply_config_file(source_path, config_path)?;
                 service_management::windows_start_service_and_wait(true, Duration::from_secs(10))?;

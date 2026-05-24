@@ -301,6 +301,7 @@ fn service_status(args: ServiceStatusArgs) -> Result<()> {
     Ok(())
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub(crate) fn query_service_status(_config_path: &Path) -> Result<ServiceStatusView> {
     query_service_status_with_binary_version(_config_path, true)
 }
