@@ -4,12 +4,6 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
-### Changed
-
-- Desktop, CLI, Android, and Windows updaters now check the htree release
-  manifest before falling back to GitHub, keeping app update checks aligned
-  with the htree release list.
-
 ## 4.0.40 - 2026-05-24
 
 ### Added
@@ -28,6 +22,9 @@ All notable changes to this project are documented in this file.
 ### Fixed
 
 - Config secrets are migrated out of plaintext config files on startup.
+- App update checks on macOS, Linux, Windows, Android, and the CLI now check
+  the htree release manifest before falling back to GitHub, keeping htree-first
+  releases discoverable without waiting on GitHub.
 - macOS config secrets now use private per-config sidecar files instead of the
   System Keychain, avoiding repeated administrator prompts.
 - Mobile tunnel launch configs redact persisted secret markers before crossing
