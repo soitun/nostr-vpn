@@ -1740,14 +1740,18 @@ impl NativeAppRuntime {
 
     #[cfg(target_os = "macos")]
     fn save_config_via_macos_service(&mut self) -> Result<()> {
-        let source_path = self.write_plaintext_config_apply_source()?;
+        let source_path = self.write_config_apply_source()?;
         let result = self.apply_macos_config_source(&source_path);
         let remove_result = fs::remove_file(&source_path)
             .with_context(|| format!("failed to remove {}", source_path.display()));
+        let secret_remove_result = AppConfig::delete_persisted_secrets_for_path(&source_path)
+            .with_context(|| format!("failed to remove secrets for {}", source_path.display()));
 
-        match (result, remove_result) {
-            (Ok(()), Ok(())) => Ok(()),
-            (Ok(()), Err(error)) | (Err(error), _) => Err(error),
+        match (result, remove_result, secret_remove_result) {
+            (Ok(()), Ok(()), Ok(())) => Ok(()),
+            (Ok(()), Ok(()), Err(error)) | (Ok(()), Err(error), _) | (Err(error), _, _) => {
+                Err(error)
+            }
         }
     }
 
@@ -1792,7 +1796,7 @@ impl NativeAppRuntime {
     }
 
     #[cfg(target_os = "macos")]
-    fn write_plaintext_config_apply_source(&self) -> Result<PathBuf> {
+    fn write_config_apply_source(&self) -> Result<PathBuf> {
         let parent = self
             .config_path
             .parent()
@@ -2742,7 +2746,8 @@ fn config_file_needs_identity_persistence(path: &Path) -> Result<bool> {
 fn is_persisted_secret_marker(value: &str) -> bool {
     matches!(
         value.trim(),
-        "stored-in-system-keychain"
+        "stored-in-macos-keychain"
+            | "stored-in-system-keychain"
             | "stored-in-ios-keychain"
             | "stored-in-android-keystore"
             | "stored-in-windows-dpapi"

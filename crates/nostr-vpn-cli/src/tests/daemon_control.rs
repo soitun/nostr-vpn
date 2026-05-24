@@ -965,6 +965,8 @@ fn stage_daemon_config_apply_writes_staged_file() {
     let loaded = AppConfig::load(&staged).expect("load staged config");
     assert_eq!(loaded.node_name, "staged-node");
 
+    AppConfig::delete_persisted_secrets_for_path(&source).expect("delete source secrets");
+    AppConfig::delete_persisted_secrets_for_path(&staged).expect("delete staged secrets");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -997,6 +999,8 @@ fn update_daemon_config_from_staged_request_replaces_target_and_cleans_up() {
         "staged config should be cleaned up"
     );
 
+    AppConfig::delete_persisted_secrets_for_path(&source).expect("delete source secrets");
+    AppConfig::delete_persisted_secrets_for_path(&target).expect("delete target secrets");
     let _ = fs::remove_dir_all(&dir);
 }
 

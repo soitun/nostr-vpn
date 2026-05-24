@@ -39,6 +39,20 @@ pub(crate) fn prepare_config_secrets_for_save(
     )
 }
 
+pub(crate) fn delete_config_secrets(path: &Path) -> Result<()> {
+    let mut result = Ok(());
+    for kind in [
+        ConfigSecret::Nostr,
+        ConfigSecret::WireGuardExitPrivate,
+        ConfigSecret::WireGuardExitPeerPreshared,
+    ] {
+        if let Err(error) = platform::delete_secret(path, kind) {
+            result = Err(error);
+        }
+    }
+    result
+}
+
 #[derive(Debug, Clone, Copy)]
 enum ConfigSecret {
     Nostr,
@@ -65,6 +79,7 @@ impl ConfigSecret {
 }
 
 const REDACTED_SECRET_MARKERS: &[&str] = &[
+    "stored-in-macos-keychain",
     "stored-in-system-keychain",
     "stored-in-ios-keychain",
     "stored-in-android-keystore",
@@ -225,20 +240,24 @@ mod platform {
     use std::path::Path;
 
     use anyhow::{Context, Result, anyhow};
-    use security_framework::os::macos::keychain::SecKeychain;
+    use security_framework::os::macos::{
+        keychain::SecKeychain,
+        keychain_item::SecKeychainItem,
+        passwords::{SecKeychainItemPassword, find_generic_password},
+    };
 
     use super::{ConfigSecret, SERVICE, account_name, hydrate_config_secret_fields};
 
-    pub(super) const REDACTED_SECRET_MARKER: &str = "stored-in-system-keychain";
+    pub(super) const REDACTED_SECRET_MARKER: &str = "stored-in-macos-keychain";
     const SYSTEM_KEYCHAIN: &str = "/Library/Keychains/System.keychain";
     const ERR_SEC_ITEM_NOT_FOUND: i32 = -25300;
 
     pub(super) fn store_name() -> &'static str {
-        "the System Keychain"
+        "the macOS Keychain"
     }
 
     pub(super) fn allows_plaintext_fallback() -> bool {
-        true
+        false
     }
 
     pub(super) fn hydrate_config_secrets(
@@ -249,14 +268,13 @@ mod platform {
     }
 
     pub(super) fn read_secret(path: &Path, kind: ConfigSecret) -> Result<Option<String>> {
-        let keychain = system_keychain()?;
         let account = account_name(path, kind);
-        match keychain.find_generic_password(SERVICE, &account) {
+        match find_macos_password(&account) {
             Ok((password, _item)) => {
                 let bytes = password.as_ref().to_vec();
                 let value = String::from_utf8(bytes).with_context(|| {
                     format!(
-                        "{} in the System Keychain is not valid UTF-8",
+                        "{} in the macOS Keychain is not valid UTF-8",
                         kind.display_name()
                     )
                 })?;
@@ -265,7 +283,7 @@ mod platform {
             Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(None),
             Err(error) => Err(anyhow!(error)).with_context(|| {
                 format!(
-                    "failed to read {} from the System Keychain",
+                    "failed to read {} from the macOS Keychain",
                     kind.display_name()
                 )
             }),
@@ -273,35 +291,66 @@ mod platform {
     }
 
     pub(super) fn delete_secret(path: &Path, kind: ConfigSecret) -> Result<()> {
-        let keychain = system_keychain()?;
         let account = account_name(path, kind);
-        match keychain.find_generic_password(SERVICE, &account) {
-            Ok((_password, item)) => {
-                item.delete();
-                Ok(())
+        let mut result = Ok(());
+        for keychain in candidate_keychains() {
+            match keychain.find_generic_password(SERVICE, &account) {
+                Ok((_password, item)) => {
+                    item.delete();
+                }
+                Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => {}
+                Err(error) => {
+                    result = Err(anyhow!(error)).with_context(|| {
+                        format!(
+                            "failed to delete {} from the macOS Keychain",
+                            kind.display_name()
+                        )
+                    });
+                }
             }
-            Err(error) if error.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
-            Err(error) => Err(anyhow!(error)).with_context(|| {
-                format!(
-                    "failed to delete {} from the System Keychain",
-                    kind.display_name()
-                )
-            }),
         }
+        result
     }
 
     pub(super) fn write_secret(path: &Path, kind: ConfigSecret, value: &str) -> Result<()> {
-        let keychain = system_keychain()?;
         let account = account_name(path, kind);
-        keychain
-            .set_generic_password(SERVICE, &account, value.as_bytes())
-            .map_err(anyhow::Error::from)
-            .with_context(|| {
-                format!(
-                    "failed to write {} to the System Keychain",
-                    kind.display_name()
-                )
-            })
+        let mut last_error = None;
+        for keychain in candidate_keychains() {
+            match keychain.set_generic_password(SERVICE, &account, value.as_bytes()) {
+                Ok(()) => return Ok(()),
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(anyhow!(last_error.map(anyhow::Error::from).unwrap_or_else(
+            || anyhow!("no macOS Keychain is available")
+        )))
+        .with_context(|| {
+            format!(
+                "failed to write {} to the macOS Keychain",
+                kind.display_name()
+            )
+        })
+    }
+
+    fn find_macos_password(
+        account: &str,
+    ) -> security_framework::base::Result<(SecKeychainItemPassword, SecKeychainItem)> {
+        let keychains = candidate_keychains();
+        if keychains.is_empty() {
+            return find_generic_password(None, SERVICE, account);
+        }
+        find_generic_password(Some(&keychains), SERVICE, account)
+    }
+
+    fn candidate_keychains() -> Vec<SecKeychain> {
+        let mut keychains = Vec::new();
+        if let Ok(keychain) = system_keychain() {
+            keychains.push(keychain);
+        }
+        if let Ok(keychain) = SecKeychain::default() {
+            keychains.push(keychain);
+        }
+        keychains
     }
 
     fn system_keychain() -> Result<SecKeychain> {
@@ -705,7 +754,7 @@ mod platform {
     }
 
     pub(super) fn allows_plaintext_fallback() -> bool {
-        true
+        false
     }
 
     pub(super) fn hydrate_config_secrets(

@@ -43,7 +43,8 @@ use crate::config_magic_dns::{
     uniquify_network_entry_id, uses_default_node_name,
 };
 use crate::config_secrets::{
-    SecretPersistence, hydrate_config_secrets, prepare_config_secrets_for_save,
+    SecretPersistence, delete_config_secrets, hydrate_config_secrets,
+    prepare_config_secrets_for_save,
 };
 use crate::fips_control::{PeerEndpointHint, peer_endpoint_hint_addr};
 use crate::network_roster::{
@@ -905,7 +906,11 @@ impl AppConfig {
     }
 
     pub fn save_plaintext(&self, path: &Path) -> Result<()> {
-        self.save_with_secret_persistence(path, SecretPersistence::Plaintext)
+        self.save(path)
+    }
+
+    pub fn delete_persisted_secrets_for_path(path: &Path) -> Result<()> {
+        delete_config_secrets(path)
     }
 
     pub fn persisted_toml_for_path(&self, path: &Path) -> Result<String> {
@@ -2408,7 +2413,21 @@ mod tests {
     const TEST_WG_PRESHARED_KEY: &str = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=";
 
     #[test]
-    fn save_plaintext_preserves_config_secrets() {
+    fn plaintext_toml_preserves_config_secrets() {
+        let mut config = AppConfig::generated();
+        config.wireguard_exit.private_key = TEST_WG_PRIVATE_KEY.to_string();
+        config.wireguard_exit.peer_public_key = TEST_WG_PUBLIC_KEY.to_string();
+        config.wireguard_exit.peer_preshared_key = TEST_WG_PRESHARED_KEY.to_string();
+
+        let raw = config.plaintext_toml().expect("encode plaintext config");
+
+        assert!(raw.contains(&config.nostr.secret_key));
+        assert!(raw.contains(TEST_WG_PRIVATE_KEY));
+        assert!(raw.contains(TEST_WG_PRESHARED_KEY));
+    }
+
+    #[test]
+    fn save_plaintext_does_not_write_config_secrets_inline() {
         let nonce = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |duration| duration.as_nanos());
@@ -2423,11 +2442,19 @@ mod tests {
 
         config.save_plaintext(&path).expect("save plaintext config");
         let raw = std::fs::read_to_string(&path).expect("read plaintext config");
+        let loaded = AppConfig::load(&path).expect("load protected config");
+        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete persisted secrets");
         let _ = std::fs::remove_file(&path);
 
-        assert!(raw.contains(&config.nostr.secret_key));
-        assert!(raw.contains(TEST_WG_PRIVATE_KEY));
-        assert!(raw.contains(TEST_WG_PRESHARED_KEY));
+        assert!(!raw.contains(&config.nostr.secret_key));
+        assert!(!raw.contains(TEST_WG_PRIVATE_KEY));
+        assert!(!raw.contains(TEST_WG_PRESHARED_KEY));
+        assert_eq!(loaded.nostr.secret_key, config.nostr.secret_key);
+        assert_eq!(loaded.wireguard_exit.private_key, TEST_WG_PRIVATE_KEY);
+        assert_eq!(
+            loaded.wireguard_exit.peer_preshared_key,
+            TEST_WG_PRESHARED_KEY
+        );
     }
 
     #[test]

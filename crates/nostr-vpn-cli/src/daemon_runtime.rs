@@ -359,9 +359,12 @@ pub(crate) fn stage_daemon_config_apply(config_path: &Path, source_path: &Path) 
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let raw = fs::read(source_path)
-        .with_context(|| format!("failed to read source config {}", source_path.display()))?;
-    write_runtime_file_atomically(&staged_path, &raw)
+    let mut config = AppConfig::load(source_path)
+        .with_context(|| format!("failed to load source config {}", source_path.display()))?;
+    config.ensure_defaults();
+    maybe_autoconfigure_node(&mut config);
+    config
+        .save(&staged_path)
         .with_context(|| format!("failed to stage config {}", staged_path.display()))?;
     set_private_cache_file_permissions(&staged_path)?;
     Ok(())
@@ -375,6 +378,7 @@ pub(crate) fn update_daemon_config_from_staged_request(config_path: &Path) -> Re
 
     let result = apply_config_file(&staged_path, config_path);
     let _ = fs::remove_file(&staged_path);
+    let _ = AppConfig::delete_persisted_secrets_for_path(&staged_path);
     result?;
     Ok(true)
 }
