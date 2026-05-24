@@ -18,6 +18,8 @@ info:
     @echo "  just build"
     @echo "  just release"
     @echo "  just release-publish"
+    @echo "  just release-final"
+    @echo "  just release-promote"
     @echo
     @echo "macOS"
     @echo "  just macos-gen-swift"
@@ -165,6 +167,12 @@ release:
 
 release-publish:
     node scripts/local-release.mjs --publish
+
+release-final:
+    node scripts/local-release.mjs --final
+
+release-promote:
+    node scripts/local-release.mjs --promote-draft
 
 test:
     cargo test

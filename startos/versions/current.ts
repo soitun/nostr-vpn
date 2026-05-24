@@ -1,7 +1,7 @@
 import { IMPOSSIBLE, VersionInfo } from '@start9labs/start-sdk'
 
 export const currentVersion = VersionInfo.of({
-  version: '4.0.39:0',
+  version: '4.0.40:0',
   releaseNotes: {
     en_US: 'Initial StartOS package for Nostr VPN.',
   },

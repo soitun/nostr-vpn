@@ -62,6 +62,23 @@ version = "0.2.27"
   assert.equal(tag, 'v0.2.27')
 })
 
+test('buildReleaseManifest can mark htree draft releases', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nostr-vpn-manifest-draft-test-'))
+  const asset = join(root, 'asset.tar.gz')
+  writeFileSync(asset, 'asset')
+
+  const manifest = buildReleaseManifest({
+    tag: 'v1.2.3',
+    commit: 'abc123',
+    createdAt: 123,
+    assetPaths: [asset],
+    draft: true,
+  })
+
+  assert.equal(manifest.draft, true)
+  assert.equal(manifest.prerelease, false)
+})
+
 test('linuxReleaseTargetsForDockerPlatform maps Docker platforms to release targets', () => {
   assert.deepEqual(linuxReleaseTargetsForDockerPlatform('linux/arm64'), {
     linuxArchSuffix: 'arm64',

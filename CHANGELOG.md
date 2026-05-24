@@ -4,9 +4,28 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.40 - 2026-05-24
+
+### Added
+
+- Admin-signed roster sync now travels over FIPS control events so members can
+  converge on the latest admin roster without a public Nostr relay publish.
+
 ### Changed
 
 - `.fips` host routing now defaults off and remains an explicit opt-in.
+- Local htree release publishing now defaults to draft mode; use the explicit
+  final/promote path to repoint `latest`.
+- macOS `just run` no longer invalidates the normal Cargo cache when building
+  the app-core framework and bundled CLI.
+
+### Fixed
+
+- Config secrets are migrated out of plaintext config files on startup.
+- macOS config secrets now use private per-config sidecar files instead of the
+  System Keychain, avoiding repeated administrator prompts.
+- Mobile tunnel launch configs redact persisted secret markers before crossing
+  the platform boundary.
 
 ## 4.0.39 - 2026-05-22
 

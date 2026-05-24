@@ -428,7 +428,7 @@ export function androidReleaseAssetName(tag, { extension = 'apk', signed = true 
   return `nostr-vpn-${normalizedTag}-android-arm64${suffix}.${extension}`
 }
 
-export function buildReleaseManifest({ tag, commit, createdAt, assetPaths }) {
+export function buildReleaseManifest({ tag, commit, createdAt, assetPaths, draft = false }) {
   const normalizedTag = normalizeTag(tag)
   const assets = [...assetPaths]
     .map((assetPath) => ({
@@ -445,7 +445,7 @@ export function buildReleaseManifest({ tag, commit, createdAt, assetPaths }) {
     commit,
     created_at: createdAt,
     published_at: createdAt,
-    draft: false,
+    draft,
     prerelease: normalizedTag.includes('-'),
     notes_file: 'notes.md',
     assets,

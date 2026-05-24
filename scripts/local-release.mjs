@@ -53,9 +53,15 @@ Build local Rust/native release artifacts, stage a hashtree release directory,
 and optionally publish it.
 
 Options:
-  --publish                 Publish the staged release tree with htree (also
+  --publish                 Publish the staged htree release as a draft
+                            (default publish mode; repoints draft instead of
+                            latest and does not publish crates/Zapstore)
+  --final                   Publish the htree release as final/latest (also
                             runs scripts/publish.sh to ship the Rust crates
                             unless --skip-cargo-publish is given)
+  --draft                   Alias for --publish, kept for explicitness
+  --promote-draft           Promote an existing staged draft directory for
+                            this tag to final/latest without rebuilding
   --cargo-publish           Force publishing Rust crates to crates.io even
                             without --publish (e.g. to retry a partial release)
   --skip-cargo-publish      With --publish, stage and publish the htree tree
@@ -82,6 +88,8 @@ function parseArgs(argv) {
   const options = {
     dryRun: false,
     publish: false,
+    draft: true,
+    promoteDraft: false,
     cargoPublish: false,
     skipCargoPublish: false,
     skipZapstore: false,
@@ -104,6 +112,20 @@ function parseArgs(argv) {
         process.exit(0)
       case '--publish':
         options.publish = true
+        break
+      case '--final':
+      case '--publish-final':
+        options.publish = true
+        options.draft = false
+        break
+      case '--draft':
+        options.publish = true
+        options.draft = true
+        break
+      case '--promote-draft':
+        options.publish = true
+        options.draft = false
+        options.promoteDraft = true
         break
       case '--cargo-publish':
         options.cargoPublish = true
@@ -188,6 +210,14 @@ function cargoTargetDir(env = process.env) {
   const configured = String(env.CARGO_TARGET_DIR ?? '').trim()
   if (configured.length === 0) {
     return join(repoRoot, 'target')
+  }
+  return resolve(repoRoot, configured)
+}
+
+function macosCargoTargetDir(env = process.env) {
+  const configured = String(env.NVPN_MACOS_CARGO_TARGET_DIR ?? '').trim()
+  if (configured.length === 0) {
+    return join(repoRoot, 'macos', '.build', 'cargo-target')
   }
   return resolve(repoRoot, configured)
 }
@@ -691,6 +721,7 @@ function buildMacosArtifacts({ tag, dryRun, builtLines }) {
 
   const env = {
     ...process.env,
+    NVPN_MACOS_CARGO_TARGET_DIR: macosCargoTargetDir(process.env),
     NVPN_MACOS_RUST_PROFILE: 'release',
     NVPN_MACOS_XCODE_CONFIGURATION: 'Release',
     NVPN_MACOS_RUST_TARGETS: 'aarch64-apple-darwin',
@@ -704,7 +735,7 @@ function buildMacosArtifacts({ tag, dryRun, builtLines }) {
   run('bash', [join(repoRoot, 'scripts', 'macos-build'), 'macos-release-artifacts'], { env, dryRun })
 
   packageUnixCliTarball({
-    binaryPath: join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release', 'nvpn'),
+    binaryPath: join(macosCargoTargetDir(env), 'aarch64-apple-darwin', 'release', 'nvpn'),
     targetTriple: 'aarch64-apple-darwin',
     tag,
     dryRun,
@@ -843,6 +874,7 @@ function stageRelease({
   skippedLines,
   dryRun,
   requireCompleteAppRelease,
+  draft,
 }) {
   const assetPaths = collectReleaseAssetPaths(tag)
   const assetNames = assetPaths.map((assetPath) => basename(assetPath))
@@ -873,6 +905,7 @@ function stageRelease({
     commit,
     createdAt,
     assetPaths: stagedAssetPaths,
+    draft,
   })
 
   for (const [fileName, text] of buildReleaseManifestFiles(manifest)) {
@@ -883,7 +916,7 @@ function stageRelease({
   return { assetPaths, stageDir }
 }
 
-function publishRelease({ stageDir, releaseTree, tag, dryRun }) {
+function publishRelease({ stageDir, releaseTree, tag, draft, dryRun }) {
   if (dryRun) {
     console.log(`Would publish ${tag} from ${stageDir} into ${releaseTree}`)
     return 'dry-run'
@@ -896,8 +929,35 @@ function publishRelease({ stageDir, releaseTree, tag, dryRun }) {
   }
 
   const cid = match[1]
-  run('htree', ['release', 'publish', releaseTree, tag, cid], { dryRun })
+  const args = ['release', 'publish', releaseTree, tag, cid]
+  if (draft) {
+    args.push('--draft')
+  }
+  run('htree', args, { dryRun })
   return cid
+}
+
+function promoteStagedDraft({ stageDir, releaseTree, tag, dryRun }) {
+  if (dryRun) {
+    console.log(`Would promote staged draft ${tag} from ${stageDir} into ${releaseTree}`)
+    return 'dry-run'
+  }
+
+  const releaseJsonPath = join(stageDir, 'release.json')
+  const manifestJsonPath = join(stageDir, 'manifest.json')
+  if (!existsSync(releaseJsonPath) || !existsSync(manifestJsonPath)) {
+    throw new Error(`No staged release manifest found at ${stageDir}. Run the draft release first or pass --stage-dir.`)
+  }
+
+  const publishedAt = Math.floor(Date.now() / 1000)
+  for (const path of [releaseJsonPath, manifestJsonPath]) {
+    const manifest = JSON.parse(readFileSync(path, 'utf8'))
+    manifest.draft = false
+    manifest.published_at = publishedAt
+    writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`)
+  }
+
+  return publishRelease({ stageDir, releaseTree, tag, draft: false, dryRun })
 }
 
 function publishRustCrates({ dryRun }) {
@@ -1037,6 +1097,26 @@ function main() {
   if (options.dryRun) {
     console.log('Dry run mode: no build, copy, or publish commands will be executed.')
   }
+  if (options.promoteDraft) {
+    console.log('Promote mode: reusing an existing staged draft and publishing it as final/latest.')
+  } else if (options.publish && options.draft) {
+    console.log('Draft mode: htree publish will repoint draft instead of latest, and crate/Zapstore publish steps are disabled.')
+  }
+
+  if (options.promoteDraft) {
+    if (!commandExists('htree')) {
+      throw new Error('Missing htree; cannot promote release.')
+    }
+    const cid = promoteStagedDraft({ stageDir, releaseTree, tag, dryRun: options.dryRun })
+    console.log(`Promoted ${tag} to ${releaseTree} via ${cid}`)
+    if (options.cargoPublish || !options.skipCargoPublish) {
+      publishRustCrates({ dryRun: options.dryRun })
+    }
+    if (!options.skipZapstore) {
+      publishZapstore({ env, tag, dryRun: options.dryRun })
+    }
+    return
+  }
 
   const steps = [
     ['platform-versions', () => syncPlatformVersions({ tag, dryRun: options.dryRun, builtLines })],
@@ -1080,15 +1160,16 @@ function main() {
     builtLines,
     skippedLines,
     dryRun: options.dryRun,
-    requireCompleteAppRelease: !allowPartial && !options.dryRun,
+    requireCompleteAppRelease: !allowPartial && !options.dryRun && !options.draft,
+    draft: options.draft,
   })
 
   if (options.publish) {
     if (!commandExists('htree')) {
       throw new Error('Missing htree; cannot publish release.')
     }
-    const cid = publishRelease({ stageDir, releaseTree, tag, dryRun: options.dryRun })
-    console.log(`Published ${tag} to ${releaseTree} via ${cid}`)
+    const cid = publishRelease({ stageDir, releaseTree, tag, draft: options.draft, dryRun: options.dryRun })
+    console.log(`Published ${options.draft ? 'draft ' : ''}${tag} to ${releaseTree} via ${cid}`)
   } else if (!options.dryRun) {
     console.log(`Staged ${tag} at ${stageDir}`)
   }
@@ -1100,12 +1181,12 @@ function main() {
   // is the explicit opt-out, --cargo-publish still lets you publish crates
   // without doing the htree publish (e.g. retrying a partial release).
   const shouldPublishCrates =
-    options.cargoPublish || (options.publish && !options.skipCargoPublish)
+    options.cargoPublish || (options.publish && !options.draft && !options.skipCargoPublish)
   if (shouldPublishCrates) {
     publishRustCrates({ dryRun: options.dryRun })
   }
 
-  if (options.publish && !options.skipZapstore) {
+  if (options.publish && !options.draft && !options.skipZapstore) {
     publishZapstore({ env, tag, dryRun: options.dryRun })
   }
 }
