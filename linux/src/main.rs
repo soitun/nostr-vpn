@@ -2477,11 +2477,12 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     setting_entry(app, &device, "Tunnel IP", "tunnel_ip");
     setting_entry(app, &device, "Endpoint", "endpoint");
     setting_entry(app, &device, "Listen Port", "listen_port");
-    setting_entry(
+    setting_entry_enabled(
         app,
         &device,
-        "Inbound .fips TCP Ports",
+        "Open inbound TCP ports",
         "fips_host_inbound_tcp_ports",
+        state.fips_host_tunnel_enabled,
     );
 
     let save = icon_text_button("Save", "");
@@ -2774,7 +2775,7 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     switch_row(
         app,
         &system,
-        "Route to non-VPN .fips",
+        "Route to npub.fips addresses outside VPN",
         state.fips_host_tunnel_enabled,
         |enabled| NativeAppAction::UpdateSettings {
             patch: SettingsPatch {
@@ -3097,6 +3098,16 @@ fn build_diagnostics(parent: &gtk::Box, state: &NativeAppState) {
 }
 
 fn setting_entry(app: &AppRef, parent: &gtk::Box, title: &str, key: &'static str) {
+    setting_entry_enabled(app, parent, title, key, true);
+}
+
+fn setting_entry_enabled(
+    app: &AppRef,
+    parent: &gtk::Box,
+    title: &str,
+    key: &'static str,
+    enabled: bool,
+) {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     row.set_valign(gtk::Align::Center);
     let label = gtk::Label::new(Some(title));
@@ -3115,7 +3126,13 @@ fn setting_entry(app: &AppRef, parent: &gtk::Box, title: &str, key: &'static str
             _ => String::new(),
         }
     };
-    let input = entry(title, &current);
+    let placeholder = if key == "fips_host_inbound_tcp_ports" {
+        "22, 443"
+    } else {
+        title
+    };
+    let input = entry(placeholder, &current);
+    input.set_sensitive(enabled);
     {
         let app = app.clone();
         input.connect_changed(move |entry| {

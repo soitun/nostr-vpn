@@ -1344,10 +1344,6 @@ struct RootView: View {
                     label("Tunnel IP")
                     TextField("Tunnel IP", text: $tunnelIp)
                 }
-                GridRow {
-                    label("Inbound .fips TCP Ports")
-                    TextField("Inbound .fips TCP Ports", text: $fipsHostInboundTcpPorts)
-                }
             }
             VStack(alignment: .leading, spacing: 8) {
                 settingsToggleGroupLabel("General")
@@ -1369,10 +1365,16 @@ struct RootView: View {
                 ), disabled: manager.actionInFlight)
 
                 settingsToggleGroupLabel("FIPS")
-                settingsToggleRow("Route to non-VPN .fips", isOn: Binding(
+                settingsToggleRow("Route to npub.fips addresses outside VPN", isOn: Binding(
                     get: { state.fipsHostTunnelEnabled },
                     set: { manager.setFipsHostTunnel($0) }
                 ))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Open inbound TCP ports")
+                        .foregroundStyle(.secondary)
+                    TextField("22, 443", text: $fipsHostInboundTcpPorts)
+                        .disabled(!state.fipsHostTunnelEnabled)
+                }
                 settingsToggleRow("Connect to non-roster FIPS peers", isOn: Binding(
                     get: { state.connectToNonRosterFipsPeers },
                     set: { manager.setConnectToNonRosterFipsPeers($0) }

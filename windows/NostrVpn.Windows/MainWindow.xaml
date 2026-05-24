@@ -667,7 +667,6 @@
                   <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
                   </Grid.RowDefinitions>
                   <TextBlock Text="Name" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
                   <TextBox Grid.Column="1" Text="{Binding NodeName, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,12,8" />
@@ -677,8 +676,6 @@
                   <TextBox Grid.Row="1" Grid.Column="1" Text="{Binding Endpoint, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,12,0" />
                   <TextBlock Grid.Row="1" Grid.Column="2" Text="Listen Port" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
                   <TextBox Grid.Row="1" Grid.Column="3" Text="{Binding ListenPort, UpdateSourceTrigger=PropertyChanged}" />
-                  <TextBlock Grid.Row="2" Text="Inbound .fips TCP Ports" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
-                  <TextBox Grid.Row="2" Grid.Column="1" Text="{Binding FipsHostInboundTcpPorts, UpdateSourceTrigger=PropertyChanged}" Margin="0,8,12,0" />
                 </Grid>
                 <StackPanel Orientation="Vertical" HorizontalAlignment="Stretch" Margin="0,12,0,0">
                   <TextBlock Text="General" Foreground="{StaticResource TextSecondary}" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,2" />
@@ -686,7 +683,15 @@
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Launch on startup" IsChecked="{Binding State.LaunchOnStartup, Mode=OneWay}" Click="LaunchOnStartup_Click" />
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Tray on close" IsChecked="{Binding State.CloseToTrayOnClose, Mode=OneWay}" Click="CloseToTray_Click" />
                   <TextBlock Text="FIPS" Foreground="{StaticResource TextSecondary}" FontSize="12" FontWeight="SemiBold" Margin="0,10,0,2" />
-                  <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Route to non-VPN .fips" IsChecked="{Binding State.FipsHostTunnelEnabled, Mode=OneWay}" Click="FipsHostTunnel_Click" />
+                  <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Route to npub.fips addresses outside VPN" IsChecked="{Binding State.FipsHostTunnelEnabled, Mode=OneWay}" Click="FipsHostTunnel_Click" />
+                  <Grid Margin="0,4,0,0" IsEnabled="{Binding State.FipsHostTunnelEnabled}">
+                    <Grid.ColumnDefinitions>
+                      <ColumnDefinition Width="150" />
+                      <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Open inbound TCP ports" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                    <TextBox Grid.Column="1" Text="{Binding FipsHostInboundTcpPorts, UpdateSourceTrigger=PropertyChanged}" ToolTip="Comma-separated ports, e.g. 22, 443" />
+                  </Grid>
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Connect to non-roster FIPS peers" IsChecked="{Binding State.ConnectToNonRosterFipsPeers, Mode=OneWay}" Click="ConnectToNonRosterFipsPeers_Click" />
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Find peers over relays" IsChecked="{Binding State.FipsNostrDiscoveryEnabled, Mode=OneWay}" Click="FipsNostrDiscoveryEnabled_Click" />
                   <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Use bootstrap servers" IsChecked="{Binding State.FipsBootstrapEnabled, Mode=OneWay}" Click="FipsBootstrapEnabled_Click" />

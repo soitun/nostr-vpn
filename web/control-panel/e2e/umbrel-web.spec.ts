@@ -197,7 +197,8 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
     await expect(page.getByRole('heading', { name: 'This Device' })).toBeVisible();
     await expect(page.getByLabel('DNS Suffix')).toHaveCount(0);
     await expect(page.getByLabel('Start VPN automatically')).toBeVisible();
-    await expect(page.getByLabel('Route to non-VPN .fips')).toBeVisible();
+    await expect(page.getByLabel('Route to npub.fips addresses outside VPN')).toBeVisible();
+    await expect(page.getByLabel('Open inbound TCP ports')).toBeDisabled();
     await expect(page.getByLabel('Connect to non-roster FIPS peers')).toBeVisible();
     const diagnosticsPanel = page.locator('.diagnostics-panel');
     const diagnosticsToggle = page.getByRole('button', { name: /Diagnostics/ });

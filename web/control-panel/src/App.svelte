@@ -1768,10 +1768,6 @@
                 <span>Advertised Routes</span>
                 <input bind:value={settingsDraft.advertisedRoutes} on:input={() => (settingsDirty = true)} />
               </label>
-              <label>
-                <span>Inbound .fips TCP Ports</span>
-                <input bind:value={settingsDraft.fipsHostInboundTcpPorts} on:input={() => (settingsDirty = true)} />
-              </label>
             </div>
 
             <div class="relay-list">
@@ -1803,11 +1799,21 @@
             <div class="settings-toggle-group">
               <div class="settings-toggle-group-title">FIPS</div>
               <label class="switch-row">
-                <span>Route to non-VPN .fips</span>
+                <span>Route to npub.fips addresses outside VPN</span>
                 <input
                   type="checkbox"
                   bind:checked={settingsDraft.fipsHostTunnelEnabled}
                   on:change={() => (settingsDirty = true)}
+                />
+              </label>
+
+              <label>
+                <span>Open inbound TCP ports</span>
+                <input
+                  placeholder="22, 443"
+                  bind:value={settingsDraft.fipsHostInboundTcpPorts}
+                  disabled={!settingsDraft.fipsHostTunnelEnabled}
+                  on:input={() => (settingsDirty = true)}
                 />
               </label>
 
