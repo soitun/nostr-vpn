@@ -1,11 +1,13 @@
 using System.Net.Http;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace NostrVpn.Windows.Services;
 
 public sealed class UpdateService
 {
-    private static readonly Uri DefaultManifestUri = new("https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json");
+    private static readonly Uri HtreeManifestUri = new("https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json");
+    private static readonly Uri GithubLatestReleaseUri = new("https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest");
     private static readonly HttpClient Http = new();
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -13,20 +15,32 @@ public sealed class UpdateService
 
     public async Task<UpdateResult> CheckAsync(string currentVersion)
     {
-        var manifestUri = ManifestUri();
-        var json = await ReadStringAsync(manifestUri);
-        var manifest = JsonSerializer.Deserialize<ReleaseManifest>(json, JsonOptions)
-            ?? throw new InvalidOperationException("release manifest was empty");
-        var asset = PreferredWindowsAsset(manifest.Assets);
-        var available = VersionIsNewer(manifest.Tag, currentVersion);
-        return new UpdateResult(
-            available,
-            manifest.Tag,
-            asset?.Url is null ? null : new Uri(manifestUri, asset.Url),
-            asset?.Name,
-            available
-                ? asset is null ? $"Update {manifest.Tag} found without a Windows asset" : $"Update {manifest.Tag} available"
-                : "Up to date");
+        Exception? lastError = null;
+        foreach (var manifestUri in ManifestUris())
+        {
+            try
+            {
+                var json = await ReadStringAsync(manifestUri);
+                var manifest = JsonSerializer.Deserialize<ReleaseManifest>(json, JsonOptions)
+                    ?? throw new InvalidOperationException("release manifest was empty");
+                var asset = PreferredWindowsAsset(manifest.Assets);
+                var available = VersionIsNewer(manifest.Tag, currentVersion);
+                return new UpdateResult(
+                    available,
+                    manifest.Tag,
+                    asset?.Url is null ? null : new Uri(manifestUri, asset.Url),
+                    asset?.Name,
+                    available
+                        ? asset is null ? $"Update {manifest.Tag} found without a Windows asset" : $"Update {manifest.Tag} available"
+                        : "Up to date");
+            }
+            catch (Exception error)
+            {
+                lastError = error;
+            }
+        }
+
+        throw lastError ?? new InvalidOperationException("no update manifest URL configured");
     }
 
     public async Task<string> DownloadAsync(Uri assetUri)
@@ -60,15 +74,30 @@ public sealed class UpdateService
         return destination;
     }
 
-    private static Uri ManifestUri()
+    private static IReadOnlyList<Uri> ManifestUris()
     {
         var overrideUrl = Environment.GetEnvironmentVariable("NVPN_UPDATE_MANIFEST_URL");
-        return string.IsNullOrWhiteSpace(overrideUrl) ? DefaultManifestUri : new Uri(overrideUrl);
+        return string.IsNullOrWhiteSpace(overrideUrl)
+            ? new[] { HtreeManifestUri, GithubLatestReleaseUri }
+            : new[] { new Uri(overrideUrl) };
     }
 
-    private static Task<string> ReadStringAsync(Uri uri)
+    private static async Task<string> ReadStringAsync(Uri uri)
     {
-        return uri.IsFile ? File.ReadAllTextAsync(uri.LocalPath) : Http.GetStringAsync(uri);
+        if (uri.IsFile)
+        {
+            return await File.ReadAllTextAsync(uri.LocalPath);
+        }
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+        if (uri.Host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase))
+        {
+            request.Headers.Accept.ParseAdd("application/vnd.github+json");
+            request.Headers.UserAgent.ParseAdd("nvpn-updater");
+        }
+        using var response = await Http.SendAsync(request);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadAsStringAsync();
     }
 
     private static ReleaseAsset? PreferredWindowsAsset(IEnumerable<ReleaseAsset> assets)
@@ -96,6 +125,8 @@ public sealed record UpdateResult(bool Available, string Tag, Uri? AssetUrl, str
 public sealed class ReleaseManifest
 {
     public string Tag { get; set; } = "";
+    [JsonPropertyName("tag_name")]
+    public string TagName { get => Tag; set { if (!string.IsNullOrWhiteSpace(value)) Tag = value; } }
     public List<ReleaseAsset> Assets { get; set; } = [];
 }
 
@@ -103,5 +134,7 @@ public sealed class ReleaseAsset
 {
     public string Name { get; set; } = "";
     public string Path { get; set; } = "";
+    [JsonPropertyName("browser_download_url")]
+    public string BrowserDownloadUrl { get => Path; set { if (!string.IsNullOrWhiteSpace(value)) Path = value; } }
     public string Url => Path;
 }

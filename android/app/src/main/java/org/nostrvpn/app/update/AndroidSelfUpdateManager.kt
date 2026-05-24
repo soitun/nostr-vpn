@@ -168,8 +168,7 @@ class AndroidSelfUpdateManager(
                 stateFlow.update { it.copy(checking = true) }
             }
             try {
-                val manifestUrl = updateManifestUrl()
-                val manifest = loadReleaseManifest(manifestUrl)
+                val (manifestUrl, manifest) = loadFirstReleaseManifest()
                 val asset = manifest.preferredAndroidAsset()
                 val assetUrl = asset?.path?.let { resolveAssetUrl(manifestUrl, it) }
                 val newerVersion = versionIsNewer(manifest.tag, BuildConfig.VERSION_NAME)
@@ -227,26 +226,22 @@ class AndroidSelfUpdateManager(
         }
     }
 
+    private suspend fun loadFirstReleaseManifest(): Pair<String, ReleaseManifest> {
+        var lastError: Exception? = null
+        for (manifestUrl in updateManifestUrls()) {
+            try {
+                return manifestUrl to loadReleaseManifest(manifestUrl)
+            } catch (error: Exception) {
+                lastError = error
+            }
+        }
+        throw lastError ?: IOException("No update manifest URL configured")
+    }
+
     private suspend fun loadReleaseManifest(manifestUrl: String): ReleaseManifest =
         withContext(ioDispatcher) {
             val body = readString(manifestUrl)
-            val json = JSONObject(body)
-            val assetsJson = json.optJSONArray("assets")
-            val assets =
-                buildList {
-                    if (assetsJson != null) {
-                        for (index in 0 until assetsJson.length()) {
-                            val asset = assetsJson.optJSONObject(index) ?: continue
-                            add(
-                                ReleaseAsset(
-                                    name = asset.optString("name"),
-                                    path = asset.optString("path"),
-                                ),
-                            )
-                        }
-                    }
-                }
-            ReleaseManifest(tag = json.optString("tag"), assets = assets)
+            parseReleaseManifest(body)
         }
 
     private suspend fun downloadApk(assetUrl: String, version: String): File =
@@ -309,6 +304,9 @@ class AndroidSelfUpdateManager(
             readTimeout = HTTP_READ_TIMEOUT_MS
             instanceFollowRedirects = true
             setRequestProperty("User-Agent", "nostrvpn-android-updater")
+            if (URI(url).host.equals("api.github.com", ignoreCase = true)) {
+                setRequestProperty("Accept", "application/vnd.github+json")
+            }
         }
         if (connection.responseCode !in 200..299) {
             val code = connection.responseCode
@@ -359,23 +357,12 @@ class AndroidSelfUpdateManager(
             }
     }
 
-    private data class ReleaseManifest(
-        val tag: String,
-        val assets: List<ReleaseAsset>,
-    ) {
-        fun preferredAndroidAsset(): ReleaseAsset? =
-            assets.firstOrNull { it.name.endsWith(ANDROID_APK_SUFFIX, ignoreCase = true) }
-    }
-
-    private data class ReleaseAsset(val name: String, val path: String)
-
     private class HttpConnection(private val connection: HttpURLConnection) : AutoCloseable {
         val inputStream get() = connection.inputStream
         override fun close() { connection.disconnect() }
     }
 
     private companion object {
-        private const val ANDROID_APK_SUFFIX = "-android-arm64.apk"
         private const val APK_MIME_TYPE = "application/vnd.android.package-archive"
         private const val PREFS_NAME = "android_self_update"
         private const val AUTO_CHECK_KEY = "auto_check_enabled"
@@ -393,8 +380,49 @@ class AndroidSelfUpdateManager(
     }
 }
 
-private fun updateManifestUrl(): String =
-    BuildConfig.UPDATE_MANIFEST_URL.ifBlank { AndroidSelfUpdateDefaults.manifestUrl }
+internal data class ReleaseManifest(
+    val tag: String,
+    val assets: List<ReleaseAsset>,
+) {
+    fun preferredAndroidAsset(): ReleaseAsset? =
+        assets.firstOrNull { it.name.endsWith(AndroidSelfUpdateDefaults.androidApkSuffix, ignoreCase = true) }
+}
+
+internal data class ReleaseAsset(val name: String, val path: String)
+
+internal fun parseReleaseManifest(body: String): ReleaseManifest {
+    val json = JSONObject(body)
+    val assetsJson = json.optJSONArray("assets")
+    val assets =
+        buildList {
+            if (assetsJson != null) {
+                for (index in 0 until assetsJson.length()) {
+                    val asset = assetsJson.optJSONObject(index) ?: continue
+                    add(
+                        ReleaseAsset(
+                            name = asset.optString("name"),
+                            path = asset.optString("path").ifBlank {
+                                asset.optString("browser_download_url")
+                            },
+                        ),
+                    )
+                }
+            }
+        }
+    return ReleaseManifest(
+        tag = json.optString("tag").ifBlank { json.optString("tag_name") },
+        assets = assets,
+    )
+}
+
+internal fun updateManifestUrls(configuredUrl: String = BuildConfig.UPDATE_MANIFEST_URL): List<String> =
+    configuredUrl
+        .takeIf { it.isNotBlank() }
+        ?.let { listOf(it) }
+        ?: listOf(
+            AndroidSelfUpdateDefaults.htreeManifestUrl,
+            AndroidSelfUpdateDefaults.githubLatestReleaseUrl,
+        )
 
 private fun updatePollIntervalMs(): Long =
     BuildConfig.UPDATE_POLL_SECONDS
@@ -430,7 +458,10 @@ private fun versionParts(value: String): List<Int> =
             part.takeWhile(Char::isDigit).takeIf { it.isNotEmpty() }?.toIntOrNull()
         }
 
-private object AndroidSelfUpdateDefaults {
-    const val manifestUrl: String =
+internal object AndroidSelfUpdateDefaults {
+    const val androidApkSuffix = "-android-arm64.apk"
+    const val htreeManifestUrl: String =
         "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json"
+    const val githubLatestReleaseUrl: String =
+        "https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest"
 }

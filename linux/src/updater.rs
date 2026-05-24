@@ -102,15 +102,20 @@ pub fn download_blocking(asset: &ReleaseAsset) -> Result<PathBuf, String> {
 }
 
 fn manifest_urls() -> Vec<String> {
-    if let Some(override_url) = std::env::var("NVPN_UPDATE_MANIFEST_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-    {
+    manifest_urls_for(
+        std::env::var("NVPN_UPDATE_MANIFEST_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty()),
+    )
+}
+
+fn manifest_urls_for(override_url: Option<String>) -> Vec<String> {
+    if let Some(override_url) = override_url.filter(|value| !value.trim().is_empty()) {
         return vec![override_url];
     }
     vec![
-        GITHUB_LATEST_RELEASE_URL.to_string(),
         HTREE_MANIFEST_URL.to_string(),
+        GITHUB_LATEST_RELEASE_URL.to_string(),
     ]
 }
 
@@ -305,6 +310,17 @@ mod tests {
         let asset = preferred_linux_asset(&manifest, HTREE_MANIFEST_URL).expect("asset");
         assert_eq!(asset.name, preferred_test_asset_name());
         assert!(asset.url.ends_with("/assets/app"));
+    }
+
+    #[test]
+    fn checks_htree_before_github_by_default() {
+        assert_eq!(
+            manifest_urls_for(None),
+            vec![
+                HTREE_MANIFEST_URL.to_string(),
+                GITHUB_LATEST_RELEASE_URL.to_string(),
+            ]
+        );
     }
 
     #[test]

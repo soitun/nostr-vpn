@@ -88,17 +88,23 @@ fn fetch_first_manifest(source: UpdateSource) -> Result<(String, ReleaseManifest
 }
 
 fn manifest_urls(source: UpdateSource) -> Vec<String> {
-    if let Some(override_url) = std::env::var("NVPN_UPDATE_MANIFEST_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-    {
+    manifest_urls_for(
+        source,
+        std::env::var("NVPN_UPDATE_MANIFEST_URL")
+            .ok()
+            .filter(|value| !value.trim().is_empty()),
+    )
+}
+
+fn manifest_urls_for(source: UpdateSource, override_url: Option<String>) -> Vec<String> {
+    if let Some(override_url) = override_url.filter(|value| !value.trim().is_empty()) {
         return vec![override_url];
     }
 
     match source {
         UpdateSource::Auto => vec![
-            GITHUB_LATEST_RELEASE_URL.to_string(),
             HTREE_MANIFEST_URL.to_string(),
+            GITHUB_LATEST_RELEASE_URL.to_string(),
         ],
         UpdateSource::Github => vec![GITHUB_LATEST_RELEASE_URL.to_string()],
         UpdateSource::Hashtree => vec![HTREE_MANIFEST_URL.to_string()],
@@ -450,6 +456,17 @@ mod tests {
                 "assets/nvpn.tgz"
             ),
             "https://example.invalid/latest/assets/nvpn.tgz"
+        );
+    }
+
+    #[test]
+    fn auto_source_checks_htree_before_github() {
+        assert_eq!(
+            manifest_urls_for(UpdateSource::Auto, None),
+            vec![
+                HTREE_MANIFEST_URL.to_string(),
+                GITHUB_LATEST_RELEASE_URL.to_string(),
+            ]
         );
     }
 

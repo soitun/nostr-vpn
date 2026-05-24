@@ -35,6 +35,15 @@ class AndroidSelfUpdateManagerTest {
     }
 
     @Test
+    fun defaultManifestUrlsCheckHtreeBeforeGithub() {
+        assertTrue(
+            updateManifestUrls("").let { urls ->
+                urls[0].contains("upload.iris.to") && urls[1].contains("api.github.com")
+            },
+        )
+    }
+
+    @Test
     fun liveReleaseManifestExposesAndroidApk() {
         // Hits the production release manifest. Fails loudly if upload.iris.to
         // ever changes the JSON shape or the APK suffix our updater filters on.

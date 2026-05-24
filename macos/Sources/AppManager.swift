@@ -57,7 +57,7 @@ final class AppManager: ObservableObject {
             .flatMap(URL.init(string:)) {
             return [overrideUrl]
         }
-        return [githubUpdateManifestUrl, defaultUpdateManifestUrl]
+        return [defaultUpdateManifestUrl, githubUpdateManifestUrl]
     }()
     let launchedHidden: Bool
 
@@ -1472,7 +1472,7 @@ private func configuredUpdateManifestUrls() -> [URL] {
         .flatMap(URL.init(string:)) {
         return [overrideUrl]
     }
-    return [githubUpdateManifestUrl, defaultUpdateManifestUrl]
+    return [defaultUpdateManifestUrl, githubUpdateManifestUrl]
 }
 
 private func loadConfiguredUpdateManifestBlocking() throws -> (URL, Data) {

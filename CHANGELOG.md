@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Desktop, CLI, Android, and Windows updaters now check the htree release
+  manifest before falling back to GitHub, keeping app update checks aligned
+  with the htree release list.
+
 ## 4.0.40 - 2026-05-24
 
 ### Added
