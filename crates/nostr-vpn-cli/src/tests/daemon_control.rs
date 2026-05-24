@@ -945,6 +945,47 @@ fn apply_config_file_writes_target_config() {
 }
 
 #[test]
+fn load_or_default_config_migrates_plaintext_config_secrets() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-load-config-secrets-{nonce}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let path = dir.join("config.toml");
+    let mut config = AppConfig::generated();
+    config.wireguard_exit.private_key = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=".to_string();
+    config.wireguard_exit.peer_public_key =
+        "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=".to_string();
+    config.wireguard_exit.peer_preshared_key =
+        "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=".to_string();
+    let nostr_secret = config.nostr.secret_key.clone();
+    let wireguard_private_key = config.wireguard_exit.private_key.clone();
+    let wireguard_peer_preshared_key = config.wireguard_exit.peer_preshared_key.clone();
+    fs::write(
+        &path,
+        config.plaintext_toml().expect("encode plaintext config"),
+    )
+    .expect("write plaintext config");
+
+    let loaded = load_or_default_config(&path).expect("load config");
+    let raw = fs::read_to_string(&path).expect("read migrated config");
+    AppConfig::delete_persisted_secrets_for_path(&path).expect("delete migrated secrets");
+
+    assert_eq!(loaded.nostr.secret_key, nostr_secret);
+    assert_eq!(loaded.wireguard_exit.private_key, wireguard_private_key);
+    assert_eq!(
+        loaded.wireguard_exit.peer_preshared_key,
+        wireguard_peer_preshared_key
+    );
+    assert!(!raw.contains(&nostr_secret));
+    assert!(!raw.contains(&wireguard_private_key));
+    assert!(!raw.contains(&wireguard_peer_preshared_key));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn stage_daemon_config_apply_writes_staged_file() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)

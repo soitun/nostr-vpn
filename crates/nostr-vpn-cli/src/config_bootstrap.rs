@@ -291,6 +291,12 @@ pub(crate) fn load_or_default_config(path: &Path) -> Result<AppConfig> {
         .try_exists()
         .with_context(|| format!("failed to inspect config {}", path.display()))?
     {
+        AppConfig::migrate_persisted_secrets(path).with_context(|| {
+            format!(
+                "failed to migrate persisted config secrets in {}",
+                path.display()
+            )
+        })?;
         return AppConfig::load(path);
     }
 

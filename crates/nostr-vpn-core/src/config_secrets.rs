@@ -1,10 +1,9 @@
+use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
 #[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
 use sha2::{Digest as _, Sha256};
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "android"))]
-use std::fs;
 
 use crate::config::{AppConfig, normalize_nostr_pubkey};
 
@@ -51,6 +50,24 @@ pub(crate) fn delete_config_secrets(path: &Path) -> Result<()> {
         }
     }
     result
+}
+
+pub(crate) fn config_file_needs_secret_migration(path: &Path) -> Result<bool> {
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let value: toml::Value = toml::from_str(&raw).context("failed to parse config TOML")?;
+
+    if nostr_secret_needs_migration(&value) {
+        return Ok(true);
+    }
+
+    for field in ["private_key", "peer_preshared_key"] {
+        if plaintext_secret_field(&value, "wireguard_exit", field) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -233,6 +250,37 @@ fn config_path_bytes(path: &Path) -> Vec<u8> {
 fn is_redacted_secret(value: &str) -> bool {
     let value = value.trim();
     REDACTED_SECRET_MARKERS.contains(&value)
+}
+
+fn nostr_secret_needs_migration(value: &toml::Value) -> bool {
+    let Some(nostr) = value.get("nostr").and_then(toml::Value::as_table) else {
+        return true;
+    };
+
+    let secret_key = nostr
+        .get("secret_key")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default()
+        .trim();
+    let public_key = nostr
+        .get("public_key")
+        .and_then(toml::Value::as_str)
+        .unwrap_or_default()
+        .trim();
+
+    secret_key.is_empty() || public_key.is_empty() || !is_redacted_secret(secret_key)
+}
+
+fn plaintext_secret_field(value: &toml::Value, table: &str, field: &str) -> bool {
+    value
+        .get(table)
+        .and_then(toml::Value::as_table)
+        .and_then(|table| table.get(field))
+        .and_then(toml::Value::as_str)
+        .is_some_and(|value| {
+            let value = value.trim();
+            !value.is_empty() && !is_redacted_secret(value)
+        })
 }
 
 #[cfg(target_os = "macos")]
@@ -784,6 +832,7 @@ mod tests {
     #[test]
     fn recognizes_all_secret_markers() {
         for marker in [
+            "stored-in-macos-keychain",
             "stored-in-system-keychain",
             "stored-in-ios-keychain",
             "stored-in-android-keystore",

@@ -164,6 +164,7 @@ impl MobileTunnelConfig {
     pub(crate) fn from_data_dir(data_dir: &str) -> Result<Self> {
         let config_path = native_config_path(data_dir);
         let mut app = if config_path.exists() {
+            AppConfig::migrate_persisted_secrets(&config_path)?;
             AppConfig::load(&config_path)?
         } else {
             let generated = AppConfig::generated_without_networks();
@@ -352,6 +353,7 @@ fn mobile_app_config(config: &MobileTunnelConfig) -> Result<AppConfig> {
 
     let config_path = non_empty_path(&config.config_path)
         .ok_or_else(|| anyhow!("mobile app config unavailable"))?;
+    AppConfig::migrate_persisted_secrets(&config_path)?;
     let mut app = AppConfig::load(&config_path)?;
     app.ensure_defaults();
     Ok(app)

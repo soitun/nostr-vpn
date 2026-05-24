@@ -43,8 +43,8 @@ use crate::config_magic_dns::{
     uniquify_network_entry_id, uses_default_node_name,
 };
 use crate::config_secrets::{
-    SecretPersistence, delete_config_secrets, hydrate_config_secrets,
-    prepare_config_secrets_for_save,
+    SecretPersistence, config_file_needs_secret_migration, delete_config_secrets,
+    hydrate_config_secrets, prepare_config_secrets_for_save,
 };
 use crate::fips_control::{PeerEndpointHint, peer_endpoint_hint_addr};
 use crate::network_roster::{
@@ -911,6 +911,20 @@ impl AppConfig {
 
     pub fn delete_persisted_secrets_for_path(path: &Path) -> Result<()> {
         delete_config_secrets(path)
+    }
+
+    pub fn config_file_needs_secret_migration(path: &Path) -> Result<bool> {
+        config_file_needs_secret_migration(path)
+    }
+
+    pub fn migrate_persisted_secrets(path: &Path) -> Result<bool> {
+        if !Self::config_file_needs_secret_migration(path)? {
+            return Ok(false);
+        }
+
+        let config = Self::load(path)?;
+        config.save(path)?;
+        Ok(true)
     }
 
     pub fn persisted_toml_for_path(&self, path: &Path) -> Result<String> {
@@ -2450,6 +2464,47 @@ mod tests {
         assert!(!raw.contains(TEST_WG_PRIVATE_KEY));
         assert!(!raw.contains(TEST_WG_PRESHARED_KEY));
         assert_eq!(loaded.nostr.secret_key, config.nostr.secret_key);
+        assert_eq!(loaded.wireguard_exit.private_key, TEST_WG_PRIVATE_KEY);
+        assert_eq!(
+            loaded.wireguard_exit.peer_preshared_key,
+            TEST_WG_PRESHARED_KEY
+        );
+    }
+
+    #[test]
+    fn migrate_persisted_secrets_rewrites_plaintext_config_secrets() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-migrate-secrets-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        let mut config = AppConfig::generated();
+        config.wireguard_exit.private_key = TEST_WG_PRIVATE_KEY.to_string();
+        config.wireguard_exit.peer_public_key = TEST_WG_PUBLIC_KEY.to_string();
+        config.wireguard_exit.peer_preshared_key = TEST_WG_PRESHARED_KEY.to_string();
+        let nostr_secret = config.nostr.secret_key.clone();
+        let raw = config.plaintext_toml().expect("encode plaintext config");
+        std::fs::write(&path, raw).expect("write plaintext config");
+
+        assert!(
+            AppConfig::config_file_needs_secret_migration(&path).expect("inspect plaintext config")
+        );
+        assert!(AppConfig::migrate_persisted_secrets(&path).expect("migrate secrets"));
+        assert!(
+            !AppConfig::config_file_needs_secret_migration(&path).expect("inspect migrated config")
+        );
+        let migrated = std::fs::read_to_string(&path).expect("read migrated config");
+        let loaded = AppConfig::load(&path).expect("load migrated config");
+        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete migrated secrets");
+        let _ = std::fs::remove_file(&path);
+
+        assert!(!migrated.contains(&nostr_secret));
+        assert!(!migrated.contains(TEST_WG_PRIVATE_KEY));
+        assert!(!migrated.contains(TEST_WG_PRESHARED_KEY));
+        assert!(migrated.contains("stored-in-"));
+        assert_eq!(loaded.nostr.secret_key, nostr_secret);
         assert_eq!(loaded.wireguard_exit.private_key, TEST_WG_PRIVATE_KEY);
         assert_eq!(
             loaded.wireguard_exit.peer_preshared_key,

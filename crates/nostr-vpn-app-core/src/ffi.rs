@@ -323,10 +323,10 @@ impl NativeAppRuntime {
         let config_exists = config_path
             .try_exists()
             .with_context(|| format!("failed to inspect config {}", config_path.display()))?;
-        let persist_identity_defaults = config_exists
-            && config_file_needs_identity_persistence(&config_path).with_context(|| {
+        let migrated_config_secrets = config_exists
+            && AppConfig::migrate_persisted_secrets(&config_path).with_context(|| {
                 format!(
-                    "failed to inspect persisted identity in {}",
+                    "failed to migrate persisted config secrets in {}",
                     config_path.display()
                 )
             })?;
@@ -337,7 +337,7 @@ impl NativeAppRuntime {
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
-        if !config_exists || persist_identity_defaults {
+        if !config_exists || migrated_config_secrets {
             config.save(&config_path)?;
         }
 
@@ -2721,40 +2721,6 @@ fn native_config_path(data_dir: &str) -> PathBuf {
     }
 }
 
-fn config_file_needs_identity_persistence(path: &Path) -> Result<bool> {
-    let raw =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    let value: toml::Value = toml::from_str(&raw).context("failed to parse config TOML")?;
-    let Some(nostr) = value.get("nostr").and_then(toml::Value::as_table) else {
-        return Ok(true);
-    };
-
-    let secret_key = nostr
-        .get("secret_key")
-        .and_then(toml::Value::as_str)
-        .unwrap_or_default()
-        .trim();
-    let public_key = nostr
-        .get("public_key")
-        .and_then(toml::Value::as_str)
-        .unwrap_or_default()
-        .trim();
-
-    Ok(secret_key.is_empty() || public_key.is_empty() || !is_persisted_secret_marker(secret_key))
-}
-
-fn is_persisted_secret_marker(value: &str) -> bool {
-    matches!(
-        value.trim(),
-        "stored-in-macos-keychain"
-            | "stored-in-system-keychain"
-            | "stored-in-ios-keychain"
-            | "stored-in-android-keystore"
-            | "stored-in-windows-dpapi"
-            | "stored-in-private-secret-file"
-    )
-}
-
 fn default_config_path() -> PathBuf {
     dirs::config_dir().map_or_else(
         || PathBuf::from("nvpn.toml"),
@@ -2975,6 +2941,7 @@ mod tests {
 
     const TEST_WG_PRIVATE_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
     const TEST_WG_PUBLIC_KEY: &str = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=";
+    const TEST_WG_PRESHARED_KEY: &str = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=";
 
     fn create_test_network(runtime: &mut NativeAppRuntime, name: &str) -> String {
         runtime.config.add_network(name)
@@ -3059,29 +3026,41 @@ mod tests {
     }
 
     #[test]
-    fn startup_rewrites_plaintext_identity_configs() {
+    fn startup_migrates_plaintext_config_secrets() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
             .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-identity-rewrite-{nonce}"));
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-secret-migration-{nonce}"));
         fs::create_dir_all(&dir).expect("create test dir");
         let path = dir.join("config.toml");
-
+        let mut config = AppConfig::generated_without_networks();
+        config.wireguard_exit.private_key = TEST_WG_PRIVATE_KEY.to_string();
+        config.wireguard_exit.peer_public_key = TEST_WG_PUBLIC_KEY.to_string();
+        config.wireguard_exit.peer_preshared_key = TEST_WG_PRESHARED_KEY.to_string();
+        let nostr_secret = config.nostr.secret_key.clone();
         fs::write(
             &path,
-            "[nostr]\nsecret_key = \"nsec1example\"\npublic_key = \"npub1example\"\n",
+            config.plaintext_toml().expect("encode plaintext config"),
         )
         .expect("write plaintext config");
-        assert!(config_file_needs_identity_persistence(&path).expect("inspect plaintext config"));
 
-        fs::write(
-            &path,
-            "[nostr]\nsecret_key = \"stored-in-ios-keychain\"\npublic_key = \"npub1example\"\n",
-        )
-        .expect("write marker config");
-        assert!(!config_file_needs_identity_persistence(&path).expect("inspect marker config"));
+        let runtime = NativeAppRuntime::new_with_config_path(path.clone(), String::new(), None)
+            .expect("runtime starts");
+        let raw = fs::read_to_string(&path).expect("read migrated config");
+        let loaded = AppConfig::load(&path).expect("load migrated config");
+        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete migrated secrets");
 
+        assert_eq!(runtime.config.nostr.secret_key, nostr_secret);
+        assert!(!raw.contains(&nostr_secret));
+        assert!(!raw.contains(TEST_WG_PRIVATE_KEY));
+        assert!(!raw.contains(TEST_WG_PRESHARED_KEY));
+        assert_eq!(loaded.nostr.secret_key, nostr_secret);
+        assert_eq!(loaded.wireguard_exit.private_key, TEST_WG_PRIVATE_KEY);
+        assert_eq!(
+            loaded.wireguard_exit.peer_preshared_key,
+            TEST_WG_PRESHARED_KEY
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 
