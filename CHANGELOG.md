@@ -6,6 +6,12 @@ All notable changes to this project are documented in this file.
 
 ## 4.0.42 - 2026-05-26
 
+### Changed
+
+- Public FIPS routing settings now include a short explanation and Learn FIPS
+  link, and are grouped after the core FIPS peer settings on web, macOS, Linux,
+  and Windows.
+
 ### Fixed
 
 - iOS now preserves pasted WireGuard upstream configs while background app
@@ -23,9 +29,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Invite imports now reuse an inactive default network placeholder and keep the
-  UI focused on the imported network instead of leaving Umbrel on the previous
-  default network.
+- Joining by invite on a fresh Umbrel install now uses the existing empty
+  starter network instead of creating another "Network 1" entry, and selects
+  the joined network after import.
 - iOS TestFlight release archives now use pinned App Store profiles and
   Transporter HTTP uploads, matching the currently available App Store profile
   entitlements.
