@@ -3912,6 +3912,48 @@ mod tests {
     }
 
     #[test]
+    fn invite_import_reuses_inactive_default_network_placeholder() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-placeholder-invite-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let admin_npub = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("admin npub");
+        let invite = serde_json::json!({
+            "v": 3,
+            "networkName": "Network 1",
+            "networkId": "8d4f34f5425bc50e",
+            "admins": [admin_npub]
+        })
+        .to_string();
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+        runtime.config = AppConfig::generated();
+
+        runtime
+            .import_network_invite(&invite)
+            .expect("import invite");
+
+        assert_eq!(runtime.config.networks.len(), 1);
+        let network = runtime.config.active_network();
+        assert_eq!(network.id, "network-1");
+        assert_eq!(network.name, "Network 1");
+        assert_eq!(network.network_id, "8d4f34f5425bc50e");
+        assert!(network.outbound_join_request.is_some());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn invite_import_creates_new_network_when_active_network_is_named() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

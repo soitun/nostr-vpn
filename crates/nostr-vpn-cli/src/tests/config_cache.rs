@@ -308,6 +308,8 @@ fn importing_current_invite_queues_join_request_to_admin() {
 
     let network = config.active_network();
     assert!(queued);
+    assert_eq!(config.networks.len(), 1);
+    assert_eq!(network.id, "network-1");
     assert_eq!(
         network
             .outbound_join_request

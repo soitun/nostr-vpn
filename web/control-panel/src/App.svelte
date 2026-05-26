@@ -698,12 +698,23 @@
     );
   }
 
+  async function importNetworkInvite(invite: string, label = 'Importing') {
+    const existingIds = new Set(state?.networks.map((network) => network.id) ?? []);
+    const next = await runState('/api/import_network_invite', { invite }, label);
+    if (!next) {
+      return false;
+    }
+    const createdNetwork = next.networks.find((network) => !existingIds.has(network.id));
+    shownNetworkId = createdNetwork?.id ?? preferredNetworkId(next, '');
+    return true;
+  }
+
   async function importInvite() {
     const invite = inviteDraft.trim();
     if (!invite) {
       return;
     }
-    const ok = await run('/api/import_network_invite', { invite }, 'Importing');
+    const ok = await importNetworkInvite(invite, 'Importing');
     if (ok) {
       inviteDraft = '';
       addNetworkOpen = false;
@@ -1268,7 +1279,7 @@
                       <span>{peer.lastSeenText ?? ''}</span>
                     </div>
                     {#if peer.invite}
-                      <button type="button" class="small-button" on:click={() => run('/api/import_network_invite', { invite: peer.invite }, 'Joining')}>
+                      <button type="button" class="small-button" on:click={() => importNetworkInvite(peer.invite ?? '', 'Joining')}>
                         Join
                       </button>
                     {/if}
@@ -1739,53 +1750,47 @@
         </section>
       {:else if tab === 'settings'}
         <section class="page-grid settings-grid">
-          <form class="panel wide" on:submit|preventDefault={saveSettings}>
-            <div class="section-heading">
-              <div>
-                <h3>This Device</h3>
-                <p>{state.selfMagicDnsName || state.nodeId}</p>
+          <form class="settings-form" on:submit|preventDefault={saveSettings}>
+            <div class="panel wide">
+              <div class="section-heading">
+                <div>
+                  <h3>This Device</h3>
+                  <p>{state.selfMagicDnsName || state.nodeId}</p>
+                </div>
+              </div>
+
+              <div class="form-grid">
+                <label>
+                  <span>Name</span>
+                  <input bind:value={settingsDraft.nodeName} on:input={() => (settingsDirty = true)} />
+                </label>
+                <label>
+                  <span>Tunnel IP</span>
+                  <input bind:value={settingsDraft.tunnelIp} on:input={() => (settingsDirty = true)} />
+                </label>
+                <label>
+                  <span>Endpoint</span>
+                  <input bind:value={settingsDraft.endpoint} on:input={() => (settingsDirty = true)} />
+                </label>
+                <label>
+                  <span>Listen Port</span>
+                  <input inputmode="numeric" bind:value={settingsDraft.listenPort} on:input={() => (settingsDirty = true)} />
+                </label>
+                <label>
+                  <span>Advertised Routes</span>
+                  <input bind:value={settingsDraft.advertisedRoutes} on:input={() => (settingsDirty = true)} />
+                </label>
               </div>
             </div>
 
-            <div class="form-grid">
-              <label>
-                <span>Name</span>
-                <input bind:value={settingsDraft.nodeName} on:input={() => (settingsDirty = true)} />
-              </label>
-              <label>
-                <span>Tunnel IP</span>
-                <input bind:value={settingsDraft.tunnelIp} on:input={() => (settingsDirty = true)} />
-              </label>
-              <label>
-                <span>Endpoint</span>
-                <input bind:value={settingsDraft.endpoint} on:input={() => (settingsDirty = true)} />
-              </label>
-              <label>
-                <span>Listen Port</span>
-                <input inputmode="numeric" bind:value={settingsDraft.listenPort} on:input={() => (settingsDirty = true)} />
-              </label>
-              <label>
-                <span>Advertised Routes</span>
-                <input bind:value={settingsDraft.advertisedRoutes} on:input={() => (settingsDirty = true)} />
-              </label>
-            </div>
-
-            <div class="relay-list">
-              {#each state.relays ?? [] as relay}
-                <div class="relay-row">
-                  <span class="status-dot {relay.status === 'connected' ? 'ok' : 'muted'}"></span>
-                  <span>{relay.url}</span>
+            <div class="panel wide">
+              <div class="section-heading">
+                <div>
+                  <h3>General</h3>
+                  <p>App behavior and relays</p>
                 </div>
-              {/each}
-            </div>
+              </div>
 
-            <label>
-              <span>Relays</span>
-              <textarea bind:value={settingsDraft.relays} on:input={() => (settingsDirty = true)} rows="4"></textarea>
-            </label>
-
-            <div class="settings-toggle-group">
-              <div class="settings-toggle-group-title">General</div>
               <label class="switch-row">
                 <span>Start VPN automatically</span>
                 <input
@@ -1794,12 +1799,32 @@
                   on:change={() => (settingsDirty = true)}
                 />
               </label>
+
+              <div class="relay-list">
+                {#each state.relays ?? [] as relay}
+                  <div class="relay-row">
+                    <span class="status-dot {relay.status === 'connected' ? 'ok' : 'muted'}"></span>
+                    <span>{relay.url}</span>
+                  </div>
+                {/each}
+              </div>
+
+              <label>
+                <span>Relays</span>
+                <textarea bind:value={settingsDraft.relays} on:input={() => (settingsDirty = true)} rows="4"></textarea>
+              </label>
             </div>
 
-            <div class="settings-toggle-group">
-              <div class="settings-toggle-group-title">FIPS</div>
+            <div class="panel wide">
+              <div class="section-heading">
+                <div>
+                  <h3>FIPS</h3>
+                  <p>Direct peer routing</p>
+                </div>
+              </div>
+
               <label class="switch-row">
-                <span>Route to npub.fips addresses outside VPN</span>
+                <span>Route npub.fips outside VPN</span>
                 <input
                   type="checkbox"
                   bind:checked={settingsDraft.fipsHostTunnelEnabled}
@@ -1808,7 +1833,7 @@
               </label>
 
               <label>
-                <span>Open inbound TCP ports</span>
+                <span>Inbound TCP allowlist</span>
                 <input
                   bind:value={settingsDraft.fipsHostInboundTcpPorts}
                   disabled={!settingsDraft.fipsHostTunnelEnabled}
@@ -1858,7 +1883,7 @@
               {/if}
             </div>
 
-            <div class="button-row">
+            <div class="settings-actions">
               <button type="submit" class="secondary-button" disabled={Boolean(busyAction)}>
                 Save
               </button>

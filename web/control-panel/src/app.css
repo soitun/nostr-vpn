@@ -516,6 +516,20 @@ code {
   grid-column: span 1;
 }
 
+.settings-form {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.settings-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
 .section-heading {
   display: flex;
   align-items: flex-start;
@@ -963,20 +977,6 @@ input.invalid {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.settings-toggle-group {
-  margin-top: 14px;
-}
-
-.settings-toggle-group-title {
-  color: var(--text-secondary);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.settings-toggle-group .switch-row {
-  margin-top: 8px;
 }
 
 .switch-row {

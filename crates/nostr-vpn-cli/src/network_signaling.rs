@@ -54,13 +54,13 @@ pub(crate) fn apply_network_invite_to_active_network(
         if network_should_adopt_invite(active_network) {
             (active_network.id.clone(), true)
         } else {
-            let network_id = config.add_network(&invite.network_name);
-            config.set_network_enabled(&network_id, true)?;
+            let network_id = reusable_placeholder_network(config, &normalized_invite_network_id)
+                .unwrap_or_else(|| config.add_network(&invite.network_name));
             (network_id, true)
         }
     } else {
-        let network_id = config.add_network(&invite.network_name);
-        config.set_network_enabled(&network_id, true)?;
+        let network_id = reusable_placeholder_network(config, &normalized_invite_network_id)
+            .unwrap_or_else(|| config.add_network(&invite.network_name));
         (network_id, true)
     };
     let should_adopt_name = config
@@ -156,6 +156,21 @@ pub(crate) fn apply_network_invite_to_active_network(
     }
 
     Ok(())
+}
+
+fn reusable_placeholder_network(
+    config: &AppConfig,
+    normalized_invite_network_id: &str,
+) -> Option<String> {
+    config
+        .networks
+        .iter()
+        .find(|network| {
+            !network.enabled
+                && network_should_adopt_invite(network)
+                && normalize_runtime_network_id(&network.network_id) != normalized_invite_network_id
+        })
+        .map(|network| network.id.clone())
 }
 
 pub(crate) fn queue_active_network_join_request(config: &mut AppConfig) -> Result<bool> {

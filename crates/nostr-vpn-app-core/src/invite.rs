@@ -142,6 +142,13 @@ fn target_network_for_invite(
     {
         return (active_network.id.clone(), true);
     }
+    if let Some(reusable_network) = config.networks.iter().find(|network| {
+        !network.enabled
+            && network_should_adopt_invite(network)
+            && normalize_runtime_network_id(&network.network_id) != normalized_invite_network_id
+    }) {
+        return (reusable_network.id.clone(), true);
+    }
     (config.add_network(&invite.network_name), true)
 }
 
