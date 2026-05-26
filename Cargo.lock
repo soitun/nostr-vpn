@@ -2605,7 +2605,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.41"
+version = "4.0.42"
 dependencies = [
  "anyhow",
  "base64",
@@ -2630,7 +2630,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.41"
+version = "4.0.42"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -2665,7 +2665,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.0.41"
+version = "4.0.42"
 dependencies = [
  "anyhow",
  "axum",
@@ -2686,7 +2686,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.0.41"
+version = "4.0.42"
 dependencies = [
  "anyhow",
  "wintun",
@@ -2751,7 +2751,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn"
-version = "4.0.41"
+version = "4.0.42"
 dependencies = [
  "anyhow",
  "base64",
