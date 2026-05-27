@@ -214,7 +214,7 @@ pub struct AppConfig {
     /// the list is kept but not dialed.
     #[serde(
         default = "default_fips_bootstrap_enabled",
-        skip_serializing_if = "is_false"
+        skip_serializing_if = "is_true"
     )]
     pub fips_bootstrap_enabled: bool,
     /// Editable transit/bootstrap peers (npub -> transport-tagged addresses),

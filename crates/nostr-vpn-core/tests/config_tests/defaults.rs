@@ -131,11 +131,26 @@ fn fips_discovery_off_and_bootstrap_opt_in_round_trip() {
 
     let encoded = toml::to_string(&config).expect("serialize config");
     assert!(encoded.contains("fips_nostr_discovery_enabled = false"));
-    assert!(encoded.contains("fips_bootstrap_enabled = true"));
+    assert!(!encoded.contains("fips_bootstrap_enabled"));
 
     let decoded: AppConfig = toml::from_str(&encoded).expect("parse config");
     assert!(!decoded.fips_nostr_discovery_enabled);
     assert!(decoded.fips_bootstrap_enabled);
+}
+
+#[test]
+fn fips_bootstrap_opt_out_round_trip() {
+    let config = AppConfig {
+        fips_bootstrap_enabled: false,
+        ..AppConfig::default()
+    };
+
+    let encoded = toml::to_string(&config).expect("serialize config");
+    assert!(encoded.contains("fips_bootstrap_enabled = false"));
+
+    let decoded: AppConfig = toml::from_str(&encoded).expect("parse config");
+    assert!(!decoded.fips_bootstrap_enabled);
+    assert!(decoded.fips_bootstrap_peer_endpoints().is_empty());
 }
 
 #[test]
