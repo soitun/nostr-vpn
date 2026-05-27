@@ -451,14 +451,6 @@ require_notary_credentials() {
 submit_notarization() {
   local item_path="$1"
 
-  if [[ -n "${MACOS_NOTARY_PROFILE:-}" ]]; then
-    xcrun notarytool submit "$item_path" \
-      --keychain-profile "$MACOS_NOTARY_PROFILE" \
-      --wait \
-      --output-format json
-    return 0
-  fi
-
   if [[ -n "${NVPN_ASC_AUTH_KEY_PATH:-}" \
     && -n "${NVPN_ASC_AUTH_KEY_ID:-}" \
     && -n "${NVPN_ASC_AUTH_KEY_ISSUER_ID:-}" ]]; then
@@ -466,6 +458,14 @@ submit_notarization() {
       --key "$NVPN_ASC_AUTH_KEY_PATH" \
       --key-id "$NVPN_ASC_AUTH_KEY_ID" \
       --issuer "$NVPN_ASC_AUTH_KEY_ISSUER_ID" \
+      --wait \
+      --output-format json
+    return 0
+  fi
+
+  if [[ -n "${MACOS_NOTARY_PROFILE:-}" ]]; then
+    xcrun notarytool submit "$item_path" \
+      --keychain-profile "$MACOS_NOTARY_PROFILE" \
       --wait \
       --output-format json
     return 0

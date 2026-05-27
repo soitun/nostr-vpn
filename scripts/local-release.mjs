@@ -348,7 +348,7 @@ function windowsArtifactArch(targetTriple) {
 
 /// Run a tar pipe through ssh in either direction. We rely on macOS `tar`
 /// and Windows 10+ `tar.exe` (bsdtar) sharing a wire format. The remote ssh
-/// shell on windows-dev defaults to cmd.exe, which gladly forwards `tar` to
+/// shell on win11-dev defaults to cmd.exe, which gladly forwards `tar` to
 /// the Windows-side `tar.exe`. No extra tools are installed on the remote.
 function runShellPipe(cmd, { dryRun = false, errMsg = 'pipe' } = {}) {
   if (dryRun) {
@@ -418,7 +418,7 @@ function pullFileFromWindowsHost({ host, remotePath, localParent, name, dryRun }
 function buildWindowsArtifacts({ env, tag, dryRun, builtLines }) {
   // Windows builds run on an x86_64 Windows VM reachable over SSH.
   // Set NVPN_WINDOWS_SSH_HOST for local machine-specific hostnames.
-  const host = env.NVPN_WINDOWS_SSH_HOST || 'windows-dev'
+  const host = env.NVPN_WINDOWS_SSH_HOST || 'win11-dev'
 
   // Probe SSH connectivity. Skip cleanly if the VM is unreachable rather
   // than aborting the whole release.

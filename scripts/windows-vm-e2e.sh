@@ -7,7 +7,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-windows-dev}}"
+SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-win11-dev}}"
 GUEST_REPO="${NVPN_WINDOWS_GUEST_REPO_PATH:-C:\\src\\nostr-vpn}"
 ARTIFACT_ROOT="${ARTIFACT_ROOT:-$ROOT/artifacts}"
 RECT_JSON="$ARTIFACT_ROOT/windows-gui-rect.json"
