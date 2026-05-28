@@ -1150,11 +1150,16 @@ mod tests {
         )
         .expect("manifest");
 
+        let asset = preferred_secure_asset(&manifest, UpdateMode::App);
+
         #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         {
-            let asset = preferred_secure_asset(&manifest, UpdateMode::App).expect("app asset");
+            let asset = asset.expect("app asset");
             assert_eq!(asset.path, "assets/app.tgz");
         }
+
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        assert!(asset.is_none());
     }
 
     #[test]
