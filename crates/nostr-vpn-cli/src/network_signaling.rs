@@ -272,12 +272,18 @@ pub(crate) fn active_network_invite_code(config: &AppConfig) -> Result<String> {
     if roster.admins.is_empty() {
         return Err(anyhow!("active network has no admin configured"));
     }
+    let own_pubkey = config.own_nostr_pubkey_hex()?;
+    if !roster.admins.iter().any(|admin| admin == &own_pubkey) {
+        return Err(anyhow!(
+            "only a network admin can create an invite for this network"
+        ));
+    }
     let invite = NetworkInvite {
         v: nostr_vpn_core::invite::NETWORK_INVITE_VERSION,
         network_name: String::new(),
         network_id: roster.network_id,
         invite_secret: active_network.invite_secret.clone(),
-        inviter_npub: String::new(),
+        inviter_npub: nostr_vpn_core::invite::to_npub(&own_pubkey),
         inviter_node_name: String::new(),
         inviter_endpoints: active_inviter_endpoints(config),
         admins: roster

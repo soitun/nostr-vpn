@@ -407,12 +407,15 @@ fn inbound_fips_roster_ignores_signed_event_from_non_admin_author() {
 
 #[test]
 fn active_network_invite_code_roundtrips_current_roster() {
-    let inviter_hex = Keys::generate().public_key().to_hex();
     let participant_hex = Keys::generate().public_key().to_hex();
     let admin_hex = Keys::generate().public_key().to_hex();
 
     let mut config = AppConfig::generated();
     activate_first_network(&mut config);
+    let inviter_hex = config
+        .own_nostr_pubkey_hex()
+        .expect("generated config has own key");
+    let inviter_npub = nostr_vpn_core::invite::to_npub(&inviter_hex);
     config.networks[0].name = "Work".to_string();
     config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
     config.networks[0].participants = vec![participant_hex];
@@ -429,6 +432,7 @@ fn active_network_invite_code_roundtrips_current_roster() {
     assert_eq!(parsed.network_id, "8d4f34f5425bc50e");
     assert_eq!(parsed.invite_secret, config.networks[0].invite_secret);
     assert_eq!(parsed.admins.len(), 2);
+    assert_eq!(parsed.inviter_npub, inviter_npub);
     assert_eq!(parsed.inviter_endpoints, vec!["192.168.50.10:51820"]);
     assert!(parsed.participants.is_empty());
     assert!(parsed.relays.is_empty());
@@ -436,10 +440,11 @@ fn active_network_invite_code_roundtrips_current_roster() {
 
 #[test]
 fn active_network_invite_omits_non_transport_inviter_endpoint() {
-    let inviter_hex = Keys::generate().public_key().to_hex();
-
     let mut config = AppConfig::generated();
     activate_first_network(&mut config);
+    let inviter_hex = config
+        .own_nostr_pubkey_hex()
+        .expect("generated config has own key");
     config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
     config.networks[0].admins = vec![inviter_hex.clone()];
     config.networks[0].invite_inviter = inviter_hex;
@@ -449,6 +454,26 @@ fn active_network_invite_omits_non_transport_inviter_endpoint() {
     let parsed = parse_network_invite(&invite).expect("invite should decode");
 
     assert!(parsed.inviter_endpoints.is_empty());
+}
+
+#[test]
+fn active_network_invite_requires_local_admin_key() {
+    let other_admin = Keys::generate().public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
+    let own_pubkey = config
+        .own_nostr_pubkey_hex()
+        .expect("generated config has own key");
+    config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
+    config.networks[0].participants = vec![own_pubkey];
+    config.networks[0].admins = vec![other_admin];
+    config.node.endpoint = "192.168.50.10:51820".to_string();
+
+    let error =
+        active_network_invite_code(&config).expect_err("non-admin device must not create invite");
+
+    assert!(error.to_string().contains("network admin"));
 }
 
 #[test]

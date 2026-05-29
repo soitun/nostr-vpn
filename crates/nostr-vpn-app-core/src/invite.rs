@@ -18,12 +18,18 @@ pub(crate) fn active_network_invite_code_with_endpoints(
     if roster.admins.is_empty() {
         return Err(anyhow!("active network has no admin configured"));
     }
+    let own_pubkey = config.own_nostr_pubkey_hex()?;
+    if !roster.admins.iter().any(|admin| admin == &own_pubkey) {
+        return Err(anyhow!(
+            "only a network admin can create an invite for this network"
+        ));
+    }
     let invite = NetworkInvite {
         v: NETWORK_INVITE_VERSION,
         network_name: String::new(),
         network_id: roster.network_id,
         invite_secret: active_network.invite_secret.clone(),
-        inviter_npub: String::new(),
+        inviter_npub: to_npub(&own_pubkey),
         inviter_node_name: String::new(),
         inviter_endpoints: active_inviter_endpoints(config, extra_inviter_endpoints),
         admins: roster.admins.iter().map(|admin| to_npub(admin)).collect(),
@@ -248,7 +254,7 @@ mod tests {
         let admin_npub = keys.public_key().to_bech32().expect("admin npub");
         let mut config = AppConfig::generated_without_networks();
         config.nostr.secret_key = keys.secret_key().to_secret_hex();
-        config.nostr.public_key = admin_npub;
+        config.nostr.public_key = admin_npub.clone();
         config.node.endpoint = "172.20.10.2:51821".to_string();
         config.networks.push(NetworkConfig {
             id: "network-1".to_string(),
@@ -279,6 +285,7 @@ mod tests {
         let invite = parse_network_invite(&code).expect("invite parses");
 
         assert_eq!(invite.invite_secret, "join-secret");
+        assert_eq!(invite.inviter_npub, admin_npub);
         assert_eq!(
             invite.inviter_endpoints,
             vec![
@@ -287,5 +294,35 @@ mod tests {
                 "192.168.1.5:51821".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn active_invite_requires_local_admin_key() {
+        let local_keys = Keys::generate();
+        let other_admin = Keys::generate();
+        let mut config = AppConfig::generated_without_networks();
+        config.nostr.secret_key = local_keys.secret_key().to_secret_hex();
+        config.nostr.public_key = local_keys.public_key().to_bech32().expect("local npub");
+        config.node.endpoint = "172.20.10.2:51821".to_string();
+        config.networks.push(NetworkConfig {
+            id: "network-1".to_string(),
+            name: "Network 1".to_string(),
+            enabled: true,
+            network_id: "8d4f34f5425bc50e".to_string(),
+            invite_secret: "join-secret".to_string(),
+            participants: vec![local_keys.public_key().to_hex()],
+            admins: vec![other_admin.public_key().to_hex()],
+            listen_for_join_requests: true,
+            invite_inviter: String::new(),
+            outbound_join_request: None,
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        });
+
+        let error = active_network_invite_code_with_endpoints(&config, &[])
+            .expect_err("non-admin device must not create invite");
+
+        assert!(error.to_string().contains("network admin"));
     }
 }

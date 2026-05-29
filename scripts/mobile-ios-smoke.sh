@@ -2,6 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/mobile_env.sh"
+load_mobile_env "$ROOT"
 BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-to.iris.nvpn}"
 SCREENSHOT="$ROOT/artifacts/nostr-vpn-ios.png"
 
@@ -12,8 +15,13 @@ usage: scripts/mobile-ios-smoke.sh [simulator|device] [--vpn-cycle]
 simulator  Builds, installs, launches, and screenshots the simulator app.
 device     Launches an already installed development build on a physical device.
 
-Physical-device mode requires NVPN_IOS_DEVICE or NVPN_IOS_DEVICE_ID. Keep device
-identifiers in environment variables or shell history, not committed files.
+Physical-device mode requires NVPN_IOS_DEVICE or NVPN_IOS_DEVICE_ID. Values may
+live in .env.mobile.local or shell env. Keep device identifiers and signing
+details out of committed files.
+
+Simulator mode is a launch smoke only; iOS Packet Tunnel dataplane checks need
+a physical device, and first-run VPN/profile permission prompts may need a
+manual approval before --vpn-cycle can run unattended.
 EOF
 }
 

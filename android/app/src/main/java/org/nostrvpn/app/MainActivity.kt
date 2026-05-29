@@ -3,9 +3,10 @@ package org.nostrvpn.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.VpnService
 import android.os.Build
 import android.os.Bundle
-import android.net.VpnService
+import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -33,12 +34,18 @@ import org.nostrvpn.app.vpn.VpnStartState
 class MainActivity : ComponentActivity() {
     private var deepLink by mutableStateOf<String?>(null)
     private var debugAction by mutableStateOf<String?>(null)
+    private var debugInvite by mutableStateOf<String?>(null)
+    private var debugExitNode by mutableStateOf<String?>(null)
+    private var debugWireGuardConfig by mutableStateOf<String?>(null)
     private lateinit var selfUpdateManager: AndroidSelfUpdateManager
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         deepLink = intent?.dataString
         debugAction = intent?.getStringExtra(EXTRA_DEBUG_ACTION)
+        debugInvite = intent?.getStringExtra(EXTRA_DEBUG_INVITE)
+        debugExitNode = intent?.getStringExtra(EXTRA_DEBUG_EXIT_NODE)
+        debugWireGuardConfig = debugWireGuardConfigFromIntent(intent)
         NativeCore.initializeAndroidContext(applicationContext)
         val dataDir = appCoreDataDir(this)
         seedMobileConfig(dataDir)
@@ -264,11 +271,16 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            LaunchedEffect(deepLink, debugAction) {
+            LaunchedEffect(deepLink, debugAction, debugInvite, debugExitNode, debugWireGuardConfig) {
                 val invite = deepLink
                 if (!invite.isNullOrBlank() && invite.startsWith("nvpn://", ignoreCase = true)) {
                     dispatch(NativeActions.importInvite(invite))
                     deepLink = null
+                }
+                val inviteExtra = debugInvite
+                if (BuildConfig.DEBUG && !inviteExtra.isNullOrBlank()) {
+                    dispatch(NativeActions.importInvite(inviteExtra.trim()))
+                    debugInvite = null
                 }
                 when (val action = debugAction) {
                     DEBUG_ACTION_CONNECT -> {
@@ -282,6 +294,50 @@ class MainActivity : ComponentActivity() {
                             dispatch(NativeActions.disconnectVpn())
                         }
                         debugAction = null
+                    }
+                    DEBUG_ACTION_SET_FIPS_EXIT -> {
+                        if (BuildConfig.DEBUG) {
+                            val exitNode = debugExitNode.orEmpty().trim()
+                            if (exitNode.isNotEmpty()) {
+                                dispatch(
+                                    NativeActions.updateSettings(
+                                        "exitNode" to exitNode,
+                                        "wireguardExitEnabled" to false,
+                                        "exitNodeLeakProtection" to true,
+                                    ),
+                                )
+                            }
+                        }
+                        debugAction = null
+                        debugExitNode = null
+                    }
+                    DEBUG_ACTION_CLEAR_EXIT -> {
+                        if (BuildConfig.DEBUG) {
+                            dispatch(
+                                NativeActions.updateSettings(
+                                    "exitNode" to "",
+                                    "wireguardExitEnabled" to false,
+                                    "exitNodeLeakProtection" to false,
+                                ),
+                            )
+                        }
+                        debugAction = null
+                    }
+                    DEBUG_ACTION_SET_WIREGUARD_EXIT -> {
+                        if (BuildConfig.DEBUG) {
+                            val config = debugWireGuardConfig.orEmpty().trim()
+                            if (config.isNotEmpty()) {
+                                dispatch(
+                                    NativeActions.updateSettings(
+                                        "wireguardExitConfig" to config,
+                                        "wireguardExitEnabled" to true,
+                                        "exitNode" to "",
+                                    ),
+                                )
+                            }
+                        }
+                        debugAction = null
+                        debugWireGuardConfig = null
                     }
                     null -> Unit
                     else -> {
@@ -335,6 +391,9 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         deepLink = intent.dataString
         debugAction = intent.getStringExtra(EXTRA_DEBUG_ACTION)
+        debugInvite = intent.getStringExtra(EXTRA_DEBUG_INVITE)
+        debugExitNode = intent.getStringExtra(EXTRA_DEBUG_EXIT_NODE)
+        debugWireGuardConfig = debugWireGuardConfigFromIntent(intent)
     }
 
     private fun startVpnService(intent: Intent) {
@@ -343,6 +402,22 @@ class MainActivity : ComponentActivity() {
         } else {
             startService(intent)
         }
+    }
+
+    private fun debugWireGuardConfigFromIntent(intent: Intent?): String? {
+        val inline = intent
+            ?.getStringExtra(EXTRA_DEBUG_WIREGUARD_CONFIG)
+            ?.takeIf { it.isNotBlank() }
+        if (inline != null) {
+            return inline
+        }
+        val encoded = intent
+            ?.getStringExtra(EXTRA_DEBUG_WIREGUARD_CONFIG_BASE64)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return runCatching {
+            String(Base64.decode(encoded, Base64.DEFAULT), Charsets.UTF_8)
+        }.getOrNull()
     }
 
     private fun AppState.withAndroidNotice(androidError: String, vpnLockdownActive: Boolean): AppState {
@@ -360,8 +435,15 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_DEBUG_ACTION = "org.nostrvpn.app.DEBUG_ACTION"
+        const val EXTRA_DEBUG_INVITE = "org.nostrvpn.app.DEBUG_INVITE"
+        const val EXTRA_DEBUG_EXIT_NODE = "org.nostrvpn.app.DEBUG_EXIT_NODE"
+        const val EXTRA_DEBUG_WIREGUARD_CONFIG = "org.nostrvpn.app.DEBUG_WIREGUARD_CONFIG"
+        const val EXTRA_DEBUG_WIREGUARD_CONFIG_BASE64 = "org.nostrvpn.app.DEBUG_WIREGUARD_CONFIG_BASE64"
         const val DEBUG_ACTION_CONNECT = "connect"
         const val DEBUG_ACTION_DISCONNECT = "disconnect"
+        const val DEBUG_ACTION_SET_FIPS_EXIT = "set_fips_exit"
+        const val DEBUG_ACTION_CLEAR_EXIT = "clear_exit"
+        const val DEBUG_ACTION_SET_WIREGUARD_EXIT = "set_wireguard_exit"
         private const val ANDROID_LOCAL_NETWORK_OPT_IN_API = 36
         private const val ANDROID_ACCESS_LOCAL_NETWORK_API = 37
         private const val ACCESS_LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"

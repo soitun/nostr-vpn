@@ -236,7 +236,7 @@ class NostrVpnService : VpnService() {
         val builder = Builder()
             .setSession("Nostr VPN")
             .setConfigureIntent(configureIntent())
-            .setMtu(config.optInt("mtu", 1280))
+            .setMtu(config.optInt("mtu", 1150))
             .setBlocking(true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
@@ -311,9 +311,19 @@ class NostrVpnService : VpnService() {
 
     private fun addDnsServers(builder: Builder, config: JSONObject) {
         val servers = config.optJSONArray("dnsServers") ?: return
+        val magicDnsServer = config.optString("magicDnsServer").trim()
+        val selected = mutableListOf<String>()
         for (index in 0 until servers.length()) {
             val server = servers.optString(index).trim()
             if (server.isEmpty()) continue
+            selected.add(server)
+        }
+        val effectiveServers = if (magicDnsServer.isNotEmpty() && selected.any { it == magicDnsServer }) {
+            listOf(magicDnsServer)
+        } else {
+            selected
+        }
+        for (server in effectiveServers) {
             runCatching {
                 builder.addDnsServer(server)
             }.onFailure { error ->

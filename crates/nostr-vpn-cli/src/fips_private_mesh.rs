@@ -273,6 +273,10 @@ fn tunnel_mtu_for_underlay(underlay_udp_mtu: u16) -> u16 {
         .max(MESH_MIN_TUNNEL_MTU)
 }
 
+fn exit_node_ipv4_mss_clamp(tunnel_mtu: u16) -> u16 {
+    tunnel_mtu.saturating_sub(40).max(536)
+}
+
 #[derive(Debug, Clone)]
 struct PeerCapabilitiesEntry {
     capabilities: PeerCapabilities,
@@ -2440,6 +2444,7 @@ impl FipsPrivateTunnelRuntime {
             &config.local_advertised_routes,
             &config.wireguard_exit,
             config.exit_node_leak_protection,
+            config.mesh_mtu.tunnel,
         );
         Ok(())
     }
@@ -2558,7 +2563,9 @@ impl FipsPrivateTunnelRuntime {
         routes: &[String],
         wireguard_exit: &WireGuardExitConfig,
         exit_node_leak_protection: bool,
+        tunnel_mtu: u16,
     ) {
+        let ipv4_mss_clamp = exit_node_ipv4_mss_clamp(tunnel_mtu);
         let mut route_families = crate::linux_exit_node_default_route_families(routes);
         if route_families.ipv6 {
             eprintln!(
@@ -2648,7 +2655,8 @@ impl FipsPrivateTunnelRuntime {
 
         let already_configured = self.exit_node_runtime.ipv4_outbound_iface == ipv4_outbound_iface
             && self.exit_node_runtime.ipv6_outbound_iface == ipv6_outbound_iface
-            && self.exit_node_runtime.ipv4_tunnel_source_cidr == ipv4_tunnel_source_cidr;
+            && self.exit_node_runtime.ipv4_tunnel_source_cidr == ipv4_tunnel_source_cidr
+            && self.exit_node_runtime.ipv4_mss_clamp == Some(ipv4_mss_clamp);
         if already_configured {
             return;
         }
@@ -2658,6 +2666,7 @@ impl FipsPrivateTunnelRuntime {
         self.exit_node_runtime.ipv4_outbound_iface = ipv4_outbound_iface.clone();
         self.exit_node_runtime.ipv6_outbound_iface = ipv6_outbound_iface.clone();
         self.exit_node_runtime.ipv4_tunnel_source_cidr = ipv4_tunnel_source_cidr.clone();
+        self.exit_node_runtime.ipv4_mss_clamp = Some(ipv4_mss_clamp);
 
         if route_families.ipv4 {
             match crate::read_linux_ip_forward(crate::LinuxExitNodeIpFamily::V4) {
@@ -2698,6 +2707,12 @@ impl FipsPrivateTunnelRuntime {
             );
             let masquerade =
                 crate::linux_exit_node_ipv4_masquerade_rule(outbound_iface, tunnel_source_cidr);
+            let mss_clamp = crate::linux_exit_node_ipv4_mss_clamp_rule(
+                &self.iface,
+                outbound_iface,
+                tunnel_source_cidr,
+                ipv4_mss_clamp,
+            );
 
             if let Err(error) = crate::linux_iptables_ensure_rule_at_front(
                 crate::LinuxExitNodeIpFamily::V4,
@@ -2716,6 +2731,13 @@ impl FipsPrivateTunnelRuntime {
                     crate::LinuxExitNodeIpFamily::V4,
                     Some("nat"),
                     &masquerade,
+                )
+            })
+            .and_then(|()| {
+                crate::linux_iptables_ensure_rule_at_front(
+                    crate::LinuxExitNodeIpFamily::V4,
+                    Some("mangle"),
+                    &mss_clamp,
                 )
             }) {
                 eprintln!("fips: failed to install IPv4 exit firewall rules: {error}");
@@ -2816,6 +2838,21 @@ impl FipsPrivateTunnelRuntime {
             self.exit_node_runtime.ipv4_outbound_iface.as_deref(),
             self.exit_node_runtime.ipv4_tunnel_source_cidr.as_deref(),
         ) {
+            if let Some(mss) = self.exit_node_runtime.ipv4_mss_clamp {
+                let mss_clamp = crate::linux_exit_node_ipv4_mss_clamp_rule(
+                    &self.iface,
+                    outbound_iface,
+                    tunnel_source_cidr,
+                    mss,
+                );
+                if let Err(error) = crate::linux_iptables_delete_rule(
+                    crate::LinuxExitNodeIpFamily::V4,
+                    Some("mangle"),
+                    &mss_clamp,
+                ) {
+                    eprintln!("fips: failed to remove MSS clamp rule: {error}");
+                }
+            }
             let forward_in = crate::linux_exit_node_forward_in_rule(
                 &self.iface,
                 outbound_iface,
@@ -2871,6 +2908,7 @@ impl FipsPrivateTunnelRuntime {
         self.exit_node_runtime.ipv4_outbound_iface = None;
         self.exit_node_runtime.ipv6_outbound_iface = None;
         self.exit_node_runtime.ipv4_tunnel_source_cidr = None;
+        self.exit_node_runtime.ipv4_mss_clamp = None;
         self.exit_node_runtime.ipv4_forward_was_enabled = None;
         self.exit_node_runtime.ipv6_forward_was_enabled = None;
     }
@@ -2994,7 +3032,10 @@ fn spawn_tun_read_task(
                         break;
                     }
                     Ok(packet) => {
-                        let bytes = packet.to_vec();
+                        let mut bytes = packet.to_vec();
+                        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(
+                            &mut bytes,
+                        );
                         match packet_tx.try_send(TunPipelinePacket::new(bytes)) {
                             Ok(()) => {}
                             Err(mpsc::error::TrySendError::Full(packet)) => {
@@ -3092,7 +3133,9 @@ async fn forward_mesh_event_to_tun(
             // upstream: the control-loop consumer discards packet events. The
             // raw fd write below still waits on utun writability instead of
             // silently dropping `EWOULDBLOCK` like boringtun's helper does.
-            write_packet_to_tun(tun_fd, &packet.bytes).await;
+            let mut bytes = packet.bytes;
+            nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut bytes);
+            write_packet_to_tun(tun_fd, &bytes).await;
             true
         }
         event => event_tx.send(event).await.is_ok(),

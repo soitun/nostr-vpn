@@ -23,7 +23,7 @@ PROFILE="${NVPN_IOS_RUST_PROFILE:-debug}"
 MIN_VERSION="${NVPN_IOS_MIN_VERSION:-17.0}"
 PROJECT="$IOS_DIR/NostrVpnIos.xcodeproj"
 SCHEME="NostrVpnIos"
-DESTINATION="${NVPN_IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 17 Pro}"
+SIMULATOR_NAME="${NVPN_IOS_SIMULATOR_NAME:-iPhone 17 Pro}"
 
 target_root() {
   local dir="${CARGO_TARGET_DIR:-$ROOT/target}"
@@ -104,16 +104,33 @@ build_app() {
     -scheme "$SCHEME" \
     -configuration Debug \
     -derivedDataPath "$BUILD_DIR/DerivedData" \
-    -destination "$DESTINATION" \
+    -destination "$(ios_destination)" \
     CODE_SIGNING_ALLOWED=NO \
     build
 }
 
 sim_device_id() {
-  local name="${NVPN_IOS_SIMULATOR_NAME:-iPhone 17 Pro}"
   xcrun simctl list devices available \
-    | sed -n "s/.*$name (\([0-9A-F-]\{36\}\)).*/\1/p" \
+    | sed -n "s/.*$SIMULATOR_NAME (\([0-9A-F-]\{36\}\)).*/\1/p" \
     | head -n 1
+}
+
+ios_destination() {
+  if [[ -n "${NVPN_IOS_DESTINATION:-}" ]]; then
+    printf '%s\n' "$NVPN_IOS_DESTINATION"
+    return
+  fi
+  if [[ -n "${NVPN_IOS_SIMULATOR_ID:-}" ]]; then
+    printf 'platform=iOS Simulator,id=%s\n' "$NVPN_IOS_SIMULATOR_ID"
+    return
+  fi
+  local device
+  device="$(sim_device_id)"
+  if [[ -n "$device" ]]; then
+    printf 'platform=iOS Simulator,id=%s\n' "$device"
+  else
+    printf 'platform=iOS Simulator,name=%s\n' "$SIMULATOR_NAME"
+  fi
 }
 
 run_app() {

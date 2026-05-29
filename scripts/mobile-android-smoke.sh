@@ -2,6 +2,9 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/mobile_env.sh"
+load_mobile_env "$ROOT"
 PACKAGE_NAME="${NVPN_ANDROID_PACKAGE:-org.nostrvpn.app}"
 MAIN_ACTIVITY="${NVPN_ANDROID_ACTIVITY:-org.nostrvpn.app/.MainActivity}"
 DEBUG_ACTION_EXTRA="${NVPN_ANDROID_DEBUG_ACTION_EXTRA:-org.nostrvpn.app.DEBUG_ACTION}"
@@ -17,8 +20,11 @@ usage() {
 usage: scripts/mobile-android-smoke.sh [--no-build] [--clear] [--vpn-cycle] [--serial SERIAL]
 
 Builds and installs the debug APK, launches the app through adb, and optionally
-cycles the debug VPN action. Pass device identifiers through env or CLI only;
-do not commit them.
+cycles the debug VPN action. Values may live in .env.mobile.local, shell env,
+or --serial. Keep device identifiers and signing details out of committed files.
+
+First-run Android VPN permission prompts may need manual approval before
+--vpn-cycle can run unattended.
 EOF
 }
 

@@ -14,7 +14,12 @@ Modes:
   device     Run opt-in physical-device smokes using env-provided identifiers.
 
 Device identifiers are intentionally not stored in the repo. Use environment
-variables such as NVPN_ANDROID_SERIAL and NVPN_IOS_DEVICE when needed.
+variables such as NVPN_ANDROID_SERIAL and NVPN_IOS_DEVICE when needed, or copy
+.env.mobile.example to .env.mobile.local for local ignored values.
+
+Simulator mode verifies app build/install/launch. Real VPN dataplane checks
+need physical devices; first-run OS VPN permission prompts may require a manual
+approval before the debug connect/disconnect cycle can run unattended.
 EOF
 }
 

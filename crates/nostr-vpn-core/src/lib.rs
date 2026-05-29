@@ -13,6 +13,7 @@ pub mod lan_pairing;
 pub mod magic_dns;
 mod network_roster;
 mod network_routes;
+pub mod packet_checksums;
 pub mod paths;
 pub mod platform_paths;
 pub mod process_ext;
@@ -40,3 +41,12 @@ pub const MESH_UNDERLAY_UDP_MTU: u16 = 1280;
 /// every TUN config, every UdpConfig, every Wintun adapter, every linux
 /// `ip link set mtu` should derive from this.
 pub const MESH_TUNNEL_MTU: u16 = 1150;
+
+/// In-tunnel IPv4 address for the local MagicDNS responder.
+///
+/// Mobile platforms install this as a VPN DNS server when MagicDNS is enabled;
+/// app-core owns the responder inside each tunnel instance and forwards
+/// non-.nvpn queries onward. This is not a remote peer address: derived peer
+/// addresses use `10.44.1.1` through `10.44.254.254`, leaving `10.44.0.0/24`
+/// outside the peer-derived range for local mesh services.
+pub const MESH_MAGIC_DNS_SERVER: &str = "10.44.0.53";

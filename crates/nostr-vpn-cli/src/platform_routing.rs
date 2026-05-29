@@ -737,6 +737,37 @@ pub(crate) fn linux_exit_node_ipv4_masquerade_rule(
 }
 
 #[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_exit_node_ipv4_mss_clamp_rule(
+    tunnel_iface: &str,
+    outbound_iface: &str,
+    tunnel_source_cidr: &str,
+    mss: u16,
+) -> Vec<String> {
+    vec![
+        "FORWARD".to_string(),
+        "-i".to_string(),
+        tunnel_iface.to_string(),
+        "-o".to_string(),
+        outbound_iface.to_string(),
+        "-s".to_string(),
+        tunnel_source_cidr.to_string(),
+        "-p".to_string(),
+        "tcp".to_string(),
+        "--tcp-flags".to_string(),
+        "SYN,RST".to_string(),
+        "SYN".to_string(),
+        "-m".to_string(),
+        "comment".to_string(),
+        "--comment".to_string(),
+        "nvpn-exit-mss".to_string(),
+        "-j".to_string(),
+        "TCPMSS".to_string(),
+        "--set-mss".to_string(),
+        mss.to_string(),
+    ]
+}
+
+#[cfg(any(target_os = "linux", test))]
 pub(crate) fn linux_wireguard_exit_inbound_drop_rule(
     wireguard_iface: &str,
     tunnel_iface: &str,
@@ -1224,6 +1255,31 @@ mod tests {
                 "nvpn-exit-forward-out",
                 "-j",
                 "ACCEPT",
+            ]
+        );
+        assert_eq!(
+            linux_exit_node_ipv4_mss_clamp_rule("utun100", "enp41s0", "10.44.0.0/16", 1110),
+            vec![
+                "FORWARD",
+                "-i",
+                "utun100",
+                "-o",
+                "enp41s0",
+                "-s",
+                "10.44.0.0/16",
+                "-p",
+                "tcp",
+                "--tcp-flags",
+                "SYN,RST",
+                "SYN",
+                "-m",
+                "comment",
+                "--comment",
+                "nvpn-exit-mss",
+                "-j",
+                "TCPMSS",
+                "--set-mss",
+                "1110",
             ]
         );
     }

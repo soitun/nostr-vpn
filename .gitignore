@@ -17,6 +17,7 @@ test-results/
 .env
 .env.*
 *.env
+!.env.mobile.example
 !.env.release.example
 .env.release.local
 .env.zapstore.local

@@ -3,6 +3,7 @@ import NetworkExtension
 import Darwin
 
 private let appGroupIdentifier = "group.to.iris.nvpn"
+private let defaultMobileMtu = 1150
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let nextPacketPollTimeoutMs: UInt32 = 100
@@ -59,9 +60,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // points it at the actual WG endpoint host, not TEST-NET. iOS
         // will refuse to flip the status badge to "connected"+icon if
         // it deems the remote address bogus.
-        let remoteAddress = parsedConfig.firstWireGuardEndpointHost ?? "10.0.0.1"
+        let remoteAddress = parsedConfig.firstWireGuardEndpointHost
+            ?? parsedConfig.firstFipsEndpointHost
+            ?? "1.1.1.1"
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: remoteAddress)
         settings.mtu = NSNumber(value: parsedConfig.mtu)
+        packetDebugLog("remoteAddress=\(remoteAddress) mtu=\(parsedConfig.mtu)")
 
         if let parsed = parseIPv4CIDR(parsedConfig.localAddress) {
             let ipv4 = NEIPv4Settings(addresses: [parsed.address], subnetMasks: [parsed.mask])
@@ -94,11 +98,23 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         // utun and toward Mullvad's WG endpoint, which doesn't run a
         // resolver. The Rust side falls back to public resolvers when
         // the user's config didn't include DNS.
-        if !parsedConfig.dnsServers.isEmpty {
-            let dns = NEDNSSettings(servers: parsedConfig.dnsServers)
-            dns.matchDomains = [""] // catch-all so VPN DNS handles every query
+        let dnsConfig = iosDnsConfig(
+            from: parsedConfig.dnsServers,
+            magicDnsServer: parsedConfig.magicDnsServer
+        )
+        if !dnsConfig.servers.isEmpty {
+            let dns = NEDNSSettings(servers: dnsConfig.servers)
+            dns.matchDomains = dnsConfig.matchDomains
+            if dnsConfig.allowFailover {
+                if #available(iOS 26.0, *) {
+                    dns.allowFailover = true
+                }
+            }
             settings.dnsSettings = dns
-            NSLog("nvpn-pkt: dns servers=\(parsedConfig.dnsServers)")
+            NSLog(
+                "nvpn-pkt: dns servers=\(dnsConfig.servers) "
+                    + "match=\(dnsConfig.matchDomains) failover=\(dnsConfig.allowFailover)"
+            )
         }
 
         NSLog("nvpn-pkt: calling setTunnelNetworkSettings")
@@ -148,6 +164,26 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         default:
             completionHandler?(nil)
         }
+    }
+
+    private func iosDnsConfig(
+        from servers: [String],
+        magicDnsServer: String
+    ) -> (servers: [String], matchDomains: [String], allowFailover: Bool) {
+        let normalized = servers
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let magicDnsServer = magicDnsServer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !magicDnsServer.isEmpty else {
+            return (normalized, [""], false)
+        }
+        guard normalized.contains(magicDnsServer) else {
+            return (normalized, [""], false)
+        }
+        if #available(iOS 26.0, *) {
+            return ([magicDnsServer], [""], true)
+        }
+        return (normalized, [""], false)
     }
 
     private func startPacketLoops() {
@@ -274,7 +310,9 @@ private struct MobileTunnelConfig {
     let routeTargets: [String]
     let excludedRoutes: [String]
     let dnsServers: [String]
+    let magicDnsServer: String
     let firstWireGuardEndpointHost: String?
+    let firstFipsEndpointHost: String?
     let mtu: Int
     let errorText: Error?
 
@@ -286,8 +324,10 @@ private struct MobileTunnelConfig {
             routeTargets = []
             excludedRoutes = []
             dnsServers = []
+            magicDnsServer = ""
             firstWireGuardEndpointHost = nil
-            mtu = 1280
+            firstFipsEndpointHost = nil
+            mtu = defaultMobileMtu
             errorText = PacketTunnelError.invalidConfig("Invalid tunnel configuration")
             return
         }
@@ -296,6 +336,7 @@ private struct MobileTunnelConfig {
         routeTargets = object["routeTargets"] as? [String] ?? []
         excludedRoutes = object["excludedRoutes"] as? [String] ?? []
         dnsServers = object["dnsServers"] as? [String] ?? []
+        magicDnsServer = object["magicDnsServer"] as? String ?? ""
         if let wg = object["wireguardExit"] as? [String: Any],
            let endpoint = wg["endpoint"] as? String
         {
@@ -304,8 +345,45 @@ private struct MobileTunnelConfig {
         } else {
             firstWireGuardEndpointHost = nil
         }
-        mtu = object["mtu"] as? Int ?? 1280
+        firstFipsEndpointHost = Self.firstEndpointHost(in: object["peerHints"])
+            ?? Self.firstEndpointHost(in: object["bootstrapPeers"])
+        mtu = object["mtu"] as? Int ?? defaultMobileMtu
         errorText = error.isEmpty ? nil : PacketTunnelError.invalidConfig(error)
+    }
+
+    private static func firstEndpointHost(in value: Any?) -> String? {
+        guard let peers = value as? [String: Any] else {
+            return nil
+        }
+        for key in peers.keys.sorted() {
+            guard let hints = peers[key] as? [[String: Any]] else {
+                continue
+            }
+            for hint in hints {
+                if let addr = hint["addr"] as? String,
+                   let host = endpointHost(from: addr) {
+                    return host
+                }
+            }
+        }
+        return nil
+    }
+
+    private static func endpointHost(from value: String) -> String? {
+        var endpoint = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if endpoint.hasPrefix("tcp:") || endpoint.hasPrefix("udp:") {
+            endpoint = String(endpoint.dropFirst(4))
+        }
+        if endpoint.hasPrefix("["),
+           let close = endpoint.firstIndex(of: "]") {
+            let host = endpoint[endpoint.index(after: endpoint.startIndex)..<close]
+            return host.isEmpty ? nil : String(host)
+        }
+        guard let colon = endpoint.lastIndex(of: ":") else {
+            return nil
+        }
+        let host = endpoint[..<colon]
+        return host.isEmpty ? nil : String(host)
     }
 }
 

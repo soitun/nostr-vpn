@@ -2461,6 +2461,7 @@ struct LinuxExitNodeRuntime {
     ipv4_outbound_iface: Option<String>,
     ipv6_outbound_iface: Option<String>,
     ipv4_tunnel_source_cidr: Option<String>,
+    ipv4_mss_clamp: Option<u16>,
     ipv4_forward_was_enabled: Option<bool>,
     ipv6_forward_was_enabled: Option<bool>,
     wireguard_exit: Option<LinuxWireGuardExitRuntime>,

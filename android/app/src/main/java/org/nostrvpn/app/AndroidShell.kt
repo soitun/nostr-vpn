@@ -22,9 +22,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledIconButton
@@ -82,17 +84,39 @@ private enum class Page(val title: String) {
 
 @Composable
 internal fun NostrVpnTheme(content: @Composable () -> Unit) {
+    val darkTheme = isSystemInDarkTheme()
     MaterialTheme(
-        colorScheme = lightColorScheme(
-            primary = Color(0xFF8B5CF6),
-            secondary = Color(0xFF22D3EE),
-            background = Color(0xFFF6F7F8),
-            surface = Color.White,
-            onPrimary = Color.White,
-            onSecondary = Color(0xFF111827),
-            onBackground = Color(0xFF17202A),
-            onSurface = Color(0xFF17202A),
-        ),
+        colorScheme = if (darkTheme) {
+            darkColorScheme(
+                primary = Color(0xFFA78BFA),
+                secondary = Color(0xFF67E8F9),
+                background = Color(0xFF101419),
+                surface = Color(0xFF171D24),
+                onPrimary = Color(0xFF1E1235),
+                onSecondary = Color(0xFF06161A),
+                onBackground = Color(0xFFE7ECF2),
+                onSurface = Color(0xFFE7ECF2),
+                surfaceVariant = Color(0xFF202833),
+                onSurfaceVariant = Color(0xFFAAB4C0),
+                error = Color(0xFFFCA5A5),
+                outline = Color(0xFF5F6B7A),
+            )
+        } else {
+            lightColorScheme(
+                primary = Color(0xFF8B5CF6),
+                secondary = Color(0xFF22D3EE),
+                background = Color(0xFFF6F7F8),
+                surface = Color.White,
+                onPrimary = Color.White,
+                onSecondary = Color(0xFF111827),
+                onBackground = Color(0xFF17202A),
+                onSurface = Color(0xFF17202A),
+                surfaceVariant = Color(0xFFF1F5F9),
+                onSurfaceVariant = Color(0xFF68717C),
+                error = Color(0xFFB00020),
+                outline = Color(0xFF9CA3AF),
+            )
+        },
         content = content,
     )
 }
@@ -123,7 +147,7 @@ internal fun NostrVpnApp(
         }
     }
     Scaffold(
-        containerColor = Color(0xFFF6F7F8),
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             MobileTopBar(
                 state = state,
@@ -139,7 +163,7 @@ internal fun NostrVpnApp(
             // network the only meaningful action is Add Network, which we
             // surface as the entire screen body.
             if (network != null) {
-                NavigationBar(containerColor = Color.White) {
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                     Page.entries.forEach { item ->
                         NavigationBarItem(
                             selected = page == item,
@@ -244,7 +268,7 @@ private fun MobileTopBar(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.White)
+            .background(MaterialTheme.colorScheme.surface)
             .statusBarsPadding()
             .padding(horizontal = 18.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -347,7 +371,8 @@ private fun PlusIcon() {
 
 @Composable
 private fun NavIcon(page: Page, selected: Boolean, attention: Boolean = false) {
-    val color = if (selected) Accent else Color(0xFF17202A)
+    val color = if (selected) Accent else MaterialTheme.colorScheme.onSurface
+    val badgeRing = MaterialTheme.colorScheme.surface
     Canvas(modifier = Modifier.size(28.dp)) {
         val strokeWidth = 2.6.dp.toPx()
         val stroke = Stroke(width = strokeWidth, cap = StrokeCap.Round)
@@ -390,7 +415,7 @@ private fun NavIcon(page: Page, selected: Boolean, attention: Boolean = false) {
         }
         if (attention) {
             val center = Offset(size.width - 4.dp.toPx(), 4.dp.toPx())
-            drawCircle(Color.White, 5.dp.toPx(), center)
+            drawCircle(badgeRing, 5.dp.toPx(), center)
             drawCircle(Color(0xFFDC2626), 4.dp.toPx(), center)
         }
     }

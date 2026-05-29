@@ -47,7 +47,7 @@ use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio::task::JoinHandle;
 
-const DEFAULT_MOBILE_MTU: u16 = 1280;
+const DEFAULT_MOBILE_MTU: u16 = nostr_vpn_core::MESH_TUNNEL_MTU;
 const TUNNEL_CHANNEL_CAPACITY: usize = 1024;
 #[cfg(test)]
 const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
@@ -82,7 +82,6 @@ const MOBILE_HANDSHAKE_RESEND_INTERVAL_MS: u64 = 300;
 const MOBILE_HANDSHAKE_RESEND_BACKOFF: f64 = 1.5;
 const MOBILE_EXIT_NODE_DEFAULT_ROUTES: &[&str] = &["0.0.0.0/0"];
 const MOBILE_EXIT_NODE_DNS_SERVERS: &[&str] = &["1.1.1.1", "9.9.9.9"];
-const MOBILE_MAGIC_DNS_SERVER: &str = "10.44.0.53";
 const MOBILE_MAGIC_DNS_FORWARDERS: &[&str] = &["1.1.1.1:53", "9.9.9.9:53"];
 const MOBILE_MAGIC_DNS_FORWARD_TIMEOUT: Duration = Duration::from_millis(1500);
 
@@ -153,6 +152,9 @@ pub(crate) struct MobileTunnelConfig {
     /// the native tunnel; other mobile hosts use public fallback DNS.
     #[serde(default)]
     dns_forwarders: Vec<String>,
+    /// In-tunnel MagicDNS responder address. Empty when MagicDNS is disabled.
+    #[serde(default)]
+    pub(crate) magic_dns_server: String,
     /// The WG upstream config to drive boringtun against. None when
     /// the user hasn't enabled WG upstream — in which case the mobile
     /// tunnel runs in pure FIPS-mesh mode.
@@ -308,9 +310,14 @@ impl MobileTunnelConfig {
             } else {
                 (None, Vec::new(), Vec::new())
             };
-        if dns_servers.is_empty() && !app.magic_dns_suffix.trim().is_empty() {
-            dns_servers.push(MOBILE_MAGIC_DNS_SERVER.to_string());
-        }
+        let magic_dns_server = if app.magic_dns_suffix.trim().is_empty() {
+            String::new()
+        } else {
+            dns_servers.retain(|server| server.trim() != nostr_vpn_core::MESH_MAGIC_DNS_SERVER);
+            dns_servers.insert(0, nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string());
+            nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string()
+        };
+        dns_servers.dedup();
         let (pending_join_request_recipient, pending_join_invite_secret, pending_join_requested_at) =
             app.active_network_opt()
                 .and_then(|network| {
@@ -349,6 +356,7 @@ impl MobileTunnelConfig {
             excluded_routes,
             dns_servers,
             dns_forwarders: Vec::new(),
+            magic_dns_server,
             wireguard_exit,
             join_requests_enabled: app.join_requests_enabled(),
             pending_join_request_recipient,
@@ -574,6 +582,7 @@ impl MobileTunnel {
                 Ok(runtime) => {
                     wg_socket_fd = runtime.udp_socket_fd();
                     let upstream = runtime.upstream();
+                    let handshake = runtime.handshake_observer();
                     wg_runtime = Some(runtime);
                     wg_send_tx = Some(send_tx);
                     // Forward decrypted WG packets back to the OS as
@@ -601,6 +610,9 @@ impl MobileTunnel {
                                 );
                                 if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
                                     rewrite_ipv4_destination(&mut packet, wg, mesh);
+                                    nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(
+                                        &mut packet,
+                                    );
                                 }
                                 let dst_after = format!(
                                     "{}.{}.{}.{}",
@@ -612,6 +624,9 @@ impl MobileTunnel {
                                 ));
                             } else if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
                                 rewrite_ipv4_destination(&mut packet, wg, mesh);
+                                nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(
+                                    &mut packet,
+                                );
                             }
                             if inbound_tx_for_wg.send(packet).is_err() {
                                 break;
@@ -619,12 +634,13 @@ impl MobileTunnel {
                         }
                     }));
                     // Watchdog: log if the handshake doesn't complete
-                    // promptly. We don't tear down the tun on mobile
-                    // (the OS owns it) but the host can surface the
-                    // status to the UI.
-                    if let Some(runtime_ref) = wg_runtime.as_ref() {
-                        let timeout = DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT;
-                        if runtime_ref.wait_for_handshake(timeout).await {
+                    // promptly, but do not block mobile tunnel startup.
+                    // Android must receive the native handle first so it can
+                    // call VpnService.protect(fd) on the WG UDP socket before
+                    // the default VPN route traps retry traffic.
+                    let timeout = DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT;
+                    tasks.push(tokio::spawn(async move {
+                        if handshake.wait_for_handshake(timeout).await {
                             tracing::info!(
                                 ?upstream,
                                 "wg-upstream: mobile tunnel handshake completed"
@@ -636,7 +652,7 @@ impl MobileTunnel {
                                  traffic will queue until upstream becomes reachable"
                             );
                         }
-                    }
+                    }));
                 }
                 Err(error) => {
                     // Don't fail the whole tunnel — FIPS mesh still
@@ -661,6 +677,9 @@ impl MobileTunnel {
             tokio::spawn(async move {
                 let mut outbound_count: u32 = 0;
                 while let Some(packet) = outbound_rx.recv().await {
+                    // Local MagicDNS responder. The well-known DNS address is
+                    // owned by this tunnel instance, so answer before mesh/WG
+                    // routing and never treat it as a remote nvpn node.
                     if let Some(response) = mobile_magic_dns_response_packet(
                         &packet,
                         &app_config_for_dns,
@@ -708,6 +727,9 @@ impl MobileTunnel {
                             };
                         if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
                             rewrite_ipv4_source(&mut packet, mesh, wg);
+                            nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(
+                                &mut packet,
+                            );
                         }
                         if let Some((proto, src_before, dst)) = pre_log {
                             let src_after = format!(
@@ -889,7 +911,11 @@ impl MobileTunnel {
                     });
                     if let Some(packet) = packet {
                         note_mobile_peer_rx(&presence, &packet.source_pubkey, message.data.len());
-                        if inbound_tx.send(packet.bytes).is_err() {
+                        let mut bytes = packet.bytes;
+                        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(
+                            &mut bytes,
+                        );
+                        if inbound_tx.send(bytes).is_err() {
                             break;
                         }
                     }
@@ -2497,7 +2523,7 @@ fn parse_mobile_magic_dns_query(packet: &[u8]) -> Option<MobileDnsQuery<'_>> {
     }
     let source = Ipv4Addr::new(packet[12], packet[13], packet[14], packet[15]);
     let destination = Ipv4Addr::new(packet[16], packet[17], packet[18], packet[19]);
-    if destination != parse_ipv4(MOBILE_MAGIC_DNS_SERVER)? {
+    if destination != parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER)? {
         return None;
     }
     let udp = header_len;
@@ -2648,13 +2674,9 @@ fn unix_timestamp() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
-/// Append-once-per-line packet diagnostic to the same `tmp/nvpn-wg.log`
-/// the WG pump uses, so we can correlate SNAT/DNAT events with WG
-/// activity in the same timeline. iOS extension stderr/stdout is
-/// /dev/null and our tracing-without-subscriber is a no-op, so a
-/// file append is the simplest reliable channel.
+/// Append-once-per-line packet diagnostic for local debug builds.
 fn log_pump_packet(message: &str) {
-    #[cfg(any(target_os = "ios", target_os = "android"))]
+    #[cfg(all(debug_assertions, any(target_os = "ios", target_os = "android")))]
     {
         use std::fs::OpenOptions;
         use std::io::Write;
@@ -2668,7 +2690,7 @@ fn log_pump_packet(message: &str) {
             let _ = writeln!(file, "{secs:.3} mobile-pump: {message}");
         }
     }
-    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    #[cfg(not(all(debug_assertions, any(target_os = "ios", target_os = "android"))))]
     let _ = message;
 }
 
@@ -2696,6 +2718,7 @@ fn empty_config() -> MobileTunnelConfig {
         excluded_routes: Vec::new(),
         dns_servers: Vec::new(),
         dns_forwarders: Vec::new(),
+        magic_dns_server: String::new(),
         wireguard_exit: None,
         join_requests_enabled: false,
         pending_join_request_recipient: String::new(),
@@ -2760,6 +2783,10 @@ mod tests {
             payload,
         };
         build_mobile_dns_response_packet(&query, payload).expect("test packet length fits")
+    }
+
+    fn test_ipv4_packet(source: Ipv4Addr, destination: Ipv4Addr) -> Vec<u8> {
+        ipv4_udp_packet(source, destination, 53123, 443, b"mobile-vpn-basic")
     }
 
     #[test]
@@ -2861,7 +2888,14 @@ mod tests {
                 .iter()
                 .any(|route| route == "0.0.0.0/0")
         );
-        assert_eq!(config.dns_servers, vec![MOBILE_MAGIC_DNS_SERVER]);
+        assert_eq!(
+            config.dns_servers,
+            vec![nostr_vpn_core::MESH_MAGIC_DNS_SERVER]
+        );
+        assert_eq!(
+            config.magic_dns_server,
+            nostr_vpn_core::MESH_MAGIC_DNS_SERVER
+        );
     }
 
     #[test]
@@ -2908,7 +2942,82 @@ mod tests {
                 .iter()
                 .any(|route| route == "0.0.0.0/0")
         );
-        assert_eq!(config.dns_servers, vec!["1.1.1.1", "9.9.9.9"]);
+        assert_eq!(config.mtu, nostr_vpn_core::MESH_TUNNEL_MTU);
+        assert_eq!(
+            config.dns_servers,
+            vec![nostr_vpn_core::MESH_MAGIC_DNS_SERVER, "1.1.1.1", "9.9.9.9"]
+        );
+        assert_eq!(
+            config.magic_dns_server,
+            nostr_vpn_core::MESH_MAGIC_DNS_SERVER
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mobile_fips_exit_node_routes_default_traffic_to_selected_member() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let client_keys = Keys::generate();
+        let exit_keys = Keys::generate();
+        let client_nsec = client_keys.secret_key().to_bech32().expect("client nsec");
+        let exit_nsec = exit_keys.secret_key().to_bech32().expect("exit nsec");
+        let client_pubkey = client_keys.public_key().to_hex();
+        let exit_pubkey = exit_keys.public_key().to_hex();
+        let network_id = format!("mobile-fips-exit-{nonce}");
+        let scope = format!("nostr-vpn:{network_id}");
+        let exit_port = available_udp_port();
+
+        let exit_mobile = fips_exit_mobile_config(exit_nsec, &exit_pubkey, &network_id, exit_port);
+        let exit_endpoint = bind_local_mobile_endpoint(&scope, &exit_mobile).await;
+        let client_app =
+            fips_exit_client_app(&client_nsec, &client_pubkey, &exit_pubkey, &network_id);
+
+        let mut client_mobile =
+            MobileTunnelConfig::from_app(&client_app).expect("client mobile config");
+        client_mobile.listen_port = available_udp_port();
+        // fips-core rejects loopback-only static peers unless Nostr discovery is
+        // available as fallback. The packet assertion below still exercises the
+        // deterministic static hint path.
+        client_mobile.nostr_discovery_enabled = true;
+        client_mobile.peer_hints.insert(
+            exit_pubkey.clone(),
+            vec![FipsPeerAddressHint {
+                addr: format!("127.0.0.1:{exit_port}"),
+                seen_at_ms: None,
+            }],
+        );
+
+        let client_tunnel_ip = assert_mobile_fips_exit_config(&client_mobile, &exit_pubkey);
+        let packet = test_ipv4_packet(client_tunnel_ip, Ipv4Addr::new(203, 0, 113, 45));
+        let started = Box::pin(MobileTunnel::start_async(client_mobile, client_app))
+            .await
+            .expect("start client mobile tunnel");
+        let message = send_mobile_packet_until_received(&started, &exit_endpoint, &packet).await;
+
+        let exit_runtime = FipsMeshRuntime::with_local_routes(
+            vec![
+                FipsMeshPeerConfig::from_participant_pubkey(
+                    &client_pubkey,
+                    vec![format!("{client_tunnel_ip}/32")],
+                )
+                .expect("client peer config"),
+            ],
+            vec!["0.0.0.0/0".to_string()],
+        );
+        assert!(
+            exit_runtime
+                .receive_endpoint_data(message.source_npub.as_deref(), &message.data)
+                .is_some(),
+            "a FIPS exit node with a local default route should admit the forwarded packet"
+        );
+
+        shutdown_started_mobile_tunnel(started).await;
+        exit_endpoint
+            .shutdown()
+            .await
+            .expect("shutdown exit endpoint");
     }
 
     #[test]
@@ -2936,7 +3045,8 @@ mod tests {
             .expect("peer alias");
         let app = Arc::new(RwLock::new(app));
         let source = Ipv4Addr::new(10, 44, 206, 222);
-        let dns_server = parse_ipv4(MOBILE_MAGIC_DNS_SERVER).expect("magic dns server");
+        let dns_server =
+            parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).expect("magic dns server");
         let query = ipv4_udp_packet(
             source,
             dns_server,
@@ -3286,6 +3396,27 @@ mod tests {
             .port()
     }
 
+    async fn shutdown_started_mobile_tunnel(started: MobileTunnelStarted) {
+        let MobileTunnelStarted {
+            endpoint,
+            tasks,
+            wg_upstream,
+            ..
+        } = started;
+        for task in &tasks {
+            task.abort();
+        }
+        for task in tasks {
+            let _ = task.await;
+        }
+        if let Some(wg) = wg_upstream {
+            wg.shutdown().await;
+        }
+        if let Ok(endpoint) = Arc::try_unwrap(endpoint) {
+            let _ = endpoint.shutdown().await;
+        }
+    }
+
     fn local_mobile_fips_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig {
         let mut config = fips_endpoint_config(scope, mobile);
         config.node.discovery.nostr.enabled = false;
@@ -3391,6 +3522,94 @@ mod tests {
         }
     }
 
+    fn fips_exit_mobile_config(
+        exit_nsec: String,
+        exit_pubkey: &str,
+        network_id: &str,
+        listen_port: u16,
+    ) -> MobileTunnelConfig {
+        MobileTunnelConfig {
+            identity_nsec: exit_nsec,
+            node_name: "fips-exit".to_string(),
+            network_id: network_id.to_string(),
+            local_address: derive_mesh_tunnel_ip(network_id, exit_pubkey).expect("exit tunnel ip"),
+            listen_port,
+            nostr_discovery_enabled: false,
+            ..empty_config()
+        }
+    }
+
+    fn fips_exit_client_app(
+        client_nsec: &str,
+        client_pubkey: &str,
+        exit_pubkey: &str,
+        network_id: &str,
+    ) -> AppConfig {
+        let mut app = AppConfig::generated();
+        app.nostr.secret_key = client_nsec.to_string();
+        app.networks = vec![NetworkConfig {
+            id: "test".to_string(),
+            name: "Test".to_string(),
+            enabled: true,
+            network_id: network_id.to_string(),
+            invite_secret: "join-secret".to_string(),
+            participants: vec![client_pubkey.to_string(), exit_pubkey.to_string()],
+            admins: vec![client_pubkey.to_string()],
+            listen_for_join_requests: true,
+            invite_inviter: String::new(),
+            outbound_join_request: None,
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        }];
+        app.exit_node = exit_pubkey.to_string();
+        app.ensure_defaults();
+        app
+    }
+
+    fn assert_mobile_fips_exit_config(
+        client_mobile: &MobileTunnelConfig,
+        exit_pubkey: &str,
+    ) -> Ipv4Addr {
+        assert!(
+            client_mobile
+                .route_targets
+                .iter()
+                .any(|route| route == "0.0.0.0/0"),
+            "selected FIPS exit node must install a mobile default route"
+        );
+        assert_eq!(client_mobile.wireguard_exit, None);
+        let exit_peer = client_mobile
+            .peers
+            .iter()
+            .find(|peer| peer.participant_pubkey == exit_pubkey)
+            .expect("selected exit peer");
+        assert!(
+            client_mobile
+                .peer_hints
+                .contains_key(&exit_peer.participant_pubkey),
+            "selected FIPS exit member should have a static local endpoint hint in this test"
+        );
+        assert!(
+            fips_peer_configs_from_mesh(
+                &client_mobile.peers,
+                &client_mobile.peer_hints,
+                &client_mobile.bootstrap_peers,
+            )
+            .iter()
+            .any(|peer| peer.npub == exit_peer.endpoint_npub && !peer.addresses.is_empty()),
+            "selected FIPS exit member should bind with a static address"
+        );
+        assert!(
+            exit_peer
+                .allowed_ips
+                .iter()
+                .any(|route| route == "0.0.0.0/0"),
+            "default traffic should route to the selected FIPS member"
+        );
+        parse_ipv4(&client_mobile.local_address).expect("client tunnel ip")
+    }
+
     async fn send_pending_mobile_join_request(
         requester_endpoint: &FipsEndpoint,
         admin_endpoint: &FipsEndpoint,
@@ -3414,6 +3633,29 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
         panic!("admin should receive mobile join request over FIPS");
+    }
+
+    async fn send_mobile_packet_until_received(
+        started: &MobileTunnelStarted,
+        recipient: &FipsEndpoint,
+        packet: &[u8],
+    ) -> FipsEndpointMessage {
+        for _ in 0..50 {
+            started
+                .outbound_tx
+                .send(packet.to_vec())
+                .await
+                .expect("send packet into mobile tunnel");
+            if let Ok(Some(message)) =
+                tokio::time::timeout(Duration::from_millis(100), recipient.recv()).await
+                && message.source_npub.as_deref() == Some(started.endpoint.npub())
+                && message.data == packet
+            {
+                return message;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("recipient should receive mobile packet over FIPS");
     }
 
     async fn handle_admin_mobile_join_request(
@@ -3735,7 +3977,61 @@ mod tests {
         assert_eq!(wg_config.allowed_ips, vec!["0.0.0.0/0"]);
         assert_eq!(wg_config.persistent_keepalive_secs, 25);
         assert_eq!(config.excluded_routes, vec!["198.51.100.20/32"]);
-        assert_eq!(config.dns_servers, vec!["10.64.0.1"]);
+        assert_eq!(
+            config.dns_servers,
+            vec![nostr_vpn_core::MESH_MAGIC_DNS_SERVER, "10.64.0.1"]
+        );
+        assert_eq!(
+            config.magic_dns_server,
+            nostr_vpn_core::MESH_MAGIC_DNS_SERVER
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn mobile_wireguard_start_returns_before_handshake_watchdog() {
+        let keys = Keys::generate();
+        let nsec = keys.secret_key().to_bech32().expect("test nsec");
+        let mut app = AppConfig::generated();
+        app.nostr.secret_key.clone_from(&nsec);
+        app.ensure_defaults();
+
+        let mobile = MobileTunnelConfig {
+            identity_nsec: nsec,
+            network_id: "mobile-wg-start".to_string(),
+            local_address: "10.44.10.2/32".to_string(),
+            listen_port: 0,
+            nostr_discovery_enabled: false,
+            wireguard_exit: Some(WireGuardExitConfig {
+                enabled: true,
+                address: "10.99.99.2/32".to_string(),
+                private_key: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=".to_string(),
+                peer_public_key: "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=".to_string(),
+                endpoint: format!("127.0.0.1:{}", available_udp_port()),
+                allowed_ips: vec!["0.0.0.0/0".to_string()],
+                persistent_keepalive_secs: 25,
+                ..WireGuardExitConfig::default()
+            }),
+            ..empty_config()
+        };
+
+        let started_at = Instant::now();
+        let started = Box::pin(tokio::time::timeout(
+            Duration::from_secs(2),
+            MobileTunnel::start_async(mobile, app),
+        ))
+        .await
+        .expect("mobile tunnel startup must not wait for WG handshake")
+        .expect("mobile tunnel should start with a non-responding WG endpoint");
+        assert!(
+            started_at.elapsed() < Duration::from_secs(2),
+            "startup should return so Android can protect the WG socket before the watchdog expires"
+        );
+        assert!(
+            started.wg_upstream_socket_fd >= 0,
+            "Android needs the WG UDP fd immediately after startup"
+        );
+
+        shutdown_started_mobile_tunnel(started).await;
     }
 
     #[test]

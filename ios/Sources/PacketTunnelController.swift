@@ -34,7 +34,7 @@ final class PacketTunnelController {
         proto.providerConfiguration = [
             "networkName": network?.displayName ?? "Nostr VPN",
             "tunnelIp": state.tunnelIp.isEmpty ? "10.44.0.1/32" : state.tunnelIp,
-            "mtu": 1280,
+            "mtu": 1150,
             "mobileTunnelConfigJson": tunnelConfigJson,
         ]
         // Tell iOS to actually use the includedRoutes we install
@@ -42,6 +42,9 @@ final class PacketTunnelController {
         // tunnel, which is also the only condition under which the
         // VPN status badge stays hidden).
         proto.enforceRoutes = true
+        if #available(iOS 14.0, *) {
+            proto.includeAllNetworks = Self.hasDefaultRoute(in: providerOptionsConfigJson)
+        }
         // Don't tear the tunnel down when the screen locks — for a
         // utility VPN we want it to keep running.
         proto.disconnectOnSleep = false
@@ -62,12 +65,32 @@ final class PacketTunnelController {
         debugLog("startVPNTunnel returned status=\(manager.connection.status.rawValue)")
     }
 
+    private static func hasDefaultRoute(in configJson: String) -> Bool {
+        guard let data = configJson.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let routes = object["routeTargets"] as? [String]
+        else {
+            return false
+        }
+        return routes.contains("0.0.0.0/0")
+    }
+
     func stop() async throws {
         debugLog("PacketTunnelController.stop begin")
         let manager = try await loadOrCreateManager()
         activeManager = manager
         manager.connection.stopVPNTunnel()
         debugLog("stopVPNTunnel returned status=\(manager.connection.status.rawValue)")
+    }
+
+    func statusRawValue() async -> Int? {
+        do {
+            let manager = try await loadOrCreateManager()
+            return manager.connection.status.rawValue
+        } catch {
+            debugLog("status failed: \(String(describing: error))")
+            return nil
+        }
     }
 
     func runtimeStateJson() async -> String? {

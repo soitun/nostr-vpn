@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import SwiftUI
 import UIKit
 
@@ -46,7 +47,7 @@ final class AppModel: ObservableObject {
         let client = NativeCoreClient(dataDir: supportDir?.path ?? "", appVersion: "")
         core = client
         state = client.state()
-        debugLog("init args=\(ProcessInfo.processInfo.arguments)")
+        debugLog("init args=\(Self.redactedDebugArguments(ProcessInfo.processInfo.arguments))")
     }
 
     deinit {
@@ -308,7 +309,8 @@ final class AppModel: ObservableObject {
 
         let rawArguments = ProcessInfo.processInfo.arguments
         let arguments = Set(rawArguments)
-        debugLog("launch automation args=\(Array(arguments).sorted())")
+        debugLog("launch automation args=\(Self.redactedDebugArguments(rawArguments))")
+        let importedInvite = importDebugInviteIfPresent(arguments: rawArguments)
         if arguments.contains("--nvpn-debug-exit-probe") {
             Task {
                 await runDebugExitProbe(arguments: rawArguments)
@@ -323,7 +325,22 @@ final class AppModel: ObservableObject {
             setVpnEnabled(false, force: true)
             return true
         }
+        return importedInvite
+    }
+
+    private func importDebugInviteIfPresent(arguments: [String]) -> Bool {
+        #if DEBUG
+        guard let invite = Self.argumentValue(after: "--nvpn-debug-import-invite", in: arguments),
+              !invite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return false
+        }
+        importInvite(invite)
+        refresh()
+        return true
+        #else
         return false
+        #endif
     }
 
     private func runDebugExitProbe(arguments: [String]) async {
@@ -336,6 +353,9 @@ final class AppModel: ObservableObject {
             .flatMap(Double.init) ?? 12
         let exitNode = Self.argumentValue(after: "--nvpn-debug-exit-node", in: arguments)
         let clearExit = arguments.contains("--nvpn-debug-clear-exit")
+        let wireGuardConfig = Self.wireGuardConfig(from: arguments, supportDir: supportDir)
+        let resolveHost = Self.argumentValue(after: "--nvpn-debug-resolve-host", in: arguments)
+        let skipFetch = arguments.contains("--nvpn-debug-skip-fetch")
         var result: [String: Any] = [
             "url": urlString,
             "startedAt": ISO8601DateFormatter().string(from: Date()),
@@ -343,15 +363,23 @@ final class AppModel: ObservableObject {
 
         await stopVpnForDebugProbe()
 
-        if let exitNode, !exitNode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if let wireGuardConfig, !wireGuardConfig.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            dispatch(NativeActions.updateSettings([
+                "wireguardExitConfig": wireGuardConfig,
+                "wireguardExitEnabled": true,
+                "exitNode": "",
+            ]))
+        } else if let exitNode, !exitNode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             dispatch(NativeActions.updateSettings([
                 "exitNode": exitNode,
                 "wireguardExitEnabled": false,
+                "exitNodeLeakProtection": true,
             ]))
         } else if clearExit {
             dispatch(NativeActions.updateSettings([
                 "exitNode": "",
                 "wireguardExitEnabled": false,
+                "exitNodeLeakProtection": false,
             ]))
         }
         refresh()
@@ -372,9 +400,25 @@ final class AppModel: ObservableObject {
         result["fipsConnectedPeerCount"] = state.fipsConnectedPeerCount
         result["fipsRosterPeerCount"] = state.fipsRosterPeerCount
         result["nonFipsRosterPeerCount"] = state.nonFipsRosterPeerCount
+        result["exitNodeLeakProtection"] = state.exitNodeLeakProtection
+        result["wireguardExitEnabled"] = state.wireguardExitEnabled
+        result["wireguardExitConfigured"] = state.wireguardExitConfigured
+        result["wireguardExitEndpoint"] = state.wireguardExitEndpoint
 
-        for (key, value) in await fetchDebugProbe(urlString: urlString) {
-            result[key] = value
+        if let host = resolveHost?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !host.isEmpty {
+            let resolved = Self.resolveDebugHost(host)
+            result["resolvedHost"] = host
+            result["resolvedAddresses"] = resolved.addresses
+            if let error = resolved.error {
+                result["resolveError"] = error
+            }
+        }
+
+        if !skipFetch {
+            for (key, value) in await fetchDebugProbe(urlString: urlString) {
+                result[key] = value
+            }
         }
         result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
         writeDebugProbeResult(result, name: resultName)
@@ -392,7 +436,12 @@ final class AppModel: ObservableObject {
         } catch {
             debugLog("debug probe stop failed: \(String(describing: error))")
         }
-        try? await Task.sleep(nanoseconds: 2_000_000_000)
+        for _ in 0..<20 {
+            if let status = await vpnController.statusRawValue(), status <= 1 {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
         refresh()
     }
 
@@ -474,6 +523,90 @@ final class AppModel: ObservableObject {
             return nil
         }
         return arguments[valueIndex]
+    }
+
+    nonisolated private static func redactedDebugArguments(_ arguments: [String]) -> [String] {
+        let sensitiveFlags = [
+            "--nvpn-debug-import-invite",
+            "--nvpn-debug-exit-node",
+            "--nvpn-debug-fetch-url",
+            "--nvpn-debug-result",
+            "--nvpn-debug-wireguard-config-base64",
+            "--nvpn-debug-wireguard-config-file",
+        ]
+        var output: [String] = []
+        var redactNext = false
+        for argument in arguments {
+            if redactNext {
+                output.append("<redacted>")
+                redactNext = false
+                continue
+            }
+            if let flag = sensitiveFlags.first(where: { argument.hasPrefix($0 + "=") }) {
+                output.append("\(flag)=<redacted>")
+                continue
+            }
+            output.append(argument)
+            if sensitiveFlags.contains(argument) {
+                redactNext = true
+            }
+        }
+        return output
+    }
+
+    nonisolated private static func wireGuardConfig(from arguments: [String], supportDir: URL?) -> String? {
+        if let encoded = argumentValue(after: "--nvpn-debug-wireguard-config-base64", in: arguments),
+           let data = Data(base64Encoded: encoded),
+           let config = String(data: data, encoding: .utf8) {
+            return config
+        }
+        guard let path = argumentValue(after: "--nvpn-debug-wireguard-config-file", in: arguments) else {
+            return nil
+        }
+        let url: URL
+        if path.hasPrefix("/") {
+            url = URL(fileURLWithPath: path)
+        } else if let supportDir {
+            url = supportDir.appendingPathComponent(path)
+        } else {
+            return nil
+        }
+        return try? String(contentsOf: url)
+    }
+
+    nonisolated private static func resolveDebugHost(_ host: String) -> (addresses: [String], error: String?) {
+        var hints = addrinfo()
+        hints.ai_family = AF_UNSPEC
+        hints.ai_socktype = SOCK_STREAM
+
+        var result: UnsafeMutablePointer<addrinfo>?
+        let status = getaddrinfo(host, nil, &hints, &result)
+        guard status == 0 else {
+            let message = gai_strerror(status).map { String(cString: $0) } ?? "getaddrinfo failed"
+            return ([], message)
+        }
+        defer { freeaddrinfo(result) }
+
+        var addresses = Set<String>()
+        var cursor = result
+        while let current = cursor {
+            var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+            let info = current.pointee
+            if getnameinfo(
+                info.ai_addr,
+                info.ai_addrlen,
+                &buffer,
+                socklen_t(buffer.count),
+                nil,
+                0,
+                NI_NUMERICHOST
+            ) == 0 {
+                addresses.insert(String(cString: buffer))
+            }
+            cursor = info.ai_next
+        }
+
+        return (Array(addresses).sorted(), nil)
     }
 
     func qrMatrix(for invite: String) -> QrMatrix {

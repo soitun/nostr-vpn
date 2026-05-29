@@ -80,6 +80,19 @@ struct HandshakeState {
     last_age: RwLock<Option<Duration>>,
 }
 
+#[derive(Clone)]
+pub struct WgUpstreamHandshakeObserver {
+    handshake: Arc<HandshakeState>,
+}
+
+impl WgUpstreamHandshakeObserver {
+    /// Wait for at most `timeout` for the WG handshake to complete.
+    /// Returns `true` if a handshake was observed; `false` on timeout.
+    pub async fn wait_for_handshake(&self, timeout: Duration) -> bool {
+        wait_for_handshake(&self.handshake, timeout).await
+    }
+}
+
 impl WgUpstreamRuntime {
     /// Probe the WG handshake without creating a tun device.
     /// Safe-by-construction: cannot blackhole the host's internet.
@@ -169,19 +182,12 @@ impl WgUpstreamRuntime {
     /// Wait for at most `timeout` for the WG handshake to complete.
     /// Returns `true` if a handshake was observed; `false` on timeout.
     pub async fn wait_for_handshake(&self, timeout: Duration) -> bool {
-        let deadline = tokio::time::Instant::now() + timeout;
-        loop {
-            if self.handshake.last_age.read().await.is_some() {
-                return true;
-            }
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            tokio::select! {
-                _ = self.handshake.completed.notified() => continue,
-                _ = tokio::time::sleep(remaining) => return false,
-            }
+        wait_for_handshake(&self.handshake, timeout).await
+    }
+
+    pub fn handshake_observer(&self) -> WgUpstreamHandshakeObserver {
+        WgUpstreamHandshakeObserver {
+            handshake: self.handshake.clone(),
         }
     }
 
@@ -210,6 +216,23 @@ impl WgUpstreamRuntime {
         if let Some(pump) = self.pump.take() {
             pump.abort();
             let _ = pump.await;
+        }
+    }
+}
+
+async fn wait_for_handshake(handshake: &Arc<HandshakeState>, timeout: Duration) -> bool {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if handshake.last_age.read().await.is_some() {
+            return true;
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return false;
+        }
+        tokio::select! {
+            _ = handshake.completed.notified() => continue,
+            _ = tokio::time::sleep(remaining) => return false,
         }
     }
 }

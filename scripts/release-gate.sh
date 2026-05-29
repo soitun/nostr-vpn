@@ -9,6 +9,13 @@ node scripts/sync-versions.mjs
 cargo fmt --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
+# Mobile VPN basics run in the blocking gate without requiring a device/emulator:
+# join request over FIPS, MagicDNS from a TUN packet, and Android WG socket
+# startup ordering before VpnService.protect(fd).
+cargo test -p nostr-vpn-app-core mobile_join_request_sends_and_records_over_real_fips_endpoint
+cargo test -p nostr-vpn-app-core mobile_magic_dns_answers_peer_name_from_tun_packet
+cargo test -p nostr-vpn-app-core mobile_wireguard_start_returns_before_handshake_watchdog
+cargo test -p nostr-vpn-app-core mobile_fips_exit_node_routes_default_traffic_to_selected_member
 ./scripts/e2e-update-cli.sh
 
 case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
