@@ -10,6 +10,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
@@ -24,6 +25,7 @@ import {
   bumpAndroidGradleVersion,
   bumpCargoPackageVersion,
   bumpPbxprojMarketingVersion,
+  deterministicBuildEnv,
   linuxReleaseTargetsForDockerPlatform,
   normalizeTag,
   parseEnvFile,
@@ -197,6 +199,15 @@ function commandExists(command) {
   return result.status === 0
 }
 
+function gitHeadEpoch() {
+  const result = spawnSync('git', ['log', '-1', '--format=%ct', 'HEAD'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    stdio: 'pipe',
+  })
+  return result.status === 0 ? result.stdout.trim() : ''
+}
+
 function quote(arg) {
   const value = String(arg)
   return /[^\w./:-]/.test(value) ? JSON.stringify(value) : value
@@ -296,6 +307,22 @@ Quick install:
   )
 }
 
+function setTreeMtime(root, epochSeconds) {
+  const epoch = Number(epochSeconds)
+  if (!Number.isFinite(epoch)) {
+    return
+  }
+  const when = new Date(epoch * 1000)
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const path = join(root, entry.name)
+    if (entry.isDirectory()) {
+      setTreeMtime(path, epochSeconds)
+    }
+    utimesSync(path, when, when)
+  }
+  utimesSync(root, when, when)
+}
+
 function packageUnixCliTarball({ binaryPath, targetTriple, tag, dryRun }) {
   const bundleDir = join(distDir, 'nvpn')
   if (!dryRun) {
@@ -304,13 +331,16 @@ function packageUnixCliTarball({ binaryPath, targetTriple, tag, dryRun }) {
     copyFileSync(binaryPath, join(bundleDir, 'nvpn'))
     writeUnixInstallScript(join(bundleDir, 'install.sh'))
     writeUnixReadme(join(bundleDir, 'README.txt'))
+    setTreeMtime(bundleDir, process.env.SOURCE_DATE_EPOCH)
   }
 
   run('chmod', ['+x', join(bundleDir, 'install.sh')], { dryRun })
 
   const unversioned = join(distDir, `nvpn-${targetTriple}.tar.gz`)
   const versioned = join(distDir, `nvpn-${tag}-${targetTriple}.tar.gz`)
-  run('tar', ['-czf', unversioned, '-C', distDir, 'nvpn'], { dryRun })
+  const tarPath = unversioned.replace(/\.gz$/, '')
+  run('tar', ['-cf', tarPath, '-C', distDir, 'nvpn/README.txt', 'nvpn/install.sh', 'nvpn/nvpn'], { dryRun })
+  run('gzip', ['-n', '-f', tarPath], { dryRun })
   if (!dryRun) {
     copyFileSync(unversioned, versioned)
   }
@@ -462,6 +492,11 @@ function buildWindowsArtifacts({ env, tag, dryRun, builtLines }) {
   const guestRepoQuoted = psQuote(guestRepo)
   const guestDistQuoted = psQuote(guestDist)
   const pathSetup = `$env:PATH = ${psQuote(llvmBin)} + ';' + $env:PATH`
+  const deterministicEnvSetup = [
+    `$env:SOURCE_DATE_EPOCH = ${psQuote(env.SOURCE_DATE_EPOCH || '0')}`,
+    `$env:CARGO_INCREMENTAL = ${psQuote(env.CARGO_INCREMENTAL || '0')}`,
+    `$env:ZERO_AR_DATE = ${psQuote(env.ZERO_AR_DATE || '1')}`,
+  ].join('\n')
 
   // Make sure the guest's dist dir exists so we can write archives to it.
   runWindowsPowerShell(
@@ -476,8 +511,9 @@ function buildWindowsArtifacts({ env, tag, dryRun, builtLines }) {
       host,
       `
 ${pathSetup}
+${deterministicEnvSetup}
 Set-Location ${guestRepoQuoted}
-cargo build --release --target ${psQuote(target)} -p nvpn
+cargo build --release --locked --target ${psQuote(target)} -p nvpn
 $cli = Join-Path ${guestRepoQuoted} ${psQuote(`target\\${target}\\release\\nvpn.exe`)}
 if (!(Test-Path $cli)) { throw "Missing nvpn.exe for ${target}" }
 $wintun = Join-Path ${guestRepoQuoted} ${psQuote(`target\\${target}\\release\\wintun.dll`)}
@@ -488,6 +524,9 @@ New-Item -ItemType Directory -Force -Path $tempDir | Out-Null
 Copy-Item $cli (Join-Path $tempDir 'nvpn.exe')
 New-Item -ItemType Directory -Force -Path (Join-Path $tempDir 'binaries') | Out-Null
 Copy-Item $wintun (Join-Path $tempDir 'binaries\\wintun.dll')
+$epoch = [DateTimeOffset]::FromUnixTimeSeconds([int64]$env:SOURCE_DATE_EPOCH).UtcDateTime
+Get-ChildItem -Recurse $tempDir | ForEach-Object { $_.LastWriteTimeUtc = $epoch }
+(Get-Item $tempDir).LastWriteTimeUtc = $epoch
 Compress-Archive -Path (Join-Path $tempDir '*') -DestinationPath ${psQuote(`${guestDist}\\${archiveName}`)} -Force
 Remove-Item -Recurse -Force $tempDir
 `,
@@ -509,6 +548,7 @@ Remove-Item -Recurse -Force $tempDir
       host,
       `
 ${pathSetup}
+${deterministicEnvSetup}
 Set-Location ${guestRepoQuoted}
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-build.ps1 -Configuration Release -Publish -Installer -Tag ${psQuote(tag)} -OutputDir ${guestDistQuoted}
 $installer = ${psQuote(`${guestDist}\\${installerName}`)}
@@ -544,18 +584,21 @@ function buildLinuxArtifacts({ env, tag, dryRun, builtLines }) {
     'rsync -a --exclude target --exclude dist --exclude .git /work/ /build/',
     'cd /build',
     'cargo build --release --locked --manifest-path linux/Cargo.toml',
+    'cargo build --release --locked -p nvpn',
     'cd /build/linux',
     'cargo deb --no-build',
     `cp "$(ls -1t target/debian/*.deb | head -1)" "/work/dist/${linuxDebName}"`,
     'cd /build',
-    `cargo build --release --target ${muslTriple} -p nvpn`,
+    `cargo build --release --locked --target ${muslTriple} -p nvpn`,
     'rm -rf /work/dist/nvpn',
     'mkdir -p /work/dist/nvpn',
     `cp target/${muslTriple}/release/nvpn /work/dist/nvpn/`,
     "printf '%s\\n' '#!/bin/bash' 'set -e' 'install -d \"${1:-/usr/local/bin}\"' 'install -m 755 nvpn \"${1:-/usr/local/bin}/\"' > /work/dist/nvpn/install.sh",
     'chmod +x /work/dist/nvpn/install.sh',
     "printf '%s\\n' 'nvpn - FIPS private mesh CLI' > /work/dist/nvpn/README.txt",
-    `tar -czf /work/dist/nvpn-${muslTriple}.tar.gz -C /work/dist nvpn`,
+    'find /work/dist/nvpn -exec touch -h -d "@${SOURCE_DATE_EPOCH}" {} +',
+    `tar -cf /work/dist/nvpn-${muslTriple}.tar -C /work/dist nvpn/README.txt nvpn/install.sh nvpn/nvpn`,
+    `gzip -n -f /work/dist/nvpn-${muslTriple}.tar`,
     `cp /work/dist/nvpn-${muslTriple}.tar.gz /work/dist/nvpn-${tag}-${muslTriple}.tar.gz`,
   ].join(' && ')
 
@@ -568,6 +611,16 @@ function buildLinuxArtifacts({ env, tag, dryRun, builtLines }) {
       platform,
       '-v',
       `${repoRoot}:/work`,
+      '-e',
+      'SOURCE_DATE_EPOCH',
+      '-e',
+      'CARGO_INCREMENTAL',
+      '-e',
+      'ZERO_AR_DATE',
+      '-e',
+      'LC_ALL',
+      '-e',
+      'TZ',
       '-w',
       '/work',
       imageName,
@@ -1083,7 +1136,9 @@ function resolveReleaseCommit(tag, { dryRun = false } = {}) {
 function main() {
   const options = parseArgs(process.argv.slice(2))
   const { loaded, loadedPaths } = readOptionalEnvFiles([...defaultEnvFiles, ...options.envFiles])
-  const env = { ...loaded, ...process.env }
+  const sourceDateEpoch = process.env.SOURCE_DATE_EPOCH || loaded.SOURCE_DATE_EPOCH || gitHeadEpoch() || '0'
+  const env = deterministicBuildEnv({ ...loaded, ...process.env }, { sourceDateEpoch })
+  Object.assign(process.env, env)
 
   const tag = options.tag || readWorkspaceVersionTag(readFileSync(rootCargoToml, 'utf8'))
   const releaseTree = options.releaseTree || env.NVPN_RELEASE_TREE || 'releases/nostr-vpn'

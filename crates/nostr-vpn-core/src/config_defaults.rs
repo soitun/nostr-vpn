@@ -75,8 +75,8 @@ pub(crate) fn default_autoconnect() -> bool {
     true
 }
 
-pub(crate) fn default_fips_advertise_endpoint() -> bool {
-    true
+pub(crate) fn default_fips_advertise_public_endpoint() -> bool {
+    false
 }
 
 pub(crate) fn default_fips_host_tunnel_enabled() -> bool {

@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.51 - 2026-06-01
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.23 and `fips-endpoint` 0.3.17, adding
+  roster-scoped NAT traversal signaling over established FIPS mesh sessions,
+  bounded active-peer direct-refresh retries, and broader STUN target probing.
+- Local release artifact builds now use locked Cargo resolution and
+  deterministic build environment defaults across macOS, Linux, Windows, and
+  CLI archives.
+
+### Fixed
+
+- FIPS roster peers that are already reachable via mesh now keep a backed-off
+  direct path refresh alive, so stale static/private endpoint hints no longer
+  pin peers on sluggish relayed or via-mesh paths indefinitely.
+- Recent FIPS endpoint hints are capped and pruned before they become
+  non-roster discovery seeds, keeping open-discovery peer fan-out bounded.
+
 ## 4.0.50 - 2026-05-30
 
 ### Changed

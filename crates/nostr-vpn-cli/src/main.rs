@@ -608,8 +608,13 @@ struct SetArgs {
     autoconnect: Option<bool>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     join_requests_enabled: Option<bool>,
-    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
-    fips_advertise_endpoint: Option<bool>,
+    #[arg(
+        long = "fips-advertise-public-endpoint",
+        alias = "fips-advertise-endpoint",
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
+    fips_advertise_public_endpoint: Option<bool>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     fips_host_tunnel_enabled: Option<bool>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
@@ -1156,8 +1161,8 @@ async fn run_command(command: Command) -> Result<()> {
                     .clone();
                 app.set_network_join_requests_enabled(&network_id, value)?;
             }
-            if let Some(value) = args.fips_advertise_endpoint {
-                app.fips_advertise_endpoint = value;
+            if let Some(value) = args.fips_advertise_public_endpoint {
+                app.fips_advertise_public_endpoint = value;
             }
             if let Some(value) = args.fips_host_tunnel_enabled {
                 app.fips_host_tunnel_enabled = value;
@@ -3142,7 +3147,7 @@ fn local_fips_endpoint_hints(
     let mut endpoints = Vec::new();
 
     let configured = endpoint_with_listen_port(&app.node.endpoint, app.node.listen_port);
-    if endpoint_is_gossipable_direct_hint(&configured, app.lan_discovery_enabled)
+    if endpoint_is_gossipable_direct_hint(&configured, true)
         && !endpoint_uses_tunnel_ip(&configured, &app.node.tunnel_ip)
     {
         endpoints.push(configured);

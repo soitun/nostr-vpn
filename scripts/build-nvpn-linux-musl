@@ -9,6 +9,9 @@ WORK_DIR=$(mktemp -d "$BUILD_ROOT/nvpn-linux-musl.XXXXXX")
 FIPS_REPO_PATH=${NVPN_FIPS_REPO_PATH:-}
 DOCKER_ENV=()
 
+source "$WORKSPACE/scripts/release_common.sh"
+enable_deterministic_build_env "$WORKSPACE"
+
 case "$TARGET" in
   x86_64-unknown-linux-musl)
     DEFAULT_IMAGE=messense/rust-musl-cross:x86_64-musl
@@ -70,6 +73,11 @@ docker run --rm -i \
   -v "$TARGET_DIR":/home/rust/src/target \
   -e CARGO_HOME=/home/rust/src/.cargo-docker \
   -e HOME=/home/rust/src \
+  -e SOURCE_DATE_EPOCH \
+  -e CARGO_INCREMENTAL \
+  -e ZERO_AR_DATE \
+  -e LC_ALL \
+  -e TZ \
   "${DOCKER_ENV[@]}" \
   "$IMAGE" \
   bash -se -- "$TARGET" <<'CONTAINER'
@@ -79,15 +87,17 @@ TARGET=$1
 cd /home/rust/src
 
 cargo_config_args=()
+cargo_lock_args=(--locked)
 if [[ -n ${NVPN_FIPS_ENDPOINT_PATCH_PATH:-} ]]; then
   cargo_config_args+=(--config "patch.crates-io.fips-endpoint.path=\"${NVPN_FIPS_ENDPOINT_PATCH_PATH}\"")
+  cargo_lock_args=()
 fi
 
 if [[ -n ${NVPN_FIPS_ENDPOINT_PATCH_PATH:-} ]]; then
   cargo "${cargo_config_args[@]}" update -p fips-endpoint
 fi
 
-cargo "${cargo_config_args[@]}" fetch --target "$TARGET"
+cargo "${cargo_config_args[@]}" fetch "${cargo_lock_args[@]}" --target "$TARGET"
 
 rustables_src=$(find "${CARGO_HOME:-/root/.cargo}/registry/src" -maxdepth 3 -type d -name 'rustables-[0-9]*' -print -quit)
 if [[ -z "$rustables_src" ]]; then
@@ -154,7 +164,7 @@ path.write_text(text.replace(old, new))
 PATCH
 fi
 
-cargo "${cargo_config_args[@]}" build -p nvpn --bin nvpn --release --target "$TARGET"
+cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}" -p nvpn --bin nvpn --release --target "$TARGET"
 CONTAINER
 
 BIN="$TARGET_DIR/$TARGET/release/nvpn"

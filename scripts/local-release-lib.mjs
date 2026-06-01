@@ -45,6 +45,22 @@ export function splitCsv(value) {
     .filter(Boolean)
 }
 
+export function deterministicBuildEnv(env = {}, { sourceDateEpoch = null } = {}) {
+  const epoch = String(sourceDateEpoch ?? env.SOURCE_DATE_EPOCH ?? '0').trim()
+  if (!/^\d+$/.test(epoch)) {
+    throw new Error(`SOURCE_DATE_EPOCH must be a Unix timestamp, got: ${epoch || '<empty>'}`)
+  }
+
+  return {
+    ...env,
+    SOURCE_DATE_EPOCH: epoch,
+    CARGO_INCREMENTAL: env.CARGO_INCREMENTAL || '0',
+    ZERO_AR_DATE: env.ZERO_AR_DATE || '1',
+    LC_ALL: env.LC_ALL || 'C',
+    TZ: env.TZ || 'UTC',
+  }
+}
+
 export function linuxReleaseTargetsForDockerPlatform(platform) {
   const normalized = String(platform || '').trim()
   const match = normalized.match(/^linux\/([^/]+)(?:\/[^/]+)?$/)

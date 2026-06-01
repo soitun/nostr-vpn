@@ -21,6 +21,7 @@ use crate::config::split_peer_transport_addr;
 use serde::{Deserialize, Serialize};
 
 const CURRENT_VERSION: u8 = 1;
+const MAX_RECENT_ENDPOINTS_PER_PEER: usize = 4;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RecentPeerEndpoints {
@@ -58,20 +59,23 @@ impl RecentPeerEndpoints {
         };
 
         let endpoints = self.entries.entry(participant.to_string()).or_default();
+        let before = endpoints.clone();
 
         if let Some(existing) = endpoints.iter_mut().find(|entry| entry.addr == addr) {
             if existing.last_success_at >= success_at {
                 return false;
             }
             existing.last_success_at = success_at;
-            return true;
+            cap_endpoint_list(endpoints, MAX_RECENT_ENDPOINTS_PER_PEER);
+            return *endpoints != before;
         }
 
         endpoints.push(RecentPeerEndpoint {
             addr,
             last_success_at: success_at,
         });
-        true
+        cap_endpoint_list(endpoints, MAX_RECENT_ENDPOINTS_PER_PEER);
+        *endpoints != before
     }
 
     /// Drop entries older than `now - ttl_secs`.
@@ -91,6 +95,17 @@ impl RecentPeerEndpoints {
             !endpoints.is_empty()
         });
 
+        changed
+    }
+
+    pub fn prune_to_limits(&mut self) -> bool {
+        let mut changed = false;
+        self.entries.retain(|_, endpoints| {
+            if cap_endpoint_list(endpoints, MAX_RECENT_ENDPOINTS_PER_PEER) {
+                changed = true;
+            }
+            !endpoints.is_empty()
+        });
         changed
     }
 
@@ -191,8 +206,24 @@ impl RecentPeerEndpoints {
         if parsed.version == 0 {
             parsed.version = CURRENT_VERSION;
         }
+        parsed.prune_to_limits();
         Ok(parsed)
     }
+}
+
+fn cap_endpoint_list(endpoints: &mut Vec<RecentPeerEndpoint>, max_endpoints: usize) -> bool {
+    let before = endpoints.len();
+    if before <= max_endpoints {
+        return false;
+    }
+    endpoints.sort_by(|left, right| {
+        right
+            .last_success_at
+            .cmp(&left.last_success_at)
+            .then_with(|| left.addr.cmp(&right.addr))
+    });
+    endpoints.truncate(max_endpoints);
+    before != endpoints.len()
 }
 
 #[derive(Serialize)]

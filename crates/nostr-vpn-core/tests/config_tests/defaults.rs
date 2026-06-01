@@ -26,6 +26,7 @@ fn generated_config_auto_populates_keys() {
     assert!(config.exit_node.is_empty());
     assert!(config.exit_node_leak_protection);
     assert!(!config.fips_host_tunnel_enabled);
+    assert!(!config.fips_advertise_public_endpoint);
     assert!(config.connect_to_non_roster_fips_peers);
     assert!(config.fips_host_inbound_tcp_ports.is_empty());
     assert!(!config.node.advertise_exit_node);
@@ -42,6 +43,32 @@ fn generated_config_auto_populates_keys() {
             .all(|ch| ch.is_ascii_hexdigit())
     );
     assert!(!config.networks[0].invite_secret.is_empty());
+}
+
+#[test]
+fn fips_public_endpoint_advertise_accepts_legacy_config_key() {
+    let config: AppConfig =
+        toml::from_str("fips_advertise_endpoint = false").expect("parse config");
+
+    assert!(!config.fips_advertise_public_endpoint);
+}
+
+#[test]
+fn fips_public_endpoint_advertise_defaults_off_when_missing() {
+    let config: AppConfig = toml::from_str("").expect("parse empty config");
+
+    assert!(!config.fips_advertise_public_endpoint);
+}
+
+#[test]
+fn fips_public_endpoint_advertise_serializes_new_config_key() {
+    let mut config = AppConfig::generated();
+    config.fips_advertise_public_endpoint = true;
+
+    let encoded = toml::to_string(&config).expect("serialize config");
+
+    assert!(encoded.contains("fips_advertise_public_endpoint = true"));
+    assert!(!encoded.contains("fips_advertise_endpoint = true"));
 }
 
 const LNVPS_BOOTSTRAP_NPUB: &str =

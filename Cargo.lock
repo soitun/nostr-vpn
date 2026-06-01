@@ -1095,7 +1095,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1151,7 +1151,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1214,9 +1214,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.22"
+version = "0.3.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa1958bd3bf9b408b4462856702326001650e4211db8cf3b618de0a8723f593d"
+checksum = "a26ec575f0ef3f90f4a2399508bee33c355e654ddf8d4592f17eac4fa140cb61"
 dependencies = [
  "bluer",
  "crossbeam-channel",
@@ -1252,9 +1252,9 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.3.16"
+version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db4c7e266fd19030bd1d43792e33bbb92947c4e08d4772028929a26d31f3a48e"
+checksum = "4a95d02004885300b55083873f9b2b32b02217d1fbe36f6edce368efcb6d312b"
 dependencies = [
  "fips-core",
 ]
@@ -2752,7 +2752,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.50"
+version = "4.0.51"
 dependencies = [
  "anyhow",
  "base64",
@@ -2777,7 +2777,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.50"
+version = "4.0.51"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -2815,7 +2815,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.0.50"
+version = "4.0.51"
 dependencies = [
  "anyhow",
  "axum",
@@ -2836,7 +2836,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.0.50"
+version = "4.0.51"
 dependencies = [
  "anyhow",
  "wintun",
@@ -2848,7 +2848,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -2901,7 +2901,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn"
-version = "4.0.50"
+version = "4.0.51"
 dependencies = [
  "anyhow",
  "base64",
@@ -3378,7 +3378,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.3",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3682,7 +3682,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4203,7 +4203,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5144,7 +5144,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

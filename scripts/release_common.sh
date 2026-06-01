@@ -51,6 +51,52 @@ git_commit_timestamp_utc() {
   fi
 }
 
+git_commit_epoch() {
+  local root="$1"
+  git -C "$root" log -1 --format=%ct HEAD 2>/dev/null || printf '%s\n' ""
+}
+
+resolve_source_date_epoch() {
+  local root="$1"
+  local epoch="${SOURCE_DATE_EPOCH:-}"
+
+  if [[ -z "$epoch" ]]; then
+    epoch="$(git_commit_epoch "$root")"
+  fi
+
+  if [[ -z "$epoch" ]]; then
+    epoch=0
+  fi
+
+  if [[ ! "$epoch" =~ ^[0-9]+$ ]]; then
+    echo "SOURCE_DATE_EPOCH must be a Unix timestamp, got: $epoch" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$epoch"
+}
+
+enable_deterministic_build_env() {
+  local root="$1"
+  local epoch
+
+  epoch="$(resolve_source_date_epoch "$root")"
+  export SOURCE_DATE_EPOCH="$epoch"
+
+  # Cargo incremental artifacts are cache- and path-sensitive. Keep release
+  # outputs from depending on whatever happened to be in the local target dir.
+  export CARGO_INCREMENTAL="${CARGO_INCREMENTAL:-0}"
+
+  # Apple archive tooling honors ZERO_AR_DATE by zeroing static-library member
+  # timestamps, which keeps Rust staticlibs stable across rebuilds.
+  export ZERO_AR_DATE="${ZERO_AR_DATE:-1}"
+
+  # Keep locale/timezone-sensitive helper output stable when scripts package
+  # release assets or derive build metadata.
+  export LC_ALL="${LC_ALL:-C}"
+  export TZ="${TZ:-UTC}"
+}
+
 package_version() {
   local root="$1"
 

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -13,6 +13,7 @@ import {
   bumpAndroidGradleVersion,
   bumpCargoPackageVersion,
   bumpPbxprojMarketingVersion,
+  deterministicBuildEnv,
   describeAsset,
   extractChangelogSection,
   linuxReleaseTargetsForDockerPlatform,
@@ -48,6 +49,29 @@ test('splitCsv trims and drops empties', () => {
     'android',
     'macos',
   ])
+})
+
+test('deterministicBuildEnv fills stable defaults without clobbering explicit env', () => {
+  assert.deepEqual(
+    deterministicBuildEnv(
+      { CARGO_INCREMENTAL: '1', TZ: 'Europe/Helsinki' },
+      { sourceDateEpoch: 123 },
+    ),
+    {
+      SOURCE_DATE_EPOCH: '123',
+      CARGO_INCREMENTAL: '1',
+      ZERO_AR_DATE: '1',
+      LC_ALL: 'C',
+      TZ: 'Europe/Helsinki',
+    },
+  )
+})
+
+test('deterministicBuildEnv rejects non-numeric source dates', () => {
+  assert.throws(
+    () => deterministicBuildEnv({}, { sourceDateEpoch: 'today' }),
+    /SOURCE_DATE_EPOCH/,
+  )
 })
 
 test('readWorkspaceVersionTag reads the workspace package version', () => {
@@ -191,6 +215,16 @@ test('validateReleaseAssetSet can require complete app release artifacts', () =>
       'nostr-vpn-v4.0.1-windows-x64-setup.exe',
     ], { requireCompleteAppRelease: true }),
   )
+})
+
+test('Linux desktop package bundles nvpn CLI helper', () => {
+  const linuxCargo = readFileSync(join(process.cwd(), 'linux/Cargo.toml'), 'utf8')
+  const localRelease = readFileSync(join(process.cwd(), 'scripts/local-release.mjs'), 'utf8')
+  const githubRelease = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
+
+  assert.match(linuxCargo, /\["\.\.\/target\/release\/nvpn", "usr\/bin\/nvpn", "755"\]/)
+  assert.match(localRelease, /cargo build --release --locked -p nvpn/)
+  assert.match(githubRelease, /cargo build --release --locked -p nvpn/)
 })
 
 test('autoDetectWindowsVmName returns the only running Windows VM', () => {

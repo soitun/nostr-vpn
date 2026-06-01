@@ -34,6 +34,25 @@ function Invoke-Checked {
   }
 }
 
+function Enable-DeterministicBuildEnv {
+  if (!$env:SOURCE_DATE_EPOCH) {
+    $Epoch = (& git -C $Root log -1 --format=%ct HEAD 2>$null)
+    if (!$Epoch) {
+      $Epoch = "0"
+    }
+    $env:SOURCE_DATE_EPOCH = $Epoch
+  }
+  if ($env:SOURCE_DATE_EPOCH -notmatch '^\d+$') {
+    throw "SOURCE_DATE_EPOCH must be a Unix timestamp, got: $env:SOURCE_DATE_EPOCH"
+  }
+  if (!$env:CARGO_INCREMENTAL) {
+    $env:CARGO_INCREMENTAL = "0"
+  }
+  if (!$env:ZERO_AR_DATE) {
+    $env:ZERO_AR_DATE = "1"
+  }
+}
+
 function Get-WorkspaceVersion {
   $Text = Get-Content -Raw -Path $WorkspaceCargoToml
   $Match = [regex]::Match($Text, '(?ms)^\[workspace\.package\].*?^version\s*=\s*"([^"]+)"')
@@ -98,7 +117,9 @@ function Assert-BundledWindowsHelpers {
   }
 }
 
-$CargoArgs = @("build", "-p", "nostr-vpn-app-core", "-p", "nvpn")
+Enable-DeterministicBuildEnv
+
+$CargoArgs = @("build", "--locked", "-p", "nostr-vpn-app-core", "-p", "nvpn")
 if ($Configuration -eq "Release") {
   $CargoArgs += "--release"
 }
@@ -117,10 +138,10 @@ Copy-RequiredFile (Join-Path $CargoOutputDir "wintun.dll") (Join-Path $AppBinari
 
 if ($Publish -or $Installer) {
   $SelfContained = if ($Installer) { "true" } else { "false" }
-  Invoke-Checked dotnet @("publish", $Project, "-c", $Configuration, "-r", $Runtime, "--self-contained", $SelfContained)
+  Invoke-Checked dotnet @("publish", $Project, "-c", $Configuration, "-r", $Runtime, "--self-contained", $SelfContained, "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true")
   $DotnetOutputDir = Join-Path $Root "windows\NostrVpn.Windows\bin\$Configuration\net8.0-windows\$Runtime\publish"
 } else {
-  Invoke-Checked dotnet @("build", $Project, "-c", $Configuration)
+  Invoke-Checked dotnet @("build", $Project, "-c", $Configuration, "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true")
   $DotnetOutputDir = Join-Path $Root "windows\NostrVpn.Windows\bin\$Configuration\net8.0-windows"
 }
 Assert-BundledWindowsHelpers $DotnetOutputDir

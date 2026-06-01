@@ -4,18 +4,21 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
+source "$ROOT_DIR/scripts/release_common.sh"
+enable_deterministic_build_env "$ROOT_DIR"
+
 node scripts/sync-versions.mjs
 ./scripts/security-audit-rust.sh
 cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --workspace
 # Mobile VPN basics run in the blocking gate without requiring a device/emulator:
 # join request over FIPS, MagicDNS from a TUN packet, and Android WG socket
 # startup ordering before VpnService.protect(fd).
-cargo test -p nostr-vpn-app-core mobile_join_request_sends_and_records_over_real_fips_endpoint
-cargo test -p nostr-vpn-app-core mobile_magic_dns_answers_peer_name_from_tun_packet
-cargo test -p nostr-vpn-app-core mobile_wireguard_start_returns_before_handshake_watchdog
-cargo test -p nostr-vpn-app-core mobile_fips_exit_node_routes_default_traffic_to_selected_member
+cargo test --locked -p nostr-vpn-app-core mobile_join_request_sends_and_records_over_real_fips_endpoint
+cargo test --locked -p nostr-vpn-app-core mobile_magic_dns_answers_peer_name_from_tun_packet
+cargo test --locked -p nostr-vpn-app-core mobile_wireguard_start_returns_before_handshake_watchdog
+cargo test --locked -p nostr-vpn-app-core mobile_fips_exit_node_routes_default_traffic_to_selected_member
 ./scripts/e2e-update-cli.sh
 
 case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in

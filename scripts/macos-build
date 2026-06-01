@@ -69,6 +69,9 @@ load_env_file_defaults "$ROOT/.env.release.local"
 if declare -F load_appstoreconnect_defaults >/dev/null 2>&1; then
   load_appstoreconnect_defaults
 fi
+if declare -F enable_deterministic_build_env >/dev/null 2>&1; then
+  enable_deterministic_build_env "$ROOT"
+fi
 
 usage() {
   cat <<'EOF'
@@ -134,9 +137,9 @@ run_macos_gen_swift() {
   local generated_bindings_dir
 
   if [[ "$PROFILE" == "release" ]]; then
-    cargo build -p nostr-vpn-app-core --release --target "$HOST_TARGET"
+    cargo build --locked -p nostr-vpn-app-core --release --target "$HOST_TARGET"
   else
-    cargo build -p nostr-vpn-app-core --target "$HOST_TARGET"
+    cargo build --locked -p nostr-vpn-app-core --target "$HOST_TARGET"
   fi
 
   mkdir -p "$BUILD_DIR"
@@ -144,13 +147,13 @@ run_macos_gen_swift() {
   trap 'rm -rf "$generated_bindings_dir"' RETURN
 
   if [[ "$PROFILE" == "release" ]]; then
-    cargo run -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --release --target "$HOST_TARGET" -- generate \
+    cargo run --locked -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --release --target "$HOST_TARGET" -- generate \
       --library "$(host_dynamic_lib)" \
       --language swift \
       --out-dir "$generated_bindings_dir" \
       --config "$CORE_DIR/uniffi.toml"
   else
-    cargo run -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --target "$HOST_TARGET" -- generate \
+    cargo run --locked -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --target "$HOST_TARGET" -- generate \
       --library "$(host_dynamic_lib)" \
       --language swift \
       --out-dir "$generated_bindings_dir" \
@@ -221,7 +224,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        cargo build -p nostr-vpn-app-core --release --target "$target"
+        cargo build --locked -p nostr-vpn-app-core --release --target "$target"
 
       env \
         SDKROOT="$sdkroot" \
@@ -238,7 +241,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        cargo build -p nvpn --release --bin nvpn --target "$target"
+        cargo build --locked -p nvpn --release --bin nvpn --target "$target"
     else
       env \
         SDKROOT="$sdkroot" \
@@ -255,7 +258,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        cargo build -p nostr-vpn-app-core --target "$target"
+        cargo build --locked -p nostr-vpn-app-core --target "$target"
 
       env \
         SDKROOT="$sdkroot" \
@@ -272,7 +275,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        cargo build -p nvpn --bin nvpn --target "$target"
+        cargo build --locked -p nvpn --bin nvpn --target "$target"
     fi
   done
 }

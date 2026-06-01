@@ -90,6 +90,21 @@ fn local_fips_endpoint_hints_do_not_share_lan_when_disabled() {
 
 #[cfg(feature = "embedded-fips")]
 #[test]
+fn local_fips_endpoint_hints_keep_configured_lan_when_lan_discovery_disabled() {
+    let mut app = AppConfig::generated();
+    app.node.endpoint = "192.168.50.22:1111".to_string();
+    app.node.listen_port = 51820;
+    app.node.tunnel_ip = "10.44.1.1/32".to_string();
+    app.lan_discovery_enabled = false;
+
+    let hints = local_fips_endpoint_hints(&app, vec![Ipv4Addr::new(192, 168, 50, 10)]);
+
+    assert_eq!(hints.len(), 1);
+    assert_eq!(hints[0].addr, "192.168.50.22:51820");
+}
+
+#[cfg(feature = "embedded-fips")]
+#[test]
 fn local_fips_endpoint_hints_do_not_share_cgnat_candidates() {
     let mut app = AppConfig::generated();
     app.node.endpoint = "127.0.0.1:1111".to_string();

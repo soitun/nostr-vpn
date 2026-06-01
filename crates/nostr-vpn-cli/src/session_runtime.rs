@@ -1,6 +1,6 @@
 use super::*;
 
-const DAEMON_STATE_PERSIST_INTERVAL_SECS: u64 = 5;
+const DAEMON_STATE_PERSIST_INTERVAL_SECS: u64 = 1;
 
 #[cfg(feature = "embedded-fips")]
 macro_rules! current_fips_peer_statuses {
@@ -616,11 +616,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     #[cfg(feature = "embedded-fips")]
     let (mut fips_tunnel_runtime, mut last_fips_endpoint_peer_signature) =
         if fips_private_runtime_active(&app, vpn_enabled, expected_peers) {
-            let seeded_endpoint_count = recent_peers
-                .as_static_peer_endpoints_with_seen_at()
-                .iter()
-                .map(|(_, eps)| eps.len())
-                .sum::<usize>();
             let config = fips_tunnel_config_from_app(
                 &app,
                 &network_id,
@@ -629,6 +624,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 Some(&recent_peers),
                 &[],
             )?;
+            let seeded_endpoint_count = config
+                .endpoint_peers
+                .iter()
+                .flat_map(|peer| peer.addresses.iter())
+                .filter(|addr| addr.seen_at_ms.is_some())
+                .count();
             let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
             let runtime = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
             eprintln!(

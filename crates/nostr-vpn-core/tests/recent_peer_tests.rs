@@ -128,6 +128,30 @@ fn prune_stale_drops_participant_when_no_endpoints_remain() {
 }
 
 #[test]
+fn recent_cache_caps_endpoints_per_peer_to_freshest_observations() {
+    let mut state = RecentPeerEndpoints::default();
+    let participant = "g".repeat(64);
+
+    for i in 0..6 {
+        state.note_success(
+            &participant,
+            &format!("203.0.113.20:{}", 50_000 + i),
+            1_000 + i,
+        );
+    }
+
+    assert_eq!(
+        state.endpoints_for(&participant),
+        vec![
+            "203.0.113.20:50002".to_string(),
+            "203.0.113.20:50003".to_string(),
+            "203.0.113.20:50004".to_string(),
+            "203.0.113.20:50005".to_string(),
+        ]
+    );
+}
+
+#[test]
 fn retain_participants_filters_unknown_npubs() {
     let mut state = RecentPeerEndpoints::default();
     let alice = "a".repeat(64);
@@ -168,6 +192,34 @@ fn from_json_tolerates_garbage_input() {
     assert!(RecentPeerEndpoints::from_json("not json").is_err());
     let empty = RecentPeerEndpoints::from_json("{}").expect("empty object");
     assert!(empty.is_empty());
+}
+
+#[test]
+fn from_json_caps_legacy_endpoint_floods() {
+    let raw = r#"{
+        "version": 1,
+        "entries": {
+            "peer-a": [
+                {"addr": "203.0.113.20:50000", "last_success_at": 1000},
+                {"addr": "203.0.113.20:50001", "last_success_at": 1001},
+                {"addr": "203.0.113.20:50002", "last_success_at": 1002},
+                {"addr": "203.0.113.20:50003", "last_success_at": 1003},
+                {"addr": "203.0.113.20:50004", "last_success_at": 1004}
+            ]
+        }
+    }"#;
+
+    let restored = RecentPeerEndpoints::from_json(raw).expect("deserialize");
+
+    assert_eq!(
+        restored.endpoints_for("peer-a"),
+        vec![
+            "203.0.113.20:50001".to_string(),
+            "203.0.113.20:50002".to_string(),
+            "203.0.113.20:50003".to_string(),
+            "203.0.113.20:50004".to_string(),
+        ]
+    );
 }
 
 #[test]

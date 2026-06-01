@@ -53,19 +53,23 @@ use tokio::io::unix::AsyncFd;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use tokio::sync::mpsc;
 
-const FIPS_PEER_ONLINE_GRACE_SECS: u64 = 45;
+const FIPS_PEER_ONLINE_GRACE_SECS: u64 = 20;
 const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 const FIPS_LAN_DISCOVERY_SCOPE_PREFIX: &str = "nostr-vpn";
 const FIPS_PEER_CAPS_GRACE_SECS: u64 = 600;
+const FIPS_RECONNECT_BACKOFF_BASE_SECS: u64 = 1;
+const FIPS_RECONNECT_BACKOFF_MAX_SECS: u64 = 60;
 const FIPS_DISCOVERY_BACKOFF_BASE_SECS: u64 = 30;
 const FIPS_DISCOVERY_BACKOFF_MAX_SECS: u64 = 300;
 const FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS: u64 = 30;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
 const FIPS_NOSTR_FAILURE_STREAK_THRESHOLD: u32 = 2;
 const FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS: u64 = 300;
-const FIPS_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 10;
-const FIPS_PEER_LINK_PING_INTERVAL_SECS: u64 = 15;
-const FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 120;
+const FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS: u64 = 5;
+const FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS: u64 = 30;
+const FIPS_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 5;
+const FIPS_PEER_LINK_PING_INTERVAL_SECS: u64 = 5;
+const FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 30;
 const FIPS_CONTROL_RTT_MAX_ACCEPT_MS: u128 = 10_000;
 const MESH_LAN_UNDERLAY_UDP_MTU: u16 = 1420;
 const MESH_LAN_TUNNEL_MTU: u16 = 1290;
@@ -417,6 +421,41 @@ fn filter_stamped_tunnel_endpoints(
             (!addrs.is_empty()).then_some((participant, addrs))
         })
         .collect()
+}
+
+fn freshest_seen_at_ms(addrs: &[(String, u64)]) -> u64 {
+    addrs
+        .iter()
+        .map(|(_, seen_at_ms)| *seen_at_ms)
+        .max()
+        .unwrap_or(0)
+}
+
+fn cap_recent_non_roster_transit_endpoints(
+    groups: Vec<(String, Vec<(String, u64)>)>,
+    roster_endpoint_npubs: &HashSet<String>,
+    max_non_roster: usize,
+) -> Vec<(String, Vec<(String, u64)>)> {
+    let mut roster = Vec::new();
+    let mut non_roster = Vec::new();
+
+    for (participant, addrs) in groups {
+        if roster_endpoint_npubs.contains(&normalize_fips_endpoint_npub(&participant)) {
+            roster.push((participant, addrs));
+        } else {
+            non_roster.push((participant, addrs));
+        }
+    }
+
+    non_roster.sort_by(|left, right| {
+        freshest_seen_at_ms(&right.1)
+            .cmp(&freshest_seen_at_ms(&left.1))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    non_roster.truncate(max_non_roster);
+
+    roster.extend(non_roster);
+    roster
 }
 
 fn fips_tunnel_endpoint_hosts(app: &AppConfig, network_id: &str) -> HashSet<IpAddr> {
@@ -1306,7 +1345,7 @@ fn control_frame_destination_npub(mesh: &FipsMeshRuntime, participant: &str) -> 
 struct FipsEndpointTransportConfig {
     listen_port: u16,
     advertised_endpoint: String,
-    advertise_endpoint: bool,
+    advertise_public_endpoint: bool,
     /// Find/advertise peers over Nostr relays. When false, the endpoint still
     /// dials static/bootstrap peers and does LAN discovery, but does not use
     /// relays for endpoint discovery or advertising.
@@ -1320,8 +1359,8 @@ struct FipsEndpointTransportConfig {
 /// being lowered into a fips `PeerAddress`. `seen_at_ms` is the
 /// most-recent observation timestamp (Unix ms) when we have one — set for
 /// recent-peers cache entries, `None` for operator-supplied static hints.
-/// fips's dialer ranks candidates by this field descending, so cached
-/// addresses sort ahead of unstamped hints in the same try-everything pass.
+/// fips's dialer uses this field as a recency tiebreaker inside the same
+/// priority tier.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FipsPeerAddressHint {
     pub(crate) addr: String,
@@ -1356,6 +1395,10 @@ fn fips_endpoint_config(
     // neighbors when direct NAT traversal fails. Reply-learned routing lets
     // first-contact EndpointData trigger discovery through those neighbors.
     config.node.routing.mode = RoutingMode::ReplyLearned;
+    config.node.retry.base_interval_secs = FIPS_RECONNECT_BACKOFF_BASE_SECS;
+    config.node.retry.max_backoff_secs = FIPS_RECONNECT_BACKOFF_MAX_SECS;
+    config.node.heartbeat_interval_secs = FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS;
+    config.node.link_dead_timeout_secs = FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS;
     config.dns.enabled = false;
     // nvpn keeps public/open discovery available as a fallback, but it should
     // be polite to public transit nodes when stale roster peers or cached
@@ -1363,8 +1406,8 @@ fn fips_endpoint_config(
     config.node.discovery.backoff_base_secs = FIPS_DISCOVERY_BACKOFF_BASE_SECS;
     config.node.discovery.backoff_max_secs = FIPS_DISCOVERY_BACKOFF_MAX_SECS;
     config.node.discovery.forward_min_interval_secs = FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS;
-    let advertise_udp = transport
-        .map(|transport| transport.advertise_endpoint)
+    let advertise_public_endpoint = transport
+        .map(|transport| transport.advertise_public_endpoint)
         .unwrap_or(false);
     // The "find peers over Nostr relays" toggle. When off we neither advertise
     // nor stream adverts/DMs, but static + bootstrap peers (config.peers below)
@@ -1372,8 +1415,8 @@ fn fips_endpoint_config(
     let nostr_discovery_enabled = transport
         .map(|transport| transport.nostr_discovery_enabled)
         .unwrap_or(true);
-    let advertise_on_nostr = nostr_discovery_enabled && advertise_udp;
-    let nostr_enabled = nostr_discovery_enabled && (advertise_udp || !peers.is_empty());
+    let advertise_on_nostr = nostr_discovery_enabled && transport.is_some();
+    let nostr_enabled = nostr_discovery_enabled && (transport.is_some() || !peers.is_empty());
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.advertise = advertise_on_nostr;
     // Open discovery by default (unless the user opts into configured-only
@@ -1407,7 +1450,9 @@ fn fips_endpoint_config(
     // only in mDNS TXT records on the local link, while the private data plane
     // still enforces roster ownership before packets reach the tun.
     let bind_addr = transport.map(fips_udp_bind_addr);
-    let external_addr = transport.and_then(fips_udp_external_addr);
+    let external_addr = transport
+        .filter(|_| advertise_public_endpoint)
+        .and_then(fips_udp_external_addr);
     if let Some(transport) = transport {
         config.node.discovery.nostr.stun_servers = transport.stun_servers.clone();
         if !transport.nostr_relays.is_empty() {
@@ -1481,8 +1526,8 @@ fn fips_endpoint_peers_from_mesh(
             });
     }
 
-    // Operator-configured hints have no freshness signal — fips sorts
-    // them after any address we've actually observed.
+    // Operator-configured hints have no freshness signal. If a duplicate
+    // address later appears in the recent cache, keep that freshness below.
     for (npub, addresses) in operator_static_endpoints {
         let npub = normalize_fips_endpoint_npub(&npub);
         let peer = peers
@@ -1504,9 +1549,9 @@ fn fips_endpoint_peers_from_mesh(
         }
     }
 
-    // Recent-peers cache entries arrive with `last_success_at_ms` so the
-    // fips dialer ranks them ahead of unstamped operator hints in the
-    // same try-everything pass. Authenticated non-roster entries are kept
+    // Recent-peers cache entries arrive with `last_success_at_ms` so fips
+    // can prefer fresher hints within the same priority tier. Authenticated
+    // non-roster entries are kept
     // too: those are overlay transit peers we successfully handshook with
     // before, and reseeding them as fallback transit keeps the FIPS overlay
     // useful before relay discovery catches up.
@@ -1587,7 +1632,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) local_address: String,
     pub(crate) listen_port: u16,
     pub(crate) advertised_endpoint: String,
-    pub(crate) advertise_endpoint: bool,
+    pub(crate) advertise_public_endpoint: bool,
     pub(crate) stun_servers: Vec<String>,
     pub(crate) nostr_relays: Vec<String>,
     pub(crate) share_local_candidates: bool,
@@ -1662,9 +1707,10 @@ impl FipsPrivateTunnelConfig {
         // Address hints feed into fips's unified `PeerConfig.addresses`:
         //   * operator-configured `fips_peer_endpoints` (unstamped)
         //   * recent-peers cache entries (stamped with `last_success_at`)
-        // fips's dialer races every hint in parallel, ranked by `seen_at_ms`
-        // descending — recent observations naturally beat unstamped hints,
-        // and a fresh nostr advert beats both because it's stamped at fetch.
+        // fips's dialer keeps configured hints first, then races fresh Nostr
+        // overlay candidates inside the bounded candidate budget. Within the
+        // same priority tier, `seen_at_ms` lets recent observations beat
+        // unstamped hints.
         let desired_endpoint_hint_npubs = app
             .active_network_signal_pubkeys_hex()
             .into_iter()
@@ -1689,6 +1735,15 @@ impl FipsPrivateTunnelConfig {
             .unwrap_or_default();
         recent_peer_endpoints =
             filter_stamped_tunnel_endpoints(recent_peer_endpoints, &tunnel_endpoint_hosts);
+        // Roster/admin endpoint hints are part of the user's network and are
+        // always retained. Recent authenticated non-roster peers are only
+        // ambient transit seeds; cap them before handing the list to fips so
+        // they don't bypass the open-discovery queue limit as configured peers.
+        recent_peer_endpoints = cap_recent_non_roster_transit_endpoints(
+            recent_peer_endpoints,
+            &desired_endpoint_hint_npubs,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        );
         // Live capability hints are accepted only for network signal peers because
         // they are claims carried by that peer. The disk cache above is
         // different: it records peers this endpoint already authenticated.
@@ -1726,7 +1781,7 @@ impl FipsPrivateTunnelConfig {
                 .unwrap_or_else(|| local_interface_address_for_tunnel(&app.node.tunnel_ip)),
             listen_port: app.node.listen_port,
             advertised_endpoint: app.node.endpoint.clone(),
-            advertise_endpoint: app.fips_advertise_endpoint,
+            advertise_public_endpoint: app.fips_advertise_public_endpoint,
             stun_servers: app.nat.stun_servers.clone(),
             nostr_relays: app.nostr.relays.clone(),
             share_local_candidates: app.lan_discovery_enabled,
@@ -1866,7 +1921,7 @@ impl FipsPrivateTunnelRuntime {
         let transport = FipsEndpointTransportConfig {
             listen_port: config.listen_port,
             advertised_endpoint: config.advertised_endpoint.clone(),
-            advertise_endpoint: config.advertise_endpoint,
+            advertise_public_endpoint: config.advertise_public_endpoint,
             nostr_discovery_enabled: config.nostr_discovery_enabled,
             stun_servers: config.stun_servers.clone(),
             nostr_relays: config.nostr_relays.clone(),
@@ -2021,7 +2076,7 @@ impl FipsPrivateTunnelRuntime {
             || self.config.network_id != config.network_id
             || self.config.listen_port != config.listen_port
             || self.config.advertised_endpoint != config.advertised_endpoint
-            || self.config.advertise_endpoint != config.advertise_endpoint
+            || self.config.advertise_public_endpoint != config.advertise_public_endpoint
             || self.config.stun_servers != config.stun_servers
             || self.config.nostr_relays != config.nostr_relays
             || self.config.share_local_candidates != config.share_local_candidates
@@ -3250,7 +3305,7 @@ impl FipsPrivateTunnelRuntime {
         let transport = FipsEndpointTransportConfig {
             listen_port: config.listen_port,
             advertised_endpoint: config.advertised_endpoint.clone(),
-            advertise_endpoint: config.advertise_endpoint,
+            advertise_public_endpoint: config.advertise_public_endpoint,
             nostr_discovery_enabled: config.nostr_discovery_enabled,
             stun_servers: config.stun_servers.clone(),
             nostr_relays: config.nostr_relays.clone(),
@@ -3386,7 +3441,7 @@ impl FipsPrivateTunnelRuntime {
             || self.config.local_address != config.local_address
             || self.config.listen_port != config.listen_port
             || self.config.advertised_endpoint != config.advertised_endpoint
-            || self.config.advertise_endpoint != config.advertise_endpoint
+            || self.config.advertise_public_endpoint != config.advertise_public_endpoint
             || self.config.stun_servers != config.stun_servers
             || self.config.nostr_relays != config.nostr_relays
             || self.config.nostr_discovery_policy != config.nostr_discovery_policy
@@ -3838,9 +3893,11 @@ fn unix_timestamp() -> u64 {
 mod tests {
     use super::{
         ControlFragmentBuffer, FIPS_DISCOVERY_BACKOFF_BASE_SECS, FIPS_DISCOVERY_BACKOFF_MAX_SECS,
-        FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS, FIPS_LAN_DISCOVERY_SCOPE_PREFIX,
+        FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS, FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS,
+        FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS, FIPS_LAN_DISCOVERY_SCOPE_PREFIX,
         FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
         FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
+        FIPS_RECONNECT_BACKOFF_BASE_SECS, FIPS_RECONNECT_BACKOFF_MAX_SECS,
         FipsEndpointTransportConfig, FipsPeerAddressHint, FipsPrivateMeshEvent,
         FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, control_frame_destination_npub,
         control_frame_source_pubkey, drain_event_batch, fips_endpoint_config,
@@ -4258,14 +4315,14 @@ mod tests {
     #[test]
     fn fips_peer_ping_due_uses_peer_state_intervals() {
         assert!(super::fips_peer_ping_due(Some(100), None, true, 120));
-        assert!(!super::fips_peer_ping_due(Some(100), Some(115), true, 120));
-        assert!(super::fips_peer_ping_due(Some(100), Some(110), true, 120));
+        assert!(!super::fips_peer_ping_due(Some(100), Some(116), true, 120));
+        assert!(super::fips_peer_ping_due(Some(100), Some(115), true, 120));
 
-        assert!(!super::fips_peer_ping_due(None, Some(110), true, 120));
-        assert!(super::fips_peer_ping_due(None, Some(105), true, 120));
+        assert!(!super::fips_peer_ping_due(None, Some(116), true, 120));
+        assert!(super::fips_peer_ping_due(None, Some(115), true, 120));
 
-        assert!(!super::fips_peer_ping_due(None, Some(1), false, 120));
-        assert!(super::fips_peer_ping_due(None, Some(0), false, 120));
+        assert!(!super::fips_peer_ping_due(None, Some(91), false, 120));
+        assert!(super::fips_peer_ping_due(None, Some(90), false, 120));
     }
 
     #[test]
@@ -4758,6 +4815,22 @@ mod tests {
             config.node.discovery.forward_min_interval_secs,
             FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS
         );
+        assert_eq!(
+            config.node.retry.base_interval_secs,
+            FIPS_RECONNECT_BACKOFF_BASE_SECS
+        );
+        assert_eq!(
+            config.node.retry.max_backoff_secs,
+            FIPS_RECONNECT_BACKOFF_MAX_SECS
+        );
+        assert_eq!(
+            config.node.heartbeat_interval_secs,
+            FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS
+        );
+        assert_eq!(
+            config.node.link_dead_timeout_secs,
+            FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS
+        );
         assert!(config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);
         assert_eq!(
@@ -4821,7 +4894,7 @@ mod tests {
         let transport = FipsEndpointTransportConfig {
             listen_port: 51820,
             advertised_endpoint: "192.168.50.20:51820".to_string(),
-            advertise_endpoint: true,
+            advertise_public_endpoint: true,
             nostr_discovery_enabled: true,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
@@ -4889,7 +4962,7 @@ mod tests {
         let transport = FipsEndpointTransportConfig {
             listen_port: 51820,
             advertised_endpoint: "192.168.50.20:51820".to_string(),
-            advertise_endpoint: true,
+            advertise_public_endpoint: true,
             nostr_discovery_enabled: false,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
@@ -4934,7 +5007,7 @@ mod tests {
         let transport = FipsEndpointTransportConfig {
             listen_port: 51820,
             advertised_endpoint: "10.203.0.10:51820".to_string(),
-            advertise_endpoint: false,
+            advertise_public_endpoint: false,
             nostr_discovery_enabled: true,
             stun_servers: Vec::new(),
             nostr_relays: Vec::new(),
@@ -4949,8 +5022,15 @@ mod tests {
         );
 
         assert!(config.node.discovery.nostr.enabled);
-        assert!(!config.node.discovery.nostr.advertise);
+        assert!(config.node.discovery.nostr.advertise);
         assert!(!config.node.discovery.lan.enabled);
+        let udp = match &config.transports.udp {
+            fips_endpoint::TransportInstances::Single(udp) => udp,
+            _ => panic!("expected one UDP transport"),
+        };
+        assert!(udp.advertise_on_nostr());
+        assert!(!udp.is_public());
+        assert_eq!(udp.external_addr.as_deref(), None);
         assert_eq!(endpoint_peers.len(), 2);
         assert_eq!(config.peers.len(), 2);
         let bob = config
@@ -5193,6 +5273,77 @@ mod tests {
         assert!(
             charlie.discovery_fallback_transit,
             "recent non-roster peers should receive fallback lookup fanout"
+        );
+    }
+
+    #[test]
+    fn tunnel_config_caps_recent_outside_roster_transit_peers() {
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
+        let network_id = "fips-recent-transit-cap-test";
+
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = alice_nsec;
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = network_id.to_string();
+        app.networks[0].participants = vec![alice_pubkey.clone(), bob_pubkey.clone()];
+
+        let mut recent = nostr_vpn_core::recent_peers::RecentPeerEndpoints::default();
+        assert!(recent.note_success(&bob_pubkey, "1.1.1.1:51820", 1));
+
+        let mut non_roster_npubs = Vec::new();
+        for i in 0..(FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING + 2) {
+            let keys = Keys::generate();
+            let pubkey = keys.public_key().to_hex();
+            let npub = keys.public_key().to_bech32().expect("transit npub");
+            let addr = format!("1.1.1.{}:51820", i + 2);
+            assert!(recent.note_success(&pubkey, &addr, 100 + i as u64));
+            non_roster_npubs.push(npub);
+        }
+
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            Some(&recent),
+            &[],
+        )
+        .expect("fips tunnel config");
+
+        let bob = config
+            .endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == bob_npub)
+            .expect("roster peer recent hint should be retained");
+        assert_eq!(bob.addresses.len(), 1);
+        assert_eq!(bob.addresses[0].addr, "1.1.1.1:51820");
+
+        let seeded_recent_non_roster = config
+            .endpoint_peers
+            .iter()
+            .filter(|peer| non_roster_npubs.iter().any(|npub| npub == &peer.npub))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            seeded_recent_non_roster.len(),
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            "recent non-roster transit cache should not bypass the open-discovery cap"
+        );
+        assert!(
+            !seeded_recent_non_roster
+                .iter()
+                .any(|peer| peer.npub == non_roster_npubs[0]),
+            "oldest non-roster transit hint should be dropped first"
+        );
+        assert!(
+            seeded_recent_non_roster
+                .iter()
+                .any(|peer| peer.npub == *non_roster_npubs.last().unwrap()),
+            "freshest non-roster transit hint should be retained"
         );
     }
 
