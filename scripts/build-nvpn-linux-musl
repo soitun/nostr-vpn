@@ -134,6 +134,7 @@ else:
     text += f"\n[patch.crates-io]\n{patch_line}\n"
 path.write_text(text)
 PATCH
+  cargo "${cargo_config_args[@]}" update -p rustables
 fi
 
 if ! grep -q 'NFTA_CHAIN_FLAGS' "$rustables_vendor/build.rs"; then
