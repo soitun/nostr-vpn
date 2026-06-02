@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INSTALLER="${NVPN_INSTALL_TEST_DAEMON:-/usr/local/sbin/nvpn-install-test-daemon}"
+STAGE_ROOT="${NVPN_TEST_DAEMON_STAGE_ROOT:-/tmp}"
+
+case "$(uname -s)" in
+  Darwin) ;;
+  *)
+    echo "install-nvpn-test-daemon is macOS-only" >&2
+    exit 1
+    ;;
+esac
+
+if [[ ! -x "$INSTALLER" ]]; then
+  echo "missing installer helper: $INSTALLER" >&2
+  exit 1
+fi
+
+cd "$ROOT"
+cargo build -p nvpn --bin nvpn --release
+
+BIN="$("$ROOT/scripts/build-output-path" --raw nvpn --release)"
+if [[ ! -x "$BIN" ]]; then
+  echo "built nvpn binary not found at Cargo target path: $BIN" >&2
+  exit 1
+fi
+
+EXPECTED_VERSION="$(
+  cargo metadata --no-deps --format-version=1 \
+    | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "nvpn"))'
+)"
+ACTUAL_VERSION="$("$BIN" version)"
+if [[ "$ACTUAL_VERSION" != "$EXPECTED_VERSION" ]]; then
+  cat >&2 <<EOF
+refusing to install stale nvpn binary
+  expected version: $EXPECTED_VERSION
+  actual version:   $ACTUAL_VERSION
+  binary:           $BIN
+EOF
+  exit 1
+fi
+
+STAGE_DIR="$STAGE_ROOT/nvpn-build-$ACTUAL_VERSION-$(date +%s)-$$/release"
+mkdir -p "$STAGE_DIR"
+cp "$BIN" "$STAGE_DIR/nvpn"
+xattr -c "$STAGE_DIR/nvpn" 2>/dev/null || true
+
+echo "Installing nvpn $ACTUAL_VERSION from $STAGE_DIR/nvpn"
+sudo "$INSTALLER" "$STAGE_DIR/nvpn"
+printf '%s\n' "$STAGE_DIR/nvpn"

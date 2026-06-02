@@ -10,6 +10,12 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- macOS test-daemon installs now resolve Cargo's real target directory and
+  verify the built `nvpn` version before installing, preventing stale
+  `target/release/nvpn` binaries from being copied when a custom Cargo target
+  dir is configured.
+- Daemon startup failures now write an explicit failure status instead of
+  leaving the previous projected `Turning VPN on` state visible.
 - FIPS bulk send saturation no longer blocks link liveness/control handling,
   reducing false link-dead drops during high-rate traffic such as Screen
   Sharing.

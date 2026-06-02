@@ -2,17 +2,96 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RAW=0
+
+if [[ ${1:-} == "--raw" ]]; then
+  RAW=1
+  shift
+fi
 
 print_one() {
-  printf 'Build output: %s\n' "$1"
+  if [[ "$RAW" == 1 ]]; then
+    printf '%s\n' "$1"
+  else
+    printf 'Build output: %s\n' "$1"
+  fi
 }
 
 print_many() {
+  if [[ "$RAW" == 1 ]]; then
+    printf '%s\n' "$@"
+    return
+  fi
   printf 'Build outputs:\n'
   for path in "$@"; do
     printf '  %s\n' "$path"
   done
 }
+
+cargo_target_dir() {
+  (
+    cd "$ROOT"
+    cargo metadata --no-deps --format-version=1 \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])'
+  )
+}
+
+cargo_binary_path() {
+  local bin="${1:?missing binary name}"
+  local profile="${2:-debug}"
+  local target="${3:-}"
+  local target_dir
+  local exe_suffix=""
+
+  target_dir="$(cargo_target_dir)"
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) exe_suffix=".exe" ;;
+  esac
+  if [[ -n "$target" ]]; then
+    print_one "$target_dir/$target/$profile/$bin$exe_suffix"
+  else
+    print_one "$target_dir/$profile/$bin$exe_suffix"
+  fi
+}
+
+if [[ ${1:-} == "nvpn" || ${1:-} == "cargo-bin" ]]; then
+  if [[ ${1:-} == "cargo-bin" ]]; then
+    shift
+    bin="${1:-nvpn}"
+    shift || true
+  else
+    bin="nvpn"
+    shift
+  fi
+  profile="debug"
+  target=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --release)
+        profile="release"
+        shift
+        ;;
+      --debug)
+        profile="debug"
+        shift
+        ;;
+      --profile)
+        profile="${2:?--profile requires a value}"
+        shift 2
+        ;;
+      --target)
+        target="${2:?--target requires a value}"
+        shift 2
+        ;;
+      *)
+        echo "unknown build-output-path argument: $1" >&2
+        exit 2
+        ;;
+    esac
+  done
+  cargo_binary_path "$bin" "$profile" "$target"
+  exit 0
+fi
 
 macos_app_path() {
   local project="$ROOT/macos/NostrVpnMac.xcodeproj"
@@ -66,6 +145,8 @@ case "$(uname -s)" in
     print_one "$ROOT/windows/NostrVpn.Windows/bin/Debug/net8.0-windows/NostrVpn.Windows.exe"
     ;;
   *)
-    print_many "$ROOT/target/debug/nvpn" "$ROOT/target/debug/nvpn-reflector"
+    print_many \
+      "$(cargo_binary_path nvpn debug | sed 's/^Build output: //')" \
+      "$(cargo_binary_path nostr-vpn-reflector debug | sed 's/^Build output: //')"
     ;;
 esac

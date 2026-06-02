@@ -616,14 +616,29 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     #[cfg(feature = "embedded-fips")]
     let (mut fips_tunnel_runtime, mut last_fips_endpoint_peer_signature) =
         if fips_private_runtime_active(&app, vpn_enabled, expected_peers) {
-            let config = fips_tunnel_config_from_app(
+            let config = match fips_tunnel_config_from_app(
                 &app,
                 &network_id,
                 iface.clone(),
                 own_pubkey.as_deref(),
                 Some(&recent_peers),
                 &[],
-            )?;
+            ) {
+                Ok(config) => config,
+                Err(error) => {
+                    persist_daemon_startup_failure_state(
+                        &state_file,
+                        &app,
+                        vpn_enabled,
+                        expected_peers,
+                        &tunnel_runtime,
+                        &network_snapshot.summary(network_changed_at, captive_portal),
+                        &port_mapping_runtime.status(),
+                        &format!("FIPS private mesh config failed ({error})"),
+                    );
+                    return Err(error);
+                }
+            };
             let seeded_endpoint_count = config
                 .endpoint_peers
                 .iter()
@@ -631,7 +646,23 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 .filter(|addr| addr.seen_at_ms.is_some())
                 .count();
             let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
-            let runtime = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
+            let runtime =
+                match crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        persist_daemon_startup_failure_state(
+                            &state_file,
+                            &app,
+                            vpn_enabled,
+                            expected_peers,
+                            &tunnel_runtime,
+                            &network_snapshot.summary(network_changed_at, captive_portal),
+                            &port_mapping_runtime.status(),
+                            &format!("FIPS private mesh startup failed ({error})"),
+                        );
+                        return Err(error);
+                    }
+                };
             eprintln!(
                 "daemon: FIPS private mesh on {} (seeded {} recently-connected peer endpoint(s))",
                 runtime.iface(),
@@ -1391,6 +1422,35 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     remove_current_daemon_pid_record(&pid_file);
 
     Ok(())
+}
+
+fn persist_daemon_startup_failure_state(
+    state_file: &Path,
+    app: &AppConfig,
+    vpn_enabled: bool,
+    expected_peers: usize,
+    tunnel_runtime: &CliTunnelRuntime,
+    network: &NetworkSummary,
+    port_mapping: &PortMappingStatus,
+    vpn_status: &str,
+) {
+    let advertised_routes = HashMap::<String, Vec<String>>::new();
+    let state = build_daemon_runtime_state(
+        app,
+        vpn_enabled,
+        false,
+        expected_peers,
+        tunnel_runtime,
+        &[],
+        &[],
+        &advertised_routes,
+        vpn_status,
+        network,
+        port_mapping,
+    );
+    if let Err(error) = write_daemon_state(state_file, &state) {
+        eprintln!("daemon: failed to persist startup failure state: {error}");
+    }
 }
 
 fn remove_current_daemon_pid_record(pid_file: &Path) {

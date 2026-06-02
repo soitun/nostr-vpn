@@ -34,11 +34,12 @@ case "${NVPN_RUN_MACOS_SERVICE_E2E:-0}" in
 esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-NVPN_BIN="${NVPN_E2E_BINARY:-$ROOT/target/release/nvpn}"
+NVPN_BIN="${NVPN_E2E_BINARY:-}"
 
-if [ ! -x "$NVPN_BIN" ]; then
+if [ -z "$NVPN_BIN" ]; then
   echo "Building nvpn (release)..."
   (cd "$ROOT" && cargo build --release -p nvpn)
+  NVPN_BIN="$("$ROOT/scripts/build-output-path" --raw nvpn --release)"
 fi
 if [ ! -x "$NVPN_BIN" ]; then
   echo "FAIL: $NVPN_BIN missing after build"
