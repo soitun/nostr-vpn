@@ -111,7 +111,7 @@ struct SecureSelection {
 }
 
 enum UpdateSelection {
-    Secure(SecureSelection),
+    Secure(Box<SecureSelection>),
     Legacy(LegacySelection),
 }
 
@@ -196,7 +196,7 @@ async fn select_update(
         return Ok(UpdateSelection::Legacy(legacy));
     }
 
-    Ok(UpdateSelection::Secure(selection))
+    Ok(UpdateSelection::Secure(Box::new(selection)))
 }
 
 fn result_from_selection(
