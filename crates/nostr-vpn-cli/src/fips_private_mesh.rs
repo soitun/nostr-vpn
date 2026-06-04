@@ -69,6 +69,7 @@ const FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS: u64 = 2;
 const FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS: u64 = 30;
 const FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS: u64 = 0;
 const FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST: usize = 64;
+const FIPS_ENDPOINT_REKEY_AFTER_SECS: u64 = 3600;
 const FIPS_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 5;
 const FIPS_PEER_LINK_PING_INTERVAL_SECS: u64 = 5;
 const FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 30;
@@ -1546,6 +1547,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
     config.node.link_dead_timeout_secs = FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS;
     config.node.session.idle_timeout_secs = FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS;
     config.node.session.pending_packets_per_dest = FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST;
+    config.node.rekey.after_secs = FIPS_ENDPOINT_REKEY_AFTER_SECS;
     config.dns.enabled = false;
     // nvpn keeps public/open discovery available as a fallback, but it should
     // be polite to public transit nodes when stale roster peers or cached
@@ -4059,13 +4061,13 @@ mod tests {
         ControlFragmentBuffer, FIPS_DISCOVERY_BACKOFF_BASE_SECS, FIPS_DISCOVERY_BACKOFF_MAX_SECS,
         FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS, FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS,
         FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS, FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST,
-        FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS, FIPS_LAN_DISCOVERY_SCOPE_PREFIX,
-        FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP, FIPS_NOSTR_EXTENDED_COOLDOWN_SECS,
-        FIPS_NOSTR_FAILURE_STREAK_THRESHOLD, FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-        FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS, FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
-        FIPS_RECONNECT_BACKOFF_BASE_SECS, FIPS_RECONNECT_BACKOFF_MAX_SECS,
-        FipsEndpointTransportConfig, FipsPeerAddressHint, FipsPrivateMeshEvent,
-        FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
+        FIPS_ENDPOINT_REKEY_AFTER_SECS, FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS,
+        FIPS_LAN_DISCOVERY_SCOPE_PREFIX, FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP,
+        FIPS_NOSTR_EXTENDED_COOLDOWN_SECS, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
+        FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
+        FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS, FIPS_RECONNECT_BACKOFF_BASE_SECS,
+        FIPS_RECONNECT_BACKOFF_MAX_SECS, FipsEndpointTransportConfig, FipsPeerAddressHint,
+        FipsPrivateMeshEvent, FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
         cap_recent_non_roster_transit_endpoints, control_frame_destination_npub,
         control_frame_source_pubkey, drain_event_batch, filter_stamped_tunnel_endpoints,
         filter_static_tunnel_endpoints, fips_endpoint_config, fips_endpoint_peers_from_mesh,
@@ -5043,6 +5045,7 @@ mod tests {
             config.node.session.pending_packets_per_dest,
             FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST
         );
+        assert_eq!(config.node.rekey.after_secs, FIPS_ENDPOINT_REKEY_AFTER_SECS);
         assert!(config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);
         assert_eq!(
