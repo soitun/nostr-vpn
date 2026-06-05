@@ -408,6 +408,7 @@ function syncRepoToWindowsHost({ host, guestRepo, dryRun }) {
     '--exclude=./.claude',
     '--exclude=./.codex',
     '--exclude=./.codex_*',
+    '--exclude=./*.s9pk',
     '--exclude=./artifacts',
     '--exclude=./node_modules',
     '--exclude=./.env.release.local',
@@ -417,6 +418,8 @@ function syncRepoToWindowsHost({ host, guestRepo, dryRun }) {
     '--exclude=./android',
     '--exclude=./linux',
     '--exclude=./umbrel',
+    '--exclude=./windows/NostrVpn.Windows/bin',
+    '--exclude=./windows/NostrVpn.Windows/obj',
   ].join(' ')
 
   // Start from a clean destination. The Windows project uses broad wildcard
