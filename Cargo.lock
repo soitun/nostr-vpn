@@ -1214,9 +1214,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.42"
+version = "0.3.43"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "506f8f6fa232f060f5549dfcb0ece0f892171e436e23fbce0ef942dc7d73a716"
+checksum = "76012221356a8f117f4350e5520ccfa8f4252480fca6883385f601c699267405"
 dependencies = [
  "bluer",
  "crossbeam-channel",
