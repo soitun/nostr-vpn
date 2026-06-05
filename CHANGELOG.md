@@ -2,6 +2,19 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.62 - 2026-06-05
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.33 and `fips-endpoint` 0.3.24.
+
+### Fixed
+
+- Link-dead direct UDP paths now stay as stale/probeable candidates instead
+  of making the FIPS peer non-sendable, so nvpn traffic can keep flowing over
+  mesh fallback while direct probes and late authenticated packets revive the
+  path.
+
 ## 4.0.61 - 2026-06-05
 
 ### Changed
