@@ -101,6 +101,9 @@ const LNVPS_BOOTSTRAP_ADDRS: &[&str] = &[
     "tcp:185.18.221.242:8443",
     "tcp:[2a13:2c0::4f44:f2b1:22dc:c62e]:8443",
 ];
+const OSIRIS_BOOTSTRAP_NPUB: &str =
+    "npub1pdwpuzkxkyurukrezseu3ny5w6x2d3xevsq3s6sly2vfz2925xasewk5g4";
+const OSIRIS_BOOTSTRAP_ADDRS: &[&str] = &["udp:65.109.48.91:2121", "tcp:65.109.48.91:8443"];
 
 #[test]
 fn fips_discovery_and_bootstrap_default_on() {
@@ -110,11 +113,19 @@ fn fips_discovery_and_bootstrap_default_on() {
     assert!(config.fips_bootstrap_enabled);
 
     let bootstrap = config.fips_bootstrap_peer_endpoints();
-    assert_eq!(bootstrap.len(), 1);
+    assert_eq!(bootstrap.len(), 2);
     assert_eq!(bootstrap[0].0, LNVPS_BOOTSTRAP_NPUB);
     assert_eq!(
         bootstrap[0].1,
         LNVPS_BOOTSTRAP_ADDRS
+            .iter()
+            .map(|addr| (*addr).to_string())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(bootstrap[1].0, OSIRIS_BOOTSTRAP_NPUB);
+    assert_eq!(
+        bootstrap[1].1,
+        OSIRIS_BOOTSTRAP_ADDRS
             .iter()
             .map(|addr| (*addr).to_string())
             .collect::<Vec<_>>()

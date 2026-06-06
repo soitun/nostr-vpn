@@ -74,6 +74,11 @@ pub const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
             "tcp:[2a13:2c0::4f44:f2b1:22dc:c62e]:8443",
         ],
     ),
+    // fips2 / osiris
+    (
+        "npub1pdwpuzkxkyurukrezseu3ny5w6x2d3xevsq3s6sly2vfz2925xasewk5g4",
+        &["udp:65.109.48.91:2121", "tcp:65.109.48.91:8443"],
+    ),
 ];
 
 /// The default bootstrap peer list as an owned map, used to seed configs and to

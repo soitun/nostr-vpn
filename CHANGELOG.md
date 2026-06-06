@@ -2,6 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
+## Unreleased
+
+### Changed
+
+- Added the `osiris` public FIPS bootstrap peer as a second built-in bootstrap
+  route alongside `lnvps`.
+
 ## 4.0.68 - 2026-06-06
 
 ### Changed
