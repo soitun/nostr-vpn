@@ -28,6 +28,8 @@ mod session_runtime;
 mod updater;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod wg_upstream_runtime;
+#[cfg(target_os = "windows")]
+mod windows_network;
 #[cfg(any(target_os = "windows", test))]
 mod windows_tunnel;
 #[cfg(target_os = "linux")]

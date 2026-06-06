@@ -1,9 +1,9 @@
 use super::*;
 
 const DAEMON_STATE_PERSIST_INTERVAL_SECS: u64 = 1;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) const DAEMON_NETWORK_REFRESH_INTERVAL_SECS: u64 = 15;
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub(crate) const DAEMON_NETWORK_REFRESH_INTERVAL_SECS: u64 = 1;
 pub(crate) const DAEMON_NETWORK_EVENT_DEBOUNCE_MILLIS: u64 = 250;
 #[cfg(any(target_os = "macos", test))]
@@ -360,7 +360,11 @@ fn spawn_platform_network_change_monitor() -> Option<tokio::sync::mpsc::Receiver
     {
         crate::macos_network::spawn_macos_route_change_monitor()
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
+    {
+        crate::windows_network::spawn_windows_route_change_monitor()
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
     {
         None
     }

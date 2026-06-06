@@ -45,6 +45,11 @@ boringtun.workspace = true
 nostr-vpn-wintun.workspace = true
 wintun = "0.5.1"
 windows-service = "0.8"
+windows-sys = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_NetworkManagement_IpHelper",
+  "Win32_Networking_WinSock",
+] }
 
 [[bin]]
 name = "nvpn"
