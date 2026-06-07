@@ -2,6 +2,21 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.72 - 2026-06-07
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.54 and `fips-endpoint` 0.3.30.
+
+### Fixed
+
+- FIPS receive-loop handling now stays responsive under bulk endpoint egress
+  by keeping priority endpoint commands ahead of bulk tunnel traffic and
+  treating saturated bulk worker queues as network backpressure.
+- The embedded mesh receive path now cooperates with Tokio scheduling after
+  forwarding packets to TUN so hot inbound streams do not starve timers or
+  control work.
+
 ## 4.0.71 - 2026-06-07
 
 ### Changed
