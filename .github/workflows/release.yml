@@ -97,6 +97,29 @@ jobs:
         if: ${{ !matrix.cross }}
         run: cargo build --release --target ${{ matrix.target }} -p nvpn
 
+      - name: Test macOS WireGuard exit native dataplane
+        if: ${{ runner.os == 'macOS' }}
+        env:
+          NVPN_WG_EXIT_HOST_PROFILE: release
+        run: ./scripts/e2e-wireguard-exit-host.sh
+
+      - name: Test Windows WireGuard exit native dataplane
+        if: ${{ runner.os == 'Windows' }}
+        shell: pwsh
+        run: |
+          $IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          if (!$IsAdmin) {
+            throw "Windows WireGuard exit release gate requires an elevated/Admin runner for Wintun and route changes"
+          }
+          $Bin = "target\${{ matrix.target }}\release\nvpn.exe"
+          if (!(Test-Path $Bin)) {
+            throw "Missing nvpn binary: $Bin"
+          }
+          & $Bin wg-upstream-test --self-test --timeout-secs 15 --scoped-host 10.99.99.1 --ping-count 3
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+
       - name: Package CLI artifact
         shell: bash
         run: |

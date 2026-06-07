@@ -712,6 +712,77 @@ mod tests {
     use super::*;
     use crate::config::parse_wireguard_exit_config;
 
+    fn internet_checksum(bytes: &[u8]) -> u16 {
+        let mut sum = 0u32;
+        let mut chunks = bytes.chunks_exact(2);
+        for chunk in &mut chunks {
+            sum += u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
+        }
+        if let Some(&byte) = chunks.remainder().first() {
+            sum += u16::from_be_bytes([byte, 0]) as u32;
+        }
+        while (sum >> 16) != 0 {
+            sum = (sum & 0xffff) + (sum >> 16);
+        }
+        !(sum as u16)
+    }
+
+    fn ipv4_icmp_echo_request(src: [u8; 4], dst: [u8; 4], seq: u16) -> Vec<u8> {
+        let mut packet = vec![0u8; 28];
+        packet[0] = 0x45;
+        packet[1] = 0;
+        let total_len = packet.len() as u16;
+        packet[2..4].copy_from_slice(&total_len.to_be_bytes());
+        packet[4..6].copy_from_slice(&0x1234u16.to_be_bytes());
+        packet[6..8].copy_from_slice(&0u16.to_be_bytes());
+        packet[8] = 64;
+        packet[9] = 1;
+        packet[12..16].copy_from_slice(&src);
+        packet[16..20].copy_from_slice(&dst);
+        let header_checksum = internet_checksum(&packet[..20]);
+        packet[10..12].copy_from_slice(&header_checksum.to_be_bytes());
+
+        packet[20] = 8;
+        packet[21] = 0;
+        packet[24..26].copy_from_slice(&0x4e56u16.to_be_bytes());
+        packet[26..28].copy_from_slice(&seq.to_be_bytes());
+        let icmp_checksum = internet_checksum(&packet[20..]);
+        packet[22..24].copy_from_slice(&icmp_checksum.to_be_bytes());
+        packet
+    }
+
+    fn ipv4_icmp_echo_reply(request: &[u8]) -> Option<Vec<u8>> {
+        if request.len() < 28 || request[0] >> 4 != 4 {
+            return None;
+        }
+        let ihl = usize::from(request[0] & 0x0f) * 4;
+        if ihl < 20 || request.len() < ihl + 8 || request[9] != 1 || request[ihl] != 8 {
+            return None;
+        }
+        let total_len = usize::from(u16::from_be_bytes([request[2], request[3]]));
+        if total_len < ihl + 8 || total_len > request.len() {
+            return None;
+        }
+
+        let mut reply = request[..total_len].to_vec();
+        reply[8] = 64;
+        reply[10] = 0;
+        reply[11] = 0;
+        let src = [reply[12], reply[13], reply[14], reply[15]];
+        let dst = [reply[16], reply[17], reply[18], reply[19]];
+        reply[12..16].copy_from_slice(&dst);
+        reply[16..20].copy_from_slice(&src);
+        let header_checksum = internet_checksum(&reply[..ihl]);
+        reply[10..12].copy_from_slice(&header_checksum.to_be_bytes());
+
+        reply[ihl] = 0;
+        reply[ihl + 2] = 0;
+        reply[ihl + 3] = 0;
+        let icmp_checksum = internet_checksum(&reply[ihl..]);
+        reply[ihl + 2..ihl + 4].copy_from_slice(&icmp_checksum.to_be_bytes());
+        Some(reply)
+    }
+
     #[test]
     fn upstream_udp_bind_uses_loopback_for_loopback_peer() {
         assert_eq!(
@@ -827,5 +898,99 @@ mod tests {
             ok,
             "expected handshake to complete against the paired responder"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn channels_round_trip_plaintext_packets_against_paired_responder() {
+        let (_, _client_pub, client_priv_b64, _) = random_keypair();
+        let (server_priv_obj, _, _, server_pub_b64) = random_keypair();
+
+        let server_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let server_addr = server_socket.local_addr().unwrap();
+        let server_socket = Arc::new(server_socket);
+
+        let mut server_tunn = Tunn::new(
+            server_priv_obj,
+            PublicKey::from(&decode_private_key(&client_priv_b64).unwrap()),
+            None,
+            Some(25),
+            2,
+            None,
+        );
+
+        let request = ipv4_icmp_echo_request([10, 99, 99, 2], [10, 99, 99, 1], 7);
+        let expected_reply = ipv4_icmp_echo_reply(&request).expect("reply packet");
+
+        let server_socket_pump = server_socket.clone();
+        let server_pump = tokio::spawn(async move {
+            let mut udp_buf = vec![0u8; MAX_WG_PACKET];
+            for _ in 0..64 {
+                let (n, src) = match tokio::time::timeout(
+                    Duration::from_millis(500),
+                    server_socket_pump.recv_from(&mut udp_buf),
+                )
+                .await
+                {
+                    Ok(Ok(value)) => value,
+                    _ => continue,
+                };
+                let mut out = vec![0u8; MAX_WG_PACKET];
+                let action = match server_tunn.decapsulate(Some(src.ip()), &udp_buf[..n], &mut out)
+                {
+                    TunnResult::WriteToNetwork(packet) => Some(packet.to_vec()),
+                    TunnResult::WriteToTunnelV4(packet, _) => {
+                        let reply = ipv4_icmp_echo_reply(packet).expect("ICMP echo request");
+                        let mut reply_out = vec![0u8; MAX_WG_PACKET];
+                        match server_tunn.encapsulate(&reply, &mut reply_out) {
+                            TunnResult::WriteToNetwork(packet) => Some(packet.to_vec()),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                };
+                if let Some(bytes) = action {
+                    let _ = server_socket_pump.send_to(&bytes, src).await;
+                }
+                loop {
+                    let mut drain_buf = vec![0u8; MAX_WG_PACKET];
+                    let drained = match server_tunn.decapsulate(None, &[], &mut drain_buf) {
+                        TunnResult::WriteToNetwork(packet) => Some(packet.to_vec()),
+                        _ => None,
+                    };
+                    let Some(bytes) = drained else { break };
+                    let _ = server_socket_pump.send_to(&bytes, src).await;
+                }
+            }
+        });
+
+        let cfg_text = format!(
+            "[Interface]\nPrivateKey = {client_priv_b64}\nAddress = 10.99.99.2/32\n\n[Peer]\nPublicKey = {server_pub_b64}\nEndpoint = {server_addr}\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 1\n"
+        );
+        let cfg = parse_wireguard_exit_config(&cfg_text).expect("parse WG config");
+        let (tun_in_tx, tun_in_rx) = mpsc::channel(8);
+        let (tun_out_tx, mut tun_out_rx) = mpsc::channel(8);
+
+        let runtime = WgUpstreamRuntime::start_with_channels(&cfg, tun_in_rx, tun_out_tx)
+            .await
+            .expect("start runtime");
+        let ok = runtime.wait_for_handshake(Duration::from_secs(10)).await;
+        assert!(
+            ok,
+            "expected handshake to complete against the paired responder"
+        );
+
+        tun_in_tx
+            .send(request)
+            .await
+            .expect("send plaintext packet into tunnel");
+        let actual_reply = tokio::time::timeout(Duration::from_secs(10), tun_out_rx.recv())
+            .await
+            .expect("reply timeout")
+            .expect("reply channel closed");
+        runtime.shutdown().await;
+        server_pump.abort();
+        let _ = server_pump.await;
+
+        assert_eq!(actual_reply, expected_reply);
     }
 }

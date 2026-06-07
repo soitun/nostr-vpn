@@ -298,12 +298,17 @@ enum Command {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 struct WgUpstreamTestArgs {
     /// Path to a WireGuard config file (the same `[Interface]` /
     /// `[Peer]` syntax wg-quick / Mullvad / Proton VPN export).
-    #[arg(long)]
-    config_file: PathBuf,
+    #[arg(long, required_unless_present = "self_test")]
+    config_file: Option<PathBuf>,
+    /// Generate a local paired WireGuard responder and test against it.
+    /// This is for release-gate host/VM checks: it uses the same native
+    /// tun/Wintun path as a provider config, but needs no external VPN account.
+    #[arg(long, default_value_t = false)]
+    self_test: bool,
     /// Maximum time to wait for the WG handshake to complete.
     #[arg(long, default_value_t = 30)]
     timeout_secs: u64,
@@ -1352,10 +1357,18 @@ async fn run_command(command: Command) -> Result<()> {
 async fn run_wg_upstream_test(args: WgUpstreamTestArgs) -> Result<()> {
     use std::time::Duration;
 
-    let raw = std::fs::read_to_string(&args.config_file)
-        .with_context(|| format!("read WG config file {}", args.config_file.display()))?;
+    if args.self_test {
+        return run_wg_upstream_self_test(args).await;
+    }
+
+    let config_file = args
+        .config_file
+        .as_ref()
+        .ok_or_else(|| anyhow!("--config-file is required unless --self-test is set"))?;
+    let raw = std::fs::read_to_string(config_file)
+        .with_context(|| format!("read WG config file {}", config_file.display()))?;
     let cfg = parse_wireguard_exit_config(&raw)
-        .with_context(|| format!("parse WG config file {}", args.config_file.display()))?;
+        .with_context(|| format!("parse WG config file {}", config_file.display()))?;
 
     let timeout = Duration::from_secs(args.timeout_secs);
 
@@ -1375,6 +1388,200 @@ async fn run_wg_upstream_test(args: WgUpstreamTestArgs) -> Result<()> {
     }
 
     run_wg_upstream_handshake_only(&cfg, timeout, args.timeout_secs).await
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+async fn run_wg_upstream_self_test(args: WgUpstreamTestArgs) -> Result<()> {
+    let (cfg, server) = start_wg_upstream_self_test_server().await?;
+    let timeout = std::time::Duration::from_secs(args.timeout_secs);
+    let result = if args.replace_default {
+        let mut args = args;
+        args.probe_target
+            .get_or_insert(IpAddr::V4(Ipv4Addr::new(10, 99, 99, 1)));
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            run_wg_upstream_replace_default(&cfg, &args, timeout).await
+        }
+        #[cfg(target_os = "windows")]
+        {
+            run_wg_upstream_windows_replace_default(&cfg, &args, timeout).await
+        }
+    } else if let Some(scoped_host) = args
+        .scoped_host
+        .or(Some(IpAddr::V4(Ipv4Addr::new(10, 99, 99, 1))))
+    {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            run_wg_upstream_scoped_host(&cfg, &args, timeout, scoped_host).await
+        }
+        #[cfg(target_os = "windows")]
+        {
+            run_wg_upstream_windows_scoped_host(&cfg, &args, timeout, scoped_host).await
+        }
+    } else {
+        run_wg_upstream_handshake_only(&cfg, timeout, args.timeout_secs).await
+    };
+    server.shutdown().await;
+    result
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+struct WgSelfTestServer {
+    handle: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl WgSelfTestServer {
+    async fn shutdown(self) {
+        self.handle.abort();
+        let _ = self.handle.await;
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+async fn start_wg_upstream_self_test_server() -> Result<(
+    nostr_vpn_core::config::WireGuardExitConfig,
+    WgSelfTestServer,
+)> {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD;
+    use boringtun::noise::{Tunn, TunnResult};
+    use nostr_vpn_core::wg_upstream::MAX_WG_PACKET;
+    use tokio::net::UdpSocket;
+
+    let (client_private, client_public) = wg_self_test_keypair(0x11);
+    let (server_private, server_public) = wg_self_test_keypair(0x51);
+    let client_private_b64 = STANDARD.encode(client_private.to_bytes());
+    let server_public_b64 = STANDARD.encode(server_public.as_bytes());
+
+    let socket = UdpSocket::bind("127.0.0.1:0")
+        .await
+        .context("bind local WG self-test responder")?;
+    let server_addr = socket
+        .local_addr()
+        .context("read self-test responder addr")?;
+    let socket = std::sync::Arc::new(socket);
+    let server_socket = socket.clone();
+    let handle = tokio::spawn(async move {
+        let mut server_tunn = Tunn::new(server_private, client_public, None, Some(25), 2, None);
+        let mut udp_buf = vec![0u8; MAX_WG_PACKET];
+        loop {
+            let Ok((n, src)) = server_socket.recv_from(&mut udp_buf).await else {
+                continue;
+            };
+            let mut out = vec![0u8; MAX_WG_PACKET];
+            let action = match server_tunn.decapsulate(Some(src.ip()), &udp_buf[..n], &mut out) {
+                TunnResult::WriteToNetwork(packet) => Some(packet.to_vec()),
+                TunnResult::WriteToTunnelV4(packet, _) => {
+                    let reply = wg_self_test_icmp_echo_reply(packet)
+                        .unwrap_or_else(|| wg_self_test_ipv4_echo(packet));
+                    let mut reply_out = vec![0u8; MAX_WG_PACKET];
+                    match server_tunn.encapsulate(&reply, &mut reply_out) {
+                        TunnResult::WriteToNetwork(packet) => Some(packet.to_vec()),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(bytes) = action {
+                let _ = server_socket.send_to(&bytes, src).await;
+            }
+            loop {
+                let mut drain_buf = vec![0u8; MAX_WG_PACKET];
+                let drained = match server_tunn.decapsulate(None, &[], &mut drain_buf) {
+                    TunnResult::WriteToNetwork(packet) => Some(packet.to_vec()),
+                    _ => None,
+                };
+                let Some(bytes) = drained else { break };
+                let _ = server_socket.send_to(&bytes, src).await;
+            }
+        }
+    });
+
+    let cfg_text = format!(
+        "[Interface]\nPrivateKey = {client_private_b64}\nAddress = 10.99.99.2/32\nMTU = 1420\n\n[Peer]\nPublicKey = {server_public_b64}\nEndpoint = {server_addr}\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 1\n"
+    );
+    let cfg =
+        parse_wireguard_exit_config(&cfg_text).context("parse generated WG self-test config")?;
+    Ok((cfg, WgSelfTestServer { handle }))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn wg_self_test_keypair(
+    seed: u8,
+) -> (
+    boringtun::x25519::StaticSecret,
+    boringtun::x25519::PublicKey,
+) {
+    let mut bytes = [0u8; 32];
+    for (idx, byte) in bytes.iter_mut().enumerate() {
+        *byte = seed.wrapping_add((idx as u8).wrapping_mul(13));
+    }
+    let private = boringtun::x25519::StaticSecret::from(bytes);
+    let public = boringtun::x25519::PublicKey::from(&private);
+    (private, public)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn wg_self_test_ipv4_echo(packet: &[u8]) -> Vec<u8> {
+    if packet.len() < 20 || packet[0] >> 4 != 4 {
+        return packet.to_vec();
+    }
+    let mut reply = packet.to_vec();
+    let src = [reply[12], reply[13], reply[14], reply[15]];
+    let dst = [reply[16], reply[17], reply[18], reply[19]];
+    reply[12..16].copy_from_slice(&dst);
+    reply[16..20].copy_from_slice(&src);
+    reply
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn wg_self_test_icmp_echo_reply(request: &[u8]) -> Option<Vec<u8>> {
+    if request.len() < 28 || request[0] >> 4 != 4 {
+        return None;
+    }
+    let ihl = usize::from(request[0] & 0x0f) * 4;
+    if ihl < 20 || request.len() < ihl + 8 || request[9] != 1 || request[ihl] != 8 {
+        return None;
+    }
+    let total_len = usize::from(u16::from_be_bytes([request[2], request[3]]));
+    if total_len < ihl + 8 || total_len > request.len() {
+        return None;
+    }
+
+    let mut reply = request[..total_len].to_vec();
+    reply[8] = 64;
+    reply[10] = 0;
+    reply[11] = 0;
+    let src = [reply[12], reply[13], reply[14], reply[15]];
+    let dst = [reply[16], reply[17], reply[18], reply[19]];
+    reply[12..16].copy_from_slice(&dst);
+    reply[16..20].copy_from_slice(&src);
+    let header_checksum = wg_self_test_checksum(&reply[..ihl]);
+    reply[10..12].copy_from_slice(&header_checksum.to_be_bytes());
+
+    reply[ihl] = 0;
+    reply[ihl + 2] = 0;
+    reply[ihl + 3] = 0;
+    let icmp_checksum = wg_self_test_checksum(&reply[ihl..]);
+    reply[ihl + 2..ihl + 4].copy_from_slice(&icmp_checksum.to_be_bytes());
+    Some(reply)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn wg_self_test_checksum(bytes: &[u8]) -> u16 {
+    let mut sum = 0u32;
+    let mut chunks = bytes.chunks_exact(2);
+    for chunk in &mut chunks {
+        sum += u16::from_be_bytes([chunk[0], chunk[1]]) as u32;
+    }
+    if let Some(&byte) = chunks.remainder().first() {
+        sum += u16::from_be_bytes([byte, 0]) as u32;
+    }
+    while (sum >> 16) != 0 {
+        sum = (sum & 0xffff) + (sum >> 16);
+    }
+    !(sum as u16)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -1591,20 +1798,34 @@ async fn run_wg_upstream_windows_scoped_host(
     }
     println!("wg-upstream-test: handshake completed, pinging {scoped_host}...");
 
-    let mut ping = tokio::process::Command::new("ping");
-    ping.arg("-n")
-        .arg(args.ping_count.to_string())
-        .arg("-w")
-        .arg("3000")
-        .arg(scoped_host.to_string());
-    let status = match ping.status().await.context("spawn ping") {
-        Ok(status) => status,
-        Err(error) => {
-            runtime.shutdown().await;
-            return Err(error);
+    let source_ip = parsed_address.address.to_string();
+    let mut ping_result = Ok(false);
+    for attempt in 1..=5 {
+        if attempt > 1 {
+            println!("wg-upstream-test: retrying probe ping through the WG tunnel...");
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
-    };
-    let ping_ok = status.success();
+        let mut ping = tokio::process::Command::new("ping");
+        ping.arg("-n")
+            .arg(args.ping_count.to_string())
+            .arg("-w")
+            .arg("3000")
+            .arg("-S")
+            .arg(&source_ip)
+            .arg(scoped_host.to_string());
+        let status = match ping.status().await.context("spawn ping") {
+            Ok(status) => status,
+            Err(error) => {
+                ping_result = Err(error);
+                break;
+            }
+        };
+        if status.success() {
+            ping_result = Ok(true);
+            break;
+        }
+    }
+    let ping_ok = ping_result?;
 
     if args.hold_secs > 0 {
         println!(

@@ -23,7 +23,7 @@ Always run locally before bumping/tagging:
 just release-gate
 ```
 
-It mirrors the regular CI gate: sync-versions, fmt, clippy, Rust tests, FIPS join-request Docker e2e, routed-FIPS Docker e2e proving two peers can communicate through an intermediary when direct UDP is blocked, and NAT safe-MTU Docker e2e. Fix any failure or warning before the release commit.
+It mirrors the regular CI gate: sync-versions, fmt, clippy, Rust tests, FIPS join-request Docker e2e, routed-FIPS Docker e2e proving two peers can communicate through an intermediary when direct UDP is blocked, NAT safe-MTU Docker e2e, WireGuard exit Docker/platform e2e, and desktop launch smokes. Fix any failure or warning before the release commit.
 
 For the Linux GTK app (`linux/`, outside the workspace), also run:
 

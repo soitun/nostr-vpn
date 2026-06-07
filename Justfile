@@ -67,6 +67,8 @@ info:
     @echo "  just e2e-roster-admin"
     @echo "  just e2e-wireguard-exit"
     @echo "  just e2e-wireguard-exit-userspace"
+    @echo "  just e2e-wireguard-exit-host"
+    @echo "  just e2e-wireguard-exit-windows-vm"
 
 run:
     @case "$(uname -s)" in \
@@ -224,3 +226,9 @@ e2e-wireguard-exit:
 
 e2e-wireguard-exit-userspace:
     ./scripts/e2e-wireguard-exit-userspace-docker.sh
+
+e2e-wireguard-exit-host:
+    ./scripts/e2e-wireguard-exit-host.sh
+
+e2e-wireguard-exit-windows-vm:
+    ./scripts/windows-vm-wireguard-exit-e2e.sh
