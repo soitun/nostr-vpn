@@ -3527,8 +3527,12 @@ fn spawn_mesh_recv_task(
         loop {
             match mesh.recv_mesh_event().await {
                 Ok(Some(event)) => {
+                    let wrote_packet = matches!(&event, FipsPrivateMeshEvent::Packet(_));
                     if !forward_mesh_event_to_tun(event, &tun_fd, &event_tx).await {
                         break;
+                    }
+                    if wrote_packet {
+                        cooperate_after_mesh_recv_packet().await;
                     }
                 }
                 Ok(None) => break,
@@ -3539,6 +3543,14 @@ fn spawn_mesh_recv_task(
             }
         }
     })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn cooperate_after_mesh_recv_packet() {
+    // Endpoint recv can stay immediately ready while a peer sends bulk data,
+    // and the utun write itself is synchronous. Count each packet against
+    // Tokio's cooperative budget so timers/control traffic get scheduler time.
+    tokio::task::coop::consume_budget().await;
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -6190,6 +6202,32 @@ default            192.168.178.1      UGScg                 en0
             mesh.receive_endpoint_data(Some(&stranger_npub), &spoofed)
                 .is_none(),
             "non-roster peer must not inject packets onto the tun (spoofed source)",
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test(flavor = "current_thread")]
+    async fn mesh_recv_packet_forwarding_cooperates_under_hot_stream() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let sibling_polls = Arc::new(AtomicUsize::new(0));
+        let sibling_polls_task = Arc::clone(&sibling_polls);
+        let sibling = tokio::spawn(async move {
+            loop {
+                sibling_polls_task.fetch_add(1, Ordering::Relaxed);
+                tokio::task::yield_now().await;
+            }
+        });
+
+        for _ in 0..512 {
+            super::cooperate_after_mesh_recv_packet().await;
+        }
+
+        sibling.abort();
+        assert!(
+            sibling_polls.load(Ordering::Relaxed) > 0,
+            "hot mesh packet forwarding must yield scheduler time to sibling tasks"
         );
     }
 }
