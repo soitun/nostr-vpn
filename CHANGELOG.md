@@ -10,8 +10,9 @@ All notable changes to this project are documented in this file.
 - The FIPS perf regression gate now stresses encrypt-worker queue pressure
   while checking throughput and latency under bulk TCP load.
 - The Docker FIPS perf gate now uses the pinned published FIPS crates by
-  default, retries empty iperf samples, and samples worker-pressure pings long
-  enough for CI jitter.
+  default, retries empty iperf samples, and gives the synthetic worker-pressure
+  ping check a CI-sized during-load loss budget while still checking post-load
+  recovery tightly.
 
 ### Fixed
 
