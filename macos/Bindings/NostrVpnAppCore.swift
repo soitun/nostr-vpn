@@ -2279,20 +2279,26 @@ public struct NativeParticipantState {
     public var fipsTransportAddr: String
     public var fipsTransportType: String
     public var fipsSrttMs: UInt64
+    public var fipsSrttAgeMs: UInt64
     public var fipsPacketsSent: UInt64
     public var fipsPacketsRecv: UInt64
     public var fipsBytesSent: UInt64
     public var fipsBytesRecv: UInt64
     public var fipsDirectProbePending: Bool
     public var fipsDirectProbeAfterMs: UInt64
+    public var fipsDirectProbeRetryCount: UInt32
+    public var fipsDirectProbeAutoReconnect: Bool
+    public var fipsDirectProbeExpiresAtMs: UInt64
     public var state: String
     public var meshState: String
     public var statusText: String
+    public var lastFipsControlSeenText: String
+    public var lastFipsDataSeenText: String
     public var lastSeenText: String
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(npub: String, pubkeyHex: String, alias: String, magicDnsAlias: String, magicDnsName: String, tunnelIp: String, isAdmin: Bool, reachable: Bool, txBytes: UInt64, rxBytes: UInt64, advertisedRoutes: [String], offersExitNode: Bool, fipsEndpointNpub: String, fipsEndpointHints: [String], fipsTransportAddr: String, fipsTransportType: String, fipsSrttMs: UInt64, fipsPacketsSent: UInt64, fipsPacketsRecv: UInt64, fipsBytesSent: UInt64, fipsBytesRecv: UInt64, fipsDirectProbePending: Bool, fipsDirectProbeAfterMs: UInt64, state: String, meshState: String, statusText: String, lastSeenText: String) {
+    public init(npub: String, pubkeyHex: String, alias: String, magicDnsAlias: String, magicDnsName: String, tunnelIp: String, isAdmin: Bool, reachable: Bool, txBytes: UInt64, rxBytes: UInt64, advertisedRoutes: [String], offersExitNode: Bool, fipsEndpointNpub: String, fipsEndpointHints: [String], fipsTransportAddr: String, fipsTransportType: String, fipsSrttMs: UInt64, fipsSrttAgeMs: UInt64, fipsPacketsSent: UInt64, fipsPacketsRecv: UInt64, fipsBytesSent: UInt64, fipsBytesRecv: UInt64, fipsDirectProbePending: Bool, fipsDirectProbeAfterMs: UInt64, fipsDirectProbeRetryCount: UInt32, fipsDirectProbeAutoReconnect: Bool, fipsDirectProbeExpiresAtMs: UInt64, state: String, meshState: String, statusText: String, lastFipsControlSeenText: String, lastFipsDataSeenText: String, lastSeenText: String) {
         self.npub = npub
         self.pubkeyHex = pubkeyHex
         self.alias = alias
@@ -2310,15 +2316,21 @@ public struct NativeParticipantState {
         self.fipsTransportAddr = fipsTransportAddr
         self.fipsTransportType = fipsTransportType
         self.fipsSrttMs = fipsSrttMs
+        self.fipsSrttAgeMs = fipsSrttAgeMs
         self.fipsPacketsSent = fipsPacketsSent
         self.fipsPacketsRecv = fipsPacketsRecv
         self.fipsBytesSent = fipsBytesSent
         self.fipsBytesRecv = fipsBytesRecv
         self.fipsDirectProbePending = fipsDirectProbePending
         self.fipsDirectProbeAfterMs = fipsDirectProbeAfterMs
+        self.fipsDirectProbeRetryCount = fipsDirectProbeRetryCount
+        self.fipsDirectProbeAutoReconnect = fipsDirectProbeAutoReconnect
+        self.fipsDirectProbeExpiresAtMs = fipsDirectProbeExpiresAtMs
         self.state = state
         self.meshState = meshState
         self.statusText = statusText
+        self.lastFipsControlSeenText = lastFipsControlSeenText
+        self.lastFipsDataSeenText = lastFipsDataSeenText
         self.lastSeenText = lastSeenText
     }
 }
@@ -2381,6 +2393,9 @@ extension NativeParticipantState: Equatable, Hashable {
         if lhs.fipsSrttMs != rhs.fipsSrttMs {
             return false
         }
+        if lhs.fipsSrttAgeMs != rhs.fipsSrttAgeMs {
+            return false
+        }
         if lhs.fipsPacketsSent != rhs.fipsPacketsSent {
             return false
         }
@@ -2399,6 +2414,15 @@ extension NativeParticipantState: Equatable, Hashable {
         if lhs.fipsDirectProbeAfterMs != rhs.fipsDirectProbeAfterMs {
             return false
         }
+        if lhs.fipsDirectProbeRetryCount != rhs.fipsDirectProbeRetryCount {
+            return false
+        }
+        if lhs.fipsDirectProbeAutoReconnect != rhs.fipsDirectProbeAutoReconnect {
+            return false
+        }
+        if lhs.fipsDirectProbeExpiresAtMs != rhs.fipsDirectProbeExpiresAtMs {
+            return false
+        }
         if lhs.state != rhs.state {
             return false
         }
@@ -2406,6 +2430,12 @@ extension NativeParticipantState: Equatable, Hashable {
             return false
         }
         if lhs.statusText != rhs.statusText {
+            return false
+        }
+        if lhs.lastFipsControlSeenText != rhs.lastFipsControlSeenText {
+            return false
+        }
+        if lhs.lastFipsDataSeenText != rhs.lastFipsDataSeenText {
             return false
         }
         if lhs.lastSeenText != rhs.lastSeenText {
@@ -2432,15 +2462,21 @@ extension NativeParticipantState: Equatable, Hashable {
         hasher.combine(fipsTransportAddr)
         hasher.combine(fipsTransportType)
         hasher.combine(fipsSrttMs)
+        hasher.combine(fipsSrttAgeMs)
         hasher.combine(fipsPacketsSent)
         hasher.combine(fipsPacketsRecv)
         hasher.combine(fipsBytesSent)
         hasher.combine(fipsBytesRecv)
         hasher.combine(fipsDirectProbePending)
         hasher.combine(fipsDirectProbeAfterMs)
+        hasher.combine(fipsDirectProbeRetryCount)
+        hasher.combine(fipsDirectProbeAutoReconnect)
+        hasher.combine(fipsDirectProbeExpiresAtMs)
         hasher.combine(state)
         hasher.combine(meshState)
         hasher.combine(statusText)
+        hasher.combine(lastFipsControlSeenText)
+        hasher.combine(lastFipsDataSeenText)
         hasher.combine(lastSeenText)
     }
 }
@@ -2471,15 +2507,21 @@ public struct FfiConverterTypeNativeParticipantState: FfiConverterRustBuffer {
                 fipsTransportAddr: FfiConverterString.read(from: &buf),
                 fipsTransportType: FfiConverterString.read(from: &buf),
                 fipsSrttMs: FfiConverterUInt64.read(from: &buf),
+                fipsSrttAgeMs: FfiConverterUInt64.read(from: &buf),
                 fipsPacketsSent: FfiConverterUInt64.read(from: &buf),
                 fipsPacketsRecv: FfiConverterUInt64.read(from: &buf),
                 fipsBytesSent: FfiConverterUInt64.read(from: &buf),
                 fipsBytesRecv: FfiConverterUInt64.read(from: &buf),
                 fipsDirectProbePending: FfiConverterBool.read(from: &buf),
                 fipsDirectProbeAfterMs: FfiConverterUInt64.read(from: &buf),
+                fipsDirectProbeRetryCount: FfiConverterUInt32.read(from: &buf),
+                fipsDirectProbeAutoReconnect: FfiConverterBool.read(from: &buf),
+                fipsDirectProbeExpiresAtMs: FfiConverterUInt64.read(from: &buf),
                 state: FfiConverterString.read(from: &buf),
                 meshState: FfiConverterString.read(from: &buf),
                 statusText: FfiConverterString.read(from: &buf),
+                lastFipsControlSeenText: FfiConverterString.read(from: &buf),
+                lastFipsDataSeenText: FfiConverterString.read(from: &buf),
                 lastSeenText: FfiConverterString.read(from: &buf)
         )
     }
@@ -2502,15 +2544,21 @@ public struct FfiConverterTypeNativeParticipantState: FfiConverterRustBuffer {
         FfiConverterString.write(value.fipsTransportAddr, into: &buf)
         FfiConverterString.write(value.fipsTransportType, into: &buf)
         FfiConverterUInt64.write(value.fipsSrttMs, into: &buf)
+        FfiConverterUInt64.write(value.fipsSrttAgeMs, into: &buf)
         FfiConverterUInt64.write(value.fipsPacketsSent, into: &buf)
         FfiConverterUInt64.write(value.fipsPacketsRecv, into: &buf)
         FfiConverterUInt64.write(value.fipsBytesSent, into: &buf)
         FfiConverterUInt64.write(value.fipsBytesRecv, into: &buf)
         FfiConverterBool.write(value.fipsDirectProbePending, into: &buf)
         FfiConverterUInt64.write(value.fipsDirectProbeAfterMs, into: &buf)
+        FfiConverterUInt32.write(value.fipsDirectProbeRetryCount, into: &buf)
+        FfiConverterBool.write(value.fipsDirectProbeAutoReconnect, into: &buf)
+        FfiConverterUInt64.write(value.fipsDirectProbeExpiresAtMs, into: &buf)
         FfiConverterString.write(value.state, into: &buf)
         FfiConverterString.write(value.meshState, into: &buf)
         FfiConverterString.write(value.statusText, into: &buf)
+        FfiConverterString.write(value.lastFipsControlSeenText, into: &buf)
+        FfiConverterString.write(value.lastFipsDataSeenText, into: &buf)
         FfiConverterString.write(value.lastSeenText, into: &buf)
     }
 }

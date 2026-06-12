@@ -1,11 +1,15 @@
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::net::{
     IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr, SocketAddrV4, SocketAddrV6, TcpStream,
     ToSocketAddrs, UdpSocket,
 };
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use std::os::fd::AsRawFd;
 use std::time::Duration;
 
 use nostr_vpn_core::diagnostics::{ProbeState, ProbeStatus};
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use socket2::{Domain, Protocol, SockAddr, Socket, Type};
 
 pub(super) const PCP_DEFAULT_PORT: u16 = 5351;
 pub(super) const NAT_PMP_DEFAULT_PORT: u16 = 5351;
@@ -41,9 +45,26 @@ pub(super) fn check_captive_portal_endpoint(
     endpoint: CaptivePortalEndpoint,
     timeout: Duration,
 ) -> Option<bool> {
+    check_captive_portal_endpoint_with_interface(endpoint, timeout, None)
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub(super) fn check_captive_portal_endpoint_on_interface(
+    endpoint: CaptivePortalEndpoint,
+    timeout: Duration,
+    interface_index: u32,
+) -> Option<bool> {
+    check_captive_portal_endpoint_with_interface(endpoint, timeout, Some(interface_index))
+}
+
+fn check_captive_portal_endpoint_with_interface(
+    endpoint: CaptivePortalEndpoint,
+    timeout: Duration,
+    interface_index: Option<u32>,
+) -> Option<bool> {
     let (host, port, path) = parse_http_url(endpoint.url)?;
     let address = (host.as_str(), port).to_socket_addrs().ok()?.next()?;
-    let mut stream = TcpStream::connect_timeout(&address, timeout).ok()?;
+    let mut stream = connect_captive_portal_stream(&address, timeout, interface_index).ok()?;
     let _ = stream.set_read_timeout(Some(timeout));
     let _ = stream.set_write_timeout(Some(timeout));
     let request = format!(
@@ -61,6 +82,53 @@ pub(super) fn check_captive_portal_endpoint(
         return Some(true);
     }
     Some(false)
+}
+
+fn connect_captive_portal_stream(
+    address: &SocketAddr,
+    timeout: Duration,
+    interface_index: Option<u32>,
+) -> io::Result<TcpStream> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    if let Some(interface_index) = interface_index {
+        return connect_tcp_stream_bound_to_interface(address, timeout, interface_index);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    let _ = interface_index;
+
+    TcpStream::connect_timeout(address, timeout)
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn connect_tcp_stream_bound_to_interface(
+    address: &SocketAddr,
+    timeout: Duration,
+    interface_index: u32,
+) -> io::Result<TcpStream> {
+    let domain = match address {
+        SocketAddr::V4(_) => Domain::IPV4,
+        SocketAddr::V6(_) => Domain::IPV6,
+    };
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+    let (level, option) = match address {
+        SocketAddr::V4(_) => (libc::IPPROTO_IP, libc::IP_BOUND_IF),
+        SocketAddr::V6(_) => (libc::IPPROTO_IPV6, libc::IPV6_BOUND_IF),
+    };
+    let value = interface_index as libc::c_int;
+    let result = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            level,
+            option,
+            (&value as *const libc::c_int).cast(),
+            std::mem::size_of_val(&value) as libc::socklen_t,
+        )
+    };
+    if result != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    socket.connect_timeout(&SockAddr::from(*address), timeout)?;
+    Ok(socket.into())
 }
 
 fn parse_http_url(url: &str) -> Option<(String, u16, String)> {

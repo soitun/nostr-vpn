@@ -94,7 +94,7 @@ Use `just run-macos` or `just run-linux` when you want a specific desktop target
 ## Further Reading
 
 - [Protocol](docs/protocol.md): invites, admin roster sync, and the [FIPS] mesh data plane
-- [Experiments](docs/EXPERIMENTS.md): current benchmark notes
+- [Experiments](docs/EXPERIMENTS.md): chronological benchmark and reliability log
 - [Native UI parity matrix](docs/native-ui-parity-matrix.md): native app rewrite status
 - [Contributing](CONTRIBUTING.md): maintainer commands and package notes
 - [Changelog](CHANGELOG.md): release history

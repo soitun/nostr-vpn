@@ -1,0 +1,215 @@
+pub(crate) fn write_runtime_file_atomically(path: &Path, contents: &[u8]) -> Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("runtime file has no parent: {}", path.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("runtime");
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_nanos());
+    let mut temp_file = None;
+    let mut temp_path = None;
+    for attempt in 0..128u32 {
+        let candidate = parent.join(format!(
+            ".{file_name}.tmp-{}-{nonce}-{attempt}",
+            std::process::id()
+        ));
+        let mut options = OpenOptions::new();
+        options.create_new(true).write(true);
+        #[cfg(unix)]
+        {
+            options.mode(0o600);
+        }
+        match options.open(&candidate) {
+            Ok(file) => {
+                temp_file = Some(file);
+                temp_path = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to create temp runtime file {}", candidate.display())
+                });
+            }
+        }
+    }
+    let temp_path = temp_path.ok_or_else(|| {
+        anyhow!(
+            "failed to allocate temp runtime file for {}",
+            path.display()
+        )
+    })?;
+    let mut file = temp_file.expect("temp file set with temp path");
+    if let Err(error) = file.write_all(contents) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error)
+            .with_context(|| format!("failed to write temp runtime file {}", temp_path.display()));
+    }
+    // These files are runtime status/control files. Keeping the replace atomic
+    // matters for readers, but forcing every status update to durable storage
+    // adds visible latency on macOS and is not needed for crash recovery.
+    drop(file);
+    fs::rename(&temp_path, path).with_context(|| {
+        format!(
+            "failed to replace {} with {}",
+            path.display(),
+            temp_path.display()
+        )
+    })?;
+    Ok(())
+}
+
+pub(crate) fn trim_runtime_json_padding(raw: &[u8]) -> &[u8] {
+    let start = raw
+        .iter()
+        .position(|byte| *byte != 0 && !byte.is_ascii_whitespace())
+        .unwrap_or(raw.len());
+    let end = raw
+        .iter()
+        .rposition(|byte| *byte != 0 && !byte.is_ascii_whitespace())
+        .map(|index| index + 1)
+        .unwrap_or(start);
+    &raw[start..end]
+}
+
+pub(crate) fn quarantine_corrupt_runtime_file(
+    path: &Path,
+    label: &str,
+    parse_error: &serde_json::Error,
+) {
+    let Some(parent) = path.parent() else {
+        eprintln!(
+            "daemon: ignoring corrupt {label} file {}: {}",
+            path.display(),
+            parse_error
+        );
+        return;
+    };
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("runtime");
+    let quarantined = parent.join(format!(
+        "{file_name}.corrupt-{}-{}",
+        std::process::id(),
+        unix_timestamp()
+    ));
+
+    match fs::rename(path, &quarantined) {
+        Ok(()) => eprintln!(
+            "daemon: ignoring corrupt {label} file {}: {}; moved aside to {}",
+            path.display(),
+            parse_error,
+            quarantined.display()
+        ),
+        Err(rename_error) => eprintln!(
+            "daemon: ignoring corrupt {label} file {}: {}; failed to move aside: {}",
+            path.display(),
+            parse_error,
+            rename_error
+        ),
+    }
+}
+
+pub(crate) fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Result<u32> {
+    if let Some(existing_pid) = daemon_candidate_pids(config_path, std::process::id())?
+        .into_iter()
+        .next()
+    {
+        return Err(anyhow!("daemon already running with pid {}", existing_pid));
+    }
+
+    let log_file_path = daemon_log_file_path(config_path);
+    if let Some(parent) = log_file_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_file_path)
+        .with_context(|| format!("failed to truncate {}", log_file_path.display()))?;
+    let log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_file_path)
+        .with_context(|| format!("failed to open {}", log_file_path.display()))?;
+    let _ = set_daemon_runtime_file_permissions(&log_file_path);
+    let stderr_log = log_file
+        .try_clone()
+        .context("failed to clone daemon log file handle")?;
+
+    let mut command = ProcessCommand::new(
+        std::env::current_exe().context("failed to resolve current executable")?,
+    );
+    command
+        .arg("daemon")
+        .arg("--config")
+        .arg(config_path)
+        .arg("--iface")
+        .arg(&args.iface)
+        .arg("--mesh-refresh-interval-secs")
+        .arg(args.mesh_refresh_interval_secs.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(stderr_log));
+
+    if let Some(network_id) = &args.network_id {
+        command.arg("--network-id").arg(network_id);
+    }
+    for participant in &args.participants {
+        command.arg("--participant").arg(participant);
+    }
+
+    let mut child = command
+        .spawn()
+        .context("failed to spawn daemonized connect process")?;
+    let pid = child.id();
+
+    // Wait briefly to catch startup failures that occur after initial bootstrapping
+    // (for example: missing tunnel permissions or resolver install errors).
+    for _ in 0..25 {
+        if let Some(status) = child
+            .try_wait()
+            .context("failed to verify daemon process state")?
+        {
+            let log_tail = read_daemon_log_tail(&log_file_path, 20);
+            return if log_tail.is_empty() {
+                Err(anyhow!(
+                    "daemon process exited during startup with status {status}"
+                ))
+            } else {
+                Err(anyhow!(
+                    "daemon process exited during startup with status {status}\nlog tail:\n{log_tail}"
+                ))
+            };
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+
+    let record = DaemonPidRecord {
+        pid,
+        config_path: config_path.display().to_string(),
+        started_at: unix_timestamp(),
+    };
+    let pid_file = daemon_pid_file_path(config_path);
+    write_daemon_pid_record(&pid_file, &record)?;
+    Ok(pid)
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub(crate) fn stop_existing_daemons_before_service_install(config_path: &Path) -> Result<()> {
+    stop_daemon(StopArgs {
+        config: Some(config_path.to_path_buf()),
+        timeout_secs: 5,
+        force: true,
+    })
+}

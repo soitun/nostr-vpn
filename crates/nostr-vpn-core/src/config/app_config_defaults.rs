@@ -1,0 +1,317 @@
+impl AppConfig {
+    pub fn ensure_defaults(&mut self) {
+        self.ensure_nostr_identity();
+        let own_pubkey_hex = self.own_nostr_pubkey_hex().ok();
+        if uses_default_node_name(&self.node_name, own_pubkey_hex.as_deref()) {
+            let hostname = detected_hostname();
+            self.node_name = own_pubkey_hex
+                .as_deref()
+                .map(|pubkey_hex| {
+                    default_node_name_for_hostname_or_pubkey(hostname.as_deref(), pubkey_hex)
+                })
+                .or_else(|| {
+                    hostname
+                        .as_deref()
+                        .and_then(default_node_name_from_hostname)
+                })
+                .unwrap_or_else(default_node_name);
+        }
+
+        self.mesh_mtu_profile = self.mesh_mtu_profile.trim().to_ascii_lowercase();
+        self.magic_dns_suffix = normalize_magic_dns_suffix(&self.magic_dns_suffix);
+        self.fips_host_inbound_tcp_ports.sort_unstable();
+        self.fips_host_inbound_tcp_ports.dedup();
+        normalize_wireguard_exit_config(&mut self.wireguard_exit);
+        self.nostr.relays = normalize_relay_urls(std::mem::take(&mut self.nostr.relays));
+        self.nostr.disabled_relays =
+            normalize_relay_urls(std::mem::take(&mut self.nostr.disabled_relays));
+        let enabled_relays = self.nostr.relays.iter().cloned().collect::<HashSet<_>>();
+        self.nostr
+            .disabled_relays
+            .retain(|relay| !enabled_relays.contains(relay));
+
+        if self.node.id.trim().is_empty() {
+            self.node.id = default_node_id();
+        }
+
+        if self.node.endpoint.trim().is_empty() {
+            self.node.endpoint = default_endpoint();
+        }
+
+        if self.node.tunnel_ip.trim().is_empty() {
+            self.node.tunnel_ip = default_tunnel_ip();
+        }
+
+        if self.node.listen_port == 0 {
+            self.node.listen_port = default_listen_port();
+        }
+
+        let mut advertise_exit_node = self.node.advertise_exit_node;
+        let mut advertised_routes = normalize_advertised_routes(&self.node.advertised_routes);
+        advertised_routes.retain(|route| {
+            if is_exit_node_route(route) {
+                advertise_exit_node = true;
+                false
+            } else {
+                true
+            }
+        });
+        self.node.advertised_routes = advertised_routes;
+        self.node.advertise_exit_node = advertise_exit_node;
+
+        self.exit_node = normalize_nostr_pubkey(self.exit_node.trim()).unwrap_or_default();
+        if let Ok(own_pubkey) = self.own_nostr_pubkey_hex()
+            && self.exit_node == own_pubkey
+        {
+            self.exit_node.clear();
+        }
+
+        let mut used_ids = HashSet::new();
+        for (index, network) in self.networks.iter_mut().enumerate() {
+            let ordinal = index + 1;
+            if network.name.trim().is_empty() {
+                network.name = default_network_name(ordinal);
+            } else {
+                network.name = network.name.trim().to_string();
+            }
+
+            if network.id.trim().is_empty() {
+                network.id = default_network_entry_id(ordinal);
+            } else {
+                network.id = normalize_network_entry_id(&network.id, ordinal);
+            }
+
+            if !used_ids.insert(network.id.clone()) {
+                network.id = uniquify_network_entry_id(network.id.clone(), &mut used_ids);
+            }
+
+            network.network_id = normalize_runtime_network_id(&network.network_id);
+            if network.network_id.trim().is_empty() {
+                network.network_id = default_network_id();
+            }
+            network.invite_secret = network.invite_secret.trim().to_string();
+            if network.invite_secret.is_empty() {
+                network.invite_secret = default_invite_secret();
+            }
+            network.invite_inviter =
+                normalize_nostr_pubkey(&network.invite_inviter).unwrap_or_default();
+
+            network.participants = network
+                .participants
+                .iter()
+                .filter_map(|participant| normalize_nostr_pubkey(participant).ok())
+                .collect();
+            network.participants.sort();
+            network.participants.dedup();
+            network.admins = normalize_network_admins(
+                std::mem::take(&mut network.admins),
+                own_pubkey_hex.as_deref(),
+                &network.invite_inviter,
+            );
+            network.outbound_join_request = normalize_outbound_join_request(
+                network.outbound_join_request.take(),
+                &network.participants,
+            );
+            network.inbound_join_requests = normalize_inbound_join_requests(
+                std::mem::take(&mut network.inbound_join_requests),
+                &network.participants,
+            );
+            network.shared_roster_signed_by =
+                normalize_nostr_pubkey(&network.shared_roster_signed_by).unwrap_or_default();
+            if network.shared_roster_signed_by.is_empty() {
+                network.shared_roster_updated_at = 0;
+            }
+        }
+
+        self.ensure_single_active_network();
+        self.generate_placeholder_network_ids();
+        self.normalize_selected_exit_node();
+        self.normalize_fips_peer_endpoints();
+        self.normalize_peer_aliases();
+    }
+
+    fn apply_load_migrations(&mut self) {}
+
+    fn canonicalize_user_facing_pubkeys(&mut self) {
+        self.nostr.public_key = canonical_npub_key(&self.nostr.public_key).unwrap_or_default();
+        self.exit_node = canonical_npub_key(&self.exit_node).unwrap_or_default();
+        self.normalize_fips_peer_endpoints();
+
+        for network in &mut self.networks {
+            network.participants = network
+                .participants
+                .iter()
+                .filter_map(|participant| canonical_npub_key(participant))
+                .collect();
+            network.participants.sort();
+            network.participants.dedup();
+            network.admins = network
+                .admins
+                .iter()
+                .filter_map(|admin| canonical_npub_key(admin))
+                .collect();
+            network.admins.sort();
+            network.admins.dedup();
+            network.invite_inviter =
+                canonical_npub_key(&network.invite_inviter).unwrap_or_default();
+            network.outbound_join_request =
+                canonicalize_outbound_join_request(network.outbound_join_request.take());
+            network.inbound_join_requests = canonicalize_inbound_join_requests(std::mem::take(
+                &mut network.inbound_join_requests,
+            ));
+            network.shared_roster_signed_by =
+                canonical_npub_key(&network.shared_roster_signed_by).unwrap_or_default();
+            if network.shared_roster_signed_by.is_empty() {
+                network.shared_roster_updated_at = 0;
+            }
+        }
+
+        self.normalize_peer_aliases();
+    }
+
+    pub fn effective_network_id(&self) -> String {
+        self.active_network_opt()
+            .map(|network| normalize_runtime_network_id(&network.network_id))
+            .unwrap_or_default()
+    }
+
+    pub fn enabled_network_meshes(&self) -> Vec<EnabledNetworkMesh> {
+        let Some(network) = self.active_network_opt() else {
+            return Vec::new();
+        };
+        let mut participants = network.participants.clone();
+        participants.sort();
+        participants.dedup();
+
+        vec![EnabledNetworkMesh {
+            id: network.id.clone(),
+            name: network.name.clone(),
+            network_id: normalize_runtime_network_id(&network.network_id),
+            participants,
+        }]
+    }
+
+    pub fn participant_pubkeys_hex(&self) -> Vec<String> {
+        let Some(network) = self.active_network_opt() else {
+            return Vec::new();
+        };
+        let mut participants = network
+            .participants
+            .iter()
+            .filter_map(|participant| normalize_nostr_pubkey(participant).ok())
+            .collect::<Vec<_>>();
+        participants.sort();
+        participants.dedup();
+        participants
+    }
+
+    pub fn all_participant_pubkeys_hex(&self) -> Vec<String> {
+        let mut participants = self
+            .networks
+            .iter()
+            .flat_map(|network| {
+                network
+                    .participants
+                    .iter()
+                    .filter_map(|participant| normalize_nostr_pubkey(participant).ok())
+            })
+            .collect::<Vec<_>>();
+        participants.sort();
+        participants.dedup();
+        participants
+    }
+
+    fn all_network_member_pubkeys_hex(&self) -> Vec<String> {
+        let mut members = self
+            .networks
+            .iter()
+            .flat_map(|network| {
+                network
+                    .participants
+                    .iter()
+                    .chain(network.admins.iter())
+                    .cloned()
+            })
+            .collect::<Vec<_>>();
+        members.sort();
+        members.dedup();
+        members
+    }
+
+    pub fn enabled_network_count(&self) -> usize {
+        self.networks
+            .iter()
+            .filter(|network| network.enabled)
+            .count()
+    }
+
+    pub fn active_network(&self) -> &NetworkConfig {
+        self.active_network_opt()
+            .expect("config has no active network")
+    }
+
+    pub fn active_network_opt(&self) -> Option<&NetworkConfig> {
+        self.networks.iter().find(|network| network.enabled)
+    }
+
+    pub fn active_network_mut(&mut self) -> &mut NetworkConfig {
+        self.active_network_mut_opt()
+            .expect("config has no active network")
+    }
+
+    pub fn active_network_mut_opt(&mut self) -> Option<&mut NetworkConfig> {
+        self.networks.iter_mut().find(|network| network.enabled)
+    }
+
+    pub fn network_by_id(&self, network_id: &str) -> Option<&NetworkConfig> {
+        self.networks
+            .iter()
+            .find(|network| network.id == network_id)
+    }
+
+    pub fn network_by_id_mut(&mut self, network_id: &str) -> Option<&mut NetworkConfig> {
+        self.networks
+            .iter_mut()
+            .find(|network| network.id == network_id)
+    }
+
+    pub fn add_owned_network(&mut self, name: &str) -> String {
+        self.seed_self_magic_dns_alias_for_first_owned_network();
+        self.add_network(name)
+    }
+
+    pub fn add_network(&mut self, name: &str) -> String {
+        let ordinal = self.networks.len() + 1;
+        let mut used_ids = self
+            .networks
+            .iter()
+            .map(|network| network.id.clone())
+            .collect::<HashSet<_>>();
+        let id = uniquify_network_entry_id(default_network_entry_id(ordinal), &mut used_ids);
+        let name = if name.trim().is_empty() {
+            default_network_name(ordinal)
+        } else {
+            name.trim().to_string()
+        };
+
+        let enabled = self.networks.is_empty();
+        self.networks.push(NetworkConfig {
+            id: id.clone(),
+            name,
+            enabled,
+            network_id: default_network_id(),
+            invite_secret: default_invite_secret(),
+            participants: Vec::new(),
+            admins: Vec::new(),
+            listen_for_join_requests: default_listen_for_join_requests(),
+            invite_inviter: String::new(),
+            outbound_join_request: None,
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        });
+        let _ = self.note_network_roster_local_change(&id);
+        id
+    }
+
+}

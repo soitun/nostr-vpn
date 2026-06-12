@@ -7,6 +7,7 @@ services:
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        hashtree: ${NVPN_HASHTREE_REPO_PATH:-../hashtree/rust}
     entrypoint: ["sleep", "infinity"]
     networks:
       internet:
@@ -20,6 +21,7 @@ services:
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        hashtree: ${NVPN_HASHTREE_REPO_PATH:-../hashtree/rust}
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN
@@ -41,6 +43,7 @@ services:
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        hashtree: ${NVPN_HASHTREE_REPO_PATH:-../hashtree/rust}
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN
@@ -58,6 +61,7 @@ services:
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        hashtree: ${NVPN_HASHTREE_REPO_PATH:-../hashtree/rust}
     cap_add:
       - NET_ADMIN
     sysctls:
@@ -92,6 +96,7 @@ services:
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        hashtree: ${NVPN_HASHTREE_REPO_PATH:-../hashtree/rust}
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN

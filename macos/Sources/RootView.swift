@@ -757,6 +757,9 @@ struct RootView: View {
                 metric("Role", deviceRoleText(participant))
                 metric("State", deviceStatusText(participant))
                 metric("FIPS path", fipsPathText(participant))
+                metric("Latency age", participant.fipsSrttAgeMs == 0 ? "-" : formatDurationMs(participant.fipsSrttAgeMs))
+                metric("Control seen", participant.lastFipsControlSeenText.isEmpty ? "-" : participant.lastFipsControlSeenText)
+                metric("Data seen", participant.lastFipsDataSeenText.isEmpty ? "-" : participant.lastFipsDataSeenText)
                 metric("Address hints", participant.fipsEndpointHints.isEmpty ? "-" : participant.fipsEndpointHints.joined(separator: ", "))
                 metric("Last seen", participant.lastSeenText.isEmpty ? "-" : participant.lastSeenText)
                 metric("Sent", formatBytes(participant.txBytes))
@@ -2426,6 +2429,16 @@ private func formatBytes(_ bytes: UInt64) -> String {
         return "\(bytes) B"
     }
     return String(format: "%.1f %@", value, units[unitIndex])
+}
+
+private func formatDurationMs(_ ms: UInt64) -> String {
+    if ms == 0 { return "-" }
+    if ms < 1_000 { return "\(ms) ms" }
+    let seconds = ms / 1_000
+    if seconds < 60 { return "\(seconds)s" }
+    let minutes = seconds / 60
+    if minutes < 60 { return "\(minutes)m" }
+    return "\(minutes / 60)h"
 }
 
 private func displayNetworkId(_ value: String) -> String {

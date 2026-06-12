@@ -4,6 +4,11 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 INSTALLER="${NVPN_INSTALL_TEST_DAEMON:-/usr/local/sbin/nvpn-install-test-daemon}"
 STAGE_ROOT="${NVPN_TEST_DAEMON_STAGE_ROOT:-/tmp}"
+INSTALL_MODE="${NVPN_TEST_DAEMON_INSTALL_MODE:-auto}"
+SERVICE_IFACE="${NVPN_TEST_DAEMON_IFACE:-utun}"
+SERVICE_CONFIG="${NVPN_TEST_DAEMON_CONFIG:-}"
+MESH_REFRESH_INTERVAL_SECS="${NVPN_TEST_DAEMON_MESH_REFRESH_INTERVAL_SECS:-20}"
+LOCK_SNAPSHOT=""
 
 case "$(uname -s)" in
   Darwin) ;;
@@ -13,10 +18,30 @@ case "$(uname -s)" in
     ;;
 esac
 
-if [[ ! -x "$INSTALLER" ]]; then
-  echo "missing installer helper: $INSTALLER" >&2
-  exit 1
-fi
+restore_lock() {
+  if [[ -n "$LOCK_SNAPSHOT" && -f "$LOCK_SNAPSHOT" && -f "$ROOT/Cargo.lock" ]]; then
+    if ! cmp -s "$LOCK_SNAPSHOT" "$ROOT/Cargo.lock"; then
+      cp -p "$LOCK_SNAPSHOT" "$ROOT/Cargo.lock"
+      printf 'restored Cargo.lock after local-FIPS cargo run\n'
+    fi
+    rm -f "$LOCK_SNAPSHOT"
+  fi
+}
+
+prepare_lock_restore() {
+  [[ -z "$LOCK_SNAPSHOT" ]] || return 0
+  LOCK_SNAPSHOT="$(mktemp)"
+  cp -p "$ROOT/Cargo.lock" "$LOCK_SNAPSHOT"
+  trap restore_lock EXIT
+}
+
+case "$INSTALL_MODE" in
+  auto|helper|service) ;;
+  *)
+    echo "NVPN_TEST_DAEMON_INSTALL_MODE must be auto, helper, or service" >&2
+    exit 1
+    ;;
+esac
 
 cd "$ROOT"
 cargo_config_args=()
@@ -28,12 +53,20 @@ if [[ "${NVPN_PATCH_LOCAL_FIPS:-0}" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$
     echo "NVPN_PATCH_LOCAL_FIPS=1 requires NVPN_FIPS_REPO_PATH to point at a fips checkout" >&2
     exit 1
   fi
+  prepare_lock_restore
   cargo_config_args+=(--config "patch.crates-io.fips-core.path=\"$FIPS_REPO_PATH/crates/fips-core\"")
   cargo_config_args+=(--config "patch.crates-io.fips-endpoint.path=\"$FIPS_REPO_PATH/crates/fips-endpoint\"")
   cargo_config_args+=(--config "patch.crates-io.fips-identity.path=\"$FIPS_REPO_PATH/crates/fips-identity\"")
 fi
 
-cargo "${cargo_config_args[@]}" build -p nvpn --bin nvpn --release
+cargo_build=(cargo)
+cargo_metadata=(cargo)
+if ((${#cargo_config_args[@]})); then
+  cargo_build+=("${cargo_config_args[@]}")
+  cargo_metadata+=("${cargo_config_args[@]}")
+fi
+
+"${cargo_build[@]}" build -p nvpn --bin nvpn --release
 
 BIN="$("$ROOT/scripts/build-output-path" --raw nvpn --release)"
 if [[ ! -x "$BIN" ]]; then
@@ -42,7 +75,7 @@ if [[ ! -x "$BIN" ]]; then
 fi
 
 EXPECTED_VERSION="$(
-  cargo "${cargo_config_args[@]}" metadata --no-deps --format-version=1 \
+  "${cargo_metadata[@]}" metadata --no-deps --format-version=1 \
     | python3 -c 'import json,sys; print(next(p["version"] for p in json.load(sys.stdin)["packages"] if p["name"] == "nvpn"))'
 )"
 ACTUAL_VERSION="$("$BIN" version)"
@@ -60,7 +93,20 @@ STAGE_DIR="$STAGE_ROOT/nvpn-build-$ACTUAL_VERSION-$(date +%s)-$$/release"
 mkdir -p "$STAGE_DIR"
 cp "$BIN" "$STAGE_DIR/nvpn"
 xattr -c "$STAGE_DIR/nvpn" 2>/dev/null || true
+codesign --force --sign - "$STAGE_DIR/nvpn"
 
 echo "Installing nvpn $ACTUAL_VERSION from $STAGE_DIR/nvpn"
-sudo "$INSTALLER" "$STAGE_DIR/nvpn"
+if [[ "$INSTALL_MODE" == "helper" || ( "$INSTALL_MODE" == "auto" && -x "$INSTALLER" ) ]]; then
+  if [[ ! -x "$INSTALLER" ]]; then
+    echo "missing installer helper: $INSTALLER" >&2
+    exit 1
+  fi
+  sudo "$INSTALLER" "$STAGE_DIR/nvpn"
+else
+  service_args=(service install --force --iface "$SERVICE_IFACE" --mesh-refresh-interval-secs "$MESH_REFRESH_INTERVAL_SECS")
+  if [[ -n "$SERVICE_CONFIG" ]]; then
+    service_args+=(--config "$SERVICE_CONFIG")
+  fi
+  sudo "$STAGE_DIR/nvpn" "${service_args[@]}"
+fi
 printf '%s\n' "$STAGE_DIR/nvpn"

@@ -1,0 +1,191 @@
+pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
+    if args.iface.trim().is_empty() {
+        return Err(anyhow!("--iface must not be empty"));
+    }
+
+    let config_path = args.config.unwrap_or_else(default_config_path);
+    #[cfg(any(target_os = "macos", test))]
+    crate::ensure_macos_connect_privileges(&config_path)?;
+    #[cfg(target_os = "macos")]
+    if let Err(error) = repair_saved_network_state(&config_path) {
+        eprintln!("connect: failed to repair saved macOS network state: {error}");
+    }
+    let (mut app, mut network_id) =
+        load_config_with_overrides(&config_path, args.network_id, args.participants)?;
+    #[cfg(target_os = "macos")]
+    {
+        let captive_portal = detect_captive_portal(network_probe_timeout(&app)).await;
+        if macos_underlay_route_repair_allowed(captive_portal) {
+            match crate::macos_network::ensure_macos_underlay_default_route() {
+                Ok(true) => eprintln!("connect: restored missing macOS underlay default route"),
+                Ok(false) => {}
+                Err(error) => {
+                    eprintln!("connect: failed to ensure macOS underlay default route: {error}")
+                }
+            }
+        } else {
+            eprintln!(
+                "connect: deferring macOS underlay default route repair while captive portal is detected"
+            );
+        }
+    }
+    let configured_participants = app.participant_pubkeys_hex();
+    if configured_participants.is_empty() {
+        return Err(anyhow!(
+            "at least one participant must be configured before running connect"
+        ));
+    }
+    #[cfg(not(feature = "embedded-fips"))]
+    {
+        return Err(anyhow!(
+            "embedded FIPS private mesh requires building nvpn with the embedded-fips feature"
+        ));
+    }
+
+    let own_pubkey = app.own_nostr_pubkey_hex().ok();
+    let mut expected_peers = expected_peer_count(&app);
+    let iface = args.iface.clone();
+    let network_snapshot = capture_network_snapshot();
+    let mut port_mapping_runtime = PortMappingRuntime::default();
+    refresh_port_mapping(
+        &app,
+        &network_snapshot,
+        app.node.listen_port,
+        &mut port_mapping_runtime,
+    )
+    .await;
+    #[cfg(feature = "embedded-fips")]
+    crate::fips_private_mesh::purge_legacy_fips_endpoint_cache(&config_path);
+    #[cfg(feature = "embedded-fips")]
+    let mut fips_tunnel_runtime = {
+        let config = fips_tunnel_config_from_app(
+            &app,
+            &network_id,
+            iface.clone(),
+            own_pubkey.as_deref(),
+            None,
+            &[],
+        )?;
+        let runtime = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
+        println!("connect: FIPS private mesh on {}", runtime.iface());
+        Some(runtime)
+    };
+    let magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
+
+    println!(
+        "connect: network {network_id} using FIPS private mesh; waiting for {expected_peers} configured peer(s)"
+    );
+
+    let mut announce_interval =
+        tokio::time::interval(Duration::from_secs(args.mesh_refresh_interval_secs.max(5)));
+    announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
+    tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    #[cfg(feature = "embedded-fips")]
+    let mut pending_fips_roster_recipients: HashSet<String> = HashSet::new();
+    #[cfg(feature = "embedded-fips")]
+    let mut fips_roster_sync_state = FipsRosterSyncState::default();
+    #[cfg(feature = "embedded-fips")]
+    let mut connect_status = String::new();
+
+    let mut last_mesh_count = 0_usize;
+    loop {
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {
+                break;
+            }
+            _ = tunnel_heartbeat_interval.tick() => {
+                #[cfg(feature = "embedded-fips")]
+                if let Some(runtime) = fips_tunnel_runtime.as_mut() {
+                    let now = unix_timestamp();
+                    if let Err(error) = runtime.ping_peers(&network_id, now).await {
+                        eprintln!("fips: peer ping failed: {error}");
+                    }
+                    if let Err(error) = runtime.refresh_link_statuses().await {
+                        eprintln!("fips: peer link snapshot failed: {error}");
+                    }
+                    if let Err(error) = sync_fips_roster_with_connected_peers(
+                        runtime,
+                        &app,
+                        &config_path,
+                        &mut fips_roster_sync_state,
+                    )
+                    .await
+                    {
+                        eprintln!("fips: roster peer sync failed: {error}");
+                    }
+                    flush_pending_fips_roster_recipients(
+                        runtime,
+                        &app,
+                        &config_path,
+                        &mut pending_fips_roster_recipients,
+                    )
+                    .await;
+                    match drain_fips_mesh_events(
+                        runtime,
+                        &mut app,
+                        &config_path,
+                        &mut connect_status,
+                    ) {
+                        Ok(true) => {
+                            network_id = app.effective_network_id();
+                            expected_peers = expected_peer_count(&app);
+                            if let Err(error) = refresh_fips_tunnel_config(
+                                runtime,
+                                &app,
+                                &network_id,
+                                own_pubkey.as_deref(),
+                            )
+                            .await
+                            {
+                                eprintln!("connect: roster applied, but FIPS reload failed: {error}");
+                            }
+                            if let Some(rt) = magic_dns_runtime.as_ref() {
+                                rt.refresh_records(&app);
+                            }
+                        }
+                        Ok(false) => {}
+                        Err(error) => eprintln!("connect: FIPS event handling failed: {error}"),
+                    }
+                    if let Err(error) = runtime.refresh_peer_dependent_routes().await {
+                        eprintln!("fips: peer route refresh failed: {error}");
+                    }
+                    maybe_log_fips_mesh_count(
+                        &app,
+                        own_pubkey.as_deref(),
+                        &runtime.peer_statuses(),
+                        expected_peers,
+                        &mut last_mesh_count,
+                    );
+                }
+            }
+            _ = announce_interval.tick() => {
+                #[cfg(feature = "embedded-fips")]
+                if let Some(runtime) = fips_tunnel_runtime.as_ref() {
+                    if let Err(error) = publish_fips_active_network_roster(
+                        runtime,
+                        &app,
+                        &config_path,
+                        &mut pending_fips_roster_recipients,
+                    ).await {
+                        eprintln!("fips: roster publish failed: {error}");
+                    }
+                    if let Err(error) = broadcast_local_fips_capabilities(runtime, &app).await {
+                        eprintln!("fips: capabilities broadcast failed: {error}");
+                    }
+                }
+            }
+        }
+    }
+
+    port_mapping_runtime.stop().await;
+    #[cfg(feature = "embedded-fips")]
+    if let Some(runtime) = fips_tunnel_runtime
+        && let Err(error) = runtime.stop().await
+    {
+        eprintln!("connect: failed to stop FIPS private mesh: {error}");
+    }
+    println!("connect: disconnected");
+
+    Ok(())
+}

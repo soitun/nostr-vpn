@@ -317,7 +317,7 @@
                     <Border BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Margin="0,20,0,0" Padding="0,18,0,0">
                       <StackPanel>
                         <TextBlock Text="Connectivity" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,10" />
-                        <UniformGrid Columns="3" Rows="2">
+                        <UniformGrid Columns="3" Rows="3">
                           <StackPanel Margin="0,0,12,12">
                             <TextBlock Text="Role" Foreground="{StaticResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.RoleText}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
@@ -333,6 +333,18 @@
                           <StackPanel Margin="0,0,12,0">
                             <TextBlock Text="Last seen" Foreground="{StaticResource TextSecondary}" FontSize="12" />
                             <TextBlock Text="{Binding SelectedParticipant.LastSeenDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Latency age" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="{Binding SelectedParticipant.FipsSrttAgeDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Control seen" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="{Binding SelectedParticipant.LastFipsControlSeenDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                          </StackPanel>
+                          <StackPanel Margin="0,0,12,0">
+                            <TextBlock Text="Data seen" Foreground="{StaticResource TextSecondary}" FontSize="12" />
+                            <TextBlock Text="{Binding SelectedParticipant.LastFipsDataSeenDisplay}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                           </StackPanel>
                           <StackPanel Margin="0,0,12,0">
                             <TextBlock Text="Sent" Foreground="{StaticResource TextSecondary}" FontSize="12" />

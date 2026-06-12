@@ -219,13 +219,21 @@ struct ParticipantState: Decodable, Identifiable {
     var fipsTransportAddr = ""
     var fipsTransportType = ""
     var fipsSrttMs: UInt64 = 0
+    var fipsSrttAgeMs: UInt64 = 0
     var fipsPacketsSent: UInt64 = 0
     var fipsPacketsRecv: UInt64 = 0
     var fipsBytesSent: UInt64 = 0
     var fipsBytesRecv: UInt64 = 0
+    var fipsDirectProbePending = false
+    var fipsDirectProbeAfterMs: UInt64 = 0
+    var fipsDirectProbeRetryCount: UInt32 = 0
+    var fipsDirectProbeAutoReconnect = false
+    var fipsDirectProbeExpiresAtMs: UInt64 = 0
     var state = ""
     var meshState = ""
     var statusText = ""
+    var lastFipsControlSeenText = ""
+    var lastFipsDataSeenText = ""
     var lastSeenText = ""
 
     var displayName: String {
@@ -238,8 +246,12 @@ struct ParticipantState: Decodable, Identifiable {
         case npub, pubkeyHex, alias, magicDnsAlias, magicDnsName, tunnelIp
         case isAdmin, reachable, offersExitNode
         case fipsEndpointNpub, fipsEndpointHints, fipsTransportAddr, fipsTransportType, fipsSrttMs
+        case fipsSrttAgeMs
         case fipsPacketsSent, fipsPacketsRecv, fipsBytesSent, fipsBytesRecv
-        case state, meshState, statusText, lastSeenText, lastSignalText
+        case fipsDirectProbePending, fipsDirectProbeAfterMs, fipsDirectProbeRetryCount
+        case fipsDirectProbeAutoReconnect, fipsDirectProbeExpiresAtMs
+        case state, meshState, statusText
+        case lastFipsControlSeenText, lastFipsDataSeenText, lastSeenText, lastSignalText
     }
 
     init() {}
@@ -260,13 +272,21 @@ struct ParticipantState: Decodable, Identifiable {
         fipsTransportAddr = container.string(.fipsTransportAddr)
         fipsTransportType = container.string(.fipsTransportType)
         fipsSrttMs = container.uint64(.fipsSrttMs)
+        fipsSrttAgeMs = container.uint64(.fipsSrttAgeMs)
         fipsPacketsSent = container.uint64(.fipsPacketsSent)
         fipsPacketsRecv = container.uint64(.fipsPacketsRecv)
         fipsBytesSent = container.uint64(.fipsBytesSent)
         fipsBytesRecv = container.uint64(.fipsBytesRecv)
+        fipsDirectProbePending = container.bool(.fipsDirectProbePending)
+        fipsDirectProbeAfterMs = container.uint64(.fipsDirectProbeAfterMs)
+        fipsDirectProbeRetryCount = UInt32(container.uint64(.fipsDirectProbeRetryCount))
+        fipsDirectProbeAutoReconnect = container.bool(.fipsDirectProbeAutoReconnect)
+        fipsDirectProbeExpiresAtMs = container.uint64(.fipsDirectProbeExpiresAtMs)
         state = container.string(.state)
         meshState = container.string(.meshState)
         statusText = container.string(.statusText)
+        lastFipsControlSeenText = container.string(.lastFipsControlSeenText)
+        lastFipsDataSeenText = container.string(.lastFipsDataSeenText)
         lastSeenText = container.string(.lastSeenText, default: container.string(.lastSignalText))
     }
 }

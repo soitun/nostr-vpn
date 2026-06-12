@@ -1,0 +1,316 @@
+impl FipsPrivateMeshRuntime {
+    pub(crate) fn peer_statuses(&self) -> Vec<MeshPeerStatus> {
+        let now = unix_timestamp();
+        let presence = self.presence.read().ok();
+        let peer_activity = self.peer_activity.load();
+        let link_status = self.link_status.read().ok();
+        let other_link_status = self.other_link_status.read().ok();
+        let mut statuses = self.mesh.load().peer_statuses();
+        for status in &mut statuses {
+            let participant_key = participant_pubkey_bytes(&status.pubkey);
+            let peer_presence = presence
+                .as_ref()
+                .and_then(|presence| presence.get(&status.pubkey));
+            let activity = participant_key
+                .as_ref()
+                .and_then(|participant| peer_activity.get(participant))
+                .map(|activity| activity.snapshot());
+            let peer_link = link_status
+                .as_ref()
+                .and_then(|link_status| link_status.get(&status.pubkey));
+            status.last_seen_at = activity
+                .and_then(|value| value.last_seen_at)
+                .or_else(|| peer_presence.and_then(|value| value.last_seen_at));
+            status.last_control_seen_at = activity
+                .and_then(|value| value.last_control_seen_at)
+                .or_else(|| peer_presence.and_then(|value| value.last_control_seen_at));
+            status.last_data_seen_at = activity
+                .and_then(|value| value.last_data_seen_at)
+                .or_else(|| peer_presence.and_then(|value| value.last_data_seen_at));
+            status.tx_bytes = activity
+                .map(|value| value.tx_bytes)
+                .or_else(|| peer_presence.map(|value| value.tx_bytes))
+                .unwrap_or(0);
+            status.rx_bytes = activity
+                .map(|value| value.rx_bytes)
+                .or_else(|| peer_presence.map(|value| value.rx_bytes))
+                .unwrap_or(0);
+            if let Some(peer_link) = peer_link {
+                status.endpoint_npub = peer_link.npub.clone();
+                status.transport_addr = peer_link.transport_addr.clone();
+                status.transport_type = peer_link.transport_type.clone();
+                status.srtt_ms = peer_link.srtt_ms;
+                status.srtt_age_ms = peer_link.srtt_age_ms;
+                status.link_packets_sent = peer_link.packets_sent;
+                status.link_packets_recv = peer_link.packets_recv;
+                status.link_bytes_sent = peer_link.bytes_sent;
+                status.link_bytes_recv = peer_link.bytes_recv;
+                status.rekey_in_progress = peer_link.rekey_in_progress;
+                status.rekey_draining = peer_link.rekey_draining;
+                status.current_k_bit = peer_link.current_k_bit;
+                status.direct_probe_pending = peer_link.direct_probe_pending;
+                status.direct_probe_after_ms = peer_link.direct_probe_after_ms;
+                status.direct_probe_retry_count = peer_link.direct_probe_retry_count;
+                status.direct_probe_auto_reconnect = peer_link.direct_probe_auto_reconnect;
+                status.direct_probe_expires_at_ms = peer_link.direct_probe_expires_at_ms;
+                status.nostr_traversal_consecutive_failures =
+                    peer_link.nostr_traversal_consecutive_failures;
+                status.nostr_traversal_in_cooldown = peer_link.nostr_traversal_in_cooldown;
+                status.nostr_traversal_cooldown_until_ms =
+                    peer_link.nostr_traversal_cooldown_until_ms;
+                status.nostr_traversal_last_observed_skew_ms =
+                    peer_link.nostr_traversal_last_observed_skew_ms;
+            }
+            if status.srtt_ms.is_none() {
+                status.srtt_ms = peer_presence.and_then(|value| value.rtt_ms);
+            }
+            let link_connected = peer_link.is_some_and(|peer_link| peer_link.connected);
+            let (connected, error) = fips_peer_liveness(
+                status.last_seen_at,
+                link_connected,
+                peer_presence.and_then(|value| value.error.clone()),
+                now,
+            );
+            status.connected = connected;
+            status.error = error;
+        }
+        if let Some(other_link_status) = other_link_status {
+            statuses.extend(other_endpoint_peer_statuses(&other_link_status, now));
+        }
+        statuses.sort_by(|left, right| left.pubkey.cmp(&right.pubkey));
+        statuses.dedup_by(|left, right| left.pubkey == right.pubkey);
+        statuses
+    }
+
+    pub(crate) async fn refresh_link_statuses(&self) -> Result<()> {
+        let endpoint_peers = self
+            .endpoint
+            .peers()
+            .await
+            .context("failed to snapshot FIPS endpoint peers")?;
+        let mesh = self.mesh.load();
+        let mut link_status = HashMap::new();
+        let mut other_link_status = HashMap::new();
+        for peer in endpoint_peers {
+            if let Some(participant) =
+                mesh.participant_for_endpoint_node_addr(peer.node_addr.as_bytes())
+            {
+                link_status.insert(participant, peer);
+            } else if let Some(pubkey) = endpoint_peer_status_pubkey(&peer) {
+                other_link_status.insert(pubkey, peer);
+            }
+        }
+        *self
+            .link_status
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))? = link_status;
+        *self
+            .other_link_status
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh other link status lock poisoned"))? = other_link_status;
+        Ok(())
+    }
+
+    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
+        self.endpoint
+            .relay_statuses()
+            .await
+            .context("failed to snapshot FIPS endpoint relays")
+            .map(|relays| {
+                relays
+                    .into_iter()
+                    .map(|relay| FipsRelayStatus {
+                        url: relay.url,
+                        status: relay.status,
+                    })
+                    .collect()
+            })
+    }
+
+    pub(crate) async fn update_relays(&self, relays: &[String]) -> Result<()> {
+        self.endpoint
+            .update_relays(relays.to_vec(), relays.to_vec())
+            .await
+            .context("failed to update FIPS endpoint relays")
+    }
+
+    pub(crate) fn peer_pubkeys(&self) -> Vec<String> {
+        self.mesh.load().peer_pubkeys()
+    }
+
+    fn ping_due_participants(&self, now: u64) -> Result<Vec<String>> {
+        let participants = self.mesh.load().peer_pubkeys();
+        let peer_activity = self.peer_activity.load();
+        let presence = self
+            .presence
+            .read()
+            .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
+        let link_status = self
+            .link_status
+            .read()
+            .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?;
+        Ok(participants
+            .into_iter()
+            .filter(|participant| {
+                let participant_key = participant_pubkey_bytes(participant);
+                let peer_presence = presence.get(participant);
+                let link_connected = link_status
+                    .get(participant)
+                    .is_some_and(|peer| peer.connected);
+                let last_seen_at = participant_key
+                    .as_ref()
+                    .and_then(|participant| peer_activity.get(participant))
+                    .and_then(|activity| activity.last_seen_at())
+                    .or_else(|| peer_presence.and_then(|value| value.last_seen_at));
+                fips_peer_ping_due(
+                    last_seen_at,
+                    peer_presence.and_then(|value| value.last_ping_sent_at),
+                    link_connected,
+                    now,
+                )
+            })
+            .collect())
+    }
+
+    /// Snapshot `(endpoint_npub, transport-tagged addr)` pairs for every peer
+    /// that currently has an authenticated FIPS link, including open-discovery
+    /// transit peers outside the private-network roster. Used by the daemon
+    /// heartbeat to update the on-disk recent-peers cache so restarts can seed
+    /// useful overlay peers before relay discovery has warmed up.
+    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
+        let peers = self
+            .endpoint
+            .peers()
+            .await
+            .context("failed to snapshot FIPS endpoint peers")?;
+        Ok(peers
+            .into_iter()
+            .filter_map(|peer| {
+                tag_authenticated_transport_addr(peer.transport_addr, peer.transport_type)
+                    .map(|addr| (peer.npub, addr))
+            })
+            .collect())
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) async fn peer_transport_ipv4_hosts(&self) -> Result<Vec<Ipv4Addr>> {
+        let mut hosts = self
+            .endpoint
+            .peers()
+            .await
+            .context("failed to snapshot FIPS endpoint peers")?
+            .into_iter()
+            .filter_map(|peer| peer.transport_addr)
+            .filter_map(|addr| endpoint_transport_ipv4_host(&addr))
+            .collect::<Vec<_>>();
+        hosts.sort_unstable();
+        hosts.dedup();
+        Ok(hosts)
+    }
+
+    pub(crate) fn replace_peers(
+        &self,
+        peers: Vec<FipsMeshPeerConfig>,
+        local_allowed_ips: Vec<String>,
+    ) -> Result<()> {
+        let peer_identities = peer_identity_map(&peers);
+        let mesh = FipsMeshRuntime::with_local_routes(peers, local_allowed_ips);
+        let configured = mesh.peer_pubkeys();
+        let previous_activity = self.peer_activity.load();
+        let peer_activity = peer_activity_map(&configured, Some(&**previous_activity));
+        self.mesh.store(Arc::new(mesh));
+        self.peer_activity.store(Arc::new(peer_activity));
+        self.peer_identities.store(Arc::new(peer_identities));
+        self.presence
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?
+            .retain(|participant, _| configured.iter().any(|value| value == participant));
+        self.link_status
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?
+            .retain(|participant, _| configured.iter().any(|value| value == participant));
+        self.other_link_status
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh other link status lock poisoned"))?
+            .clear();
+        self.peer_capabilities
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh peer capabilities lock poisoned"))?
+            .retain(|participant, _| configured.iter().any(|value| value == participant));
+        Ok(())
+    }
+
+    pub(crate) fn peer_advertised_routes(&self, participant: &str) -> Vec<String> {
+        let normalized = match normalize_nostr_pubkey(participant) {
+            Ok(value) => value,
+            Err(_) => return Vec::new(),
+        };
+        let now = unix_timestamp();
+        let caps = match self.peer_capabilities.read() {
+            Ok(guard) => guard,
+            Err(_) => return Vec::new(),
+        };
+        caps.get(&normalized)
+            .filter(|entry| {
+                fips_timestamp_within_grace(now, entry.received_at, FIPS_PEER_CAPS_GRACE_SECS)
+            })
+            .map(|entry| entry.capabilities.advertised_routes.clone())
+            .unwrap_or_default()
+    }
+
+    pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
+        let now = unix_timestamp();
+        let caps = match self.peer_capabilities.read() {
+            Ok(guard) => guard,
+            Err(_) => return Vec::new(),
+        };
+        let mut out = caps
+            .iter()
+            .filter(|(_, entry)| {
+                fips_timestamp_within_grace(now, entry.received_at, FIPS_PEER_CAPS_GRACE_SECS)
+            })
+            .filter_map(|(participant, entry)| {
+                let mut addresses = entry
+                    .capabilities
+                    .endpoint_hints
+                    .iter()
+                    .filter_map(peer_endpoint_hint_addr)
+                    .map(|addr| (addr, entry.received_at.saturating_mul(1000)))
+                    .collect::<Vec<_>>();
+                addresses.sort_by(|left, right| left.0.cmp(&right.0));
+                addresses.dedup_by(|left, right| left.0 == right.0);
+                (!addresses.is_empty()).then_some((participant.clone(), addresses))
+            })
+            .collect::<Vec<_>>();
+        out.sort_by(|left, right| left.0.cmp(&right.0));
+        out
+    }
+
+    fn record_peer_capabilities(
+        &self,
+        participant: &str,
+        capabilities: &PeerCapabilities,
+        now: u64,
+    ) -> Result<()> {
+        let normalized = normalize_nostr_pubkey(participant)?;
+        let mut caps = self
+            .peer_capabilities
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh peer capabilities lock poisoned"))?;
+        match caps.get(&normalized) {
+            Some(existing) if existing.capabilities.signed_at > capabilities.signed_at => {
+                return Ok(());
+            }
+            _ => {}
+        }
+        caps.insert(
+            normalized,
+            PeerCapabilitiesEntry {
+                capabilities: capabilities.clone(),
+                received_at: now,
+            },
+        );
+        Ok(())
+    }
+
+}

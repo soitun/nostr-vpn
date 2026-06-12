@@ -54,6 +54,10 @@ info:
     @echo "  just mobile-test-kit-rust"
     @echo "  just mobile-test-kit-sim"
     @echo "  just mobile-test-kit-device"
+    @echo "  just check-rust-file-lines"
+    @echo "  just dataplane-safety-fast [suites...]"
+    @echo "  just dataplane-host-pair-comparison-dry-run"
+    @echo "  just dataplane-host-pair-comparison"
     @echo "  just release-gate"
     @echo "  just security-regressions"
     @echo "  just e2e"
@@ -182,6 +186,31 @@ release-promote:
 
 test:
     cargo test
+
+check-rust-file-lines:
+    ./scripts/check-rust-file-lines.sh
+
+dataplane-safety-fast *suites:
+    ./scripts/test-dataplane-safety-fast.sh {{suites}}
+
+dataplane-host-pair-comparison-dry-run:
+    NVPN_HOST_PAIR_COMPARISON_DRY_RUN=1 \
+    NVPN_HOST_PAIR_COMPARISON_RUN_OUTPUT_DIR="${TMPDIR:-/tmp}/nvpn-host-pair-comparison-dry-run" \
+    NVPN_HOST_PAIR_COMPARISON_SSH="${NVPN_HOST_PAIR_COMPARISON_SSH:-bench-host}" \
+    NVPN_HOST_PAIR_COMPARISON_LOCAL_UNDERLAY_IP="${NVPN_HOST_PAIR_COMPARISON_LOCAL_UNDERLAY_IP:-192.0.2.10}" \
+    NVPN_HOST_PAIR_COMPARISON_REMOTE_UNDERLAY_IP="${NVPN_HOST_PAIR_COMPARISON_REMOTE_UNDERLAY_IP:-192.0.2.20}" \
+    NVPN_HOST_PAIR_COMPARISON_BACKENDS="${NVPN_HOST_PAIR_COMPARISON_BACKENDS:-boringtun,wireguard-go}" \
+    NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_MODES="${NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_MODES:-clean,stress}" \
+    NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_SIDES="${NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_SIDES:-both}" \
+    NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_WORKERS="${NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_WORKERS:-auto}" \
+    ./scripts/run-host-pair-comparison.sh
+
+dataplane-host-pair-comparison:
+    NVPN_HOST_PAIR_COMPARISON_BACKENDS="${NVPN_HOST_PAIR_COMPARISON_BACKENDS:-boringtun,wireguard-go}" \
+    NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_MODES="${NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_MODES:-clean,stress}" \
+    NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_SIDES="${NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_SIDES:-both}" \
+    NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_WORKERS="${NVPN_HOST_PAIR_COMPARISON_CPU_STRESS_WORKERS:-auto}" \
+    ./scripts/run-host-pair-comparison.sh
 
 release-gate:
     ./scripts/release-gate.sh

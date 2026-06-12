@@ -1,0 +1,363 @@
+#[cfg(test)]
+mod tests {
+    use super::{
+        AppConfig, normalize_nostr_pubkey, parse_wireguard_exit_config, wireguard_exit_config_text,
+    };
+    use crate::config_defaults::generate_nostr_identity;
+
+    const TEST_WG_PRIVATE_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
+    const TEST_WG_PUBLIC_KEY: &str = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=";
+    const TEST_WG_PRESHARED_KEY: &str = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=";
+
+    #[test]
+    fn plaintext_toml_preserves_config_secrets() {
+        let mut config = AppConfig::generated();
+        config.wireguard_exit.private_key = TEST_WG_PRIVATE_KEY.to_string();
+        config.wireguard_exit.peer_public_key = TEST_WG_PUBLIC_KEY.to_string();
+        config.wireguard_exit.peer_preshared_key = TEST_WG_PRESHARED_KEY.to_string();
+
+        let raw = config.plaintext_toml().expect("encode plaintext config");
+
+        assert!(raw.contains(&config.nostr.secret_key));
+        assert!(raw.contains(TEST_WG_PRIVATE_KEY));
+        assert!(raw.contains(TEST_WG_PRESHARED_KEY));
+    }
+
+    #[test]
+    fn save_plaintext_does_not_write_config_secrets_inline() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-save-plaintext-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        let mut config = AppConfig::generated();
+        config.wireguard_exit.private_key = TEST_WG_PRIVATE_KEY.to_string();
+        config.wireguard_exit.peer_public_key = TEST_WG_PUBLIC_KEY.to_string();
+        config.wireguard_exit.peer_preshared_key = TEST_WG_PRESHARED_KEY.to_string();
+
+        config.save_plaintext(&path).expect("save plaintext config");
+        let raw = std::fs::read_to_string(&path).expect("read plaintext config");
+        let loaded = AppConfig::load(&path).expect("load protected config");
+
+        assert!(!raw.contains(&config.nostr.secret_key));
+        assert!(!raw.contains(TEST_WG_PRIVATE_KEY));
+        assert!(!raw.contains(TEST_WG_PRESHARED_KEY));
+        #[cfg(target_os = "macos")]
+        {
+            assert!(raw.contains("stored-in-private-secret-file"));
+            let file_name = path.file_name().and_then(|value| value.to_str()).unwrap();
+            let parent = path.parent().unwrap();
+            assert!(
+                parent
+                    .join(format!(".{file_name}.nostr-secret-key.secret"))
+                    .exists()
+            );
+            assert!(
+                parent
+                    .join(format!(".{file_name}.wireguard-exit-private-key.secret"))
+                    .exists()
+            );
+            assert!(
+                parent
+                    .join(format!(
+                        ".{file_name}.wireguard-exit-peer-preshared-key.secret"
+                    ))
+                    .exists()
+            );
+        }
+        assert_eq!(loaded.nostr.secret_key, config.nostr.secret_key);
+        assert_eq!(loaded.wireguard_exit.private_key, TEST_WG_PRIVATE_KEY);
+        assert_eq!(
+            loaded.wireguard_exit.peer_preshared_key,
+            TEST_WG_PRESHARED_KEY
+        );
+        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete persisted secrets");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn migrate_persisted_secrets_rewrites_plaintext_config_secrets() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-migrate-secrets-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        let mut config = AppConfig::generated();
+        config.wireguard_exit.private_key = TEST_WG_PRIVATE_KEY.to_string();
+        config.wireguard_exit.peer_public_key = TEST_WG_PUBLIC_KEY.to_string();
+        config.wireguard_exit.peer_preshared_key = TEST_WG_PRESHARED_KEY.to_string();
+        let nostr_secret = config.nostr.secret_key.clone();
+        let raw = config.plaintext_toml().expect("encode plaintext config");
+        std::fs::write(&path, raw).expect("write plaintext config");
+
+        assert!(
+            AppConfig::config_file_needs_secret_migration(&path).expect("inspect plaintext config")
+        );
+        assert!(AppConfig::migrate_persisted_secrets(&path).expect("migrate secrets"));
+        assert!(
+            !AppConfig::config_file_needs_secret_migration(&path).expect("inspect migrated config")
+        );
+        let migrated = std::fs::read_to_string(&path).expect("read migrated config");
+        let loaded = AppConfig::load(&path).expect("load migrated config");
+        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete migrated secrets");
+        let _ = std::fs::remove_file(&path);
+
+        assert!(!migrated.contains(&nostr_secret));
+        assert!(!migrated.contains(TEST_WG_PRIVATE_KEY));
+        assert!(!migrated.contains(TEST_WG_PRESHARED_KEY));
+        assert!(migrated.contains("stored-in-"));
+        assert_eq!(loaded.nostr.secret_key, nostr_secret);
+        assert_eq!(loaded.wireguard_exit.private_key, TEST_WG_PRIVATE_KEY);
+        assert_eq!(
+            loaded.wireguard_exit.peer_preshared_key,
+            TEST_WG_PRESHARED_KEY
+        );
+    }
+
+    #[test]
+    fn save_rejects_unsupported_secret_markers() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-unsupported-secret-marker-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        let mut config = AppConfig::generated();
+        config.nostr.secret_key = "stored-in-macos-keychain".to_string();
+
+        let error = config.save(&path).expect_err("unsupported marker fails");
+
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported secret storage marker")
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn ensure_defaults_keeps_existing_public_identity_without_parsing_secret_key() {
+        let (_, public_key) = generate_nostr_identity();
+        let public_key_hex = normalize_nostr_pubkey(&public_key).expect("valid public key");
+        let mut config = AppConfig::default();
+        config.nostr.secret_key = "not-a-secret-key".to_string();
+        config.nostr.public_key = public_key.clone();
+
+        config.ensure_defaults();
+
+        assert_eq!(
+            normalize_nostr_pubkey(&config.nostr.public_key).expect("valid public key"),
+            public_key_hex
+        );
+        assert_eq!(config.nostr.secret_key, "not-a-secret-key");
+    }
+
+    #[test]
+    fn wireguard_exit_defaults_and_normalization_are_stable() {
+        let mut config = AppConfig::default();
+        config.wireguard_exit.enabled = true;
+        config.wireguard_exit.interface = "  ".to_string();
+        config.wireguard_exit.address = " 10.200.0.2/32 ".to_string();
+        config.wireguard_exit.private_key = " private ".to_string();
+        config.wireguard_exit.peer_public_key = " peer ".to_string();
+        config.wireguard_exit.endpoint = " 198.51.100.20:51830 ".to_string();
+        config.wireguard_exit.allowed_ips = vec![
+            "0.0.0.0/0".to_string(),
+            "bad-route".to_string(),
+            "0.0.0.0/0".to_string(),
+        ];
+        config.wireguard_exit.dns = vec![" 9.9.9.9 ".to_string(), "9.9.9.9".to_string()];
+
+        config.ensure_defaults();
+
+        assert!(config.wireguard_exit.enabled);
+        assert_eq!(config.wireguard_exit.interface, "nvpn-wg-exit");
+        assert_eq!(config.wireguard_exit.address, "10.200.0.2/32");
+        assert_eq!(config.wireguard_exit.private_key, "private");
+        assert_eq!(config.wireguard_exit.peer_public_key, "peer");
+        assert_eq!(config.wireguard_exit.endpoint, "198.51.100.20:51830");
+        assert_eq!(config.wireguard_exit.allowed_ips, vec!["0.0.0.0/0"]);
+        assert_eq!(config.wireguard_exit.dns, vec!["9.9.9.9"]);
+        assert!(config.wireguard_exit.configured());
+    }
+
+    #[test]
+    fn wireguard_exit_import_accepts_provider_config() {
+        let imported = parse_wireguard_exit_config(
+            r#"
+            # Provider export
+            [Interface]
+            PrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+            Address = 10.64.70.195/32, fc00:bbbb:bbbb:bb01::1:46c2/128
+            DNS = 10.64.0.1, 1.1.1.1
+            MTU = 1380
+
+            [Peer]
+            PublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=
+            PresharedKey = AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=
+            AllowedIPs = 0.0.0.0/0, ::/0
+            Endpoint = vpn.example.test:51820
+            PersistentKeepalive = 20
+            "#,
+        )
+        .expect("provider config parses");
+
+        assert_eq!(imported.address, "10.64.70.195/32");
+        assert_eq!(imported.private_key, TEST_WG_PRIVATE_KEY);
+        assert_eq!(imported.peer_public_key, TEST_WG_PUBLIC_KEY);
+        assert_eq!(imported.peer_preshared_key, TEST_WG_PRESHARED_KEY);
+        assert_eq!(imported.endpoint, "vpn.example.test:51820");
+        assert_eq!(imported.allowed_ips, vec!["0.0.0.0/0", "::/0"]);
+        assert_eq!(imported.dns, vec!["1.1.1.1", "10.64.0.1"]);
+        assert_eq!(imported.mtu, 1380);
+        assert_eq!(imported.persistent_keepalive_secs, 20);
+        assert!(wireguard_exit_config_text(&imported).contains("[Peer]"));
+    }
+
+    #[test]
+    fn wireguard_exit_import_rejects_shell_hooks() {
+        let error = parse_wireguard_exit_config(
+            r#"
+            [Interface]
+            PrivateKey = AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=
+            Address = 10.64.70.195/32
+            PostUp = echo unsafe
+
+            [Peer]
+            PublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=
+            AllowedIPs = 0.0.0.0/0
+            Endpoint = vpn.example.test:51820
+            "#,
+        )
+        .expect_err("shell hooks are rejected")
+        .to_string();
+
+        assert!(error.contains("hook directive"), "{error}");
+    }
+
+    #[test]
+    fn wireguard_exit_import_rejects_invalid_key_material() {
+        let error = parse_wireguard_exit_config(
+            r#"
+            [Interface]
+            PrivateKey = not-a-wireguard-key
+            Address = 10.64.70.195/32
+
+            [Peer]
+            PublicKey = AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=
+            AllowedIPs = 0.0.0.0/0
+            Endpoint = vpn.example.test:51820
+            "#,
+        )
+        .expect_err("bad keys are rejected")
+        .to_string();
+
+        assert!(error.contains("PrivateKey"), "{error}");
+    }
+
+    #[test]
+    fn fips_peer_endpoints_normalize_and_exclude_self() {
+        let (_, own_public_key) = generate_nostr_identity();
+        let (_, peer_public_key) = generate_nostr_identity();
+        let peer_public_key_hex =
+            normalize_nostr_pubkey(&peer_public_key).expect("valid peer public key");
+        let mut config = AppConfig::default();
+        config.nostr.secret_key = "not-a-secret-key".to_string();
+        config.nostr.public_key = own_public_key.clone();
+        config.fips_peer_endpoints.insert(
+            peer_public_key_hex,
+            vec![
+                " 10.203.0.12:51820 ".to_string(),
+                "10.203.0.12:51820".to_string(),
+                "198.51.100.10:51820".to_string(),
+                format!("{peer_public_key}:51820"),
+                "fips".to_string(),
+            ],
+        );
+        config
+            .fips_peer_endpoints
+            .insert(own_public_key, vec!["10.203.0.10:51820".to_string()]);
+
+        config.ensure_defaults();
+
+        assert_eq!(
+            config.fips_static_peer_endpoints(),
+            vec![(
+                peer_public_key,
+                vec!["10.203.0.12:51820".to_string(), "fips:51820".to_string()]
+            )]
+        );
+        assert!(config.has_fips_static_peer_endpoints());
+    }
+
+    #[test]
+    fn set_fips_peer_endpoint_hints_replaces_and_removes_peer_hints() {
+        let (_, peer_public_key) = generate_nostr_identity();
+        let peer_public_key_hex =
+            normalize_nostr_pubkey(&peer_public_key).expect("valid peer public key");
+        let mut config = AppConfig::default();
+
+        config
+            .set_fips_peer_endpoint_hints(
+                &peer_public_key,
+                &[
+                    " peer.example.com ".to_string(),
+                    "192.168.1.23".to_string(),
+                    "peer.example.com:51820".to_string(),
+                    "[fd00::23]".to_string(),
+                ],
+            )
+            .expect("set hints");
+
+        assert_eq!(
+            config.fips_peer_endpoint_hints(&peer_public_key_hex),
+            vec![
+                "192.168.1.23:51820".to_string(),
+                "[fd00::23]:51820".to_string(),
+                "peer.example.com:51820".to_string()
+            ]
+        );
+
+        let error = config
+            .set_fips_peer_endpoint_hints(&peer_public_key, &["198.51.100.10:51820".to_string()])
+            .expect_err("documentation endpoint is rejected")
+            .to_string();
+        assert!(error.contains("host:port"), "{error}");
+        assert_eq!(
+            config.fips_peer_endpoint_hints(&peer_public_key),
+            vec![
+                "192.168.1.23:51820".to_string(),
+                "[fd00::23]:51820".to_string(),
+                "peer.example.com:51820".to_string()
+            ]
+        );
+
+        config
+            .set_fips_peer_endpoint_hints(&peer_public_key, &[])
+            .expect("clear hints");
+        assert!(config.fips_peer_endpoint_hints(&peer_public_key).is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn config_save_prefers_user_owned_parent_over_stale_root_owned_file() {
+        assert_eq!(
+            super::preferred_config_owner(Some((0, 0)), Some((501, 20))),
+            Some((501, 20))
+        );
+        assert_eq!(
+            super::preferred_config_owner(Some((502, 20)), Some((501, 20))),
+            Some((502, 20))
+        );
+        assert_eq!(
+            super::preferred_config_owner(None, Some((501, 20))),
+            Some((501, 20))
+        );
+        assert_eq!(super::preferred_config_owner(None, Some((0, 0))), None);
+    }
+}

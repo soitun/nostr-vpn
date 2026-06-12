@@ -302,6 +302,13 @@ fn macos_underlay_route_check_throttles_route_event_storms() {
     ));
 }
 
+#[test]
+fn macos_underlay_route_repair_defers_only_for_confirmed_captive_portal() {
+    assert!(!macos_underlay_route_repair_allowed(Some(true)));
+    assert!(macos_underlay_route_repair_allowed(Some(false)));
+    assert!(macos_underlay_route_repair_allowed(None));
+}
+
 #[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_link_events_restart_endpoint_for_major_link_changes() {

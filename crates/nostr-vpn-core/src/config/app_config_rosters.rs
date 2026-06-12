@@ -1,0 +1,204 @@
+impl AppConfig {
+    pub fn shared_network_roster(&self, network_id: &str) -> Result<SharedNetworkRoster> {
+        let network = self
+            .network_by_id(network_id)
+            .ok_or_else(|| anyhow::anyhow!("network not found"))?;
+        let mut participants = network.participants.clone();
+        if let Ok(own_pubkey) = self.own_nostr_pubkey_hex() {
+            participants.push(own_pubkey);
+        }
+        participants.sort();
+        participants.dedup();
+
+        let mut admins = network.admins.clone();
+        admins.sort();
+        admins.dedup();
+
+        let own_pubkey = self.own_nostr_pubkey_hex().ok();
+        let mut alias_keys = participants.clone();
+        alias_keys.extend(admins.iter().cloned());
+        alias_keys.sort();
+        alias_keys.dedup();
+        let aliases = alias_keys
+            .into_iter()
+            .filter_map(|member| {
+                let alias = if own_pubkey.as_deref() == Some(member.as_str()) {
+                    self.self_magic_dns_label()
+                } else {
+                    self.peer_alias(&member)
+                }?;
+                Some((member, alias))
+            })
+            .collect::<HashMap<_, _>>();
+
+        Ok(SharedNetworkRoster {
+            id: network.id.clone(),
+            network_id: normalize_runtime_network_id(&network.network_id),
+            name: network.name.clone(),
+            participants,
+            admins,
+            aliases,
+            updated_at: network.shared_roster_updated_at,
+            signed_by: network.shared_roster_signed_by.clone(),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_admin_signed_shared_roster(
+        &mut self,
+        network_id: &str,
+        network_name: &str,
+        participants: Vec<String>,
+        admins: Vec<String>,
+        aliases: HashMap<String, String>,
+        signed_at: u64,
+        signed_by: &str,
+    ) -> Result<bool> {
+        let normalized_network_id = normalize_runtime_network_id(network_id);
+        if normalized_network_id.is_empty() {
+            return Ok(false);
+        }
+
+        let normalized_signed_by = normalize_nostr_pubkey(signed_by)?;
+        let own_pubkey = self.own_nostr_pubkey_hex().ok();
+        let now = current_unix_timestamp();
+        if signed_at > now.saturating_add(MAX_SHARED_ROSTER_FUTURE_SECS) {
+            return Err(anyhow::anyhow!(
+                "shared roster timestamp is too far in the future"
+            ));
+        }
+
+        let Some(network_index) = self.networks.iter().position(|network| {
+            normalize_runtime_network_id(&network.network_id) == normalized_network_id
+        }) else {
+            return Ok(false);
+        };
+
+        {
+            let network = &self.networks[network_index];
+            if !network
+                .admins
+                .iter()
+                .any(|admin| admin == &normalized_signed_by)
+            {
+                return Ok(false);
+            }
+            if signed_at <= network.shared_roster_updated_at {
+                return Ok(false);
+            }
+        }
+
+        let own_in_shared_roster = own_pubkey.as_deref().is_none_or(|own_pubkey| {
+            participants
+                .iter()
+                .chain(admins.iter())
+                .filter_map(|member| normalize_nostr_pubkey(member).ok())
+                .any(|member| member == own_pubkey)
+        });
+        let own_in_previous_roster = own_pubkey.as_deref().is_some_and(|own_pubkey| {
+            let network = &self.networks[network_index];
+            network
+                .participants
+                .iter()
+                .chain(network.admins.iter())
+                .filter_map(|member| normalize_nostr_pubkey(member).ok())
+                .any(|member| member == own_pubkey)
+        });
+
+        if own_pubkey.is_some() && own_in_previous_roster && !own_in_shared_roster {
+            self.networks.remove(network_index);
+            self.normalize_selected_exit_node();
+            self.normalize_peer_aliases();
+            return Ok(true);
+        }
+
+        let own_join_completed = own_pubkey.is_some() && own_in_shared_roster;
+        let participants = if own_in_shared_roster {
+            normalize_shared_roster_participants(participants, own_pubkey.as_deref())?
+        } else {
+            Vec::new()
+        };
+        let network = &mut self.networks[network_index];
+        let admins =
+            normalize_network_admins(admins, own_pubkey.as_deref(), &network.invite_inviter);
+        if admins.is_empty() {
+            return Err(anyhow::anyhow!(
+                "shared roster must include at least one admin"
+            ));
+        }
+
+        network.participants = participants;
+        network.admins = admins;
+        if !network_name.trim().is_empty() {
+            network.name = network_name.trim().to_string();
+        }
+        if !network
+            .admins
+            .iter()
+            .any(|admin| admin == &network.invite_inviter)
+        {
+            network.invite_inviter = normalized_signed_by.clone();
+        }
+        network.shared_roster_updated_at = signed_at;
+        network.shared_roster_signed_by = normalized_signed_by;
+        network.outbound_join_request = if own_join_completed {
+            None
+        } else {
+            normalize_outbound_join_request(
+                network.outbound_join_request.take(),
+                &network.participants,
+            )
+        };
+        network.inbound_join_requests = normalize_inbound_join_requests(
+            std::mem::take(&mut network.inbound_join_requests),
+            &network.participants,
+        );
+
+        let mut allowed_members = network.participants.clone();
+        allowed_members.extend(network.admins.iter().cloned());
+        if own_in_shared_roster && let Some(own_pubkey) = &own_pubkey {
+            allowed_members.push(own_pubkey.clone());
+        }
+        allowed_members.sort();
+        allowed_members.dedup();
+        let allowed_members = allowed_members.into_iter().collect::<HashSet<_>>();
+        for (participant, alias) in aliases {
+            let Ok(normalized_participant) = normalize_nostr_pubkey(&participant) else {
+                continue;
+            };
+            if !allowed_members.contains(&normalized_participant) {
+                continue;
+            }
+            let Some(normalized_alias) = normalize_magic_dns_label(&alias) else {
+                continue;
+            };
+            self.peer_aliases.insert(
+                npub_for_pubkey_hex(&normalized_participant),
+                normalized_alias,
+            );
+        }
+        self.normalize_selected_exit_node();
+        self.normalize_peer_aliases();
+        Ok(true)
+    }
+
+    pub fn apply_verified_admin_signed_shared_roster(
+        &mut self,
+        signed_roster: &SignedRoster,
+    ) -> Result<bool> {
+        signed_roster.verify()?;
+        let network_id = signed_roster.network_id()?;
+        let roster = signed_roster.roster()?;
+        let signed_by = signed_roster.signer_pubkey_hex()?;
+        self.apply_admin_signed_shared_roster(
+            &network_id,
+            &roster.network_name,
+            roster.participants,
+            roster.admins,
+            roster.aliases,
+            roster.signed_at,
+            &signed_by,
+        )
+    }
+
+}

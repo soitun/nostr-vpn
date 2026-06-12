@@ -1,0 +1,577 @@
+#!/usr/bin/env bash
+# Narrow privileged helper for scripts/bench-userspace-wg-host-pair.sh.
+#
+# Intended operator-local install shape:
+#   root-owned, not user-writable, and optionally allowed via sudoers for this
+#   exact helper only. It accepts a small action set instead of arbitrary shell.
+set -euo pipefail
+
+PATH="/usr/local/sbin:/opt/nvpn/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/homebrew/bin:/usr/local/bin"
+TRUST_ERROR=""
+
+fail() {
+  printf 'nvpn wg host-pair priv-helper failed: %s\n' "$*" >&2
+  exit 1
+}
+
+err() {
+  printf '%s\n' "$*" >&2
+}
+
+need_root() {
+  [[ "$(/usr/bin/id -u)" == "0" ]] || fail "this action must run as root"
+}
+
+need_privileged_action() {
+  need_root
+  TRUST_ERROR=""
+  path_is_trusted "$0" helper || fail "$TRUST_ERROR"
+}
+
+os_name() {
+  /usr/bin/uname -s
+}
+
+stat_owner_mode() {
+  local path="$1"
+
+  case "$(os_name)" in
+    Darwin)
+      /usr/bin/stat -L -f '%u %Lp' "$path"
+      ;;
+    Linux)
+      /usr/bin/stat -L -c '%u %a' "$path"
+      ;;
+    *)
+      fail "unsupported OS: $(os_name)"
+      ;;
+  esac
+}
+
+set_trust_error() {
+  TRUST_ERROR="$*"
+  return 1
+}
+
+path_is_trusted() {
+  local path="$1"
+  local label="$2"
+  local check_path owner mode perm group_digit other_digit
+
+  [[ "$path" == /* ]] || {
+    set_trust_error "$label did not resolve to an absolute path: $path"
+    return 1
+  }
+
+  check_path="$path"
+  while :; do
+    read -r owner mode < <(stat_owner_mode "$check_path") || {
+      set_trust_error "cannot stat $label path: $check_path"
+      return 1
+    }
+    [[ "$owner" == "0" ]] || {
+      set_trust_error "$label path is not root-owned: $check_path"
+      return 1
+    }
+    perm="${mode: -3}"
+    [[ "$perm" =~ ^[0-7]{3}$ ]] || {
+      set_trust_error "$label path has unexpected mode: $check_path"
+      return 1
+    }
+    group_digit="${perm:1:1}"
+    other_digit="${perm:2:1}"
+    (( (10#$group_digit & 2) == 0 )) || {
+      set_trust_error "$label path is group-writable: $check_path"
+      return 1
+    }
+    (( (10#$other_digit & 2) == 0 )) || {
+      set_trust_error "$label path is world-writable: $check_path"
+      return 1
+    }
+
+    [[ "$check_path" == "/" ]] && break
+    check_path="${check_path%/*}"
+    [[ -n "$check_path" ]] || check_path="/"
+  done
+}
+
+trusted_cmd_path() {
+  local cmd="$1"
+  local dir candidate found_error
+
+  for dir in /usr/local/sbin /opt/nvpn/bin /usr/sbin /usr/bin /sbin /bin /opt/homebrew/bin /usr/local/bin; do
+    candidate="$dir/$cmd"
+    [[ -x "$candidate" ]] || continue
+    TRUST_ERROR=""
+    if path_is_trusted "$candidate" "$cmd"; then
+      printf '%s\n' "$candidate"
+      return
+    fi
+    found_error="$TRUST_ERROR"
+  done
+
+  if [[ -n "${found_error:-}" ]]; then
+    fail "no trusted command found for $cmd ($found_error)"
+  fi
+  fail "missing required command: $cmd"
+}
+
+is_uint() {
+  [[ "$1" =~ ^[0-9]+$ ]]
+}
+
+valid_ipv4() {
+  local ip="$1" part
+  local -a parts
+  [[ "$ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1
+  IFS=. read -r -a parts <<<"$ip"
+  for part in "${parts[@]}"; do
+    (( part >= 0 && part <= 255 )) || return 1
+  done
+}
+
+valid_iface() {
+  local iface="$1"
+  [[ "$iface" =~ ^(utun[0-9]+|wgbench[A-Za-z0-9_.-]*)$ ]] || {
+    err "invalid interface: $iface"
+    return 1
+  }
+}
+
+valid_iface_request() {
+  local iface="$1"
+  [[ "$iface" =~ ^(utun[0-9]*|wgbench[A-Za-z0-9_.-]*)$ ]] || {
+    err "invalid interface request: $iface"
+    return 1
+  }
+}
+
+valid_backend() {
+  local backend="$1"
+  [[ "$backend" == "boringtun" || "$backend" == "wireguard-go" ]] || {
+    err "invalid backend: $backend"
+    return 1
+  }
+}
+
+valid_threads() {
+  local threads="$1"
+  is_uint "$threads" && (( threads >= 1 && threads <= 256 )) || {
+    err "invalid thread count: $threads"
+    return 1
+  }
+}
+
+valid_mtu() {
+  local mtu="$1"
+  is_uint "$mtu" && (( mtu >= 576 && mtu <= 9000 )) || {
+    err "invalid mtu: $mtu"
+    return 1
+  }
+}
+
+valid_port() {
+  local port="$1"
+  is_uint "$port" && (( port >= 1 && port <= 65535 )) || {
+    err "invalid port: $port"
+    return 1
+  }
+}
+
+valid_pubkey() {
+  local key="$1"
+  [[ "$key" =~ ^[A-Za-z0-9+/=]{40,64}$ ]] || {
+    err "invalid WireGuard public key"
+    return 1
+  }
+}
+
+valid_ipv4_cidr32() {
+  local cidr="$1" ip
+  [[ "$cidr" == */32 ]] || {
+    err "invalid /32 address: $cidr"
+    return 1
+  }
+  ip="${cidr%/32}"
+  valid_ipv4 "$ip" || {
+    err "invalid IPv4 address: $ip"
+    return 1
+  }
+}
+
+valid_endpoint() {
+  local endpoint="$1" ip port
+  [[ "$endpoint" == *:* ]] || {
+    err "invalid endpoint: $endpoint"
+    return 1
+  }
+  ip="${endpoint%:*}"
+  port="${endpoint##*:}"
+  valid_ipv4 "$ip" || {
+    err "invalid endpoint IPv4 address: $ip"
+    return 1
+  }
+  valid_port "$port"
+}
+
+trusted_backend_path() {
+  local backend="$1"
+  local requested="$2"
+  local expected_base resolved base
+
+  valid_backend "$backend" || fail "bad backend"
+  case "$backend" in
+    boringtun) expected_base="boringtun-cli" ;;
+    wireguard-go) expected_base="wireguard-go" ;;
+  esac
+
+  if [[ "$requested" == */* ]]; then
+    [[ "$requested" == /* ]] || fail "backend path must be absolute: $requested"
+    [[ -x "$requested" ]] || fail "backend is not executable: $requested"
+    TRUST_ERROR=""
+    path_is_trusted "$requested" "$backend" || fail "$TRUST_ERROR"
+    resolved="$requested"
+  else
+    resolved="$(trusted_cmd_path "$requested")"
+  fi
+
+  base="${resolved##*/}"
+  [[ "$base" == "$expected_base" ]] || {
+    fail "backend $backend must use $expected_base, got $base"
+  }
+  printf '%s\n' "$resolved"
+}
+
+backend_state_root() {
+  printf '/opt/nvpn/run/wg-host-pair\n'
+}
+
+ensure_backend_state_root() {
+  local root
+  root="$(backend_state_root)"
+  mkdir -p "$root"
+  chmod 755 "$root"
+  TRUST_ERROR=""
+  path_is_trusted "$root" "backend state root" || fail "$TRUST_ERROR"
+  printf '%s\n' "$root"
+}
+
+valid_backend_state_dir() {
+  local state_dir="$1"
+  local owner mode perm group_digit other_digit
+  local root
+  root="$(backend_state_root)"
+
+  [[ "$state_dir" == "$root"/backend.* ]] || {
+    err "invalid backend state directory: $state_dir"
+    return 1
+  }
+  [[ -d "$state_dir" ]] || {
+    err "backend state directory does not exist: $state_dir"
+    return 1
+  }
+  read -r owner mode < <(stat_owner_mode "$state_dir") || {
+    err "cannot stat backend state directory: $state_dir"
+    return 1
+  }
+  [[ "$owner" == "0" ]] || {
+    err "backend state directory is not root-owned: $state_dir"
+    return 1
+  }
+  perm="${mode: -3}"
+  [[ "$perm" =~ ^[0-7]{3}$ ]] || {
+    err "backend state directory has unexpected mode: $state_dir"
+    return 1
+  }
+  group_digit="${perm:1:1}"
+  other_digit="${perm:2:1}"
+  (( (10#$group_digit & 2) == 0 && (10#$other_digit & 2) == 0 )) || {
+    err "backend state directory is writable by non-root: $state_dir"
+    return 1
+  }
+}
+
+check() {
+  need_privileged_action
+  trusted_cmd_path wg >/dev/null
+  case "$(os_name)" in
+    Darwin)
+      trusted_cmd_path ifconfig >/dev/null
+      trusted_cmd_path route >/dev/null
+      ;;
+    Linux)
+      trusted_cmd_path ip >/dev/null
+      ;;
+    *)
+      fail "unsupported OS: $(os_name)"
+      ;;
+  esac
+}
+
+check_backend() {
+  local backend="$1"
+  local requested_bin="$2"
+
+  need_privileged_action
+  trusted_cmd_path nohup >/dev/null
+  trusted_backend_path "$backend" "$requested_bin" >/dev/null
+}
+
+start_backend() {
+  local backend="$1"
+  local requested_bin="$2"
+  local iface="$3"
+  local threads="$4"
+  local backend_bin nohup_bin state_root state_dir pid_file tun_name_file log_file pid
+
+  need_privileged_action
+  backend_bin="$(trusted_backend_path "$backend" "$requested_bin")"
+  nohup_bin="$(trusted_cmd_path nohup)"
+  valid_iface_request "$iface" || fail "bad interface request"
+  valid_threads "$threads" || fail "bad thread count"
+
+  state_root="$(ensure_backend_state_root)"
+  state_dir="$(mktemp -d "$state_root/backend.XXXXXX")"
+  chmod 755 "$state_dir"
+  pid_file="$state_dir/backend.pid"
+  tun_name_file="$state_dir/tun-name"
+  log_file="$state_dir/backend.log"
+  : >"$tun_name_file"
+  : >"$log_file"
+  chmod 644 "$tun_name_file" "$log_file"
+
+  case "$backend" in
+    boringtun)
+      WG_TUN_NAME_FILE="$tun_name_file" WG_THREADS="$threads" \
+        "$nohup_bin" "$backend_bin" --foreground --disable-drop-privileges "$iface" \
+        >"$log_file" 2>&1 &
+      ;;
+    wireguard-go)
+      WG_TUN_NAME_FILE="$tun_name_file" \
+        "$nohup_bin" "$backend_bin" --foreground "$iface" \
+        >"$log_file" 2>&1 &
+      ;;
+  esac
+  pid="$!"
+  printf '%s\n' "$pid" >"$pid_file"
+  chmod 644 "$pid_file"
+  printf '%s\n' "$state_dir"
+}
+
+stop_backend() {
+  local state_dir="$1"
+  local pid_file pid
+
+  need_privileged_action
+  valid_backend_state_dir "$state_dir" || fail "bad backend state directory"
+  pid_file="$state_dir/backend.pid"
+  if [[ -f "$pid_file" ]]; then
+    IFS= read -r pid <"$pid_file" || pid=""
+    if [[ "$pid" =~ ^[0-9]+$ ]]; then
+      kill "$pid" >/dev/null 2>&1 || true
+    fi
+  fi
+  rm -rf "$state_dir"
+}
+
+configure_iface() {
+  local iface="$1"
+  local local_ip="$2"
+  local remote_ip="$3"
+  local mtu="$4"
+  local ifconfig_bin route_bin ip_bin
+
+  need_privileged_action
+  valid_iface "$iface" || fail "bad interface"
+  valid_ipv4 "$local_ip" || fail "bad local tunnel IP"
+  valid_ipv4 "$remote_ip" || fail "bad remote tunnel IP"
+  valid_mtu "$mtu" || fail "bad MTU"
+
+  case "$(os_name)" in
+    Darwin)
+      ifconfig_bin="$(trusted_cmd_path ifconfig)"
+      route_bin="$(trusted_cmd_path route)"
+      "$ifconfig_bin" "$iface" "$local_ip" "$local_ip" alias
+      "$ifconfig_bin" "$iface" mtu "$mtu"
+      "$ifconfig_bin" "$iface" up
+      "$route_bin" -q -n add -host "$remote_ip" -interface "$iface" 2>/dev/null \
+        || "$route_bin" -q -n change -host "$remote_ip" -interface "$iface"
+      ;;
+    Linux)
+      ip_bin="$(trusted_cmd_path ip)"
+      "$ip_bin" address replace "$local_ip/32" dev "$iface"
+      "$ip_bin" link set mtu "$mtu" up dev "$iface"
+      "$ip_bin" route replace "$remote_ip/32" dev "$iface"
+      ;;
+    *)
+      fail "unsupported OS: $(os_name)"
+      ;;
+  esac
+}
+
+wg_set() {
+  local iface="$1"
+  local listen_port="$2"
+  local peer_pub="$3"
+  local allowed_ip="$4"
+  local endpoint="$5"
+  local private_key
+  local wg_bin
+
+  need_privileged_action
+  wg_bin="$(trusted_cmd_path wg)"
+  valid_iface "$iface" || fail "bad interface"
+  valid_port "$listen_port" || fail "bad listen port"
+  valid_pubkey "$peer_pub" || fail "bad peer public key"
+  valid_ipv4_cidr32 "$allowed_ip" || fail "bad allowed IP"
+  valid_endpoint "$endpoint" || fail "bad endpoint"
+
+  IFS= read -r private_key || fail "missing private key on stdin"
+  [[ "$private_key" =~ ^[A-Za-z0-9+/=]{40,64}$ ]] || fail "invalid private key on stdin"
+
+  printf '%s\n' "$private_key" | "$wg_bin" set "$iface" private-key /dev/stdin listen-port "$listen_port" \
+    peer "$peer_pub" allowed-ips "$allowed_ip" endpoint "$endpoint" \
+    persistent-keepalive 25
+}
+
+wg_show() {
+  local iface="$1"
+  local wg_bin
+
+  need_privileged_action
+  wg_bin="$(trusted_cmd_path wg)"
+  valid_iface "$iface" || fail "bad interface"
+  "$wg_bin" show "$iface"
+}
+
+cleanup_iface() {
+  local iface="$1"
+  local remote_ip="$2"
+  local ifconfig_bin route_bin ip_bin
+
+  need_privileged_action
+  valid_iface "$iface" || fail "bad interface"
+  valid_ipv4 "$remote_ip" || fail "bad remote tunnel IP"
+
+  case "$(os_name)" in
+    Darwin)
+      route_bin="$(trusted_cmd_path route)"
+      ifconfig_bin="$(trusted_cmd_path ifconfig)"
+      "$route_bin" -q -n delete -host "$remote_ip" >/dev/null 2>&1 || true
+      "$ifconfig_bin" "$iface" down >/dev/null 2>&1 || true
+      ;;
+    Linux)
+      ip_bin="$(trusted_cmd_path ip)"
+      "$ip_bin" link del "$iface" >/dev/null 2>&1 || true
+      ;;
+    *)
+      fail "unsupported OS: $(os_name)"
+      ;;
+  esac
+}
+
+self_test() {
+  local tmp_dir tmp_cmd
+
+  valid_backend boringtun
+  valid_backend wireguard-go
+  ! valid_backend bad-backend >/dev/null 2>&1
+  valid_iface_request utun
+  valid_iface utun7
+  valid_iface wgbench0
+  ! valid_iface en0 >/dev/null 2>&1
+  ! valid_iface_request en0 >/dev/null 2>&1
+  valid_ipv4 10.44.77.1
+  ! valid_ipv4 999.44.77.1 >/dev/null 2>&1
+  valid_mtu 1420
+  ! valid_mtu 99 >/dev/null 2>&1
+  valid_threads 1
+  ! valid_threads 0 >/dev/null 2>&1
+  valid_port 51871
+  ! valid_port 70000 >/dev/null 2>&1
+  valid_pubkey "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa="
+  valid_ipv4_cidr32 "10.44.77.2/32"
+  valid_endpoint "192.0.2.10:51871"
+  tmp_dir="$(mktemp -d)"
+  tmp_cmd="$tmp_dir/wg"
+  printf '#!/usr/bin/env bash\nexit 0\n' >"$tmp_cmd"
+  chmod +x "$tmp_cmd"
+  ! path_is_trusted "$tmp_cmd" "self-test temp command" >/dev/null 2>&1
+  rm -rf "$tmp_dir"
+  printf 'nvpn wg host-pair priv-helper self-test passed\n'
+}
+
+usage() {
+  cat >&2 <<'EOF'
+usage: nvpn-wg-host-pair-priv-helper ACTION [ARGS...]
+
+Actions:
+  check
+  check-backend BACKEND BACKEND_BIN
+  start-backend BACKEND BACKEND_BIN IFACE THREADS
+    Starts a trusted local userspace WG backend and prints its state dir.
+  stop-backend STATE_DIR
+  configure-iface IFACE LOCAL_IP REMOTE_IP MTU
+  wg-set IFACE LISTEN_PORT PEER_PUBKEY ALLOWED_IP_CIDR32 ENDPOINT
+    Reads the private key from stdin.
+  wg-show IFACE
+  cleanup-iface IFACE REMOTE_IP
+  self-test
+EOF
+}
+
+main() {
+  local action="${1:-}"
+  [[ -n "$action" ]] || {
+    usage
+    exit 2
+  }
+  shift
+
+  case "$action" in
+    check)
+      [[ "$#" == 0 ]] || fail "check takes no arguments"
+      check
+      ;;
+    check-backend)
+      [[ "$#" == 2 ]] || fail "check-backend takes 2 arguments"
+      check_backend "$@"
+      ;;
+    start-backend)
+      [[ "$#" == 4 ]] || fail "start-backend takes 4 arguments"
+      start_backend "$@"
+      ;;
+    stop-backend)
+      [[ "$#" == 1 ]] || fail "stop-backend takes 1 argument"
+      stop_backend "$@"
+      ;;
+    configure-iface)
+      [[ "$#" == 4 ]] || fail "configure-iface takes 4 arguments"
+      configure_iface "$@"
+      ;;
+    wg-set)
+      [[ "$#" == 5 ]] || fail "wg-set takes 5 arguments"
+      wg_set "$@"
+      ;;
+    wg-show)
+      [[ "$#" == 1 ]] || fail "wg-show takes 1 argument"
+      wg_show "$@"
+      ;;
+    cleanup-iface)
+      [[ "$#" == 2 ]] || fail "cleanup-iface takes 2 arguments"
+      cleanup_iface "$@"
+      ;;
+    self-test)
+      [[ "$#" == 0 ]] || fail "self-test takes no arguments"
+      self_test
+      ;;
+    *)
+      usage
+      exit 2
+      ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

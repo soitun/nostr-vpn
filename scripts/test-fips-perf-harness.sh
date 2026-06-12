@@ -1,0 +1,1038 @@
+#!/usr/bin/env bash
+# Local self-tests for the Docker FIPS perf harness helpers.
+#
+# These tests do not start Docker. They pin the ping parser and threshold guard
+# behavior so p95/p99 latency in phase summaries is also a real pass/fail signal.
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PERF_SCRIPT="$ROOT_DIR/scripts/e2e-fips-perf-regression-docker.sh"
+
+# shellcheck source=scripts/e2e-fips-perf-regression-docker.sh
+source "$PERF_SCRIPT"
+
+fail() {
+  printf 'fips perf harness self-test failed: %s\n' "$*" >&2
+  exit 1
+}
+
+assert_eq() {
+  local got="$1"
+  local want="$2"
+  local label="$3"
+  [[ "$got" == "$want" ]] || fail "$label: got '$got', want '$want'"
+}
+
+assert_file_contains() {
+  local file="$1"
+  local pattern="$2"
+  local label="$3"
+  grep -Fq "$pattern" "$file" || fail "$label: missing '$pattern'"
+}
+
+assert_file_not_contains() {
+  local file="$1"
+  local pattern="$2"
+  local label="$3"
+  if grep -Fq "$pattern" "$file"; then
+    fail "$label: unexpectedly contained '$pattern'"
+  fi
+}
+
+assert_fails_with() {
+  local label="$1"
+  local pattern="$2"
+  shift 2
+  local err
+  err="$(mktemp)"
+  if "$@" 2>"$err"; then
+    cat "$err" >&2
+    rm -f "$err"
+    fail "$label: command unexpectedly passed"
+  fi
+  if ! grep -Fq "$pattern" "$err"; then
+    cat "$err" >&2
+    rm -f "$err"
+    fail "$label: expected stderr to contain '$pattern'"
+  fi
+  rm -f "$err"
+}
+
+fixture_ping_output() {
+  cat <<'EOF'
+PING 198.51.100.1 (198.51.100.1) 56(84) bytes of data.
+64 bytes from 198.51.100.1: icmp_seq=1 ttl=64 time=1.0 ms
+64 bytes from 198.51.100.1: icmp_seq=2 ttl=64 time=2.0 ms
+64 bytes from 198.51.100.1: icmp_seq=3 ttl=64 time=3.0 ms
+64 bytes from 198.51.100.1: icmp_seq=4 ttl=64 time=4.0 ms
+64 bytes from 198.51.100.1: icmp_seq=5 ttl=64 time=5.0 ms
+64 bytes from 198.51.100.1: icmp_seq=6 ttl=64 time=6.0 ms
+64 bytes from 198.51.100.1: icmp_seq=7 ttl=64 time=7.0 ms
+64 bytes from 198.51.100.1: icmp_seq=8 ttl=64 time=8.0 ms
+64 bytes from 198.51.100.1: icmp_seq=9 ttl=64 time=9.0 ms
+64 bytes from 198.51.100.1: icmp_seq=10 ttl=64 time=10.0 ms
+64 bytes from 198.51.100.1: icmp_seq=11 ttl=64 time=11.0 ms
+64 bytes from 198.51.100.1: icmp_seq=12 ttl=64 time=12.0 ms
+64 bytes from 198.51.100.1: icmp_seq=13 ttl=64 time=13.0 ms
+64 bytes from 198.51.100.1: icmp_seq=14 ttl=64 time=14.0 ms
+64 bytes from 198.51.100.1: icmp_seq=15 ttl=64 time=15.0 ms
+64 bytes from 198.51.100.1: icmp_seq=16 ttl=64 time=16.0 ms
+64 bytes from 198.51.100.1: icmp_seq=17 ttl=64 time=17.0 ms
+64 bytes from 198.51.100.1: icmp_seq=18 ttl=64 time=18.0 ms
+64 bytes from 198.51.100.1: icmp_seq=19 ttl=64 time=19.0 ms
+64 bytes from 198.51.100.1: icmp_seq=20 ttl=64 time=100.0 ms
+
+--- 198.51.100.1 ping statistics ---
+20 packets transmitted, 20 received, 0% packet loss, time 1900ms
+rtt min/avg/max/mdev = 1.000/5.000/100.000/20.000 ms
+EOF
+}
+
+fixture_iperf_output() {
+  cat <<'EOF'
+{
+  "end": {
+    "sum_received": {
+      "bits_per_second": 123000000
+    },
+    "sum_sent": {
+      "retransmits": 7
+    }
+  }
+}
+EOF
+}
+
+fixture_iperf_interval_output() {
+  cat <<'EOF'
+{
+  "intervals": [
+    {
+      "streams": [
+        {
+          "snd_cwnd": 111,
+          "rtt": 222,
+          "rttvar": 33
+        }
+      ],
+      "sum": {
+        "start": 0,
+        "end": 1,
+        "bits_per_second": 123456789,
+        "retransmits": 2,
+        "omitted": true
+      }
+    },
+    {
+      "streams": [
+        {
+          "retransmits": 3,
+          "snd_cwnd": 444,
+          "rtt": 555,
+          "rttvar": 66
+        },
+        {
+          "retransmits": 4
+        }
+      ],
+      "sum": {
+        "start": 1,
+        "end": 2,
+        "bits_per_second": 987654321
+      }
+    },
+    {
+      "streams": [],
+      "sum": {
+        "start": 2,
+        "end": 3,
+        "bits_per_second": 0,
+        "omitted": false
+      }
+    }
+  ]
+}
+EOF
+}
+
+fixture_iperf_with_server_output() {
+  cat <<'EOF'
+{
+  "intervals": [],
+  "server_output_json": {
+    "intervals": [
+      {
+        "streams": [
+          {
+            "snd_cwnd": 777,
+            "rtt": 888,
+            "rttvar": 99
+          }
+        ],
+        "sum": {
+          "start": 0,
+          "end": 1,
+          "bits_per_second": 234567890,
+          "retransmits": 9,
+          "omitted": false
+        }
+      }
+    ],
+    "end": {
+      "sum_sent": {
+        "retransmits": 9
+      }
+    }
+  }
+}
+EOF
+}
+
+fixture_forward_iperf_with_server_output() {
+  cat <<'EOF'
+{
+  "intervals": [
+    {
+      "streams": [
+        {
+          "snd_cwnd": 321,
+          "rtt": 654,
+          "rttvar": 87
+        }
+      ],
+      "sum": {
+        "start": 0,
+        "end": 1,
+        "bits_per_second": 345678901,
+        "retransmits": 4,
+        "omitted": false
+      }
+    }
+  ],
+  "end": {
+    "sum_sent": {
+      "retransmits": 4,
+      "sender": true
+    }
+  },
+  "server_output_json": {
+    "intervals": [
+      {
+        "streams": [
+          {
+            "snd_cwnd": 999,
+            "rtt": 999,
+            "rttvar": 999
+          }
+        ],
+        "sum": {
+          "start": 0,
+          "end": 1,
+          "bits_per_second": 1,
+          "retransmits": 99,
+          "omitted": false
+        }
+      }
+    ],
+    "end": {
+      "sum_sent": {
+        "retransmits": 99,
+        "sender": false
+      }
+    }
+  }
+}
+EOF
+}
+
+test_ping_parser_percentiles() {
+  local ping_output stats loss avg p95 p99 max
+  ping_output="$(fixture_ping_output)"
+  stats="$(printf '%s\n' "$ping_output" | parse_ping_stats)"
+  read -r loss avg p95 p99 max <<<"$stats"
+
+  assert_eq "$loss" "0" "packet loss"
+  assert_eq "$avg" "5.000" "average latency"
+  assert_eq "$p95" "19" "p95 latency"
+  assert_eq "$p99" "100" "p99 latency"
+  assert_eq "$max" "100.000" "max latency"
+}
+
+test_ping_thresholds() {
+  local ping_output
+  ping_output="$(fixture_ping_output)"
+
+  assert_ping_ok "fixture pass" "$ping_output" 0 5 100 19 100 >/dev/null
+
+  assert_fails_with \
+    "p95 threshold" \
+    "fixture p95 ping p95 ms" \
+    bash -c 'source "$1"; assert_ping_ok "fixture p95" "$2" 0 5 200 18 200 >/dev/null' \
+    bash "$PERF_SCRIPT" "$ping_output"
+
+  assert_fails_with \
+    "p99 threshold" \
+    "fixture p99 ping p99 ms" \
+    bash -c 'source "$1"; assert_ping_ok "fixture p99" "$2" 0 5 200 19 99 >/dev/null' \
+    bash "$PERF_SCRIPT" "$ping_output"
+
+  assert_fails_with \
+    "default percentile threshold" \
+    "fixture default ping p99 ms" \
+    bash -c 'source "$1"; assert_ping_ok "fixture default" "$2" 0 5 99 >/dev/null' \
+    bash "$PERF_SCRIPT" "$ping_output"
+}
+
+test_iperf_parser_and_tcp_thresholds() {
+  local iperf_output got
+  iperf_output="$(fixture_iperf_output)"
+
+  got="$(printf '%s\n' "$iperf_output" | iperf_mbps)"
+  assert_eq "$got" "123" "iperf Mbps"
+
+  got="$(printf '%s\n' "$iperf_output" | iperf_retransmits)"
+  assert_eq "$got" "7" "iperf retransmits"
+
+  assert_float_at_least 101 100 "fixture TCP throughput Mbps"
+  assert_int_at_most_if_set 7 "" "fixture TCP retransmits"
+  assert_int_at_most_if_set 7 7 "fixture TCP retransmits"
+
+  assert_fails_with \
+    "TCP throughput floor" \
+    "fixture TCP throughput Mbps" \
+    bash -c 'source "$1"; assert_float_at_least 99 100 "fixture TCP throughput Mbps"' \
+    bash "$PERF_SCRIPT"
+
+  assert_fails_with \
+    "TCP retransmit ceiling" \
+    "fixture TCP retransmits" \
+    bash -c 'source "$1"; assert_int_at_most_if_set 8 7 "fixture TCP retransmits"' \
+    bash "$PERF_SCRIPT"
+}
+
+test_iperf_interval_summary() {
+  local got expected
+
+  got="$(fixture_iperf_interval_output | iperf_interval_summary)"
+  expected=$'interval\tomitted\tstart_sec\tend_sec\tmbps\tretransmits\tsnd_cwnd_bytes\trtt_us\trttvar_us\n0\ttrue\t0\t1\t123.5\t2\t111\t222\t33\n1\tfalse\t1\t2\t987.7\t7\t444\t555\t66\n2\tfalse\t2\t3\t0\t\t\t\t'
+  assert_eq "$got" "$expected" "iperf interval summary"
+
+  got="$(fixture_iperf_with_server_output | iperf_server_json | iperf_interval_summary)"
+  expected=$'interval\tomitted\tstart_sec\tend_sec\tmbps\tretransmits\tsnd_cwnd_bytes\trtt_us\trttvar_us\n0\tfalse\t0\t1\t234.6\t9\t777\t888\t99'
+  assert_eq "$got" "$expected" "iperf server interval summary"
+
+  if fixture_iperf_interval_output | iperf_server_json >/dev/null 2>&1; then
+    fail "iperf server JSON extractor should ignore client-only JSON"
+  fi
+}
+
+test_iperf_sender_summary() {
+  local got expected
+
+  got="$(fixture_forward_iperf_with_server_output | iperf_sender_json | iperf_interval_summary)"
+  expected=$'interval\tomitted\tstart_sec\tend_sec\tmbps\tretransmits\tsnd_cwnd_bytes\trtt_us\trttvar_us\n0\tfalse\t0\t1\t345.7\t4\t321\t654\t87'
+  assert_eq "$got" "$expected" "forward sender interval summary prefers client sender"
+
+  got="$(fixture_iperf_with_server_output | iperf_sender_json | iperf_interval_summary)"
+  expected=$'interval\tomitted\tstart_sec\tend_sec\tmbps\tretransmits\tsnd_cwnd_bytes\trtt_us\trttvar_us\n0\tfalse\t0\t1\t234.6\t9\t777\t888\t99'
+  assert_eq "$got" "$expected" "reverse sender interval summary prefers server sender"
+
+  got="$(fixture_iperf_interval_output | iperf_sender_interval_summary)"
+  expected=$'intervals\tmbps_min\tmbps_max\tretransmits_total\tretransmits_max_interval\tsnd_cwnd_min_bytes\trtt_max_us\trttvar_max_us\n2\t0\t987.7\t7\t7\t444\t555\t66'
+  assert_eq "$got" "$expected" "sender interval rollup"
+}
+
+test_direct_underlay_policy() {
+  (
+    direct_underlay_bytes() { printf '42\n'; }
+    assert_direct_counter_advanced node-a 40 "fixture node-a" >/dev/null
+    assert_eq "$LAST_DIRECT_DELTA" "2" "direct underlay delta"
+    assert_eq "$LAST_DIRECT_TOTAL" "42" "direct underlay total"
+  )
+
+  assert_fails_with \
+    "direct underlay no-progress" \
+    "fixture node-a did not use the configured direct UDP underlay path" \
+    bash -c 'source "$1"; direct_underlay_bytes() { printf "40\n"; }; assert_direct_counter_advanced node-a 40 "fixture node-a"' \
+    bash "$PERF_SCRIPT"
+}
+
+test_pipeline_summary_collects_fips_and_nvpn_lines() {
+  local got
+
+  got="$(
+    latest_pipeline_lines_from_stdin <<'EOF'
+[pipe 5s] endpoint_event_wait=1/s
+[nvpn-pipe 5s] nvpn_tun_write=2/s
+[pipe 5s] endpoint_event_wait=3/s
+[nvpn-pipe 5s] nvpn_mesh_to_tun_queue_wait=4/s
+EOF
+  )"
+  assert_eq \
+    "$got" \
+    "[pipe 5s] endpoint_event_wait=3/s | [nvpn-pipe 5s] nvpn_mesh_to_tun_queue_wait=4/s" \
+    "combined pipeline summary"
+
+  got="$(
+    latest_pipeline_lines_from_stdin <<'EOF'
+[pipe 5s] endpoint_event_wait=1/s
+EOF
+  )"
+  assert_eq "$got" "[pipe 5s] endpoint_event_wait=1/s" "FIPS-only pipeline summary"
+
+  got="$(
+    latest_pipeline_lines_from_stdin <<'EOF'
+[nvpn-pipe 5s] nvpn_tun_write=2/s
+EOF
+  )"
+  assert_eq "$got" "[nvpn-pipe 5s] nvpn_tun_write=2/s" "nvpn-only pipeline summary"
+}
+
+test_pipeline_summary_prefers_peak_wait_lines() {
+  local got
+
+  got="$(
+    latest_pipeline_lines_from_stdin <<'EOF'
+[pipe 5s] endpoint_event_wait=100/s avg=20us transport_queue_wait=100/s avg=10us
+[nvpn-pipe 5s] nvpn_tun_to_mesh_queue_wait=100/s avg=5us
+[pipe 5s] endpoint_event_wait=100/s avg=450us transport_queue_wait=100/s avg=40us
+[nvpn-pipe 5s] nvpn_tun_to_mesh_queue_wait=100/s avg=60us
+[pipe 5s] endpoint_event_wait=100/s avg=40us decrypt_fallback_wait=100/s avg=900us
+[pipe 5s] endpoint_bulk_command_wait=100/s avg=1.4ms decrypt_fallback_wait=100/s avg=900us
+[pipe 5s] endpoint_event_wait=1/s avg=4us transport_queue_wait=1/s avg=5us
+[nvpn-pipe 5s] nvpn_tun_to_mesh_queue_wait=1/s avg=3us
+EOF
+  )"
+  assert_eq \
+    "$got" \
+    "[pipe 5s] endpoint_bulk_command_wait=100/s avg=1.4ms decrypt_fallback_wait=100/s avg=900us | [nvpn-pipe 5s] nvpn_tun_to_mesh_queue_wait=100/s avg=60us" \
+    "peak wait pipeline summary"
+}
+
+test_pipeline_summary_prefers_load_bearing_lines() {
+  local got
+
+  got="$(
+    load_pipeline_lines_from_stdin <<'EOF'
+[pipe 5s] fmp_worker_batch_packets=48000/s udp_send_connected=48000/s fmp_worker_queue_wait=48000/s avg=40us
+[nvpn-pipe 5s] nvpn_tun_read=47000/s nvpn_tun_to_mesh_queue_wait=47000/s avg=20us
+[pipe 5s] fmp_worker_batch_packets=12/s udp_send_connected=12/s fmp_worker_queue_wait=12/s avg=2.1ms
+[nvpn-pipe 5s] nvpn_tun_read=9/s nvpn_tun_to_mesh_queue_wait=9/s avg=3.0ms
+EOF
+  )"
+  assert_eq \
+    "$got" \
+    "[pipe 5s] fmp_worker_batch_packets=48000/s udp_send_connected=48000/s fmp_worker_queue_wait=48000/s avg=40us | [nvpn-pipe 5s] nvpn_tun_read=47000/s nvpn_tun_to_mesh_queue_wait=47000/s avg=20us" \
+    "load-bearing pipeline summary"
+
+  got="$(
+    load_pipeline_lines_from_stdin <<'EOF'
+[pipe 5s] fmp_worker_batch_packets=100/s endpoint_send=200/s
+[pipe 5s] fmp_worker_batch_packets=100/s endpoint_send=200/s udp_send_connected=200/s
+EOF
+  )"
+  assert_eq \
+    "$got" \
+    "[pipe 5s] fmp_worker_batch_packets=100/s endpoint_send=200/s udp_send_connected=200/s" \
+    "load-bearing pipeline summary keeps latest tie"
+}
+
+test_pipeline_summary_scopes_selected_lines_after_start() {
+  local got
+
+  got="$(
+    pipeline_lines_after_start_from_stdin 2 <<'EOF' | load_pipeline_lines_from_stdin
+[pipe 5s] fmp_worker_batch_packets=355000/s udp_send_connected=355000/s fmp_worker_queue_wait=355000/s avg=1.0ms
+[nvpn-pipe 5s] nvpn_tun_read=355000/s nvpn_tun_to_mesh_queue_wait=355000/s avg=1.0ms
+[pipe 5s] fmp_worker_batch_packets=4200/s udp_send_connected=4200/s fmp_worker_queue_wait=4200/s avg=30us
+[nvpn-pipe 5s] nvpn_tun_read=3900/s nvpn_tun_to_mesh_queue_wait=3900/s avg=20us
+[pipe 5s] fmp_worker_batch_packets=12/s udp_send_connected=12/s fmp_worker_queue_wait=12/s avg=2.1ms
+[nvpn-pipe 5s] nvpn_tun_read=9/s nvpn_tun_to_mesh_queue_wait=9/s avg=3.0ms
+EOF
+  )"
+  assert_eq \
+    "$got" \
+    "[pipe 5s] fmp_worker_batch_packets=4200/s udp_send_connected=4200/s fmp_worker_queue_wait=4200/s avg=30us | [nvpn-pipe 5s] nvpn_tun_read=3900/s nvpn_tun_to_mesh_queue_wait=3900/s avg=20us" \
+    "phase-scoped load-bearing pipeline summary"
+
+  got="$(
+    pipeline_lines_after_start_from_stdin 2 <<'EOF' | peak_wait_pipeline_lines_from_stdin
+[pipe 5s] fmp_worker_batch_packets=355000/s fmp_worker_queue_wait=355000/s avg=1.0ms
+[nvpn-pipe 5s] nvpn_tun_read=355000/s nvpn_tun_to_mesh_queue_wait=355000/s avg=1.0ms
+[pipe 5s] fmp_worker_batch_packets=4200/s fmp_worker_queue_wait=4200/s avg=30us
+[nvpn-pipe 5s] nvpn_tun_read=3900/s nvpn_tun_to_mesh_queue_wait=3900/s avg=20us
+[pipe 5s] fmp_worker_batch_packets=12/s fmp_worker_queue_wait=12/s avg=2.1ms
+[nvpn-pipe 5s] nvpn_tun_read=9/s nvpn_tun_to_mesh_queue_wait=9/s avg=3.0ms
+EOF
+  )"
+  assert_eq \
+    "$got" \
+    "[pipe 5s] fmp_worker_batch_packets=12/s fmp_worker_queue_wait=12/s avg=2.1ms | [nvpn-pipe 5s] nvpn_tun_read=9/s nvpn_tun_to_mesh_queue_wait=9/s avg=3.0ms" \
+    "phase-scoped peak-wait pipeline summary"
+}
+
+test_pipeline_queue_wait_top_summary() {
+  local got
+
+  got="$(pipeline_queue_wait_top_summary '[pipe 5s] endpoint_event_wait=10/s avg=40.0us p50<=32.8us p95<=262.1us p99<=524.3us max<=1.0ms allmax=5.7ms decrypt_fallback_bulk_wait=10/s avg=1.1ms p50<=2.1ms p95<=2.1ms p99<=8.4ms max<=16.8ms allmax=11.1ms | [nvpn-pipe 5s] nvpn_tun_to_mesh_queue_wait=10/s avg=31.0us p50<=32.8us p95<=131.1us p99<=524.3us max<=1.0ms allmax=2.5ms')"
+  assert_eq \
+    "$got" \
+    "decrypt_fallback_bulk_wait:rate_per_sec=10,p95_ms=2.1,p99_ms=8.4,max_ms=16.8,allmax_ms=11.1" \
+    "pipeline top queue wait summary"
+
+  got="$(pipeline_queue_wait_top_summary '[nvpn-pipe 5s] nvpn_tun_to_mesh_queue_wait=10/s avg=31.0us p50<=32.8us p95<=131.1us p99<=524.3us max<=1.0ms allmax=2.5ms')"
+  assert_eq \
+    "$got" \
+    "nvpn_tun_to_mesh_queue_wait:rate_per_sec=10,p95_ms=0.1311,p99_ms=0.5243,max_ms=1,allmax_ms=2.5" \
+    "nvpn-only top queue wait summary"
+
+  got="$(pipeline_queue_wait_top_summary '[pipe 5s] endpoint_command_wait=10/s avg=40.0us p50<=32.8us p95<=262.1us p99<=524.3us max<=1.0ms allmax=5.7ms endpoint_priority_command_wait=10/s avg=1.1ms p50<=2.1ms p95<=2.1ms p99<=4.2ms max<=4.2ms allmax=4.1ms')"
+  assert_eq \
+    "$got" \
+    "endpoint_priority_command_wait:rate_per_sec=10,p95_ms=2.1,p99_ms=4.2,max_ms=4.2,allmax_ms=4.1" \
+    "endpoint command lane top queue wait summary"
+
+  got="$(pipeline_queue_wait_top_summary '[pipe 5s] endpoint_command_wait=244851/s avg=48.2us p50<=4.1us p95<=262.1us p99<=2.1ms max<=4.2ms allmax=9.9ms endpoint_priority_command_wait=1/s avg=14.5us p50<=16.4us p95<=65.5us p99<=65.5us max<=65.5us allmax=2.1ms endpoint_bulk_command_wait=244849/s avg=48.2us p50<=4.1us p95<=262.1us p99<=2.1ms max<=4.2ms allmax=3.4ms')"
+  assert_eq \
+    "$got" \
+    "endpoint_bulk_command_wait:rate_per_sec=244849,p95_ms=0.2621,p99_ms=2.1,max_ms=4.2,allmax_ms=3.4" \
+    "pipeline top queue wait prefers lane split on aggregate tie"
+
+  got="$(pipeline_queue_wait_top_summary '[pipe 5s] decrypt_authenticated_session_bulk_wait=1/s avg=3.0ms p50<=2.1ms p95<=4.2ms p99<=8.4ms max<=16.8ms allmax=16.8ms decrypt_fsp_worker_priority_queue_wait=0.2/s avg=10.0ms p50<=8.4ms p95<=16.8ms p99<=33.6ms max<=67.1ms allmax=67.1ms')"
+  assert_eq \
+    "$got" \
+    "decrypt_fsp_worker_priority_queue_wait:rate_per_sec=0.2,p95_ms=16.8,p99_ms=33.6,max_ms=67.1,allmax_ms=67.1" \
+    "pipeline top queue wait includes authenticated/FSP worker waits"
+
+  got="$(pipeline_queue_wait_top_summary '[pipe 5s] transport_priority_queue_wait=0.2/s avg=14.5us p50<=16.4us p95<=65.5us p99<=65.5us max<=65.5us allmax=2.1ms')"
+  assert_eq \
+    "$got" \
+    "transport_priority_queue_wait:rate_per_sec=0.2,p95_ms=0.0655,p99_ms=0.0655,max_ms=0.0655,allmax_ms=2.1" \
+    "pipeline top queue wait keeps fractional low-rate samples"
+
+  got="$(pipeline_queue_wait_top_summary '[pipe 5s] udp_send_connected=10/s')"
+  assert_eq "$got" "" "empty top queue wait summary"
+}
+
+test_pipeline_fmp_worker_batch_summary() {
+  local got
+
+  got="$(pipeline_fmp_worker_batch_summary '[pipe 5s] fmp_worker_batch_flush=10/s fmp_worker_batch_packets=420/s fmp_worker_batch_full=9/s fmp_worker_batch_single=0.5/s endpoint_event_wait=10/s avg=40.0us | [nvpn-pipe 5s] nvpn_tun_write=2/s')"
+  assert_eq \
+    "$got" \
+    "avg_packets=42.0,full_pct=90.0,single_pct=5.0,flush_per_sec=10,packets_per_sec=420" \
+    "legacy FMP worker batch summary"
+
+  got="$(pipeline_fmp_worker_batch_summary '[pipe 5s] fmp_worker_batch_flush=10/s fmp_worker_batch_packets=420/s fmp_worker_batch_priority_packets=105/s fmp_worker_batch_bulk_packets=315/s fmp_worker_batch_full=9/s fmp_worker_batch_single=0.5/s endpoint_event_wait=10/s avg=40.0us | [nvpn-pipe 5s] nvpn_tun_write=2/s')"
+  assert_eq \
+    "$got" \
+    "avg_packets=42.0,full_pct=90.0,single_pct=5.0,priority_pct=25.0,bulk_pct=75.0,flush_per_sec=10,packets_per_sec=420,priority_packets_per_sec=105,bulk_packets_per_sec=315" \
+    "lane-aware FMP worker batch summary"
+
+  got="$(pipeline_fmp_worker_batch_summary '[pipe 5s] fmp_worker_batch_flush=10/s fmp_worker_batch_packets=420/s fmp_worker_batch_priority_packets=105/s fmp_worker_batch_bulk_packets=315/s fmp_worker_batch_full=9/s fmp_worker_batch_single=0.5/s fmp_send_group=12/s fmp_send_group_packets=420/s fmp_send_group_single=3/s endpoint_event_wait=10/s avg=40.0us | [nvpn-pipe 5s] nvpn_tun_write=2/s')"
+  assert_eq \
+    "$got" \
+    "avg_packets=42.0,full_pct=90.0,single_pct=5.0,priority_pct=25.0,bulk_pct=75.0,flush_per_sec=10,packets_per_sec=420,priority_packets_per_sec=105,bulk_packets_per_sec=315,send_groups_per_flush=1.2,send_group_avg_packets=35.0,send_group_single_pct=25.0,send_groups_per_sec=12,send_group_packets_per_sec=420" \
+    "FMP worker batch summary includes selected send group shape"
+
+  got="$(pipeline_fmp_worker_batch_summary '[pipe 5s] endpoint_event_wait=10/s avg=40.0us')"
+  assert_eq "$got" "" "empty FMP worker batch summary"
+}
+
+test_pipeline_decrypt_worker_batch_summary() {
+  local got
+
+  got="$(pipeline_decrypt_worker_batch_summary '[pipe 5s] decrypt_worker_batch_flush=20/s decrypt_worker_batch_packets=640/s decrypt_worker_batch_priority_packets=64/s decrypt_worker_batch_bulk_packets=576/s decrypt_worker_batch_full=5/s decrypt_worker_batch_single=2/s fmp_send_group=12/s fmp_send_group_packets=420/s decrypt_worker_bulk_queue_wait=100/s avg=40.0us | [nvpn-pipe 5s] nvpn_tun_write=2/s')"
+  assert_eq \
+    "$got" \
+    "avg_packets=32.0,full_pct=25.0,single_pct=10.0,priority_pct=10.0,bulk_pct=90.0,flush_per_sec=20,packets_per_sec=640,priority_packets_per_sec=64,bulk_packets_per_sec=576" \
+    "lane-aware decrypt worker batch summary"
+
+  got="$(pipeline_decrypt_worker_batch_summary '[pipe 5s] decrypt_worker_bulk_queue_wait=10/s avg=40.0us')"
+  assert_eq "$got" "" "empty decrypt worker batch summary"
+}
+
+test_pipeline_udp_send_batch_summary() {
+  local got
+
+  got="$(pipeline_udp_send_batch_summary '[pipe 5s] udp_send_gso_batch=10/s udp_send_gso_packets=420/s udp_send_gso_batch_ge32=7/s udp_send_gso_batch_ge48=3/s udp_send_gso_batch_eq64=1/s udp_send_sendmmsg_batch=2/s udp_send_sendmmsg_packets=4/s udp_send_sendmmsg_batch_ge32=1/s udp_send_sendmmsg_batch_ge48=0/s udp_send_sendmmsg_batch_eq64=0/s endpoint_event_wait=10/s avg=40.0us | [nvpn-pipe 5s] nvpn_tun_write=2/s')"
+  assert_eq \
+    "$got" \
+    "gso_packet_pct=99.1,sendmmsg_packet_pct=0.9,avg_packets=35.3,gso_avg_packets=42.0,sendmmsg_avg_packets=2.0,gso_ge32_pct=70.0,gso_ge48_pct=30.0,gso_eq64_pct=10.0,sendmmsg_ge32_pct=50.0,sendmmsg_ge48_pct=0.0,sendmmsg_eq64_pct=0.0,gso_batch_per_sec=10,gso_packets_per_sec=420,sendmmsg_batch_per_sec=2,sendmmsg_packets_per_sec=4,total_packets_per_sec=424" \
+    "GSO-heavy UDP send batch summary"
+
+  got="$(pipeline_udp_send_batch_summary '[pipe 5s] udp_send_gso_batch=0/s udp_send_gso_packets=0/s udp_send_sendmmsg_batch=12.5/s udp_send_sendmmsg_packets=25/s endpoint_event_wait=10/s avg=40.0us')"
+  assert_eq \
+    "$got" \
+    "gso_packet_pct=0.0,sendmmsg_packet_pct=100.0,avg_packets=2.0,gso_avg_packets=0.0,sendmmsg_avg_packets=2.0,gso_ge32_pct=0.0,gso_ge48_pct=0.0,gso_eq64_pct=0.0,sendmmsg_ge32_pct=0.0,sendmmsg_ge48_pct=0.0,sendmmsg_eq64_pct=0.0,gso_batch_per_sec=0,gso_packets_per_sec=0,sendmmsg_batch_per_sec=12.5,sendmmsg_packets_per_sec=25,total_packets_per_sec=25" \
+    "sendmmsg-only UDP send batch summary stays compatible with old counters"
+
+  got="$(pipeline_udp_send_batch_summary '[pipe 5s] endpoint_event_wait=10/s avg=40.0us')"
+  assert_eq "$got" "" "empty UDP send batch summary"
+}
+
+test_pipeline_hard_event_summary() {
+  local got
+
+  got="$(
+    pipeline_hard_event_summary_from_stdin <<'EOF'
+[pipe 5s] udp_send_connected=10/s encrypt_worker_queue_full=2/s total=10 encrypt_worker_bulk_dropped=1.5/s total=7 decrypt_worker_queue_full=0/s total=0
+[pipe 5s] encrypt_worker_queue_full=3/s total=12 encrypt_worker_priority_queue_full=0.1/s total=1 encrypt_worker_bulk_queue_full=2.8/s total=11 rx_loop_slow_maintenance_skipped=0.2/s total=1 decrypt_fsp_bulk_queue_full_fallback=0.5/s total=2 nvpn_tun_to_mesh_bulk_dropped=0/s total=0
+[nvpn-pipe 5s] nvpn_tun_to_mesh_bulk_dropped=4/s total=8
+EOF
+  )"
+  assert_eq \
+    "$got" \
+    "encrypt_worker_queue_full:max_rate_per_sec=3,total=12;encrypt_worker_priority_queue_full:max_rate_per_sec=0.1,total=1;encrypt_worker_bulk_queue_full:max_rate_per_sec=2.8,total=11;encrypt_worker_bulk_dropped:max_rate_per_sec=1.5,total=7;rx_loop_slow_maintenance_skipped:max_rate_per_sec=0.2,total=1;decrypt_fsp_bulk_queue_full_fallback:max_rate_per_sec=0.5,total=2;nvpn_tun_to_mesh_bulk_dropped:max_rate_per_sec=4,total=8" \
+    "pipeline hard event summary"
+
+  got="$(
+    pipeline_hard_event_summary_from_stdin 2 <<'EOF'
+[pipe 5s] encrypt_worker_queue_full=4/s total=100 encrypt_worker_bulk_dropped=4/s total=50
+[nvpn-pipe 5s] nvpn_tun_to_mesh_bulk_dropped=2/s total=20
+[pipe 5s] encrypt_worker_queue_full=3/s total=112 encrypt_worker_priority_queue_full=0.1/s total=1 encrypt_worker_bulk_queue_full=2.8/s total=11 encrypt_worker_bulk_dropped=1.5/s total=57 rx_loop_slow_maintenance_skipped=0.2/s total=1
+[nvpn-pipe 5s] nvpn_tun_to_mesh_bulk_dropped=4/s total=28
+EOF
+  )"
+  assert_eq \
+    "$got" \
+    "encrypt_worker_queue_full:max_rate_per_sec=3,total=12;encrypt_worker_priority_queue_full:max_rate_per_sec=0.1,total=1;encrypt_worker_bulk_queue_full:max_rate_per_sec=2.8,total=11;encrypt_worker_bulk_dropped:max_rate_per_sec=1.5,total=7;rx_loop_slow_maintenance_skipped:max_rate_per_sec=0.2,total=1;nvpn_tun_to_mesh_bulk_dropped:max_rate_per_sec=4,total=8" \
+    "phase-scoped pipeline hard event summary subtracts pre-phase totals"
+}
+
+test_priority_hard_event_guard() {
+  local got
+
+  got="$(
+    printf '%s\n' \
+      "encrypt_worker_queue_full:max_rate_per_sec=3,total=12;encrypt_worker_bulk_queue_full:max_rate_per_sec=2.8,total=11;encrypt_worker_bulk_dropped:max_rate_per_sec=1.5,total=7" \
+      | priority_hard_event_violations_from_summary
+  )"
+  assert_eq "$got" "" "bulk-only hard events do not violate priority guard"
+
+  got="$(
+    printf '%s\n' \
+      "encrypt_worker_priority_queue_full:max_rate_per_sec=0.1,total=1;decrypt_fallback_priority_dropped:max_rate_per_sec=2,total=3;encrypt_worker_bulk_dropped:max_rate_per_sec=5,total=8" \
+      | priority_hard_event_violations_from_summary
+  )"
+  assert_eq \
+    "$got" \
+    "encrypt_worker_priority_queue_full(total=1,max_rate_per_sec=0.1);decrypt_fallback_priority_dropped(total=3,max_rate_per_sec=2)" \
+    "priority hard event violation summary"
+
+  assert_fails_with \
+    "priority hard event guard" \
+    "fixture node-a priority/control hard events observed: encrypt_worker_priority_queue_full(total=1,max_rate_per_sec=0.1)" \
+    bash -c 'source "$1"; FAIL_ON_PRIORITY_HARD_EVENTS=1; assert_no_priority_hard_events "fixture node-a" "encrypt_worker_priority_queue_full:max_rate_per_sec=0.1,total=1"' \
+    bash "$PERF_SCRIPT"
+
+  got="$(
+    bash -c 'source "$1"; FAIL_ON_PRIORITY_HARD_EVENTS=0; assert_no_priority_hard_events "fixture node-a" "encrypt_worker_priority_queue_full:max_rate_per_sec=0.1,total=1"; printf ok' \
+      bash "$PERF_SCRIPT"
+  )"
+  assert_eq "$got" "ok" "priority hard event guard opt-out"
+}
+
+test_priority_queue_wait_guard() {
+  local got
+
+  got="$(
+    pipeline_priority_queue_wait_violations_from_stdin 10 <<'EOF'
+[pipe 5s] fmp_worker_bulk_queue_wait=1000/s avg=1.1ms p50<=1.0ms p95<=2.1ms p99<=4.2ms max<=12.0ms allmax=12.0ms fmp_worker_priority_queue_wait=10/s avg=20.0us p50<=16.4us p95<=65.5us p99<=65.5us max<=131.1us allmax=2.1ms
+[pipe 5s] decrypt_authenticated_session_priority_wait=1/s avg=30.0us p50<=32.8us p95<=65.5us p99<=65.5us max<=65.5us allmax=3.0ms
+EOF
+  )"
+  assert_eq "$got" "" "bulk-only wait spikes do not violate priority wait guard"
+
+  got="$(
+    pipeline_priority_queue_wait_violations_from_stdin 10 <<'EOF'
+[pipe 5s] endpoint_priority_event_wait=1/s avg=1.0ms p50<=1.0ms p95<=2.1ms p99<=4.2ms max<=16.8ms allmax=16.8ms fmp_worker_bulk_queue_wait=1000/s avg=1.1ms p50<=1.0ms p95<=2.1ms p99<=4.2ms max<=12.0ms allmax=12.0ms
+[pipe 5s] decrypt_fsp_worker_priority_queue_wait=0.2/s avg=20.0ms p50<=16.8ms p95<=33.6ms p99<=33.6ms max<=67.1ms allmax=67.1ms
+EOF
+  )"
+  assert_eq \
+    "$got" \
+    "endpoint_priority_event_wait(max_ms=16.8,p99_ms=4.2,rate_per_sec=1);decrypt_fsp_worker_priority_queue_wait(max_ms=67.1,p99_ms=33.6,rate_per_sec=0.2)" \
+    "priority wait violation summary"
+
+  assert_fails_with \
+    "priority queue wait guard" \
+    "fixture node-a priority queue waits exceeded 10ms: endpoint_priority_event_wait(max_ms=16.8,p99_ms=4.2,rate_per_sec=1)" \
+    bash -c 'source "$1"; pipeline_priority_queue_wait_violations(){ printf "%s\n" "endpoint_priority_event_wait(max_ms=16.8,p99_ms=4.2,rate_per_sec=1)"; }; MAX_PRIORITY_QUEUE_WAIT_MS=10; assert_priority_queue_wait_ok "fixture node-a" node-a 0' \
+    bash "$PERF_SCRIPT"
+
+  got="$(
+    bash -c 'source "$1"; pipeline_priority_queue_wait_violations(){ printf "should-not-run"; }; MAX_PRIORITY_QUEUE_WAIT_MS=0; assert_priority_queue_wait_ok "fixture node-a" node-a 0; printf ok' \
+      bash "$PERF_SCRIPT"
+  )"
+  assert_eq "$got" "ok" "priority queue wait guard opt-out"
+}
+
+test_phase_argument_selection() {
+  local got
+
+  got="$(
+    bash -c '
+      source "$1"
+      parse_args --phase clean-underlay --phase rx-maintenance-fault
+      validate_perf_phases
+      printf "%s\n" "$PERF_PHASES"
+    ' bash "$PERF_SCRIPT"
+  )"
+  assert_eq "$got" "clean-underlay,rx-maintenance-fault" "repeated --phase selection"
+
+  got="$(
+    bash -c '
+      source "$1"
+      parse_args --phases " worker-queue-pressure , constrained-underlay "
+      validate_perf_phases
+      printf "%s\n" "$PERF_PHASES"
+    ' bash "$PERF_SCRIPT"
+  )"
+  assert_eq "$got" " worker-queue-pressure , constrained-underlay " "--phases selection"
+
+  assert_fails_with \
+    "unknown phase argument" \
+    "NVPN_PERF_PHASES contains unknown phase: nope" \
+    bash -c 'source "$1"; parse_args --phase nope; validate_perf_phases' \
+    bash "$PERF_SCRIPT"
+}
+
+test_phase_summary_pipeline_columns() {
+  local dir header_fields row_fields top_a top_b batch_a batch_b decrypt_batch_a decrypt_batch_b udp_send_a udp_send_b hard_a hard_b raw_a raw_b
+  dir="$(mktemp -d)"
+
+  (
+    PERF_OUTPUT_DIR="$dir"
+    init_phase_summary >/dev/null
+    append_phase_summary \
+      "fixture-phase" \
+      "1" \
+      "2" \
+      "3" \
+      "4" \
+      "5" \
+      "6" \
+      "0" \
+      "1.1" \
+      "2.2" \
+      "3.3" \
+      "4.4" \
+      "7" \
+      "8" \
+      "0" \
+      "1.5" \
+      "2.5" \
+      "3.5" \
+      "4.5" \
+      "0" \
+      "1.6" \
+      "2.6" \
+      "3.6" \
+      "4.6" \
+      "100" \
+      "200" \
+      "decrypt_fallback_bulk_wait:rate_per_sec=10,p95_ms=2.1,p99_ms=8.4,max_ms=16.8,allmax_ms=11.1" \
+      "fmp_worker_queue_wait:rate_per_sec=20,p95_ms=1,p99_ms=2.1,max_ms=2.1,allmax_ms=2" \
+      "avg_packets=42.0,full_pct=90.0,single_pct=5.0,priority_pct=25.0,bulk_pct=75.0,flush_per_sec=10,packets_per_sec=420,priority_packets_per_sec=105,bulk_packets_per_sec=315" \
+      "avg_packets=31.5,full_pct=60.0,single_pct=2.0,priority_pct=40.0,bulk_pct=60.0,flush_per_sec=20,packets_per_sec=630,priority_packets_per_sec=252,bulk_packets_per_sec=378" \
+      "avg_packets=32.0,full_pct=25.0,single_pct=10.0,priority_pct=10.0,bulk_pct=90.0,flush_per_sec=20,packets_per_sec=640,priority_packets_per_sec=64,bulk_packets_per_sec=576" \
+      "avg_packets=16.0,full_pct=12.5,single_pct=4.0,priority_pct=25.0,bulk_pct=75.0,flush_per_sec=30,packets_per_sec=480,priority_packets_per_sec=120,bulk_packets_per_sec=360" \
+      "gso_packet_pct=99.1,sendmmsg_packet_pct=0.9,avg_packets=35.3,gso_avg_packets=42.0,sendmmsg_avg_packets=2.0,gso_batch_per_sec=10,gso_packets_per_sec=420,sendmmsg_batch_per_sec=2,sendmmsg_packets_per_sec=4,total_packets_per_sec=424" \
+      "gso_packet_pct=0.0,sendmmsg_packet_pct=100.0,avg_packets=2.0,gso_avg_packets=0.0,sendmmsg_avg_packets=2.0,gso_batch_per_sec=0,gso_packets_per_sec=0,sendmmsg_batch_per_sec=12.5,sendmmsg_packets_per_sec=25,total_packets_per_sec=25" \
+      "encrypt_worker_queue_full:max_rate_per_sec=3,total=12" \
+      "decrypt_worker_bulk_dropped:max_rate_per_sec=1,total=4" \
+      "[pipe node-a]" \
+      "[pipe node-b]"
+  )
+
+  header_fields="$(awk -F '\t' 'NR == 1 { print NF }' "$dir/phase-summary.tsv")"
+  row_fields="$(awk -F '\t' 'NR == 2 { print NF }' "$dir/phase-summary.tsv")"
+  assert_eq "$header_fields" "38" "phase summary header field count"
+  assert_eq "$row_fields" "38" "phase summary row field count"
+
+  top_a="$(awk -F '\t' 'NR == 2 { print $27 }' "$dir/phase-summary.tsv")"
+  top_b="$(awk -F '\t' 'NR == 2 { print $28 }' "$dir/phase-summary.tsv")"
+  batch_a="$(awk -F '\t' 'NR == 2 { print $29 }' "$dir/phase-summary.tsv")"
+  batch_b="$(awk -F '\t' 'NR == 2 { print $30 }' "$dir/phase-summary.tsv")"
+  decrypt_batch_a="$(awk -F '\t' 'NR == 2 { print $31 }' "$dir/phase-summary.tsv")"
+  decrypt_batch_b="$(awk -F '\t' 'NR == 2 { print $32 }' "$dir/phase-summary.tsv")"
+  udp_send_a="$(awk -F '\t' 'NR == 2 { print $33 }' "$dir/phase-summary.tsv")"
+  udp_send_b="$(awk -F '\t' 'NR == 2 { print $34 }' "$dir/phase-summary.tsv")"
+  hard_a="$(awk -F '\t' 'NR == 2 { print $35 }' "$dir/phase-summary.tsv")"
+  hard_b="$(awk -F '\t' 'NR == 2 { print $36 }' "$dir/phase-summary.tsv")"
+  raw_a="$(awk -F '\t' 'NR == 2 { print $37 }' "$dir/phase-summary.tsv")"
+  raw_b="$(awk -F '\t' 'NR == 2 { print $38 }' "$dir/phase-summary.tsv")"
+  assert_eq "$top_a" "decrypt_fallback_bulk_wait:rate_per_sec=10,p95_ms=2.1,p99_ms=8.4,max_ms=16.8,allmax_ms=11.1" "phase summary node-a top queue wait"
+  assert_eq "$top_b" "fmp_worker_queue_wait:rate_per_sec=20,p95_ms=1,p99_ms=2.1,max_ms=2.1,allmax_ms=2" "phase summary node-b top queue wait"
+  assert_eq "$batch_a" "avg_packets=42.0,full_pct=90.0,single_pct=5.0,priority_pct=25.0,bulk_pct=75.0,flush_per_sec=10,packets_per_sec=420,priority_packets_per_sec=105,bulk_packets_per_sec=315" "phase summary node-a FMP worker batch"
+  assert_eq "$batch_b" "avg_packets=31.5,full_pct=60.0,single_pct=2.0,priority_pct=40.0,bulk_pct=60.0,flush_per_sec=20,packets_per_sec=630,priority_packets_per_sec=252,bulk_packets_per_sec=378" "phase summary node-b FMP worker batch"
+  assert_eq "$decrypt_batch_a" "avg_packets=32.0,full_pct=25.0,single_pct=10.0,priority_pct=10.0,bulk_pct=90.0,flush_per_sec=20,packets_per_sec=640,priority_packets_per_sec=64,bulk_packets_per_sec=576" "phase summary node-a decrypt worker batch"
+  assert_eq "$decrypt_batch_b" "avg_packets=16.0,full_pct=12.5,single_pct=4.0,priority_pct=25.0,bulk_pct=75.0,flush_per_sec=30,packets_per_sec=480,priority_packets_per_sec=120,bulk_packets_per_sec=360" "phase summary node-b decrypt worker batch"
+  assert_eq "$udp_send_a" "gso_packet_pct=99.1,sendmmsg_packet_pct=0.9,avg_packets=35.3,gso_avg_packets=42.0,sendmmsg_avg_packets=2.0,gso_batch_per_sec=10,gso_packets_per_sec=420,sendmmsg_batch_per_sec=2,sendmmsg_packets_per_sec=4,total_packets_per_sec=424" "phase summary node-a UDP send batch"
+  assert_eq "$udp_send_b" "gso_packet_pct=0.0,sendmmsg_packet_pct=100.0,avg_packets=2.0,gso_avg_packets=0.0,sendmmsg_avg_packets=2.0,gso_batch_per_sec=0,gso_packets_per_sec=0,sendmmsg_batch_per_sec=12.5,sendmmsg_packets_per_sec=25,total_packets_per_sec=25" "phase summary node-b UDP send batch"
+  assert_eq "$hard_a" "encrypt_worker_queue_full:max_rate_per_sec=3,total=12" "phase summary node-a hard events"
+  assert_eq "$hard_b" "decrypt_worker_bulk_dropped:max_rate_per_sec=1,total=4" "phase summary node-b hard events"
+  assert_eq "$raw_a" "[pipe node-a]" "phase summary node-a raw pipeline"
+  assert_eq "$raw_b" "[pipe node-b]" "phase summary node-b raw pipeline"
+
+  rm -rf "$dir"
+}
+
+test_start_compose_services_supports_skip_build() {
+  local calls
+  calls="$(mktemp)"
+
+  (
+    source "$PERF_SCRIPT"
+    COMPOSE=(record_compose_call)
+    record_compose_call() {
+      printf '%s\n' "$*" >>"$calls"
+    }
+
+    SKIP_BUILD=0
+    start_compose_services
+  )
+  assert_eq "$(cat "$calls")" $'build node-a node-b\nup -d node-a node-b' "default compose startup"
+
+  : >"$calls"
+  (
+    source "$PERF_SCRIPT"
+    COMPOSE=(record_compose_call)
+    record_compose_call() {
+      printf '%s\n' "$*" >>"$calls"
+    }
+
+    SKIP_BUILD=1
+    start_compose_services
+  )
+  assert_eq "$(cat "$calls")" "up -d --no-build node-a node-b" "skip-build compose startup"
+
+  rm -f "$calls"
+}
+
+test_dockerfile_supports_local_base_images() {
+  local dockerfile="$ROOT_DIR/Dockerfile.e2e"
+  local compose="$ROOT_DIR/docker-compose.e2e.yml"
+
+  assert_file_not_contains "$dockerfile" "syntax=docker/dockerfile" "Dockerfile external frontend directive"
+  assert_file_contains "$dockerfile" "ARG NVPN_E2E_BUILDER_IMAGE=rust:1.93-bookworm" "builder image arg"
+  assert_file_contains "$dockerfile" 'FROM ${NVPN_E2E_BUILDER_IMAGE} AS builder' "builder image from"
+  assert_file_contains "$dockerfile" "ARG NVPN_E2E_RUNTIME_IMAGE=debian:bookworm-slim" "runtime image arg"
+  assert_file_contains "$dockerfile" 'FROM ${NVPN_E2E_RUNTIME_IMAGE} AS runtime' "runtime image from"
+  assert_file_contains "$dockerfile" "ARG NVPN_E2E_BUILDER_APT_INSTALL=1" "builder apt arg"
+  assert_file_contains "$dockerfile" "ARG NVPN_E2E_RUNTIME_APT_INSTALL=1" "runtime apt arg"
+
+  assert_file_contains "$compose" 'NVPN_E2E_BUILDER_IMAGE: ${NVPN_E2E_BUILDER_IMAGE:-rust:1.93-bookworm}' "compose builder image arg"
+  assert_file_contains "$compose" 'NVPN_E2E_RUNTIME_IMAGE: ${NVPN_E2E_RUNTIME_IMAGE:-debian:bookworm-slim}' "compose runtime image arg"
+  assert_file_contains "$compose" 'NVPN_E2E_BUILDER_APT_INSTALL: ${NVPN_E2E_BUILDER_APT_INSTALL:-1}' "compose builder apt arg"
+  assert_file_contains "$compose" 'NVPN_E2E_RUNTIME_APT_INSTALL: ${NVPN_E2E_RUNTIME_APT_INSTALL:-1}' "compose runtime apt arg"
+}
+
+test_perf_harness_supports_cpu_stress() {
+  assert_file_contains "$PERF_SCRIPT" 'source "$SUMMARY_LIB"' "perf harness sources docker bench helpers"
+  assert_file_contains "$PERF_SCRIPT" 'PIPELINE_INTERVAL_SECS="${NVPN_PERF_PIPELINE_INTERVAL_SECS:-5}"' "perf harness configurable pipeline interval"
+  assert_file_contains "$PERF_SCRIPT" "FIPS_PERF_INTERVAL_SECS='\$PIPELINE_INTERVAL_SECS'" "perf harness propagates FIPS pipeline interval"
+  assert_file_contains "$PERF_SCRIPT" "NVPN_PERF_PIPELINE_INTERVAL_SECS=1" "perf harness pipeline interval help example"
+  assert_file_contains "$PERF_SCRIPT" "NVPN_PERF_MAX_TCP_RETRANS=1000" "perf harness retransmit ceiling help example"
+  assert_file_contains "$PERF_SCRIPT" "NVPN_PERF_FAIL_ON_PRIORITY_HARD_EVENTS=0" "perf harness priority hard-event opt-out help example"
+  assert_file_contains "$PERF_SCRIPT" "NVPN_PERF_MAX_PRIORITY_QUEUE_WAIT_MS=0" "perf harness priority wait opt-out help example"
+  assert_file_contains "$PERF_SCRIPT" "docker_bench_stop_cpu_stress" "perf harness stops docker CPU stress"
+  assert_file_contains "$PERF_SCRIPT" "docker_bench_start_cpu_stress" "perf harness starts docker CPU stress"
+  assert_file_contains "$PERF_SCRIPT" "NVPN_DOCKER_CPU_STRESS=1 NVPN_DOCKER_CPU_STRESS_SIDES=remote" "perf harness CPU stress help example"
+}
+
+test_failure_summary_context() {
+  local dir header_prefix header_fields row_fields row_phase row_step row_forward row_direct_a row_direct_b row_pipeline_a row_pipeline_b
+  dir="$(mktemp -d)"
+
+  (
+    PERF_OUTPUT_DIR="$dir"
+    init_phase_summary >/dev/null
+    direct_underlay_bytes() {
+      case "$1" in
+        node-a) printf '150\n' ;;
+        node-b) printf '240\n' ;;
+        *) printf '0\n' ;;
+      esac
+    }
+    peak_wait_pipeline_line() {
+      printf '[pipe %s queue_full=1 drop=0]\n' "$1"
+    }
+
+    CURRENT_PHASE="fixture-phase"
+    CURRENT_STEP="fixture-step"
+    CURRENT_FORWARD_MBIT="123.4"
+    CURRENT_FORWARD_RETRANS="7"
+    CURRENT_REVERSE_MBIT="234.5"
+    CURRENT_REVERSE_RETRANS="8"
+    CURRENT_PROBE_MBIT="111.1"
+    CURRENT_PROBE_RETRANS="9"
+    CURRENT_PING_LOSS="0"
+    CURRENT_PING_AVG="1.2"
+    CURRENT_PING_P95="3.4"
+    CURRENT_PING_P99="5.6"
+    CURRENT_PING_MAX="7.8"
+    CURRENT_DIRECT_BEFORE_A="100"
+    CURRENT_DIRECT_BEFORE_B="200"
+    append_failure_summary "fixture throughput" ">=" "99" "100"
+  )
+
+  header_prefix="$(awk -F '\t' 'NR == 1 { print $1 "\t" $2 "\t" $3 "\t" $4 }' "$dir/failure-summary.tsv")"
+  assert_eq "$header_prefix" $'label\tcomparison\tactual\tthreshold' "failure summary prefix"
+
+  header_fields="$(awk -F '\t' 'NR == 1 { print NF }' "$dir/failure-summary.tsv")"
+  row_fields="$(awk -F '\t' 'NR == 2 { print NF }' "$dir/failure-summary.tsv")"
+  assert_eq "$header_fields" "21" "failure summary header field count"
+  assert_eq "$row_fields" "21" "failure summary row field count"
+
+  row_phase="$(awk -F '\t' 'NR == 2 { print $5 }' "$dir/failure-summary.tsv")"
+  row_step="$(awk -F '\t' 'NR == 2 { print $6 }' "$dir/failure-summary.tsv")"
+  row_forward="$(awk -F '\t' 'NR == 2 { print $7 }' "$dir/failure-summary.tsv")"
+  row_direct_a="$(awk -F '\t' 'NR == 2 { print $18 }' "$dir/failure-summary.tsv")"
+  row_direct_b="$(awk -F '\t' 'NR == 2 { print $19 }' "$dir/failure-summary.tsv")"
+  row_pipeline_a="$(awk -F '\t' 'NR == 2 { print $20 }' "$dir/failure-summary.tsv")"
+  row_pipeline_b="$(awk -F '\t' 'NR == 2 { print $21 }' "$dir/failure-summary.tsv")"
+  assert_eq "$row_phase" "fixture-phase" "failure summary phase"
+  assert_eq "$row_step" "fixture-step" "failure summary step"
+  assert_eq "$row_forward" "123.4" "failure summary forward Mbps"
+  assert_eq "$row_direct_a" "50" "failure summary node-a direct delta"
+  assert_eq "$row_direct_b" "40" "failure summary node-b direct delta"
+  assert_eq "$row_pipeline_a" "[pipe node-a queue_full=1 drop=0]" "failure summary node-a pipeline"
+  assert_eq "$row_pipeline_b" "[pipe node-b queue_full=1 drop=0]" "failure summary node-b pipeline"
+
+  rm -rf "$dir"
+}
+
+test_raw_artifact_helpers() {
+  local dir path content copied_content server_interval_content
+  dir="$(mktemp -d)"
+
+  (
+    PERF_OUTPUT_DIR="$dir"
+    assert_eq "$(artifact_slug 'rx maintenance/fault')" "rx-maintenance-fault" "artifact phase slug"
+    assert_eq "$(artifact_slug 'Forward TCP load ping')" "forward-tcp-load-ping" "artifact step slug"
+
+    path="$(perf_artifact_path 'rx maintenance/fault' 'Forward TCP load ping' 'ping.txt')"
+    assert_eq "$path" "$dir/raw/rx-maintenance-fault-forward-tcp-load-ping.ping.txt" "artifact path"
+
+    write_perf_artifact 'rx maintenance/fault' 'Forward TCP load ping' 'ping.txt' 'ping payload'
+    content="$(cat "$path")"
+    assert_eq "$content" "ping payload" "written raw ping artifact"
+
+    content="$(mktemp)"
+    printf '%s\n' '{"end":true}' >"$content"
+    copy_perf_artifact 'rx maintenance/fault' 'forward TCP load' 'iperf.json' "$content"
+    copied_content="$(cat "$dir/raw/rx-maintenance-fault-forward-tcp-load.iperf.json")"
+    assert_eq "$copied_content" '{"end":true}' "copied raw iperf artifact"
+    rm -f "$content"
+
+    write_iperf_server_artifacts \
+      'rx maintenance/fault' \
+      'reverse TCP' \
+      "$(fixture_iperf_with_server_output)"
+    assert_file_contains \
+      "$dir/raw/rx-maintenance-fault-reverse-tcp-server.iperf.json" \
+      '"intervals"' \
+      "server iperf JSON artifact"
+    server_interval_content="$(cat "$dir/raw/rx-maintenance-fault-reverse-tcp-server-intervals.tsv")"
+    assert_eq \
+      "$server_interval_content" \
+      $'interval\tomitted\tstart_sec\tend_sec\tmbps\tretransmits\tsnd_cwnd_bytes\trtt_us\trttvar_us\n0\tfalse\t0\t1\t234.6\t9\t777\t888\t99' \
+      "server iperf interval artifact"
+
+    write_iperf_sender_artifacts \
+      'rx maintenance/fault' \
+      'reverse TCP' \
+      "$(fixture_iperf_with_server_output)"
+    sender_interval_content="$(cat "$dir/raw/rx-maintenance-fault-reverse-tcp-sender-intervals.tsv")"
+    assert_eq \
+      "$sender_interval_content" \
+      $'interval\tomitted\tstart_sec\tend_sec\tmbps\tretransmits\tsnd_cwnd_bytes\trtt_us\trttvar_us\n0\tfalse\t0\t1\t234.6\t9\t777\t888\t99' \
+      "sender iperf interval artifact"
+    sender_summary_content="$(cat "$dir/raw/rx-maintenance-fault-reverse-tcp-sender-summary.tsv")"
+    assert_eq \
+      "$sender_summary_content" \
+      $'intervals\tmbps_min\tmbps_max\tretransmits_total\tretransmits_max_interval\tsnd_cwnd_min_bytes\trtt_max_us\trttvar_max_us\n1\t234.6\t234.6\t9\t9\t777\t888\t99' \
+      "sender iperf summary artifact"
+  )
+
+  rm -rf "$dir"
+}
+
+test_selected_pipeline_summary_artifact() {
+  local dir node_a_path node_b_path empty_path
+  dir="$(mktemp -d)"
+
+  (
+    PERF_OUTPUT_DIR="$dir"
+    write_selected_pipeline_summary \
+      "clean-underlay" \
+      "node-a" \
+      "[pipe node-a selected]"
+    write_selected_pipeline_summary \
+      "clean-underlay" \
+      "node-b" \
+      "[pipe node-b selected] | [nvpn-pipe node-b selected]"
+    write_selected_pipeline_summary "clean-underlay" "node-c" ""
+  )
+
+  node_a_path="$dir/raw/clean-underlay-node-a-selected-pipeline.txt"
+  node_b_path="$dir/raw/clean-underlay-node-b-selected-pipeline.txt"
+  empty_path="$dir/raw/clean-underlay-node-c-selected-pipeline.txt"
+  assert_eq "$(cat "$node_a_path")" "[pipe node-a selected]" "selected node-a pipeline artifact"
+  assert_eq "$(cat "$node_b_path")" "[pipe node-b selected] | [nvpn-pipe node-b selected]" "selected node-b pipeline artifact"
+  if [[ -e "$empty_path" ]]; then
+    fail "empty selected pipeline artifact should not be written"
+  fi
+
+  rm -rf "$dir"
+}
+
+test_host_snapshot_artifact() {
+  local dir path content
+  dir="$(mktemp -d)"
+
+  (
+    PERF_OUTPUT_DIR="$dir"
+    host_snapshot() {
+      printf '%s\n' 'fixture host snapshot'
+    }
+
+    write_host_snapshot 'start'
+    path="$dir/raw/host-start.txt"
+    content="$(cat "$path")"
+    assert_eq "$content" "fixture host snapshot" "host snapshot artifact"
+  )
+
+  rm -rf "$dir"
+}
+
+test_ping_parser_percentiles
+test_ping_thresholds
+test_iperf_parser_and_tcp_thresholds
+test_iperf_interval_summary
+test_iperf_sender_summary
+test_direct_underlay_policy
+test_pipeline_summary_collects_fips_and_nvpn_lines
+test_pipeline_summary_prefers_peak_wait_lines
+test_pipeline_summary_prefers_load_bearing_lines
+test_pipeline_summary_scopes_selected_lines_after_start
+test_pipeline_queue_wait_top_summary
+test_pipeline_fmp_worker_batch_summary
+test_pipeline_decrypt_worker_batch_summary
+test_pipeline_udp_send_batch_summary
+test_pipeline_hard_event_summary
+test_priority_hard_event_guard
+test_priority_queue_wait_guard
+test_phase_argument_selection
+test_phase_summary_pipeline_columns
+test_start_compose_services_supports_skip_build
+test_dockerfile_supports_local_base_images
+test_perf_harness_supports_cpu_stress
+test_failure_summary_context
+test_raw_artifact_helpers
+test_selected_pipeline_summary_artifact
+test_host_snapshot_artifact
+
+printf 'fips perf harness self-test passed\n'

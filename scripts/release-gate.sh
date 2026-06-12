@@ -8,6 +8,7 @@ source "$ROOT_DIR/scripts/release_common.sh"
 enable_deterministic_build_env "$ROOT_DIR"
 
 node scripts/sync-versions.mjs
+./scripts/check-rust-file-lines.sh
 ./scripts/security-audit-rust.sh
 cargo fmt --check
 cargo clippy --locked --workspace --all-targets -- -D warnings

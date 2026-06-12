@@ -144,13 +144,21 @@ public sealed class NativeParticipantState
     public string FipsTransportAddr { get; set; } = "";
     public string FipsTransportType { get; set; } = "";
     public ulong FipsSrttMs { get; set; }
+    public ulong FipsSrttAgeMs { get; set; }
     public ulong FipsPacketsSent { get; set; }
     public ulong FipsPacketsRecv { get; set; }
     public ulong FipsBytesSent { get; set; }
     public ulong FipsBytesRecv { get; set; }
+    public bool FipsDirectProbePending { get; set; }
+    public ulong FipsDirectProbeAfterMs { get; set; }
+    public uint FipsDirectProbeRetryCount { get; set; }
+    public bool FipsDirectProbeAutoReconnect { get; set; }
+    public ulong FipsDirectProbeExpiresAtMs { get; set; }
     public string State { get; set; } = "";
     public string MeshState { get; set; } = "";
     public string StatusText { get; set; } = "";
+    public string LastFipsControlSeenText { get; set; } = "";
+    public string LastFipsDataSeenText { get; set; } = "";
     public string LastSeenText { get; set; } = "";
     [System.Text.Json.Serialization.JsonIgnore]
     public bool IsSelf { get; set; }
@@ -164,6 +172,9 @@ public sealed class NativeParticipantState
     public string CleanTunnelIp => TunnelIp.Split('/')[0].Trim();
     public string MagicDnsDisplay => FirstNonEmpty(MagicDnsName, MagicDnsAlias, "-");
     public string LastSeenDisplay => string.IsNullOrWhiteSpace(LastSeenText) ? "-" : LastSeenText;
+    public string LastFipsControlSeenDisplay => string.IsNullOrWhiteSpace(LastFipsControlSeenText) ? "-" : LastFipsControlSeenText;
+    public string LastFipsDataSeenDisplay => string.IsNullOrWhiteSpace(LastFipsDataSeenText) ? "-" : LastFipsDataSeenText;
+    public string FipsSrttAgeDisplay => FipsSrttAgeMs == 0 ? "-" : FormatDurationMs(FipsSrttAgeMs);
     public string TxBytesDisplay => FormatBytes(TxBytes);
     public string RxBytesDisplay => FormatBytes(RxBytes);
     public string RoleText
@@ -267,6 +278,25 @@ public sealed class NativeParticipantState
             unitIndex++;
         }
         return unitIndex == 0 ? $"{bytes} B" : $"{value:0.0} {units[unitIndex]}";
+    }
+
+    private static string FormatDurationMs(ulong ms)
+    {
+        if (ms < 1_000)
+        {
+            return $"{ms} ms";
+        }
+        var seconds = ms / 1_000;
+        if (seconds < 60)
+        {
+            return $"{seconds}s";
+        }
+        var minutes = seconds / 60;
+        if (minutes < 60)
+        {
+            return $"{minutes}m";
+        }
+        return $"{minutes / 60}h";
     }
 }
 

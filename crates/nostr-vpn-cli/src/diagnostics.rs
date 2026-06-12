@@ -8,6 +8,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use netdev::get_default_interface;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use netdev::get_interfaces;
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::diagnostics::{
     HealthIssue, HealthSeverity, NetcheckReport, NetworkSummary, PortMappingStatus,
@@ -15,6 +17,8 @@ use nostr_vpn_core::diagnostics::{
 
 pub(crate) use self::port_mapping::PortMappingRuntime;
 use self::port_mapping::probe_port_mapping_services;
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+use self::probes::check_captive_portal_endpoint_on_interface;
 use self::probes::{
     CAPTIVE_PORTAL_ENDPOINTS, check_captive_portal_endpoint, mapping_varies_by_dest_ip,
 };
@@ -382,6 +386,15 @@ fn sanitized_config_json(app: &AppConfig) -> serde_json::Value {
 }
 
 pub(crate) async fn detect_captive_portal(timeout: Duration) -> Option<bool> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    if let Some(found) = detect_captive_portal_on_candidate_interfaces(timeout).await {
+        return Some(found);
+    }
+
+    detect_captive_portal_on_default_route(timeout).await
+}
+
+async fn detect_captive_portal_on_default_route(timeout: Duration) -> Option<bool> {
     for endpoint in CAPTIVE_PORTAL_ENDPOINTS {
         match tokio::task::spawn_blocking({
             let endpoint = *endpoint;
@@ -399,11 +412,93 @@ pub(crate) async fn detect_captive_portal(timeout: Duration) -> Option<bool> {
     None
 }
 
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+async fn detect_captive_portal_on_candidate_interfaces(timeout: Duration) -> Option<bool> {
+    tokio::task::spawn_blocking(move || {
+        detect_captive_portal_on_candidate_interfaces_blocking(timeout)
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn detect_captive_portal_on_candidate_interfaces_blocking(timeout: Duration) -> Option<bool> {
+    let mut saw_clean_endpoint = false;
+
+    for (name, interface_index) in captive_portal_candidate_interfaces() {
+        tracing::debug!(
+            interface = %name,
+            interface_index,
+            "checking captive portal status on candidate interface"
+        );
+
+        for endpoint in CAPTIVE_PORTAL_ENDPOINTS {
+            match check_captive_portal_endpoint_on_interface(*endpoint, timeout, interface_index) {
+                Some(true) => return Some(true),
+                Some(false) => saw_clean_endpoint = true,
+                None => {}
+            }
+        }
+    }
+
+    saw_clean_endpoint.then_some(false)
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn captive_portal_candidate_interfaces() -> Vec<(String, u32)> {
+    get_interfaces()
+        .into_iter()
+        .filter(|interface| {
+            interface.index != 0
+                && interface.is_up()
+                && !interface.is_loopback()
+                && !interface.is_tun()
+                && !interface.ipv4.is_empty()
+                && captive_portal_interface_name_needs_detection(&interface.name)
+        })
+        .map(|interface| (interface.name, interface.index))
+        .collect()
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios", test))]
+fn captive_portal_interface_name_needs_detection(name: &str) -> bool {
+    const EXCLUDED_PREFIXES: &[&str] = &[
+        "tailscale",
+        "tun",
+        "tap",
+        "docker",
+        "kube",
+        "wg",
+        "ipsec",
+        "pdp",
+        "awdl",
+        "bridge",
+        "ap",
+        "utun",
+        "llw",
+        "anpi",
+        "lo",
+        "stf",
+        "gif",
+        "xhc",
+        "pktap",
+    ];
+
+    let name = name.to_ascii_lowercase();
+    !EXCLUDED_PREFIXES
+        .iter()
+        .any(|prefix| name.starts_with(prefix))
+}
+
 #[cfg(test)]
 mod tests {
+    #[cfg(target_os = "macos")]
+    use super::check_captive_portal_endpoint_on_interface;
     use super::probes::{probe_nat_pmp_server, probe_pcp_server, probe_upnp_ssdp_server};
     use super::{
-        CaptivePortalEndpoint, NetworkSnapshot, build_health_issues, check_captive_portal_endpoint,
+        CaptivePortalEndpoint, NetworkSnapshot, build_health_issues,
+        captive_portal_interface_name_needs_detection, check_captive_portal_endpoint,
         mapping_varies_by_dest_ip, parse_http_response, prefer_nonempty_network_snapshot,
     };
     use nostr_vpn_core::config::AppConfig;
@@ -552,6 +647,71 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn captive_portal_check_can_bind_to_loopback_interface_on_macos() {
+        let interface = netdev::get_interfaces()
+            .into_iter()
+            .find(|interface| {
+                interface.index != 0 && interface.is_loopback() && !interface.ipv4.is_empty()
+            })
+            .expect("loopback interface with IPv4 address");
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind tcp");
+        let addr = listener.local_addr().expect("listener addr");
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request);
+            stream
+                .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+                .expect("write");
+        });
+
+        let endpoint = CaptivePortalEndpoint {
+            url: Box::leak(format!("http://{addr}/generate_204").into_boxed_str()),
+            expected_status: 204,
+            expected_prefix: "",
+        };
+
+        assert_eq!(
+            check_captive_portal_endpoint_on_interface(
+                endpoint,
+                Duration::from_secs(1),
+                interface.index
+            ),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn captive_portal_interface_filter_keeps_underlay_candidates() {
+        assert!(captive_portal_interface_name_needs_detection("en0"));
+        assert!(captive_portal_interface_name_needs_detection("eth0"));
+        assert!(captive_portal_interface_name_needs_detection("wlan0"));
+        assert!(captive_portal_interface_name_needs_detection("Wi-Fi"));
+
+        for excluded in [
+            "utun0",
+            "awdl0",
+            "llw0",
+            "anpi1",
+            "bridge100",
+            "pdp_ip0",
+            "tailscale0",
+            "docker0",
+            "wg0",
+            "ipsec0",
+            "lo0",
+            "pktap0",
+        ] {
+            assert!(
+                !captive_portal_interface_name_needs_detection(excluded),
+                "{excluded} should be skipped"
+            );
+        }
+    }
+
     #[test]
     fn parse_http_response_extracts_status_and_body() {
         let (status, body) = parse_http_response("HTTP/1.1 204 No Content\r\nX-Test: ok\r\n\r\n")
@@ -588,18 +748,31 @@ mod tests {
                 fips_transport_addr: String::new(),
                 fips_transport_type: String::new(),
                 fips_srtt_ms: None,
+                fips_srtt_age_ms: None,
                 fips_packets_sent: 0,
                 fips_packets_recv: 0,
                 fips_bytes_sent: 0,
                 fips_bytes_recv: 0,
+                fips_rekey_in_progress: false,
+                fips_rekey_draining: false,
+                fips_current_k_bit: None,
                 direct_probe_pending: false,
                 direct_probe_after_ms: None,
+                direct_probe_retry_count: 0,
+                direct_probe_auto_reconnect: false,
+                direct_probe_expires_at_ms: None,
+                fips_nostr_traversal_failures: 0,
+                fips_nostr_traversal_in_cooldown: false,
+                fips_nostr_traversal_cooldown_until_ms: None,
+                fips_nostr_traversal_last_observed_skew_ms: None,
                 tx_bytes: 0,
                 rx_bytes: 0,
                 public_key: "pk".to_string(),
                 advertised_routes: vec!["0.0.0.0/0".to_string()],
                 last_mesh_seen_at: 1,
                 last_fips_seen_at: Some(1),
+                last_fips_control_seen_at: Some(1),
+                last_fips_data_seen_at: None,
                 reachable: false,
                 last_handshake_at: None,
                 error: Some("awaiting handshake".to_string()),

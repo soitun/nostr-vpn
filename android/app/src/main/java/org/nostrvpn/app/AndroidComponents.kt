@@ -156,6 +156,18 @@ private fun DeviceDetailDialog(
                 }
                 Text("FIPS path", style = MaterialTheme.typography.labelMedium, color = Muted)
                 Text(participant.fipsPathLabel(state))
+                if (participant.fipsSrttAgeMs > 0) {
+                    Text("Latency age", style = MaterialTheme.typography.labelMedium, color = Muted)
+                    Text(formatDurationMs(participant.fipsSrttAgeMs))
+                }
+                if (participant.lastFipsControlSeenText.isNotBlank()) {
+                    Text("Control seen", style = MaterialTheme.typography.labelMedium, color = Muted)
+                    Text(participant.lastFipsControlSeenText)
+                }
+                if (participant.lastFipsDataSeenText.isNotBlank()) {
+                    Text("Data seen", style = MaterialTheme.typography.labelMedium, color = Muted)
+                    Text(participant.lastFipsDataSeenText)
+                }
                 if (participant.fipsEndpointHints.isNotEmpty()) {
                     Text("Address hints", style = MaterialTheme.typography.labelMedium, color = Muted)
                     Text(participant.fipsEndpointHints.joinToString(", "))
@@ -324,6 +336,16 @@ private fun formatRemaining(seconds: Long): String {
     if (minutes == 0L) return "${seconds}s"
     val secs = seconds % 60
     return if (secs == 0L) "${minutes}m" else "${minutes}m%02ds".format(secs)
+}
+
+private fun formatDurationMs(ms: Long): String {
+    if (ms <= 0) return "-"
+    if (ms < 1_000) return "$ms ms"
+    val seconds = ms / 1_000
+    if (seconds < 60) return "${seconds}s"
+    val minutes = seconds / 60
+    if (minutes < 60) return "${minutes}m"
+    return "${minutes / 60}h"
 }
 
 @Composable

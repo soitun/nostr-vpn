@@ -1,8 +1,12 @@
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+use std::sync::atomic::{
+    AtomicU64,
+    Ordering::{Acquire, Relaxed, Release},
+};
 use std::time::Instant;
 
 const N_STAGES: usize = 4;
+const N_COUNTERS: usize = 1;
 const HIST_BUCKETS: usize = 48;
 
 #[derive(Copy, Clone)]
@@ -25,6 +29,27 @@ impl Stage {
     }
 }
 
+#[derive(Copy, Clone)]
+#[repr(usize)]
+pub(crate) enum Counter {
+    TunToMeshBulkDropped = 0,
+}
+
+impl Counter {
+    fn name(self) -> &'static str {
+        match self {
+            Counter::TunToMeshBulkDropped => "nvpn_tun_to_mesh_bulk_dropped",
+        }
+    }
+}
+
+fn counter_from_index(idx: usize) -> Counter {
+    match idx {
+        0 => Counter::TunToMeshBulkDropped,
+        _ => unreachable!(),
+    }
+}
+
 fn stage_from_index(idx: usize) -> Stage {
     match idx {
         0 => Stage::TunRead,
@@ -40,6 +65,7 @@ static COUNT: [AtomicU64; N_STAGES] = [const { AtomicU64::new(0) }; N_STAGES];
 static MAX_NS: [AtomicU64; N_STAGES] = [const { AtomicU64::new(0) }; N_STAGES];
 static HIST: [AtomicU64; N_STAGES * HIST_BUCKETS] =
     [const { AtomicU64::new(0) }; N_STAGES * HIST_BUCKETS];
+static COUNTERS: [AtomicU64; N_COUNTERS] = [const { AtomicU64::new(0) }; N_COUNTERS];
 
 pub(crate) fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
@@ -73,9 +99,15 @@ pub(crate) fn record(stage: Stage, elapsed_ns: u64) {
     let idx = stage as usize;
     let elapsed_ns = elapsed_ns.max(1);
     TOTAL_NS[idx].fetch_add(elapsed_ns, Relaxed);
-    COUNT[idx].fetch_add(1, Relaxed);
     MAX_NS[idx].fetch_max(elapsed_ns, Relaxed);
     HIST[(idx * HIST_BUCKETS) + bucket_for_ns(elapsed_ns)].fetch_add(1, Relaxed);
+    COUNT[idx].fetch_add(1, Release);
+}
+
+pub(crate) fn increment_counter_by(counter: Counter, amount: u64) {
+    if amount > 0 && enabled() {
+        COUNTERS[counter as usize].fetch_add(amount, Relaxed);
+    }
 }
 
 pub(crate) struct Timer {
@@ -117,14 +149,18 @@ pub(crate) fn maybe_spawn_reporter() {
         let mut prev_total = [0u64; N_STAGES];
         let mut prev_count = [0u64; N_STAGES];
         let mut prev_hist = [0u64; N_STAGES * HIST_BUCKETS];
+        let mut prev_counters = [0u64; N_COUNTERS];
         loop {
             tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
             let mut line = format!("[nvpn-pipe {}s]", interval);
             for i in 0..N_STAGES {
-                let total = TOTAL_NS[i].load(Relaxed);
-                let count = COUNT[i].load(Relaxed);
-                let dt = total.saturating_sub(prev_total[i]);
+                let count = COUNT[i].load(Acquire);
                 let dc = count.saturating_sub(prev_count[i]);
+                if dc == 0 {
+                    continue;
+                }
+                let total = TOTAL_NS[i].load(Relaxed);
+                let dt = total.saturating_sub(prev_total[i]);
                 prev_total[i] = total;
                 prev_count[i] = count;
 
@@ -135,9 +171,6 @@ pub(crate) fn maybe_spawn_reporter() {
                     let current = HIST[idx].load(Relaxed);
                     *slot = current.saturating_sub(prev_hist[idx]);
                     prev_hist[idx] = current;
-                }
-                if dc == 0 {
-                    continue;
                 }
 
                 let stage = stage_from_index(i);
@@ -158,6 +191,20 @@ pub(crate) fn maybe_spawn_reporter() {
                     fmt_ns(p99),
                     fmt_ns(approx_max),
                     fmt_ns(lifetime_max),
+                ));
+            }
+            for i in 0..N_COUNTERS {
+                let current = COUNTERS[i].load(Relaxed);
+                let delta = current.saturating_sub(prev_counters[i]);
+                prev_counters[i] = current;
+                if delta == 0 {
+                    continue;
+                }
+                line.push_str(&format!(
+                    " {}={}/s total={}",
+                    counter_from_index(i).name(),
+                    delta / interval,
+                    current,
                 ));
             }
             eprintln!("{line}");
@@ -183,6 +230,8 @@ fn bucket_upper_ns(bucket: usize) -> u64 {
 }
 
 fn percentile_ns(hist_delta: &[u64; HIST_BUCKETS], total: u64, pct: u64) -> u64 {
+    let observed_total = hist_delta.iter().copied().sum::<u64>();
+    let total = total.min(observed_total);
     if total == 0 {
         return 0;
     }
@@ -194,7 +243,7 @@ fn percentile_ns(hist_delta: &[u64; HIST_BUCKETS], total: u64, pct: u64) -> u64 
             return bucket_upper_ns(idx);
         }
     }
-    bucket_upper_ns(HIST_BUCKETS - 1)
+    interval_max_ns(hist_delta)
 }
 
 fn interval_max_ns(hist_delta: &[u64; HIST_BUCKETS]) -> u64 {
@@ -215,5 +264,19 @@ fn fmt_ns(ns: u64) -> String {
         format!("{:.1}us", ns as f64 / 1_000.0)
     } else {
         format!("{ns}ns")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{HIST_BUCKETS, bucket_upper_ns, percentile_ns};
+
+    #[test]
+    fn percentile_uses_observed_histogram_count_when_stage_count_leads() {
+        let mut hist = [0u64; HIST_BUCKETS];
+        hist[10] = 1;
+
+        assert_eq!(percentile_ns(&hist, 2, 99), bucket_upper_ns(10));
+        assert_eq!(percentile_ns(&[0u64; HIST_BUCKETS], 1, 99), 0);
     }
 }

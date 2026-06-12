@@ -8,6 +8,22 @@ import org.gradle.api.tasks.Exec
 
 val repoRoot = layout.projectDirectory.dir("../..")
 val rustOutputDir = layout.projectDirectory.dir("src/main/jniLibs")
+
+fun localFipsCargoConfigArgs(): List<String> {
+    val fipsPath = System.getenv("NVPN_FIPS_REPO_PATH")?.takeIf { it.isNotBlank() } ?: return emptyList()
+    val fipsRoot = file(fipsPath)
+    val crateNames = listOf("fips-core", "fips-endpoint", "fips-identity")
+    crateNames.forEach { crateName ->
+        val crateDir = fipsRoot.resolve("crates/$crateName")
+        require(crateDir.isDirectory) {
+            "NVPN_FIPS_REPO_PATH must point at a fips checkout with $crateName"
+        }
+    }
+    return crateNames.flatMap { crateName ->
+        val crateDir = fipsRoot.resolve("crates/$crateName").absolutePath
+        listOf("--config", "patch.crates-io.$crateName.path=\"$crateDir\"")
+    }
+}
 val releaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH")
 val releaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD")
 val releaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS")
@@ -26,8 +42,8 @@ android {
         applicationId = "org.nostrvpn.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 40072
-        versionName = "4.0.72"
+        versionCode = 40073
+        versionName = "4.0.73"
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -99,18 +115,23 @@ kotlin {
 tasks.register<Exec>("buildRustArm64") {
     workingDir = repoRoot.asFile
     commandLine(
-        "cargo",
-        "ndk",
-        "--target",
-        "arm64-v8a",
-        "--platform",
-        "26",
-        "--output-dir",
-        rustOutputDir.asFile.absolutePath,
-        "build",
-        "--package",
-        "nostr-vpn-app-core",
-        "--release",
+        *(listOf(
+                "cargo",
+                "ndk",
+                "--target",
+                "arm64-v8a",
+                "--platform",
+                "26",
+                "--output-dir",
+                rustOutputDir.asFile.absolutePath,
+                "build",
+            ) +
+            localFipsCargoConfigArgs() +
+            listOf(
+                "--package",
+                "nostr-vpn-app-core",
+                "--release",
+            )).toTypedArray()
     )
 }
 

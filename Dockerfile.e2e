@@ -1,14 +1,21 @@
-# syntax=docker/dockerfile:1.4
+ARG NVPN_E2E_BUILDER_IMAGE=rust:1.93-bookworm
+ARG NVPN_E2E_RUNTIME_IMAGE=debian:bookworm-slim
 
-FROM rust:1.93-bookworm AS builder
+FROM ${NVPN_E2E_BUILDER_IMAGE} AS builder
 WORKDIR /app/nostr-vpn
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config \
-    && rm -rf /var/lib/apt/lists/*
+ARG NVPN_E2E_BUILDER_APT_INSTALL=1
+RUN case "$NVPN_E2E_BUILDER_APT_INSTALL" in \
+        0|false|FALSE|False|no|NO|No|off|OFF|Off) ;; \
+        *) apt-get update \
+          && apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config \
+          && rm -rf /var/lib/apt/lists/* ;; \
+      esac
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY --from=hashtree Cargo.toml Cargo.lock /app/hashtree/rust/
+COPY --from=hashtree crates /app/hashtree/rust/crates
 COPY --from=fips . /app/fips
 
 ARG NVPN_PATCH_LOCAL_FIPS=0
@@ -38,10 +45,14 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --features embedded-fips -p nvpn \
     && cp target/release/nvpn /tmp/nvpn
 
-FROM debian:bookworm-slim AS runtime
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates dnsutils iperf3 iproute2 iptables iputils-ping libdbus-1-3 netcat-openbsd nftables procps tcpdump wireguard-tools \
-    && rm -rf /var/lib/apt/lists/*
+FROM ${NVPN_E2E_RUNTIME_IMAGE} AS runtime
+ARG NVPN_E2E_RUNTIME_APT_INSTALL=1
+RUN case "$NVPN_E2E_RUNTIME_APT_INSTALL" in \
+        0|false|FALSE|False|no|NO|No|off|OFF|Off) ;; \
+        *) apt-get update \
+          && apt-get install -y --no-install-recommends ca-certificates dnsutils iperf3 iproute2 iptables iputils-ping libdbus-1-3 netcat-openbsd nftables procps tcpdump wireguard-tools \
+          && rm -rf /var/lib/apt/lists/* ;; \
+      esac
 
 COPY --from=builder /tmp/nvpn /usr/local/bin/nvpn
 

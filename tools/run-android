@@ -3,6 +3,34 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="$ROOT/android"
+LOCK_SNAPSHOT=""
+
+restore_lock() {
+  if [[ -n "$LOCK_SNAPSHOT" && -f "$LOCK_SNAPSHOT" && -f "$ROOT/Cargo.lock" ]]; then
+    if ! cmp -s "$LOCK_SNAPSHOT" "$ROOT/Cargo.lock"; then
+      cp -p "$LOCK_SNAPSHOT" "$ROOT/Cargo.lock"
+      printf 'restored Cargo.lock after local-FIPS cargo run\n'
+    fi
+  fi
+}
+
+prepare_lock_restore() {
+  [[ -z "$LOCK_SNAPSHOT" ]] || return 0
+  LOCK_SNAPSHOT="$(mktemp)"
+  cp -p "$ROOT/Cargo.lock" "$LOCK_SNAPSHOT"
+  trap restore_lock EXIT
+}
+
+validated_fips_repo_path() {
+  local fips_path="${NVPN_FIPS_REPO_PATH:-}"
+  [[ -n "$fips_path" ]] || return 1
+  if [[ ! -d "$fips_path/crates/fips-core" \
+        || ! -d "$fips_path/crates/fips-endpoint" \
+        || ! -d "$fips_path/crates/fips-identity" ]]; then
+    echo "NVPN_FIPS_REPO_PATH must point at a fips checkout with fips-core, fips-endpoint, and fips-identity" >&2
+    exit 1
+  fi
+}
 
 find_gradle() {
   local cached
@@ -43,6 +71,11 @@ if [[ -z "${ANDROID_NDK_HOME:-}" && -n "${ANDROID_HOME:-}" ]]; then
 fi
 export NDK_HOME="${ANDROID_NDK_HOME:-${NDK_HOME:-}}"
 
+if [[ -n "${NVPN_FIPS_REPO_PATH:-}" ]]; then
+  validated_fips_repo_path
+  prepare_lock_restore
+fi
+
 GRADLE="$(find_gradle)"
 cmd="${1:-assembleDebug}"
 if [[ $# -gt 0 ]]; then
@@ -51,15 +84,15 @@ fi
 
 case "$cmd" in
   build|assembleDebug|debug)
-    exec "$GRADLE" -p "$ANDROID_DIR" :app:assembleDebug "$@"
+    "$GRADLE" -p "$ANDROID_DIR" :app:assembleDebug "$@"
     ;;
   release|assembleRelease)
-    exec "$GRADLE" -p "$ANDROID_DIR" :app:assembleRelease "$@"
+    "$GRADLE" -p "$ANDROID_DIR" :app:assembleRelease "$@"
     ;;
   install|installDebug)
-    exec "$GRADLE" -p "$ANDROID_DIR" :app:installDebug "$@"
+    "$GRADLE" -p "$ANDROID_DIR" :app:installDebug "$@"
     ;;
   *)
-    exec "$GRADLE" -p "$ANDROID_DIR" "$cmd" "$@"
+    "$GRADLE" -p "$ANDROID_DIR" "$cmd" "$@"
     ;;
 esac

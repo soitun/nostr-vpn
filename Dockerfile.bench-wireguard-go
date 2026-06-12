@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1.4
+#
+# Bench harness: upstream wireguard-go built from a local source checkout,
+# with the same Linux + iperf3 + wireguard-tools shape as Dockerfile.e2e.
+
+FROM golang:1.23-bookworm AS builder
+WORKDIR /src/wireguard-go
+COPY --from=wireguard_go . .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -o /tmp/wireguard-go .
+
+FROM debian:bookworm-slim AS runtime
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates iperf3 iproute2 iputils-ping procps wireguard-tools \
+    && rm -rf /var/lib/apt/lists/*
+COPY --from=builder /tmp/wireguard-go /usr/local/bin/wireguard-go

@@ -1,27 +1,23 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use hashtree_blossom::{BlossomClient, BlossomStore};
-use hashtree_core::{HashTree, HashTreeConfig};
-use hashtree_resolver::{
-    Keys as HashtreeResolverKeys,
-    nostr::{NostrResolverConfig, NostrRootResolver},
-};
 use hashtree_updater::{
-    DownloadOptions, HashtreeUpdater, UpdateAsset, UpdateCheck, UpdateCheckOptions, UpdateManifest,
-    UpdateRef, UpdateTarget,
+    ProductAssetPolicy, SecureNostrBlossomConfig, SecureNostrBlossomSelection, UpdateAsset,
+    UpdateManifest, build_secure_nostr_blossom_updater, current_archive_target, dedupe_nonempty,
+    download_product_selection, env_csv, platform_app_asset_suffixes,
+    preferred_app_asset_for_suffixes, preferred_cli_asset_for_target, select_product_update,
+    selected_download_path as shared_selected_download_path, update_ref_from_override,
 };
+pub use hashtree_updater::{ProductUpdateMode, SECURE_SOURCE_NAME, UpdateAutoCheckPolicy};
 use serde::{Deserialize, Serialize};
 
 pub const GITHUB_LATEST_RELEASE_URL: &str =
     "https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest";
 pub const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json";
 pub const HTREE_UPDATE_REF: &str = "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest";
-pub const SECURE_SOURCE_NAME: &str = "hashtree-nostr-blossom";
 pub const LEGACY_HTREE_SOURCE_NAME: &str = "legacy-htree-url";
 pub const GITHUB_SOURCE_NAME: &str = "github";
 
@@ -42,22 +38,6 @@ const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
     "https://upload.iris.to",
     "https://blossom.primal.net",
 ];
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ProductUpdateMode {
-    Cli,
-    App,
-}
-
-impl ProductUpdateMode {
-    #[must_use]
-    pub fn noun(self) -> &'static str {
-        match self {
-            Self::Cli => "nvpn CLI",
-            Self::App => "Nostr VPN app",
-        }
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ProductUpdateSource {
@@ -103,18 +83,8 @@ struct LegacySelection {
     update_available: bool,
 }
 
-type SecureUpdater = HashtreeUpdater<NostrRootResolver, BlossomStore>;
-
-struct SecureSelection {
-    updater: SecureUpdater,
-    check: UpdateCheck,
-    asset: UpdateAsset,
-    tag: String,
-    update_available: bool,
-}
-
 enum UpdateSelection {
-    Secure(Box<SecureSelection>),
+    Secure(Box<SecureNostrBlossomSelection>),
     Legacy(LegacySelection),
 }
 
@@ -236,55 +206,33 @@ fn result_from_selection(
 async fn secure_selection(
     current_version: &str,
     mode: ProductUpdateMode,
-) -> Result<SecureSelection> {
+) -> Result<SecureNostrBlossomSelection> {
     let updater = build_secure_updater().await?;
-    let mut check = updater
-        .check(UpdateCheckOptions {
-            reference: secure_update_ref()?,
-            current_version: current_version.to_string(),
-            target: UpdateTarget::new(current_target()),
-            ..UpdateCheckOptions::default()
-        })
+    let reference = update_ref_from_override(None, Some("NVPN_UPDATE_HTREE_REF"), HTREE_UPDATE_REF)
+        .context("invalid update hashtree ref")?;
+    select_product_update(updater, reference, current_version, mode, &asset_policy())
         .await
-        .context("failed to resolve signed hashtree release")?;
-    let asset = preferred_secure_asset(&check.manifest, mode).ok_or_else(|| {
-        anyhow!(
-            "release {} has no {} asset for {}",
-            check.manifest.effective_version(),
-            mode.noun(),
-            current_target()
-        )
-    })?;
-    check.asset = Some(asset.clone());
-    let tag = display_manifest_tag(&check.manifest);
-    let update_available = check.update_available;
-    Ok(SecureSelection {
-        updater,
-        check,
-        asset,
-        tag,
-        update_available,
-    })
+        .with_context(|| {
+            format!(
+                "failed to resolve signed hashtree release for {}",
+                asset_policy().noun(mode)
+            )
+        })
 }
 
-async fn build_secure_updater() -> Result<SecureUpdater> {
-    let resolver = NostrRootResolver::new(NostrResolverConfig {
+async fn build_secure_updater() -> Result<hashtree_updater::SecureNostrBlossomUpdater> {
+    build_secure_nostr_blossom_updater(SecureNostrBlossomConfig {
         relays: update_relays(),
-        resolve_timeout: Duration::from_secs(
+        manifest_timeout: Duration::from_secs(
             UPDATE_MANIFEST_TIMEOUT_SECS.parse::<u64>().unwrap_or(8),
         ),
-        secret_key: None,
+        download_timeout: Duration::from_secs(
+            UPDATE_DOWNLOAD_TIMEOUT_SECS.parse::<u64>().unwrap_or(180),
+        ),
+        blossom_read_servers: blossom_read_servers(),
     })
     .await
-    .context("failed to connect to Nostr release relays")?;
-    let blossom = BlossomClient::new_empty(HashtreeResolverKeys::generate())
-        .with_read_servers(blossom_read_servers())
-        .with_timeout(Duration::from_secs(
-            UPDATE_DOWNLOAD_TIMEOUT_SECS.parse::<u64>().unwrap_or(180),
-        ));
-    let store = Arc::new(BlossomStore::new(blossom));
-    let tree = HashTree::new(HashTreeConfig::new(store).public());
-    Ok(HashtreeUpdater::new(resolver, tree))
+    .context("failed to connect to Nostr release relays")
 }
 
 fn legacy_selection(
@@ -298,7 +246,7 @@ fn legacy_selection(
         anyhow!(
             "release {} has no {} asset for {}",
             manifest.tag,
-            mode.noun(),
+            asset_policy().noun(mode),
             current_target()
         )
     })?;
@@ -324,26 +272,14 @@ async fn download_selection(
 ) -> Result<PathBuf> {
     match selection {
         UpdateSelection::Secure(selection) => {
-            let destination = selected_download_path(download_dir, &selection.asset.name)?;
-            let downloaded = selection
-                .updater
-                .download(
-                    &selection.check,
-                    DownloadOptions {
-                        max_size: None,
-                        ..DownloadOptions::default()
-                    },
-                    None,
-                )
+            download_product_selection(selection, download_dir, &asset_policy())
                 .await
                 .with_context(|| {
                     format!(
                         "failed to download verified hashtree asset {}",
                         selection.asset.name
                     )
-                })?;
-            write_downloaded_asset(&destination, &downloaded.bytes)?;
-            Ok(destination)
+                })
         }
         UpdateSelection::Legacy(selection) => {
             let destination = selected_download_path(download_dir, &selection.asset.name)?;
@@ -366,41 +302,83 @@ pub fn should_try_github_fallback(source: ProductUpdateSource, secure_available:
     matches!(source, ProductUpdateSource::Auto) && !secure_available
 }
 
-fn secure_update_ref() -> Result<UpdateRef> {
-    let raw = std::env::var("NVPN_UPDATE_HTREE_REF")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| HTREE_UPDATE_REF.to_string());
-    UpdateRef::parse(&raw).with_context(|| format!("invalid update hashtree ref: {raw}"))
-}
-
 fn update_relays() -> Vec<String> {
-    split_env_csv("NVPN_UPDATE_RELAYS").unwrap_or_else(|| {
-        DEFAULT_UPDATE_RELAYS
-            .iter()
-            .map(|value| (*value).to_string())
-            .collect()
+    env_csv("NVPN_UPDATE_RELAYS").unwrap_or_else(|| {
+        dedupe_nonempty(
+            DEFAULT_UPDATE_RELAYS
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+        )
     })
 }
 
 fn blossom_read_servers() -> Vec<String> {
-    split_env_csv("NVPN_UPDATE_BLOSSOM_SERVERS").unwrap_or_else(|| {
-        DEFAULT_BLOSSOM_READ_SERVERS
-            .iter()
-            .map(|value| (*value).to_string())
-            .collect()
+    env_csv("NVPN_UPDATE_BLOSSOM_SERVERS").unwrap_or_else(|| {
+        dedupe_nonempty(
+            DEFAULT_BLOSSOM_READ_SERVERS
+                .iter()
+                .map(|value| (*value).to_string())
+                .collect(),
+        )
     })
 }
 
-fn split_env_csv(name: &str) -> Option<Vec<String>> {
-    let values = std::env::var(name)
-        .ok()?
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-        .collect::<Vec<_>>();
-    (!values.is_empty()).then_some(values)
+fn asset_policy() -> ProductAssetPolicy {
+    ProductAssetPolicy::new("nvpn", "nvpn CLI", "Nostr VPN app")
+        .with_app_asset_suffixes(platform_app_asset_suffixes().iter().copied())
+        .with_download_file_name_fallback("nvpn-update-archive")
+}
+
+fn current_target() -> &'static str {
+    current_archive_target()
+}
+
+fn legacy_update_manifest(manifest: &ReleaseManifest) -> UpdateManifest {
+    UpdateManifest {
+        tag: Some(manifest.tag.clone()),
+        assets: manifest
+            .assets
+            .iter()
+            .map(|asset| UpdateAsset {
+                name: asset.name.clone(),
+                path: asset.path.clone(),
+                ..UpdateAsset::default()
+            })
+            .collect(),
+        ..UpdateManifest::default()
+    }
+}
+
+fn release_asset_from_update_asset(asset: UpdateAsset) -> ReleaseAsset {
+    ReleaseAsset {
+        name: asset.name,
+        path: asset.path,
+    }
+}
+
+fn preferred_asset(manifest: &ReleaseManifest, mode: ProductUpdateMode) -> Option<ReleaseAsset> {
+    match mode {
+        ProductUpdateMode::Cli => preferred_cli_asset(manifest),
+        ProductUpdateMode::App => preferred_legacy_app_asset(manifest),
+    }
+}
+
+fn preferred_cli_asset(manifest: &ReleaseManifest) -> Option<ReleaseAsset> {
+    let update_manifest = legacy_update_manifest(manifest);
+    preferred_cli_asset_for_target(&update_manifest, "nvpn", current_target())
+        .map(release_asset_from_update_asset)
+}
+
+fn preferred_legacy_app_asset(manifest: &ReleaseManifest) -> Option<ReleaseAsset> {
+    let update_manifest = legacy_update_manifest(manifest);
+    preferred_app_asset_for_suffixes(&update_manifest, platform_app_asset_suffixes())
+        .map(release_asset_from_update_asset)
+}
+
+fn selected_download_path(download_dir: Option<&Path>, asset_name: &str) -> Result<PathBuf> {
+    shared_selected_download_path(download_dir, asset_name, "nvpn-update-archive")
+        .with_context(|| format!("failed to choose update download path for {asset_name}"))
 }
 
 fn fetch_first_manifest(source: ProductUpdateSource) -> Result<(String, ReleaseManifest)> {
@@ -464,174 +442,6 @@ fn fetch_manifest(url: &str) -> Result<ReleaseManifest> {
     serde_json::from_slice(&output.stdout).context("failed to parse release manifest")
 }
 
-fn preferred_asset(manifest: &ReleaseManifest, mode: ProductUpdateMode) -> Option<ReleaseAsset> {
-    match mode {
-        ProductUpdateMode::Cli => preferred_cli_asset(manifest),
-        ProductUpdateMode::App => preferred_legacy_app_asset(manifest),
-    }
-}
-
-fn preferred_cli_asset(manifest: &ReleaseManifest) -> Option<ReleaseAsset> {
-    let target = current_target();
-    let archive_ext = if cfg!(target_os = "windows") {
-        ".zip"
-    } else {
-        ".tar.gz"
-    };
-    let exact = format!("nvpn-{}-{target}{archive_ext}", manifest.tag);
-    let unversioned = format!("nvpn-{target}{archive_ext}");
-
-    manifest
-        .assets
-        .iter()
-        .find(|asset| asset.name == exact)
-        .or_else(|| {
-            manifest
-                .assets
-                .iter()
-                .find(|asset| asset.name == unversioned)
-        })
-        .or_else(|| {
-            manifest.assets.iter().find(|asset| {
-                asset.name.starts_with("nvpn-")
-                    && asset.name.contains(target)
-                    && asset.name.ends_with(archive_ext)
-            })
-        })
-        .cloned()
-}
-
-fn preferred_legacy_app_asset(manifest: &ReleaseManifest) -> Option<ReleaseAsset> {
-    manifest
-        .assets
-        .iter()
-        .find(|asset| app_asset_name_matches_current_target(&asset.name))
-        .cloned()
-}
-
-fn preferred_secure_asset(
-    manifest: &UpdateManifest,
-    mode: ProductUpdateMode,
-) -> Option<UpdateAsset> {
-    match mode {
-        ProductUpdateMode::Cli => preferred_secure_cli_asset(manifest),
-        ProductUpdateMode::App => preferred_secure_app_asset(manifest),
-    }
-}
-
-fn preferred_secure_cli_asset(manifest: &UpdateManifest) -> Option<UpdateAsset> {
-    let tag = display_manifest_tag(manifest);
-    let target = current_target();
-    let archive_ext = if cfg!(target_os = "windows") {
-        ".zip"
-    } else {
-        ".tar.gz"
-    };
-    let exact = format!("nvpn-{tag}-{target}{archive_ext}");
-    let unversioned = format!("nvpn-{target}{archive_ext}");
-
-    manifest
-        .assets
-        .iter()
-        .find(|asset| asset.name == exact)
-        .or_else(|| {
-            manifest
-                .assets
-                .iter()
-                .find(|asset| asset.name == unversioned)
-        })
-        .or_else(|| {
-            manifest.assets.iter().find(|asset| {
-                asset.name.starts_with("nvpn-")
-                    && asset.name.contains(target)
-                    && asset.name.ends_with(archive_ext)
-            })
-        })
-        .cloned()
-}
-
-fn preferred_secure_app_asset(manifest: &UpdateManifest) -> Option<UpdateAsset> {
-    manifest
-        .assets
-        .iter()
-        .find(|asset| app_asset_name_matches_current_target(&asset.name))
-        .cloned()
-}
-
-fn app_asset_name_matches_current_target(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    {
-        lower.ends_with("-macos-arm64.app.tar.gz")
-            || lower.ends_with("-macos-arm64.dmg")
-            || lower.ends_with("-macos-arm64.zip")
-    }
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    {
-        lower.ends_with("-linux-x64.deb") || lower.ends_with("-linux-x64.appimage")
-    }
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    {
-        lower.ends_with("-linux-arm64.deb") || lower.ends_with("-linux-arm64.appimage")
-    }
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    {
-        lower.ends_with("-windows-x64-setup.exe")
-    }
-    #[cfg(not(any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "aarch64"),
-        all(target_os = "windows", target_arch = "x86_64"),
-    )))]
-    {
-        let _ = lower;
-        false
-    }
-}
-
-fn display_manifest_tag(manifest: &UpdateManifest) -> String {
-    manifest
-        .tag
-        .clone()
-        .filter(|tag| !tag.trim().is_empty())
-        .unwrap_or_else(|| format!("v{}", manifest.effective_version()))
-}
-
-#[must_use]
-pub fn current_target() -> &'static str {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-    {
-        "aarch64-apple-darwin"
-    }
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
-    {
-        "x86_64-unknown-linux-musl"
-    }
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
-    {
-        "aarch64-unknown-linux-musl"
-    }
-    #[cfg(all(target_os = "linux", target_arch = "arm"))]
-    {
-        "arm-unknown-linux-musleabihf"
-    }
-    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
-    {
-        "x86_64-pc-windows-msvc"
-    }
-    #[cfg(not(any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64"),
-        all(target_os = "linux", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "arm"),
-        all(target_os = "windows", target_arch = "x86_64"),
-    )))]
-    {
-        "unsupported"
-    }
-}
-
 fn manifest_asset_url(manifest_url: &str, path: &str) -> String {
     if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("file://") {
         return path.to_string();
@@ -641,16 +451,6 @@ fn manifest_asset_url(manifest_url: &str, path: &str) -> String {
         .map(|(base, _)| base)
         .unwrap_or(manifest_url);
     format!("{}/{}", base, path.trim_start_matches('/'))
-}
-
-fn selected_download_path(download_dir: Option<&Path>, asset_name: &str) -> Result<PathBuf> {
-    let file_name = safe_file_name(asset_name);
-    let parent = download_dir
-        .map(Path::to_path_buf)
-        .unwrap_or_else(std::env::temp_dir);
-    fs::create_dir_all(&parent)
-        .with_context(|| format!("failed to create {}", parent.display()))?;
-    Ok(parent.join(file_name))
 }
 
 fn download_asset(url: &str, destination: &Path) -> Result<()> {
@@ -676,37 +476,6 @@ fn download_asset(url: &str, destination: &Path) -> Result<()> {
         ));
     }
     Ok(())
-}
-
-fn write_downloaded_asset(destination: &Path, bytes: &[u8]) -> Result<()> {
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
-    fs::write(destination, bytes).with_context(|| {
-        format!(
-            "failed to write verified update to {}",
-            destination.display()
-        )
-    })
-}
-
-fn safe_file_name(name: &str) -> String {
-    let value = name
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-' | '_') {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    if value.is_empty() {
-        "nvpn-update-archive".to_string()
-    } else {
-        value
-    }
 }
 
 fn command_error(prefix: &str, output: &std::process::Output) -> String {

@@ -253,6 +253,7 @@ enum ScreenshotFixtures {
         participant.fipsTransportAddr = transport
         participant.fipsTransportType = transport.isEmpty ? "" : "udp"
         participant.fipsSrttMs = reachable ? 18 : 0
+        participant.fipsSrttAgeMs = reachable ? 1_100 : 0
         participant.fipsPacketsSent = reachable ? 1482 : 0
         participant.fipsPacketsRecv = reachable ? 1516 : 0
         participant.fipsBytesSent = reachable ? 481_280 : 0
@@ -260,6 +261,8 @@ enum ScreenshotFixtures {
         participant.state = state
         participant.meshState = meshState
         participant.statusText = status
+        participant.lastFipsControlSeenText = reachable ? "seen now" : ""
+        participant.lastFipsDataSeenText = reachable ? "seen now" : ""
         participant.lastSeenText = reachable ? "now" : "yesterday"
         return participant
     }

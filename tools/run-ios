@@ -24,6 +24,51 @@ MIN_VERSION="${NVPN_IOS_MIN_VERSION:-17.0}"
 PROJECT="$IOS_DIR/NostrVpnIos.xcodeproj"
 SCHEME="NostrVpnIos"
 SIMULATOR_NAME="${NVPN_IOS_SIMULATOR_NAME:-iPhone 17 Pro}"
+cargo_config_args=()
+LOCK_SNAPSHOT=""
+
+restore_lock() {
+  if [[ -n "$LOCK_SNAPSHOT" && -f "$LOCK_SNAPSHOT" && -f "$ROOT/Cargo.lock" ]]; then
+    if ! cmp -s "$LOCK_SNAPSHOT" "$ROOT/Cargo.lock"; then
+      cp -p "$LOCK_SNAPSHOT" "$ROOT/Cargo.lock"
+      printf 'restored Cargo.lock after local-FIPS cargo run\n'
+    fi
+  fi
+}
+
+prepare_lock_restore() {
+  [[ -z "$LOCK_SNAPSHOT" ]] || return 0
+  LOCK_SNAPSHOT="$(mktemp)"
+  cp -p "$ROOT/Cargo.lock" "$LOCK_SNAPSHOT"
+  trap restore_lock EXIT
+}
+
+validated_fips_repo_path() {
+  local fips_path="${NVPN_FIPS_REPO_PATH:-}"
+  [[ -n "$fips_path" ]] || return 1
+  if [[ ! -d "$fips_path/crates/fips-core" \
+        || ! -d "$fips_path/crates/fips-endpoint" \
+        || ! -d "$fips_path/crates/fips-identity" ]]; then
+    echo "NVPN_FIPS_REPO_PATH must point at a fips checkout with fips-core, fips-endpoint, and fips-identity" >&2
+    exit 1
+  fi
+  printf '%s\n' "$fips_path"
+}
+
+prepare_cargo_config() {
+  cargo_config_args=()
+  if [[ -n "${NVPN_FIPS_REPO_PATH:-}" ]]; then
+    local fips_path
+    fips_path="$(validated_fips_repo_path)"
+    prepare_lock_restore
+    cargo_config_args+=(
+      --config "patch.crates-io.fips-core.path=\"$fips_path/crates/fips-core\""
+      --config "patch.crates-io.fips-endpoint.path=\"$fips_path/crates/fips-endpoint\""
+      --config "patch.crates-io.fips-identity.path=\"$fips_path/crates/fips-identity\""
+    )
+    printf 'using local FIPS crates from %s\n' "$fips_path"
+  fi
+}
 
 target_root() {
   local dir="${CARGO_TARGET_DIR:-$ROOT/target}"
@@ -54,6 +99,8 @@ build_rust_target() {
     cargo_args+=(--release)
   fi
 
+  prepare_cargo_config
+
   env \
     SDKROOT="$sdkroot" \
     IPHONEOS_DEPLOYMENT_TARGET="$MIN_VERSION" \
@@ -64,7 +111,7 @@ build_rust_target() {
     CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$toolchain_bin/clang" \
     CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="$toolchain_bin/clang" \
     RUSTFLAGS="-C linker=$toolchain_bin/clang -C link-arg=-target -C link-arg=$clang_target -C link-arg=$min_flag=$MIN_VERSION" \
-    cargo "${cargo_args[@]}"
+    cargo "${cargo_config_args[@]}" "${cargo_args[@]}"
 }
 
 build_rust() {

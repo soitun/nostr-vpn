@@ -2,6 +2,23 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.73 - 2026-06-12
+
+### Changed
+
+- FIPS now uses `fips-core` 0.3.56 and `fips-endpoint` 0.3.32.
+- Large Rust modules were split into focused submodules so every Rust source
+  file is at or below the 1000-line maintenance cap.
+
+### Fixed
+
+- The embedded FIPS dataplane now includes the latest upstream control-plane
+  progress and packet-mover reliability fixes while preserving peer/session
+  continuity under queue pressure.
+- Windows builds now pick up the FIPS patch that keeps shared dataplane worker
+  state available on non-Unix targets while leaving Unix raw-socket batching
+  platform-gated.
+
 ## 4.0.72 - 2026-06-07
 
 ### Changed

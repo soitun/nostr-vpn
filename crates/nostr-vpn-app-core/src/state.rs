@@ -45,6 +45,7 @@ pub struct DaemonRuntimeState {
     pub peers: Vec<DaemonPeerState>,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct DaemonPeerState {
@@ -65,6 +66,8 @@ pub struct DaemonPeerState {
     pub fips_transport_type: String,
     #[serde(default, alias = "fips_srtt_ms")]
     pub fips_srtt_ms: Option<u64>,
+    #[serde(default, alias = "fips_srtt_age_ms")]
+    pub fips_srtt_age_ms: Option<u64>,
     #[serde(default, alias = "fips_packets_sent")]
     pub fips_packets_sent: u64,
     #[serde(default, alias = "fips_packets_recv")]
@@ -77,6 +80,20 @@ pub struct DaemonPeerState {
     pub direct_probe_pending: bool,
     #[serde(default, alias = "direct_probe_after_ms")]
     pub direct_probe_after_ms: Option<u64>,
+    #[serde(default, alias = "direct_probe_retry_count")]
+    pub direct_probe_retry_count: u32,
+    #[serde(default, alias = "direct_probe_auto_reconnect")]
+    pub direct_probe_auto_reconnect: bool,
+    #[serde(default, alias = "direct_probe_expires_at_ms")]
+    pub direct_probe_expires_at_ms: Option<u64>,
+    #[serde(default, alias = "fips_nostr_traversal_failures")]
+    pub fips_nostr_traversal_failures: u32,
+    #[serde(default, alias = "fips_nostr_traversal_in_cooldown")]
+    pub fips_nostr_traversal_in_cooldown: bool,
+    #[serde(default, alias = "fips_nostr_traversal_cooldown_until_ms")]
+    pub fips_nostr_traversal_cooldown_until_ms: Option<u64>,
+    #[serde(default, alias = "fips_nostr_traversal_last_observed_skew_ms")]
+    pub fips_nostr_traversal_last_observed_skew_ms: Option<i64>,
     #[serde(default, alias = "tx_bytes")]
     pub tx_bytes: u64,
     #[serde(default, alias = "rx_bytes")]
@@ -99,12 +116,17 @@ pub struct DaemonPeerState {
         alias = "last_fips_seen_at"
     )]
     pub last_fips_seen_at: Option<u64>,
+    #[serde(default, alias = "last_fips_control_seen_at")]
+    pub last_fips_control_seen_at: Option<u64>,
+    #[serde(default, alias = "last_fips_data_seen_at")]
+    pub last_fips_data_seen_at: Option<u64>,
     pub reachable: bool,
     #[serde(alias = "last_handshake_at")]
     pub last_handshake_at: Option<u64>,
     pub error: Option<String>,
 }
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct ParticipantView {
@@ -123,12 +145,16 @@ pub struct ParticipantView {
     pub fips_transport_addr: String,
     pub fips_transport_type: String,
     pub fips_srtt_ms: Option<u64>,
+    pub fips_srtt_age_ms: Option<u64>,
     pub fips_packets_sent: u64,
     pub fips_packets_recv: u64,
     pub fips_bytes_sent: u64,
     pub fips_bytes_recv: u64,
     pub fips_direct_probe_pending: bool,
     pub fips_direct_probe_after_ms: Option<u64>,
+    pub fips_direct_probe_retry_count: u32,
+    pub fips_direct_probe_auto_reconnect: bool,
+    pub fips_direct_probe_expires_at_ms: Option<u64>,
     pub state: String,
     pub mesh_state: String,
     pub status_text: String,
@@ -450,12 +476,19 @@ mod tests {
                 "tunnel_ip": "10.44.219.172/32",
                 "endpoint": "fips",
                 "runtime_endpoint": "fips",
+                "direct_probe_pending": true,
+                "direct_probe_after_ms": 12345,
+                "direct_probe_retry_count": 3,
+                "direct_probe_auto_reconnect": true,
+                "direct_probe_expires_at_ms": 67890,
                 "tx_bytes": 8340,
                 "rx_bytes": 19269,
                 "public_key": "",
                 "advertised_routes": [],
                 "last_mesh_seen_at": 1778104080,
                 "last_fips_seen_at": 1778104080,
+                "last_fips_control_seen_at": 1778104075,
+                "last_fips_data_seen_at": 1778104080,
                 "reachable": true,
                 "last_handshake_at": 1778104080,
                 "error": null
@@ -473,7 +506,17 @@ mod tests {
         assert_eq!(state.relays[0].status, "connected");
         assert!(state.relays[0].enabled);
         assert_eq!(state.peers[0].runtime_endpoint.as_deref(), Some("fips"));
+        assert!(state.peers[0].direct_probe_pending);
+        assert_eq!(state.peers[0].direct_probe_after_ms, Some(12_345));
+        assert_eq!(state.peers[0].direct_probe_retry_count, 3);
+        assert!(state.peers[0].direct_probe_auto_reconnect);
+        assert_eq!(state.peers[0].direct_probe_expires_at_ms, Some(67_890));
         assert_eq!(state.peers[0].last_fips_seen_at, Some(1_778_104_080));
+        assert_eq!(
+            state.peers[0].last_fips_control_seen_at,
+            Some(1_778_104_075)
+        );
+        assert_eq!(state.peers[0].last_fips_data_seen_at, Some(1_778_104_080));
         assert_eq!(state.peers[0].last_mesh_seen_at, 1_778_104_080);
         assert!(state.peers[0].reachable);
     }

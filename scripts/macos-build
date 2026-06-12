@@ -73,6 +73,63 @@ if declare -F enable_deterministic_build_env >/dev/null 2>&1; then
   enable_deterministic_build_env "$ROOT"
 fi
 
+cargo_config_args=()
+cargo_prefix=(cargo)
+LOCK_SNAPSHOT=""
+
+restore_lock() {
+  [[ -n "$LOCK_SNAPSHOT" ]] || return 0
+  cp -p "$LOCK_SNAPSHOT" "$ROOT/Cargo.lock"
+  rm -f "$LOCK_SNAPSHOT"
+  LOCK_SNAPSHOT=""
+}
+
+prepare_lock_restore() {
+  [[ -z "$LOCK_SNAPSHOT" ]] || return 0
+  LOCK_SNAPSHOT="$(mktemp)"
+  cp -p "$ROOT/Cargo.lock" "$LOCK_SNAPSHOT"
+  trap restore_lock EXIT
+}
+
+validated_fips_repo_path() {
+  local fips_path="${NVPN_FIPS_REPO_PATH:-}"
+  [[ -n "$fips_path" ]] || return 1
+  [[ -d "$fips_path/crates/fips-core" ]] || {
+    echo "missing $fips_path/crates/fips-core" >&2
+    exit 1
+  }
+  [[ -d "$fips_path/crates/fips-endpoint" ]] || {
+    echo "missing $fips_path/crates/fips-endpoint" >&2
+    exit 1
+  }
+  [[ -d "$fips_path/crates/fips-identity" ]] || {
+    echo "missing $fips_path/crates/fips-identity" >&2
+    exit 1
+  }
+  printf '%s\n' "$fips_path"
+}
+
+prepare_cargo_config() {
+  cargo_config_args=()
+  if [[ -n "${NVPN_FIPS_REPO_PATH:-}" ]]; then
+    local fips_path
+    fips_path="$(validated_fips_repo_path)"
+    prepare_lock_restore
+    cargo_config_args+=(
+      --config "patch.crates-io.fips-core.path=\"$fips_path/crates/fips-core\""
+      --config "patch.crates-io.fips-endpoint.path=\"$fips_path/crates/fips-endpoint\""
+      --config "patch.crates-io.fips-identity.path=\"$fips_path/crates/fips-identity\""
+    )
+    printf 'using local FIPS crates from %s\n' "$fips_path"
+  fi
+  cargo_prefix=(cargo)
+  if ((${#cargo_config_args[@]})); then
+    cargo_prefix+=("${cargo_config_args[@]}")
+  else
+    cargo_prefix+=(--locked)
+  fi
+}
+
 usage() {
   cat <<'EOF'
 usage: ./scripts/macos-build <command>
@@ -97,6 +154,9 @@ release signing env:
   MACOS_NOTARIZE_APPLE_ID      Apple ID for notarytool app-password auth
   MACOS_NOTARIZE_APP_PASSWORD  App-specific password for notarytool
   MACOS_NOTARIZE_TEAM_ID       Apple developer team id for notarytool
+
+development env:
+  NVPN_FIPS_REPO_PATH          patch app-core/nvpn builds against local FIPS crates
 EOF
 }
 
@@ -136,10 +196,12 @@ target_cli_bin() {
 run_macos_gen_swift() {
   local generated_bindings_dir
 
+  prepare_cargo_config
+
   if [[ "$PROFILE" == "release" ]]; then
-    cargo build --locked -p nostr-vpn-app-core --release --target "$HOST_TARGET"
+    "${cargo_prefix[@]}" build -p nostr-vpn-app-core --release --target "$HOST_TARGET"
   else
-    cargo build --locked -p nostr-vpn-app-core --target "$HOST_TARGET"
+    "${cargo_prefix[@]}" build -p nostr-vpn-app-core --target "$HOST_TARGET"
   fi
 
   mkdir -p "$BUILD_DIR"
@@ -147,13 +209,13 @@ run_macos_gen_swift() {
   trap 'rm -rf "$generated_bindings_dir"' RETURN
 
   if [[ "$PROFILE" == "release" ]]; then
-    cargo run --locked -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --release --target "$HOST_TARGET" -- generate \
+    "${cargo_prefix[@]}" run -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --release --target "$HOST_TARGET" -- generate \
       --library "$(host_dynamic_lib)" \
       --language swift \
       --out-dir "$generated_bindings_dir" \
       --config "$CORE_DIR/uniffi.toml"
   else
-    cargo run --locked -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --target "$HOST_TARGET" -- generate \
+    "${cargo_prefix[@]}" run -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --target "$HOST_TARGET" -- generate \
       --library "$(host_dynamic_lib)" \
       --language swift \
       --out-dir "$generated_bindings_dir" \
@@ -182,6 +244,8 @@ run_macos_rust() {
   local arch_target
   local rustflags_env_var
   local target_rustflags
+
+  prepare_cargo_config
 
   dev_dir="$(xcode-select -p)"
   toolchain_bin="$dev_dir/Toolchains/XcodeDefault.xctoolchain/usr/bin"
@@ -224,7 +288,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        cargo build --locked -p nostr-vpn-app-core --release --target "$target"
+        "${cargo_prefix[@]}" build -p nostr-vpn-app-core --release --target "$target"
 
       env \
         SDKROOT="$sdkroot" \
@@ -241,7 +305,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        cargo build --locked -p nvpn --release --bin nvpn --target "$target"
+        "${cargo_prefix[@]}" build -p nvpn --release --bin nvpn --target "$target"
     else
       env \
         SDKROOT="$sdkroot" \
@@ -258,7 +322,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        cargo build --locked -p nostr-vpn-app-core --target "$target"
+        "${cargo_prefix[@]}" build -p nostr-vpn-app-core --target "$target"
 
       env \
         SDKROOT="$sdkroot" \
@@ -275,7 +339,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        cargo build --locked -p nvpn --bin nvpn --target "$target"
+        "${cargo_prefix[@]}" build -p nvpn --bin nvpn --target "$target"
     fi
   done
 }

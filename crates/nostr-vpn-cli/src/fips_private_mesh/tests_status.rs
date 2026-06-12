@@ -1,0 +1,803 @@
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn closed_tun_to_mesh_queue_stops_reader() {
+        let (tx, rx) = TunPipelineQueueTx::channel(1);
+        drop(rx);
+
+        assert_eq!(
+            submit_tun_packet_batch_to_mesh_queue(
+                &tx,
+                vec![test_pipeline_packet(test_ipv6_tcp_packet(0x18, 512))],
+            ),
+            TunQueueSubmit::Closed
+        );
+    }
+
+    fn mesh_peer_status(
+        pubkey: impl AsRef<str>,
+        endpoint_npub: impl AsRef<str>,
+        transport_addr: Option<&str>,
+        transport_type: Option<&str>,
+        connected: bool,
+        last_seen_at: Option<u64>,
+    ) -> MeshPeerStatus {
+        MeshPeerStatus {
+            pubkey: pubkey.as_ref().to_string(),
+            connected,
+            endpoint_npub: endpoint_npub.as_ref().to_string(),
+            transport_addr: transport_addr.map(str::to_string),
+            transport_type: transport_type.map(str::to_string),
+            srtt_ms: Some(18),
+            srtt_age_ms: Some(250),
+            link_packets_sent: 7,
+            link_packets_recv: 8,
+            link_bytes_sent: 900,
+            link_bytes_recv: 1200,
+            rekey_in_progress: false,
+            rekey_draining: false,
+            current_k_bit: None,
+            direct_probe_pending: false,
+            direct_probe_after_ms: None,
+            direct_probe_retry_count: 0,
+            direct_probe_auto_reconnect: false,
+            direct_probe_expires_at_ms: None,
+            nostr_traversal_consecutive_failures: 0,
+            nostr_traversal_in_cooldown: false,
+            nostr_traversal_cooldown_until_ms: None,
+            nostr_traversal_last_observed_skew_ms: None,
+            last_seen_at,
+            last_control_seen_at: None,
+            last_data_seen_at: None,
+            tx_bytes: 0,
+            rx_bytes: 0,
+            error: None,
+        }
+    }
+
+    #[test]
+    fn non_roster_endpoint_peers_surface_as_mesh_statuses() {
+        let keys = Keys::generate();
+        let pubkey = keys.public_key().to_hex();
+        let npub = keys.public_key().to_bech32().expect("npub");
+        let mut peers = HashMap::new();
+        peers.insert(
+            pubkey.clone(),
+            FipsEndpointPeer {
+                npub: npub.clone(),
+                node_addr: NodeAddr::from_bytes([7; 16]),
+                connected: true,
+                transport_addr: Some("203.0.113.9:9000".to_string()),
+                transport_type: Some("udp".to_string()),
+                link_id: 42,
+                srtt_ms: Some(7),
+                srtt_age_ms: Some(123),
+                packets_sent: 11,
+                packets_recv: 12,
+                bytes_sent: 1300,
+                bytes_recv: 1400,
+                rekey_in_progress: true,
+                rekey_draining: true,
+                current_k_bit: Some(true),
+                direct_probe_pending: true,
+                direct_probe_after_ms: Some(12_345),
+                direct_probe_retry_count: 3,
+                direct_probe_auto_reconnect: true,
+                direct_probe_expires_at_ms: Some(67_890),
+                nostr_traversal_consecutive_failures: 3,
+                nostr_traversal_in_cooldown: true,
+                nostr_traversal_cooldown_until_ms: Some(123_456),
+                nostr_traversal_last_observed_skew_ms: Some(-250),
+            },
+        );
+
+        let statuses = other_endpoint_peer_statuses(&peers, 123);
+
+        assert_eq!(statuses.len(), 1);
+        assert_eq!(statuses[0].pubkey, pubkey);
+        assert_eq!(statuses[0].endpoint_npub, npub);
+        assert!(statuses[0].connected);
+        assert_eq!(
+            statuses[0].transport_addr.as_deref(),
+            Some("203.0.113.9:9000")
+        );
+        assert_eq!(statuses[0].transport_type.as_deref(), Some("udp"));
+        assert!(statuses[0].direct_probe_pending);
+        assert_eq!(statuses[0].direct_probe_after_ms, Some(12_345));
+        assert_eq!(statuses[0].direct_probe_retry_count, 3);
+        assert!(statuses[0].direct_probe_auto_reconnect);
+        assert_eq!(statuses[0].direct_probe_expires_at_ms, Some(67_890));
+        assert_eq!(statuses[0].nostr_traversal_consecutive_failures, 3);
+        assert!(statuses[0].nostr_traversal_in_cooldown);
+        assert_eq!(statuses[0].nostr_traversal_cooldown_until_ms, Some(123_456));
+        assert_eq!(
+            statuses[0].nostr_traversal_last_observed_skew_ms,
+            Some(-250)
+        );
+        assert_eq!(statuses[0].srtt_ms, Some(7));
+        assert_eq!(statuses[0].srtt_age_ms, Some(123));
+        assert_eq!(statuses[0].link_packets_sent, 11);
+        assert_eq!(statuses[0].link_packets_recv, 12);
+        assert_eq!(statuses[0].link_bytes_sent, 1300);
+        assert_eq!(statuses[0].link_bytes_recv, 1400);
+        assert!(statuses[0].rekey_in_progress);
+        assert!(statuses[0].rekey_draining);
+        assert_eq!(statuses[0].current_k_bit, Some(true));
+        assert_eq!(statuses[0].last_seen_at, Some(123));
+        assert_eq!(statuses[0].error, None);
+    }
+
+    #[test]
+    fn retry_only_endpoint_peer_status_keeps_probe_separate_from_link() {
+        let status = mesh_status_from_endpoint_peer(
+            "peer".to_string(),
+            &FipsEndpointPeer {
+                npub: "npub1peer".to_string(),
+                node_addr: NodeAddr::from_bytes([8; 16]),
+                connected: false,
+                transport_addr: None,
+                transport_type: None,
+                link_id: 0,
+                srtt_ms: None,
+                srtt_age_ms: None,
+                packets_sent: 0,
+                packets_recv: 0,
+                bytes_sent: 0,
+                bytes_recv: 0,
+                rekey_in_progress: false,
+                rekey_draining: false,
+                current_k_bit: None,
+                direct_probe_pending: true,
+                direct_probe_after_ms: Some(12_345),
+                direct_probe_retry_count: 2,
+                direct_probe_auto_reconnect: false,
+                direct_probe_expires_at_ms: Some(67_890),
+                nostr_traversal_consecutive_failures: 2,
+                nostr_traversal_in_cooldown: true,
+                nostr_traversal_cooldown_until_ms: Some(123_456),
+                nostr_traversal_last_observed_skew_ms: Some(500),
+            },
+            123,
+        );
+
+        assert!(!status.connected);
+        assert!(status.direct_probe_pending);
+        assert_eq!(status.direct_probe_after_ms, Some(12_345));
+        assert_eq!(status.direct_probe_retry_count, 2);
+        assert!(!status.direct_probe_auto_reconnect);
+        assert_eq!(status.direct_probe_expires_at_ms, Some(67_890));
+        assert_eq!(status.nostr_traversal_consecutive_failures, 2);
+        assert!(status.nostr_traversal_in_cooldown);
+        assert_eq!(status.nostr_traversal_cooldown_until_ms, Some(123_456));
+        assert_eq!(status.nostr_traversal_last_observed_skew_ms, Some(500));
+        assert_eq!(status.last_seen_at, None);
+        assert_eq!(status.transport_addr, None);
+        assert_eq!(status.error.as_deref(), Some("fips link pending"));
+    }
+
+    #[test]
+    fn fragmented_control_frames_reassemble_to_original_frame() {
+        let roster = NetworkRoster {
+            network_name: "Network 1".to_string(),
+            participants: (0..12).map(|value| format!("{value:064x}")).collect(),
+            admins: vec!["f".repeat(64)],
+            aliases: (0..12)
+                .map(|value| (format!("{value:064x}"), format!("node-{value}")))
+                .collect(),
+            signed_at: 123,
+        };
+        let frame = FipsControlFrame::Roster {
+            network_id: "mesh".to_string(),
+            roster,
+            signed_roster: None,
+        };
+        let messages = encode_fips_control_messages(&frame).expect("fragment messages");
+        let mut buffer = ControlFragmentBuffer::default();
+        let mut reassembled = None;
+        let source_key = [7u8; 16];
+
+        for message in messages {
+            let decoded = decode_fips_control_frame(&message)
+                .expect("decode fragment")
+                .expect("fragment frame");
+            let FipsControlFrame::Fragment {
+                id,
+                index,
+                total,
+                data,
+            } = decoded
+            else {
+                panic!("expected fragment");
+            };
+            reassembled = buffer
+                .push(source_key, id, index, total, data, 1)
+                .expect("push fragment")
+                .or(reassembled);
+        }
+
+        let decoded = decode_fips_control_frame(&reassembled.expect("reassembled frame"))
+            .expect("decode reassembled")
+            .expect("control frame");
+        assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn private_mesh_mtu_defaults_to_safe_budget() {
+        let mtu = super::resolve_private_mesh_mtu(None, None, None);
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: nostr_vpn_core::MESH_UNDERLAY_UDP_MTU,
+                tunnel: nostr_vpn_core::MESH_TUNNEL_MTU,
+            }
+        );
+    }
+
+    #[test]
+    fn private_mesh_mtu_lan_profile_uses_larger_paired_budget() {
+        let mtu = super::resolve_private_mesh_mtu(Some(" LAN "), None, None);
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1420,
+                tunnel: 1290,
+            }
+        );
+    }
+
+    #[test]
+    fn private_mesh_mtu_app_profile_uses_same_resolver() {
+        let app = AppConfig {
+            mesh_mtu_profile: " LAN ".to_string(),
+            ..Default::default()
+        };
+        let mtu = super::resolve_private_mesh_mtu_from_sources(Some(&app), None, None, None);
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1420,
+                tunnel: 1290,
+            }
+        );
+    }
+
+    #[test]
+    fn private_mesh_mtu_env_overrides_app_config() {
+        let app = AppConfig {
+            mesh_mtu_profile: "lan".to_string(),
+            mesh_underlay_udp_mtu: 1420,
+            mesh_tunnel_mtu: 1290,
+            ..Default::default()
+        };
+        let mtu = super::resolve_private_mesh_mtu_from_sources(Some(&app), None, Some(1280), None);
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1280,
+                tunnel: 1150,
+            }
+        );
+    }
+
+    #[test]
+    fn private_mesh_mtu_underlay_override_derives_tunnel_budget() {
+        let mtu = super::resolve_private_mesh_mtu(None, Some(1500), None);
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1500,
+                tunnel: 1370,
+            }
+        );
+    }
+
+    #[test]
+    fn private_mesh_mtu_caps_tunnel_to_underlay_budget() {
+        let mtu = super::resolve_private_mesh_mtu(None, Some(1280), Some(1420));
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1280,
+                tunnel: 1150,
+            }
+        );
+    }
+
+    #[test]
+    fn peer_endpoint_hint_addr_accepts_only_udp_socket_addresses() {
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("192.168.50.22:51820")),
+            Some("192.168.50.22:51820".to_string())
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("peer.example.com:51820")),
+            Some("peer.example.com:51820".to_string())
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint {
+                transport: "tcp".to_string(),
+                addr: "192.168.50.22:51820".to_string(),
+            }),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("192.168.50.22")),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("127.0.0.1:51820")),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("100.120.94.10:51820")),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("198.51.100.10:51820")),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("0.0.0.0:51820")),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("localhost:51820")),
+            None
+        );
+        assert_eq!(
+            super::peer_endpoint_hint_addr(&PeerEndpointHint::udp(format!(
+                "{}:51820",
+                "npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+            ))),
+            None
+        );
+    }
+
+    #[test]
+    fn fips_peer_liveness_trusts_authenticated_link_snapshot() {
+        assert_eq!(
+            super::fips_peer_liveness(Some(100), true, None, 120),
+            (true, None)
+        );
+        assert_eq!(
+            super::fips_peer_liveness(None, true, None, 120),
+            (true, None)
+        );
+        assert_eq!(
+            super::fips_peer_liveness(Some(10), true, None, 120),
+            (true, None)
+        );
+        assert_eq!(
+            super::fips_peer_liveness(None, false, Some("dial failed".to_string()), 120),
+            (false, Some("dial failed".to_string()))
+        );
+    }
+
+    #[test]
+    fn fips_peer_liveness_rejects_far_future_presence() {
+        assert_eq!(
+            super::fips_peer_liveness(Some(122), false, None, 120),
+            (true, None)
+        );
+        assert_eq!(
+            super::fips_peer_liveness(Some(180), false, None, 120),
+            (false, Some("fips link pending".to_string()))
+        );
+    }
+
+    #[test]
+    fn fips_peer_ping_due_uses_peer_state_intervals() {
+        assert!(super::fips_peer_ping_due(Some(100), None, true, 120));
+        assert!(!super::fips_peer_ping_due(Some(100), Some(116), true, 120));
+        assert!(super::fips_peer_ping_due(Some(100), Some(115), true, 120));
+
+        assert!(!super::fips_peer_ping_due(None, Some(116), true, 120));
+        assert!(super::fips_peer_ping_due(None, Some(115), true, 120));
+
+        assert!(!super::fips_peer_ping_due(None, Some(91), false, 120));
+        assert!(super::fips_peer_ping_due(None, Some(90), false, 120));
+    }
+
+    #[test]
+    fn fips_peer_ping_due_recovers_from_future_timestamps() {
+        assert_eq!(
+            super::fips_peer_ping_interval_secs(Some(122), false, 120),
+            super::FIPS_PEER_ACTIVE_PING_INTERVAL_SECS
+        );
+        assert_eq!(
+            super::fips_peer_ping_interval_secs(Some(180), false, 120),
+            super::FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS
+        );
+        assert!(!super::fips_peer_ping_due(None, Some(122), false, 120));
+        assert!(super::fips_peer_ping_due(None, Some(180), false, 120));
+    }
+
+    #[test]
+    fn control_frames_from_rostered_endpoint_resolve_to_participant() {
+        let keys = Keys::generate();
+        let participant_pubkey = keys.public_key().to_hex();
+        let endpoint_npub = keys.public_key().to_bech32().expect("npub");
+        let source_peer = PeerIdentity::from_npub(&endpoint_npub).expect("source peer");
+        let mesh = FipsMeshRuntime::new(vec![FipsMeshPeerConfig {
+            participant_pubkey: participant_pubkey.clone(),
+            endpoint_npub: endpoint_npub.clone(),
+            allowed_ips: vec!["10.44.1.2/32".to_string()],
+        }]);
+        let frame = FipsControlFrame::Ping {
+            network_id: "network".to_string(),
+            sent_at: 42,
+        };
+
+        assert_eq!(
+            control_frame_source_pubkey(&mesh, source_peer, &frame),
+            Some(participant_pubkey)
+        );
+    }
+
+    #[test]
+    fn control_frames_from_unknown_endpoints_are_limited_to_join_requests() {
+        let keys = Keys::generate();
+        let unknown_pubkey = keys.public_key().to_hex();
+        let unknown_npub = keys.public_key().to_bech32().expect("npub");
+        let unknown_peer = PeerIdentity::from_npub(&unknown_npub).expect("unknown peer");
+        let mesh = FipsMeshRuntime::new(Vec::new());
+        let ping = FipsControlFrame::Ping {
+            network_id: "network".to_string(),
+            sent_at: 42,
+        };
+        let roster = FipsControlFrame::Roster {
+            network_id: "network".to_string(),
+            roster: NetworkRoster {
+                network_name: "network".to_string(),
+                participants: Vec::new(),
+                admins: Vec::new(),
+                aliases: HashMap::new(),
+                signed_at: 42,
+            },
+            signed_roster: None,
+        };
+        let join_request = FipsControlFrame::JoinRequest {
+            requested_at: 42,
+            request: MeshJoinRequest {
+                network_id: "network".to_string(),
+                invite_secret: String::new(),
+                requester_node_name: "new-device".to_string(),
+            },
+        };
+
+        assert!(control_frame_source_pubkey(&mesh, unknown_peer, &ping).is_none());
+        assert!(control_frame_source_pubkey(&mesh, unknown_peer, &roster).is_none());
+        assert_eq!(
+            control_frame_source_pubkey(&mesh, unknown_peer, &join_request),
+            Some(unknown_pubkey)
+        );
+    }
+
+    #[test]
+    fn control_frame_destinations_can_target_pending_join_requester() {
+        let keys = Keys::generate();
+        let requester_pubkey = keys.public_key().to_hex();
+        let requester_npub = keys.public_key().to_bech32().expect("npub");
+        let mesh = FipsMeshRuntime::new(Vec::new());
+
+        let identities = FipsPeerIdentityMap::default();
+        let destination = control_frame_destination_peer(&mesh, &identities, &requester_pubkey)
+            .expect("destination identity");
+
+        assert_eq!(destination.npub(), requester_npub);
+    }
+
+    #[test]
+    fn control_frame_destinations_use_configured_endpoint_identity() {
+        let participant_pubkey = Keys::generate().public_key().to_hex();
+        let endpoint_npub = Keys::generate().public_key().to_bech32().expect("npub");
+        let endpoint_identity = PeerIdentity::from_npub(&endpoint_npub).expect("peer identity");
+        let endpoint_node_addr = *endpoint_identity.node_addr().as_bytes();
+        let mesh = FipsMeshRuntime::new(vec![FipsMeshPeerConfig {
+            participant_pubkey: participant_pubkey.clone(),
+            endpoint_npub: endpoint_npub.clone(),
+            allowed_ips: Vec::new(),
+        }]);
+        let mut identities = FipsPeerIdentityMap::default();
+        identities
+            .by_endpoint_node_addr
+            .insert(endpoint_node_addr, endpoint_identity);
+
+        let destination = control_frame_destination_peer(&mesh, &identities, &participant_pubkey)
+            .expect("destination identity");
+
+        assert_eq!(destination.npub(), endpoint_npub);
+    }
+
+    #[tokio::test]
+    async fn endpoint_data_runtime_sends_and_receives_raw_packets() {
+        let keys = Keys::generate();
+        let nsec = keys.secret_key().to_bech32().expect("nsec");
+        let participant_pubkey = keys.public_key().to_hex();
+        let source = Ipv4Addr::new(10, 44, 10, 1);
+        let destination = Ipv4Addr::new(10, 44, 22, 44);
+
+        // The FIPS endpoint self-loop is used only to exercise send/recv
+        // without external discovery. Real peers should not own both routes.
+        let peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &participant_pubkey,
+            vec![format!("{source}/32"), format!("{destination}/32")],
+        )
+        .expect("peer config");
+        let runtime = FipsPrivateMeshRuntime::bind(nsec, "test-network", vec![peer])
+            .await
+            .expect("runtime should bind");
+        let packet = ipv4_packet(source, destination);
+
+        let sent = runtime
+            .send_tunnel_packet(&packet)
+            .await
+            .expect("send packet");
+        assert!(sent);
+
+        let received = tokio::time::timeout(Duration::from_secs(2), runtime.recv_tunnel_packet())
+            .await
+            .expect("packet should arrive")
+            .expect("receive packet")
+            .expect("packet should pass admission");
+
+        assert_eq!(received, packet);
+        assert_peer_data_activity(&runtime, &participant_pubkey, packet.len() as u64);
+        runtime.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn endpoint_data_runtime_sends_and_receives_raw_packet_batch() {
+        let keys = Keys::generate();
+        let nsec = keys.secret_key().to_bech32().expect("nsec");
+        let participant_pubkey = keys.public_key().to_hex();
+        let source = Ipv4Addr::new(10, 44, 10, 1);
+        let destination = Ipv4Addr::new(10, 44, 22, 44);
+
+        let peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &participant_pubkey,
+            vec![format!("{source}/32"), format!("{destination}/32")],
+        )
+        .expect("peer config");
+        let runtime = FipsPrivateMeshRuntime::bind(nsec, "test-network", vec![peer])
+            .await
+            .expect("runtime should bind");
+        let first = ipv4_packet(source, destination);
+        let second = ipv4_packet(source, destination);
+        let expected_endpoint_data_bytes = (first.len() + second.len()) as u64;
+
+        let sent = runtime
+            .send_tunnel_packet_batch_owned(vec![first.clone(), second.clone()])
+            .await
+            .expect("send packet batch");
+        assert_eq!(sent, 2);
+
+        let events = tokio::time::timeout(Duration::from_secs(2), runtime.recv_mesh_event_batch(4))
+            .await
+            .expect("packet batch should arrive")
+            .expect("receive packet batch")
+            .expect("batch should contain admitted packets");
+        assert_eq!(events.len(), 2);
+
+        let mut packets = events.into_iter().map(|event| match event {
+            FipsPrivateMeshEvent::Packet(packet) => packet,
+            event => panic!("expected packet event, got {event:?}"),
+        });
+        assert_eq!(packets.next(), Some(first));
+        assert_eq!(packets.next(), Some(second));
+        assert_peer_data_activity(&runtime, &participant_pubkey, expected_endpoint_data_bytes);
+        runtime.shutdown().await.expect("shutdown");
+    }
+    #[tokio::test]
+    async fn endpoint_data_runtime_sends_tun_pipeline_batch_without_repacking() {
+        let keys = Keys::generate();
+        let nsec = keys.secret_key().to_bech32().expect("nsec");
+        let participant_pubkey = keys.public_key().to_hex();
+        let source = Ipv4Addr::new(10, 44, 10, 1);
+        let destination = Ipv4Addr::new(10, 44, 22, 44);
+
+        let peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &participant_pubkey,
+            vec![format!("{source}/32"), format!("{destination}/32")],
+        )
+        .expect("peer config");
+        let runtime = FipsPrivateMeshRuntime::bind(nsec, "test-network", vec![peer])
+            .await
+            .expect("runtime should bind");
+        let mut first = ipv4_packet(source, destination);
+        let mut second = ipv4_packet(source, destination);
+        first[20] = 1;
+        second[20] = 2;
+        let expected_endpoint_data_bytes = (first.len() + second.len()) as u64;
+
+        let mut batch = Vec::with_capacity(4);
+        let batch_capacity = batch.capacity();
+        batch.push(TunPipelinePacket::new(first.clone()));
+        batch.push(TunPipelinePacket::new(second.clone()));
+
+        let sent = runtime
+            .send_tun_pipeline_packet_batch(&mut batch)
+            .await
+            .expect("send TUN pipeline packet batch");
+        assert_eq!(sent, 2);
+        assert!(batch.is_empty());
+        assert_eq!(batch.capacity(), batch_capacity);
+
+        let events = tokio::time::timeout(Duration::from_secs(2), runtime.recv_mesh_event_batch(4))
+            .await
+            .expect("packet batch should arrive")
+            .expect("receive packet batch")
+            .expect("batch should contain admitted packets");
+        assert_eq!(events.len(), 2);
+
+        let packets: Vec<_> = events
+            .into_iter()
+            .map(|event| match event {
+                FipsPrivateMeshEvent::Packet(packet) => packet,
+                event => panic!("expected packet event, got {event:?}"),
+            })
+            .collect();
+        assert_eq!(packets, vec![first, second]);
+        assert_peer_data_activity(&runtime, &participant_pubkey, expected_endpoint_data_bytes);
+        runtime.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test]
+    async fn endpoint_data_runtime_recv_batch_into_reuses_buffers_and_respects_limit() {
+        let keys = Keys::generate();
+        let nsec = keys.secret_key().to_bech32().expect("nsec");
+        let participant_pubkey = keys.public_key().to_hex();
+        let source = Ipv4Addr::new(10, 44, 10, 1);
+        let destination = Ipv4Addr::new(10, 44, 22, 44);
+
+        let peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &participant_pubkey,
+            vec![format!("{source}/32"), format!("{destination}/32")],
+        )
+        .expect("peer config");
+        let runtime = FipsPrivateMeshRuntime::bind(nsec, "test-network", vec![peer])
+            .await
+            .expect("runtime should bind");
+        let mut first = ipv4_packet(source, destination);
+        let mut second = ipv4_packet(source, destination);
+        let mut third = ipv4_packet(source, destination);
+        first[20] = 1;
+        second[20] = 2;
+        third[20] = 3;
+
+        let sent = runtime
+            .send_tunnel_packet_batch_owned(vec![first.clone(), second.clone(), third.clone()])
+            .await
+            .expect("send packet batch");
+        assert_eq!(sent, 3);
+
+        let mut messages = Vec::with_capacity(8);
+        let mut events = Vec::with_capacity(8);
+        let message_capacity = messages.capacity();
+        let event_capacity = events.capacity();
+
+        let received = tokio::time::timeout(
+            Duration::from_secs(2),
+            runtime.recv_mesh_event_batch_into(&mut messages, &mut events, 2),
+        )
+        .await
+        .expect("packet batch should arrive")
+        .expect("receive packet batch")
+        .expect("batch should contain admitted packets");
+        assert_eq!(received, 2);
+        assert!(messages.is_empty());
+        assert_eq!(messages.capacity(), message_capacity);
+        assert_eq!(events.capacity(), event_capacity);
+
+        let packets: Vec<_> = events
+            .drain(..)
+            .map(|event| match event {
+                FipsPrivateMeshEvent::Packet(packet) => packet,
+                event => panic!("expected packet event, got {event:?}"),
+            })
+            .collect();
+        assert_eq!(packets, vec![first, second]);
+
+        let received = tokio::time::timeout(
+            Duration::from_secs(2),
+            runtime.recv_mesh_event_batch_into(&mut messages, &mut events, 8),
+        )
+        .await
+        .expect("packet batch should arrive")
+        .expect("receive packet batch")
+        .expect("batch should contain admitted packets");
+        assert_eq!(received, 1);
+        assert!(messages.is_empty());
+        assert_eq!(messages.capacity(), message_capacity);
+        assert_eq!(events.capacity(), event_capacity);
+
+        let packets: Vec<_> = events
+            .drain(..)
+            .map(|event| match event {
+                FipsPrivateMeshEvent::Packet(packet) => packet,
+                event => panic!("expected packet event, got {event:?}"),
+            })
+            .collect();
+        assert_eq!(packets, vec![third]);
+        runtime.shutdown().await.expect("shutdown");
+    }
+    #[tokio::test]
+    async fn endpoint_data_runtime_blocking_recv_batch_into_reuses_event_buffer_and_respects_limit()
+    {
+        let keys = Keys::generate();
+        let nsec = keys.secret_key().to_bech32().expect("nsec");
+        let participant_pubkey = keys.public_key().to_hex();
+        let source = Ipv4Addr::new(10, 44, 10, 1);
+        let destination = Ipv4Addr::new(10, 44, 22, 44);
+
+        let peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &participant_pubkey,
+            vec![format!("{source}/32"), format!("{destination}/32")],
+        )
+        .expect("peer config");
+        let runtime = FipsPrivateMeshRuntime::bind(nsec, "test-network", vec![peer])
+            .await
+            .expect("runtime should bind");
+        let mut first = ipv4_packet(source, destination);
+        let mut second = ipv4_packet(source, destination);
+        let mut third = ipv4_packet(source, destination);
+        first[20] = 1;
+        second[20] = 2;
+        third[20] = 3;
+
+        let sent = runtime
+            .send_tunnel_packet_batch_owned(vec![first.clone(), second.clone(), third.clone()])
+            .await
+            .expect("send packet batch");
+        assert_eq!(sent, 3);
+
+        let (runtime, event_capacity) =
+            tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+                let stop = AtomicBool::new(false);
+                let mut events = Vec::with_capacity(8);
+                let event_capacity = events.capacity();
+
+                let received = runtime
+                    .recv_mesh_event_batch_blocking_into(&mut events, 2, &stop)?
+                    .expect("batch should contain admitted packets");
+                assert_eq!(received, 2);
+                assert_eq!(events.capacity(), event_capacity);
+
+                let packets: Vec<_> = events
+                    .drain(..)
+                    .map(|event| match event {
+                        FipsPrivateMeshEvent::Packet(packet) => packet,
+                        event => panic!("expected packet event, got {event:?}"),
+                    })
+                    .collect();
+                assert_eq!(packets, vec![first, second]);
+
+                let received = runtime
+                    .recv_mesh_event_batch_blocking_into(&mut events, 8, &stop)?
+                    .expect("batch should contain admitted packets");
+                assert_eq!(received, 1);
+                assert_eq!(events.capacity(), event_capacity);
+
+                let packets: Vec<_> = events
+                    .drain(..)
+                    .map(|event| match event {
+                        FipsPrivateMeshEvent::Packet(packet) => packet,
+                        event => panic!("expected packet event, got {event:?}"),
+                    })
+                    .collect();
+                assert_eq!(packets, vec![third]);
+
+                Ok((runtime, event_capacity))
+            })
+            .await
+            .expect("blocking receiver should join")
+            .expect("blocking batch receive should succeed");
+        assert_eq!(event_capacity, 8);
+
+        runtime.shutdown().await.expect("shutdown");
+    }

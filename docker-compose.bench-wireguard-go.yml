@@ -1,0 +1,40 @@
+# Bench-only: two containers running upstream wireguard-go as a userspace
+# WireGuard reference. Same network shape and IP ranges as the BoringTun bench.
+
+services:
+  node-a:
+    build:
+      context: .
+      dockerfile: Dockerfile.bench-wireguard-go
+      additional_contexts:
+        wireguard_go: ${NVPN_WIREGUARD_GO_REPO_PATH:-../wireguard-go}
+    entrypoint: ["sleep", "infinity"]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      e2e:
+        ipv4_address: 10.203.0.10
+
+  node-b:
+    build:
+      context: .
+      dockerfile: Dockerfile.bench-wireguard-go
+      additional_contexts:
+        wireguard_go: ${NVPN_WIREGUARD_GO_REPO_PATH:-../wireguard-go}
+    entrypoint: ["sleep", "infinity"]
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      e2e:
+        ipv4_address: 10.203.0.11
+
+networks:
+  e2e:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.203.0.0/24

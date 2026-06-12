@@ -1075,6 +1075,15 @@ private struct DeviceDetailSheet: View {
                         labelValueRow("Tunnel IP", participant.tunnelIp, copyable: true)
                     }
                     labelValueRow("FIPS path", fipsPath(participant, state: model.state))
+                    if participant.fipsSrttAgeMs > 0 {
+                        labelValueRow("Latency age", formatDurationMs(participant.fipsSrttAgeMs))
+                    }
+                    if !participant.lastFipsControlSeenText.isEmpty {
+                        labelValueRow("Control seen", participant.lastFipsControlSeenText)
+                    }
+                    if !participant.lastFipsDataSeenText.isEmpty {
+                        labelValueRow("Data seen", participant.lastFipsDataSeenText)
+                    }
                     if !participant.fipsTransportAddr.isEmpty {
                         labelValueRow("Endpoint", participant.fipsTransportAddr)
                     }
@@ -2069,6 +2078,16 @@ private func fipsPath(_ participant: ParticipantState, state: AppState) -> Strin
         return "Connecting"
     }
     return "Offline"
+}
+
+private func formatDurationMs(_ ms: UInt64) -> String {
+    if ms == 0 { return "-" }
+    if ms < 1_000 { return "\(ms) ms" }
+    let seconds = ms / 1_000
+    if seconds < 60 { return "\(seconds)s" }
+    let minutes = seconds / 60
+    if minutes < 60 { return "\(minutes)m" }
+    return "\(minutes / 60)h"
 }
 
 private func connectivityTint(_ participant: ParticipantState, state: AppState) -> Color {

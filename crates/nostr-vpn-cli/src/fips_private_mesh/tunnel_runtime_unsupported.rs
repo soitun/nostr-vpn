@@ -1,0 +1,112 @@
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+pub(crate) struct FipsPrivateTunnelRuntime;
+
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+impl FipsPrivateTunnelRuntime {
+    pub(crate) async fn start(_config: FipsPrivateTunnelConfig) -> Result<Self> {
+        Err(anyhow!(
+            "FIPS private tunnel runtime is not implemented for this platform"
+        ))
+    }
+
+    pub(crate) fn iface(&self) -> &str {
+        ""
+    }
+
+    pub(crate) fn peer_statuses(&self) -> Vec<MeshPeerStatus> {
+        Vec::new()
+    }
+
+    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
+        Ok(Vec::new())
+    }
+
+    pub(crate) fn peer_pubkeys(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
+
+    pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
+        Vec::new()
+    }
+
+    pub(crate) async fn update_peers(
+        &self,
+        _endpoint_peers: &[FipsEndpointPeerTransportConfig],
+    ) -> Result<fips_endpoint::UpdatePeersOutcome> {
+        Ok(fips_endpoint::UpdatePeersOutcome::default())
+    }
+
+    pub(crate) async fn update_relays(&self, _relays: &[String]) -> Result<()> {
+        Ok(())
+    }
+
+    pub(crate) fn requires_endpoint_restart(&self, _config: &FipsPrivateTunnelConfig) -> bool {
+        false
+    }
+
+    pub(crate) async fn apply_config(&self, _config: FipsPrivateTunnelConfig) -> Result<()> {
+        Ok(())
+    }
+
+    pub(crate) async fn refresh_peer_dependent_routes(&self) -> Result<()> {
+        Ok(())
+    }
+
+    pub(crate) async fn ping_peers(&self, _network_id: &str, _now: u64) -> Result<usize> {
+        Ok(0)
+    }
+
+    pub(crate) async fn refresh_link_statuses(&self) -> Result<()> {
+        Ok(())
+    }
+
+    pub(crate) async fn send_join_request(
+        &self,
+        _participant: &str,
+        _requested_at: u64,
+        _request: MeshJoinRequest,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    pub(crate) async fn send_roster(
+        &self,
+        _participant: &str,
+        _signed_roster: SignedRoster,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    pub(crate) async fn send_capabilities(
+        &self,
+        _participant: &str,
+        _network_id: &str,
+        _capabilities: PeerCapabilities,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    pub(crate) async fn broadcast_capabilities(
+        &self,
+        _network_id: &str,
+        _capabilities: PeerCapabilities,
+    ) -> Result<usize> {
+        Ok(0)
+    }
+
+    pub(crate) fn peer_advertised_routes(&self, _participant: &str) -> Vec<String> {
+        Vec::new()
+    }
+
+    pub(crate) fn drain_events(&mut self) -> Vec<FipsPrivateMeshEvent> {
+        Vec::new()
+    }
+
+    pub(crate) async fn stop(self) -> Result<()> {
+        Ok(())
+    }
+}
