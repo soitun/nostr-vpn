@@ -245,7 +245,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     iface: String,
     mesh: Arc<FipsPrivateMeshRuntime>,
     config: FipsPrivateTunnelConfig,
-    _tun: Arc<TunSocket>,
+    _tun: Arc<SystemTun>,
     tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
     fips_host: Option<crate::fips_host_tunnel::FipsHostTunnelRuntime>,
     tun_read_task: JoinHandle<()>,

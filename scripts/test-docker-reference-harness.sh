@@ -211,6 +211,22 @@ EOF
   rm -rf "$dir"
 }
 
+test_nvpn_tun_write_summary_prefers_coalesced_frame_interval() {
+  local dir lines summary
+  dir="$(mktemp -d)"
+  lines="$dir/nvpn-pipe.txt"
+  cat >"$lines" <<'EOF'
+[nvpn-pipe 1s] nvpn_tun_write_packets=1000/s total=1000 nvpn_tun_write_packet_bytes=1150000/s total=1150000 nvpn_tun_write_frames=1000/s total=1000 nvpn_tun_write_frame_bytes=1160000/s total=1160000
+[nvpn-pipe 1s] nvpn_tun_write_packets=330000/s total=331000 nvpn_tun_write_packet_bytes=379500000/s total=380650000 nvpn_tun_write_frames=10000/s total=11000 nvpn_tun_write_frame_bytes=380000000/s total=381160000
+[nvpn-pipe 1s] nvpn_tun_write_packets=90000/s total=421000 nvpn_tun_write_packet_bytes=4680000/s total=385330000 nvpn_tun_write_frames=90000/s total=101000 nvpn_tun_write_frame_bytes=5580000/s total=386740000
+EOF
+
+  summary="$(docker_bench_pipeline_nvpn_tun_write_summary_from_stdin <"$lines")"
+  assert_eq "$summary" "packets_per_sec=330000,bytes_per_sec=3.795e+08,avg_packet_bytes=1150.0,frames_per_sec=10000,avg_packets_per_frame=33.0,avg_frame_bytes=38000.0,would_block_per_sec=0" "nvpn TUN write coalesced interval summary"
+
+  rm -rf "$dir"
+}
+
 write_summary_fixture() {
   local path="$1"
   local backend="$2"
@@ -450,6 +466,7 @@ test_summary_row
 test_metadata_writer_records_cpu_stress
 test_metadata_writer_records_pipeline_trace
 test_pipeline_summary_helpers
+test_nvpn_tun_write_summary_prefers_coalesced_frame_interval
 test_docker_comparison_outputs
 test_docker_comparison_relaxes_udp_bulk_loss_under_cpu_stress
 test_docker_comparison_selects_wireguard_go_reference

@@ -35,7 +35,7 @@ impl FipsPrivateTunnelRuntime {
             .await?,
         );
         let tun = Arc::new(
-            TunSocket::new(&config.iface)
+            SystemTun::new(&config.iface)
                 .with_context(|| fips_tun_create_context(&config.iface))?
                 .set_non_blocking()
                 .context("failed to set FIPS tunnel nonblocking")?,
@@ -43,7 +43,7 @@ impl FipsPrivateTunnelRuntime {
         let iface = tun.name().context("failed to read FIPS tunnel name")?;
         let tun_fd = Arc::new(
             AsyncFd::with_interest(
-                BorrowedTunFd(tun.as_raw_fd()),
+                BorrowedTunFd::new(tun.as_raw_fd(), tun.vnet_hdr()),
                 Interest::READABLE | Interest::WRITABLE,
             )
             .context("failed to register FIPS tunnel fd with reactor")?,

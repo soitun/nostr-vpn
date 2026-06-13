@@ -6,7 +6,7 @@ use std::sync::atomic::{
 use std::time::Instant;
 
 const N_STAGES: usize = 4;
-const N_COUNTERS: usize = 15;
+const N_COUNTERS: usize = 17;
 const HIST_BUCKETS: usize = 48;
 
 #[derive(Copy, Clone)]
@@ -47,6 +47,8 @@ pub(crate) enum Counter {
     TunWritePackets = 12,
     TunWritePacketBytes = 13,
     TunWriteWouldBlock = 14,
+    TunWriteFrames = 15,
+    TunWriteFrameBytes = 16,
 }
 
 impl Counter {
@@ -67,6 +69,8 @@ impl Counter {
             Counter::TunWritePackets => "nvpn_tun_write_packets",
             Counter::TunWritePacketBytes => "nvpn_tun_write_packet_bytes",
             Counter::TunWriteWouldBlock => "nvpn_tun_write_would_block",
+            Counter::TunWriteFrames => "nvpn_tun_write_frames",
+            Counter::TunWriteFrameBytes => "nvpn_tun_write_frame_bytes",
         }
     }
 }
@@ -88,6 +92,8 @@ fn counter_from_index(idx: usize) -> Counter {
         12 => Counter::TunWritePackets,
         13 => Counter::TunWritePacketBytes,
         14 => Counter::TunWriteWouldBlock,
+        15 => Counter::TunWriteFrames,
+        16 => Counter::TunWriteFrameBytes,
         _ => unreachable!(),
     }
 }
@@ -189,11 +195,23 @@ pub(crate) fn record_mesh_recv_batch(
 }
 
 pub(crate) fn record_tun_write_packet(bytes: usize) {
+    record_tun_write_packets(1, bytes);
+}
+
+pub(crate) fn record_tun_write_packets(packets: usize, bytes: usize) {
+    if packets == 0 || !enabled() {
+        return;
+    }
+    increment_counter_by(Counter::TunWritePackets, packets as u64);
+    increment_counter_by(Counter::TunWritePacketBytes, bytes as u64);
+}
+
+pub(crate) fn record_tun_write_frame(bytes: usize) {
     if bytes == 0 || !enabled() {
         return;
     }
-    increment_counter_by(Counter::TunWritePackets, 1);
-    increment_counter_by(Counter::TunWritePacketBytes, bytes as u64);
+    increment_counter_by(Counter::TunWriteFrames, 1);
+    increment_counter_by(Counter::TunWriteFrameBytes, bytes as u64);
 }
 
 pub(crate) fn record_tun_write_would_block() {

@@ -141,7 +141,7 @@ capture_pipeline_for_service() {
   udp_send_batch="$(docker_bench_pipeline_udp_send_batch_summary "$load_line")"
   nvpn_tun_read_batch="$(docker_bench_pipeline_nvpn_tun_read_batch_summary "$load_line")"
   nvpn_mesh_recv_batch="$(docker_bench_pipeline_nvpn_mesh_recv_batch_summary "$load_line")"
-  nvpn_tun_write="$(docker_bench_pipeline_nvpn_tun_write_summary "$load_line")"
+  nvpn_tun_write="$(docker_bench_pipeline_nvpn_tun_write_summary_from_stdin <"$bench_lines_path")"
   hard_events="$(docker_bench_pipeline_hard_event_summary_from_stdin "$start_line" <"$all_lines_path")"
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \

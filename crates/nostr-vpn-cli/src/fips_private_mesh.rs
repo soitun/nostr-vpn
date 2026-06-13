@@ -102,7 +102,7 @@ fn fips_lan_discovery_scope(network_id: &str) -> String {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use boringtun::device::{Error as TunError, tun::TunSocket};
+use boringtun::device::tun::TunSocket;
 #[cfg(target_os = "windows")]
 use nostr_vpn_wintun::load_wintun;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -139,6 +139,8 @@ include!("fips_private_mesh/endpoint_config.rs");
 include!("fips_private_mesh/tunnel_config.rs");
 include!("fips_private_mesh/tunnel_runtime_unix_core.rs");
 include!("fips_private_mesh/tunnel_runtime_linux.rs");
+#[cfg(target_os = "linux")]
+include!("fips_private_mesh/linux_vnet_tun.rs");
 include!("fips_private_mesh/unix_tun.rs");
 include!("fips_private_mesh/tunnel_runtime_windows.rs");
 include!("fips_private_mesh/windows_tun.rs");

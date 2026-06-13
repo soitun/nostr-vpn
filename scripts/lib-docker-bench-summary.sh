@@ -701,7 +701,11 @@ docker_bench_pipeline_nvpn_mesh_recv_batch_summary() {
 
 docker_bench_pipeline_nvpn_tun_write_summary() {
   local line="$1"
-  printf '%s\n' "$line" | awk '
+  printf '%s\n' "$line" | docker_bench_pipeline_nvpn_tun_write_summary_from_stdin
+}
+
+docker_bench_pipeline_nvpn_tun_write_summary_from_stdin() {
+  awk '
     function parse_rate(line, metric, start, rest, parts, value) {
       start = index(line, metric "=")
       if (start == 0) {
@@ -713,16 +717,41 @@ docker_bench_pipeline_nvpn_tun_write_summary() {
       sub(/\/s$/, "", value)
       return value + 0
     }
-    {
-      packets = parse_rate($0, "nvpn_tun_write_packets")
-      bytes = parse_rate($0, "nvpn_tun_write_packet_bytes")
-      would_block = parse_rate($0, "nvpn_tun_write_would_block")
-      if (packets <= 0 && bytes <= 0 && would_block <= 0) {
-        next
+    function consider(line, packets, bytes, would_block, frames, frame_bytes, ratio, score) {
+      packets = parse_rate(line, "nvpn_tun_write_packets")
+      bytes = parse_rate(line, "nvpn_tun_write_packet_bytes")
+      would_block = parse_rate(line, "nvpn_tun_write_would_block")
+      frames = parse_rate(line, "nvpn_tun_write_frames")
+      frame_bytes = parse_rate(line, "nvpn_tun_write_frame_bytes")
+      if (would_block < 0) would_block = 0
+      if (frames < 0) frames = 0
+      if (frame_bytes < 0) frame_bytes = 0
+      if (packets <= 0 && bytes <= 0 && would_block <= 0 && frames <= 0 && frame_bytes <= 0) {
+        return
       }
       avg_bytes = packets > 0 ? bytes / packets : 0
-      printf "packets_per_sec=%g,bytes_per_sec=%g,avg_packet_bytes=%.1f,would_block_per_sec=%g\n", packets, bytes, avg_bytes, would_block
-      exit
+      avg_packets_per_frame = frames > 0 ? packets / frames : 0
+      avg_frame_bytes = frames > 0 ? frame_bytes / frames : 0
+      ratio = frames > 0 ? packets / frames : 0
+      score = ratio > 0 ? ratio : packets
+      if (best == "" || score > best_score || (score == best_score && packets > best_packets)) {
+        best_score = score
+        best_packets = packets
+        summary = sprintf("packets_per_sec=%g,bytes_per_sec=%g,avg_packet_bytes=%.1f", packets, bytes, avg_bytes)
+        if (frames > 0 || frame_bytes > 0) {
+          summary = summary sprintf(",frames_per_sec=%g,avg_packets_per_frame=%.1f,avg_frame_bytes=%.1f", frames, avg_packets_per_frame, avg_frame_bytes)
+        }
+        summary = summary sprintf(",would_block_per_sec=%g", would_block)
+        best = summary
+      }
+    }
+    {
+      consider($0)
+    }
+    END {
+      if (best != "") {
+        print best
+      }
     }
   '
 }
