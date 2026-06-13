@@ -188,6 +188,23 @@ test_metadata_writer_records_iperf_interval() {
   rm -rf "$dir"
 }
 
+test_metadata_writer_records_iperf_timeout() {
+  local dir metadata
+  dir="$(mktemp -d)"
+  OUTPUT_DIR="$dir/out"
+  metadata="$OUTPUT_DIR/metadata.json"
+  mkdir -p "$OUTPUT_DIR"
+
+  (
+    export NVPN_DOCKER_IPERF_TIMEOUT_SECS=11
+    docker_bench_write_metadata nvpn 3
+  )
+
+  assert_eq "$(jq -r '.iperf.timeout_secs' "$metadata")" "11" "metadata iperf timeout"
+
+  rm -rf "$dir"
+}
+
 test_metadata_writer_records_run_provenance() {
   local dir metadata
   dir="$(mktemp -d)"
@@ -533,6 +550,7 @@ test_summary_row
 test_metadata_writer_records_cpu_stress
 test_metadata_writer_records_pipeline_trace
 test_metadata_writer_records_iperf_interval
+test_metadata_writer_records_iperf_timeout
 test_metadata_writer_records_run_provenance
 test_pipeline_summary_helpers
 test_nvpn_tun_write_summary_prefers_coalesced_frame_interval

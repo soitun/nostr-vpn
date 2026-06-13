@@ -154,6 +154,7 @@ docker_bench_write_metadata() {
   local pipeline_trace_enabled=0
   local pipeline_trace_interval_secs=""
   local iperf_interval_secs="${NVPN_DOCKER_IPERF_INTERVAL_SECS:-0}"
+  local iperf_timeout_secs="${NVPN_DOCKER_IPERF_TIMEOUT_SECS:-}"
   local patch_local_fips_enabled=0
   local nvpn_git_head=""
   local nvpn_git_dirty=""
@@ -194,6 +195,7 @@ docker_bench_write_metadata() {
     --arg pipeline_trace_enabled "$pipeline_trace_enabled" \
     --arg pipeline_trace_interval_secs "$pipeline_trace_interval_secs" \
     --arg iperf_interval_secs "$iperf_interval_secs" \
+    --arg iperf_timeout_secs "$iperf_timeout_secs" \
     --arg extra_connect_env "${NVPN_DOCKER_EXTRA_ENV:-}" \
     --arg patch_local_fips_enabled "$patch_local_fips_enabled" \
     --arg nvpn_git_head "$nvpn_git_head" \
@@ -228,7 +230,12 @@ docker_bench_write_metadata() {
         )
       },
       iperf: {
-        interval_secs: ($iperf_interval_secs | tonumber)
+        interval_secs: ($iperf_interval_secs | tonumber),
+        timeout_secs: (
+          if $iperf_timeout_secs == "" then null
+          else ($iperf_timeout_secs | tonumber)
+          end
+        )
       },
       source: {
         nvpn: {

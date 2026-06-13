@@ -31,6 +31,8 @@ COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.bench-bo
 
 DURATION="${DURATION:-10}"
 IPERF_INTERVAL_SECS="${NVPN_DOCKER_IPERF_INTERVAL_SECS:-0}"
+IPERF_TIMEOUT_SECS="${NVPN_DOCKER_IPERF_TIMEOUT_SECS:-$((DURATION + 30))}"
+NVPN_DOCKER_IPERF_TIMEOUT_SECS="$IPERF_TIMEOUT_SECS"
 SKIP_BUILD="${NVPN_DOCKER_SKIP_BUILD:-0}"
 OUTPUT_DIR="${NVPN_BORINGTUN_DOCKER_OUTPUT_DIR:-$ROOT_DIR/artifacts/boringtun-docker/$(date -u +%Y%m%dT%H%M%SZ)}"
 RAW_DIR="$OUTPUT_DIR/raw"
@@ -138,8 +140,12 @@ run_test_json() {
   shift 2
   printf '## %s\n' "$label"
   local err_path="$json_path.stderr"
-  if ! "${COMPOSE[@]}" exec -T node-a iperf3 -c "$BOB_TUN" -t "$DURATION" -i "$IPERF_INTERVAL_SECS" -f m \
-    --connect-timeout 3000 --json "$@" >"$json_path" 2>"$err_path"; then
+  local iperf_cmd=(
+    timeout --kill-after=5s "$IPERF_TIMEOUT_SECS"
+    iperf3 -c "$BOB_TUN" -t "$DURATION" -i "$IPERF_INTERVAL_SECS" -f m
+    --connect-timeout 3000 --json "$@"
+  )
+  if ! "${COMPOSE[@]}" exec -T node-a "${iperf_cmd[@]}" >"$json_path" 2>"$err_path"; then
     cat "$err_path" >&2
     cat "$json_path" >&2
     return 1
