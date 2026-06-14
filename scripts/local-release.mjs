@@ -394,17 +394,10 @@ function syncRepoToWindowsHost({ host, guestRepo, dryRun }) {
 function pullFileFromWindowsHost({ host, remotePath, localParent, name, dryRun }) {
   const remoteFile = `${remotePath.replace(/\\/g, '/')}/${name}`
   const dest = join(localParent, name)
-  const script = `[Console]::Out.Write([Convert]::ToBase64String([IO.File]::ReadAllBytes(${psQuote(remoteFile)})))`
-  const encoded = encodePowerShellScript(script)
-  const base64 = run(
-    'ssh',
-    [host, 'powershell.exe', '-NoProfile', '-EncodedCommand', encoded],
-    { capture: true, dryRun },
-  )
   if (!dryRun) {
     mkdirSync(localParent, { recursive: true })
-    writeFileSync(dest, Buffer.from(base64.trim(), 'base64'))
   }
+  run('scp', [`${host}:${remoteFile}`, dest], { dryRun })
 }
 
 function buildWindowsArtifacts({ env, tag, dryRun, builtLines }) {

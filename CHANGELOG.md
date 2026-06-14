@@ -2,6 +2,20 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.74 - 2026-06-14
+
+### Changed
+
+- Unix FIPS TUN-to-mesh queuing now defaults to a larger bounded bulk budget
+  and exposes an explicit environment override for controlled A/B trials.
+- FIPS now uses `fips-core` 0.3.58 and `fips-endpoint` 0.3.33.
+
+### Fixed
+
+- macOS FIPS bulk TUN traffic is coalesced briefly before mesh send while
+  keeping liveness/control packets priority-biased, improving sustained
+  private-mesh throughput without delaying priority traffic.
+
 ## 4.0.73 - 2026-06-12
 
 ### Changed

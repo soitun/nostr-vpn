@@ -100,6 +100,11 @@ build_rust_target() {
   fi
 
   prepare_cargo_config
+  local cargo_cmd=(cargo)
+  if [[ ${#cargo_config_args[@]} -gt 0 ]]; then
+    cargo_cmd+=("${cargo_config_args[@]}")
+  fi
+  cargo_cmd+=("${cargo_args[@]}")
 
   env \
     SDKROOT="$sdkroot" \
@@ -111,7 +116,7 @@ build_rust_target() {
     CARGO_TARGET_AARCH64_APPLE_IOS_LINKER="$toolchain_bin/clang" \
     CARGO_TARGET_AARCH64_APPLE_IOS_SIM_LINKER="$toolchain_bin/clang" \
     RUSTFLAGS="-C linker=$toolchain_bin/clang -C link-arg=-target -C link-arg=$clang_target -C link-arg=$min_flag=$MIN_VERSION" \
-    cargo "${cargo_config_args[@]}" "${cargo_args[@]}"
+    "${cargo_cmd[@]}"
 }
 
 build_rust() {
