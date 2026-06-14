@@ -613,7 +613,6 @@ async fn broadcast_local_fips_capabilities(
             } else {
                 Vec::new()
             },
-            direct_fmp_endpoint_data: true,
             signed_at,
         };
         if runtime

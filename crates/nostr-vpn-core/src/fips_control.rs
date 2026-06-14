@@ -240,14 +240,8 @@ pub struct PeerCapabilities {
     pub advertised_routes: Vec<String>,
     #[serde(default)]
     pub endpoint_hints: Vec<PeerEndpointHint>,
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub direct_fmp_endpoint_data: bool,
     #[serde(default)]
     pub signed_at: u64,
-}
-
-fn is_false(value: &bool) -> bool {
-    !*value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -671,7 +665,6 @@ mod tests {
             capabilities: PeerCapabilities {
                 advertised_routes: vec!["0.0.0.0/0".to_string(), "::/0".to_string()],
                 endpoint_hints: vec![PeerEndpointHint::udp("192.168.50.22:51820")],
-                direct_fmp_endpoint_data: true,
                 signed_at: 99,
             },
         };
@@ -691,7 +684,6 @@ mod tests {
 
         assert_eq!(caps.advertised_routes, vec!["0.0.0.0/0".to_string()]);
         assert!(caps.endpoint_hints.is_empty());
-        assert!(!caps.direct_fmp_endpoint_data);
         assert_eq!(caps.signed_at, 99);
     }
 
