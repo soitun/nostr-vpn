@@ -19,6 +19,13 @@ CONFIG_PATH="/root/.config/nvpn/config.toml"
 KNOWN_PERF_PHASES="clean-underlay,constrained-underlay,worker-queue-pressure,rx-maintenance-fault"
 DURATION="${NVPN_PERF_DURATION_SECS:-8}"
 LOAD_DURATION="${NVPN_PERF_LOAD_DURATION_SECS:-12}"
+if (( LOAD_DURATION > DURATION )); then
+  IPERF_TIMEOUT_BASE_SECS="$LOAD_DURATION"
+else
+  IPERF_TIMEOUT_BASE_SECS="$DURATION"
+fi
+IPERF_TIMEOUT_SECS="${NVPN_DOCKER_IPERF_TIMEOUT_SECS:-$((IPERF_TIMEOUT_BASE_SECS + 30))}"
+NVPN_DOCKER_IPERF_TIMEOUT_SECS="$IPERF_TIMEOUT_SECS"
 MIN_TCP_MBIT="${NVPN_PERF_MIN_TCP_MBIT:-100}"
 MIN_REVERSE_TCP_MBIT="${NVPN_PERF_MIN_REVERSE_TCP_MBIT:-100}"
 MAX_TCP_RETRANS="${NVPN_PERF_MAX_TCP_RETRANS:-}"
@@ -126,6 +133,7 @@ Examples:
   NVPN_E2E_BUILDER_IMAGE=local-rust NVPN_E2E_RUNTIME_IMAGE=local-runtime $(basename "$0")
   NVPN_PERF_PIPELINE_INTERVAL_SECS=1 $(basename "$0") --phase clean-underlay
   NVPN_PERF_MAX_TCP_RETRANS=1000 $(basename "$0") --phase clean-underlay
+  NVPN_DOCKER_IPERF_TIMEOUT_SECS=20 $(basename "$0") --phase clean-underlay
   NVPN_DOCKER_CPU_STRESS=1 NVPN_DOCKER_CPU_STRESS_SIDES=remote $(basename "$0") --phase clean-underlay
   NVPN_PERF_FAIL_ON_PRIORITY_HARD_EVENTS=0 $(basename "$0") --phase worker-queue-pressure
   NVPN_PERF_MAX_PRIORITY_QUEUE_WAIT_MS=0 $(basename "$0") --phase clean-underlay
@@ -531,7 +539,7 @@ run_iperf_json() {
   shift
   local output code
   for attempt in 1 2 3; do
-    if output="$("${COMPOSE[@]}" exec -T node-a iperf3 \
+    if output="$("${COMPOSE[@]}" exec -T node-a timeout --kill-after=5s "$IPERF_TIMEOUT_SECS" iperf3 \
         -J --get-server-output -c "$BOB_TUNNEL_IP" -t "$DURATION" -O 1 --connect-timeout 3000 "$@" 2>&1)"; then
       code=0
       if printf '%s\n' "$output" | iperf_mbps >/dev/null 2>&1; then
@@ -548,7 +556,9 @@ run_iperf_json() {
       continue
     fi
 
-    if [[ "$code" -ne 0 ]]; then
+    if [[ "$code" -eq 124 || "$code" -eq 137 ]]; then
+      echo "fips perf regression e2e failed: iperf $label timed out after ${IPERF_TIMEOUT_SECS}s" >&2
+    elif [[ "$code" -ne 0 ]]; then
       echo "fips perf regression e2e failed: iperf $label failed with exit $code" >&2
     else
       echo "fips perf regression e2e failed: iperf $label returned no throughput result" >&2
@@ -1631,7 +1641,7 @@ run_concurrent_probe() {
   local json_path err_path iperf_pid ping_output mbps retrans
   json_path="$(mktemp)"
   err_path="$(mktemp)"
-  "${COMPOSE[@]}" exec -T node-a iperf3 \
+  "${COMPOSE[@]}" exec -T node-a timeout --kill-after=5s "$IPERF_TIMEOUT_SECS" iperf3 \
     -J --get-server-output -c "$BOB_TUNNEL_IP" -t "$LOAD_DURATION" -O 1 --connect-timeout 3000 "$@" \
     >"$json_path" 2>"$err_path" &
   iperf_pid=$!
@@ -1639,10 +1649,18 @@ run_concurrent_probe() {
   ping_output="$("${COMPOSE[@]}" exec -T node-a ping \
     -c "$PING_COUNT" -i "$PING_INTERVAL" -W 2 "$BOB_TUNNEL_IP" 2>&1)"
   write_perf_artifact "$phase" "$label TCP load ping" "ping.txt" "$ping_output"
-  if ! wait "$iperf_pid"; then
+  local iperf_status=0
+  if wait "$iperf_pid"; then
+    iperf_status=0
+  else
+    iperf_status=$?
     copy_perf_artifact "$phase" "$label TCP load" "iperf.json" "$json_path"
     copy_perf_artifact "$phase" "$label TCP load" "iperf.stderr" "$err_path"
-    echo "fips perf regression e2e failed: $phase $label iperf failed" >&2
+    if [[ "$iperf_status" -eq 124 || "$iperf_status" -eq 137 ]]; then
+      echo "fips perf regression e2e failed: $phase $label iperf timed out after ${IPERF_TIMEOUT_SECS}s" >&2
+    else
+      echo "fips perf regression e2e failed: $phase $label iperf failed with exit $iperf_status" >&2
+    fi
     cat "$err_path" >&2
     exit 1
   fi

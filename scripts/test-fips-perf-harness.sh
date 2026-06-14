@@ -342,6 +342,88 @@ test_iperf_sender_summary() {
   assert_eq "$got" "$expected" "sender interval rollup"
 }
 
+test_iperf_timeout_configuration() {
+  local got
+
+  got="$(
+    NVPN_PERF_DURATION_SECS=3 NVPN_PERF_LOAD_DURATION_SECS=12 \
+      bash -c 'source "$1"; printf "%s" "$IPERF_TIMEOUT_SECS"' bash "$PERF_SCRIPT"
+  )"
+  assert_eq "$got" "42" "iperf timeout uses longer load duration"
+
+  got="$(
+    NVPN_PERF_DURATION_SECS=9 NVPN_PERF_LOAD_DURATION_SECS=4 \
+      bash -c 'source "$1"; printf "%s" "$IPERF_TIMEOUT_SECS"' bash "$PERF_SCRIPT"
+  )"
+  assert_eq "$got" "39" "iperf timeout uses longer normal duration"
+
+  got="$(
+    NVPN_DOCKER_IPERF_TIMEOUT_SECS=17 \
+      bash -c 'source "$1"; printf "%s" "$IPERF_TIMEOUT_SECS"' bash "$PERF_SCRIPT"
+  )"
+  assert_eq "$got" "17" "iperf timeout honors override"
+}
+
+test_iperf_probes_use_container_timeout() {
+  local args_path timeout_count
+  args_path="$(mktemp)"
+
+  (
+    BOB_TUNNEL_IP="198.51.100.1"
+    DURATION=3
+    LOAD_DURATION=4
+    IPERF_TIMEOUT_SECS=11
+    COMPOSE=(fixture_compose_timeout)
+
+    fixture_compose_timeout() {
+      printf '%s\n' "$*" >>"$args_path"
+      case " $* " in
+        *" ping "*) fixture_ping_output ;;
+        *) fixture_iperf_output ;;
+      esac
+    }
+
+    run_iperf_json "fixture forward" >/dev/null
+    run_concurrent_probe "fixture-phase" "forward" 100 2 250 1000 1000 1000 >/dev/null
+  )
+
+  timeout_count="$(grep -Fc 'exec -T node-a timeout --kill-after=5s 11 iperf3' "$args_path")"
+  assert_eq "$timeout_count" "2" "plain and load iperf probes use timeout"
+  assert_file_contains "$args_path" " -t 3 " "plain iperf uses normal duration"
+  assert_file_contains "$args_path" " -t 4 " "load iperf uses load duration"
+
+  rm -f "$args_path"
+}
+
+test_concurrent_iperf_timeout_is_reported() {
+  local err
+  err="$(mktemp)"
+
+  if (
+    BOB_TUNNEL_IP="198.51.100.1"
+    LOAD_DURATION=4
+    IPERF_TIMEOUT_SECS=2
+    COMPOSE=(fixture_compose_timeout_failure)
+
+    fixture_compose_timeout_failure() {
+      case " $* " in
+        *" ping "*) fixture_ping_output ;;
+        *" timeout "*) return 124 ;;
+        *) fixture_iperf_output ;;
+      esac
+    }
+
+    run_concurrent_probe "fixture-phase" "reverse" 100 2 250 1000 1000 1000 -R
+  ) 2>"$err"; then
+    cat "$err" >&2
+    rm -f "$err"
+    fail "concurrent iperf timeout unexpectedly passed"
+  fi
+
+  assert_file_contains "$err" "fixture-phase reverse iperf timed out after 2s" "concurrent iperf timeout message"
+  rm -f "$err"
+}
+
 test_direct_underlay_policy() {
   (
     direct_underlay_bytes() { printf '42\n'; }
@@ -1013,6 +1095,9 @@ test_ping_thresholds
 test_iperf_parser_and_tcp_thresholds
 test_iperf_interval_summary
 test_iperf_sender_summary
+test_iperf_timeout_configuration
+test_iperf_probes_use_container_timeout
+test_concurrent_iperf_timeout_is_reported
 test_direct_underlay_policy
 test_pipeline_summary_collects_fips_and_nvpn_lines
 test_pipeline_summary_prefers_peak_wait_lines
