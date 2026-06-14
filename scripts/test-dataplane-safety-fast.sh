@@ -127,8 +127,10 @@ run_harnesses() {
     scripts/perf-docker.sh
     scripts/perf-docker-boringtun.sh
     scripts/perf-docker-wireguard-go.sh
+    scripts/release-gate.sh
     scripts/run-darwin-docker-wg-reference.sh
     scripts/run-host-pair-comparison.sh
+    scripts/release-gate-host-pair-latency.sh
     scripts/soak-fips-dataplane-docker.sh
     scripts/soak-fips-dataplane-host-pair.sh
     scripts/summarize-fips-soak-docker.sh
@@ -145,6 +147,7 @@ run_harnesses() {
     scripts/test-host-pair-harness.sh
     scripts/test-install-nvpn-test-daemon.sh
     scripts/test-mobile-platform-tools.sh
+    scripts/test-release-gate-host-pair-latency.sh
     scripts/test-userspace-wg-host-pair-harness.sh
   )
   run bash -n "${scripts[@]/#/$ROOT_DIR/}"
@@ -160,6 +163,7 @@ run_harnesses() {
   run "$ROOT_DIR/scripts/test-host-pair-comparison-runner.sh"
   run "$ROOT_DIR/scripts/test-mobile-platform-tools.sh"
   run "$ROOT_DIR/scripts/test-install-nvpn-test-daemon.sh"
+  run "$ROOT_DIR/scripts/test-release-gate-host-pair-latency.sh"
   run "$ROOT_DIR/scripts/test-userspace-wg-host-pair-harness.sh"
 }
 
@@ -203,6 +207,8 @@ run_core() {
 
 run_nvpn_hotpath() {
   run cargo_test -p nvpn blocking_mesh_recv_defaults_on_and_accepts_explicit_disable
+  run cargo_test -p nvpn tun_to_mesh_queue_default_matches_host_pair_bulk_budget
+  run cargo_test -p nvpn tun_to_mesh_queue_cap_env_keeps_safe_bounds
   run cargo_test -p nvpn raw_tun_write_keeps_fd_open_and_writes_platform_frame
   run cargo_test -p nvpn blocking_tun_write_keeps_fd_open_and_writes_platform_frame
   run cargo_test -p nvpn tun_to_mesh_classifier_reserves_liveness_and_tcp_control_packets

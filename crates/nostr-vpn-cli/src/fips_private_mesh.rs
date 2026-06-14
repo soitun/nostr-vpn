@@ -87,11 +87,91 @@ const FIPS_MESH_RECV_BURST: usize = 128;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_EVENT_DRAIN_LIMIT: usize = 256;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-const FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 1024;
+const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 4096;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MIN_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 1;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 65_536;
+#[cfg(target_os = "macos")]
+const DEFAULT_FIPS_TUN_BULK_COALESCE_MICROS: u64 = 250;
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_FIPS_TUN_BULK_COALESCE_MICROS: u64 = 0;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_FIPS_TUN_BULK_COALESCE_MICROS: u64 = 5_000;
+const MIN_FIPS_UDP_SEND_BUF_SIZE: usize = 64 * 1024;
+const MAX_FIPS_UDP_SEND_BUF_SIZE: usize = 8 * 1024 * 1024;
+#[cfg(target_os = "macos")]
+const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(512 * 1024);
+#[cfg(not(target_os = "macos"))]
+const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = None;
 #[cfg(target_os = "windows")]
 const WINDOWS_FIPS_TUN_READ_BURST: usize = 64;
 #[cfg(target_os = "windows")]
 const WINDOWS_FIPS_TUN_WRITE_BURST: usize = 128;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn fips_tun_to_mesh_queue_cap() -> usize {
+    static VALUE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        parse_fips_tun_to_mesh_queue_cap(
+            std::env::var("NVPN_FIPS_TUN_TO_MESH_QUEUE_CAP")
+                .ok()
+                .as_deref(),
+            DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP,
+        )
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn parse_fips_tun_to_mesh_queue_cap(raw: Option<&str>, default: usize) -> usize {
+    raw.and_then(|raw| raw.trim().parse::<usize>().ok())
+        .unwrap_or(default)
+        .clamp(
+            MIN_FIPS_TUN_TO_MESH_QUEUE_CAP,
+            MAX_FIPS_TUN_TO_MESH_QUEUE_CAP,
+        )
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn fips_tun_bulk_coalesce_delay() -> std::time::Duration {
+    static VALUE: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        std::time::Duration::from_micros(parse_fips_tun_bulk_coalesce_micros(
+            std::env::var("NVPN_FIPS_TUN_BULK_COALESCE_MICROS")
+                .ok()
+                .as_deref(),
+            DEFAULT_FIPS_TUN_BULK_COALESCE_MICROS,
+        ))
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn parse_fips_tun_bulk_coalesce_micros(raw: Option<&str>, default: u64) -> u64 {
+    raw.and_then(|raw| raw.trim().parse::<u64>().ok())
+        .unwrap_or(default)
+        .min(MAX_FIPS_TUN_BULK_COALESCE_MICROS)
+}
+
+fn fips_udp_send_buf_size() -> Option<usize> {
+    static VALUE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        parse_fips_udp_send_buf_size(
+            std::env::var("NVPN_FIPS_UDP_SEND_BUF_SIZE").ok().as_deref(),
+            DEFAULT_FIPS_UDP_SEND_BUF_SIZE,
+        )
+    })
+}
+
+fn parse_fips_udp_send_buf_size(raw: Option<&str>, default: Option<usize>) -> Option<usize> {
+    let Some(raw) = raw.map(str::trim).filter(|raw| !raw.is_empty()) else {
+        return default;
+    };
+    match raw.parse::<usize>().ok() {
+        Some(0) => None,
+        Some(value) => Some(value.clamp(MIN_FIPS_UDP_SEND_BUF_SIZE, MAX_FIPS_UDP_SEND_BUF_SIZE)),
+        None => default,
+    }
+}
 
 fn fips_lan_discovery_scope(network_id: &str) -> String {
     let digest = Sha256::digest(network_id.trim().as_bytes());

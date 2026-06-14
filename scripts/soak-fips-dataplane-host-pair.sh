@@ -1134,6 +1134,13 @@ pipeline_line_count() {
   fi
 }
 
+pipeline_count_has_advanced() {
+  local count baseline
+  count="$(int_value "$1")"
+  baseline="$(int_value "$2")"
+  (( count > baseline ))
+}
+
 pipeline_hard_events() {
   local line="$1"
   [[ -z "$line" ]] && return 0
@@ -2207,6 +2214,8 @@ main() {
   write_metadata
 
   local start iteration prev_local_sent prev_local_recv prev_remote_sent prev_remote_recv
+  local baseline_fips_pipeline_local_count baseline_fips_pipeline_remote_count
+  local baseline_nvpn_pipeline_local_count baseline_nvpn_pipeline_remote_count
   local prev_fips_pipeline_local_count="" prev_fips_pipeline_remote_count=""
   local prev_nvpn_pipeline_local_count="" prev_nvpn_pipeline_remote_count=""
   local stale_fips_pipeline_local_count=0 stale_fips_pipeline_remote_count=0
@@ -2222,6 +2231,10 @@ main() {
   prev_local_recv=""
   prev_remote_sent=""
   prev_remote_recv=""
+  baseline_fips_pipeline_local_count="$(pipeline_line_count local "$LOCAL_DAEMON_LOG" pipe)"
+  baseline_fips_pipeline_remote_count="$(pipeline_line_count remote "$REMOTE_DAEMON_LOG" pipe)"
+  baseline_nvpn_pipeline_local_count="$(pipeline_line_count local "$LOCAL_DAEMON_LOG" nvpn-pipe)"
+  baseline_nvpn_pipeline_remote_count="$(pipeline_line_count remote "$REMOTE_DAEMON_LOG" nvpn-pipe)"
 
   while (( SECONDS - start < DURATION_SECS || iteration == 0 )); do
     iteration=$((iteration + 1))
@@ -2352,24 +2365,44 @@ main() {
     record_direct_probe_progress "remote FIPS" "$REMOTE_DIRECT_PROBE_PENDING" "$REMOTE_DIRECT_PROBE_AFTER_MS" "$sample_now_ms" REMOTE_DIRECT_PROBE_PENDING_COUNT REMOTE_DIRECT_PROBE_OVERDUE_COUNT
     LOCAL_CPU="$(daemon_cpu_percent local)"
     REMOTE_CPU="$(daemon_cpu_percent remote)"
-    FIPS_PIPELINE_LOCAL="$(pipeline_latest_line local "$LOCAL_DAEMON_LOG" pipe)"
-    FIPS_PIPELINE_REMOTE="$(pipeline_latest_line remote "$REMOTE_DAEMON_LOG" pipe)"
-    NVPN_PIPELINE_LOCAL="$(pipeline_latest_line local "$LOCAL_DAEMON_LOG" nvpn-pipe)"
-    NVPN_PIPELINE_REMOTE="$(pipeline_latest_line remote "$REMOTE_DAEMON_LOG" nvpn-pipe)"
     FIPS_PIPELINE_LOCAL_COUNT="$(pipeline_line_count local "$LOCAL_DAEMON_LOG" pipe)"
     FIPS_PIPELINE_REMOTE_COUNT="$(pipeline_line_count remote "$REMOTE_DAEMON_LOG" pipe)"
     NVPN_PIPELINE_LOCAL_COUNT="$(pipeline_line_count local "$LOCAL_DAEMON_LOG" nvpn-pipe)"
     NVPN_PIPELINE_REMOTE_COUNT="$(pipeline_line_count remote "$REMOTE_DAEMON_LOG" nvpn-pipe)"
+    FIPS_PIPELINE_LOCAL=""
+    FIPS_PIPELINE_REMOTE=""
+    NVPN_PIPELINE_LOCAL=""
+    NVPN_PIPELINE_REMOTE=""
+    if pipeline_count_has_advanced "$FIPS_PIPELINE_LOCAL_COUNT" "$baseline_fips_pipeline_local_count"; then
+      FIPS_PIPELINE_LOCAL="$(pipeline_latest_line local "$LOCAL_DAEMON_LOG" pipe)"
+    fi
+    if pipeline_count_has_advanced "$FIPS_PIPELINE_REMOTE_COUNT" "$baseline_fips_pipeline_remote_count"; then
+      FIPS_PIPELINE_REMOTE="$(pipeline_latest_line remote "$REMOTE_DAEMON_LOG" pipe)"
+    fi
+    if pipeline_count_has_advanced "$NVPN_PIPELINE_LOCAL_COUNT" "$baseline_nvpn_pipeline_local_count"; then
+      NVPN_PIPELINE_LOCAL="$(pipeline_latest_line local "$LOCAL_DAEMON_LOG" nvpn-pipe)"
+    fi
+    if pipeline_count_has_advanced "$NVPN_PIPELINE_REMOTE_COUNT" "$baseline_nvpn_pipeline_remote_count"; then
+      NVPN_PIPELINE_REMOTE="$(pipeline_latest_line remote "$REMOTE_DAEMON_LOG" nvpn-pipe)"
+    fi
     FIPS_PIPELINE_LOCAL_QUEUE_WAIT="$(pipeline_queue_wait_json "$FIPS_PIPELINE_LOCAL")"
     FIPS_PIPELINE_REMOTE_QUEUE_WAIT="$(pipeline_queue_wait_json "$FIPS_PIPELINE_REMOTE")"
     NVPN_PIPELINE_LOCAL_QUEUE_WAIT="$(pipeline_queue_wait_json "$NVPN_PIPELINE_LOCAL")"
     NVPN_PIPELINE_REMOTE_QUEUE_WAIT="$(pipeline_queue_wait_json "$NVPN_PIPELINE_REMOTE")"
     assert_pipeline_present_if_required "local" "$LOCAL_DAEMON_LOG" "$FIPS_PIPELINE_LOCAL" "$NVPN_PIPELINE_LOCAL"
     assert_pipeline_present_if_required "remote" "$REMOTE_DAEMON_LOG" "$FIPS_PIPELINE_REMOTE" "$NVPN_PIPELINE_REMOTE"
-    assert_pipeline_fresh "local FIPS" "$FIPS_PIPELINE_LOCAL_COUNT" prev_fips_pipeline_local_count stale_fips_pipeline_local_count
-    assert_pipeline_fresh "remote FIPS" "$FIPS_PIPELINE_REMOTE_COUNT" prev_fips_pipeline_remote_count stale_fips_pipeline_remote_count
-    assert_pipeline_fresh "local nvpn" "$NVPN_PIPELINE_LOCAL_COUNT" prev_nvpn_pipeline_local_count stale_nvpn_pipeline_local_count
-    assert_pipeline_fresh "remote nvpn" "$NVPN_PIPELINE_REMOTE_COUNT" prev_nvpn_pipeline_remote_count stale_nvpn_pipeline_remote_count
+    if [[ "$REQUIRE_PIPELINE_LOGS" == "1" ]] || pipeline_count_has_advanced "$FIPS_PIPELINE_LOCAL_COUNT" "$baseline_fips_pipeline_local_count"; then
+      assert_pipeline_fresh "local FIPS" "$FIPS_PIPELINE_LOCAL_COUNT" prev_fips_pipeline_local_count stale_fips_pipeline_local_count
+    fi
+    if [[ "$REQUIRE_PIPELINE_LOGS" == "1" ]] || pipeline_count_has_advanced "$FIPS_PIPELINE_REMOTE_COUNT" "$baseline_fips_pipeline_remote_count"; then
+      assert_pipeline_fresh "remote FIPS" "$FIPS_PIPELINE_REMOTE_COUNT" prev_fips_pipeline_remote_count stale_fips_pipeline_remote_count
+    fi
+    if [[ "$REQUIRE_PIPELINE_LOGS" == "1" ]] || pipeline_count_has_advanced "$NVPN_PIPELINE_LOCAL_COUNT" "$baseline_nvpn_pipeline_local_count"; then
+      assert_pipeline_fresh "local nvpn" "$NVPN_PIPELINE_LOCAL_COUNT" prev_nvpn_pipeline_local_count stale_nvpn_pipeline_local_count
+    fi
+    if [[ "$REQUIRE_PIPELINE_LOGS" == "1" ]] || pipeline_count_has_advanced "$NVPN_PIPELINE_REMOTE_COUNT" "$baseline_nvpn_pipeline_remote_count"; then
+      assert_pipeline_fresh "remote nvpn" "$NVPN_PIPELINE_REMOTE_COUNT" prev_nvpn_pipeline_remote_count stale_nvpn_pipeline_remote_count
+    fi
     assert_pipeline_ok "local FIPS" "$FIPS_PIPELINE_LOCAL"
     assert_pipeline_ok "remote FIPS" "$FIPS_PIPELINE_REMOTE"
     assert_pipeline_ok "local nvpn" "$NVPN_PIPELINE_LOCAL"

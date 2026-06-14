@@ -50,7 +50,9 @@ metric decisions, and long-run degradation before changing the hot path.
 `nostr-vpn` now makes the Unix TUN-to-mesh coordinator policy explicit:
 
 - `TunPipelinePacket` is bulk tunnel data.
-- The TUN-to-mesh channel is bounded by `FIPS_TUN_TO_MESH_QUEUE_CAP`.
+- The TUN-to-mesh channel defaults to a bounded 4096-packet bulk budget on
+  Unix hosts. `NVPN_FIPS_TUN_TO_MESH_QUEUE_CAP` can override that budget for
+  explicit A/B trials and is clamped to `1..65536`.
 - `submit_tun_packet_to_mesh_queue` uses non-blocking `try_send`.
 - A full queue returns `DroppedBulk` and increments
   `nvpn_tun_to_mesh_bulk_dropped` when `NVPN_PIPELINE_TRACE=1`.

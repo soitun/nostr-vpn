@@ -157,6 +157,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
         // nested tunnels. Clean-LAN tests must opt into a larger paired budget
         // through config or NVPN_MESH_* env overrides.
         mtu: Some(mesh_mtu.underlay_udp),
+        send_buf_size: fips_udp_send_buf_size(),
         ..UdpConfig::default()
     });
     // Outbound TCP transport so peers reachable only over tcp:443 (e.g. on

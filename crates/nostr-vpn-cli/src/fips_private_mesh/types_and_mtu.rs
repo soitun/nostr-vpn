@@ -23,6 +23,7 @@ struct TunPipelinePacket {
 type TunPipelineBatch = Vec<TunPipelinePacket>;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone)]
 struct TunPipelineQueueTx {
     priority: mpsc::UnboundedSender<TunPipelineBatch>,
     bulk: mpsc::Sender<TunPipelineBatch>,
@@ -35,6 +36,8 @@ struct TunPipelineQueueRx {
     priority: mpsc::UnboundedReceiver<TunPipelineBatch>,
     bulk: mpsc::Receiver<TunPipelineBatch>,
     bulk_queued_packets: Arc<AtomicUsize>,
+    bulk_coalesce_delay: std::time::Duration,
+    deferred_priority: Option<TunPipelineBatch>,
     priority_closed: bool,
     bulk_closed: bool,
 }
@@ -92,6 +95,8 @@ impl TunPipelineQueueTx {
                 priority: priority_rx,
                 bulk: bulk_rx,
                 bulk_queued_packets,
+                bulk_coalesce_delay: fips_tun_bulk_coalesce_delay(),
+                deferred_priority: None,
                 priority_closed: false,
                 bulk_closed: false,
             },
@@ -103,10 +108,13 @@ impl TunPipelineQueueTx {
 impl TunPipelineQueueRx {
     async fn recv(&mut self) -> Option<TunPipelineBatch> {
         loop {
-            match self.priority.try_recv() {
-                Ok(batch) => return Some(batch),
-                Err(mpsc::error::TryRecvError::Empty) => {}
-                Err(mpsc::error::TryRecvError::Disconnected) => self.priority_closed = true,
+            if let Some(mut batch) = self.deferred_priority.take() {
+                self.drain_ready_priority_batches(&mut batch);
+                return Some(batch);
+            }
+
+            if let Some(batch) = self.take_ready_priority_batch() {
+                return Some(batch);
             }
 
             if self.priority_closed && self.bulk_closed {
@@ -117,14 +125,19 @@ impl TunPipelineQueueRx {
                 biased;
                 batch = self.priority.recv(), if !self.priority_closed => {
                     match batch {
-                        Some(batch) => return Some(batch),
+                        Some(mut batch) => {
+                            self.drain_ready_priority_batches(&mut batch);
+                            return Some(batch);
+                        }
                         None => self.priority_closed = true,
                     }
                 }
                 batch = self.bulk.recv(), if !self.bulk_closed => {
                     match batch {
-                        Some(batch) => {
+                        Some(mut batch) => {
                             release_tun_bulk_packet_slots(&self.bulk_queued_packets, batch.len());
+                            self.drain_ready_bulk_batches(&mut batch);
+                            self.coalesce_bulk_batches(&mut batch).await;
                             return Some(batch);
                         }
                         None => self.bulk_closed = true,
@@ -132,6 +145,108 @@ impl TunPipelineQueueRx {
                 }
             }
         }
+    }
+
+    fn take_ready_priority_batch(&mut self) -> Option<TunPipelineBatch> {
+        match self.priority.try_recv() {
+            Ok(mut batch) => {
+                self.drain_ready_priority_batches(&mut batch);
+                Some(batch)
+            }
+            Err(mpsc::error::TryRecvError::Empty) => None,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.priority_closed = true;
+                None
+            }
+        }
+    }
+
+    fn drain_ready_priority_batches(&mut self, batch: &mut TunPipelineBatch) {
+        while batch.len() < FIPS_MESH_SEND_BURST {
+            match self.priority.try_recv() {
+                Ok(mut next) => batch.append(&mut next),
+                Err(mpsc::error::TryRecvError::Empty) => return,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    self.priority_closed = true;
+                    return;
+                }
+            }
+        }
+    }
+
+    fn drain_ready_bulk_batches(&mut self, batch: &mut TunPipelineBatch) {
+        while batch.len() < FIPS_MESH_SEND_BURST {
+            match self.bulk.try_recv() {
+                Ok(mut next) => {
+                    release_tun_bulk_packet_slots(&self.bulk_queued_packets, next.len());
+                    batch.append(&mut next);
+                }
+                Err(mpsc::error::TryRecvError::Empty) => return,
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    self.bulk_closed = true;
+                    return;
+                }
+            }
+        }
+    }
+
+    async fn coalesce_bulk_batches(&mut self, batch: &mut TunPipelineBatch) {
+        if self.bulk_coalesce_delay.is_zero()
+            || batch.len() >= FIPS_MESH_SEND_BURST
+            || self.bulk_closed
+        {
+            return;
+        }
+
+        let deadline = tokio::time::Instant::now() + self.bulk_coalesce_delay;
+        loop {
+            self.drain_ready_bulk_batches(batch);
+            if batch.len() >= FIPS_MESH_SEND_BURST || self.bulk_closed {
+                return;
+            }
+            if let Some(priority) = self.take_ready_priority_batch() {
+                self.deferred_priority = Some(priority);
+                return;
+            }
+
+            tokio::select! {
+                biased;
+                priority = self.priority.recv(), if !self.priority_closed => {
+                    match priority {
+                        Some(mut priority) => {
+                            self.drain_ready_priority_batches(&mut priority);
+                            self.deferred_priority = Some(priority);
+                            return;
+                        }
+                        None => self.priority_closed = true,
+                    }
+                }
+                bulk = self.bulk.recv(), if !self.bulk_closed => {
+                    match bulk {
+                        Some(mut next) => {
+                            release_tun_bulk_packet_slots(
+                                &self.bulk_queued_packets,
+                                next.len(),
+                            );
+                            batch.append(&mut next);
+                        }
+                        None => {
+                            self.bulk_closed = true;
+                            return;
+                        }
+                    }
+                }
+                _ = tokio::time::sleep_until(deadline) => {
+                    self.drain_ready_bulk_batches(batch);
+                    return;
+                }
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn set_bulk_coalesce_delay_for_tests(&mut self, delay: std::time::Duration) {
+        self.bulk_coalesce_delay = delay;
     }
 }
 

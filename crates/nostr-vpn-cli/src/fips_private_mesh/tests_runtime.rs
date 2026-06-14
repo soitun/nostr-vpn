@@ -516,6 +516,7 @@
         assert!(udp.outbound_only());
         assert!(!udp.advertise_on_nostr());
         assert!(!udp.accept_connections());
+        assert_eq!(udp.send_buf_size, super::DEFAULT_FIPS_UDP_SEND_BUF_SIZE);
         assert_eq!(config.peers.len(), 1);
         assert!(config.peers[0].addresses.is_empty());
     }
