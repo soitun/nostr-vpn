@@ -27,6 +27,28 @@ docker_bench_bool_enabled() {
   esac
 }
 
+docker_bench_env_bool_assignment_enabled() {
+  local name="$1"
+  local token value
+  for token in ${2:-}; do
+    case "$token" in
+      "$name"=*)
+        value="${token#*=}"
+        if docker_bench_bool_enabled "$value"; then
+          return 0
+        fi
+        ;;
+    esac
+  done
+  return 1
+}
+
+docker_bench_direct_fmp_forced_enabled() {
+  docker_bench_env_bool_assignment_enabled \
+    FIPS_DIRECT_ENDPOINT_FMP_ONLY \
+    "${NVPN_DOCKER_EXTRA_ENV:-}"
+}
+
 docker_bench_cpu_stress_enabled() {
   docker_bench_bool_enabled "${NVPN_DOCKER_CPU_STRESS:-0}"
 }
@@ -155,6 +177,8 @@ docker_bench_write_metadata() {
   local pipeline_trace_interval_secs=""
   local iperf_interval_secs="${NVPN_DOCKER_IPERF_INTERVAL_SECS:-0}"
   local iperf_timeout_secs="${NVPN_DOCKER_IPERF_TIMEOUT_SECS:-}"
+  local require_no_direct_fmp=0
+  local direct_fmp_forced=0
   local patch_local_fips_enabled=0
   local nvpn_git_head=""
   local nvpn_git_dirty=""
@@ -175,6 +199,12 @@ docker_bench_write_metadata() {
   fi
   if docker_bench_bool_enabled "${NVPN_PATCH_LOCAL_FIPS:-0}"; then
     patch_local_fips_enabled=1
+  fi
+  if docker_bench_bool_enabled "${NVPN_DOCKER_REQUIRE_NO_DIRECT_FMP:-0}"; then
+    require_no_direct_fmp=1
+  fi
+  if docker_bench_direct_fmp_forced_enabled; then
+    direct_fmp_forced=1
   fi
   if [[ -n "${ROOT_DIR:-}" ]]; then
     nvpn_git_head="$(docker_bench_git_head "$ROOT_DIR")"
@@ -197,6 +227,8 @@ docker_bench_write_metadata() {
     --arg iperf_interval_secs "$iperf_interval_secs" \
     --arg iperf_timeout_secs "$iperf_timeout_secs" \
     --arg extra_connect_env "${NVPN_DOCKER_EXTRA_ENV:-}" \
+    --arg require_no_direct_fmp "$require_no_direct_fmp" \
+    --arg direct_fmp_forced "$direct_fmp_forced" \
     --arg patch_local_fips_enabled "$patch_local_fips_enabled" \
     --arg nvpn_git_head "$nvpn_git_head" \
     --arg nvpn_git_dirty "$nvpn_git_dirty" \
@@ -213,7 +245,9 @@ docker_bench_write_metadata() {
       backend: $backend,
       duration_secs: ($duration_secs | tonumber),
       run_env: {
-        extra_connect_env: $extra_connect_env
+        extra_connect_env: $extra_connect_env,
+        require_no_direct_fmp: ($require_no_direct_fmp == "1"),
+        direct_fmp_forced: ($direct_fmp_forced == "1")
       },
       cpu_stress: {
         enabled: ($stress_enabled == "1"),

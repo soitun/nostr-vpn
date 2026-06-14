@@ -30,6 +30,7 @@ SUMMARY_TSV="$OUTPUT_DIR/summary.tsv"
 PIPELINE_TRACE="${NVPN_DOCKER_PIPELINE_TRACE:-1}"
 PIPELINE_INTERVAL_SECS="${NVPN_DOCKER_PIPELINE_INTERVAL_SECS:-5}"
 EXTRA_CONNECT_ENV="${NVPN_DOCKER_EXTRA_ENV:-}"
+REQUIRE_NO_DIRECT_FMP="${NVPN_DOCKER_REQUIRE_NO_DIRECT_FMP:-0}"
 NVPN_DOCKER_PIPELINE_TRACE="$PIPELINE_TRACE"
 NVPN_DOCKER_PIPELINE_INTERVAL_SECS="$PIPELINE_INTERVAL_SECS"
 DIAGNOSTICS_READY=0
@@ -39,7 +40,9 @@ PIPELINE_START_NODE_B=0
 
 cleanup() {
   local status=$?
-  capture_nvpn_diagnostics "$status" || true
+  if declare -F capture_nvpn_diagnostics >/dev/null; then
+    capture_nvpn_diagnostics "$status" || true
+  fi
   docker_bench_stop_cpu_stress
   if [[ -z "${KEEP:-}" ]]; then
     "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -51,6 +54,11 @@ trap cleanup EXIT
 is_true() {
   [[ "${1:-}" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ ]]
 }
+
+if is_true "$REQUIRE_NO_DIRECT_FMP" && docker_bench_direct_fmp_forced_enabled; then
+  echo "perf: NVPN_DOCKER_REQUIRE_NO_DIRECT_FMP=1 rejects FIPS_DIRECT_ENDPOINT_FMP_ONLY in NVPN_DOCKER_EXTRA_ENV" >&2
+  exit 2
+fi
 
 start_compose_services() {
   if is_true "$SKIP_BUILD"; then

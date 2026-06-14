@@ -219,9 +219,37 @@ test_metadata_writer_records_run_provenance() {
   )
 
   assert_eq "$(jq -r '.run_env.extra_connect_env' "$metadata")" "FIPS_LINUX_BULK_CONTAINERS=1 NVPN_FIPS_LINUX_TUN_VNET=1" "metadata extra env"
+  assert_eq "$(jq -r '.run_env.direct_fmp_forced' "$metadata")" "false" "metadata direct-FMP forced default"
+  assert_eq "$(jq -r '.run_env.require_no_direct_fmp' "$metadata")" "false" "metadata no-direct requirement default"
   assert_eq "$(jq -r '.source.local_fips_patch.enabled' "$metadata")" "true" "metadata local FIPS enabled"
   assert_eq "$(jq -r '.source.nvpn | has("git_head")' "$metadata")" "true" "metadata nvpn head field"
   assert_eq "$(jq -r '.source.local_fips_patch | has("git_head")' "$metadata")" "true" "metadata FIPS head field"
+
+  rm -rf "$dir"
+}
+
+test_metadata_writer_records_direct_fmp_guard() {
+  local dir metadata helper_result
+  dir="$(mktemp -d)"
+  OUTPUT_DIR="$dir/out"
+  metadata="$OUTPUT_DIR/metadata.json"
+  mkdir -p "$OUTPUT_DIR"
+
+  (
+    export NVPN_DOCKER_EXTRA_ENV="FIPS_LINUX_BULK_CONTAINERS=1 FIPS_DIRECT_ENDPOINT_FMP_ONLY=1 NVPN_FIPS_LINUX_TUN_VNET=1"
+    export NVPN_DOCKER_REQUIRE_NO_DIRECT_FMP=1
+    if docker_bench_direct_fmp_forced_enabled; then
+      printf 'yes'
+    else
+      printf 'no'
+    fi >"$dir/helper-result"
+    docker_bench_write_metadata nvpn 3
+  )
+  helper_result="$(cat "$dir/helper-result")"
+
+  assert_eq "$helper_result" "yes" "direct-FMP env detector"
+  assert_eq "$(jq -r '.run_env.direct_fmp_forced' "$metadata")" "true" "metadata direct-FMP forced"
+  assert_eq "$(jq -r '.run_env.require_no_direct_fmp' "$metadata")" "true" "metadata no-direct requirement"
 
   rm -rf "$dir"
 }
@@ -554,6 +582,7 @@ test_metadata_writer_records_pipeline_trace
 test_metadata_writer_records_iperf_interval
 test_metadata_writer_records_iperf_timeout
 test_metadata_writer_records_run_provenance
+test_metadata_writer_records_direct_fmp_guard
 test_pipeline_summary_helpers
 test_nvpn_tun_write_summary_prefers_coalesced_frame_interval
 test_docker_comparison_outputs
