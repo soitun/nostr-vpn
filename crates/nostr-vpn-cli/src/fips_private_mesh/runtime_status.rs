@@ -258,6 +258,21 @@ impl FipsPrivateMeshRuntime {
             .unwrap_or_default()
     }
 
+    fn direct_fmp_endpoint_capable_participants(&self) -> HashSet<ParticipantPubkeyBytes> {
+        let now = unix_timestamp();
+        let caps = match self.peer_capabilities.read() {
+            Ok(guard) => guard,
+            Err(_) => return HashSet::new(),
+        };
+        caps.iter()
+            .filter(|(_, entry)| {
+                fips_timestamp_within_grace(now, entry.received_at, FIPS_PEER_CAPS_GRACE_SECS)
+            })
+            .filter(|(_, entry)| entry.capabilities.direct_fmp_endpoint_data)
+            .filter_map(|(participant, _)| participant_pubkey_bytes(participant))
+            .collect()
+    }
+
     pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
         let now = unix_timestamp();
         let caps = match self.peer_capabilities.read() {

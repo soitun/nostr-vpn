@@ -108,19 +108,26 @@ impl FipsPrivateMeshRuntime {
 
         let mesh = self.mesh.load();
         let peer_identities = self.peer_identities.load();
+        let direct_fmp_participants = self.direct_fmp_endpoint_capable_participants();
         let mut runs = Vec::new();
 
         for packet in packets {
             let Some(outgoing) = mesh.route_outbound_packet_owned_with_peer(packet) else {
                 continue;
             };
+            let participant_key = outgoing.participant_pubkey_bytes.copied();
+            let payload = Self::allow_direct_fmp_endpoint_payload(
+                FipsEndpointPayload::new(outgoing.bytes),
+                participant_key.as_ref(),
+                &direct_fmp_participants,
+            );
             Self::push_endpoint_send_run(
                 &mut runs,
                 &peer_identities,
                 outgoing.participant_pubkey,
-                outgoing.participant_pubkey_bytes.copied(),
+                participant_key,
                 outgoing.endpoint_node_addr,
-                FipsEndpointPayload::new(outgoing.bytes),
+                payload,
             );
         }
         drop(peer_identities);
@@ -140,6 +147,7 @@ impl FipsPrivateMeshRuntime {
 
         let mesh = self.mesh.load();
         let peer_identities = self.peer_identities.load();
+        let direct_fmp_participants = self.direct_fmp_endpoint_capable_participants();
         let mut runs = Vec::new();
 
         for packet in packets.drain(..) {
@@ -147,12 +155,17 @@ impl FipsPrivateMeshRuntime {
             let Some(outgoing) = mesh.route_outbound_packet_owned_with_peer(packet.bytes) else {
                 continue;
             };
-            let payload = FipsEndpointPayload::from_classified(outgoing.bytes, class);
+            let participant_key = outgoing.participant_pubkey_bytes.copied();
+            let payload = Self::allow_direct_fmp_endpoint_payload(
+                FipsEndpointPayload::from_classified(outgoing.bytes, class),
+                participant_key.as_ref(),
+                &direct_fmp_participants,
+            );
             Self::push_endpoint_send_run(
                 &mut runs,
                 &peer_identities,
                 outgoing.participant_pubkey,
-                outgoing.participant_pubkey_bytes.copied(),
+                participant_key,
                 outgoing.endpoint_node_addr,
                 payload,
             );
@@ -161,6 +174,18 @@ impl FipsPrivateMeshRuntime {
         drop(mesh);
 
         self.send_endpoint_send_runs(runs).await
+    }
+
+    fn allow_direct_fmp_endpoint_payload(
+        payload: FipsEndpointPayload,
+        participant_key: Option<&ParticipantPubkeyBytes>,
+        direct_fmp_participants: &HashSet<ParticipantPubkeyBytes>,
+    ) -> FipsEndpointPayload {
+        if participant_key.is_some_and(|key| direct_fmp_participants.contains(key)) {
+            payload.with_direct_fmp_endpoint_allowed()
+        } else {
+            payload
+        }
     }
 
     fn push_endpoint_send_run(
