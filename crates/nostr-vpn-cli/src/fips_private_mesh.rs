@@ -92,12 +92,34 @@ const FIPS_MESH_RECV_BURST: usize = 256;
 const FIPS_MESH_RECV_BURST: usize = 128;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_EVENT_DRAIN_LIMIT: usize = 256;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 1024;
+#[cfg(target_os = "linux")]
+const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 4096;
+#[cfg(target_os = "macos")]
+const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 1024;
 #[cfg(target_os = "windows")]
 const WINDOWS_FIPS_TUN_READ_BURST: usize = 64;
 #[cfg(target_os = "windows")]
 const WINDOWS_FIPS_TUN_WRITE_BURST: usize = 128;
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn fips_tun_to_mesh_queue_cap() -> usize {
+    static VALUE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(|| {
+        parse_fips_tun_to_mesh_queue_cap(
+            std::env::var("NVPN_FIPS_TUN_TO_MESH_QUEUE_CAP")
+                .ok()
+                .as_deref(),
+            DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP,
+        )
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn parse_fips_tun_to_mesh_queue_cap(raw: Option<&str>, default: usize) -> usize {
+    raw.and_then(|raw| raw.trim().parse::<usize>().ok())
+        .unwrap_or(default)
+        .clamp(1, 65_536)
+}
 
 fn fips_lan_discovery_scope(network_id: &str) -> String {
     let digest = Sha256::digest(network_id.trim().as_bytes());

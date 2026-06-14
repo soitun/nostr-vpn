@@ -27,8 +27,9 @@
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
         BorrowedTunFd, TunPipelineLane, TunPipelinePacket, TunPipelineQueueTx, TunQueueSubmit,
-        raw_write_packet_to_tun, release_tun_bulk_packet_slots,
-        submit_tun_packet_batch_to_mesh_queue, tun_pipeline_packet_lane,
+        parse_fips_tun_to_mesh_queue_cap, raw_write_packet_to_tun,
+        release_tun_bulk_packet_slots, submit_tun_packet_batch_to_mesh_queue,
+        tun_pipeline_packet_lane,
     };
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
@@ -69,6 +70,23 @@
         ] {
             assert!(!super::fips_blocking_mesh_recv_enabled_from_env(value));
         }
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn tun_to_mesh_queue_cap_env_keeps_safe_bounds() {
+        assert_eq!(parse_fips_tun_to_mesh_queue_cap(None, 1024), 1024);
+        assert_eq!(parse_fips_tun_to_mesh_queue_cap(Some(""), 1024), 1024);
+        assert_eq!(
+            parse_fips_tun_to_mesh_queue_cap(Some("not-a-number"), 1024),
+            1024
+        );
+        assert_eq!(parse_fips_tun_to_mesh_queue_cap(Some("0"), 1024), 1);
+        assert_eq!(
+            parse_fips_tun_to_mesh_queue_cap(Some("999999"), 1024),
+            65_536
+        );
+        assert_eq!(parse_fips_tun_to_mesh_queue_cap(Some("4096"), 1024), 4096);
     }
 
     #[test]

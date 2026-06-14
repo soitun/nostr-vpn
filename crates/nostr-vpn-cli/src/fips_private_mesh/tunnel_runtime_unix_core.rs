@@ -49,7 +49,8 @@ impl FipsPrivateTunnelRuntime {
             .context("failed to register FIPS tunnel fd with reactor")?,
         );
 
-        let (packet_tx, mut packet_rx) = TunPipelineQueueTx::channel(FIPS_TUN_TO_MESH_QUEUE_CAP);
+        let (packet_tx, mut packet_rx) =
+            TunPipelineQueueTx::channel(fips_tun_to_mesh_queue_cap());
         let (event_tx, event_rx) = mpsc::channel::<FipsPrivateMeshEvent>(1024);
         let tun_read_task = spawn_tun_read_task(Arc::clone(&tun), Arc::clone(&tun_fd), packet_tx);
         let mesh_send_task = {
