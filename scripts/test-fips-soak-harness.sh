@@ -86,6 +86,21 @@ rtt min/avg/max/mdev = 1.000/5.000/100.000/20.000 ms
 EOF
 }
 
+fixture_iperf_output() {
+  cat <<'EOF'
+{
+  "end": {
+    "sum_received": {
+      "bits_per_second": 123000000
+    },
+    "sum_sent": {
+      "retransmits": 7
+    }
+  }
+}
+EOF
+}
+
 test_ping_parser_percentiles() {
   local stats loss avg p95 p99 max
   stats="$(fixture_ping_output | parse_ping_stats)"
@@ -145,6 +160,72 @@ test_counter_progress_policy() {
     "fixture counter did not advance" \
     bash -c 'source "$1"; assert_counter_advanced 10 10 "fixture"' \
     bash "$SOAK_SCRIPT"
+}
+
+test_iperf_timeout_configuration() {
+  local got
+
+  got="$(
+    NVPN_SOAK_IPERF_DURATION_SECS=4 \
+      bash -c 'source "$1"; printf "%s" "$IPERF_TIMEOUT_SECS"' bash "$SOAK_SCRIPT"
+  )"
+  assert_eq "$got" "34" "soak iperf timeout follows iperf duration"
+
+  got="$(
+    NVPN_SOAK_IPERF_TIMEOUT_SECS=9 \
+      bash -c 'source "$1"; printf "%s" "$IPERF_TIMEOUT_SECS"' bash "$SOAK_SCRIPT"
+  )"
+  assert_eq "$got" "9" "soak iperf timeout honors override"
+}
+
+test_iperf_probe_uses_container_timeout() {
+  local args_path got
+  args_path="$(mktemp)"
+
+  got="$(
+    BOB_TUNNEL_IP="198.51.100.1"
+    IPERF_DURATION=3
+    IPERF_TIMEOUT_SECS=11
+    COMPOSE=(fixture_compose_timeout)
+
+    fixture_compose_timeout() {
+      printf '%s\n' "$*" >>"$args_path"
+      fixture_iperf_output
+    }
+
+    iperf_probe forward
+  )"
+
+  assert_eq "$got" "123 7" "soak iperf probe parses fixture"
+  assert_file_contains "$args_path" "exec -T node-a timeout --kill-after=5s 11 iperf3" "soak iperf probe timeout command"
+  assert_file_contains "$args_path" " -t 3 " "soak iperf probe duration"
+
+  rm -f "$args_path"
+}
+
+test_iperf_probe_timeout_is_reported() {
+  local err
+  err="$(mktemp)"
+
+  if (
+    BOB_TUNNEL_IP="198.51.100.1"
+    IPERF_DURATION=3
+    IPERF_TIMEOUT_SECS=2
+    COMPOSE=(fixture_compose_timeout_failure)
+
+    fixture_compose_timeout_failure() {
+      return 124
+    }
+
+    iperf_probe reverse -R
+  ) 2>"$err"; then
+    cat "$err" >&2
+    rm -f "$err"
+    fail "soak iperf timeout unexpectedly passed"
+  fi
+
+  assert_file_contains "$err" "iperf reverse timed out after 2s" "soak iperf timeout message"
+  rm -f "$err"
 }
 
 test_fips_liveness_policy() {
@@ -535,6 +616,9 @@ test_ping_parser_percentiles
 test_ping_thresholds
 test_tail_drift_thresholds
 test_counter_progress_policy
+test_iperf_timeout_configuration
+test_iperf_probe_uses_container_timeout
+test_iperf_probe_timeout_is_reported
 test_fips_liveness_policy
 test_rekey_stuck_policy
 test_direct_probe_overdue_policy
