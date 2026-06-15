@@ -1,12 +1,10 @@
 const LINUX_VIRTIO_NET_HDR_LEN: usize = 10;
-
 const LINUX_VIRTIO_NET_HDR_F_NEEDS_CSUM: u8 = 0x01;
 const LINUX_VIRTIO_NET_HDR_GSO_NONE: u8 = 0;
 const LINUX_VIRTIO_NET_HDR_GSO_TCPV4: u8 = 1;
 const LINUX_VIRTIO_NET_HDR_GSO_TCPV6: u8 = 4;
 const LINUX_VIRTIO_NET_HDR_GSO_UDP_L4: u8 = 5;
 const LINUX_VIRTIO_NET_HDR_GSO_ECN: u8 = 0x80;
-
 const LINUX_TCP_FLAGS_OFFSET: usize = 13;
 const LINUX_TCP_FLAG_FIN: u8 = 0x01;
 const LINUX_TCP_FLAG_PSH: u8 = 0x08;
@@ -15,7 +13,6 @@ const LINUX_IPPROTO_TCP: u8 = 6;
 const LINUX_IPPROTO_UDP: u8 = 17;
 const LINUX_IPV4_SRC_ADDR_OFFSET: usize = 12;
 const LINUX_IPV6_SRC_ADDR_OFFSET: usize = 8;
-
 #[repr(C)]
 union LinuxIfReqIfru {
     ifru_flags: libc::c_short,
@@ -33,7 +30,6 @@ struct LinuxVnetTun {
     name: String,
     _udp_gso: bool,
 }
-
 impl Drop for LinuxVnetTun {
     fn drop(&mut self) {
         unsafe {
@@ -47,7 +43,6 @@ impl AsRawFd for LinuxVnetTun {
         self.fd
     }
 }
-
 impl LinuxVnetTun {
     fn new(name: &str) -> Result<Self> {
         if name.parse::<i32>().is_ok() {
@@ -59,12 +54,7 @@ impl LinuxVnetTun {
             return Err(anyhow!("invalid Linux TUN interface name '{name}'"));
         }
 
-        let fd = unsafe {
-            libc::open(
-                b"/dev/net/tun\0".as_ptr().cast(),
-                libc::O_RDWR | libc::O_CLOEXEC,
-            )
-        };
+        let fd = unsafe { libc::open(c"/dev/net/tun".as_ptr(), libc::O_RDWR | libc::O_CLOEXEC) };
         if fd < 0 {
             return Err(io::Error::last_os_error()).context("open /dev/net/tun");
         }
@@ -88,7 +78,6 @@ impl LinuxVnetTun {
         };
         let name_bytes = name.as_bytes();
         ifr.ifr_name[..name_bytes.len()].copy_from_slice(name_bytes);
-
         let rc = unsafe { libc::ioctl(fd, libc::TUNSETIFF as _, &ifr) };
         if rc < 0 {
             return Err(io::Error::last_os_error()).context("TUNSETIFF IFF_VNET_HDR");
@@ -102,7 +91,6 @@ impl LinuxVnetTun {
 
         let udp_offloads = tcp_offloads | libc::TUN_F_USO4 | libc::TUN_F_USO6;
         let udp_gso = unsafe { libc::ioctl(fd, libc::TUNSETOFFLOAD as _, udp_offloads) } >= 0;
-
         eprintln!("fips: Linux vnet TUN enabled on {name}; udp_gso={udp_gso}");
         Ok(Self {
             fd,
@@ -126,7 +114,6 @@ impl LinuxVnetTun {
     fn name(&self) -> &str {
         &self.name
     }
-
     fn read_packets_into(
         &self,
         scratch: &mut [u8],
@@ -215,7 +202,6 @@ struct LinuxVnetTcp4GroFlow {
     ack: u32,
     tcp_options: Vec<u8>,
 }
-
 #[derive(Clone, Debug)]
 struct LinuxVnetTcp4GroCandidate {
     ip_header_len: usize,
@@ -225,7 +211,6 @@ struct LinuxVnetTcp4GroCandidate {
     psh_set: bool,
     flow: LinuxVnetTcp4GroFlow,
 }
-
 fn linux_vnet_prepare_write_frames(packets: &[Vec<u8>]) -> Vec<Vec<u8>> {
     linux_vnet_prepare_write_frames_with_gro(packets, linux_vnet_tcp4_gro_write_enabled())
 }
@@ -243,7 +228,6 @@ fn linux_vnet_prepare_write_frames_with_gro(
 
     let mut frames = Vec::with_capacity(packets.len());
     let mut current: Option<LinuxVnetWriteFrame> = None;
-
     for packet in packets {
         if let Some(frame) = current.as_mut()
             && linux_vnet_try_tcp4_gro_append(frame, packet)
@@ -260,7 +244,6 @@ fn linux_vnet_prepare_write_frames_with_gro(
     if let Some(frame) = current {
         frames.push(linux_vnet_finish_write_frame(frame));
     }
-
     frames
 }
 

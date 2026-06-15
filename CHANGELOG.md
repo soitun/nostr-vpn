@@ -2,6 +2,26 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.0.76 - 2026-06-15
+
+### Changed
+
+- Linux FIPS private-mesh dataplane now includes the direct endpoint-payload
+  send path, opt-in vnet TUN fast path guardrails, and wider Linux receive
+  drains used by the latest latency benchmark work.
+- Docker FIPS perf and soak harnesses now capture richer benchmark provenance,
+  trace mismatches, bulk-container pressure, receive drops, and bounded iperf
+  probe windows.
+
+### Fixed
+
+- FIPS TUN-to-mesh queuing now preserves priority progress under bulk load by
+  classifying liveness/control packets separately from bulk tunnel traffic and
+  accounting queued bulk capacity by packet.
+- Linux FIPS throughput/latency experiments now use tuned TUN queue depth and
+  mesh burst behavior without undoing the macOS bounded queue/coalescing
+  safeguards from 4.0.75.
+
 ## 4.0.75 - 2026-06-15
 
 ### Changed
