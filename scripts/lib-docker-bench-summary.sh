@@ -1036,6 +1036,40 @@ docker_bench_pipeline_nvpn_tun_read_batch_summary() {
   '
 }
 
+docker_bench_pipeline_nvpn_mesh_send_batch_summary() {
+  local line="$1"
+  printf '%s\n' "$line" | awk '
+    function parse_rate(line, metric, start, rest, parts, value) {
+      start = index(line, metric "=")
+      if (start == 0) {
+        return ""
+      }
+      rest = substr(line, start + length(metric) + 1)
+      split(rest, parts, " ")
+      value = parts[1]
+      sub(/\/s$/, "", value)
+      return value + 0
+    }
+    {
+      flush = parse_rate($0, "nvpn_mesh_send_batch_flush")
+      input_packets = parse_rate($0, "nvpn_mesh_send_batch_input_packets")
+      routed_packets = parse_rate($0, "nvpn_mesh_send_batch_routed_packets")
+      runs = parse_rate($0, "nvpn_mesh_send_batch_runs")
+      full = parse_rate($0, "nvpn_mesh_send_batch_full")
+      if (flush <= 0 && input_packets <= 0 && routed_packets <= 0 && runs <= 0) {
+        next
+      }
+      avg_input_packets = flush > 0 ? input_packets / flush : 0
+      avg_routed_packets = flush > 0 ? routed_packets / flush : 0
+      avg_runs = flush > 0 ? runs / flush : 0
+      routed_pct = input_packets > 0 ? (routed_packets / input_packets) * 100 : 0
+      full_pct = flush > 0 ? (full / flush) * 100 : 0
+      printf "avg_input_packets=%.1f,avg_routed_packets=%.1f,avg_runs=%.1f,routed_pct=%.1f,full_pct=%.1f,flush_per_sec=%g,input_packets_per_sec=%g,routed_packets_per_sec=%g,runs_per_sec=%g\n", avg_input_packets, avg_routed_packets, avg_runs, routed_pct, full_pct, flush, input_packets, routed_packets, runs
+      exit
+    }
+  '
+}
+
 docker_bench_pipeline_nvpn_mesh_recv_batch_summary() {
   local line="$1"
   printf '%s\n' "$line" | awk '

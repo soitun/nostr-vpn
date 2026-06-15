@@ -138,28 +138,44 @@ impl FipsPrivateMeshRuntime {
             return Ok(0);
         }
 
+        let input_packets = packets.len();
         let mesh = self.mesh.load();
         let peer_identities = self.peer_identities.load();
         let mut runs = Vec::new();
+        let mut routed_packets = 0usize;
 
-        for packet in packets.drain(..) {
-            let class = packet.class;
-            let Some(outgoing) = mesh.route_outbound_packet_owned_with_peer(packet.bytes) else {
-                continue;
-            };
-            let payload = FipsEndpointPayload::from_classified(outgoing.bytes, class);
-            Self::push_endpoint_send_run(
-                &mut runs,
-                &peer_identities,
-                outgoing.participant_pubkey,
-                outgoing.participant_pubkey_bytes.copied(),
-                outgoing.endpoint_node_addr,
-                payload,
-            );
+        {
+            let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRoute);
+            for packet in packets.drain(..) {
+                let class = packet.class;
+                let Some(outgoing) = mesh.route_outbound_packet_owned_with_peer(packet.bytes) else {
+                    continue;
+                };
+                routed_packets += 1;
+                let payload = FipsEndpointPayload::from_classified(outgoing.bytes, class);
+                Self::push_endpoint_send_run(
+                    &mut runs,
+                    &peer_identities,
+                    outgoing.participant_pubkey,
+                    outgoing.participant_pubkey_bytes.copied(),
+                    outgoing.endpoint_node_addr,
+                    payload,
+                );
+            }
         }
         drop(peer_identities);
         drop(mesh);
 
+        let run_count = runs.len();
+        crate::pipeline_profile::record_mesh_send_batch(
+            input_packets,
+            routed_packets,
+            run_count,
+            FIPS_MESH_SEND_BURST,
+        );
+
+        let _t =
+            crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
         self.send_endpoint_send_runs(runs).await
     }
 

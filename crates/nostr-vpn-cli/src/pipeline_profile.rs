@@ -5,8 +5,8 @@ use std::sync::atomic::{
 };
 use std::time::Instant;
 
-const N_STAGES: usize = 4;
-const N_COUNTERS: usize = 17;
+const N_STAGES: usize = 6;
+const N_COUNTERS: usize = 22;
 const HIST_BUCKETS: usize = 48;
 
 #[derive(Copy, Clone)]
@@ -15,7 +15,9 @@ pub(crate) enum Stage {
     TunRead = 0,
     TunToMeshQueueWait = 1,
     MeshSend = 2,
-    TunWrite = 3,
+    MeshRoute = 3,
+    MeshEndpointSend = 4,
+    TunWrite = 5,
 }
 
 impl Stage {
@@ -24,6 +26,8 @@ impl Stage {
             Stage::TunRead => "nvpn_tun_read",
             Stage::TunToMeshQueueWait => "nvpn_tun_to_mesh_queue_wait",
             Stage::MeshSend => "nvpn_mesh_send",
+            Stage::MeshRoute => "nvpn_mesh_route",
+            Stage::MeshEndpointSend => "nvpn_mesh_endpoint_send",
             Stage::TunWrite => "nvpn_tun_write",
         }
     }
@@ -44,11 +48,16 @@ pub(crate) enum Counter {
     MeshRecvPacketBytes = 9,
     MeshRecvBatchFull = 10,
     MeshRecvBatchSinglePacket = 11,
-    TunWritePackets = 12,
-    TunWritePacketBytes = 13,
-    TunWriteWouldBlock = 14,
-    TunWriteFrames = 15,
-    TunWriteFrameBytes = 16,
+    MeshSendBatchFlush = 12,
+    MeshSendBatchInputPackets = 13,
+    MeshSendBatchRoutedPackets = 14,
+    MeshSendBatchRuns = 15,
+    MeshSendBatchFull = 16,
+    TunWritePackets = 17,
+    TunWritePacketBytes = 18,
+    TunWriteWouldBlock = 19,
+    TunWriteFrames = 20,
+    TunWriteFrameBytes = 21,
 }
 
 impl Counter {
@@ -66,6 +75,11 @@ impl Counter {
             Counter::MeshRecvPacketBytes => "nvpn_mesh_recv_packet_bytes",
             Counter::MeshRecvBatchFull => "nvpn_mesh_recv_batch_full",
             Counter::MeshRecvBatchSinglePacket => "nvpn_mesh_recv_batch_single_packet",
+            Counter::MeshSendBatchFlush => "nvpn_mesh_send_batch_flush",
+            Counter::MeshSendBatchInputPackets => "nvpn_mesh_send_batch_input_packets",
+            Counter::MeshSendBatchRoutedPackets => "nvpn_mesh_send_batch_routed_packets",
+            Counter::MeshSendBatchRuns => "nvpn_mesh_send_batch_runs",
+            Counter::MeshSendBatchFull => "nvpn_mesh_send_batch_full",
             Counter::TunWritePackets => "nvpn_tun_write_packets",
             Counter::TunWritePacketBytes => "nvpn_tun_write_packet_bytes",
             Counter::TunWriteWouldBlock => "nvpn_tun_write_would_block",
@@ -89,11 +103,16 @@ fn counter_from_index(idx: usize) -> Counter {
         9 => Counter::MeshRecvPacketBytes,
         10 => Counter::MeshRecvBatchFull,
         11 => Counter::MeshRecvBatchSinglePacket,
-        12 => Counter::TunWritePackets,
-        13 => Counter::TunWritePacketBytes,
-        14 => Counter::TunWriteWouldBlock,
-        15 => Counter::TunWriteFrames,
-        16 => Counter::TunWriteFrameBytes,
+        12 => Counter::MeshSendBatchFlush,
+        13 => Counter::MeshSendBatchInputPackets,
+        14 => Counter::MeshSendBatchRoutedPackets,
+        15 => Counter::MeshSendBatchRuns,
+        16 => Counter::MeshSendBatchFull,
+        17 => Counter::TunWritePackets,
+        18 => Counter::TunWritePacketBytes,
+        19 => Counter::TunWriteWouldBlock,
+        20 => Counter::TunWriteFrames,
+        21 => Counter::TunWriteFrameBytes,
         _ => unreachable!(),
     }
 }
@@ -103,7 +122,9 @@ fn stage_from_index(idx: usize) -> Stage {
         0 => Stage::TunRead,
         1 => Stage::TunToMeshQueueWait,
         2 => Stage::MeshSend,
-        3 => Stage::TunWrite,
+        3 => Stage::MeshRoute,
+        4 => Stage::MeshEndpointSend,
+        5 => Stage::TunWrite,
         _ => unreachable!(),
     }
 }
@@ -191,6 +212,24 @@ pub(crate) fn record_mesh_recv_batch(
     }
     if packets == 1 {
         increment_counter_by(Counter::MeshRecvBatchSinglePacket, 1);
+    }
+}
+
+pub(crate) fn record_mesh_send_batch(
+    input_packets: usize,
+    routed_packets: usize,
+    runs: usize,
+    max_batch: usize,
+) {
+    if input_packets == 0 || !enabled() {
+        return;
+    }
+    increment_counter_by(Counter::MeshSendBatchFlush, 1);
+    increment_counter_by(Counter::MeshSendBatchInputPackets, input_packets as u64);
+    increment_counter_by(Counter::MeshSendBatchRoutedPackets, routed_packets as u64);
+    increment_counter_by(Counter::MeshSendBatchRuns, runs as u64);
+    if input_packets >= max_batch.max(1) {
+        increment_counter_by(Counter::MeshSendBatchFull, 1);
     }
 }
 
@@ -377,7 +416,10 @@ fn fmt_ns(ns: u64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{HIST_BUCKETS, bucket_upper_ns, percentile_ns};
+    use super::{
+        Counter, HIST_BUCKETS, Stage, bucket_upper_ns, counter_from_index, percentile_ns,
+        stage_from_index,
+    };
 
     #[test]
     fn percentile_uses_observed_histogram_count_when_stage_count_leads() {
@@ -386,5 +428,27 @@ mod tests {
 
         assert_eq!(percentile_ns(&hist, 2, 99), bucket_upper_ns(10));
         assert_eq!(percentile_ns(&[0u64; HIST_BUCKETS], 1, 99), 0);
+    }
+
+    #[test]
+    fn mesh_send_pipeline_names_are_stable() {
+        assert_eq!(Stage::MeshRoute.name(), "nvpn_mesh_route");
+        assert_eq!(Stage::MeshEndpointSend.name(), "nvpn_mesh_endpoint_send");
+        assert_eq!(
+            Counter::MeshSendBatchInputPackets.name(),
+            "nvpn_mesh_send_batch_input_packets"
+        );
+        assert_eq!(
+            Counter::MeshSendBatchRoutedPackets.name(),
+            "nvpn_mesh_send_batch_routed_packets"
+        );
+        assert_eq!(
+            stage_from_index(Stage::MeshRoute as usize).name(),
+            "nvpn_mesh_route"
+        );
+        assert_eq!(
+            counter_from_index(Counter::MeshSendBatchRuns as usize).name(),
+            "nvpn_mesh_send_batch_runs"
+        );
     }
 }
