@@ -75,10 +75,16 @@
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(target_os = "linux")]
     #[test]
     fn tun_to_mesh_queue_default_matches_host_pair_bulk_budget() {
         assert_eq!(DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP, 4096);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn tun_to_mesh_queue_default_matches_macos_latency_budget() {
+        assert_eq!(DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP, 256);
     }
 
     #[cfg(target_os = "macos")]
@@ -163,7 +169,7 @@
     #[cfg(target_os = "macos")]
     #[test]
     fn udp_send_buf_size_defaults_to_latency_oriented_macos_window() {
-        assert_eq!(super::DEFAULT_FIPS_UDP_SEND_BUF_SIZE, Some(512 * 1024));
+        assert_eq!(super::DEFAULT_FIPS_UDP_SEND_BUF_SIZE, Some(256 * 1024));
     }
 
     #[cfg(not(target_os = "macos"))]

@@ -106,8 +106,10 @@ const FIPS_MESH_RECV_BURST: usize = 256;
 const FIPS_MESH_RECV_BURST: usize = 128;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_EVENT_DRAIN_LIMIT: usize = 256;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "linux")]
 const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 4096;
+#[cfg(target_os = "macos")]
+const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 256;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MIN_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 1;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -121,7 +123,7 @@ const MAX_FIPS_TUN_BULK_COALESCE_MICROS: u64 = 5_000;
 const MIN_FIPS_UDP_SEND_BUF_SIZE: usize = 64 * 1024;
 const MAX_FIPS_UDP_SEND_BUF_SIZE: usize = 8 * 1024 * 1024;
 #[cfg(target_os = "macos")]
-const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(512 * 1024);
+const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(256 * 1024);
 #[cfg(not(target_os = "macos"))]
 const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = None;
 #[cfg(target_os = "windows")]
