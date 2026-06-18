@@ -19,6 +19,7 @@ CONFIG_PATH="/root/.config/nvpn/config.toml"
 KNOWN_PERF_PHASES="clean-underlay,constrained-underlay,worker-queue-pressure,rx-maintenance-fault"
 DURATION="${NVPN_PERF_DURATION_SECS:-8}"
 LOAD_DURATION="${NVPN_PERF_LOAD_DURATION_SECS:-12}"
+IPERF_INTERVAL_SECS="${NVPN_PERF_IPERF_INTERVAL_SECS:-1}"
 if (( LOAD_DURATION > DURATION )); then
   IPERF_TIMEOUT_BASE_SECS="$LOAD_DURATION"
 else
@@ -26,9 +27,12 @@ else
 fi
 IPERF_TIMEOUT_SECS="${NVPN_DOCKER_IPERF_TIMEOUT_SECS:-$((IPERF_TIMEOUT_BASE_SECS + 30))}"
 NVPN_DOCKER_IPERF_TIMEOUT_SECS="$IPERF_TIMEOUT_SECS"
+NVPN_DOCKER_IPERF_INTERVAL_SECS="$IPERF_INTERVAL_SECS"
 MIN_TCP_MBIT="${NVPN_PERF_MIN_TCP_MBIT:-100}"
 MIN_REVERSE_TCP_MBIT="${NVPN_PERF_MIN_REVERSE_TCP_MBIT:-100}"
 MAX_TCP_RETRANS="${NVPN_PERF_MAX_TCP_RETRANS:-}"
+MIN_IPERF_INTERVAL_MBIT="${NVPN_PERF_MIN_IPERF_INTERVAL_MBIT:-1}"
+MAX_IPERF_STALL_INTERVALS="${NVPN_PERF_MAX_IPERF_STALL_INTERVALS:-0}"
 MAX_PING_LOSS_PERCENT="${NVPN_PERF_MAX_PING_LOSS_PERCENT:-2}"
 MAX_PING_AVG_MS="${NVPN_PERF_MAX_PING_AVG_MS:-250}"
 MAX_PING_MAX_MS="${NVPN_PERF_MAX_PING_MAX_MS:-1000}"
@@ -133,6 +137,7 @@ Examples:
   NVPN_E2E_BUILDER_IMAGE=local-rust NVPN_E2E_RUNTIME_IMAGE=local-runtime $(basename "$0")
   NVPN_PERF_PIPELINE_INTERVAL_SECS=1 $(basename "$0") --phase clean-underlay
   NVPN_PERF_MAX_TCP_RETRANS=1000 $(basename "$0") --phase clean-underlay
+  NVPN_PERF_MIN_IPERF_INTERVAL_MBIT=1 NVPN_PERF_MAX_IPERF_STALL_INTERVALS=0 $(basename "$0") --phase clean-underlay
   NVPN_DOCKER_IPERF_TIMEOUT_SECS=20 $(basename "$0") --phase clean-underlay
   NVPN_DOCKER_CPU_STRESS=1 NVPN_DOCKER_CPU_STRESS_SIDES=remote $(basename "$0") --phase clean-underlay
   NVPN_PERF_FAIL_ON_PRIORITY_HARD_EVENTS=0 $(basename "$0") --phase worker-queue-pressure
@@ -425,6 +430,44 @@ iperf_retransmits() {
   jq -r '(.end.sum_sent.retransmits // .end.sum.retransmits // 0)'
 }
 
+iperf_stall_interval_count() {
+  local min_mbit="${1:-$MIN_IPERF_INTERVAL_MBIT}"
+  jq -r --argjson min_mbit "$min_mbit" '
+    [
+      (.intervals // [])[]
+      | select((.sum.omitted // false) | not)
+      | ((.sum.bits_per_second // 0) | if type == "number" then . else 0 end) as $bps
+      | select(($bps / 1000000) < $min_mbit)
+    ] | length
+  '
+}
+
+assert_iperf_progress_ok() {
+  local label="$1"
+  local json="$2"
+  local stall_count
+  stall_count="$(printf '%s\n' "$json" | iperf_stall_interval_count "$MIN_IPERF_INTERVAL_MBIT")"
+  if ! [[ "$stall_count" =~ ^[0-9]+$ ]]; then
+    echo "fips perf regression e2e failed: unable to count iperf stalled intervals for $label" >&2
+    exit 1
+  fi
+  if (( stall_count > MAX_IPERF_STALL_INTERVALS )); then
+    append_failure_summary \
+      "$label iperf stalled intervals below ${MIN_IPERF_INTERVAL_MBIT} Mbps" \
+      "<=" \
+      "$stall_count" \
+      "$MAX_IPERF_STALL_INTERVALS"
+    echo "fips perf regression e2e failed: $label had $stall_count iperf interval(s) below ${MIN_IPERF_INTERVAL_MBIT} Mbps" >&2
+    exit 1
+  fi
+}
+
+assert_iperf_progress_file_ok() {
+  local label="$1"
+  local json_path="$2"
+  assert_iperf_progress_ok "$label" "$(cat "$json_path")"
+}
+
 iperf_interval_summary() {
   jq -r '
     def numbers: map(select(type == "number"));
@@ -540,7 +583,7 @@ run_iperf_json() {
   local output code
   for attempt in 1 2 3; do
     if output="$("${COMPOSE[@]}" exec -T node-a timeout --kill-after=5s "$IPERF_TIMEOUT_SECS" iperf3 \
-        -J --get-server-output -c "$BOB_TUNNEL_IP" -t "$DURATION" -O 1 --connect-timeout 3000 "$@" 2>&1)"; then
+        -J --get-server-output -c "$BOB_TUNNEL_IP" -t "$DURATION" -i "$IPERF_INTERVAL_SECS" -O 1 --connect-timeout 3000 "$@" 2>&1)"; then
       code=0
       if printf '%s\n' "$output" | iperf_mbps >/dev/null 2>&1; then
         printf '%s\n' "$output"
@@ -1724,7 +1767,7 @@ run_concurrent_probe() {
   json_path="$(mktemp)"
   err_path="$(mktemp)"
   "${COMPOSE[@]}" exec -T node-a timeout --kill-after=5s "$IPERF_TIMEOUT_SECS" iperf3 \
-    -J --get-server-output -c "$BOB_TUNNEL_IP" -t "$LOAD_DURATION" -O 1 --connect-timeout 3000 "$@" \
+    -J --get-server-output -c "$BOB_TUNNEL_IP" -t "$LOAD_DURATION" -i "$IPERF_INTERVAL_SECS" -O 1 --connect-timeout 3000 "$@" \
     >"$json_path" 2>"$err_path" &
   iperf_pid=$!
   sleep 1
@@ -1758,15 +1801,17 @@ run_concurrent_probe() {
     exit 1
   fi
   retrans="$(iperf_retransmits <"$json_path")"
-  rm -f "$json_path" "$err_path"
   printf '%s %s TCP load: %.1f Mbps retrans=%s\n' "$phase" "$label" "$mbps" "$retrans"
   CURRENT_STEP="$label TCP load"
   CURRENT_PROBE_MBIT="$mbps"
   CURRENT_PROBE_RETRANS="$retrans"
   assert_float_at_least "$mbps" "$min_tcp" "$phase $label TCP throughput Mbps"
   assert_int_at_most_if_set "$retrans" "$MAX_TCP_RETRANS" "$phase $label TCP load retransmits"
+  CURRENT_STEP="$label TCP load progress"
+  assert_iperf_progress_file_ok "$phase $label TCP load" "$json_path"
   CURRENT_STEP="$label TCP load ping"
   assert_ping_ok "$phase during $label TCP load" "$ping_output" "$max_loss" "$max_avg" "$max_max" "$max_p95" "$max_p99"
+  rm -f "$json_path" "$err_path"
   LAST_PROBE_MBIT="$mbps"
   LAST_PROBE_RETRANS="$retrans"
   LAST_PROBE_PING_LOSS="$LAST_PING_LOSS"
@@ -1825,6 +1870,8 @@ run_perf_phase() {
   CURRENT_FORWARD_RETRANS="$forward_retrans"
   assert_float_at_least "$forward_mbps" "$min_tcp" "$phase forward TCP throughput Mbps"
   assert_int_at_most_if_set "$forward_retrans" "$MAX_TCP_RETRANS" "$phase forward TCP retransmits"
+  CURRENT_STEP="forward TCP progress"
+  assert_iperf_progress_ok "$phase forward TCP" "$forward_json"
 
   local reverse_json reverse_mbps reverse_retrans
   CURRENT_STEP="reverse TCP"
@@ -1840,6 +1887,8 @@ run_perf_phase() {
   CURRENT_REVERSE_RETRANS="$reverse_retrans"
   assert_float_at_least "$reverse_mbps" "$min_reverse_tcp" "$phase reverse TCP throughput Mbps"
   assert_int_at_most_if_set "$reverse_retrans" "$MAX_TCP_RETRANS" "$phase reverse TCP retransmits"
+  CURRENT_STEP="reverse TCP progress"
+  assert_iperf_progress_ok "$phase reverse TCP" "$reverse_json"
 
   local post_ping forward_load_mbps forward_load_retrans
   local forward_load_ping_loss forward_load_ping_avg forward_load_ping_p95 forward_load_ping_p99 forward_load_ping_max

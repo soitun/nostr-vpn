@@ -310,6 +310,28 @@ test_iperf_parser_and_tcp_thresholds() {
     bash "$PERF_SCRIPT"
 }
 
+test_iperf_progress_guard() {
+  local got good_json bad_json
+
+  got="$(fixture_iperf_interval_output | iperf_stall_interval_count 1)"
+  assert_eq "$got" "1" "iperf stalled interval count"
+
+  good_json="$(fixture_forward_iperf_with_server_output)"
+  bad_json="$(fixture_iperf_interval_output)"
+
+  (
+    MIN_IPERF_INTERVAL_MBIT=1
+    MAX_IPERF_STALL_INTERVALS=0
+    assert_iperf_progress_ok "fixture good" "$good_json"
+  )
+
+  assert_fails_with \
+    "iperf interval stall guard" \
+    "fixture bad had 1 iperf interval(s) below 1 Mbps" \
+    bash -c 'source "$1"; MIN_IPERF_INTERVAL_MBIT=1; MAX_IPERF_STALL_INTERVALS=0; assert_iperf_progress_ok "fixture bad" "$2"' \
+    bash "$PERF_SCRIPT" "$bad_json"
+}
+
 test_iperf_interval_summary() {
   local got expected
 
@@ -1358,6 +1380,7 @@ test_host_snapshot_artifact() {
 test_ping_parser_percentiles
 test_ping_thresholds
 test_iperf_parser_and_tcp_thresholds
+test_iperf_progress_guard
 test_iperf_interval_summary
 test_iperf_sender_summary
 test_iperf_timeout_configuration
