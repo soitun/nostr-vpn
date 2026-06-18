@@ -644,6 +644,54 @@
     }
 
     #[test]
+    fn static_peer_endpoint_disables_connected_udp_fast_path() {
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
+        let network_id = "static-connected-udp-test";
+
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = network_id.to_string();
+        app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey];
+        app.fips_peer_endpoints.insert(
+            bob_npub,
+            vec!["192.168.50.30:51820".to_string()],
+        );
+        app.node.connected_udp = ConnectedUdpConfig {
+            enabled: Some(true),
+            fd_reserve: None,
+        };
+
+        let tunnel_config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            None,
+            &[],
+        )
+        .expect("fips tunnel config");
+
+        let endpoint_config = fips_endpoint_config_with_open_discovery_limit(
+            &tunnel_config.endpoint_peers,
+            None,
+            tunnel_config.mesh_mtu,
+            tunnel_config.nostr_discovery_policy,
+            tunnel_config.open_discovery_max_pending,
+            Some(&tunnel_config.connected_udp),
+        );
+
+        assert!(
+            !endpoint_config.node.connected_udp.enabled,
+            "static UDP peer endpoints must stay on wildcard UDP for path drift"
+        );
+    }
+
+    #[test]
     fn endpoint_config_disables_nostr_when_discovery_off() {
         let keys = Keys::generate();
         let participant_pubkey = keys.public_key().to_hex();

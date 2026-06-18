@@ -309,4 +309,21 @@ impl FipsPrivateMeshRuntime {
             .await
             .context("fips: update_peers rejected by endpoint")
     }
+
+    pub(crate) async fn refresh_peer_paths(
+        &self,
+        endpoint_peers: &[FipsEndpointPeerTransportConfig],
+    ) -> Result<usize> {
+        let peers = endpoint_peers
+            .iter()
+            .map(|peer| {
+                PeerIdentity::from_npub(&peer.npub)
+                    .with_context(|| format!("invalid FIPS endpoint peer npub {}", peer.npub))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        self.endpoint
+            .refresh_peer_paths(peers)
+            .await
+            .context("fips: refresh_peer_paths rejected by endpoint")
+    }
 }

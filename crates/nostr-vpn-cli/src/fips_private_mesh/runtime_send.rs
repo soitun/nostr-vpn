@@ -149,10 +149,22 @@ impl FipsPrivateMeshRuntime {
             let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRoute);
             for packet in packets.drain(..) {
                 let class = packet.class;
+                let debug_description =
+                    fips_unix_packet_debug_enabled().then(|| describe_ip_packet(&packet.bytes));
                 let Some(outgoing) = mesh.route_outbound_packet_owned_with_peer(packet.bytes) else {
+                    if let Some(description) = debug_description {
+                        eprintln!("fips: TUN packet had no FIPS route {description}");
+                    }
                     continue;
                 };
                 routed_packets += 1;
+                if fips_unix_packet_debug_enabled() {
+                    eprintln!(
+                        "fips: TUN packet routed to {} {}",
+                        outgoing.participant_pubkey,
+                        describe_ip_packet(&outgoing.bytes)
+                    );
+                }
                 let participant_key = outgoing.participant_pubkey_bytes.copied();
                 let payload = FipsEndpointPayload::from_classified(outgoing.bytes, class);
                 Self::push_endpoint_send_run(

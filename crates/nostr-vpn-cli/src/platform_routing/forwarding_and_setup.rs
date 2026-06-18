@@ -456,7 +456,7 @@ pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
                 .arg(&ip)
                 .arg(&ip)
                 .arg("netmask")
-                .arg("255.255.255.0")
+                .arg(macos_tunnel_ipv4_netmask())
                 .arg("mtu")
                 .arg(mtu)
                 .arg("up"),
@@ -494,4 +494,9 @@ pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
     Err(anyhow!(
         "interface setup is not implemented for this platform"
     ))
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_tunnel_ipv4_netmask() -> &'static str {
+    "255.255.255.255"
 }

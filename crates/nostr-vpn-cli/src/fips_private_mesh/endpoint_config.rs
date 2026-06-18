@@ -71,6 +71,13 @@ fn fips_endpoint_config_with_open_discovery_limit(
 ) -> Config {
     let mut config = Config::new();
     apply_connected_udp_config(&mut config, connected_udp);
+    if peers.iter().any(|peer| {
+        peer.addresses.iter().any(|hint| {
+            hint.seen_at_ms.is_none() && split_peer_transport_addr(&hint.addr).0 == "udp"
+        })
+    }) {
+        config.node.connected_udp.enabled = false;
+    }
     config.node.control.enabled = false;
     // App mesh peers may be routable only through already-connected
     // neighbors when direct NAT traversal fails. Reply-learned routing lets

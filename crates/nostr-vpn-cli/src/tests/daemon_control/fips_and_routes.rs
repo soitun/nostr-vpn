@@ -386,3 +386,8 @@ fn macos_ifconfig_has_ipv4_matches_exact_interface_address() {
         Ipv4Addr::new(10, 44, 10, 24)
     ));
 }
+
+#[test]
+fn macos_tunnel_ipv4_netmask_uses_host_route() {
+    assert_eq!(crate::macos_tunnel_ipv4_netmask(), "255.255.255.255");
+}

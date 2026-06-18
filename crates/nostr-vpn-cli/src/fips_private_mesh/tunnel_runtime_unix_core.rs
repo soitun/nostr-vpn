@@ -139,6 +139,13 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.update_peers(endpoint_peers).await
     }
 
+    pub(crate) async fn refresh_peer_paths(
+        &self,
+        endpoint_peers: &[FipsEndpointPeerTransportConfig],
+    ) -> Result<usize> {
+        self.mesh.refresh_peer_paths(endpoint_peers).await
+    }
+
     pub(crate) async fn update_relays(&self, relays: &[String]) -> Result<()> {
         self.mesh.update_relays(relays).await
     }

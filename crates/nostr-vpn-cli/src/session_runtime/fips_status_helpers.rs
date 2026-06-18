@@ -410,10 +410,11 @@ async fn refresh_fips_tunnel_runtime_peer_paths(
     )?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
     let outcome = current.update_peers(&config.endpoint_peers).await?;
+    let refreshed = current.refresh_peer_paths(&config.endpoint_peers).await?;
     *context.last_endpoint_peer_signature = endpoint_peer_signature;
     eprintln!(
-        "daemon: refreshed FIPS endpoint peer paths in place (added={} updated={} unchanged={} removed={})",
-        outcome.added, outcome.updated, outcome.unchanged, outcome.removed
+        "daemon: refreshed FIPS endpoint peer paths in place (added={} updated={} unchanged={} removed={} direct_refreshes={})",
+        outcome.added, outcome.updated, outcome.unchanged, outcome.removed, refreshed
     );
     Ok(false)
 }

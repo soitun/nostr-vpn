@@ -44,6 +44,13 @@ impl FipsPrivateTunnelRuntime {
         Ok(fips_endpoint::UpdatePeersOutcome::default())
     }
 
+    pub(crate) async fn refresh_peer_paths(
+        &self,
+        _endpoint_peers: &[FipsEndpointPeerTransportConfig],
+    ) -> Result<usize> {
+        Ok(0)
+    }
+
     pub(crate) async fn update_relays(&self, _relays: &[String]) -> Result<()> {
         Ok(())
     }
