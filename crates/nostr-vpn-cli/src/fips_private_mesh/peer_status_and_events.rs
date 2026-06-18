@@ -466,6 +466,41 @@ fn recent_transit_group_rank(addrs: &[(String, u64)]) -> (u8, u64) {
     (best_score, freshest_seen_at_ms(addrs))
 }
 
+fn static_transit_group_rank(addrs: &[String]) -> u8 {
+    addrs
+        .iter()
+        .map(|addr| recent_transit_endpoint_score(addr))
+        .max()
+        .unwrap_or(0)
+}
+
+fn cap_static_non_roster_transit_endpoints(
+    groups: Vec<(String, Vec<String>)>,
+    roster_endpoint_npubs: &HashSet<String>,
+    max_non_roster: usize,
+) -> Vec<(String, Vec<String>)> {
+    let mut roster = Vec::new();
+    let mut non_roster = Vec::new();
+
+    for (participant, addrs) in groups {
+        if roster_endpoint_npubs.contains(&normalize_fips_endpoint_npub(&participant)) {
+            roster.push((participant, addrs));
+        } else {
+            non_roster.push((participant, addrs));
+        }
+    }
+
+    non_roster.sort_by(|left, right| {
+        static_transit_group_rank(&right.1)
+            .cmp(&static_transit_group_rank(&left.1))
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    non_roster.truncate(max_non_roster);
+
+    roster.extend(non_roster);
+    roster
+}
+
 fn cap_recent_non_roster_transit_endpoints(
     groups: Vec<(String, Vec<(String, u64)>)>,
     roster_endpoint_npubs: &HashSet<String>,

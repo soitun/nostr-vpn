@@ -12,6 +12,9 @@ All notable changes to this project are documented in this file.
 - Configured-only FIPS discovery no longer seeds built-in bootstrap or recent
   non-roster transit peers, keeping low-power nodes out of public transit retry
   churn while preserving roster/static hints.
+- Open FIPS discovery now caps bootstrap/transit seeds before applying the open
+  discovery admission budget, preventing large learned bootstrap lists from
+  exhausting fresh-discovery headroom and churning on ambient peers.
 - The release gate now honors `NVPN_FIPS_REPO_PATH` for its blocking Cargo
   clippy/test steps, so local FIPS API changes are tested with the same patch
   set used for daemon builds.

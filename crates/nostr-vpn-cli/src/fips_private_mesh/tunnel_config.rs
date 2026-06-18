@@ -81,10 +81,15 @@ impl FipsPrivateTunnelConfig {
         // peers, so they ferry frames when direct traversal fails but never
         // become roster route targets.
         if allow_non_roster_transit {
-            operator_static.extend(filter_static_tunnel_endpoints(
+            let bootstrap_transit = filter_static_tunnel_endpoints(
                 app.fips_bootstrap_peer_endpoints(),
                 &tunnel_endpoint_hosts,
                 &local_private_subnets,
+            );
+            operator_static.extend(cap_static_non_roster_transit_endpoints(
+                bootstrap_transit,
+                &desired_endpoint_hint_npubs,
+                FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS,
             ));
         }
         let static_non_roster_transit_seeds = if allow_non_roster_transit {
