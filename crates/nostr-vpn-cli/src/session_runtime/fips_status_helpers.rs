@@ -385,16 +385,37 @@ async fn restart_fips_tunnel_runtime_after_stale_participants(
         return Ok(false);
     }
     eprintln!(
-        "daemon: restarting FIPS private mesh after {} participant(s) stopped responding while endpoint links stayed connected",
+        "daemon: refreshing FIPS peer paths after {} participant(s) stopped responding while endpoint links stayed connected",
         stale_participants.len()
     );
-    restart_fips_tunnel_runtime_after_link_event(
-        runtime,
-        context,
-        "stale FIPS participant traffic",
-    )
-    .await?;
-    Ok(true)
+    refresh_fips_tunnel_runtime_peer_paths(runtime, context).await
+}
+
+#[cfg(feature = "embedded-fips")]
+async fn refresh_fips_tunnel_runtime_peer_paths(
+    runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
+    context: FipsRestartContext<'_>,
+) -> Result<bool> {
+    let Some(current) = runtime.as_ref() else {
+        return Ok(false);
+    };
+    let live_peer_endpoints = current.peer_endpoint_hints();
+    let config = fips_tunnel_config_from_app(
+        context.app,
+        context.network_id,
+        current.iface().to_string(),
+        context.own_pubkey,
+        context.recent_peers,
+        &live_peer_endpoints,
+    )?;
+    let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
+    let outcome = current.update_peers(&config.endpoint_peers).await?;
+    *context.last_endpoint_peer_signature = endpoint_peer_signature;
+    eprintln!(
+        "daemon: refreshed FIPS endpoint peer paths in place (added={} updated={} unchanged={} removed={})",
+        outcome.added, outcome.updated, outcome.unchanged, outcome.removed
+    );
+    Ok(false)
 }
 
 #[cfg(feature = "embedded-fips")]
