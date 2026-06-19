@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.78 - 2026-06-19
+
+### Changed
+
+- The release gate can now run an optional host-pair loaded-latency check that
+  keeps ping running while TCP throughput probes run, catching tunnel stalls,
+  packet loss, and low-throughput iperf intervals in configured real-device
+  environments without committing local host details.
+- macOS FIPS private-mesh sending now sequences endpoint flows independently
+  on the ordered Darwin sender path, so one bulk TCP flow cannot block
+  latency-sensitive tunnel traffic to the same peer.
+
 ### Fixed
 
 - FIPS Nostr discovery GUI toggles now restart the embedded endpoint so live
@@ -18,6 +30,12 @@ All notable changes to this project are documented in this file.
 - The release gate now honors `NVPN_FIPS_REPO_PATH` for its blocking Cargo
   clippy/test steps, so local FIPS API changes are tested with the same patch
   set used for daemon builds.
+- The Docker FIPS perf gate now fails on low-throughput iperf intervals instead
+  of only checking whole-run averages.
+- macOS app windows refresh daemon state when the app starts or is shown again,
+  preventing stale one-device roster views after daemon/config changes.
+- Active direct-path refreshes without concrete direct candidates now use a
+  cooldown instead of tight retry churn.
 
 ## 4.0.77 - 2026-06-15
 
