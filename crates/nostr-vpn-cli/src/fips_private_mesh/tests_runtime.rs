@@ -62,6 +62,9 @@
         runtime.shutdown().await.expect("shutdown");
     }
 
+    static LOCAL_UDP_ENDPOINT_TEST_LOCK: tokio::sync::Mutex<()> =
+        tokio::sync::Mutex::const_new(());
+
     fn available_udp_port() -> u16 {
         UdpSocket::bind("127.0.0.1:0")
             .expect("bind test port")
@@ -207,6 +210,7 @@
 
     #[tokio::test]
     async fn two_local_endpoints_exchange_raw_packets_over_fips() {
+        let _local_udp_guard = LOCAL_UDP_ENDPOINT_TEST_LOCK.lock().await;
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
         let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
@@ -277,6 +281,7 @@
 
     #[tokio::test]
     async fn relayed_control_ping_marks_peer_present_without_direct_link() {
+        let _local_udp_guard = LOCAL_UDP_ENDPOINT_TEST_LOCK.lock().await;
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
         let carol_keys = Keys::generate();
