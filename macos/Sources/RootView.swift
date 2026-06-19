@@ -306,9 +306,14 @@ struct RootView: View {
         Binding(
             get: { shownNetwork?.id ?? state.networks.first?.id ?? "" },
             set: { networkId in
-                guard !networkId.isEmpty else { return }
-                shownNetworkId = networkId
+                guard let network = state.networks.first(where: { $0.id == networkId }) else {
+                    return
+                }
+                shownNetworkId = network.id
                 selectedSidebarItem = .devices
+                if !network.enabled {
+                    activateNetwork(network)
+                }
             }
         )
     }
