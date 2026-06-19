@@ -20,6 +20,7 @@ struct FipsEndpointTransportConfig {
 /// priority tier.
 const FIPS_STATIC_PEER_ENDPOINT_PRIORITY: u8 = 10;
 const FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 100;
+const FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY: u8 = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FipsPeerAddressHint {
@@ -43,6 +44,18 @@ fn fips_peer_address_from_hint(hint: &FipsPeerAddressHint) -> PeerAddress {
         peer_address = peer_address.with_seen_at_ms(seen_at_ms);
     }
     peer_address
+}
+
+fn operator_static_endpoint_priority(addr: &str) -> u8 {
+    match endpoint_addr_ip(addr) {
+        Some(IpAddr::V4(ip)) if ipv4_static_hint_requires_local_subnet(ip) => {
+            FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY
+        }
+        Some(IpAddr::V6(ip)) if ip.is_unique_local() || ip.is_unicast_link_local() => {
+            FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY
+        }
+        _ => FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
+    }
 }
 
 fn fips_endpoint_config(
@@ -254,15 +267,16 @@ fn fips_endpoint_peers_from_mesh(
             if trimmed.is_empty() {
                 continue;
             }
+            let priority = operator_static_endpoint_priority(trimmed);
             if let Some(existing) = peer.addresses.iter_mut().find(|hint| hint.addr == trimmed) {
                 existing.seen_at_ms = None;
-                existing.priority = existing.priority.min(FIPS_STATIC_PEER_ENDPOINT_PRIORITY);
+                existing.priority = existing.priority.min(priority);
                 continue;
             }
             peer.addresses.push(FipsPeerAddressHint {
                 addr: trimmed.to_string(),
                 seen_at_ms: None,
-                priority: FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
+                priority,
             });
         }
     }

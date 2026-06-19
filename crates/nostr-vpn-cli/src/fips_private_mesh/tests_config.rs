@@ -370,7 +370,7 @@
     }
 
     #[test]
-    fn endpoint_peer_hints_mark_static_addresses_as_preferred_priority() {
+    fn endpoint_peer_hints_make_private_static_addresses_last_resort() {
         let endpoint_peers = fips_endpoint_peers_from_mesh(
             &[],
             vec![("peer".to_string(), vec!["192.168.178.91:51830".to_string()])],
@@ -395,16 +395,49 @@
             .find(|hint| hint.addr == "89.27.103.157:33838")
             .expect("recent hint");
 
-        assert_eq!(static_hint.priority, FIPS_STATIC_PEER_ENDPOINT_PRIORITY);
+        assert_eq!(
+            static_hint.priority,
+            FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY
+        );
         assert_eq!(recent_hint.priority, FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY);
         assert_eq!(
             fips_peer_address_from_hint(static_hint).priority,
-            FIPS_STATIC_PEER_ENDPOINT_PRIORITY
+            FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY
         );
         assert_eq!(
             fips_peer_address_from_hint(recent_hint).priority,
             FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY
         );
+    }
+
+    #[test]
+    fn endpoint_peer_hints_keep_public_static_addresses_preferred() {
+        let endpoint_peers = fips_endpoint_peers_from_mesh(
+            &[],
+            vec![("peer".to_string(), vec!["198.51.100.91:51830".to_string()])],
+            vec![(
+                "peer".to_string(),
+                vec![("89.27.103.157:33838".to_string(), 123_000)],
+            )],
+        );
+
+        let peer = endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == "peer")
+            .expect("peer");
+        let static_hint = peer
+            .addresses
+            .iter()
+            .find(|hint| hint.addr == "198.51.100.91:51830")
+            .expect("static hint");
+        let recent_hint = peer
+            .addresses
+            .iter()
+            .find(|hint| hint.addr == "89.27.103.157:33838")
+            .expect("recent hint");
+
+        assert_eq!(static_hint.priority, FIPS_STATIC_PEER_ENDPOINT_PRIORITY);
+        assert_eq!(recent_hint.priority, FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY);
     }
 
     #[test]
