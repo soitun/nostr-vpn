@@ -5,7 +5,14 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT_DIR"
 
 source "$ROOT_DIR/scripts/release_common.sh"
+source "$ROOT_DIR/scripts/lib-release-gate-timeout.sh"
 enable_deterministic_build_env "$ROOT_DIR"
+
+MACOS_WG_EXIT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MACOS_WG_EXIT_TIMEOUT_SECS:-300}"
+WINDOWS_WG_EXIT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_TIMEOUT_SECS:-900}"
+LINUX_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_LINUX_GUI_SMOKE_TIMEOUT_SECS:-1800}"
+MACOS_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MACOS_GUI_SMOKE_TIMEOUT_SECS:-900}"
+WINDOWS_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE_TIMEOUT_SECS:-1800}"
 
 release_cargo_config_args=()
 release_cargo_lock_backup=""
@@ -82,7 +89,8 @@ release_cargo test --locked -p nostr-vpn-core channels_round_trip_plaintext_pack
 run_auto_windows_vm_app_smoke() {
   local host="${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
   if ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" hostname >/dev/null 2>&1; then
-    ./scripts/windows-vm-app-launch-smoke.sh "$host"
+    release_gate_run_with_timeout "Windows VM app launch smoke" "$WINDOWS_GUI_SMOKE_TIMEOUT_SECS" \
+      ./scripts/windows-vm-app-launch-smoke.sh "$host"
   else
     echo "Skipping Windows VM app launch smoke because ssh $host is unreachable."
   fi
@@ -91,7 +99,8 @@ run_auto_windows_vm_app_smoke() {
 run_auto_windows_vm_wireguard_exit_e2e() {
   local host="${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
   if ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" hostname >/dev/null 2>&1; then
-    ./scripts/windows-vm-wireguard-exit-e2e.sh "$host"
+    release_gate_run_with_timeout "Windows WG exit e2e" "$WINDOWS_WG_EXIT_TIMEOUT_SECS" \
+      ./scripts/windows-vm-wireguard-exit-e2e.sh "$host"
   else
     echo "Skipping Windows WG exit e2e because ssh $host is unreachable."
   fi
@@ -103,11 +112,13 @@ run_wireguard_exit_platform_gates() {
       echo "Skipping macOS WG exit e2e because NVPN_RELEASE_GATE_MACOS_WG_EXIT_E2E=${NVPN_RELEASE_GATE_MACOS_WG_EXIT_E2E}"
       ;;
     1|true|TRUE|True|yes|YES|Yes|on|ON|On)
-      ./scripts/e2e-wireguard-exit-host.sh
+      release_gate_run_with_timeout "macOS WG exit e2e" "$MACOS_WG_EXIT_TIMEOUT_SECS" \
+        ./scripts/e2e-wireguard-exit-host.sh
       ;;
     auto|AUTO|Auto|"")
       if [[ "$(uname -s)" == "Darwin" ]]; then
-        ./scripts/e2e-wireguard-exit-host.sh
+        release_gate_run_with_timeout "macOS WG exit e2e" "$MACOS_WG_EXIT_TIMEOUT_SECS" \
+          ./scripts/e2e-wireguard-exit-host.sh
       else
         echo "Skipping macOS WG exit e2e on this host."
       fi
@@ -123,7 +134,8 @@ run_wireguard_exit_platform_gates() {
       echo "Skipping Windows WG exit e2e because NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E=${NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E}"
       ;;
     1|true|TRUE|True|yes|YES|Yes|on|ON|On|windows-vm)
-      ./scripts/windows-vm-wireguard-exit-e2e.sh "${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
+      release_gate_run_with_timeout "Windows WG exit e2e" "$WINDOWS_WG_EXIT_TIMEOUT_SECS" \
+        ./scripts/windows-vm-wireguard-exit-e2e.sh "${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
       ;;
     auto|AUTO|Auto|"")
       run_auto_windows_vm_wireguard_exit_e2e
@@ -148,7 +160,8 @@ run_desktop_app_launch_smokes() {
       echo "Skipping Linux GUI launch smoke because NVPN_RELEASE_GATE_LINUX_GUI_SMOKE=${NVPN_RELEASE_GATE_LINUX_GUI_SMOKE}"
       ;;
     *)
-      ./tools/run-linux ./scripts/e2e-smoke.sh
+      release_gate_run_with_timeout "Linux GUI launch smoke" "$LINUX_GUI_SMOKE_TIMEOUT_SECS" \
+        ./tools/run-linux ./scripts/e2e-smoke.sh
       ;;
   esac
 
@@ -157,11 +170,13 @@ run_desktop_app_launch_smokes() {
       echo "Skipping macOS app launch smoke because NVPN_RELEASE_GATE_MACOS_GUI_SMOKE=${NVPN_RELEASE_GATE_MACOS_GUI_SMOKE}"
       ;;
     1|true|TRUE|True|yes|YES|Yes|on|ON|On)
-      ./scripts/macos-app-launch-smoke.sh
+      release_gate_run_with_timeout "macOS app launch smoke" "$MACOS_GUI_SMOKE_TIMEOUT_SECS" \
+        ./scripts/macos-app-launch-smoke.sh
       ;;
     auto|AUTO|Auto|"")
       if [[ "$(uname -s)" == "Darwin" && -d "$ROOT_DIR/macos/Sources" ]]; then
-        ./scripts/macos-app-launch-smoke.sh
+        release_gate_run_with_timeout "macOS app launch smoke" "$MACOS_GUI_SMOKE_TIMEOUT_SECS" \
+          ./scripts/macos-app-launch-smoke.sh
       else
         echo "Skipping macOS app launch smoke on this host."
       fi
@@ -177,7 +192,8 @@ run_desktop_app_launch_smokes() {
       echo "Skipping Windows app launch smoke because NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE=${NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE}"
       ;;
     1|true|TRUE|True|yes|YES|Yes|on|ON|On|windows-vm)
-      ./scripts/windows-vm-app-launch-smoke.sh "${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
+      release_gate_run_with_timeout "Windows VM app launch smoke" "$WINDOWS_GUI_SMOKE_TIMEOUT_SECS" \
+        ./scripts/windows-vm-app-launch-smoke.sh "${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
       ;;
     auto|AUTO|Auto|"")
       run_auto_windows_vm_app_smoke

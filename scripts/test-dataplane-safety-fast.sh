@@ -167,6 +167,7 @@ run_harnesses() {
     scripts/test-host-pair-harness.sh
     scripts/test-install-nvpn-test-daemon.sh
     scripts/test-mobile-platform-tools.sh
+    scripts/test-release-gate-timeout-harness.sh
     scripts/test-userspace-wg-host-pair-harness.sh
   )
   run bash -n "${scripts[@]/#/$ROOT_DIR/}"
@@ -181,6 +182,7 @@ run_harnesses() {
   run "$ROOT_DIR/scripts/test-host-pair-comparison-harness.sh"
   run "$ROOT_DIR/scripts/test-host-pair-comparison-runner.sh"
   run "$ROOT_DIR/scripts/test-mobile-platform-tools.sh"
+  run "$ROOT_DIR/scripts/test-release-gate-timeout-harness.sh"
   run "$ROOT_DIR/scripts/test-install-nvpn-test-daemon.sh"
   run "$ROOT_DIR/scripts/test-userspace-wg-host-pair-harness.sh"
   run_loaded_latency_dry_run
