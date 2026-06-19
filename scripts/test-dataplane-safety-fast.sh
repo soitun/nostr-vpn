@@ -147,6 +147,8 @@ run_harnesses() {
     scripts/perf-docker-relay.sh
     scripts/perf-docker-boringtun.sh
     scripts/perf-docker-wireguard-go.sh
+    scripts/release-gate-host-pair-latency.sh
+    scripts/release-gate-host-pair-loaded-latency.sh
     scripts/run-darwin-docker-wg-reference.sh
     scripts/run-host-pair-comparison.sh
     scripts/soak-fips-dataplane-docker.sh
@@ -181,6 +183,7 @@ run_harnesses() {
   run "$ROOT_DIR/scripts/test-mobile-platform-tools.sh"
   run "$ROOT_DIR/scripts/test-install-nvpn-test-daemon.sh"
   run "$ROOT_DIR/scripts/test-userspace-wg-host-pair-harness.sh"
+  run_loaded_latency_dry_run
 }
 
 run_comparison_dry_run() {
@@ -213,6 +216,28 @@ run_comparison_dry_run() {
   [[ ! -e "$dir/bundle" ]] || fail "comparison dry-run created an output bundle"
   rm -rf "$dir"
   printf 'comparison dry-run matrix mapping passed\n'
+}
+
+run_loaded_latency_dry_run() {
+  local dir out
+  dir="$(mktemp -d)"
+  out="$dir/loaded-latency-dry-run.log"
+  NVPN_RELEASE_GATE_HOST_PAIR_LOADED_LATENCY=1 \
+    NVPN_RELEASE_GATE_HOST_PAIR_LOADED_LATENCY_DRY_RUN=1 \
+    NVPN_RELEASE_GATE_HOST_PAIR_LOADED_LATENCY_SSH=bench-host \
+    NVPN_RELEASE_GATE_HOST_PAIR_LOADED_DURATION_SECS=120 \
+    NVPN_RELEASE_GATE_HOST_PAIR_LOADED_SAMPLE_INTERVAL_SECS=30 \
+    NVPN_RELEASE_GATE_HOST_PAIR_LOADED_IPERF_DURATION_SECS=3 \
+    "$ROOT_DIR/scripts/release-gate-host-pair-loaded-latency.sh" >"$out"
+
+  grep -Fq 'NVPN_RELEASE_GATE_HOST_PAIR_LOADED_DURATION_SECS=120' "$out" \
+    || fail "loaded latency dry-run did not include duration"
+  grep -Fq 'NVPN_RELEASE_GATE_HOST_PAIR_LOADED_SAMPLE_INTERVAL_SECS=30' "$out" \
+    || fail "loaded latency dry-run did not include sample interval"
+  grep -Fq 'release-gate-host-pair-loaded-latency.sh' "$out" \
+    || fail "loaded latency dry-run did not include script path"
+  rm -rf "$dir"
+  printf 'loaded latency dry-run mapping passed\n'
 }
 
 run_core() {

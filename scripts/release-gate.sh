@@ -217,5 +217,6 @@ case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
 esac
 
 ./scripts/release-gate-host-pair-latency.sh
+./scripts/release-gate-host-pair-loaded-latency.sh
 run_wireguard_exit_platform_gates
 run_desktop_app_launch_smokes
