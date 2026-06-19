@@ -182,23 +182,28 @@ pub(crate) fn fips_stale_participant_restart_due(
 fn fips_pending_roster_links_detected(
     peer_statuses: &[MeshPeerStatus],
     relay_statuses: &[DaemonRelayState],
+    roster_pubkeys: &HashSet<String>,
     expected_peers: usize,
 ) -> bool {
     if expected_peers == 0
+        || roster_pubkeys.is_empty()
         || !relay_statuses
             .iter()
             .any(|relay| relay.status.eq_ignore_ascii_case("connected"))
     {
         return false;
     }
-    let connected = peer_statuses.iter().filter(|status| status.connected).count();
-    if connected > 0 {
+    if peer_statuses
+        .iter()
+        .any(|status| roster_pubkeys.contains(&status.pubkey) && status.connected)
+    {
         return false;
     }
     let pending = peer_statuses
         .iter()
         .filter(|status| {
-            !status.connected
+            roster_pubkeys.contains(&status.pubkey)
+                && !status.connected
                 && status.last_seen_at.is_none()
                 && status.error.as_deref() == Some("fips link pending")
         })
@@ -210,11 +215,17 @@ fn fips_pending_roster_links_detected(
 pub(crate) fn fips_pending_roster_restart_due(
     peer_statuses: &[MeshPeerStatus],
     relay_statuses: &[DaemonRelayState],
+    roster_pubkeys: &HashSet<String>,
     expected_peers: usize,
     state: &mut FipsPendingRosterRestartState,
     now: u64,
 ) -> bool {
-    if !fips_pending_roster_links_detected(peer_statuses, relay_statuses, expected_peers) {
+    if !fips_pending_roster_links_detected(
+        peer_statuses,
+        relay_statuses,
+        roster_pubkeys,
+        expected_peers,
+    ) {
         state.pending_since = None;
         return false;
     }
@@ -447,6 +458,7 @@ async fn restart_fips_tunnel_runtime_after_pending_roster_links(
     if !fips_pending_roster_restart_due(
         &peer_statuses,
         &relay_statuses,
+        &fips_roster_pubkeys(context.app, context.own_pubkey),
         expected_peers,
         state,
         now,
@@ -463,6 +475,14 @@ async fn restart_fips_tunnel_runtime_after_pending_roster_links(
     )
     .await?;
     Ok(true)
+}
+
+#[cfg(feature = "embedded-fips")]
+fn fips_roster_pubkeys(app: &AppConfig, own_pubkey: Option<&str>) -> HashSet<String> {
+    app.participant_pubkeys_hex()
+        .into_iter()
+        .filter(|participant| Some(participant.as_str()) != own_pubkey)
+        .collect()
 }
 
 #[cfg(any(target_os = "macos", test))]

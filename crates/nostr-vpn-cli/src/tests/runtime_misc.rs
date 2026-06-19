@@ -2,6 +2,8 @@ use crate::*;
 #[cfg(feature = "embedded-fips")]
 use nostr_sdk::prelude::{Keys, ToBech32};
 #[cfg(feature = "embedded-fips")]
+use std::collections::HashSet;
+#[cfg(feature = "embedded-fips")]
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -407,19 +409,26 @@ fn connected_relay() -> DaemonRelayState {
 }
 
 #[cfg(feature = "embedded-fips")]
+fn roster_pubkeys(values: &[&str]) -> HashSet<String> {
+    values.iter().map(|value| (*value).to_string()).collect()
+}
+
+#[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_pending_roster_recovery_waits_for_grace_and_cooldown() {
     let peers = vec![pending_fips_peer("a"), pending_fips_peer("b")];
     let relays = vec![connected_relay()];
+    let roster = roster_pubkeys(&["a", "b"]);
     let mut state = FipsPendingRosterRestartState::default();
     let start = 10_000;
 
     assert!(!fips_pending_roster_restart_due(
-        &peers, &relays, 2, &mut state, start
+        &peers, &relays, &roster, 2, &mut state, start
     ));
     assert!(!fips_pending_roster_restart_due(
         &peers,
         &relays,
+        &roster,
         2,
         &mut state,
         start + FIPS_PENDING_ROSTER_RESTART_GRACE_SECS - 1
@@ -427,6 +436,7 @@ fn fips_pending_roster_recovery_waits_for_grace_and_cooldown() {
     assert!(fips_pending_roster_restart_due(
         &peers,
         &relays,
+        &roster,
         2,
         &mut state,
         start + FIPS_PENDING_ROSTER_RESTART_GRACE_SECS
@@ -434,6 +444,7 @@ fn fips_pending_roster_recovery_waits_for_grace_and_cooldown() {
     assert!(!fips_pending_roster_restart_due(
         &peers,
         &relays,
+        &roster,
         2,
         &mut state,
         start + FIPS_PENDING_ROSTER_RESTART_GRACE_SECS + 1
@@ -449,10 +460,12 @@ fn fips_pending_roster_recovery_requires_connected_relay_and_all_pending() {
         status: "disconnected".to_string(),
     };
     let peers = vec![pending_fips_peer("a"), pending_fips_peer("b")];
+    let roster = roster_pubkeys(&["a", "b"]);
 
     assert!(!fips_pending_roster_restart_due(
         &peers,
         &[disconnected_relay],
+        &roster,
         2,
         &mut state,
         10_000 + FIPS_PENDING_ROSTER_RESTART_GRACE_SECS
@@ -464,6 +477,7 @@ fn fips_pending_roster_recovery_requires_connected_relay_and_all_pending() {
     assert!(!fips_pending_roster_restart_due(
         &partly_connected,
         &[connected_relay()],
+        &roster,
         2,
         &mut state,
         20_000
@@ -473,9 +487,38 @@ fn fips_pending_roster_recovery_requires_connected_relay_and_all_pending() {
     assert!(!fips_pending_roster_restart_due(
         &one_peer_missing_from_snapshot,
         &[connected_relay()],
+        &roster,
         2,
         &mut state,
         30_000 + FIPS_PENDING_ROSTER_RESTART_GRACE_SECS
+    ));
+}
+
+#[cfg(feature = "embedded-fips")]
+#[test]
+fn fips_pending_roster_recovery_ignores_connected_non_roster_transit() {
+    let mut peers = vec![pending_fips_peer("a"), pending_fips_peer("b")];
+    let mut transit = pending_fips_peer("transit");
+    transit.connected = true;
+    transit.error = None;
+    transit.last_seen_at = Some(10_000);
+    peers.push(transit);
+
+    let relays = vec![connected_relay()];
+    let roster = roster_pubkeys(&["a", "b"]);
+    let mut state = FipsPendingRosterRestartState::default();
+    let start = 40_000;
+
+    assert!(!fips_pending_roster_restart_due(
+        &peers, &relays, &roster, 2, &mut state, start
+    ));
+    assert!(fips_pending_roster_restart_due(
+        &peers,
+        &relays,
+        &roster,
+        2,
+        &mut state,
+        start + FIPS_PENDING_ROSTER_RESTART_GRACE_SECS
     ));
 }
 
