@@ -52,7 +52,11 @@ prepare_release_cargo_config() {
 }
 
 release_cargo() {
-  cargo "${release_cargo_config_args[@]}" "$@"
+  if ((${#release_cargo_config_args[@]})); then
+    cargo "${release_cargo_config_args[@]}" "$@"
+  else
+    cargo "$@"
+  fi
 }
 
 node scripts/sync-versions.mjs
