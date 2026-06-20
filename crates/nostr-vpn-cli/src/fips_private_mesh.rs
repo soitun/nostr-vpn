@@ -95,9 +95,8 @@ const MESH_LAN_TUNNEL_MTU: u16 = 1290;
 const MESH_MIN_UNDERLAY_UDP_MTU: u16 = 1280;
 const MESH_MIN_TUNNEL_MTU: u16 = 576;
 const MESH_MAX_MTU: u16 = 9000;
-// Linux vnet receive writes need enough batching to amortize endpoint wakeups,
-// but wide TUN-write turns create UDP receive-buffer bursts under CPU stress.
-// Docker A/Bs found 32 steadier than the old effective 128 and than 16/64.
+// Keep macOS in the same send-batch lane as Linux for release throughput. Earlier
+// macOS-only 16-packet turns protected latency but collapsed live TCP throughput.
 #[cfg(target_os = "linux")]
 const FIPS_TUN_READ_BURST: usize = 128;
 #[cfg(target_os = "macos")]
@@ -107,14 +106,14 @@ const FIPS_TUN_WRITE_BURST: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_SEND_BURST: usize = 64;
 #[cfg(target_os = "macos")]
-const FIPS_MESH_PRIORITY_SEND_BURST: usize = 16;
+const FIPS_MESH_PRIORITY_SEND_BURST: usize = FIPS_MESH_SEND_BURST;
 #[cfg(all(
     any(target_os = "linux", target_os = "macos"),
     not(target_os = "macos")
 ))]
 const FIPS_MESH_PRIORITY_SEND_BURST: usize = FIPS_MESH_SEND_BURST;
 #[cfg(target_os = "macos")]
-const FIPS_MESH_BULK_SEND_BURST: usize = 16;
+const FIPS_MESH_BULK_SEND_BURST: usize = FIPS_MESH_SEND_BURST;
 #[cfg(all(
     any(target_os = "linux", target_os = "macos"),
     not(target_os = "macos")
@@ -131,13 +130,13 @@ const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 4096;
 #[cfg(target_os = "linux")]
 const DEFAULT_LINUX_TUN_TX_QUEUE_LEN: usize = 4096;
 #[cfg(target_os = "macos")]
-const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 256;
+const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 4096;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MIN_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 1;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 65_536;
 #[cfg(target_os = "macos")]
-const DEFAULT_FIPS_TUN_BULK_COALESCE_MICROS: u64 = 250;
+const DEFAULT_FIPS_TUN_BULK_COALESCE_MICROS: u64 = 0;
 #[cfg(not(target_os = "macos"))]
 const DEFAULT_FIPS_TUN_BULK_COALESCE_MICROS: u64 = 0;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -145,7 +144,7 @@ const MAX_FIPS_TUN_BULK_COALESCE_MICROS: u64 = 5_000;
 const MIN_FIPS_UDP_SEND_BUF_SIZE: usize = 64 * 1024;
 const MAX_FIPS_UDP_SEND_BUF_SIZE: usize = 8 * 1024 * 1024;
 #[cfg(target_os = "macos")]
-const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(256 * 1024);
+const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(2 * 1024 * 1024);
 #[cfg(not(target_os = "macos"))]
 const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = None;
 #[cfg(target_os = "windows")]

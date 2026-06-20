@@ -270,6 +270,12 @@ async fn run_command(command: Command) -> Result<()> {
                 if daemon.running {
                     println!("daemon: running (pid {})", daemon.pid.unwrap_or_default());
                     if let Some(state) = daemon.state.as_ref() {
+                        if !state.binary_version.is_empty() {
+                            println!("daemon_version: {}", state.binary_version);
+                        }
+                        if !state.fips_core_version.is_empty() {
+                            println!("daemon_fips_core_version: {}", state.fips_core_version);
+                        }
                         println!("vpn_status: {}", state.vpn_status);
                     }
                 } else {

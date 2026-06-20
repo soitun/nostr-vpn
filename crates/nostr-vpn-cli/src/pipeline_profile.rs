@@ -162,6 +162,9 @@ static COUNTERS: [AtomicU64; N_COUNTERS] = [const { AtomicU64::new(0) }; N_COUNT
 pub(crate) fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
     *ENABLED.get_or_init(|| {
+        if cfg!(debug_assertions) || option_env!("NVPN_FORCE_PIPELINE_TRACE").is_some() {
+            return true;
+        }
         ["NVPN_PIPELINE_TRACE", "FIPS_PIPELINE_TRACE"]
             .into_iter()
             .any(|key| {

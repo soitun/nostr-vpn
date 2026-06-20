@@ -212,6 +212,16 @@ const MAJOR_LINK_CHANGE_TIME_JUMP_SECS: u64 = 30;
 const WAITING_FOR_PARTICIPANTS_STATUS: &str = "Waiting for participants";
 const LISTENING_FOR_JOIN_REQUESTS_STATUS: &str = "Listening for join requests";
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
+#[cfg(feature = "embedded-fips")]
+pub(crate) fn fips_core_build_version() -> String {
+    fips_core::version::short_version().to_string()
+}
+
+#[cfg(not(feature = "embedded-fips"))]
+pub(crate) fn fips_core_build_version() -> String {
+    "disabled".to_string()
+}
+
 #[cfg(target_os = "windows")]
 const MAGIC_DNS_PORT: u16 = 53;
 #[cfg(not(target_os = "windows"))]

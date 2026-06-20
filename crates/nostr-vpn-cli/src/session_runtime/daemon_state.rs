@@ -297,6 +297,7 @@ pub(crate) fn build_daemon_runtime_state(
     DaemonRuntimeState {
         updated_at: now,
         binary_version: PRODUCT_VERSION.to_string(),
+        fips_core_version: fips_core_build_version(),
         local_endpoint,
         advertised_endpoint,
         listen_port,
@@ -395,6 +396,7 @@ pub(crate) fn disconnected_daemon_runtime_state(
     DaemonRuntimeState {
         updated_at: unix_timestamp(),
         binary_version: PRODUCT_VERSION.to_string(),
+        fips_core_version: fips_core_build_version(),
         local_endpoint: String::new(),
         advertised_endpoint: String::new(),
         listen_port: 0,

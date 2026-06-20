@@ -43,6 +43,8 @@ struct ServiceStatusView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct VersionInfoView {
     version: String,
+    #[serde(default)]
+    fips_core_version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -50,6 +52,8 @@ struct DaemonRuntimeState {
     updated_at: u64,
     #[serde(default)]
     binary_version: String,
+    #[serde(default)]
+    fips_core_version: String,
     #[serde(default)]
     local_endpoint: String,
     #[serde(default)]

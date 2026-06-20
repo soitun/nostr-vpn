@@ -200,6 +200,9 @@ struct InstallCliArgs {
 struct VersionArgs {
     #[arg(long)]
     json: bool,
+    /// Print component build details in text output.
+    #[arg(long)]
+    verbose: bool,
 }
 
 #[derive(Debug, Args)]

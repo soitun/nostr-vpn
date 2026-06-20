@@ -13,10 +13,14 @@ pub(crate) fn uninstall_cli(args: UninstallCliArgs) -> Result<()> {
 pub(crate) fn print_version(args: VersionArgs) -> Result<()> {
     let info = VersionInfoView {
         version: PRODUCT_VERSION.to_string(),
+        fips_core_version: fips_core_build_version(),
     };
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&info)?);
+    } else if args.verbose {
+        println!("{}", info.version);
+        println!("fips_core_version: {}", info.fips_core_version);
     } else {
         println!("{}", info.version);
     }
