@@ -234,17 +234,6 @@ fn fips_endpoint_config_with_open_discovery_limit(
             config.transports.tcp = TransportInstances::Single(Default::default());
         }
     }
-    // Keep static UDP mixes on the wildcard socket path. fips has a per-peer
-    // static-path guard, but live macOS mixed static/recent rosters can still
-    // install connected UDP for a peer that later rotates to a configured path,
-    // which leaves the daemon reporting reachable while the tunnel black-holes.
-    if peers.iter().any(|peer| {
-        peer.addresses.iter().any(|hint| {
-            hint.seen_at_ms.is_none() && split_peer_transport_addr(&hint.addr).0 == "udp"
-        })
-    }) {
-        config.node.connected_udp.enabled = false;
-    }
     config.peers = peers
         .iter()
         .map(|peer| FipsPeerConfig {

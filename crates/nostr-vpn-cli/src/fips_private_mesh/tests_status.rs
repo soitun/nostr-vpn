@@ -78,6 +78,7 @@
                 rekey_in_progress: true,
                 rekey_draining: true,
                 current_k_bit: Some(true),
+                last_outbound_route: None,
                 direct_probe_pending: true,
                 direct_probe_after_ms: Some(12_345),
                 direct_probe_retry_count: 3,
@@ -146,6 +147,7 @@
             rekey_in_progress: false,
             rekey_draining: false,
             current_k_bit: None,
+            last_outbound_route: None,
             direct_probe_pending: true,
             direct_probe_after_ms: Some(12_345),
             direct_probe_retry_count: 3,
@@ -168,7 +170,10 @@
         assert!(!super::endpoint_path_refresh_due(&peer, Some(120), 123));
 
         peer.connected = true;
-        assert!(super::endpoint_path_refresh_due(&peer, Some(80), 123));
+        assert!(
+            !super::endpoint_path_refresh_due(&peer, Some(80), 123),
+            "connected endpoint links should not be refreshed from wrapper-level participant staleness alone"
+        );
     }
 
     #[test]
@@ -191,6 +196,7 @@
                 rekey_in_progress: false,
                 rekey_draining: false,
                 current_k_bit: None,
+                last_outbound_route: None,
                 direct_probe_pending: true,
                 direct_probe_after_ms: Some(12_345),
                 direct_probe_retry_count: 2,
