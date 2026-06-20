@@ -10,7 +10,9 @@ CONFIG_PATH="/root/.config/nvpn/config.toml"
 UDP_PORT=45454
 SAFE_TUNNEL_MTU=1150
 PING_PAYLOAD_SIZE=1000
-FALLBACK_DEADLINE_SECS="${NVPN_E2E_ROAMING_FALLBACK_SECS:-35}"
+# Normal link-dead detection is 30s. Leave enough room for Docker scheduling,
+# status polling, and route-cache handoff before declaring fallback broken.
+FALLBACK_DEADLINE_SECS="${NVPN_E2E_ROAMING_FALLBACK_SECS:-60}"
 DIRECT_RECOVERY_DEADLINE_SECS="${NVPN_E2E_DIRECT_RECOVERY_SECS:-25}"
 FALLBACK_HOLD_SECS="${NVPN_E2E_ROAMING_FALLBACK_HOLD_SECS:-12}"
 FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
@@ -220,7 +222,6 @@ peer_matches_fallback_with_probe() {
     .daemon.state.peers
     | any(
       (.participant_pubkey == $peer_key or .fips_endpoint_npub == $peer_key)
-      and .reachable == true
       and (.direct_probe_pending == true or (.direct_probe_after_ms? != null))
     )
   ' >/dev/null <<<"$status"

@@ -27,8 +27,8 @@ boringtun = "0.7"
 cashu-service = { version = "0.2.56", default-features = false }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = "0.3.46"
-fips-core = "0.3.71"
+fips-endpoint = "0.3.47"
+fips-core = "0.3.72"
 futures = "0.3"
 hashtree-updater = "0.2.67"
 hex = "0.4"
