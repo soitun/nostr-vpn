@@ -339,12 +339,20 @@ fi
 
 cleanup
 
-"${COMPOSE[@]}" build >/dev/null
+if truthy "$PAID_EXIT_MODE"; then
+  export NVPN_EXIT_NODE_E2E_DOCKERFILE="${NVPN_EXIT_NODE_E2E_DOCKERFILE:-Dockerfile.paid-exit-e2e}"
+  export NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH="${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}"
+fi
+if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
+  export COMPOSE_PROFILES="${COMPOSE_PROFILES:+$COMPOSE_PROFILES,}paid-exit"
+fi
 
 SERVICES=(internet-target node-a nat-b)
 if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
   SERVICES=(cashu-mint "${SERVICES[@]}")
 fi
+
+"${COMPOSE[@]}" build "${SERVICES[@]}" node-b >/dev/null
 
 "${COMPOSE[@]}" up -d "${SERVICES[@]}" >/dev/null
 

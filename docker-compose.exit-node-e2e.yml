@@ -2,7 +2,7 @@ services:
   internet-target:
     build:
       context: .
-      dockerfile: Dockerfile.e2e
+      dockerfile: ${NVPN_EXIT_NODE_E2E_DOCKERFILE:-Dockerfile.e2e}
       args:
         NVPN_E2E_BUILDER_IMAGE: ${NVPN_E2E_BUILDER_IMAGE:-rust:1.93-bookworm}
         NVPN_E2E_RUNTIME_IMAGE: ${NVPN_E2E_RUNTIME_IMAGE:-debian:bookworm-slim}
@@ -10,8 +10,7 @@ services:
         NVPN_E2E_RUNTIME_APT_INSTALL: ${NVPN_E2E_RUNTIME_APT_INSTALL:-1}
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
-        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-../cashu-service}
-        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}
+        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
     entrypoint: ["sleep", "infinity"]
     cap_add:
@@ -22,14 +21,14 @@ services:
         ipv4_address: ${NVPN_E2E_INTERNET_TARGET_IP:-198.18.242.100}
 
   cashu-mint:
+    profiles: ["paid-exit"]
     build:
       context: .
-      dockerfile: Dockerfile.e2e
+      dockerfile: ${NVPN_EXIT_NODE_E2E_DOCKERFILE:-Dockerfile.paid-exit-e2e}
       args:
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
-        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-../cashu-service}
-        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}
+        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
     command:
       - cdk-spilman-test-mintd
@@ -46,7 +45,7 @@ services:
   wireguard-upstream:
     build:
       context: .
-      dockerfile: Dockerfile.e2e
+      dockerfile: ${NVPN_EXIT_NODE_E2E_DOCKERFILE:-Dockerfile.e2e}
       args:
         NVPN_E2E_BUILDER_IMAGE: ${NVPN_E2E_BUILDER_IMAGE:-rust:1.93-bookworm}
         NVPN_E2E_RUNTIME_IMAGE: ${NVPN_E2E_RUNTIME_IMAGE:-debian:bookworm-slim}
@@ -54,8 +53,7 @@ services:
         NVPN_E2E_RUNTIME_APT_INSTALL: ${NVPN_E2E_RUNTIME_APT_INSTALL:-1}
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
-        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-../cashu-service}
-        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}
+        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
     entrypoint: ["sleep", "infinity"]
     cap_add:
@@ -73,7 +71,7 @@ services:
   node-a:
     build:
       context: .
-      dockerfile: Dockerfile.e2e
+      dockerfile: ${NVPN_EXIT_NODE_E2E_DOCKERFILE:-Dockerfile.e2e}
       args:
         NVPN_E2E_BUILDER_IMAGE: ${NVPN_E2E_BUILDER_IMAGE:-rust:1.93-bookworm}
         NVPN_E2E_RUNTIME_IMAGE: ${NVPN_E2E_RUNTIME_IMAGE:-debian:bookworm-slim}
@@ -81,8 +79,7 @@ services:
         NVPN_E2E_RUNTIME_APT_INSTALL: ${NVPN_E2E_RUNTIME_APT_INSTALL:-1}
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
-        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-../cashu-service}
-        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}
+        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
     entrypoint: ["sleep", "infinity"]
     cap_add:
@@ -96,7 +93,7 @@ services:
   nat-b:
     build:
       context: .
-      dockerfile: Dockerfile.e2e
+      dockerfile: ${NVPN_EXIT_NODE_E2E_DOCKERFILE:-Dockerfile.e2e}
       args:
         NVPN_E2E_BUILDER_IMAGE: ${NVPN_E2E_BUILDER_IMAGE:-rust:1.93-bookworm}
         NVPN_E2E_RUNTIME_IMAGE: ${NVPN_E2E_RUNTIME_IMAGE:-debian:bookworm-slim}
@@ -104,8 +101,7 @@ services:
         NVPN_E2E_RUNTIME_APT_INSTALL: ${NVPN_E2E_RUNTIME_APT_INSTALL:-1}
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
-        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-../cashu-service}
-        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}
+        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
     cap_add:
       - NET_ADMIN
@@ -136,7 +132,7 @@ services:
   node-b:
     build:
       context: .
-      dockerfile: Dockerfile.e2e
+      dockerfile: ${NVPN_EXIT_NODE_E2E_DOCKERFILE:-Dockerfile.e2e}
       args:
         NVPN_E2E_BUILDER_IMAGE: ${NVPN_E2E_BUILDER_IMAGE:-rust:1.93-bookworm}
         NVPN_E2E_RUNTIME_IMAGE: ${NVPN_E2E_RUNTIME_IMAGE:-debian:bookworm-slim}
@@ -144,8 +140,7 @@ services:
         NVPN_E2E_RUNTIME_APT_INSTALL: ${NVPN_E2E_RUNTIME_APT_INSTALL:-1}
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
-        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-../cashu-service}
-        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}
+        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
         fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
     entrypoint: ["sleep", "infinity"]
     cap_add:

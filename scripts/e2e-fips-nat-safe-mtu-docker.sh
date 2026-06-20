@@ -337,7 +337,7 @@ wait_for_payload_file() {
 
 cleanup
 
-"${COMPOSE[@]}" build >/dev/null
+"${COMPOSE[@]}" build node-a nat-b node-b >/dev/null
 "${COMPOSE[@]}" up -d node-a nat-b >/dev/null
 for service in node-a nat-b; do
   wait_for_service "$service"
