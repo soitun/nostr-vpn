@@ -471,7 +471,7 @@ public sealed class NativeParticipantState
     public string LastSeenDisplay => string.IsNullOrWhiteSpace(LastSeenText) ? "-" : LastSeenText;
     public string LastFipsControlSeenDisplay => string.IsNullOrWhiteSpace(LastFipsControlSeenText) ? "-" : LastFipsControlSeenText;
     public string LastFipsDataSeenDisplay => string.IsNullOrWhiteSpace(LastFipsDataSeenText) ? "-" : LastFipsDataSeenText;
-    public string FipsSrttAgeDisplay => FipsSrttAgeMs == 0 ? "-" : FormatDurationMs(FipsSrttAgeMs);
+    public string FipsSrttAgeDisplay => FipsSrttAgeMs == 0 ? "-" : NativeDisplayText.FormatDurationMs(FipsSrttAgeMs);
     public string TxBytesDisplay => FormatBytes(TxBytes);
     public string RxBytesDisplay => FormatBytes(RxBytes);
     public string RoleText
@@ -764,7 +764,7 @@ internal static class NativeDisplayText
             : char.ToUpperInvariant(text[0]) + text[1..];
     }
 
-    private static string FormatDurationMs(ulong ms)
+    public static string FormatDurationMs(ulong ms)
     {
         if (ms < 1_000)
         {
