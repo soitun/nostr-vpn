@@ -97,6 +97,7 @@ run_local_fips_regression_tests() {
     cd "$release_fips_path"
     cargo test -p fips-core overlay_adverts -- --nocapture
     cargo test -p fips-core update_peers -- --nocapture
+    cargo test -p fips-core test_reply_learned_moves_configured_static_direct_peer_when_session_degraded -- --nocapture
   )
 }
 
