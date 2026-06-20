@@ -1,0 +1,8 @@
+# Exact-path release-gate debt ledger.
+# Format: path max_lines reason
+# Keep caps close to current size. Split these files before raising caps.
+crates/nostr-vpn-cli/src/session_runtime/daemon_vpn.rs 1050 legacy-daemon-event-loop
+crates/nostr-vpn-cli/src/tests/runtime_misc.rs 2500 legacy-mixed-runtime-tests
+crates/nostr-vpn-cli/src/main/paid_exit.rs 4900 default-off-paid-exit-cli-checkpoint
+crates/nostr-vpn-core/src/paid_routes.rs 2000 paid-route-config-and-event-model
+crates/nostr-vpn-core/src/paid_route_store.rs 5550 default-off-paid-exit-store-checkpoint
