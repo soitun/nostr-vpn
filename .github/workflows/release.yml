@@ -352,6 +352,7 @@ jobs:
           set -euo pipefail
           RELEASE_VERSION="${{ github.event.inputs.tag || github.ref_name }}"
           cargo build --release --locked --manifest-path linux/Cargo.toml
+          cargo build --release --locked -p nvpn
           (cd linux && cargo deb --no-build)
           mkdir -p dist
           cp "$(ls -1t linux/target/debian/*.deb | head -1)" "dist/nostr-vpn-${RELEASE_VERSION}-linux-x64.deb"
