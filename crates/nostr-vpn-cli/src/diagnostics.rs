@@ -756,6 +756,7 @@ mod tests {
                 fips_rekey_in_progress: false,
                 fips_rekey_draining: false,
                 fips_current_k_bit: None,
+                fips_last_outbound_route: String::new(),
                 direct_probe_pending: false,
                 direct_probe_after_ms: None,
                 direct_probe_retry_count: 0,

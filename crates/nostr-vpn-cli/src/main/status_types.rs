@@ -138,6 +138,8 @@ struct DaemonPeerState {
     fips_rekey_draining: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     fips_current_k_bit: Option<bool>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    fips_last_outbound_route: String,
     #[serde(default, skip_serializing_if = "is_false")]
     direct_probe_pending: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

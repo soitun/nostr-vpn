@@ -37,7 +37,7 @@ fn fips_runtime_state_counts_direct_roster_and_other_peers() {
                 rekey_in_progress: true,
                 rekey_draining: true,
                 current_k_bit: Some(true),
-                last_outbound_route: None,
+                last_outbound_route: Some("fallback-route".to_string()),
                 direct_probe_pending: false,
                 direct_probe_after_ms: None,
                 direct_probe_retry_count: 0,
@@ -137,6 +137,7 @@ fn fips_runtime_state_counts_direct_roster_and_other_peers() {
     assert!(rekey_peer.fips_rekey_in_progress);
     assert!(rekey_peer.fips_rekey_draining);
     assert_eq!(rekey_peer.fips_current_k_bit, Some(true));
+    assert_eq!(rekey_peer.fips_last_outbound_route, "fallback-route");
     assert_eq!(rekey_peer.fips_nostr_traversal_failures, 4);
     assert!(rekey_peer.fips_nostr_traversal_in_cooldown);
     assert_eq!(

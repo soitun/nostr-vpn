@@ -216,6 +216,9 @@ pub(crate) fn build_daemon_runtime_state(
             fips_rekey_in_progress: status.is_some_and(|status| status.rekey_in_progress),
             fips_rekey_draining: status.is_some_and(|status| status.rekey_draining),
             fips_current_k_bit: status.and_then(|status| status.current_k_bit),
+            fips_last_outbound_route: status
+                .and_then(|status| status.last_outbound_route.clone())
+                .unwrap_or_default(),
             direct_probe_pending: status.is_some_and(|status| status.direct_probe_pending),
             direct_probe_after_ms: status.and_then(|status| status.direct_probe_after_ms),
             direct_probe_retry_count: status
