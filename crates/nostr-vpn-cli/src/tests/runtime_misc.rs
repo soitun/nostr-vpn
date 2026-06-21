@@ -1875,28 +1875,12 @@ fn fips_roster_publish_attempts_disconnected_recipients() {
 
 #[cfg(feature = "embedded-fips")]
 #[test]
-fn local_fips_endpoint_hints_withhold_public_configured_endpoint_by_default() {
+fn local_fips_endpoint_hints_share_public_configured_endpoint_with_roster() {
     let mut app = AppConfig::generated();
     app.node.endpoint = "89.27.103.157:1111".to_string();
     app.node.listen_port = 51820;
     app.node.tunnel_ip = "10.44.1.1/32".to_string();
     app.lan_discovery_enabled = true;
-
-    let hints = local_fips_endpoint_hints(&app, vec![Ipv4Addr::new(192, 168, 50, 10)]);
-    let addrs = hints.into_iter().map(|hint| hint.addr).collect::<Vec<_>>();
-
-    assert_eq!(addrs, vec!["192.168.50.10:51820".to_string()]);
-}
-
-#[cfg(feature = "embedded-fips")]
-#[test]
-fn local_fips_endpoint_hints_share_public_configured_endpoint_when_enabled() {
-    let mut app = AppConfig::generated();
-    app.node.endpoint = "89.27.103.157:1111".to_string();
-    app.node.listen_port = 51820;
-    app.node.tunnel_ip = "10.44.1.1/32".to_string();
-    app.lan_discovery_enabled = true;
-    app.fips_advertise_public_endpoint = true;
 
     let hints = local_fips_endpoint_hints(&app, vec![Ipv4Addr::new(192, 168, 50, 10)]);
     let addrs = hints.into_iter().map(|hint| hint.addr).collect::<Vec<_>>();
@@ -1989,7 +1973,6 @@ fn local_fips_endpoint_hints_keep_dns_endpoint_and_listen_port() {
     app.node.listen_port = 51820;
     app.node.tunnel_ip = "10.44.1.1/32".to_string();
     app.lan_discovery_enabled = false;
-    app.fips_advertise_public_endpoint = true;
 
     let hints = local_fips_endpoint_hints(&app, Vec::new());
 

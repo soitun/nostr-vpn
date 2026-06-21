@@ -680,7 +680,6 @@ fn local_fips_endpoint_hints(
 
     let configured = endpoint_with_listen_port(&app.node.endpoint, app.node.listen_port);
     if endpoint_is_gossipable_direct_hint(&configured, true)
-        && (app.fips_advertise_public_endpoint || endpoint_is_local_only(&configured))
         && !endpoint_uses_tunnel_ip(&configured, &app.node.tunnel_ip)
     {
         endpoints.push(configured);

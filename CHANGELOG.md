@@ -8,9 +8,8 @@ All notable changes to this project are documented in this file.
 
 - FIPS/Nostr discovery now defaults to configured roster peers only; open
   non-roster transit remains available as an explicit setting or env override.
-- FIPS roster capability hints no longer share exact public configured endpoints
-  unless public endpoint advertising is explicitly enabled; LAN/private hints
-  are still shared with roster peers.
+- FIPS public configured endpoints are treated as ordinary roster hints instead
+  of authoritative paths; public relay advertising remains opt-in.
 - macOS FIPS private-mesh pacing defaults are now expressed as a bounded bulk
   admission policy derived from MTU and socket-buffer relationships instead of
   standalone emergency constants. The effective queue and UDP buffer defaults
