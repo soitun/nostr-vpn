@@ -95,11 +95,7 @@
     }
 
     #[test]
-    fn macos_bounded_bulk_policy_derives_release_defaults() {
-        assert_eq!(
-            super::macos_bounded_bulk_send_burst(super::FIPS_MESH_SEND_BURST),
-            16
-        );
+    fn macos_bounded_bulk_queue_derives_release_defaults() {
         assert_eq!(super::macos_default_udp_send_buf_size(), 256 * 1024);
         assert_eq!(
             super::macos_tun_to_mesh_queue_cap(
@@ -109,14 +105,11 @@
             ),
             256
         );
-        assert_eq!(super::macos_tun_bulk_coalesce_micros(), 250);
 
         #[cfg(target_os = "macos")]
         {
-            assert_eq!(super::FIPS_MESH_PRIORITY_SEND_BURST, 16);
-            assert_eq!(super::FIPS_MESH_BULK_SEND_BURST, 16);
+            assert_eq!(super::FIPS_MESH_SEND_BURST, 64);
             assert_eq!(super::DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP, 256);
-            assert_eq!(super::DEFAULT_FIPS_TUN_BULK_COALESCE_MICROS, 250);
             assert_eq!(super::DEFAULT_FIPS_UDP_SEND_BUF_SIZE, Some(256 * 1024));
         }
     }
@@ -850,6 +843,29 @@
             ),
             TunQueueSubmit::Enqueued
         );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn tun_to_mesh_rx_exposes_bulk_backlog_for_adaptive_sender_yield() {
+        let (tx, mut rx) = TunPipelineQueueTx::channel(2);
+
+        assert_eq!(rx.bulk_backlog_capacity(), 2);
+        assert!(!rx.has_bulk_backlog());
+        assert_eq!(
+            submit_tun_packet_batch_to_mesh_queue(
+                &tx,
+                vec![test_pipeline_packet(test_ipv6_tcp_packet(0x18, 512))],
+            ),
+            TunQueueSubmit::Enqueued
+        );
+        assert_eq!(rx.bulk_backlog_packets(), 1);
+        assert!(rx.has_bulk_backlog());
+
+        let queued = rx.recv().await.expect("queued bulk batch");
+        assert_eq!(queued.len(), 1);
+        assert_eq!(rx.bulk_backlog_packets(), 0);
+        assert!(!rx.has_bulk_backlog());
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

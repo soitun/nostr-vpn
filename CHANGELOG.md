@@ -7,9 +7,12 @@ All notable changes to this project are documented in this file.
 ### Changed
 
 - macOS FIPS private-mesh pacing defaults are now expressed as a bounded bulk
-  admission policy derived from send-turn, MTU, socket-buffer, and coalescing
-  cadence relationships instead of standalone emergency constants. The effective
-  defaults remain the 4.0.82 release values.
+  admission policy derived from MTU and socket-buffer relationships instead of
+  standalone emergency constants. The effective queue and UDP buffer defaults
+  remain the 4.0.82 release values.
+- FIPS private-mesh sender fairness now yields from actual bulk queue pressure
+  instead of macOS-only fixed send-turn constants, matching the WireGuard-style
+  bounded queue/backpressure model more closely.
 
 ## 4.0.82 - 2026-06-20
 

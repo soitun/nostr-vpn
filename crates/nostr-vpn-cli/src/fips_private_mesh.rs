@@ -104,21 +104,9 @@ const FIPS_TUN_WRITE_BURST: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_SEND_BURST: usize = 64;
 #[cfg(any(target_os = "macos", test))]
-const MACOS_BOUNDED_BULK_SEND_TURN_DIVISOR: usize = 4;
-#[cfg(any(target_os = "macos", test))]
-const MACOS_TUN_BULK_COALESCE_WAKEUPS_PER_MILLISECOND: u64 = 4;
-#[cfg(any(target_os = "macos", test))]
 const MACOS_UDP_SEND_BUF_MIN_MULTIPLIER: usize = 4;
-#[cfg(any(target_os = "macos", test))]
-const MICROS_PER_MILLISECOND: u64 = 1_000;
 const MIN_FIPS_UDP_SEND_BUF_SIZE: usize = 64 * 1024;
 const MAX_FIPS_UDP_SEND_BUF_SIZE: usize = 8 * 1024 * 1024;
-
-#[cfg(any(target_os = "macos", test))]
-const fn macos_bounded_bulk_send_burst(generic_burst: usize) -> usize {
-    let bounded = generic_burst / MACOS_BOUNDED_BULK_SEND_TURN_DIVISOR;
-    if bounded == 0 { 1 } else { bounded }
-}
 
 #[cfg(any(target_os = "macos", test))]
 const fn macos_default_udp_send_buf_size() -> usize {
@@ -155,33 +143,10 @@ const fn macos_tun_to_mesh_queue_cap(
     if rounded == 0 { 1 } else { rounded }
 }
 
-#[cfg(any(target_os = "macos", test))]
-const fn macos_tun_bulk_coalesce_micros() -> u64 {
-    match MICROS_PER_MILLISECOND.checked_div(MACOS_TUN_BULK_COALESCE_WAKEUPS_PER_MILLISECOND) {
-        Some(micros) => micros,
-        None => 0,
-    }
-}
-
-// macOS utun/Wi-Fi paths need bounded bulk admission more than a fixed Mbps cap:
-// run shorter mesh-send turns, keep only the packets that fit the conservative
-// UDP send-buffer window, and coalesce bulk TUN reads briefly so priority packets
-// still cut in between bulk turns. FIPS's raw `FIPS_MACOS_SEND_PACE_MBPS` rate
-// knob remains opt-in for lab A/Bs; these defaults only shape queue pressure.
-#[cfg(target_os = "macos")]
-const FIPS_MESH_PRIORITY_SEND_BURST: usize = macos_bounded_bulk_send_burst(FIPS_MESH_SEND_BURST);
-#[cfg(all(
-    any(target_os = "linux", target_os = "macos"),
-    not(target_os = "macos")
-))]
-const FIPS_MESH_PRIORITY_SEND_BURST: usize = FIPS_MESH_SEND_BURST;
-#[cfg(target_os = "macos")]
-const FIPS_MESH_BULK_SEND_BURST: usize = macos_bounded_bulk_send_burst(FIPS_MESH_SEND_BURST);
-#[cfg(all(
-    any(target_os = "linux", target_os = "macos"),
-    not(target_os = "macos")
-))]
-const FIPS_MESH_BULK_SEND_BURST: usize = FIPS_MESH_SEND_BURST;
+// Keep WireGuard-style bounded packet turns and let actual queue pressure decide
+// whether the sender should yield between batches. FIPS's raw
+// `FIPS_MACOS_SEND_PACE_MBPS` rate knob remains opt-in for lab A/Bs; the default
+// path shapes backlog instead of sleeping to a fixed bandwidth number.
 #[cfg(target_os = "linux")]
 const FIPS_MESH_RECV_BURST: usize = 64;
 #[cfg(target_os = "macos")]
@@ -202,12 +167,6 @@ const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = macos_tun_to_mesh_queue_cap(
 const MIN_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 1;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 65_536;
-#[cfg(target_os = "macos")]
-const DEFAULT_FIPS_TUN_BULK_COALESCE_MICROS: u64 = macos_tun_bulk_coalesce_micros();
-#[cfg(not(target_os = "macos"))]
-const DEFAULT_FIPS_TUN_BULK_COALESCE_MICROS: u64 = 0;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const MAX_FIPS_TUN_BULK_COALESCE_MICROS: u64 = 5_000;
 #[cfg(target_os = "macos")]
 const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(macos_default_udp_send_buf_size());
 #[cfg(not(target_os = "macos"))]
@@ -238,26 +197,6 @@ fn parse_fips_tun_to_mesh_queue_cap(raw: Option<&str>, default: usize) -> usize 
             MIN_FIPS_TUN_TO_MESH_QUEUE_CAP,
             MAX_FIPS_TUN_TO_MESH_QUEUE_CAP,
         )
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn fips_tun_bulk_coalesce_delay() -> std::time::Duration {
-    static VALUE: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
-    *VALUE.get_or_init(|| {
-        std::time::Duration::from_micros(parse_fips_tun_bulk_coalesce_micros(
-            std::env::var("NVPN_FIPS_TUN_BULK_COALESCE_MICROS")
-                .ok()
-                .as_deref(),
-            DEFAULT_FIPS_TUN_BULK_COALESCE_MICROS,
-        ))
-    })
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn parse_fips_tun_bulk_coalesce_micros(raw: Option<&str>, default: u64) -> u64 {
-    raw.and_then(|raw| raw.trim().parse::<u64>().ok())
-        .unwrap_or(default)
-        .min(MAX_FIPS_TUN_BULK_COALESCE_MICROS)
 }
 
 fn fips_udp_send_buf_size() -> Option<usize> {

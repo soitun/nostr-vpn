@@ -53,6 +53,7 @@ struct TunPipelineQueueRx {
     priority: mpsc::UnboundedReceiver<TunPipelineBatch>,
     bulk: mpsc::Receiver<TunPipelineBatch>,
     bulk_queued_packets: Arc<AtomicUsize>,
+    bulk_packet_capacity: usize,
     bulk_available: Arc<Notify>,
     priority_closed: bool,
     bulk_closed: bool,
@@ -139,6 +140,7 @@ impl TunPipelineQueueTx {
                 priority: priority_rx,
                 bulk: bulk_rx,
                 bulk_queued_packets,
+                bulk_packet_capacity: capacity,
                 bulk_available,
                 priority_closed: false,
                 bulk_closed: false,
@@ -202,6 +204,19 @@ impl TunPipelineQueueTx {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TunPipelineQueueRx {
+    fn bulk_backlog_packets(&self) -> usize {
+        self.bulk_queued_packets
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn has_bulk_backlog(&self) -> bool {
+        self.bulk_backlog_packets() > 0
+    }
+
+    fn bulk_backlog_capacity(&self) -> usize {
+        self.bulk_packet_capacity
+    }
+
     async fn recv(&mut self) -> Option<TunPipelineBatch> {
         loop {
             match self.priority.try_recv() {
