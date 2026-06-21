@@ -98,6 +98,7 @@ run_local_fips_regression_tests() {
     cargo test -p fips-core overlay_adverts -- --nocapture
     cargo test -p fips-core update_peers -- --nocapture
     cargo test -p fips-core test_reply_learned_moves_configured_static_direct_peer_when_session_degraded -- --nocapture
+    cargo test -p fips-core traversal_path_liveness_keeps_mobile_safe_floor -- --nocapture
     cargo test -p fips-core fresh_control_with_unreturned_endpoint_data_blocks_direct_without_known_fallback -- --nocapture
   )
 }

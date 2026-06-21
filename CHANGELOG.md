@@ -17,6 +17,9 @@ All notable changes to this project are documented in this file.
 - FIPS private-mesh sender fairness now yields from actual bulk queue pressure
   instead of macOS-only fixed send-turn constants, matching the WireGuard-style
   bounded queue/backpressure model more closely.
+- Release-gate local-FIPS coverage now checks that traversal/recent-endpoint
+  paths keep their mobile-safe liveness floor instead of falling back to the 5s
+  local-route-failure timeout.
 
 ## 4.0.82 - 2026-06-20
 
