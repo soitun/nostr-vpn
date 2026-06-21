@@ -4,8 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.83 - 2026-06-21
+
 ### Changed
 
+- The workspace now depends on the published FIPS 0.3.75/0.3.50 crates,
+  carrying the direct-path re-probe and direct-payload freshness fixes used by
+  the latest private-mesh recovery testing.
 - FIPS/Nostr discovery now defaults to configured roster peers only; open
   non-roster transit remains available as an explicit setting or env override.
 - FIPS public configured endpoints are treated as ordinary roster hints instead
@@ -25,6 +30,12 @@ All notable changes to this project are documented in this file.
 - FIPS private-mesh maintenance now probes stale peers on the slower discovery
   cadence and caps peer pings per heartbeat to avoid synchronized control bursts
   from stale/offline roster members.
+
+### Fixed
+
+- Private-mesh transfers no longer stay pinned to stale fallback routes after
+  authenticated direct endpoint payload traffic has returned, reducing slow
+  reverse transfers after network changes.
 
 ## 4.0.82 - 2026-06-20
 

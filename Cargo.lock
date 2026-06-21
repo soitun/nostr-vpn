@@ -1628,9 +1628,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.74"
+version = "0.3.75"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03395d3f5672edcd3ef8cd3182de748a7f7326ba115cfaa2a6064455d16b5c58"
+checksum = "46caedf5f6065306b48850fd843b3f74dbf82ab3cfb882cb7fbe8986a40fef23"
 dependencies = [
  "bluer",
  "crossbeam-channel",
@@ -1666,9 +1666,9 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.3.49"
+version = "0.3.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3c400e49ee5f785ccff4bc04c7040a267300e510ef4cc6e7359ad38af755edf1"
+checksum = "516efdb222862e68243cafeed64b5cdce0c651e2708c865485cbe9032c830fa8"
 dependencies = [
  "fips-core",
 ]
@@ -3202,7 +3202,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.82"
+version = "4.0.83"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3227,7 +3227,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.82"
+version = "4.0.83"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -3267,7 +3267,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.0.82"
+version = "4.0.83"
 dependencies = [
  "anyhow",
  "axum",
@@ -3288,7 +3288,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.0.82"
+version = "4.0.83"
 dependencies = [
  "anyhow",
  "wintun",
@@ -3383,7 +3383,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn"
-version = "4.0.82"
+version = "4.0.83"
 dependencies = [
  "anyhow",
  "arc-swap",

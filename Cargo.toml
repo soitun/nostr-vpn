@@ -11,7 +11,7 @@ exclude = ["linux"]
 resolver = "2"
 
 [workspace.package]
-version = "4.0.82"
+version = "4.0.83"
 edition = "2024"
 license = "MIT"
 authors = ["Nostr VPN contributors"]
@@ -27,8 +27,8 @@ boringtun = "0.7"
 cashu-service = { version = "0.2.56", default-features = false }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = "0.3.49"
-fips-core = "0.3.74"
+fips-endpoint = "0.3.50"
+fips-core = "0.3.75"
 futures = "0.3"
 hashtree-updater = "0.2.67"
 hex = "0.4"

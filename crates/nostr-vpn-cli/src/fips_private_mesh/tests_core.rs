@@ -142,22 +142,14 @@
 
     #[test]
     fn parses_fips_nostr_discovery_policy_override() {
-        assert_eq!(
-            parse_fips_nostr_discovery_policy("configured-only"),
-            Some(fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly)
-        );
-        assert_eq!(
-            parse_fips_nostr_discovery_policy("configured_only"),
-            Some(fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly)
-        );
-        assert_eq!(
-            parse_fips_nostr_discovery_policy("open"),
-            Some(fips_endpoint::NostrDiscoveryPolicy::Open)
-        );
-        assert_eq!(
-            parse_fips_nostr_discovery_policy("disabled"),
-            Some(fips_endpoint::NostrDiscoveryPolicy::Disabled)
-        );
+        for (raw, expected) in [
+            ("configured-only", NostrDiscoveryPolicy::ConfiguredOnly),
+            ("configured_only", NostrDiscoveryPolicy::ConfiguredOnly),
+            ("open", NostrDiscoveryPolicy::Open),
+            ("disabled", NostrDiscoveryPolicy::Disabled),
+        ] {
+            assert_eq!(parse_fips_nostr_discovery_policy(raw), Some(expected));
+        }
         assert_eq!(parse_fips_nostr_discovery_policy("wat"), None);
     }
 
@@ -674,44 +666,25 @@
         icmpv6[6] = 58;
         assert_eq!(tun_pipeline_packet_lane(&icmpv6), TunPipelineLane::Priority);
 
-        assert_eq!(
-            tun_pipeline_packet_lane(&test_ipv4_tcp_packet(0x10, 0)),
-            TunPipelineLane::Priority
-        );
-        assert_eq!(
-            tun_pipeline_packet_lane(&test_ipv4_tcp_packet(0x02, 0)),
-            TunPipelineLane::Priority
-        );
-        assert_eq!(
-            tun_pipeline_packet_lane(&test_ipv4_tcp_packet(0x18, 64)),
-            TunPipelineLane::Priority
-        );
-        assert_eq!(
-            tun_pipeline_packet_lane(&test_ipv4_tcp_packet(0x18, 512)),
-            TunPipelineLane::Bulk
-        );
+        for packet in [
+            test_ipv4_tcp_packet(0x10, 0),
+            test_ipv4_tcp_packet(0x02, 0),
+            test_ipv4_tcp_packet(0x18, 64),
+            test_ipv6_tcp_packet(0x10, 0),
+            test_ipv6_tcp_packet(0x02, 0),
+            test_ipv6_tcp_packet(0x18, 64),
+        ] {
+            assert_eq!(tun_pipeline_packet_lane(&packet), TunPipelineLane::Priority);
+        }
 
-        assert_eq!(
-            tun_pipeline_packet_lane(&test_ipv6_tcp_packet(0x10, 0)),
-            TunPipelineLane::Priority
-        );
-        assert_eq!(
-            tun_pipeline_packet_lane(&test_ipv6_tcp_packet(0x02, 0)),
-            TunPipelineLane::Priority
-        );
-        assert_eq!(
-            tun_pipeline_packet_lane(&test_ipv6_tcp_packet(0x18, 64)),
-            TunPipelineLane::Priority
-        );
-        assert_eq!(
-            tun_pipeline_packet_lane(&test_ipv6_tcp_packet(0x18, 512)),
-            TunPipelineLane::Bulk
-        );
-        assert_eq!(
-            tun_pipeline_packet_lane(&test_ipv6_udp_packet(8)),
-            TunPipelineLane::Bulk
-        );
-        assert_eq!(tun_pipeline_packet_lane(&[0xaa; 32]), TunPipelineLane::Bulk);
+        for packet in [
+            test_ipv4_tcp_packet(0x18, 512),
+            test_ipv6_tcp_packet(0x18, 512),
+            test_ipv6_udp_packet(8),
+            vec![0xaa; 32],
+        ] {
+            assert_eq!(tun_pipeline_packet_lane(&packet), TunPipelineLane::Bulk);
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
