@@ -445,6 +445,23 @@ async fn refresh_fips_tunnel_runtime_peer_paths(
     let Some(current) = runtime.as_ref() else {
         return Ok(false);
     };
+    refresh_fips_tunnel_runtime_peer_paths_in_place(
+        current,
+        context,
+        stale_participants,
+        "stale participant liveness",
+    )
+    .await?;
+    Ok(false)
+}
+
+#[cfg(feature = "embedded-fips")]
+async fn refresh_fips_tunnel_runtime_peer_paths_in_place(
+    current: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+    context: FipsRestartContext<'_>,
+    participants: &[String],
+    reason: &str,
+) -> Result<()> {
     let live_peer_endpoints = current.peer_endpoint_hints();
     let config = fips_tunnel_config_from_app(
         context.app,
@@ -458,19 +475,19 @@ async fn refresh_fips_tunnel_runtime_peer_paths(
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
     let outcome = current.update_peers(&config.endpoint_peers).await?;
     let refresh_endpoint_peers =
-        endpoint_peers_for_participant_refresh(&config.endpoint_peers, stale_participants);
+        endpoint_peers_for_participant_refresh(&config.endpoint_peers, participants);
     if refresh_endpoint_peers.is_empty() {
         eprintln!(
-            "daemon: no matching FIPS endpoint peer paths for {} stale participant(s)",
-            stale_participants.len()
+            "daemon: no matching FIPS endpoint peer paths for {} participant(s) after {reason}",
+            participants.len()
         );
         *context.last_endpoint_peer_signature = endpoint_peer_signature;
-        return Ok(false);
+        return Ok(());
     }
     let refreshed = current.refresh_peer_paths(&refresh_endpoint_peers).await?;
     *context.last_endpoint_peer_signature = endpoint_peer_signature;
     eprintln!(
-        "daemon: refreshed stale FIPS endpoint peer paths in place (targets={} added={} updated={} unchanged={} removed={} direct_refreshes={})",
+        "daemon: refreshed FIPS endpoint peer paths in place after {reason} (targets={} added={} updated={} unchanged={} removed={} direct_refreshes={})",
         refresh_endpoint_peers.len(),
         outcome.added,
         outcome.updated,
@@ -478,7 +495,7 @@ async fn refresh_fips_tunnel_runtime_peer_paths(
         outcome.removed,
         refreshed
     );
-    Ok(false)
+    Ok(())
 }
 
 #[cfg(feature = "embedded-fips")]

@@ -703,34 +703,57 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &config_path,
                         &mut vpn_status,
                     ) {
-                        Ok(true) => {
-                            let reload = build_daemon_reload_config(
-                                app.clone(),
-                                app.effective_network_id(),
-                            );
-                            app = reload.app;
-                            network_id = reload.network_id;
-                            expected_peers = reload.expected_peers;
-                            own_pubkey = reload.own_pubkey;
+                        Ok(drained) => {
+                            if drained.roster_changed {
+                                let reload = build_daemon_reload_config(
+                                    app.clone(),
+                                    app.effective_network_id(),
+                                );
+                                app = reload.app;
+                                network_id = reload.network_id;
+                                expected_peers = reload.expected_peers;
+                                own_pubkey = reload.own_pubkey;
 
-                            fips_join_request_sends.clear();
-                            if let Err(error) = refresh_fips_tunnel_config(
-                                runtime,
-                                &app,
-                                &config_path,
-                                &network_id,
-                                own_pubkey.as_deref(),
-                            )
-                            .await
+                                fips_join_request_sends.clear();
+                                if let Err(error) = refresh_fips_tunnel_config(
+                                    runtime,
+                                    &app,
+                                    &config_path,
+                                    &network_id,
+                                    own_pubkey.as_deref(),
+                                )
+                                .await
+                                {
+                                    vpn_status =
+                                        format!("Roster applied, but FIPS reload failed ({error})");
+                                }
+                                if let Some(rt) = magic_dns_runtime.as_ref() {
+                                    rt.refresh_records(&app);
+                                }
+                            }
+                            if !drained.endpoint_hint_participants.is_empty()
+                                && let Err(error) =
+                                    refresh_fips_tunnel_runtime_peer_paths_in_place(
+                                        runtime,
+                                        FipsRestartContext {
+                                            app: &app,
+                                            config_path: &config_path,
+                                            network_id: &network_id,
+                                            fallback_iface: &iface,
+                                            own_pubkey: own_pubkey.as_deref(),
+                                            recent_peers: Some(&recent_peers),
+                                            last_endpoint_peer_signature:
+                                                &mut last_fips_endpoint_peer_signature,
+                                        },
+                                        &drained.endpoint_hint_participants,
+                                        "fresh endpoint capability",
+                                    )
+                                    .await
                             {
                                 vpn_status =
-                                    format!("Roster applied, but FIPS reload failed ({error})");
-                            }
-                            if let Some(rt) = magic_dns_runtime.as_ref() {
-                                rt.refresh_records(&app);
+                                    format!("FIPS endpoint hint refresh failed ({error})");
                             }
                         }
-                        Ok(false) => {}
                         Err(error) => {
                             vpn_status = format!("FIPS event handling failed ({error})");
                         }

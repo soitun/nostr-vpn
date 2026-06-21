@@ -2025,6 +2025,61 @@ fn endpoint_hint_recipients_are_active_participants_only() {
     assert!(!recipients.contains(&admin_pubkey));
 }
 
+#[cfg(feature = "embedded-fips")]
+#[test]
+fn endpoint_hint_capability_refreshes_only_matching_roster_peer() {
+    use nostr_vpn_core::fips_control::{PeerCapabilities, PeerEndpointHint};
+
+    let roster_peer = "11".repeat(32);
+    let other_peer = "22".repeat(32);
+    let recipients = HashSet::from([roster_peer.clone()]);
+    let capabilities = PeerCapabilities {
+        endpoint_hints: vec![PeerEndpointHint::udp("192.168.50.10:51820")],
+        ..PeerCapabilities::default()
+    };
+
+    assert_eq!(
+        endpoint_hint_refresh_participant(
+            Some("network-a"),
+            &recipients,
+            &roster_peer,
+            "network-a",
+            &capabilities,
+        ),
+        Some(roster_peer.clone())
+    );
+    assert_eq!(
+        endpoint_hint_refresh_participant(
+            Some("network-a"),
+            &recipients,
+            &roster_peer,
+            "network-b",
+            &capabilities,
+        ),
+        None
+    );
+    assert_eq!(
+        endpoint_hint_refresh_participant(
+            Some("network-a"),
+            &recipients,
+            &other_peer,
+            "network-a",
+            &capabilities,
+        ),
+        None
+    );
+    assert_eq!(
+        endpoint_hint_refresh_participant(
+            Some("network-a"),
+            &recipients,
+            &roster_peer,
+            "network-a",
+            &PeerCapabilities::default(),
+        ),
+        None
+    );
+}
+
 #[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
 #[test]
 fn fips_tunnel_config_carries_paid_route_payment_streaming_inputs() {

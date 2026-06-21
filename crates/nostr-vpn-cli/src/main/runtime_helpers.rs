@@ -338,13 +338,40 @@ fn persist_shared_network_roster(
 }
 
 #[cfg(feature = "embedded-fips")]
+fn endpoint_hint_refresh_participant(
+    active_network_id: Option<&str>,
+    roster_participants: &HashSet<String>,
+    sender_pubkey: &str,
+    network_id: &str,
+    capabilities: &PeerCapabilities,
+) -> Option<String> {
+    let network_matches = active_network_id
+        .is_some_and(|active| active == normalize_runtime_network_id(network_id));
+    (network_matches
+        && roster_participants.contains(sender_pubkey)
+        && !capabilities.endpoint_hints.is_empty())
+    .then(|| sender_pubkey.to_string())
+}
+
+#[cfg(feature = "embedded-fips")]
+#[derive(Debug, Default)]
+struct DrainedFipsMeshEvents {
+    roster_changed: bool,
+    endpoint_hint_participants: Vec<String>,
+}
+
+#[cfg(feature = "embedded-fips")]
 fn drain_fips_mesh_events(
     runtime: &mut crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &mut AppConfig,
     config_path: &Path,
     vpn_status: &mut String,
-) -> Result<bool> {
-    let mut roster_changed = false;
+) -> Result<DrainedFipsMeshEvents> {
+    let mut drained = DrainedFipsMeshEvents::default();
+    let active_network_id = app
+        .active_network_opt()
+        .map(|network| normalize_runtime_network_id(&network.network_id));
+    let roster_participants = desired_fips_endpoint_hint_recipients(app);
     for event in runtime.drain_events() {
         match event {
             crate::fips_private_mesh::FipsPrivateMeshEvent::Packet(packet) => {
@@ -382,7 +409,7 @@ fn drain_fips_mesh_events(
                 signed_roster.as_deref(),
                 vpn_status,
             ) {
-                Ok(Some(_)) => roster_changed = true,
+                Ok(Some(_)) => drained.roster_changed = true,
                 Ok(None) => {}
                 Err(error) => {
                     eprintln!("daemon: ignoring invalid FIPS roster from {sender_pubkey}: {error}");
@@ -393,16 +420,26 @@ fn drain_fips_mesh_events(
                 network_id,
                 capabilities,
             } => {
-                let _ = (sender_pubkey, network_id, capabilities);
                 // The FIPS receive path records capabilities before queuing
-                // this event. The daemon heartbeat applies fresh endpoint
-                // hints with a signature guard, and the status tick reads
-                // advertised routes from the same cache, so a capability frame
-                // should not force a full FIPS config refresh by itself.
+                // this event. Apply fresh direct endpoint hints promptly so
+                // peers that roam between LAN/NAT paths do not stay on stale
+                // direct-probe state until the generic liveness repair fires.
+                if let Some(participant) = endpoint_hint_refresh_participant(
+                    active_network_id.as_deref(),
+                    &roster_participants,
+                    &sender_pubkey,
+                    &network_id,
+                    &capabilities,
+                )
+                {
+                    drained.endpoint_hint_participants.push(participant);
+                }
             }
         }
     }
-    Ok(roster_changed)
+    drained.endpoint_hint_participants.sort();
+    drained.endpoint_hint_participants.dedup();
+    Ok(drained)
 }
 
 #[cfg(feature = "embedded-fips")]
