@@ -9,7 +9,7 @@
         FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
         FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS, FIPS_RECONNECT_BACKOFF_BASE_SECS,
         FIPS_RECONNECT_BACKOFF_MAX_SECS, FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS,
-        FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY, FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
+        FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY, FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY,
         FipsEndpointSendRun, FipsEndpointTransportConfig, FipsPeerActivity, FipsPeerActivitySnapshot,
         FipsPeerAddressHint, FipsPeerIdentityMap, FipsPeerRxKind, FipsPrivateMeshEvent,
         FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
@@ -322,11 +322,11 @@
         let udp = fips_peer_address_from_hint(&FipsPeerAddressHint {
             addr: "udp:203.0.113.21:2121".to_string(),
             seen_at_ms: None,
-            priority: FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
+            priority: FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY,
         });
         assert_eq!(udp.transport, "udp");
         assert_eq!(udp.addr, "203.0.113.21:2121");
-        assert_eq!(udp.priority, FIPS_STATIC_PEER_ENDPOINT_PRIORITY);
+        assert_eq!(udp.priority, FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY);
     }
 
     #[test]

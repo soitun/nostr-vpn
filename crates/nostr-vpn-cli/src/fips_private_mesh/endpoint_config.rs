@@ -18,7 +18,7 @@ struct FipsEndpointTransportConfig {
 /// recent-peers cache entries, `None` for operator-supplied static hints.
 /// fips's dialer uses this field as a recency tiebreaker inside the same
 /// priority tier.
-const FIPS_STATIC_PEER_ENDPOINT_PRIORITY: u8 = 10;
+const FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY: u8 = 100;
 const FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 100;
 const FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY: u8 = 200;
 
@@ -51,7 +51,7 @@ fn fips_peer_address_from_hint(hint: &FipsPeerAddressHint) -> PeerAddress {
 }
 
 fn operator_static_endpoint_priority(addr: &str) -> u8 {
-    endpoint_hint_priority(addr, FIPS_STATIC_PEER_ENDPOINT_PRIORITY)
+    endpoint_hint_priority(addr, FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY)
 }
 
 fn dynamic_endpoint_priority(addr: &str) -> u8 {
@@ -205,7 +205,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
     config.transports.udp = TransportInstances::Single(UdpConfig {
         bind_addr,
         advertise_on_nostr: Some(advertise_on_nostr),
-        public: Some(external_addr.is_some()),
+        public: Some(advertise_public_endpoint),
         external_addr,
         outbound_only: Some(transport.is_none()),
         accept_connections: Some(transport.is_some()),

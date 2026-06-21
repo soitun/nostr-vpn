@@ -537,7 +537,7 @@
     }
 
     #[test]
-    fn endpoint_config_keeps_private_app_endpoint_off_public_nostr_advert() {
+    fn endpoint_config_uses_stun_when_public_advert_has_private_app_endpoint() {
         let keys = Keys::generate();
         let participant_pubkey = keys.public_key().to_hex();
         let peer = FipsMeshPeerConfig::from_participant_pubkey(
@@ -603,7 +603,7 @@
         assert_eq!(udp.bind_addr.as_deref(), Some("0.0.0.0:51820"));
         assert!(!udp.outbound_only());
         assert!(udp.advertise_on_nostr());
-        assert!(!udp.is_public());
+        assert!(udp.is_public());
         assert!(udp.accept_connections());
         assert_eq!(udp.external_addr.as_deref(), None);
         assert_eq!(config.peers.len(), 1);

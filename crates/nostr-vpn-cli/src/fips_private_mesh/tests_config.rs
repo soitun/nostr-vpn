@@ -443,7 +443,7 @@
     }
 
     #[test]
-    fn endpoint_peer_hints_keep_public_static_addresses_preferred() {
+    fn endpoint_peer_hints_treat_public_static_addresses_as_hints() {
         let endpoint_peers = fips_endpoint_peers_from_mesh(
             &[],
             vec![("peer".to_string(), vec!["198.51.100.91:51830".to_string()])],
@@ -468,7 +468,7 @@
             .find(|hint| hint.addr == "89.27.103.157:33838")
             .expect("recent hint");
 
-        assert_eq!(static_hint.priority, FIPS_STATIC_PEER_ENDPOINT_PRIORITY);
+        assert_eq!(static_hint.priority, FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY);
         assert_eq!(recent_hint.priority, FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY);
     }
 
@@ -500,7 +500,7 @@
         assert_eq!(matching_hints[0].seen_at_ms, None);
         assert_eq!(
             matching_hints[0].priority,
-            FIPS_STATIC_PEER_ENDPOINT_PRIORITY
+            FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY
         );
         assert_eq!(
             fips_peer_address_from_hint(matching_hints[0]).seen_at_ms,
