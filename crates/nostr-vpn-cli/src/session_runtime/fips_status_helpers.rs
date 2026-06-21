@@ -392,10 +392,10 @@ async fn restart_fips_tunnel_runtime_after_link_event(
         .as_ref()
         .map(|runtime| runtime.iface().to_string())
         .unwrap_or_else(|| context.fallback_iface.to_string());
-    let live_peer_endpoints = runtime
-        .as_ref()
-        .map(|runtime| runtime.peer_endpoint_hints())
-        .unwrap_or_default();
+    // Link events mean the old runtime's learned endpoint hints belong to a
+    // previous underlay/NAT mapping. Rebuild from configured hints and fresh
+    // discovery instead of carrying stale direct tuples across the restart.
+    let live_peer_endpoints = Vec::new();
     let config = fips_tunnel_config_from_app(
         context.app,
         context.config_path,
