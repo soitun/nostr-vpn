@@ -476,7 +476,12 @@
             }]
         );
         let endpoint_config =
-            fips_peer_configs_from_mesh(&config.peers, &config.peer_hints, &config.bootstrap_peers);
+            fips_peer_configs_from_mesh(
+                &config.peers,
+                &config.peer_hints,
+                &config.bootstrap_peers,
+                false,
+            );
         let endpoint_peer = endpoint_config
             .iter()
             .find(|peer| peer.npub == admin_npub)
@@ -531,6 +536,7 @@
     #[test]
     fn mobile_config_seeds_bootstrap_transit_peers() {
         let mut app = AppConfig::generated();
+        app.connect_to_non_roster_fips_peers = true;
         app.fips_bootstrap_enabled = true;
         app.ensure_defaults();
         let mobile = MobileTunnelConfig::from_app(&app).expect("mobile config");

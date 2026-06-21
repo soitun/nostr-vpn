@@ -78,7 +78,7 @@ pub(crate) struct MobileTunnelConfig {
     pub(crate) stun_servers: Vec<String>,
     #[serde(default)]
     pub(crate) share_local_candidates: bool,
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(crate) connect_to_non_roster_fips_peers: bool,
     /// Find/advertise peers over Nostr relays. When false, the tunnel still
     /// dials static + bootstrap peers and (when allowed) LAN, but does not use

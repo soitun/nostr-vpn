@@ -585,7 +585,7 @@ fn fips_nostr_discovery_policy_from_env() -> NostrDiscoveryPolicy {
         .ok()
         .as_deref()
         .and_then(parse_fips_nostr_discovery_policy)
-        .unwrap_or(NostrDiscoveryPolicy::Open)
+        .unwrap_or(NostrDiscoveryPolicy::ConfiguredOnly)
 }
 
 fn fips_nostr_discovery_policy_from_app(app: &AppConfig) -> NostrDiscoveryPolicy {

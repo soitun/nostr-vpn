@@ -560,13 +560,26 @@ async fn refresh_mobile_endpoint_peers(
         .read()
         .map_err(|_| anyhow!("mobile FIPS peer hint lock poisoned"))?
         .clone();
-    let bootstrap = config_state
-        .read()
-        .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
-        .bootstrap_peers
-        .clone();
+    let (bootstrap, include_non_roster_transit) = {
+        let config = config_state
+            .read()
+            .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
+        let join_request_pending = !config.pending_join_request_recipient.trim().is_empty()
+            && config.pending_join_requested_at != 0;
+        (
+            config.bootstrap_peers.clone(),
+            config.connect_to_non_roster_fips_peers
+                || config.join_requests_enabled
+                || join_request_pending,
+        )
+    };
     endpoint
-        .update_peers(fips_peer_configs_from_mesh(&peers, &hints, &bootstrap))
+        .update_peers(fips_peer_configs_from_mesh(
+            &peers,
+            &hints,
+            &bootstrap,
+            include_non_roster_transit,
+        ))
         .await
         .context("mobile FIPS peer update failed")?;
     Ok(())

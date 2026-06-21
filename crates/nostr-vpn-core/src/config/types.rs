@@ -150,7 +150,7 @@ pub struct AppConfig {
     pub fips_host_tunnel_enabled: bool,
     #[serde(
         default = "default_connect_to_non_roster_fips_peers",
-        skip_serializing_if = "is_true"
+        skip_serializing_if = "is_false"
     )]
     pub connect_to_non_roster_fips_peers: bool,
     /// Find/advertise FIPS peers over Nostr relays. When false, the node still

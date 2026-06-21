@@ -67,7 +67,7 @@ impl AppConfig {
     pub fn join_requests_enabled(&self) -> bool {
         self.networks
             .iter()
-            .any(|network| network.listen_for_join_requests)
+            .any(|network| network.enabled && network.listen_for_join_requests)
     }
 
     pub fn record_inbound_join_request(

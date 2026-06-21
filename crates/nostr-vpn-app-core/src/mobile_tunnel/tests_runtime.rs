@@ -274,6 +274,7 @@
                 &client_mobile.peers,
                 &client_mobile.peer_hints,
                 &client_mobile.bootstrap_peers,
+                client_mobile.connect_to_non_roster_fips_peers,
             )
             .iter()
             .any(|peer| peer.npub == exit_peer.endpoint_npub && !peer.addresses.is_empty()),

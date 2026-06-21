@@ -72,14 +72,20 @@ fn explicit_active_network_id_is_preserved() {
 }
 
 #[test]
-fn join_requests_enabled_is_true_when_any_network_listens() {
+fn join_requests_enabled_uses_enabled_networks() {
     let mut config = AppConfig::generated();
+    assert!(!config.join_requests_enabled());
+
     config.networks[0].listen_for_join_requests = false;
     let network_id = config.add_network("Other");
     config
         .set_network_join_requests_enabled(&network_id, true)
         .expect("enable join requests");
+    assert!(!config.join_requests_enabled());
 
+    config
+        .set_network_enabled(&network_id, true)
+        .expect("enable network");
     assert!(config.join_requests_enabled());
 }
 

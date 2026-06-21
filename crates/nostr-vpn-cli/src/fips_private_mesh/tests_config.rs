@@ -117,6 +117,7 @@
 
         let mut app = AppConfig::default();
         app.nostr.secret_key = alice_nsec;
+        app.connect_to_non_roster_fips_peers = true;
         app.networks[0].enabled = true;
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];
@@ -226,6 +227,7 @@
 
         let mut app = AppConfig::default();
         app.nostr.secret_key = alice_nsec;
+        app.connect_to_non_roster_fips_peers = true;
         app.networks[0].enabled = true;
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];
@@ -302,6 +304,7 @@
 
         let mut app = AppConfig::default();
         app.nostr.secret_key = alice_nsec;
+        app.connect_to_non_roster_fips_peers = true;
         app.networks[0].enabled = true;
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];

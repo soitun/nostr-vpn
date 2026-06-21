@@ -596,7 +596,7 @@
         assert!(config.node.discovery.lan.enabled);
         assert_eq!(
             config.node.discovery.nostr.policy,
-            NostrDiscoveryPolicy::Open
+            NostrDiscoveryPolicy::ConfiguredOnly
         );
         assert_eq!(
             config.node.discovery.nostr.open_discovery_max_pending,
@@ -754,6 +754,7 @@
         let mobile = MobileTunnelConfig {
             peers: vec![roster_peer],
             peer_hints,
+            connect_to_non_roster_fips_peers: true,
             ..empty_config()
         };
         let config = fips_endpoint_config("nostr-vpn:test", &mobile);

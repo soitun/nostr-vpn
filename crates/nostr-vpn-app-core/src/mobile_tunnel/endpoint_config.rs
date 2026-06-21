@@ -41,6 +41,7 @@ fn fips_peer_configs_from_mesh(
     peers: &[FipsMeshPeerConfig],
     peer_hints: &HashMap<String, Vec<FipsPeerAddressHint>>,
     bootstrap_peers: &HashMap<String, Vec<FipsPeerAddressHint>>,
+    include_non_roster_transit: bool,
 ) -> Vec<FipsPeerConfig> {
     let mut configs = Vec::new();
     let mut included = std::collections::HashSet::new();
@@ -53,6 +54,10 @@ fn fips_peer_configs_from_mesh(
             !peer.advertises_default_route(),
             FIPS_ROSTER_AUTO_RECONNECT,
         ));
+    }
+
+    if !include_non_roster_transit {
+        return configs;
     }
 
     for (participant, hints) in peer_hints {
@@ -219,6 +224,9 @@ fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig 
     config.node.limits.max_links = MOBILE_MAX_FIPS_LINKS;
     let join_request_pending = !mobile.pending_join_request_recipient.trim().is_empty()
         && mobile.pending_join_requested_at != 0;
+    let include_non_roster_transit = mobile.connect_to_non_roster_fips_peers
+        || mobile.join_requests_enabled
+        || join_request_pending;
     let nostr_enabled = mobile.nostr_discovery_enabled
         && (mobile.join_requests_enabled
             || join_request_pending
@@ -230,10 +238,7 @@ fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig 
     // not placed in that public advert; when enabled, they are carried inside
     // encrypted traversal signaling/control frames.
     config.node.discovery.nostr.advertise = nostr_enabled;
-    config.node.discovery.nostr.policy = if mobile.connect_to_non_roster_fips_peers
-        || mobile.join_requests_enabled
-        || join_request_pending
-    {
+    config.node.discovery.nostr.policy = if include_non_roster_transit {
         NostrDiscoveryPolicy::Open
     } else {
         NostrDiscoveryPolicy::ConfiguredOnly
@@ -280,8 +285,12 @@ fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig 
         public: Some(false),
         ..UdpConfig::default()
     });
-    config.peers =
-        fips_peer_configs_from_mesh(&mobile.peers, &mobile.peer_hints, &mobile.bootstrap_peers);
+    config.peers = fips_peer_configs_from_mesh(
+        &mobile.peers,
+        &mobile.peer_hints,
+        &mobile.bootstrap_peers,
+        include_non_roster_transit,
+    );
     // Outbound TCP transport so peers reachable only over tcp:443 (UDP-blocked
     // networks) can still be dialed. bind_addr=None keeps it outbound-only.
     let needs_tcp = config.peers.iter().any(|peer| {

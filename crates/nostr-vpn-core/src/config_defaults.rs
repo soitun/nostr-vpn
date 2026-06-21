@@ -84,7 +84,7 @@ pub(crate) fn default_fips_host_tunnel_enabled() -> bool {
 }
 
 pub(crate) fn default_connect_to_non_roster_fips_peers() -> bool {
-    true
+    false
 }
 
 pub(crate) fn default_fips_bootstrap_enabled() -> bool {

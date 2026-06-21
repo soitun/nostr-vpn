@@ -23,7 +23,7 @@ fn generated_config_auto_populates_keys() {
     assert!(config.exit_node_leak_protection);
     assert!(!config.fips_host_tunnel_enabled);
     assert!(!config.fips_advertise_public_endpoint);
-    assert!(config.connect_to_non_roster_fips_peers);
+    assert!(!config.connect_to_non_roster_fips_peers);
     assert!(config.fips_host_inbound_tcp_ports.is_empty());
     assert!(!config.node.advertise_exit_node);
     assert!(config.node.advertised_routes.is_empty());
@@ -245,6 +245,21 @@ fn fips_discovery_and_bootstrap_default_on_when_missing() {
 
     assert!(config.fips_nostr_discovery_enabled);
     assert!(config.fips_bootstrap_enabled);
+    assert!(!config.connect_to_non_roster_fips_peers);
+}
+
+#[test]
+fn fips_non_roster_peer_opt_in_round_trips() {
+    let config = AppConfig {
+        connect_to_non_roster_fips_peers: true,
+        ..AppConfig::default()
+    };
+
+    let encoded = toml::to_string(&config).expect("serialize config");
+    assert!(encoded.contains("connect_to_non_roster_fips_peers = true"));
+
+    let decoded: AppConfig = toml::from_str(&encoded).expect("parse config");
+    assert!(decoded.connect_to_non_roster_fips_peers);
 }
 
 #[test]

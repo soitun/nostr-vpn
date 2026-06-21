@@ -242,7 +242,7 @@ fn empty_config() -> MobileTunnelConfig {
         nostr_relays: Vec::new(),
         stun_servers: Vec::new(),
         share_local_candidates: false,
-        connect_to_non_roster_fips_peers: true,
+        connect_to_non_roster_fips_peers: false,
         nostr_discovery_enabled: true,
         excluded_routes: Vec::new(),
         dns_servers: Vec::new(),
