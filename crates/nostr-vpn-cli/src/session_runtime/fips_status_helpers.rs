@@ -139,7 +139,7 @@ struct FipsRestartContext<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FipsLinkEventRefresh {
     None,
-    RestartEndpoint,
+    RefreshPaths,
 }
 
 #[cfg(feature = "embedded-fips")]
@@ -157,7 +157,7 @@ pub(crate) fn fips_link_event_refresh(
     resumed_after_sleep: bool,
 ) -> FipsLinkEventRefresh {
     if network_changed || endpoint_changed || underlay_repaired || resumed_after_sleep {
-        FipsLinkEventRefresh::RestartEndpoint
+        FipsLinkEventRefresh::RefreshPaths
     } else {
         FipsLinkEventRefresh::None
     }
@@ -383,7 +383,7 @@ async fn update_recent_peers_from_runtime(
 }
 
 #[cfg(feature = "embedded-fips")]
-async fn restart_fips_tunnel_runtime_after_link_event(
+async fn refresh_fips_tunnel_runtime_after_link_event(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
     context: FipsRestartContext<'_>,
     reason: &str,
@@ -392,9 +392,9 @@ async fn restart_fips_tunnel_runtime_after_link_event(
         .as_ref()
         .map(|runtime| runtime.iface().to_string())
         .unwrap_or_else(|| context.fallback_iface.to_string());
-    // Link events mean the old runtime's learned endpoint hints belong to a
-    // previous underlay/NAT mapping. Rebuild from configured hints and fresh
-    // discovery instead of carrying stale direct tuples across the restart.
+    // Link events mean the old runtime's learned endpoint hints may belong to
+    // a previous underlay/NAT mapping. Keep the endpoint bound and make fips
+    // re-earn direct paths from configured hints and fresh discovery.
     let live_peer_endpoints = Vec::new();
     let config = fips_tunnel_config_from_app(
         context.app,
@@ -406,15 +406,17 @@ async fn restart_fips_tunnel_runtime_after_link_event(
         &live_peer_endpoints,
     )?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
-    if let Some(existing) = runtime.take() {
-        existing.stop().await?;
+    if let Some(existing) = runtime.as_mut() {
+        existing.apply_config(config).await?;
+        eprintln!(
+            "daemon: refreshed FIPS private mesh paths on {} after {reason}",
+            existing.iface()
+        );
+    } else {
+        let started = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
+        eprintln!("daemon: FIPS private mesh on {} after {reason}", started.iface());
+        *runtime = Some(started);
     }
-    let restarted = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
-    eprintln!(
-        "daemon: restarted FIPS private mesh on {} after {reason}",
-        restarted.iface()
-    );
-    *runtime = Some(restarted);
     *context.last_endpoint_peer_signature = endpoint_peer_signature;
     Ok(())
 }
@@ -541,9 +543,9 @@ async fn restart_fips_tunnel_runtime_after_pending_roster_links(
         return Ok(false);
     }
     eprintln!(
-        "daemon: restarting FIPS private mesh after all {expected_peers} roster link(s) stayed pending with relay discovery connected"
+        "daemon: refreshing FIPS private mesh paths after all {expected_peers} roster link(s) stayed pending with relay discovery connected"
     );
-    restart_fips_tunnel_runtime_after_link_event(
+    refresh_fips_tunnel_runtime_after_link_event(
         runtime,
         context,
         "all FIPS roster links pending",

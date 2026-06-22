@@ -468,27 +468,27 @@ fn macos_underlay_route_repair_defers_only_for_confirmed_captive_portal() {
 
 #[cfg(feature = "embedded-fips")]
 #[test]
-fn fips_link_events_restart_endpoint_for_major_link_changes() {
+fn fips_link_events_refresh_paths_for_major_link_changes() {
     assert_eq!(
         fips_link_event_refresh(true, false, false, false),
-        FipsLinkEventRefresh::RestartEndpoint
+        FipsLinkEventRefresh::RefreshPaths
     );
     assert_eq!(
         fips_link_event_refresh(false, false, true, false),
-        FipsLinkEventRefresh::RestartEndpoint
+        FipsLinkEventRefresh::RefreshPaths
     );
     assert_eq!(
         fips_link_event_refresh(false, false, false, true),
-        FipsLinkEventRefresh::RestartEndpoint
+        FipsLinkEventRefresh::RefreshPaths
     );
 }
 
 #[cfg(feature = "embedded-fips")]
 #[test]
-fn fips_link_events_restart_endpoint_for_endpoint_only_changes() {
+fn fips_link_events_refresh_paths_for_endpoint_only_changes() {
     assert_eq!(
         fips_link_event_refresh(false, true, false, false),
-        FipsLinkEventRefresh::RestartEndpoint
+        FipsLinkEventRefresh::RefreshPaths
     );
     assert_eq!(
         fips_link_event_refresh(false, false, false, false),

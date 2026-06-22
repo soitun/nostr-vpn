@@ -619,11 +619,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     }
                     #[cfg(feature = "embedded-fips")]
                     let fips_result = match fips_refresh {
-                        FipsLinkEventRefresh::RestartEndpoint => {
+                        FipsLinkEventRefresh::RefreshPaths => {
                             if fips_tunnel_runtime.is_some()
                                 || fips_private_runtime_active(&app, vpn_enabled, expected_peers)
                             {
-                                restart_fips_tunnel_runtime_after_link_event(
+                                refresh_fips_tunnel_runtime_after_link_event(
                                     &mut fips_tunnel_runtime,
                                     FipsRestartContext {
                                         app: &app,
@@ -631,9 +631,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         network_id: &network_id,
                                         fallback_iface: &iface,
                                         own_pubkey: own_pubkey.as_deref(),
-                                        // A link-event restart means the old underlay or NAT mapping
-                                        // just changed. Keep the cache on disk, but make this runtime
-                                        // earn direct paths from fresh evidence on the current network.
+                                        // A link event means the old underlay or NAT mapping just
+                                        // changed. Keep the cache on disk, but make this runtime earn
+                                        // direct paths from fresh evidence on the current network.
                                         recent_peers: seed_recent_fips_peers
                                             .then_some(&recent_peers),
                                         last_endpoint_peer_signature:
