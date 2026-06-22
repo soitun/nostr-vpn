@@ -718,8 +718,8 @@
 
         #[cfg(target_os = "macos")]
         assert!(
-            endpoint_config.node.connected_udp.enabled,
-            "nvpn opts macOS into connected UDP after live reverse-throughput A/B"
+            !endpoint_config.node.connected_udp.enabled,
+            "macOS should inherit FIPS' default-off connected UDP behavior"
         );
         #[cfg(not(target_os = "macos"))]
         assert!(
