@@ -256,11 +256,8 @@ fn apply_connected_udp_config(config: &mut Config, connected_udp: Option<&Connec
     let Some(connected_udp) = connected_udp else {
         return;
     };
-    match connected_udp.enabled {
-        Some(enabled) => {
-            config.node.connected_udp.enabled = enabled;
-        }
-        None => {}
+    if let Some(enabled) = connected_udp.enabled {
+        config.node.connected_udp.enabled = enabled;
     }
     if let Some(fd_reserve) = connected_udp.fd_reserve {
         config.node.connected_udp.fd_reserve = fd_reserve;
