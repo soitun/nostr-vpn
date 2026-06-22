@@ -15,9 +15,10 @@ All notable changes to this project are documented in this file.
 - Refreshed embedded FIPS private-mesh paths in place after link changes instead
   of restarting the FIPS endpoint, reducing churn during route or endpoint
   refreshes.
-- Bumped to FIPS 0.3.76/0.3.51 for fresh endpoint peer liveness, preventing
+- Bumped to FIPS 0.3.77/0.3.52 for fresh endpoint peer liveness, preventing
   stale receive counters from keeping dead mobile/NAT paths marked online, and
-  for stale worker-open completion classification during FSP session churn.
+  for direct-path staleness based on authenticated receive evidence plus stale
+  worker-open completion classification during FSP session churn.
 
 ## 4.0.83 - 2026-06-21
 
