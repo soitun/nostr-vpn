@@ -193,7 +193,7 @@ async fn run_command(command: Command) -> Result<()> {
                         "expected_peer_count": expected_peers,
                         "peer_count": peer_count,
                         "mesh_ready": mesh_ready,
-                        "peers": peers,
+                        "peers": status_json_peers(daemon_peers.as_deref(), &peers),
                     }))?
                 );
             } else {
@@ -665,4 +665,14 @@ async fn run_command(command: Command) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn status_json_peers(
+    daemon_peers: Option<&[DaemonPeerState]>,
+    configured_peers: &[PeerAnnouncement],
+) -> serde_json::Value {
+    match daemon_peers {
+        Some(peers) => serde_json::json!(peers),
+        None => serde_json::json!(configured_peers),
+    }
 }
