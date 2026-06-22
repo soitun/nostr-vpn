@@ -16,6 +16,7 @@ FALLBACK_DEADLINE_SECS="${NVPN_E2E_ROAMING_FALLBACK_SECS:-60}"
 DIRECT_RECOVERY_DEADLINE_SECS="${NVPN_E2E_DIRECT_RECOVERY_SECS:-25}"
 FALLBACK_HOLD_SECS="${NVPN_E2E_ROAMING_FALLBACK_HOLD_SECS:-12}"
 PAYLOAD_PROBE_INTERVAL_SECS="${NVPN_E2E_ROAMING_PAYLOAD_PROBE_INTERVAL_SECS:-1}"
+PAYLOAD_RECOVERY_DEADLINE_SECS="${NVPN_E2E_ROAMING_PAYLOAD_RECOVERY_SECS:-10}"
 FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
 
 cleanup() {
@@ -343,17 +344,23 @@ assert_payload_probe_success_since() {
   local output="$2"
   local since="$3"
   local label="$4"
-  if ! "${COMPOSE[@]}" exec -T "$node" sh -s -- "$output" "$since" <<'SH'
+  local end=$(( $(date +%s) + PAYLOAD_RECOVERY_DEADLINE_SECS ))
+  while [[ "$(date +%s)" -le "$end" ]]; do
+    if "${COMPOSE[@]}" exec -T "$node" sh -s -- "$output" "$since" <<'SH'
 set -eu
 output="$1"
 since="$2"
 awk -v since="$since" '$1 >= since && $2 == "ok" { found = 1 } END { exit found ? 0 : 1 }' "$output"
 SH
-  then
-    echo "fips roaming e2e failed: $label did not recover tunnel payload after churn" >&2
-    "${COMPOSE[@]}" exec -T "$node" sh -lc "cat '$output' 2>/dev/null || true" >&2 || true
-    exit 1
-  fi
+    then
+      return 0
+    fi
+    sleep "$PAYLOAD_PROBE_INTERVAL_SECS"
+  done
+
+  echo "fips roaming e2e failed: $label did not recover tunnel payload after churn within ${PAYLOAD_RECOVERY_DEADLINE_SECS}s" >&2
+  "${COMPOSE[@]}" exec -T "$node" sh -lc "cat '$output' 2>/dev/null || true" >&2 || true
+  exit 1
 }
 
 resolve_magic_dns() {
