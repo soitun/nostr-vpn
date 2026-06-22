@@ -28,7 +28,7 @@ fn generated_config_auto_populates_keys() {
     assert!(!config.node.advertise_exit_node);
     assert!(config.node.advertised_routes.is_empty());
     assert!(config.node.connected_udp.is_default());
-    assert_eq!(config.node.connected_udp.enabled, Some(false));
+    assert_eq!(config.node.connected_udp.enabled, None);
     assert!(config.effective_advertised_routes().is_empty());
     assert_eq!(config.enabled_network_count(), 0);
     assert!(!config.networks[0].enabled);

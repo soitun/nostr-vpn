@@ -683,7 +683,7 @@
     }
 
     #[test]
-    fn app_connected_udp_default_disables_fips_fast_path() {
+    fn app_connected_udp_default_uses_platform_fips_default() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
         let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
@@ -716,9 +716,15 @@
             Some(&tunnel_config.connected_udp),
         );
 
+        #[cfg(target_os = "macos")]
         assert!(
-            !endpoint_config.node.connected_udp.enabled,
-            "nvpn should keep connected UDP opt-in until the live LAN loss regression is fixed"
+            endpoint_config.node.connected_udp.enabled,
+            "nvpn opts macOS into connected UDP after live reverse-throughput A/B"
+        );
+        #[cfg(not(target_os = "macos"))]
+        assert!(
+            endpoint_config.node.connected_udp.enabled,
+            "non-macOS should inherit FIPS connected UDP default"
         );
     }
 

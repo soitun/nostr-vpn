@@ -254,10 +254,22 @@ fn fips_endpoint_config_with_open_discovery_limit(
 
 fn apply_connected_udp_config(config: &mut Config, connected_udp: Option<&ConnectedUdpConfig>) {
     let Some(connected_udp) = connected_udp else {
+        #[cfg(target_os = "macos")]
+        {
+            config.node.connected_udp.enabled = true;
+        }
         return;
     };
-    if let Some(enabled) = connected_udp.enabled {
-        config.node.connected_udp.enabled = enabled;
+    match connected_udp.enabled {
+        Some(enabled) => {
+            config.node.connected_udp.enabled = enabled;
+        }
+        None => {
+            #[cfg(target_os = "macos")]
+            {
+                config.node.connected_udp.enabled = true;
+            }
+        }
     }
     if let Some(fd_reserve) = connected_udp.fd_reserve {
         config.node.connected_udp.fd_reserve = fd_reserve;

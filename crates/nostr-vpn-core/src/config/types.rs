@@ -820,7 +820,7 @@ pub struct ConnectedUdpConfig {
 impl Default for ConnectedUdpConfig {
     fn default() -> Self {
         Self {
-            enabled: Some(false),
+            enabled: None,
             fd_reserve: None,
         }
     }
