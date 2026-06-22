@@ -11,13 +11,30 @@ CONFIG_PATH="$DATA_HOME/nostr-vpn/config.toml"
 BOB_CONFIG="$E2E_ROOT/bob.toml"
 FAKE_NVPN="$E2E_ROOT/nvpn"
 SCREENSHOT="$ARTIFACT_DIR/nostr-vpn-linux-gui-e2e.png"
+cargo_config_args=()
+
+if [[ -n "${NVPN_FIPS_REPO_PATH:-}" ]]; then
+  cargo_config_args+=(
+    --config "patch.crates-io.fips-core.path=\"$NVPN_FIPS_REPO_PATH/crates/fips-core\""
+    --config "patch.crates-io.fips-endpoint.path=\"$NVPN_FIPS_REPO_PATH/crates/fips-endpoint\""
+    --config "patch.crates-io.fips-identity.path=\"$NVPN_FIPS_REPO_PATH/crates/fips-identity\""
+  )
+fi
+
+cargo_run() {
+  if ((${#cargo_config_args[@]})); then
+    cargo "${cargo_config_args[@]}" "$@"
+  else
+    cargo "$@"
+  fi
+}
 
 rm -rf "$E2E_ROOT"
 mkdir -p "$ARTIFACT_DIR" "$(dirname "$CONFIG_PATH")" "$CONFIG_HOME"
 rm -f "$SCREENSHOT"
 
 cd "$ROOT_DIR"
-cargo build -p nvpn >/dev/null
+cargo_run build -p nvpn >/dev/null
 "$ROOT_DIR/target/debug/nvpn" init --config "$CONFIG_PATH" --force >/dev/null
 "$ROOT_DIR/target/debug/nvpn" init --config "$BOB_CONFIG" --force >/dev/null
 
@@ -197,7 +214,7 @@ SH
 chmod +x "$FAKE_NVPN"
 
 cd "$LINUX_DIR"
-cargo build >/dev/null
+cargo_run build >/dev/null
 
 export XDG_DATA_HOME="$DATA_HOME"
 export XDG_CONFIG_HOME="$CONFIG_HOME"
