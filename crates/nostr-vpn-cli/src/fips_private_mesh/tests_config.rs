@@ -57,6 +57,72 @@
     }
 
     #[test]
+    fn link_event_path_hint_refresh_does_not_require_endpoint_restart() {
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
+        let network_id = "fips-link-refresh-restart-test";
+
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = alice_nsec;
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = network_id.to_string();
+        app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];
+
+        let current = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            None,
+            &[(
+                bob_pubkey.clone(),
+                vec![("203.0.113.22:51820".to_string(), 123_000)],
+            )],
+        )
+        .expect("current fips tunnel config");
+        let refreshed = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            None,
+            &[],
+        )
+        .expect("refreshed fips tunnel config");
+
+        let current_bob = current
+            .endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == bob_npub)
+            .expect("current bob endpoint peer");
+        assert_eq!(current_bob.addresses.len(), 1);
+        let refreshed_bob = refreshed
+            .endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == bob_npub)
+            .expect("refreshed bob endpoint peer");
+        assert!(
+            refreshed_bob.addresses.is_empty(),
+            "link-event refreshes must not carry stale live direct hints forward",
+        );
+        assert!(
+            !fips_tunnel_requires_endpoint_restart(&current, &refreshed),
+            "path-hint-only refreshes should be applied in place, not by restarting FIPS",
+        );
+
+        let mut changed_port = refreshed.clone();
+        changed_port.listen_port = changed_port.listen_port.saturating_add(1);
+        assert!(
+            fips_tunnel_requires_endpoint_restart(&refreshed, &changed_port),
+            "transport bind changes still require a real endpoint restart",
+        );
+    }
+
+    #[test]
     fn tunnel_config_keeps_static_endpoint_hint_for_control_only_admin() {
         let alice_keys = Keys::generate();
         let admin_keys = Keys::generate();

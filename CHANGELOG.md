@@ -4,7 +4,7 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
-## 4.0.84 - 2026-06-22
+## 4.0.85 - 2026-06-22
 
 ### Fixed
 
@@ -12,6 +12,9 @@ All notable changes to this project are documented in this file.
   GUI/device lists no longer collapse active roster peers to offline.
 - Stopped forcing macOS connected UDP on by default; macOS now inherits FIPS'
   default-off behavior unless explicitly enabled.
+- Refreshed embedded FIPS private-mesh paths in place after link changes instead
+  of restarting the FIPS endpoint, reducing churn during route or endpoint
+  refreshes.
 - Bumped to FIPS 0.3.76/0.3.51 for fresh endpoint peer liveness, preventing
   stale receive counters from keeping dead mobile/NAT paths marked online, and
   for stale worker-open completion classification during FSP session churn.
