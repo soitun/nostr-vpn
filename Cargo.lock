@@ -2031,9 +2031,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.67"
+version = "0.2.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d83e4c15c3f78c49cbdad97f8750a653871b0a82ef701a91c61f6234e44b60df"
+checksum = "3af5926f07ee243e9d52ddbdb7cad27f497fcd4f058d0fbf01dd57fd7bff8340"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2053,9 +2053,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-config"
-version = "0.2.67"
+version = "0.2.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14ba01a3bf66224f1d62515b1dea1704feeb6271df8c4044e53053520fe64992"
+checksum = "8f796f3b542999a3e0c2d677eebb9fc20a41f8ecfc75403511d7d7238b87d398"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -2065,9 +2065,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.67"
+version = "0.2.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c585bea218c1b61a2996068310577c23ba569d7f21d80fcb751b000a2d4c9d8e"
+checksum = "b8c5b9d45681f69555d054176a9a6f38246d2a9ead5e3de6abac64e8a1ee73f4"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2086,9 +2086,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.67"
+version = "0.2.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b35d77716c9ddaa44bd93463a4e720aaa0a143f7fdc34937a319695633c905e4"
+checksum = "f525482abaa911596a747b9a096f518895ce0dcafe4ebb9a5e6f61d32f1edde8"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2101,9 +2101,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.67"
+version = "0.2.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd1865c5b12eee67fd992c7dc631e53561f9390a506123ee5dc7dcfaf49ad33d"
+checksum = "7333d60f635297f7aa2c7849f876ef841e287f4aa39a2f7fee219a96d56bfa35"
 dependencies = [
  "flate2",
  "hashtree-blossom",
@@ -3202,7 +3202,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.85"
+version = "4.0.86"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3227,7 +3227,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.85"
+version = "4.0.86"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -3267,7 +3267,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.0.85"
+version = "4.0.86"
 dependencies = [
  "anyhow",
  "axum",
@@ -3288,7 +3288,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.0.85"
+version = "4.0.86"
 dependencies = [
  "anyhow",
  "wintun",
@@ -3383,7 +3383,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn"
-version = "4.0.85"
+version = "4.0.86"
 dependencies = [
  "anyhow",
  "arc-swap",
