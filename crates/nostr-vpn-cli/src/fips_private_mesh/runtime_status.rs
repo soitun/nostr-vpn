@@ -4,11 +4,11 @@ fn endpoint_link_refreshable_after_stale_participant(peer_link: &FipsEndpointPee
 
 fn endpoint_path_refresh_due(
     peer_link: &FipsEndpointPeer,
-    last_seen_at: Option<u64>,
+    last_path_data_seen_at: Option<u64>,
     now: u64,
 ) -> bool {
     endpoint_link_refreshable_after_stale_participant(peer_link)
-        && fips_peer_presence_stale(last_seen_at, now)
+        && fips_peer_presence_stale(last_path_data_seen_at, now)
 }
 
 impl FipsPrivateMeshRuntime {
@@ -113,16 +113,20 @@ impl FipsPrivateMeshRuntime {
                     return false;
                 };
                 let participant_key = participant_pubkey_bytes(participant);
-                let last_seen_at = participant_key
+                let activity = participant_key
                     .as_ref()
                     .and_then(|participant| peer_activity.get(participant))
-                    .and_then(|activity| activity.snapshot().last_seen_at)
-                    .or_else(|| {
-                        presence
-                            .get(participant)
-                            .and_then(|presence| presence.last_seen_at)
-                    });
-                endpoint_path_refresh_due(peer_link, last_seen_at, now)
+                    .map(|activity| activity.snapshot());
+                let peer_presence = presence.get(participant);
+                let last_seen_at = activity
+                    .as_ref()
+                    .and_then(|activity| activity.last_seen_at)
+                    .or_else(|| peer_presence.and_then(|presence| presence.last_seen_at));
+                let last_data_seen_at = activity
+                    .as_ref()
+                    .and_then(|activity| activity.last_data_seen_at)
+                    .or_else(|| peer_presence.and_then(|presence| presence.last_data_seen_at));
+                endpoint_path_refresh_due(peer_link, last_data_seen_at.or(last_seen_at), now)
             })
             .collect::<Vec<_>>();
         participants.sort();

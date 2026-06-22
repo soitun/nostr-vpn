@@ -178,6 +178,49 @@
     }
 
     #[test]
+    fn endpoint_path_refresh_prefers_data_freshness_over_control_freshness() {
+        let peer = FipsEndpointPeer {
+            npub: Keys::generate()
+                .public_key()
+                .to_bech32()
+                .expect("npub"),
+            node_addr: NodeAddr::from_bytes([7; 16]),
+            connected: true,
+            transport_addr: Some("203.0.113.7:9000".to_string()),
+            transport_type: Some("udp".to_string()),
+            link_id: 43,
+            srtt_ms: Some(50),
+            srtt_age_ms: Some(1_000),
+            packets_sent: 100,
+            packets_recv: 100,
+            bytes_sent: 8192,
+            bytes_recv: 8192,
+            rekey_in_progress: false,
+            rekey_draining: false,
+            current_k_bit: None,
+            last_outbound_route: None,
+            direct_probe_pending: true,
+            direct_probe_after_ms: Some(12_345),
+            direct_probe_retry_count: 3,
+            direct_probe_auto_reconnect: true,
+            direct_probe_expires_at_ms: Some(67_890),
+            nostr_traversal_consecutive_failures: 0,
+            nostr_traversal_in_cooldown: false,
+            nostr_traversal_cooldown_until_ms: None,
+            nostr_traversal_last_observed_skew_ms: None,
+        };
+
+        assert!(
+            super::endpoint_path_refresh_due(&peer, Some(80), 123),
+            "stale tunnel data should refresh direct probes even if control traffic stayed fresh"
+        );
+        assert!(
+            !super::endpoint_path_refresh_due(&peer, Some(120), 123),
+            "fresh tunnel data should not churn direct probes"
+        );
+    }
+
+    #[test]
     fn retry_only_endpoint_peer_status_keeps_probe_separate_from_link() {
         let status = mesh_status_from_endpoint_peer(
             "peer".to_string(),
