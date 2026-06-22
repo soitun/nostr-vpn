@@ -1,6 +1,5 @@
 #[cfg(any(target_os = "linux", test))]
 const LINUX_CAP_NET_ADMIN_BIT: u32 = 12;
-
 #[cfg(target_os = "linux")]
 fn ensure_linux_tun_permissions(iface: &str) -> Result<()> {
     if fs::metadata("/dev/net/tun").is_err() {
@@ -21,7 +20,6 @@ fn ensure_linux_tun_permissions(iface: &str) -> Result<()> {
 
     Ok(())
 }
-
 #[cfg(any(target_os = "linux", test))]
 fn linux_cap_eff_has_net_admin(status: &str) -> Option<bool> {
     let value = status
@@ -31,7 +29,6 @@ fn linux_cap_eff_has_net_admin(status: &str) -> Option<bool> {
     let caps = u64::from_str_radix(value, 16).ok()?;
     Some((caps & (1_u64 << LINUX_CAP_NET_ADMIN_BIT)) != 0)
 }
-
 #[cfg(any(target_os = "linux", test))]
 fn linux_tun_setup_error(iface: &str, reason: &str) -> String {
     format!(
@@ -54,10 +51,8 @@ enum SystemTun {
     Plain(TunSocket),
     Vnet(LinuxVnetTun),
 }
-
 #[cfg(target_os = "macos")]
 struct SystemTun(TunSocket);
-
 #[cfg(target_os = "linux")]
 impl SystemTun {
     fn new(iface: &str) -> Result<Self> {
