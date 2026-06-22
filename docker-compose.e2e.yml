@@ -20,7 +20,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     networks:
       e2e:
-        ipv4_address: 10.203.0.10
+        ipv4_address: ${NVPN_E2E_NODE_A_UNDERLAY_IP:-10.203.0.10}
 
   node-b:
     build:
@@ -43,7 +43,7 @@ services:
       - /dev/net/tun:/dev/net/tun
     networks:
       e2e:
-        ipv4_address: 10.203.0.11
+        ipv4_address: ${NVPN_E2E_NODE_B_UNDERLAY_IP:-10.203.0.11}
 
   node-c:
     build:
@@ -66,11 +66,11 @@ services:
       - /dev/net/tun:/dev/net/tun
     networks:
       e2e:
-        ipv4_address: 10.203.0.12
+        ipv4_address: ${NVPN_E2E_NODE_C_UNDERLAY_IP:-10.203.0.12}
 
 networks:
   e2e:
     driver: bridge
     ipam:
       config:
-        - subnet: 10.203.0.0/24
+        - subnet: ${NVPN_E2E_UNDERLAY_SUBNET:-10.203.0.0/24}

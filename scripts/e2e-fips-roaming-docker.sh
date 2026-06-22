@@ -10,6 +10,11 @@ CONFIG_PATH="/root/.config/nvpn/config.toml"
 UDP_PORT=45454
 SAFE_TUNNEL_MTU=1150
 PING_PAYLOAD_SIZE=1000
+UNDERLAY_PREFIX="${NVPN_E2E_UNDERLAY_PREFIX:-10.203.0}"
+export NVPN_E2E_UNDERLAY_SUBNET="${NVPN_E2E_UNDERLAY_SUBNET:-$UNDERLAY_PREFIX.0/24}"
+export NVPN_E2E_NODE_A_UNDERLAY_IP="${NVPN_E2E_NODE_A_UNDERLAY_IP:-$UNDERLAY_PREFIX.10}"
+export NVPN_E2E_NODE_B_UNDERLAY_IP="${NVPN_E2E_NODE_B_UNDERLAY_IP:-$UNDERLAY_PREFIX.11}"
+export NVPN_E2E_NODE_C_UNDERLAY_IP="${NVPN_E2E_NODE_C_UNDERLAY_IP:-$UNDERLAY_PREFIX.12}"
 # Normal link-dead detection is 30s. Leave enough room for Docker scheduling,
 # status polling, and route-cache handoff before declaring fallback broken.
 FALLBACK_DEADLINE_SECS="${NVPN_E2E_ROAMING_FALLBACK_SECS:-60}"
@@ -17,6 +22,7 @@ DIRECT_RECOVERY_DEADLINE_SECS="${NVPN_E2E_DIRECT_RECOVERY_SECS:-25}"
 FALLBACK_HOLD_SECS="${NVPN_E2E_ROAMING_FALLBACK_HOLD_SECS:-12}"
 PAYLOAD_PROBE_INTERVAL_SECS="${NVPN_E2E_ROAMING_PAYLOAD_PROBE_INTERVAL_SECS:-1}"
 PAYLOAD_RECOVERY_DEADLINE_SECS="${NVPN_E2E_ROAMING_PAYLOAD_RECOVERY_SECS:-10}"
+LOCAL_ROUTE_HANDSHAKE_FAILURE_MAX="${NVPN_E2E_LOCAL_ROUTE_HANDSHAKE_FAILURE_MAX:-24}"
 FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
 
 cleanup() {
@@ -152,47 +158,63 @@ start_nvpn_daemon() {
 }
 
 block_direct_alice_bob_udp() {
-  "${COMPOSE[@]}" exec -T node-a sh -lc '
-    iptables -C OUTPUT -p udp -d 10.203.0.11 -j DROP 2>/dev/null || iptables -I OUTPUT -p udp -d 10.203.0.11 -j DROP
-    iptables -C INPUT -p udp -s 10.203.0.11 -j DROP 2>/dev/null || iptables -I INPUT -p udp -s 10.203.0.11 -j DROP
-  '
-  "${COMPOSE[@]}" exec -T node-b sh -lc '
-    iptables -C OUTPUT -p udp -d 10.203.0.10 -j DROP 2>/dev/null || iptables -I OUTPUT -p udp -d 10.203.0.10 -j DROP
-    iptables -C INPUT -p udp -s 10.203.0.10 -j DROP 2>/dev/null || iptables -I INPUT -p udp -s 10.203.0.10 -j DROP
-  '
+  "${COMPOSE[@]}" exec -T node-a sh -s -- "$NVPN_E2E_NODE_B_UNDERLAY_IP" <<'SH'
+set -eu
+peer_ip="$1"
+iptables -C OUTPUT -p udp -d "$peer_ip" -j DROP 2>/dev/null || iptables -I OUTPUT -p udp -d "$peer_ip" -j DROP
+iptables -C INPUT -p udp -s "$peer_ip" -j DROP 2>/dev/null || iptables -I INPUT -p udp -s "$peer_ip" -j DROP
+SH
+  "${COMPOSE[@]}" exec -T node-b sh -s -- "$NVPN_E2E_NODE_A_UNDERLAY_IP" <<'SH'
+set -eu
+peer_ip="$1"
+iptables -C OUTPUT -p udp -d "$peer_ip" -j DROP 2>/dev/null || iptables -I OUTPUT -p udp -d "$peer_ip" -j DROP
+iptables -C INPUT -p udp -s "$peer_ip" -j DROP 2>/dev/null || iptables -I INPUT -p udp -s "$peer_ip" -j DROP
+SH
 }
 
 unblock_direct_alice_bob_udp() {
-  "${COMPOSE[@]}" exec -T node-a sh -lc '
-    while iptables -D OUTPUT -p udp -d 10.203.0.11 -j DROP 2>/dev/null; do :; done
-    while iptables -D INPUT -p udp -s 10.203.0.11 -j DROP 2>/dev/null; do :; done
-  '
-  "${COMPOSE[@]}" exec -T node-b sh -lc '
-    while iptables -D OUTPUT -p udp -d 10.203.0.10 -j DROP 2>/dev/null; do :; done
-    while iptables -D INPUT -p udp -s 10.203.0.10 -j DROP 2>/dev/null; do :; done
-  '
+  "${COMPOSE[@]}" exec -T node-a sh -s -- "$NVPN_E2E_NODE_B_UNDERLAY_IP" <<'SH'
+set -eu
+peer_ip="$1"
+while iptables -D OUTPUT -p udp -d "$peer_ip" -j DROP 2>/dev/null; do :; done
+while iptables -D INPUT -p udp -s "$peer_ip" -j DROP 2>/dev/null; do :; done
+SH
+  "${COMPOSE[@]}" exec -T node-b sh -s -- "$NVPN_E2E_NODE_A_UNDERLAY_IP" <<'SH'
+set -eu
+peer_ip="$1"
+while iptables -D OUTPUT -p udp -d "$peer_ip" -j DROP 2>/dev/null; do :; done
+while iptables -D INPUT -p udp -s "$peer_ip" -j DROP 2>/dev/null; do :; done
+SH
 }
 
 make_direct_alice_bob_unreachable() {
-  "${COMPOSE[@]}" exec -T node-a sh -lc '
-    ip route replace unreachable 10.203.0.11/32 metric 1
-    ip route flush cache 2>/dev/null || true
-  '
-  "${COMPOSE[@]}" exec -T node-b sh -lc '
-    ip route replace unreachable 10.203.0.10/32 metric 1
-    ip route flush cache 2>/dev/null || true
-  '
+  "${COMPOSE[@]}" exec -T node-a sh -s -- "$NVPN_E2E_NODE_B_UNDERLAY_IP" <<'SH'
+set -eu
+peer_ip="$1"
+ip route replace unreachable "$peer_ip/32" metric 1
+ip route flush cache 2>/dev/null || true
+SH
+  "${COMPOSE[@]}" exec -T node-b sh -s -- "$NVPN_E2E_NODE_A_UNDERLAY_IP" <<'SH'
+set -eu
+peer_ip="$1"
+ip route replace unreachable "$peer_ip/32" metric 1
+ip route flush cache 2>/dev/null || true
+SH
 }
 
 restore_direct_alice_bob_route() {
-  "${COMPOSE[@]}" exec -T node-a sh -lc '
-    ip route del unreachable 10.203.0.11/32 2>/dev/null || ip route del 10.203.0.11/32 2>/dev/null || true
-    ip route flush cache 2>/dev/null || true
-  '
-  "${COMPOSE[@]}" exec -T node-b sh -lc '
-    ip route del unreachable 10.203.0.10/32 2>/dev/null || ip route del 10.203.0.10/32 2>/dev/null || true
-    ip route flush cache 2>/dev/null || true
-  '
+  "${COMPOSE[@]}" exec -T node-a sh -s -- "$NVPN_E2E_NODE_B_UNDERLAY_IP" <<'SH'
+set -eu
+peer_ip="$1"
+ip route del unreachable "$peer_ip/32" 2>/dev/null || ip route del "$peer_ip/32" 2>/dev/null || true
+ip route flush cache 2>/dev/null || true
+SH
+  "${COMPOSE[@]}" exec -T node-b sh -s -- "$NVPN_E2E_NODE_A_UNDERLAY_IP" <<'SH'
+set -eu
+peer_ip="$1"
+ip route del unreachable "$peer_ip/32" 2>/dev/null || ip route del "$peer_ip/32" 2>/dev/null || true
+ip route flush cache 2>/dev/null || true
+SH
 }
 
 wait_for_mesh() {
@@ -363,6 +385,48 @@ SH
   exit 1
 }
 
+mark_daemon_log() {
+  local node="$1"
+  local marker="$2"
+  "${COMPOSE[@]}" exec -T "$node" sh -s -- "$marker" <<'SH'
+set -eu
+marker="$1"
+printf 'NVPN_E2E_MARKER %s\n' "$marker" >> /root/.config/nvpn/daemon.log
+SH
+}
+
+assert_local_route_handshake_failures_bounded() {
+  local node="$1"
+  local marker="$2"
+  local label="$3"
+  local count
+  count="$("${COMPOSE[@]}" exec -T "$node" sh -s -- "$marker" <<'SH'
+set -eu
+marker="$1"
+awk -v marker="$marker" '
+  $0 ~ "NVPN_E2E_MARKER " marker { seen = 1; next }
+  seen && /Failed to send handshake message/ && /(Network is unreachable|No route to host|Host is unreachable|os error 51|os error 65)/ {
+    count++
+  }
+  END { print count + 0 }
+' /root/.config/nvpn/daemon.log
+SH
+  )"
+  count="${count//$'\r'/}"
+  if (( count > LOCAL_ROUTE_HANDSHAKE_FAILURE_MAX )); then
+    echo "fips roaming e2e failed: $label saw $count local-route handshake failures after churn marker, expected <= $LOCAL_ROUTE_HANDSHAKE_FAILURE_MAX" >&2
+    "${COMPOSE[@]}" exec -T "$node" sh -s -- "$marker" <<'SH' >&2 || true
+set -eu
+marker="$1"
+awk -v marker="$marker" '
+  $0 ~ "NVPN_E2E_MARKER " marker { seen = 1; print; next }
+  seen && (/Failed to send handshake message/ || /Local route unavailable/ || /request.*stale|stale.*advert/) { print }
+' /root/.config/nvpn/daemon.log | tail -n 120
+SH
+    exit 1
+  fi
+}
+
 resolve_magic_dns() {
   local node="$1"
   local name="$2"
@@ -443,13 +507,17 @@ assert_no_transit_roster_peer() {
 run_roam_flap() {
   local flap_name="$1"
   local flap_mode="${2:-drop}"
-  local alice_direct_addr="10.203.0.11:51820"
-  local bob_direct_addr="10.203.0.10:51820"
+  local alice_direct_addr="$NVPN_E2E_NODE_B_UNDERLAY_IP:51820"
+  local bob_direct_addr="$NVPN_E2E_NODE_A_UNDERLAY_IP:51820"
   local alice_probe="/tmp/${flap_name}-alice-payload-probe.log"
   local bob_probe="/tmp/${flap_name}-bob-payload-probe.log"
+  local alice_marker="${flap_name}-alice-$(date +%s)"
+  local bob_marker="${flap_name}-bob-$(date +%s)"
   local churn_started
 
   echo "--- $flap_name: churn direct Alice<->Bob path ($flap_mode), expect FIPS fallback plus direct probe ---"
+  mark_daemon_log node-a "$alice_marker"
+  mark_daemon_log node-b "$bob_marker"
   start_payload_probe node-a "$BOB_TUNNEL_IP" "$alice_probe"
   start_payload_probe node-b "$ALICE_TUNNEL_IP" "$bob_probe"
   churn_started="$(date +%s)"
@@ -471,6 +539,8 @@ run_roam_flap() {
   bob_fallback="$(wait_for_fallback_probe_peer node-b "$ALICE_NPUB" "$bob_direct_addr" "bob during $flap_name" "$FALLBACK_DEADLINE_SECS")"
   assert_payload_probe_success_since node-a "$alice_probe" "$churn_started" "alice continuous payload during $flap_name"
   assert_payload_probe_success_since node-b "$bob_probe" "$churn_started" "bob continuous payload during $flap_name"
+  assert_local_route_handshake_failures_bounded node-a "$alice_marker" "alice during $flap_name"
+  assert_local_route_handshake_failures_bounded node-b "$bob_marker" "bob during $flap_name"
 
   assert_ping_tunnel node-a "$BOB_TUNNEL_IP" "alice-to-bob during $flap_name fallback" "/tmp/${flap_name}-alice-to-bob-fallback-ping.log"
   assert_ping_tunnel node-b "$ALICE_TUNNEL_IP" "bob-to-alice during $flap_name fallback" "/tmp/${flap_name}-bob-to-alice-fallback-ping.log"
@@ -547,9 +617,9 @@ fi
   --node-name alice \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" \
-  --fips-peer-endpoint "$CHARLIE_NPUB=10.203.0.12:51820" \
-  --endpoint "10.203.0.10:51820" \
+  --fips-peer-endpoint "$BOB_NPUB=$NVPN_E2E_NODE_B_UNDERLAY_IP:51820" \
+  --fips-peer-endpoint "$CHARLIE_NPUB=$NVPN_E2E_NODE_C_UNDERLAY_IP:51820" \
+  --endpoint "$NVPN_E2E_NODE_A_UNDERLAY_IP:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \
   --fips-nostr-discovery-enabled false \
@@ -560,9 +630,9 @@ fi
   --node-name bob \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
-  --fips-peer-endpoint "$ALICE_NPUB=10.203.0.10:51820" \
-  --fips-peer-endpoint "$CHARLIE_NPUB=10.203.0.12:51820" \
-  --endpoint "10.203.0.11:51820" \
+  --fips-peer-endpoint "$ALICE_NPUB=$NVPN_E2E_NODE_A_UNDERLAY_IP:51820" \
+  --fips-peer-endpoint "$CHARLIE_NPUB=$NVPN_E2E_NODE_C_UNDERLAY_IP:51820" \
+  --endpoint "$NVPN_E2E_NODE_B_UNDERLAY_IP:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \
   --fips-nostr-discovery-enabled false \
@@ -571,9 +641,9 @@ fi
 "${COMPOSE[@]}" exec -T node-c nvpn set \
   --network-id "$NETWORK_ID" \
   --node-name charlie \
-  --fips-peer-endpoint "$ALICE_NPUB=10.203.0.10:51820" \
-  --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" \
-  --endpoint "10.203.0.12:51820" \
+  --fips-peer-endpoint "$ALICE_NPUB=$NVPN_E2E_NODE_A_UNDERLAY_IP:51820" \
+  --fips-peer-endpoint "$BOB_NPUB=$NVPN_E2E_NODE_B_UNDERLAY_IP:51820" \
+  --endpoint "$NVPN_E2E_NODE_C_UNDERLAY_IP:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \
   --fips-nostr-discovery-enabled false \
@@ -599,8 +669,8 @@ BOB_STATUS="$(wait_for_mesh node-b 1)" || {
 assert_no_transit_roster_peer "$ALICE_STATUS" "$CHARLIE_NPUB" "alice"
 assert_no_transit_roster_peer "$BOB_STATUS" "$CHARLIE_NPUB" "bob"
 
-ALICE_DIRECT="$(wait_for_direct_peer node-a "$BOB_NPUB" "10.203.0.11:51820" "alice initial LAN" "$DIRECT_RECOVERY_DEADLINE_SECS")"
-BOB_DIRECT="$(wait_for_direct_peer node-b "$ALICE_NPUB" "10.203.0.10:51820" "bob initial LAN" "$DIRECT_RECOVERY_DEADLINE_SECS")"
+ALICE_DIRECT="$(wait_for_direct_peer node-a "$BOB_NPUB" "$NVPN_E2E_NODE_B_UNDERLAY_IP:51820" "alice initial LAN" "$DIRECT_RECOVERY_DEADLINE_SECS")"
+BOB_DIRECT="$(wait_for_direct_peer node-b "$ALICE_NPUB" "$NVPN_E2E_NODE_A_UNDERLAY_IP:51820" "bob initial LAN" "$DIRECT_RECOVERY_DEADLINE_SECS")"
 
 BOB_TUNNEL_IP="$(resolve_magic_dns node-a bob.nvpn)"
 ALICE_TUNNEL_IP="$(resolve_magic_dns node-b alice.nvpn)"
