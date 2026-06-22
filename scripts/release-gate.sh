@@ -296,8 +296,14 @@ run_desktop_app_launch_smokes() {
       echo "Skipping Linux GUI launch smoke because NVPN_RELEASE_GATE_LINUX_GUI_SMOKE=$linux_gui_smoke"
       ;;
     *)
-      release_gate_run_with_timeout "Linux GUI launch smoke" "$LINUX_GUI_SMOKE_TIMEOUT_SECS" \
-        ./tools/run-linux ./scripts/e2e-smoke.sh
+      if [[ -n "$release_fips_path" ]]; then
+        release_gate_run_with_timeout "Linux GUI launch smoke" "$LINUX_GUI_SMOKE_TIMEOUT_SECS" \
+          env NVPN_LINUX_FIPS_REPO_PATH="$release_fips_path" \
+          ./tools/run-linux env NVPN_PATCH_LOCAL_FIPS=1 NVPN_FIPS_REPO_PATH=/workspace/fips ./scripts/e2e-smoke.sh
+      else
+        release_gate_run_with_timeout "Linux GUI launch smoke" "$LINUX_GUI_SMOKE_TIMEOUT_SECS" \
+          ./tools/run-linux ./scripts/e2e-smoke.sh
+      fi
       ;;
   esac
 
