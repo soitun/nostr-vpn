@@ -25,6 +25,8 @@ pub struct UpdateState {
 pub struct ReleaseAsset {
     pub name: String,
     pub url: String,
+    pub source: String,
+    pub verified: bool,
 }
 
 #[derive(Debug)]
@@ -41,6 +43,8 @@ pub struct UpdateCheck {
     pub tag: String,
     pub asset: Option<ReleaseAsset>,
     pub newer: bool,
+    pub source: String,
+    pub verified: bool,
 }
 
 pub fn check(current_version: String, manual: bool, sender: Sender<UpdateEvent>) {
@@ -64,18 +68,30 @@ pub fn check_blocking(current_version: &str) -> Result<UpdateCheck, String> {
         ProductUpdateSource::Auto,
     )
     .map_err(|error| error.to_string())?;
-    let asset = (!result.asset.trim().is_empty()).then(|| ReleaseAsset {
+    let source = result.source.clone();
+    let verified = result.verified;
+    let asset = (!result.asset.trim().is_empty() && verified).then(|| ReleaseAsset {
         name: result.asset,
-        url: result.url.unwrap_or_else(|| result.source.clone()),
+        url: result.url.unwrap_or_else(|| source.clone()),
+        source: source.clone(),
+        verified,
     });
     Ok(UpdateCheck {
         tag: result.tag,
         asset,
         newer: result.available,
+        source,
+        verified,
     })
 }
 
 pub fn download_blocking(asset: &ReleaseAsset) -> Result<PathBuf, String> {
+    if !asset.verified {
+        return Err(format!(
+            "Refusing to install unverified update from {}",
+            asset.source
+        ));
+    }
     let download_dir = update_download_dir();
     let result = download_product_update_blocking(
         "0.0.0",
@@ -84,6 +100,12 @@ pub fn download_blocking(asset: &ReleaseAsset) -> Result<PathBuf, String> {
         Some(&download_dir),
     )
     .map_err(|error| error.to_string())?;
+    if !result.verified {
+        return Err(format!(
+            "Refusing to install unverified update from {}",
+            result.source
+        ));
+    }
     if result.asset != asset.name {
         return Err(format!(
             "Latest release changed from {} to {}; please check again",

@@ -304,6 +304,10 @@
             config.magic_dns_server,
             nostr_vpn_core::MESH_MAGIC_DNS_SERVER
         );
+        assert!(
+            mobile_magic_dns_forwarders_for_config(&config).is_empty(),
+            "WireGuard exits must not forward MagicDNS fallback queries on raw underlay sockets"
+        );
     }
 
     #[test]
@@ -371,6 +375,22 @@
                 "9.9.9.9:53".parse().unwrap(),
             ]
         );
+    }
+
+    #[test]
+    fn mobile_magic_dns_forwarders_are_empty_for_default_route_config() {
+        let mobile = MobileTunnelConfig {
+            route_targets: vec!["0.0.0.0/0".to_string()],
+            dns_servers: vec![
+                nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string(),
+                "94.140.14.14".to_string(),
+            ],
+            dns_forwarders: vec!["1.1.1.1".to_string()],
+            magic_dns_server: nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string(),
+            ..empty_config()
+        };
+
+        assert!(mobile_magic_dns_forwarders_for_config(&mobile).is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

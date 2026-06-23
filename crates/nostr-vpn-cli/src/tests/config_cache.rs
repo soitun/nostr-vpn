@@ -513,6 +513,53 @@ fn importing_current_invite_queues_join_request_to_admin() {
 }
 
 #[test]
+fn importing_invite_with_existing_established_network_id_is_rejected() {
+    let existing_admin = Keys::generate().public_key().to_hex();
+    let invite_admin = Keys::generate();
+    let invite_admin_npub = invite_admin.public_key().to_bech32().expect("admin npub");
+    let invite_peer_npub = Keys::generate()
+        .public_key()
+        .to_bech32()
+        .expect("peer npub");
+    let invite = serde_json::json!({
+        "v": 3,
+        "networkId": "mesh-home",
+        "inviteSecret": "new-secret",
+        "inviterNpub": invite_admin_npub,
+        "admins": [invite_admin_npub],
+        "participants": [invite_peer_npub]
+    })
+    .to_string();
+
+    let mut config = AppConfig::generated_without_networks();
+    config.networks.push(NetworkConfig {
+        id: "home".to_string(),
+        name: "Home".to_string(),
+        enabled: true,
+        network_id: "mesh-home".to_string(),
+        invite_secret: "old-secret".to_string(),
+        devices: Vec::new(),
+        admins: vec![existing_admin.clone()],
+        listen_for_join_requests: true,
+        invite_inviter: String::new(),
+        outbound_join_request: None,
+        inbound_join_requests: Vec::new(),
+        shared_roster_updated_at: 1,
+        shared_roster_signed_by: String::new(),
+    });
+    let parsed = parse_network_invite(&invite).expect("invite should parse");
+
+    let error = apply_network_invite_to_active_network(&mut config, &parsed)
+        .expect_err("established network must not accept unsigned invite membership");
+
+    assert!(error.to_string().contains("existing network"));
+    assert_eq!(config.networks[0].name, "Home");
+    assert_eq!(config.networks[0].invite_secret, "old-secret");
+    assert_eq!(config.networks[0].admins, vec![existing_admin]);
+    assert!(config.networks[0].devices.is_empty());
+}
+
+#[test]
 fn manual_join_invite_with_admin_id_and_mesh_id_queues_join_request() {
     // Mirrors the iOS / Android manual-join UI: user has the admin's
     // Device ID (npub) and the mesh network id but no invite link, so

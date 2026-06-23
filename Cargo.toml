@@ -34,6 +34,7 @@ hashtree-updater = "0.2.72"
 hex = "0.4"
 hickory-proto = "0.26"
 hostname = "0.4"
+libc = "0.2"
 netdev = "0.43"
 rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }

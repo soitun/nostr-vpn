@@ -384,17 +384,16 @@ impl NativeAppRuntime {
 
     fn accept_join_request(&mut self, network_id: &str, requester_npub: &str) -> Result<()> {
         let requester = normalize_nostr_pubkey(requester_npub)?;
-        let requester_node_name = self
+        let network = self
             .config
             .network_by_id(network_id)
-            .and_then(|network| {
-                network
-                    .inbound_join_requests
-                    .iter()
-                    .find(|pending| pending.requester == requester)
-                    .map(|pending| pending.requester_node_name.clone())
-            })
-            .unwrap_or_default();
+            .ok_or_else(|| anyhow!("network not found"))?;
+        let requester_node_name = network
+            .inbound_join_requests
+            .iter()
+            .find(|pending| pending.requester == requester)
+            .map(|pending| pending.requester_node_name.clone())
+            .ok_or_else(|| anyhow!("no pending join request from {requester_npub}"))?;
 
         self.config
             .add_participant_to_network(network_id, &requester)?;

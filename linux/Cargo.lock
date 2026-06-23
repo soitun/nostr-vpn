@@ -2641,6 +2641,7 @@ dependencies = [
  "hickory-proto",
  "hostname",
  "keyring-core",
+ "libc",
  "netdev",
  "nostr-sdk",
  "security-framework",

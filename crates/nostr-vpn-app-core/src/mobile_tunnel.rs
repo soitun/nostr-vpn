@@ -37,7 +37,10 @@ use nostr_vpn_core::fips_control::{
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
 use nostr_vpn_core::join_requests::{FIPS_JOIN_REQUEST_RETRY_SECS, MeshJoinRequest};
-use nostr_vpn_core::magic_dns::{build_magic_dns_records, build_magic_dns_response_if_handled};
+use nostr_vpn_core::magic_dns::{
+    build_magic_dns_records, build_magic_dns_response_if_handled,
+    build_magic_dns_server_failure_response,
+};
 use nostr_vpn_core::signed_rosters::{signed_rosters_file_path, upsert_signed_roster};
 use nostr_vpn_core::wg_upstream::{DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT, WgUpstreamRuntime};
 use serde::{Deserialize, Serialize};

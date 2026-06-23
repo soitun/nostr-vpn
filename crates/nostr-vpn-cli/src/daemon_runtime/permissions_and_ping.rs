@@ -3,6 +3,19 @@ pub(crate) fn set_daemon_runtime_file_permissions(path: &Path) -> Result<()> {
     {
         // Daemon runtime files must stay readable by the desktop app even when
         // the daemon was started with elevated privileges.
+        let metadata = fs::symlink_metadata(path).with_context(|| {
+            format!(
+                "failed to inspect daemon runtime file permissions on {}",
+                path.display()
+            )
+        })?;
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() || !file_type.is_file() {
+            return Err(anyhow!(
+                "refusing to set daemon runtime permissions on non-regular file {}",
+                path.display()
+            ));
+        }
         let permissions = fs::Permissions::from_mode(0o644);
         fs::set_permissions(path, permissions).with_context(|| {
             format!(
@@ -14,6 +27,30 @@ pub(crate) fn set_daemon_runtime_file_permissions(path: &Path) -> Result<()> {
 
     #[cfg(not(unix))]
     let _ = path;
+
+    Ok(())
+}
+
+pub(crate) fn set_daemon_runtime_file_permissions_on_file(
+    file: &fs::File,
+    path: &Path,
+) -> Result<()> {
+    #[cfg(unix)]
+    {
+        file.set_permissions(fs::Permissions::from_mode(0o644))
+            .with_context(|| {
+                format!(
+                    "failed to set daemon runtime file permissions on {}",
+                    path.display()
+                )
+            })?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = file;
+        let _ = path;
+    }
 
     Ok(())
 }

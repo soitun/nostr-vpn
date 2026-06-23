@@ -203,11 +203,7 @@ impl MobileTunnel {
             let mesh_addr = mesh_ipv4;
             let inbound_tx_for_dns = inbound_tx.clone();
             let app_config_for_dns = Arc::clone(&app_config);
-            let dns_forwarders = mobile_magic_dns_forwarders(
-                &config.dns_forwarders,
-                &config.dns_servers,
-                &config.magic_dns_server,
-            );
+            let dns_forwarders = mobile_magic_dns_forwarders_for_config(&config);
             tokio::spawn(async move {
                 let mut outbound_count: u32 = 0;
                 let mut packets = Vec::with_capacity(MOBILE_FIPS_SEND_BATCH);

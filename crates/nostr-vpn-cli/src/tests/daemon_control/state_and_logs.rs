@@ -121,7 +121,7 @@ fn status_json_peers_preserves_daemon_reachability() {
 
 #[cfg(unix)]
 #[test]
-fn atomic_runtime_write_creates_private_file() {
+fn atomic_runtime_write_creates_desktop_readable_file() {
     use std::os::unix::fs::PermissionsExt;
 
     let nonce = SystemTime::now()
@@ -139,7 +139,7 @@ fn atomic_runtime_write_creates_private_file() {
         .mode()
         & 0o777;
 
-    assert_eq!(mode, 0o600);
+    assert_eq!(mode, 0o644);
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -286,6 +286,33 @@ fn daemon_log_compaction_keeps_line_aligned_tail() {
     assert!(!compacted.contains("keep-1"));
     assert!(compacted.ends_with("keep-2\n"));
 
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn daemon_log_compaction_rejects_symlinked_log() {
+    use std::os::unix::fs::symlink;
+
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-daemon-log-symlink-test-{nonce}"));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let target = dir.join("target.log");
+    let log_path = dir.join("daemon.log");
+    fs::write(&target, "do-not-compact").expect("write target");
+    symlink(&target, &log_path).expect("create daemon log symlink");
+
+    let error = compact_log_file_if_needed(&log_path, 2, 1)
+        .expect_err("symlinked daemon log should be rejected");
+
+    assert!(error.to_string().contains("refusing to compact"));
+    assert_eq!(
+        fs::read_to_string(&target).expect("read target"),
+        "do-not-compact"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

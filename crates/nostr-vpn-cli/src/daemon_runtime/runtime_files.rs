@@ -1,7 +1,7 @@
 pub(crate) fn write_runtime_file_atomically(path: &Path, contents: &[u8]) -> Result<()> {
     use std::io::Write;
     #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
     let parent = path
         .parent()
@@ -24,7 +24,7 @@ pub(crate) fn write_runtime_file_atomically(path: &Path, contents: &[u8]) -> Res
         options.create_new(true).write(true);
         #[cfg(unix)]
         {
-            options.mode(0o600);
+            options.mode(0o644);
         }
         match options.open(&candidate) {
             Ok(file) => {
@@ -51,6 +51,16 @@ pub(crate) fn write_runtime_file_atomically(path: &Path, contents: &[u8]) -> Res
         let _ = fs::remove_file(&temp_path);
         return Err(error)
             .with_context(|| format!("failed to write temp runtime file {}", temp_path.display()));
+    }
+    #[cfg(unix)]
+    if let Err(error) = file.set_permissions(fs::Permissions::from_mode(0o644)) {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error).with_context(|| {
+            format!(
+                "failed to set temp runtime file permissions on {}",
+                temp_path.display()
+            )
+        });
     }
     // These files are runtime status/control files. Keeping the replace atomic
     // matters for readers, but forcing every status update to durable storage
@@ -131,18 +141,22 @@ pub(crate) fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Re
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    OpenOptions::new()
+    let mut truncate_options = runtime_open_options_no_follow();
+    let truncate_log = truncate_options
         .create(true)
         .write(true)
         .truncate(true)
         .open(&log_file_path)
         .with_context(|| format!("failed to truncate {}", log_file_path.display()))?;
-    let log_file = OpenOptions::new()
+    let _ = set_daemon_runtime_file_permissions_on_file(&truncate_log, &log_file_path);
+    drop(truncate_log);
+    let mut append_options = runtime_open_options_no_follow();
+    let log_file = append_options
         .create(true)
         .append(true)
         .open(&log_file_path)
         .with_context(|| format!("failed to open {}", log_file_path.display()))?;
-    let _ = set_daemon_runtime_file_permissions(&log_file_path);
+    let _ = set_daemon_runtime_file_permissions_on_file(&log_file, &log_file_path);
     let stderr_log = log_file
         .try_clone()
         .context("failed to clone daemon log file handle")?;

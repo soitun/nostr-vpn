@@ -49,23 +49,37 @@ pub(crate) fn apply_network_invite_to_active_network(
         config.networks.iter().find(|network| {
             normalize_runtime_network_id(&network.network_id) == normalized_invite_network_id
         }) {
-        (existing.id.clone(), false)
+        if network_should_adopt_invite(existing, own_pubkey.as_deref()) {
+            (existing.id.clone(), true)
+        } else {
+            return Err(anyhow!(
+                "invite network id matches an existing network; refusing to merge unsigned invite membership"
+            ));
+        }
     } else if let Some(active_network) = config.active_network_opt() {
-        if network_should_adopt_invite(active_network) {
+        if network_should_adopt_invite(active_network, own_pubkey.as_deref()) {
             (active_network.id.clone(), true)
         } else {
-            let network_id = reusable_placeholder_network(config, &normalized_invite_network_id)
-                .unwrap_or_else(|| config.add_network(&invite.network_name));
+            let network_id = reusable_placeholder_network(
+                config,
+                &normalized_invite_network_id,
+                own_pubkey.as_deref(),
+            )
+            .unwrap_or_else(|| config.add_network(&invite.network_name));
             (network_id, true)
         }
     } else {
-        let network_id = reusable_placeholder_network(config, &normalized_invite_network_id)
-            .unwrap_or_else(|| config.add_network(&invite.network_name));
+        let network_id = reusable_placeholder_network(
+            config,
+            &normalized_invite_network_id,
+            own_pubkey.as_deref(),
+        )
+        .unwrap_or_else(|| config.add_network(&invite.network_name));
         (network_id, true)
     };
     let should_adopt_name = config
         .network_by_id(&target_network_id)
-        .map(network_should_adopt_invite)
+        .map(|network| network_should_adopt_invite(network, own_pubkey.as_deref()))
         .unwrap_or(false);
     let inviter_already_configured = config
         .network_by_id(&target_network_id)
@@ -161,13 +175,14 @@ pub(crate) fn apply_network_invite_to_active_network(
 fn reusable_placeholder_network(
     config: &AppConfig,
     normalized_invite_network_id: &str,
+    own_pubkey: Option<&str>,
 ) -> Option<String> {
     config
         .networks
         .iter()
         .find(|network| {
             !network.enabled
-                && network_should_adopt_invite(network)
+                && network_should_adopt_invite(network, own_pubkey)
                 && normalize_runtime_network_id(&network.network_id) != normalized_invite_network_id
         })
         .map(|network| network.id.clone())
@@ -378,7 +393,26 @@ pub(crate) async fn update_active_network_roster(
     Ok(())
 }
 
-fn network_should_adopt_invite(network: &nostr_vpn_core::config::NetworkConfig) -> bool {
+fn network_should_adopt_invite(
+    network: &nostr_vpn_core::config::NetworkConfig,
+    own_pubkey: Option<&str>,
+) -> bool {
     let trimmed = network.name.trim();
-    network.devices.is_empty() && (trimmed.is_empty() || trimmed.starts_with("Network "))
+    network.devices.is_empty()
+        && placeholder_admins_only(network, own_pubkey)
+        && network.invite_inviter.trim().is_empty()
+        && network.outbound_join_request.is_none()
+        && network.inbound_join_requests.is_empty()
+        && network.shared_roster_signed_by.trim().is_empty()
+        && (trimmed.is_empty() || trimmed.starts_with("Network "))
+}
+
+fn placeholder_admins_only(
+    network: &nostr_vpn_core::config::NetworkConfig,
+    own_pubkey: Option<&str>,
+) -> bool {
+    network.admins.is_empty()
+        || (network.shared_roster_updated_at == 0
+            && network.admins.len() == 1
+            && own_pubkey.is_some_and(|own| network.admins[0] == own))
 }
