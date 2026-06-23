@@ -713,8 +713,7 @@ async fn broadcast_local_fips_capabilities(
         return Ok(0);
     };
     let advertised_routes = runtime_effective_advertised_routes(app);
-    let local_ipv4_candidates =
-        runtime_signal_ipv4_candidates(detect_runtime_primary_ipv4(), &app.node.tunnel_ip);
+    let local_ipv4_candidates = runtime_signal_ipv4_candidates_async(&app.node.tunnel_ip).await;
     let local_advertised_endpoints = match runtime.local_advertised_endpoints().await {
         Ok(endpoints) => endpoints,
         Err(error) => {
@@ -827,6 +826,22 @@ fn runtime_signal_ipv4_candidates(
     ips.sort();
     ips.dedup();
     ips
+}
+
+#[cfg(feature = "embedded-fips")]
+async fn runtime_signal_ipv4_candidates_async(tunnel_ip: &str) -> Vec<Ipv4Addr> {
+    let tunnel_ip = tunnel_ip.to_string();
+    match tokio::task::spawn_blocking(move || {
+        runtime_signal_ipv4_candidates(detect_runtime_primary_ipv4(), &tunnel_ip)
+    })
+    .await
+    {
+        Ok(ips) => ips,
+        Err(error) => {
+            eprintln!("fips: local IPv4 candidate discovery task failed: {error}");
+            Vec::new()
+        }
+    }
 }
 
 #[cfg(feature = "embedded-fips")]
