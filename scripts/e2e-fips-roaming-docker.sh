@@ -24,6 +24,13 @@ PAYLOAD_PROBE_INTERVAL_SECS="${NVPN_E2E_ROAMING_PAYLOAD_PROBE_INTERVAL_SECS:-1}"
 PAYLOAD_RECOVERY_DEADLINE_SECS="${NVPN_E2E_ROAMING_PAYLOAD_RECOVERY_SECS:-10}"
 LOCAL_ROUTE_HANDSHAKE_FAILURE_MAX="${NVPN_E2E_LOCAL_ROUTE_HANDSHAKE_FAILURE_MAX:-24}"
 FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
+LOADED_LATENCY_ENABLED="${NVPN_E2E_ROAMING_LOADED_LATENCY:-1}"
+LOADED_LATENCY_DURATION_SECS="${NVPN_E2E_ROAMING_LOADED_LATENCY_DURATION_SECS:-15}"
+LOADED_LATENCY_PING_INTERVAL_SECS="${NVPN_E2E_ROAMING_LOADED_LATENCY_PING_INTERVAL_SECS:-0.1}"
+LOADED_LATENCY_MAX_P99_MS="${NVPN_E2E_ROAMING_LOADED_LATENCY_MAX_P99_MS:-500}"
+LOADED_LATENCY_MAX_GT1000="${NVPN_E2E_ROAMING_LOADED_LATENCY_MAX_GT1000:-0}"
+LOADED_LATENCY_MIN_MBPS="${NVPN_E2E_ROAMING_LOADED_LATENCY_MIN_MBPS:-5}"
+LOADED_LATENCY_MIN_PING_REPLY_PERCENT="${NVPN_E2E_ROAMING_LOADED_LATENCY_MIN_PING_REPLY_PERCENT:-98}"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -470,6 +477,121 @@ assert_ping_tunnel() {
   fi
 }
 
+ping_count_for_loaded_latency() {
+  awk -v duration="$LOADED_LATENCY_DURATION_SECS" -v interval="$LOADED_LATENCY_PING_INTERVAL_SECS" '
+    BEGIN {
+      if (interval <= 0) interval = 1;
+      count = int((duration / interval) + 0.999);
+      if (count < 1) count = 1;
+      print count;
+    }'
+}
+
+parse_loaded_latency_ping() {
+  local file="$1"
+  sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" | sort -n | awk '
+    NF {
+      v[++n] = $1 + 0;
+      if (v[n] > 1000) gt1000++;
+    }
+    END {
+      if (n == 0) {
+        printf "0\t100\tnull\tnull\t0\n";
+        exit;
+      }
+      p99i = int((n * 99 + 99) / 100);
+      if (p99i < 1) p99i = 1;
+      if (p99i > n) p99i = n;
+      printf "%d\t0\t%.3f\t%.3f\t%d\n", n, v[p99i], v[n], gt1000 + 0;
+    }'
+}
+
+iperf_mbps_from_json() {
+  local file="$1"
+  jq -r '
+    [.end.sum_received.bits_per_second?, .end.sum.bits_per_second?, .end.sum_sent.bits_per_second?]
+    | map(select(type == "number"))
+    | if length == 0 then "null" else (.[0] / 1000000) end
+  ' "$file" 2>/dev/null || printf 'null\n'
+}
+
+assert_float_at_least() {
+  local actual="$1"
+  local min="$2"
+  local label="$3"
+  awk -v actual="$actual" -v min="$min" -v label="$label" '
+    BEGIN {
+      if (actual == "" || actual == "null" || (actual + 0) < (min + 0)) {
+        printf("fips roaming e2e failed: %s %s below %s\n", label, actual, min) > "/dev/stderr";
+        exit 1;
+      }
+    }'
+}
+
+assert_float_at_most() {
+  local actual="$1"
+  local max="$2"
+  local label="$3"
+  awk -v actual="$actual" -v max="$max" -v label="$label" '
+    BEGIN {
+      if (actual == "" || actual == "null" || (actual + 0) > (max + 0)) {
+        printf("fips roaming e2e failed: %s %s exceeds %s\n", label, actual, max) > "/dev/stderr";
+        exit 1;
+      }
+    }'
+}
+
+run_loaded_latency_probe() {
+  local label="$1"
+  local source_node="$2"
+  local target_node="$3"
+  local target_ip="$4"
+  local ping_count ping_log iperf_json mbps count loss p99 max gt1000 reply_pct
+
+  case "$LOADED_LATENCY_ENABLED" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "--- $label: skipping loaded latency probe ---"
+      return 0
+      ;;
+  esac
+
+  ping_count="$(ping_count_for_loaded_latency)"
+  ping_log="/tmp/${label}-loaded-latency-ping.log"
+  iperf_json="/tmp/${label}-loaded-latency-iperf.json"
+  echo "--- $label: loaded latency probe (${LOADED_LATENCY_DURATION_SECS}s TCP load + ping) ---"
+  "${COMPOSE[@]}" exec -T "$target_node" sh -lc \
+    "pkill -9 iperf3 >/dev/null 2>&1 || true; iperf3 -s -D --logfile /tmp/${label}-iperf3-server.log"
+  "${COMPOSE[@]}" exec -T "$source_node" sh -lc \
+    "ping -c '$ping_count' -i '$LOADED_LATENCY_PING_INTERVAL_SECS' -W 1 '$target_ip' > '$ping_log' 2>&1 || true" &
+  local ping_pid=$!
+  "${COMPOSE[@]}" exec -T "$source_node" sh -lc \
+    "iperf3 -J -c '$target_ip' -t '$LOADED_LATENCY_DURATION_SECS' -O 1 --connect-timeout 3000 > '$iperf_json' 2>'$iperf_json.err' || true"
+  wait "$ping_pid" || true
+  "${COMPOSE[@]}" exec -T "$target_node" sh -lc 'pkill -9 iperf3 >/dev/null 2>&1 || true'
+
+  "${COMPOSE[@]}" exec -T "$source_node" sh -lc "cat '$ping_log'" >"/tmp/${label}-loaded-latency-ping.host.log" || true
+  "${COMPOSE[@]}" exec -T "$source_node" sh -lc "cat '$iperf_json'" >"/tmp/${label}-loaded-latency-iperf.host.json" || true
+  read -r count loss p99 max gt1000 < <(parse_loaded_latency_ping "/tmp/${label}-loaded-latency-ping.host.log")
+  mbps="$(iperf_mbps_from_json "/tmp/${label}-loaded-latency-iperf.host.json")"
+  reply_pct="$(awk -v count="$count" -v expected="$ping_count" 'BEGIN {
+    if (expected <= 0) {
+      print 0;
+    } else {
+      printf "%.3f\n", (count * 100.0) / expected;
+    }
+  }')"
+
+  echo "$label loaded latency: ping_replies=$count/$ping_count reply_pct=$reply_pct p99_ms=$p99 max_ms=$max gt1000=$gt1000 iperf_mbps=$mbps"
+  assert_float_at_least "$mbps" "$LOADED_LATENCY_MIN_MBPS" "$label iperf Mbps"
+  assert_float_at_least "$reply_pct" "$LOADED_LATENCY_MIN_PING_REPLY_PERCENT" "$label ping reply percent under load"
+  assert_float_at_most "$p99" "$LOADED_LATENCY_MAX_P99_MS" "$label ping p99 ms under load"
+  if (( gt1000 > LOADED_LATENCY_MAX_GT1000 )); then
+    echo "fips roaming e2e failed: $label ping spikes >1000 ms $gt1000 exceeds $LOADED_LATENCY_MAX_GT1000" >&2
+    cat "/tmp/${label}-loaded-latency-ping.host.log" >&2
+    exit 1
+  fi
+}
+
 run_udp_roundtrip() {
   local source_node="$1"
   local target_node="$2"
@@ -685,10 +807,12 @@ assert_tunnel_mtu node-b
 assert_ping_tunnel node-a "$BOB_TUNNEL_IP" "initial alice-to-bob direct LAN" /tmp/initial-alice-to-bob-ping.log
 assert_ping_tunnel node-b "$ALICE_TUNNEL_IP" "initial bob-to-alice direct LAN" /tmp/initial-bob-to-alice-ping.log
 run_udp_roundtrip node-a node-b "$BOB_TUNNEL_IP" "alice-to-bob-roaming-initial" /tmp/bob-roaming-initial-udp.out
+run_loaded_latency_probe "initial-direct" node-a node-b "$BOB_TUNNEL_IP"
 
 run_roam_flap "mobile-flap-1"
 run_roam_flap "mobile-flap-2"
 run_roam_flap "route-unreachable-flap" "route-unreachable"
+run_loaded_latency_probe "restored-direct" node-a node-b "$BOB_TUNNEL_IP"
 
 echo "--- Initial direct status: alice ---"
 echo "$ALICE_DIRECT"
@@ -703,4 +827,4 @@ cat /tmp/initial-bob-to-alice-ping.log
 echo "--- Initial UDP payload ---"
 "${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/bob-roaming-initial-udp.out'
 
-echo "fips roaming docker e2e passed: direct LAN path established, mobile/WiFi-style direct drops and a route-unreachable flap used FIPS fallback while direct probing stayed pending, continuous payload recovered during churn, and each restore upgraded back to direct within ${DIRECT_RECOVERY_DEADLINE_SECS}s"
+echo "fips roaming docker e2e passed: direct LAN path established, loaded-latency probes stayed bounded, mobile/WiFi-style direct drops and a route-unreachable flap used FIPS fallback while direct probing stayed pending, continuous payload recovered during churn, and each restore upgraded back to direct within ${DIRECT_RECOVERY_DEADLINE_SECS}s"
