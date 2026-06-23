@@ -1,9 +1,11 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeepLink {
     Invite(String),
+    #[cfg(debug_assertions)]
     Debug(DebugAction),
 }
 
+#[cfg(debug_assertions)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebugAction {
     Tick,
@@ -25,6 +27,19 @@ pub fn parse(raw: &str) -> Option<DeepLink> {
         return Some(DeepLink::Invite(raw.to_string()));
     }
 
+    #[cfg(debug_assertions)]
+    {
+        return parse_debug(raw);
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        None
+    }
+}
+
+#[cfg(debug_assertions)]
+fn parse_debug(raw: &str) -> Option<DeepLink> {
     let without_scheme = &raw["nvpn://".len()..];
     let head = without_scheme
         .split(['?', '#'])

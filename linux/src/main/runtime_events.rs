@@ -193,7 +193,12 @@ fn drain_update_events(app: &AppRef) {
                             model.update.version = check.tag.clone();
                             model.update.asset = if check.newer { check.asset } else { None };
                             if check.newer {
-                                model.update.status = if model.update.asset.is_some() {
+                                model.update.status = if !check.verified {
+                                    format!(
+                                        "Update {} found from unverified {}; install disabled",
+                                        check.tag, check.source
+                                    )
+                                } else if model.update.asset.is_some() {
                                     format!("Update {} available", check.tag)
                                 } else {
                                     format!(
@@ -345,9 +350,11 @@ fn drain_pending_urls(runtime: &AppRuntime) {
 fn handle_deep_link(app: &AppRef, raw: &str) {
     match deep_link::parse(raw) {
         Some(deep_link::DeepLink::Invite(invite)) => import_invite(app, invite),
+        #[cfg(debug_assertions)]
         Some(deep_link::DeepLink::Debug(deep_link::DebugAction::Tick)) => {
             dispatch(app, NativeAppAction::Tick);
         }
+        #[cfg(debug_assertions)]
         Some(deep_link::DeepLink::Debug(deep_link::DebugAction::RequestJoin { network_id })) => {
             let network_id = {
                 let state = app.borrow().state.clone();
@@ -357,6 +364,7 @@ fn handle_deep_link(app: &AppRef, raw: &str) {
                 dispatch(app, NativeAppAction::RequestNetworkJoin { network_id });
             }
         }
+        #[cfg(debug_assertions)]
         Some(deep_link::DeepLink::Debug(deep_link::DebugAction::AcceptJoin {
             network_id,
             requester_npub,

@@ -277,6 +277,9 @@ pub const FIPS_CONTROL_FRAGMENT_CHUNK_LEN: usize = 700;
 pub const FIPS_CONTROL_FRAGMENT_TTL_SECS: u64 = 120;
 pub const FIPS_CONTROL_MAX_FRAGMENTS: u16 = 128;
 pub const FIPS_CONTROL_MAX_REASSEMBLED_LEN: usize = 128 * 1024;
+const FIPS_CONTROL_MAX_FRAGMENT_ID_LEN: usize = 128;
+const FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES: usize = 1024;
+const FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -424,7 +427,11 @@ impl FipsControlFragmentBuffer {
         now: u64,
     ) -> Result<Option<Vec<u8>>> {
         let source_key = source_key.as_ref();
-        if total == 0 || total > FIPS_CONTROL_MAX_FRAGMENTS || index >= total {
+        if total == 0
+            || total > FIPS_CONTROL_MAX_FRAGMENTS
+            || index >= total
+            || id.len() > FIPS_CONTROL_MAX_FRAGMENT_ID_LEN
+        {
             return Ok(None);
         }
 
@@ -443,6 +450,9 @@ impl FipsControlFragmentBuffer {
             source_key: source_key.to_vec(),
             id,
         };
+        if !self.entries.contains_key(&key) && !self.can_allocate_fragment_entry(source_key) {
+            return Ok(None);
+        }
         let entry = self
             .entries
             .entry(key.clone())
@@ -486,6 +496,17 @@ impl FipsControlFragmentBuffer {
             reassembled.extend_from_slice(&chunk);
         }
         Ok(Some(reassembled))
+    }
+
+    fn can_allocate_fragment_entry(&self, source_key: &[u8]) -> bool {
+        if self.entries.len() >= FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES {
+            return false;
+        }
+        self.entries
+            .keys()
+            .filter(|key| key.source_key == source_key)
+            .count()
+            < FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE
     }
 }
 
@@ -978,6 +999,76 @@ mod tests {
             .expect("decode reassembled")
             .expect("control frame");
         assert_eq!(decoded, frame);
+    }
+
+    #[test]
+    fn fragment_buffer_limits_pending_entries_per_source() {
+        let mut buffer = FipsControlFragmentBuffer::default();
+        let source = [7u8; 16];
+        let data = URL_SAFE_NO_PAD.encode(b"x");
+
+        for index in 0..FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE {
+            assert!(
+                buffer
+                    .push(source, format!("fragment-{index}"), 0, 2, data.clone(), 1)
+                    .expect("push fragment")
+                    .is_none()
+            );
+        }
+        assert_eq!(
+            buffer.entries.len(),
+            FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE
+        );
+
+        assert!(
+            buffer
+                .push(source, "overflow".to_string(), 0, 2, data, 1)
+                .expect("push overflow fragment")
+                .is_none()
+        );
+        assert_eq!(
+            buffer.entries.len(),
+            FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE
+        );
+    }
+
+    #[test]
+    fn fragment_buffer_limits_pending_entries_globally() {
+        let mut buffer = FipsControlFragmentBuffer::default();
+        let data = URL_SAFE_NO_PAD.encode(b"x");
+        let mut inserted = 0usize;
+
+        'outer: for source_index in 0u16.. {
+            let source = source_index.to_be_bytes();
+            for entry_index in 0..FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE {
+                buffer
+                    .push(
+                        source,
+                        format!("fragment-{source_index}-{entry_index}"),
+                        0,
+                        2,
+                        data.clone(),
+                        1,
+                    )
+                    .expect("push fragment");
+                inserted += 1;
+                if inserted == FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES {
+                    break 'outer;
+                }
+            }
+        }
+        assert_eq!(
+            buffer.entries.len(),
+            FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES
+        );
+
+        buffer
+            .push([0xff, 0xff], "global-overflow".to_string(), 0, 2, data, 1)
+            .expect("push overflow fragment");
+        assert_eq!(
+            buffer.entries.len(),
+            FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES
+        );
     }
 
     #[test]

@@ -19,6 +19,7 @@ async fn mobile_magic_dns_response_packet(
     };
     let response = match response {
         Some(response) => response,
+        None if forwarders.is_empty() => build_magic_dns_server_failure_response(query.payload)?,
         None => forward_mobile_dns_query(query.payload, forwarders).await?,
     };
     build_mobile_dns_response_packet(&query, &response)
@@ -155,6 +156,29 @@ fn mobile_magic_dns_forwarders(
         )
         .filter(|server| seen.insert(*server))
         .collect()
+}
+
+fn mobile_magic_dns_forwarders_for_config(config: &MobileTunnelConfig) -> Vec<SocketAddr> {
+    if !mobile_magic_dns_raw_forwarding_allowed(config) {
+        return Vec::new();
+    }
+    mobile_magic_dns_forwarders(
+        &config.dns_forwarders,
+        &config.dns_servers,
+        &config.magic_dns_server,
+    )
+}
+
+fn mobile_magic_dns_raw_forwarding_allowed(config: &MobileTunnelConfig) -> bool {
+    config.wireguard_exit.is_none()
+        && !config
+            .route_targets
+            .iter()
+            .any(|route| mobile_route_is_default(route))
+}
+
+fn mobile_route_is_default(route: &str) -> bool {
+    matches!(route.trim(), "0.0.0.0/0" | "::/0")
 }
 
 fn parse_dns_forwarder(value: &str) -> Option<SocketAddr> {

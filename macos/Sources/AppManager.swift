@@ -283,6 +283,7 @@ final class AppManager: ObservableObject {
             return
         }
 
+        #if DEBUG
         guard url.scheme == "nvpn", url.host == "debug" else {
             return
         }
@@ -306,6 +307,7 @@ final class AppManager: ObservableObject {
         default:
             break
         }
+        #endif
     }
 
     func importInvite(_ invite: String) {
@@ -1153,7 +1155,9 @@ final class AppManager: ObservableObject {
             asset: asset,
             assetUrl: nil,
             isNewer: result.available,
-            usesCoreDownload: result.available && asset != nil
+            usesCoreDownload: result.available && asset != nil && result.verified,
+            source: result.source,
+            verified: result.verified
         )
     }
 
@@ -1166,7 +1170,11 @@ final class AppManager: ObservableObject {
         updateAssetUrl = check.isNewer ? check.assetUrl : nil
         if check.isNewer {
             let hasAsset = check.usesCoreDownload
-            updateStatus = hasAsset ? "Update \(check.manifest.tag) available" : "Update \(check.manifest.tag) found without a macOS asset"
+            if !check.verified {
+                updateStatus = "Update \(check.manifest.tag) found from unverified \(check.source); install disabled"
+            } else {
+                updateStatus = hasAsset ? "Update \(check.manifest.tag) available" : "Update \(check.manifest.tag) found without a macOS asset"
+            }
             if allowAutoInstall, autoInstallUpdates, hasAsset {
                 installUpdate()
             }
@@ -1195,6 +1203,9 @@ final class AppManager: ObservableObject {
                     currentVersion: currentVersion,
                     downloadDir: downloadDir
                 )
+                guard result.verified else {
+                    throw UpdateError.unverifiedSource(result.source)
+                }
                 guard let path = result.path, !path.isEmpty else {
                     throw UpdateError.missingDownloadedPath
                 }
@@ -2078,6 +2089,8 @@ struct UpdateCheck {
     let assetUrl: URL?
     let isNewer: Bool
     let usesCoreDownload: Bool
+    let source: String
+    let verified: Bool
 }
 
 struct CoreUpdateResult: Decodable {
@@ -2155,6 +2168,7 @@ enum UpdateError: LocalizedError {
     case coreUpdaterFailed(String)
     case coreUpdaterOutputInvalid
     case missingDownloadedPath
+    case unverifiedSource(String)
 
     var errorDescription: String? {
         switch self {
@@ -2166,6 +2180,8 @@ enum UpdateError: LocalizedError {
             return "Updater returned invalid output."
         case .missingDownloadedPath:
             return "Updater did not return a downloaded file."
+        case .unverifiedSource(let source):
+            return "Refusing to install unverified update from \(source)."
         }
     }
 }

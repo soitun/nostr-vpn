@@ -1,11 +1,11 @@
 #[cfg(target_os = "linux")]
 mod platform {
-    use std::fs::{self, OpenOptions};
-    use std::io::Write;
+    use std::fs::{self, File, OpenOptions};
+    use std::io::{Read, Write};
     use std::os::unix::fs::OpenOptionsExt;
     use std::path::{Path, PathBuf};
 
-    use anyhow::{Context, Result};
+    use anyhow::{Context, Result, anyhow};
 
     use super::{ConfigSecret, hydrate_config_secret_fields};
 
@@ -28,11 +28,13 @@ mod platform {
 
     pub(super) fn read_secret(path: &Path, kind: ConfigSecret) -> Result<Option<String>> {
         let path = secret_path(path, kind);
-        match fs::read_to_string(&path) {
-            Ok(value) => Ok(Some(value)),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
-        }
+        let Some(mut file) = open_secret_for_read(&path)? else {
+            return Ok(None);
+        };
+        let mut value = String::new();
+        file.read_to_string(&mut value)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        Ok(Some(value))
     }
 
     pub(super) fn write_secret(path: &Path, kind: ConfigSecret, value: &str) -> Result<()> {
@@ -41,13 +43,7 @@ mod platform {
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        let mut file = OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .mode(0o600)
-            .open(&secret_path)
-            .with_context(|| format!("failed to open {}", secret_path.display()))?;
+        let mut file = open_secret_for_write(&secret_path)?;
         file.write_all(value.as_bytes())
             .with_context(|| format!("failed to write {}", secret_path.display()))
     }
@@ -70,5 +66,47 @@ mod platform {
             .and_then(|value| value.to_str())
             .unwrap_or("config.toml");
         parent.join(format!(".{file_name}.{}.secret", kind.account_suffix()))
+    }
+
+    fn open_secret_for_read(path: &Path) -> Result<Option<File>> {
+        match validate_existing_secret_path(path)? {
+            false => Ok(None),
+            true => OpenOptions::new()
+                .read(true)
+                .custom_flags(libc::O_NOFOLLOW)
+                .open(path)
+                .map(Some)
+                .with_context(|| format!("failed to open {}", path.display())),
+        }
+    }
+
+    fn open_secret_for_write(path: &Path) -> Result<File> {
+        validate_existing_secret_path(path)?;
+        OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(path)
+            .with_context(|| format!("failed to open {}", path.display()))
+    }
+
+    fn validate_existing_secret_path(path: &Path) -> Result<bool> {
+        let metadata = match fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(error).with_context(|| format!("failed to inspect {}", path.display()));
+            }
+        };
+        let file_type = metadata.file_type();
+        if file_type.is_symlink() || !file_type.is_file() {
+            return Err(anyhow!(
+                "refusing to use non-regular Linux secret sidecar {}",
+                path.display()
+            ));
+        }
+        Ok(true)
     }
 }

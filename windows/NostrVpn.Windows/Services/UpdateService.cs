@@ -11,16 +11,23 @@ public sealed class UpdateService
         var update = await Task.Run(() => AppCoreClient.CheckUpdate(currentVersion));
         var assetUrl = string.IsNullOrWhiteSpace(update.Url) ? null : new Uri(update.Url);
         var hasAsset = !string.IsNullOrWhiteSpace(update.Asset);
+        var installable = update.Available && hasAsset && update.Verified;
+        var message = update.Available
+            ? !hasAsset
+                ? $"Update {update.Tag} found without a Windows asset"
+                : update.Verified
+                    ? $"Update {update.Tag} available"
+                    : $"Update {update.Tag} found from unverified {update.Source}; install disabled"
+            : "Up to date";
 
         return new UpdateResult(
             update.Available,
             update.Tag,
             assetUrl,
             string.IsNullOrWhiteSpace(update.Asset) ? null : update.Asset,
-            update.Available
-                ? hasAsset ? $"Update {update.Tag} available" : $"Update {update.Tag} found without a Windows asset"
-                : "Up to date",
-            UseCoreDownload: update.Available && hasAsset);
+            message,
+            update.Verified,
+            UseCoreDownload: installable);
     }
 
     public async Task<string> DownloadWithCoreAsync(string currentVersion)
@@ -33,6 +40,10 @@ public sealed class UpdateService
         Directory.CreateDirectory(downloadDir);
 
         var update = await Task.Run(() => AppCoreClient.DownloadUpdate(currentVersion, downloadDir));
+        if (!update.Verified)
+        {
+            throw new InvalidOperationException($"Refusing to install unverified update from {update.Source}");
+        }
         if (string.IsNullOrWhiteSpace(update.Path))
         {
             throw new InvalidOperationException("updater did not return a downloaded file");
@@ -47,4 +58,5 @@ public sealed record UpdateResult(
     Uri? AssetUrl,
     string? AssetName,
     string Message,
+    bool Verified,
     bool UseCoreDownload);

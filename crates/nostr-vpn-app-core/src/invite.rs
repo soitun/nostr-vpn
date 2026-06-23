@@ -45,11 +45,15 @@ pub(crate) fn apply_network_invite_to_active_network(
 ) -> Result<()> {
     let prepared = PreparedNetworkInvite::from_invite(invite)?;
     let own_pubkey = config.own_nostr_pubkey_hex().ok();
-    let (target_network_id, reset_membership) =
-        target_network_for_invite(config, invite, &prepared.normalized_network_id);
+    let (target_network_id, reset_membership) = target_network_for_invite(
+        config,
+        invite,
+        &prepared.normalized_network_id,
+        own_pubkey.as_deref(),
+    )?;
     let should_adopt_name = config
         .network_by_id(&target_network_id)
-        .is_some_and(network_should_adopt_invite);
+        .is_some_and(|network| network_should_adopt_invite(network, own_pubkey.as_deref()));
     let inviter_already_configured =
         network_has_pubkey_configured(config, &target_network_id, &prepared.inviter_pubkey);
 
@@ -137,25 +141,31 @@ fn target_network_for_invite(
     config: &mut AppConfig,
     invite: &NetworkInvite,
     normalized_invite_network_id: &str,
-) -> (String, bool) {
+    own_pubkey: Option<&str>,
+) -> Result<(String, bool)> {
     if let Some(existing) = config.networks.iter().find(|network| {
         normalize_runtime_network_id(&network.network_id) == normalized_invite_network_id
     }) {
-        return (existing.id.clone(), false);
+        if network_should_adopt_invite(existing, own_pubkey) {
+            return Ok((existing.id.clone(), true));
+        }
+        return Err(anyhow!(
+            "invite network id matches an existing network; refusing to merge unsigned invite membership"
+        ));
     }
     if let Some(active_network) = config.active_network_opt()
-        && network_should_adopt_invite(active_network)
+        && network_should_adopt_invite(active_network, own_pubkey)
     {
-        return (active_network.id.clone(), true);
+        return Ok((active_network.id.clone(), true));
     }
     if let Some(reusable_network) = config.networks.iter().find(|network| {
         !network.enabled
-            && network_should_adopt_invite(network)
+            && network_should_adopt_invite(network, own_pubkey)
             && normalize_runtime_network_id(&network.network_id) != normalized_invite_network_id
     }) {
-        return (reusable_network.id.clone(), true);
+        return Ok((reusable_network.id.clone(), true));
     }
-    (config.add_network(&invite.network_name), true)
+    Ok((config.add_network(&invite.network_name), true))
 }
 
 fn network_has_pubkey_configured(config: &AppConfig, network_id: &str, pubkey: &str) -> bool {
@@ -233,9 +243,22 @@ pub(crate) fn preferred_join_request_recipient(network: &NetworkConfig) -> Optio
     network.admins.first().cloned()
 }
 
-fn network_should_adopt_invite(network: &NetworkConfig) -> bool {
+fn network_should_adopt_invite(network: &NetworkConfig, own_pubkey: Option<&str>) -> bool {
     let trimmed = network.name.trim();
-    network.devices.is_empty() && (trimmed.is_empty() || trimmed.starts_with("Network "))
+    network.devices.is_empty()
+        && placeholder_admins_only(network, own_pubkey)
+        && network.invite_inviter.trim().is_empty()
+        && network.outbound_join_request.is_none()
+        && network.inbound_join_requests.is_empty()
+        && network.shared_roster_signed_by.trim().is_empty()
+        && (trimmed.is_empty() || trimmed.starts_with("Network "))
+}
+
+fn placeholder_admins_only(network: &NetworkConfig, own_pubkey: Option<&str>) -> bool {
+    network.admins.is_empty()
+        || (network.shared_roster_updated_at == 0
+            && network.admins.len() == 1
+            && own_pubkey.is_some_and(|own| network.admins[0] == own))
 }
 
 #[cfg(test)]
@@ -265,7 +288,7 @@ mod tests {
             invite_inviter: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
-            shared_roster_updated_at: 0,
+            shared_roster_updated_at: 1,
             shared_roster_signed_by: String::new(),
         });
 
@@ -321,5 +344,55 @@ mod tests {
             .expect_err("non-admin device must not create invite");
 
         assert!(error.to_string().contains("network admin"));
+    }
+
+    #[test]
+    fn invite_with_existing_established_network_id_is_rejected() {
+        let existing_admin = Keys::generate();
+        let invite_admin = Keys::generate();
+        let invite_peer = Keys::generate();
+        let invite_admin_npub = invite_admin.public_key().to_bech32().expect("admin npub");
+        let invite_peer_npub = invite_peer.public_key().to_bech32().expect("peer npub");
+        let mut config = AppConfig::generated_without_networks();
+        config.networks.push(NetworkConfig {
+            id: "home".to_string(),
+            name: "Home".to_string(),
+            enabled: true,
+            network_id: "mesh-home".to_string(),
+            invite_secret: "old-secret".to_string(),
+            devices: Vec::new(),
+            admins: vec![existing_admin.public_key().to_hex()],
+            listen_for_join_requests: true,
+            invite_inviter: String::new(),
+            outbound_join_request: None,
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        });
+        let invite = NetworkInvite {
+            v: NETWORK_INVITE_VERSION,
+            network_name: "Attacker".to_string(),
+            network_id: "mesh-home".to_string(),
+            invite_secret: "new-secret".to_string(),
+            inviter_npub: invite_admin_npub.clone(),
+            inviter_node_name: "attacker".to_string(),
+            inviter_endpoints: Vec::new(),
+            admins: vec![invite_admin_npub],
+            participants: vec![invite_peer_npub],
+            relays: Vec::new(),
+        };
+
+        let error = apply_network_invite_to_active_network(&mut config, &invite)
+            .expect_err("established network must not accept unsigned invite membership");
+
+        assert!(error.to_string().contains("existing network"));
+        assert_eq!(config.networks.len(), 1);
+        assert_eq!(config.networks[0].name, "Home");
+        assert_eq!(config.networks[0].invite_secret, "old-secret");
+        assert_eq!(
+            config.networks[0].admins,
+            vec![existing_admin.public_key().to_hex()]
+        );
+        assert!(config.networks[0].devices.is_empty());
     }
 }

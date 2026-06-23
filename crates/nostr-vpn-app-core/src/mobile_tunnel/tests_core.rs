@@ -164,6 +164,10 @@
             config.magic_dns_server,
             nostr_vpn_core::MESH_MAGIC_DNS_SERVER
         );
+        assert!(
+            !mobile_magic_dns_forwarders_for_config(&config).is_empty(),
+            "split-tunnel MagicDNS can use configured raw fallback forwarders"
+        );
     }
 
     #[test]
@@ -218,6 +222,10 @@
         assert_eq!(
             config.magic_dns_server,
             nostr_vpn_core::MESH_MAGIC_DNS_SERVER
+        );
+        assert!(
+            mobile_magic_dns_forwarders_for_config(&config).is_empty(),
+            "selected peer exits must not forward MagicDNS fallback queries on raw underlay sockets"
         );
     }
 
@@ -380,6 +388,33 @@
             response.windows(4).any(|window| window == expected_octets),
             "response did not include {expected_ip}: {response:?}"
         );
+    }
+
+    #[test]
+    fn mobile_magic_dns_without_forwarders_returns_server_failure_for_unknown_query() {
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        let app = Arc::new(RwLock::new(app));
+        let source = Ipv4Addr::new(10, 44, 206, 222);
+        let dns_server =
+            parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).expect("magic dns server");
+        let query = ipv4_udp_packet(
+            source,
+            dns_server,
+            53000,
+            53,
+            &dns_query("example.com", 1),
+        );
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+
+        let response = runtime
+            .block_on(mobile_magic_dns_response_packet(&query, &app, &[]))
+            .expect("dns response packet");
+
+        assert_eq!(response[31] & 0x0f, 2, "DNS rcode should be SERVFAIL");
     }
 
     #[test]

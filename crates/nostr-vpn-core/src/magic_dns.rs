@@ -130,6 +130,10 @@ pub fn build_magic_dns_response_if_handled(
     build_dns_response(request, records, false)
 }
 
+pub fn build_magic_dns_server_failure_response(request: &[u8]) -> Option<Vec<u8>> {
+    build_dns_error_response(request, ResponseCode::ServFail)
+}
+
 fn build_dns_response(
     request: &[u8],
     records: &HashMap<String, Ipv4Addr>,
@@ -173,6 +177,23 @@ fn build_dns_response(
     } else {
         ResponseCode::NXDomain
     };
+
+    let mut bytes = Vec::with_capacity(512);
+    let mut encoder = BinEncoder::new(&mut bytes);
+    response.emit(&mut encoder).ok()?;
+    Some(bytes)
+}
+
+fn build_dns_error_response(request: &[u8], code: ResponseCode) -> Option<Vec<u8>> {
+    let message = Message::from_vec(request).ok()?;
+    let mut response = Message::new(message.id, MessageType::Response, OpCode::Query);
+    response.metadata.recursion_desired = message.recursion_desired;
+    response.metadata.recursion_available = false;
+    response.metadata.authoritative = true;
+    response.metadata.response_code = code;
+    for query in &message.queries {
+        response.add_query(query.clone());
+    }
 
     let mut bytes = Vec::with_capacity(512);
     let mut encoder = BinEncoder::new(&mut bytes);
@@ -680,7 +701,7 @@ mod tests {
         build_magic_dns_response_if_handled, windows_install_nrpt_script, windows_nameserver,
         windows_uninstall_nrpt_script,
     };
-    use hickory_proto::op::{Message, MessageType, OpCode, Query};
+    use hickory_proto::op::{Message, MessageType, OpCode, Query, ResponseCode};
     use hickory_proto::rr::{Name, RecordType};
     use hickory_proto::serialize::binary::{BinEncodable, BinEncoder};
     use std::collections::HashMap;
@@ -717,6 +738,16 @@ mod tests {
         let records = HashMap::new();
 
         assert!(build_magic_dns_response_if_handled(&dns_query("example.com"), &records).is_none());
+    }
+
+    #[test]
+    fn magic_dns_server_failure_response_returns_servfail() {
+        let response = super::build_magic_dns_server_failure_response(&dns_query("example.com"))
+            .expect("response");
+        let parsed = Message::from_vec(&response).expect("parse response");
+
+        assert_eq!(parsed.response_code, ResponseCode::ServFail);
+        assert!(parsed.answers.is_empty());
     }
 
     #[test]

@@ -68,6 +68,7 @@ pub(crate) async fn run_update(args: UpdateArgs) -> Result<()> {
         return Ok(());
     }
 
+    ensure_verified_for_install(&download)?;
     install_cli_archive(&archive_path, &temp_dir, args.path.as_deref())?;
     let _ = fs::remove_dir_all(&temp_dir);
 
@@ -144,6 +145,16 @@ fn print_up_to_date(mode: UpdateMode, result: &ProductUpdateResult, json: bool) 
 fn print_update_json(output: &ProductUpdateResult) -> Result<()> {
     println!("{}", serde_json::to_string(output)?);
     Ok(())
+}
+
+fn ensure_verified_for_install(result: &ProductUpdateResult) -> Result<()> {
+    if result.verified {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "refusing to install unverified update from {}; use --download-only to inspect it manually",
+        result.source
+    ))
 }
 
 fn install_cli_archive(

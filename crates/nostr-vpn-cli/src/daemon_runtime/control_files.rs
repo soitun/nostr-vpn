@@ -19,18 +19,29 @@ pub(crate) fn daemon_log_file_path(config_path: &Path) -> PathBuf {
     parent.join("daemon.log")
 }
 
+fn runtime_open_options_no_follow() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    options
+}
+
 pub(crate) fn redirect_stdio_to_daemon_log(config_path: &Path) -> Result<()> {
     let log_path = daemon_log_file_path(config_path);
     if let Some(parent) = log_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
-    let log_file = OpenOptions::new()
+    let mut options = runtime_open_options_no_follow();
+    let log_file = options
         .create(true)
         .append(true)
         .open(&log_path)
         .with_context(|| format!("failed to open {}", log_path.display()))?;
-    let _ = set_daemon_runtime_file_permissions(&log_path);
+    let _ = set_daemon_runtime_file_permissions_on_file(&log_file, &log_path);
 
     #[cfg(unix)]
     {
@@ -107,20 +118,28 @@ pub(crate) fn compact_log_file_if_needed(
         return Ok(false);
     }
 
-    let metadata = match fs::metadata(path) {
+    let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => {
             return Err(error).with_context(|| format!("failed to inspect {}", path.display()));
         }
     };
+    let file_type = metadata.file_type();
+    if file_type.is_symlink() || !file_type.is_file() {
+        return Err(anyhow!(
+            "refusing to compact non-regular daemon log {}",
+            path.display()
+        ));
+    }
     let original_len = metadata.len();
     if original_len <= max_bytes {
         return Ok(false);
     }
 
     let retain_start = original_len.saturating_sub(retain_bytes);
-    let mut file = OpenOptions::new()
+    let mut read_options = runtime_open_options_no_follow();
+    let mut file = read_options
         .read(true)
         .open(path)
         .with_context(|| format!("failed to open {}", path.display()))?;
@@ -139,7 +158,8 @@ pub(crate) fn compact_log_file_if_needed(
         retained.len(),
         original_len
     );
-    let mut file = OpenOptions::new()
+    let mut write_options = runtime_open_options_no_follow();
+    let mut file = write_options
         .write(true)
         .truncate(true)
         .open(path)

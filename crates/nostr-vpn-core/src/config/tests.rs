@@ -77,6 +77,43 @@ mod tests {
         let _ = std::fs::remove_file(&path);
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn save_plaintext_rejects_symlinked_secret_sidecar() {
+        use std::os::unix::fs::symlink;
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-secret-sidecar-symlink-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("config.toml");
+        let target = dir.join("target-secret");
+        let sidecar = dir.join(".config.toml.nostr-secret-key.secret");
+        std::fs::write(&target, "do-not-overwrite").expect("write target");
+        symlink(&target, &sidecar).expect("create secret sidecar symlink");
+
+        let error = AppConfig::generated()
+            .save_plaintext(&path)
+            .expect_err("symlinked secret sidecar should be rejected");
+
+        assert!(error.to_string().contains("failed to store Nostr secret key"));
+        assert_eq!(
+            std::fs::read_to_string(&target).expect("read target"),
+            "do-not-overwrite"
+        );
+        assert!(
+            std::fs::symlink_metadata(&sidecar)
+                .expect("sidecar metadata")
+                .file_type()
+                .is_symlink()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn migrate_persisted_secrets_rewrites_plaintext_config_secrets() {
         let nonce = std::time::SystemTime::now()
