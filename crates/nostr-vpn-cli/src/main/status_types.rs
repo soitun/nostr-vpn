@@ -363,6 +363,7 @@ impl Drop for ConnectMagicDnsRuntime {
     }
 }
 
+#[derive(Clone)]
 struct CliTunnelRuntime {
     iface: String,
     active_listen_port: Option<u16>,

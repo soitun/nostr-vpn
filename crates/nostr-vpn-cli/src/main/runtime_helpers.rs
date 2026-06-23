@@ -450,7 +450,7 @@ async fn refresh_fips_tunnel_config(
     network_id: &str,
     own_pubkey: Option<&str>,
 ) -> Result<()> {
-    let config = fips_tunnel_config_from_app(
+    let config = fips_tunnel_config_from_app_async(
         app,
         config_path,
         network_id,
@@ -458,7 +458,8 @@ async fn refresh_fips_tunnel_config(
         own_pubkey,
         None,
         &runtime.peer_endpoint_hints(),
-    )?;
+    )
+    .await?;
     runtime.apply_config(config).await
 }
 
@@ -502,6 +503,39 @@ fn fips_tunnel_config_from_app(
         configured
     };
     Ok(config)
+}
+
+#[cfg(feature = "embedded-fips")]
+async fn fips_tunnel_config_from_app_async(
+    app: &AppConfig,
+    config_path: &Path,
+    network_id: &str,
+    iface: impl Into<String>,
+    own_pubkey: Option<&str>,
+    recent_peers: Option<&nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
+    live_peer_endpoints: &[(String, Vec<(String, u64)>)],
+) -> Result<crate::fips_private_mesh::FipsPrivateTunnelConfig> {
+    let app = app.clone();
+    let config_path = config_path.to_path_buf();
+    let network_id = network_id.to_string();
+    let iface = iface.into();
+    let own_pubkey = own_pubkey.map(ToOwned::to_owned);
+    let recent_peers = recent_peers.cloned();
+    let live_peer_endpoints = live_peer_endpoints.to_vec();
+
+    tokio::task::spawn_blocking(move || {
+        fips_tunnel_config_from_app(
+            &app,
+            &config_path,
+            &network_id,
+            iface,
+            own_pubkey.as_deref(),
+            recent_peers.as_ref(),
+            &live_peer_endpoints,
+        )
+    })
+    .await
+    .context("FIPS tunnel config task failed")?
 }
 
 #[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
@@ -562,7 +596,7 @@ async fn sync_fips_private_runtime(
         .as_ref()
         .map(|runtime| runtime.peer_endpoint_hints())
         .unwrap_or_default();
-    let config = fips_tunnel_config_from_app(
+    let config = fips_tunnel_config_from_app_async(
         context.app,
         context.config_path,
         context.network_id,
@@ -570,7 +604,8 @@ async fn sync_fips_private_runtime(
         context.own_pubkey,
         None,
         &live_peer_endpoints,
-    )?;
+    )
+    .await?;
 
     let restart = runtime
         .as_ref()

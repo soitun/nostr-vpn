@@ -392,6 +392,58 @@ pub(crate) fn persist_daemon_runtime_and_cleanup_state(
     persisted
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn persist_daemon_runtime_and_cleanup_state_async(
+    state_file: &Path,
+    config_path: &Path,
+    app: &AppConfig,
+    vpn_enabled: bool,
+    expected_peers: usize,
+    tunnel_runtime: &CliTunnelRuntime,
+    fips_peer_statuses: &[MeshPeerStatus],
+    fips_relay_statuses: &[DaemonRelayState],
+    advertised_routes_by_participant: &HashMap<String, Vec<String>>,
+    vpn_status: &str,
+    network: &NetworkSummary,
+    port_mapping: &PortMappingStatus,
+) -> bool {
+    let state_file = state_file.to_path_buf();
+    let config_path = config_path.to_path_buf();
+    let app = app.clone();
+    let tunnel_runtime = tunnel_runtime.clone();
+    let fips_peer_statuses = fips_peer_statuses.to_vec();
+    let fips_relay_statuses = fips_relay_statuses.to_vec();
+    let advertised_routes_by_participant = advertised_routes_by_participant.clone();
+    let vpn_status = vpn_status.to_string();
+    let network = network.clone();
+    let port_mapping = port_mapping.clone();
+
+    match tokio::task::spawn_blocking(move || {
+        persist_daemon_runtime_and_cleanup_state(
+            &state_file,
+            &config_path,
+            &app,
+            vpn_enabled,
+            expected_peers,
+            &tunnel_runtime,
+            &fips_peer_statuses,
+            &fips_relay_statuses,
+            &advertised_routes_by_participant,
+            &vpn_status,
+            &network,
+            &port_mapping,
+        )
+    })
+    .await
+    {
+        Ok(persisted) => persisted,
+        Err(error) => {
+            eprintln!("daemon: runtime state persistence task failed: {error}");
+            false
+        }
+    }
+}
+
 pub(crate) fn disconnected_daemon_runtime_state(
     expected_peers: usize,
     network: &NetworkSummary,

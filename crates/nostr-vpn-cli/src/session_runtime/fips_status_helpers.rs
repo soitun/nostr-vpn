@@ -357,15 +357,26 @@ async fn update_recent_peers_from_runtime(
         );
     }
     let live_peer_endpoints = runtime.peer_endpoint_hints();
-    match crate::fips_private_mesh::FipsPrivateTunnelConfig::from_app(
-        app,
-        network_id,
-        runtime.iface().to_string(),
-        own_pubkey,
-        Some(refresh.recent_peers),
-        &live_peer_endpoints,
-    ) {
-        Ok(refreshed) => {
+    let refreshed = {
+        let app = app.clone();
+        let network_id = network_id.to_string();
+        let iface = runtime.iface().to_string();
+        let own_pubkey = own_pubkey.map(ToOwned::to_owned);
+        let recent_peers = refresh.recent_peers.clone();
+        tokio::task::spawn_blocking(move || {
+            crate::fips_private_mesh::FipsPrivateTunnelConfig::from_app(
+                &app,
+                &network_id,
+                iface,
+                own_pubkey.as_deref(),
+                Some(&recent_peers),
+                &live_peer_endpoints,
+            )
+        })
+        .await
+    };
+    match refreshed {
+        Ok(Ok(refreshed)) => {
             let signature = endpoint_peer_signature(&refreshed.endpoint_peers);
             if signature == *refresh.last_endpoint_peer_signature {
                 return;
@@ -376,8 +387,11 @@ async fn update_recent_peers_from_runtime(
                 *refresh.last_endpoint_peer_signature = signature;
             }
         }
-        Err(error) => {
+        Ok(Err(error)) => {
             eprintln!("fips: rebuilding peer hint list failed: {error}");
+        }
+        Err(error) => {
+            eprintln!("fips: peer hint rebuild task failed: {error}");
         }
     }
 }
@@ -396,7 +410,7 @@ async fn refresh_fips_tunnel_runtime_after_link_event(
     // a previous underlay/NAT mapping. Keep the endpoint bound and make fips
     // re-earn direct paths from configured hints and fresh discovery.
     let live_peer_endpoints = Vec::new();
-    let config = fips_tunnel_config_from_app(
+    let config = fips_tunnel_config_from_app_async(
         context.app,
         context.config_path,
         context.network_id,
@@ -404,7 +418,8 @@ async fn refresh_fips_tunnel_runtime_after_link_event(
         context.own_pubkey,
         context.recent_peers,
         &live_peer_endpoints,
-    )?;
+    )
+    .await?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
     if let Some(existing) = runtime.as_mut() {
         existing.apply_config(config).await?;
@@ -472,7 +487,7 @@ async fn refresh_fips_tunnel_runtime_peer_paths_in_place(
     reason: &str,
 ) -> Result<()> {
     let live_peer_endpoints = current.peer_endpoint_hints();
-    let config = fips_tunnel_config_from_app(
+    let config = fips_tunnel_config_from_app_async(
         context.app,
         context.config_path,
         context.network_id,
@@ -480,7 +495,8 @@ async fn refresh_fips_tunnel_runtime_peer_paths_in_place(
         context.own_pubkey,
         context.recent_peers,
         &live_peer_endpoints,
-    )?;
+    )
+    .await?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
     let outcome = current.update_peers(&config.endpoint_peers).await?;
     let refresh_endpoint_peers =
