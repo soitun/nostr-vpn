@@ -247,6 +247,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     #[cfg(target_os = "macos")]
     let mut last_macos_underlay_route_check_at =
         Instant::now() - Duration::from_secs(MACOS_UNDERLAY_ROUTE_CHECK_INTERVAL_SECS);
+    let mut platform_network_event_pending = false;
+    let mut platform_network_event_suppressed_until: Option<Instant> = None;
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     let supervised_service_executable = if args.service {
@@ -481,6 +483,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     continue;
                 }
                 drain_platform_network_changes(&mut platform_network_change_rx);
+                let now = Instant::now();
+                if platform_network_event_suppressed_until.is_some_and(|until| now < until) {
+                    continue;
+                }
+                platform_network_event_pending = true;
                 network_interval.reset_after(Duration::from_millis(
                     DAEMON_NETWORK_EVENT_DEBOUNCE_MILLIS,
                 ));
@@ -526,6 +533,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     network_changed = latest_snapshot.changed_since(&network_snapshot);
                     captive_portal = detect_captive_portal(timeout).await;
                 }
+                let platform_network_event = std::mem::take(&mut platform_network_event_pending);
                 let runtime_listen_port =
                     tunnel_runtime.active_listen_port.unwrap_or(app.node.listen_port);
                 let vpn_active = daemon_vpn_active(vpn_enabled, expected_peers);
@@ -575,12 +583,18 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     false
                 };
 
-                if !network_changed && !endpoint_changed && !underlay_repaired && !resumed_after_sleep {
+                if !platform_network_event
+                    && !network_changed
+                    && !endpoint_changed
+                    && !underlay_repaired
+                    && !resumed_after_sleep
+                {
                     continue;
                 }
 
                 #[cfg(feature = "embedded-fips")]
                 let fips_refresh = fips_link_event_refresh(
+                    platform_network_event,
                     network_changed,
                     endpoint_changed,
                     underlay_repaired,
@@ -590,13 +604,20 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 let seed_recent_fips_peers =
                     fips_link_event_should_seed_recent_peers(fips_refresh);
 
-                if network_changed || underlay_repaired || resumed_after_sleep || endpoint_changed {
+                if platform_network_event
+                    || network_changed
+                    || underlay_repaired
+                    || resumed_after_sleep
+                    || endpoint_changed
+                {
                     let refresh_reason = if network_changed {
                         "network change"
                     } else if resumed_after_sleep {
                         "sleep/wake"
                     } else if underlay_repaired {
                         "macOS underlay repair"
+                    } else if platform_network_event {
+                        "platform route event"
                     } else {
                         "endpoint change"
                     };
@@ -611,6 +632,10 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     } else if underlay_repaired {
                         network_snapshot = latest_snapshot;
                         eprintln!("daemon: refreshing tunnel after macOS underlay repair");
+                    } else if platform_network_event {
+                        eprintln!(
+                            "daemon: platform route event detected; refreshing FIPS endpoint state"
+                        );
                     } else {
                         eprintln!("daemon: endpoint changed; refreshing FIPS endpoint state");
                     }
@@ -631,9 +656,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         network_id: &network_id,
                                         fallback_iface: &iface,
                                         own_pubkey: own_pubkey.as_deref(),
-                                        // A link event means the old underlay or NAT mapping just
-                                        // changed. Keep the cache on disk, but make this runtime earn
-                                        // direct paths from fresh evidence on the current network.
+                                        // Recent endpoints are only dial hints; fips still has to
+                                        // authenticate them. Keeping these hints lets mobile/link
+                                        // churn recover quickly without trusting stale live paths.
                                         recent_peers: seed_recent_fips_peers
                                             .then_some(&recent_peers),
                                         last_endpoint_peer_signature:
@@ -652,6 +677,10 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if let Err(error) = fips_result {
                         vpn_status = format!("Network route refresh failed ({error})");
                     } else {
+                        if platform_network_event {
+                            platform_network_event_suppressed_until =
+                                Some(Instant::now() + Duration::from_secs(5));
+                        }
                         #[cfg(feature = "embedded-fips")]
                         if let Some(runtime) = fips_tunnel_runtime.as_ref() {
                             if let Err(error) = runtime.ping_peers(&network_id, now).await {

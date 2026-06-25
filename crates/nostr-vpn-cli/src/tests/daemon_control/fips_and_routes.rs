@@ -307,7 +307,28 @@ Internet:\n\
 Destination        Gateway            Flags               Netif Expire\n\
 0/1                link#13            UCS                 utun5\n\
 128/1              link#13            UCS                 utun5\n\
-"
+        "
+    ));
+}
+
+#[test]
+fn macos_route_monitor_ignores_self_host_route_churn() {
+    let mut route_add = [0_u8; 4];
+    route_add[3] = 0x01;
+    assert!(!crate::macos_network::macos_route_message_is_underlay_relevant(
+        &route_add
+    ));
+
+    let mut new_addr = [0_u8; 4];
+    new_addr[3] = 0x0c;
+    assert!(crate::macos_network::macos_route_message_is_underlay_relevant(
+        &new_addr
+    ));
+
+    let mut if_info = [0_u8; 4];
+    if_info[3] = 0x0e;
+    assert!(crate::macos_network::macos_route_message_is_underlay_relevant(
+        &if_info
     ));
 }
 

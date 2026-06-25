@@ -151,12 +151,18 @@ pub(crate) struct FipsPendingRosterRestartState {
 
 #[cfg(feature = "embedded-fips")]
 pub(crate) fn fips_link_event_refresh(
+    platform_network_event: bool,
     network_changed: bool,
     endpoint_changed: bool,
     underlay_repaired: bool,
     resumed_after_sleep: bool,
 ) -> FipsLinkEventRefresh {
-    if network_changed || endpoint_changed || underlay_repaired || resumed_after_sleep {
+    if platform_network_event
+        || network_changed
+        || endpoint_changed
+        || underlay_repaired
+        || resumed_after_sleep
+    {
         FipsLinkEventRefresh::RefreshPaths
     } else {
         FipsLinkEventRefresh::None
@@ -165,9 +171,9 @@ pub(crate) fn fips_link_event_refresh(
 
 #[cfg(feature = "embedded-fips")]
 pub(crate) fn fips_link_event_should_seed_recent_peers(
-    refresh: FipsLinkEventRefresh,
+    _refresh: FipsLinkEventRefresh,
 ) -> bool {
-    matches!(refresh, FipsLinkEventRefresh::None)
+    true
 }
 
 #[cfg(feature = "embedded-fips")]

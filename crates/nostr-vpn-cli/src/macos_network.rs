@@ -72,6 +72,9 @@ pub(crate) fn spawn_macos_route_change_monitor() -> Option<mpsc::Receiver<()>> {
                 if read == 0 {
                     continue;
                 }
+                if !macos_route_message_is_underlay_relevant(&buf[..read as usize]) {
+                    continue;
+                }
                 match tx.try_send(()) {
                     Ok(()) | Err(mpsc::error::TrySendError::Full(())) => {}
                     Err(mpsc::error::TrySendError::Closed(())) => break,
@@ -101,6 +104,14 @@ impl Drop for MacosRouteMonitorFd {
             libc::close(self.0);
         }
     }
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_route_message_is_underlay_relevant(message: &[u8]) -> bool {
+    let Some(message_type) = message.get(3).copied() else {
+        return false;
+    };
+    matches!(message_type, 0x0c | 0x0d | 0x0e | 0x12)
 }
 
 #[cfg(any(target_os = "macos", test))]

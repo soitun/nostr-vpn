@@ -63,19 +63,20 @@ mod tests {
 
     #[cfg(feature = "embedded-fips")]
     #[test]
-    fn link_event_refresh_does_not_seed_previous_direct_endpoint_hints() {
-        let idle = fips_link_event_refresh(false, false, false, false);
+    fn link_event_refresh_keeps_recent_endpoint_hints_available() {
+        let idle = fips_link_event_refresh(false, false, false, false, false);
         assert_eq!(idle, FipsLinkEventRefresh::None);
         assert!(fips_link_event_should_seed_recent_peers(idle));
 
         for refresh in [
-            fips_link_event_refresh(true, false, false, false),
-            fips_link_event_refresh(false, true, false, false),
-            fips_link_event_refresh(false, false, true, false),
-            fips_link_event_refresh(false, false, false, true),
+            fips_link_event_refresh(true, false, false, false, false),
+            fips_link_event_refresh(false, true, false, false, false),
+            fips_link_event_refresh(false, false, true, false, false),
+            fips_link_event_refresh(false, false, false, true, false),
+            fips_link_event_refresh(false, false, false, false, true),
         ] {
             assert_eq!(refresh, FipsLinkEventRefresh::RefreshPaths);
-            assert!(!fips_link_event_should_seed_recent_peers(refresh));
+            assert!(fips_link_event_should_seed_recent_peers(refresh));
         }
     }
 
