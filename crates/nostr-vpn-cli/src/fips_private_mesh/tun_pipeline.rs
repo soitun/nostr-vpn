@@ -46,9 +46,6 @@ async fn submit_tun_packet_batch_to_mesh_queue_with_backpressure(
         TunPipelineSubmitBatches::Single { lane, batch } => match lane {
             TunPipelineLane::Priority => submit_tun_packet_batch_to_lane(packet_tx, lane, batch),
             TunPipelineLane::Bulk => {
-                if tun_pipeline_batch_drops_on_backpressure(&batch) {
-                    return submit_tun_bulk_batch(packet_tx, batch);
-                }
                 submit_tun_bulk_batch_with_backpressure(
                     packet_tx,
                     batch,
@@ -63,9 +60,6 @@ async fn submit_tun_packet_batch_to_mesh_queue_with_backpressure(
                 TunQueueSubmit::Closed
             ) {
                 return TunQueueSubmit::Closed;
-            }
-            if tun_pipeline_batch_drops_on_backpressure(&bulk) {
-                return submit_tun_bulk_batch(packet_tx, bulk);
             }
             submit_tun_bulk_batch_with_backpressure(packet_tx, bulk, max_bulk_chunk_packets).await
         }
@@ -114,14 +108,6 @@ fn tun_pipeline_split_batch_by_lane(batch: TunPipelineBatch) -> TunPipelineSubmi
         }
     }
     TunPipelineSubmitBatches::Split { priority, bulk }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn tun_pipeline_batch_drops_on_backpressure(batch: &[TunPipelinePacket]) -> bool {
-    !batch.is_empty()
-        && batch
-            .iter()
-            .all(|packet| packet.class.drop_on_backpressure())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
