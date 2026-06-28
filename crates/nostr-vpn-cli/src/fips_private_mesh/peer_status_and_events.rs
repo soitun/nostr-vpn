@@ -10,7 +10,16 @@ fn fips_peer_liveness(
     peer_error: Option<String>,
     now: u64,
 ) -> (bool, Option<String>) {
+    if fips_peer_presence_far_future(last_seen_at, now) {
+        return (
+            false,
+            peer_error.or_else(|| Some("fips participant stale".to_string())),
+        );
+    }
     if fips_peer_presence_fresh(last_seen_at, now) {
+        return (true, None);
+    }
+    if link_connected {
         return (true, None);
     }
     if fips_peer_presence_stale(last_seen_at, now) {
@@ -18,9 +27,6 @@ fn fips_peer_liveness(
             false,
             peer_error.or_else(|| Some("fips participant stale".to_string())),
         );
-    }
-    if link_connected {
-        return (true, None);
     }
     (
         false,
@@ -38,13 +44,19 @@ fn fips_peer_presence_stale(last_seen_at: Option<u64>, now: u64) -> bool {
     last_seen_at.is_some_and(|last_seen_at| !fips_peer_presence_fresh(Some(last_seen_at), now))
 }
 
+fn fips_peer_presence_far_future(last_seen_at: Option<u64>, now: u64) -> bool {
+    last_seen_at.is_some_and(|last_seen_at| {
+        last_seen_at > now && last_seen_at - now > FIPS_PEER_MAX_FUTURE_SKEW_SECS
+    })
+}
+
 fn fips_peer_ping_interval_secs(last_seen_at: Option<u64>, link_connected: bool, now: u64) -> u64 {
     if fips_peer_presence_fresh(last_seen_at, now) {
         FIPS_PEER_ACTIVE_PING_INTERVAL_SECS
-    } else if last_seen_at.is_some() {
-        FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS
     } else if link_connected {
         FIPS_PEER_LINK_PING_INTERVAL_SECS
+    } else if last_seen_at.is_some() {
+        FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS
     } else {
         FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS
     }

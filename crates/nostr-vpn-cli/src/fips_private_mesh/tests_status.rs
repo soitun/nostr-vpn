@@ -454,7 +454,7 @@
     }
 
     #[test]
-    fn fips_peer_liveness_prefers_participant_activity_over_link_snapshot() {
+    fn fips_peer_liveness_uses_fresh_link_when_presence_is_stale() {
         assert_eq!(
             super::fips_peer_liveness(Some(100), true, None, 120),
             (true, None)
@@ -465,6 +465,10 @@
         );
         assert_eq!(
             super::fips_peer_liveness(Some(10), true, None, 120),
+            (true, None)
+        );
+        assert_eq!(
+            super::fips_peer_liveness(Some(10), false, None, 120),
             (false, Some("fips participant stale".to_string()))
         );
         assert_eq!(
@@ -498,7 +502,11 @@
         assert!(!super::fips_peer_ping_due(None, Some(116), true, 120));
         assert!(super::fips_peer_ping_due(None, Some(115), true, 120));
 
-        assert!(!super::fips_peer_ping_due(Some(90), Some(91), true, 120));
+        assert_eq!(
+            super::fips_peer_ping_interval_secs(Some(90), true, 120),
+            super::FIPS_PEER_LINK_PING_INTERVAL_SECS
+        );
+        assert!(super::fips_peer_ping_due(Some(90), Some(91), true, 120));
         assert!(super::fips_peer_ping_due(Some(90), Some(90), true, 120));
 
         assert!(!super::fips_peer_ping_due(None, Some(91), false, 120));
