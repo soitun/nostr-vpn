@@ -500,22 +500,15 @@ async fn send_mesh_packet_batch_turns(
         return;
     }
 
-    let mut pending = batch;
-    while !pending.is_empty() {
+    let mut packets = batch.into_iter();
+    while !packets.as_slice().is_empty() {
         send_mesh_waiting_priority_packets(mesh, packet_rx, &mut send_runs).await;
 
         let turn_capacity = mesh_send_bulk_turn_capacity(packet_rx);
-        coalesce_tun_bulk_turn_from_backlog(packet_rx, &mut pending, turn_capacity);
-        let drained = pending.len().min(turn_capacity);
-        let rest = if pending.len() > drained {
-            pending.split_off(drained)
-        } else {
-            Vec::new()
-        };
-        let turn = std::mem::replace(&mut pending, rest);
+        let drained = packets.as_slice().len().min(turn_capacity);
         send_mesh_packet_turn_or_log(
             mesh,
-            turn,
+            packets.by_ref().take(drained),
             drained,
             turn_capacity,
             &mut send_runs,
@@ -524,24 +517,12 @@ async fn send_mesh_packet_batch_turns(
 
         send_mesh_waiting_priority_packets(mesh, packet_rx, &mut send_runs).await;
 
-        if !pending.is_empty() || packet_rx.has_bulk_backlog() || drained >= FIPS_MESH_SEND_BURST {
+        if !packets.as_slice().is_empty()
+            || packet_rx.has_bulk_backlog()
+            || drained >= FIPS_MESH_SEND_BURST
+        {
             tokio::task::yield_now().await;
         }
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn coalesce_tun_bulk_turn_from_backlog(
-    packet_rx: &mut TunPipelineQueueRx,
-    pending: &mut TunPipelineBatch,
-    turn_capacity: usize,
-) {
-    let turn_capacity = turn_capacity.max(1);
-    while pending.len() < turn_capacity {
-        let Some(batch) = packet_rx.try_recv_bulk_batch() else {
-            break;
-        };
-        pending.extend(batch);
     }
 }
 

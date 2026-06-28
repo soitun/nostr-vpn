@@ -35,8 +35,8 @@
     use super::{
         BorrowedTunFd, TunPipelineLane, TunPipelinePacket, TunPipelineQueueTx,
         TunQueueSubmit, TunWriteBatch, parse_fips_tun_to_mesh_queue_cap,
-        coalesce_tun_bulk_turn_from_backlog, push_mesh_packet_for_tun, raw_write_packet_to_tun,
-        release_tun_bulk_packet_slots, submit_tun_packet_batch_to_mesh_queue,
+        push_mesh_packet_for_tun, raw_write_packet_to_tun, release_tun_bulk_packet_slots,
+        submit_tun_packet_batch_to_mesh_queue,
         submit_tun_packet_batch_to_mesh_queue_with_backpressure,
         tun_pipeline_packet_lane,
     };
@@ -859,98 +859,6 @@
         assert_eq!(queued.len(), 1);
         assert_eq!(rx.bulk_backlog_packets(), 0);
         assert!(!rx.has_bulk_backlog());
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[tokio::test]
-    async fn tun_to_mesh_bulk_turn_coalesces_queued_batches_to_capacity() {
-        let (tx, mut rx) = TunPipelineQueueTx::channel(4);
-        let first = test_ipv6_tcp_packet(0x18, 512);
-        let second = test_ipv6_tcp_packet(0x18, 513);
-        let third = test_ipv6_tcp_packet(0x18, 514);
-        let fourth = test_ipv6_tcp_packet(0x18, 515);
-
-        assert_eq!(
-            submit_tun_packet_batch_to_mesh_queue(
-                &tx,
-                vec![test_pipeline_packet(first.clone())],
-            ),
-            TunQueueSubmit::Enqueued
-        );
-        assert_eq!(
-            submit_tun_packet_batch_to_mesh_queue(
-                &tx,
-                vec![
-                    test_pipeline_packet(second.clone()),
-                    test_pipeline_packet(third.clone()),
-                ],
-            ),
-            TunQueueSubmit::Enqueued
-        );
-        assert_eq!(
-            submit_tun_packet_batch_to_mesh_queue(
-                &tx,
-                vec![test_pipeline_packet(fourth.clone())],
-            ),
-            TunQueueSubmit::Enqueued
-        );
-
-        let mut turn = rx.recv().await.expect("first bulk batch");
-        assert_eq!(turn.len(), 1);
-        assert_eq!(rx.bulk_backlog_packets(), 3);
-
-        coalesce_tun_bulk_turn_from_backlog(&mut rx, &mut turn, 4);
-
-        assert_eq!(
-            turn.iter()
-                .map(|packet| packet.bytes.clone())
-                .collect::<Vec<_>>(),
-            vec![first, second, third, fourth]
-        );
-        assert_eq!(rx.bulk_backlog_packets(), 0);
-        assert!(rx.bulk.try_recv().is_err());
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[tokio::test]
-    async fn tun_to_mesh_bulk_turn_coalescing_stops_when_turn_is_full() {
-        let (tx, mut rx) = TunPipelineQueueTx::channel(3);
-        let first = test_ipv6_tcp_packet(0x18, 512);
-        let second = test_ipv6_tcp_packet(0x18, 513);
-        let third = test_ipv6_tcp_packet(0x18, 514);
-
-        assert_eq!(
-            submit_tun_packet_batch_to_mesh_queue(
-                &tx,
-                vec![
-                    test_pipeline_packet(first.clone()),
-                    test_pipeline_packet(second.clone()),
-                ],
-            ),
-            TunQueueSubmit::Enqueued
-        );
-        assert_eq!(
-            submit_tun_packet_batch_to_mesh_queue(
-                &tx,
-                vec![test_pipeline_packet(third.clone())],
-            ),
-            TunQueueSubmit::Enqueued
-        );
-
-        let mut turn = rx.recv().await.expect("first bulk batch");
-        assert_eq!(turn.len(), 2);
-        assert_eq!(rx.bulk_backlog_packets(), 1);
-
-        coalesce_tun_bulk_turn_from_backlog(&mut rx, &mut turn, 2);
-
-        assert_eq!(turn.len(), 2);
-        assert_eq!(turn[0].bytes, first);
-        assert_eq!(turn[1].bytes, second);
-        assert_eq!(rx.bulk_backlog_packets(), 1);
-
-        let queued = rx.recv().await.expect("remaining bulk batch");
-        assert_eq!(queued.len(), 1);
-        assert_eq!(queued[0].bytes, third);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
