@@ -170,27 +170,14 @@ impl FipsPrivateMeshRuntime {
         let mesh = self.mesh.load();
         let peer_identities = self.peer_identities.load();
         let mut routed_packets = 0usize;
-        let mut cached_route: Option<TunEndpointRouteCache> = None;
-        let packet_debug = fips_unix_packet_debug_enabled();
 
         {
             let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRoute);
             for packet in packets {
                 let class = packet.class;
                 let destination = packet.destination;
+                let packet_debug = fips_unix_packet_debug_enabled();
                 let debug_description = packet_debug.then(|| describe_ip_packet(&packet.bytes));
-                if !packet_debug
-                    && let Some(destination) = destination
-                    && let Some(route) = cached_route
-                        .as_ref()
-                        .filter(|route| route.destination == destination)
-                {
-                    routed_packets += 1;
-                    let payload = FipsEndpointPayload::from_classified(packet.bytes, class);
-                    Self::push_endpoint_send_run_for_route(runs, route, payload);
-                    continue;
-                }
-
                 let outgoing = match destination {
                     Some(destination) => mesh
                         .route_outbound_packet_owned_with_peer_to_destination(
@@ -213,34 +200,16 @@ impl FipsPrivateMeshRuntime {
                         describe_ip_packet(&outgoing.bytes)
                     );
                 }
-                let participant_fallback = outgoing.participant_pubkey;
                 let participant_key = outgoing.participant_pubkey_bytes.copied();
-                let endpoint_node_addr = outgoing.endpoint_node_addr;
                 let payload = FipsEndpointPayload::from_classified(outgoing.bytes, class);
-                if !packet_debug && let Some(destination) = destination {
-                    let Some(route) = Self::tun_endpoint_route_cache(
-                        &peer_identities,
-                        destination,
-                        participant_fallback,
-                        participant_key,
-                        endpoint_node_addr,
-                    ) else {
-                        cached_route = None;
-                        continue;
-                    };
-                    Self::push_endpoint_send_run_for_route(runs, &route, payload);
-                    cached_route = Some(route);
-                } else {
-                    cached_route = None;
-                    Self::push_endpoint_send_run(
-                        runs,
-                        &peer_identities,
-                        participant_fallback,
-                        participant_key,
-                        endpoint_node_addr,
-                        payload,
-                    );
-                }
+                Self::push_endpoint_send_run(
+                    runs,
+                    &peer_identities,
+                    outgoing.participant_pubkey,
+                    participant_key,
+                    outgoing.endpoint_node_addr,
+                    payload,
+                );
             }
         }
         drop(peer_identities);
@@ -259,41 +228,6 @@ impl FipsPrivateMeshRuntime {
         self.send_endpoint_send_runs(runs.drain(..)).await
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn tun_endpoint_route_cache(
-        peer_identities: &FipsPeerIdentityMap,
-        destination: IpAddr,
-        participant_fallback: &str,
-        participant_key: Option<ParticipantPubkeyBytes>,
-        endpoint_node_addr: &[u8; 16],
-    ) -> Option<TunEndpointRouteCache> {
-        let identity =
-            endpoint_identity_for_send(peer_identities, participant_key.as_ref(), endpoint_node_addr)?;
-        Some(TunEndpointRouteCache {
-            destination,
-            participant_fallback: participant_key
-                .is_none()
-                .then(|| participant_fallback.to_string()),
-            participant_key,
-            identity,
-        })
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn push_endpoint_send_run_for_route(
-        runs: &mut Vec<FipsEndpointSendRun>,
-        route: &TunEndpointRouteCache,
-        payload: FipsEndpointPayload,
-    ) {
-        Self::push_endpoint_send_run_for_identity(
-            runs,
-            route.participant_fallback.as_deref(),
-            route.participant_key,
-            route.identity,
-            payload,
-        );
-    }
-
     fn push_endpoint_send_run(
         runs: &mut Vec<FipsEndpointSendRun>,
         peer_identities: &FipsPeerIdentityMap,
@@ -302,45 +236,31 @@ impl FipsPrivateMeshRuntime {
         endpoint_node_addr: &[u8; 16],
         payload: FipsEndpointPayload,
     ) {
+        let bytes_len = payload.len();
+
         if let Some(identity) = endpoint_identity_for_send(
             peer_identities,
             participant_key.as_ref(),
             endpoint_node_addr,
         ) {
-            Self::push_endpoint_send_run_for_identity(
-                runs,
-                participant_key.is_none().then_some(participant_pubkey),
+            if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
+                && run.matches(identity, participant_key, participant_pubkey)
+            {
+                run.bytes_len += bytes_len;
+                run.payloads.push(payload);
+                return;
+            }
+
+            runs.push(FipsEndpointSendRun::Identity(FipsEndpointIdentitySendRun {
+                participant_fallback: participant_key
+                    .is_none()
+                    .then(|| participant_pubkey.to_string()),
                 participant_key,
                 identity,
-                payload,
-            );
+                payloads: vec![payload],
+                bytes_len,
+            }));
         }
-    }
-
-    fn push_endpoint_send_run_for_identity(
-        runs: &mut Vec<FipsEndpointSendRun>,
-        participant_fallback: Option<&str>,
-        participant_key: Option<ParticipantPubkeyBytes>,
-        identity: PeerIdentity,
-        payload: FipsEndpointPayload,
-    ) {
-        let bytes_len = payload.len();
-
-        if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
-            && run.matches(identity, participant_key, participant_fallback)
-        {
-            run.bytes_len += bytes_len;
-            run.payloads.push(payload);
-            return;
-        }
-
-        runs.push(FipsEndpointSendRun::Identity(FipsEndpointIdentitySendRun {
-            participant_fallback: participant_fallback.map(str::to_string),
-            participant_key,
-            identity,
-            payloads: vec![payload],
-            bytes_len,
-        }));
     }
 
     async fn send_endpoint_send_runs<I>(&self, runs: I) -> Result<usize>

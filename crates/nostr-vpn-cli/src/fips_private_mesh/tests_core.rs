@@ -614,56 +614,6 @@
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[test]
-    fn endpoint_route_cache_appends_same_destination_to_existing_send_run() {
-        let participant = Keys::generate().public_key().to_hex();
-        let participant_key = participant_pubkey_bytes(&participant).expect("participant key");
-        let endpoint_npub = Keys::generate().public_key().to_bech32().expect("npub");
-        let identity = PeerIdentity::from_npub(&endpoint_npub).expect("peer identity");
-        let endpoint_node_addr = *identity.node_addr().as_bytes();
-        let destination = IpAddr::V4(Ipv4Addr::new(10, 44, 22, 44));
-        let mut identity_map = FipsPeerIdentityMap::default();
-        identity_map
-            .by_endpoint_node_addr
-            .insert(endpoint_node_addr, identity);
-        let route = FipsPrivateMeshRuntime::tun_endpoint_route_cache(
-            &identity_map,
-            destination,
-            &participant,
-            Some(participant_key),
-            &endpoint_node_addr,
-        )
-        .expect("cached endpoint route");
-        let mut runs = Vec::new();
-
-        FipsPrivateMeshRuntime::push_endpoint_send_run_for_route(
-            &mut runs,
-            &route,
-            FipsEndpointPayload::new(vec![1]),
-        );
-        FipsPrivateMeshRuntime::push_endpoint_send_run_for_route(
-            &mut runs,
-            &route,
-            FipsEndpointPayload::new(vec![2]),
-        );
-
-        assert_eq!(route.destination, destination);
-        assert!(route.participant_fallback.is_none());
-        assert_eq!(route.participant_key, Some(participant_key));
-        assert_eq!(route.identity, identity);
-        assert_eq!(runs.len(), 1);
-        let FipsEndpointSendRun::Identity(run) = &runs[0];
-        assert_eq!(run.identity, identity);
-        assert_eq!(run.bytes_len, 2);
-        let payloads = run
-            .payloads
-            .iter()
-            .map(|payload| payload.as_slice().to_vec())
-            .collect::<Vec<_>>();
-        assert_eq!(payloads, vec![vec![1], vec![2]]);
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn test_ipv6_tcp_packet(flags: u8, tcp_payload_len: usize) -> Vec<u8> {
         let tcp_len = 20 + tcp_payload_len;
         let mut packet = vec![0u8; 40 + tcp_len];
