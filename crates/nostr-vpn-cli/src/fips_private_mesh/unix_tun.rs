@@ -206,7 +206,7 @@ fn spawn_tun_read_task(
         let mut batch = Vec::with_capacity(FIPS_TUN_READ_BURST);
         loop {
             if !packet_tx
-                .wait_for_tun_read_bulk_headroom(FIPS_TUN_READ_BURST)
+                .wait_for_tun_read_bulk_headroom(1)
                 .await
             {
                 return;
