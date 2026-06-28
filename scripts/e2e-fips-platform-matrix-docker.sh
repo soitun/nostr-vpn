@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Short Linux/docker platform-split matrix for FIPS dataplane changes.
 #
-# This wraps e2e-fips-perf-regression-docker.sh so connected-UDP, worker-count,
+# This wraps e2e-fips-perf-regression-docker.sh so default-path, worker-count,
 # and backpressure knobs are exercised through the same direct-path and
 # TCP/ping no-wedge assertions. It is intentionally local/docker coverage only;
 # real Mac-to-Mac Wi-Fi/screenshare soak remains operator-local.
@@ -9,7 +9,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${NVPN_PLATFORM_MATRIX_OUTPUT_DIR:-$ROOT_DIR/artifacts/fips-platform-matrix/$(date -u +%Y%m%dT%H%M%SZ)}"
-SCENARIO_CSV="${NVPN_PLATFORM_MATRIX_SCENARIOS:-connected-udp-on,connected-udp-off,single-encrypt-worker,tight-send-backpressure,tight-backpressure}"
+SCENARIO_CSV="${NVPN_PLATFORM_MATRIX_SCENARIOS:-default,single-encrypt-worker,tight-send-backpressure,tight-backpressure}"
 PROJECT_PREFIX="${NVPN_PLATFORM_MATRIX_PROJECT_PREFIX:-nostr-vpn-e2e-fips-matrix}"
 FAIL_FAST="${NVPN_PLATFORM_MATRIX_FAIL_FAST:-0}"
 ATTEMPTS="${NVPN_PLATFORM_MATRIX_ATTEMPTS:-1}"
@@ -63,31 +63,28 @@ sha256_file() {
 scenario_extra_env() {
   local scenario="$1"
   case "$scenario" in
-    connected-udp-on)
-      printf 'FIPS_CONNECTED_UDP=1'
-      ;;
-    connected-udp-off)
-      printf 'FIPS_CONNECTED_UDP=0'
+    default)
+      :
       ;;
     single-encrypt-worker)
-      printf 'FIPS_CONNECTED_UDP=1 FIPS_ENCRYPT_WORKERS=1 FIPS_DECRYPT_WORKERS=0'
+      printf 'FIPS_ENCRYPT_WORKERS=1 FIPS_DECRYPT_WORKERS=0'
       ;;
     tight-send-backpressure)
-      printf 'FIPS_CONNECTED_UDP=1 FIPS_WORKER_CHANNEL_CAP=%q FIPS_DECRYPT_WORKER_CHANNEL_CAP=%q FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=%q FIPS_SEND_BACKPRESSURE_DROP_AFTER=%q' \
+      printf 'FIPS_WORKER_CHANNEL_CAP=%q FIPS_DECRYPT_WORKER_CHANNEL_CAP=%q FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=%q FIPS_SEND_BACKPRESSURE_DROP_AFTER=%q' \
         "${NVPN_PLATFORM_MATRIX_TIGHT_WORKER_CHANNEL_CAP:-4}" \
         "${NVPN_PLATFORM_MATRIX_TIGHT_SEND_DECRYPT_WORKER_CHANNEL_CAP:-32768}" \
         "${NVPN_PLATFORM_MATRIX_BACKPRESSURE_SLEEP_MICROS:-500}" \
         "${NVPN_PLATFORM_MATRIX_BACKPRESSURE_DROP_AFTER:-0}"
       ;;
     tight-backpressure)
-      printf 'FIPS_CONNECTED_UDP=1 FIPS_WORKER_CHANNEL_CAP=%q FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=%q FIPS_SEND_BACKPRESSURE_DROP_AFTER=%q' \
+      printf 'FIPS_WORKER_CHANNEL_CAP=%q FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=%q FIPS_SEND_BACKPRESSURE_DROP_AFTER=%q' \
         "${NVPN_PLATFORM_MATRIX_TIGHT_WORKER_CHANNEL_CAP:-4}" \
         "${NVPN_PLATFORM_MATRIX_BACKPRESSURE_SLEEP_MICROS:-500}" \
         "${NVPN_PLATFORM_MATRIX_BACKPRESSURE_DROP_AFTER:-0}"
       ;;
     *)
       echo "unknown platform matrix scenario: $scenario" >&2
-      echo "known scenarios: connected-udp-on, connected-udp-off, single-encrypt-worker, tight-send-backpressure, tight-backpressure" >&2
+      echo "known scenarios: default, single-encrypt-worker, tight-send-backpressure, tight-backpressure" >&2
       return 1
       ;;
   esac
@@ -101,8 +98,10 @@ for raw_scenario in "${scenarios[@]}"; do
   [[ -z "$scenario" ]] && continue
 
   scenario_env="$(scenario_extra_env "$scenario")"
-  if [[ -n "$EXTRA_ENV" ]]; then
+  if [[ -n "$scenario_env" && -n "$EXTRA_ENV" ]]; then
     scenario_env="$scenario_env $EXTRA_ENV"
+  elif [[ -n "$EXTRA_ENV" ]]; then
+    scenario_env="$EXTRA_ENV"
   fi
 
   name="$(safe_name "$scenario")"

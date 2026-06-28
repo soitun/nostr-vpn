@@ -50,7 +50,7 @@ test_tight_send_backpressure_env_is_isolated_from_decrypt_cap() {
   "$MATRIX_SCRIPT" >"$dir/stdout"
 
   got="$(cat "$dir/env.log")"
-  want="FIPS_CONNECTED_UDP=1 FIPS_WORKER_CHANNEL_CAP=5 FIPS_DECRYPT_WORKER_CHANNEL_CAP=1234 FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=600 FIPS_SEND_BACKPRESSURE_DROP_AFTER=2"
+  want="FIPS_WORKER_CHANNEL_CAP=5 FIPS_DECRYPT_WORKER_CHANNEL_CAP=1234 FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=600 FIPS_SEND_BACKPRESSURE_DROP_AFTER=2"
   assert_eq "$got" "$want" "tight-send-backpressure runner env"
 
   summary_env="$(awk -F '\t' 'NR == 2 { print $7 }' "$dir/out/summary.tsv")"
@@ -59,7 +59,7 @@ test_tight_send_backpressure_env_is_isolated_from_decrypt_cap() {
   rm -rf "$dir"
 }
 
-test_legacy_tight_backpressure_keeps_combined_worker_pressure() {
+test_tight_backpressure_keeps_combined_worker_pressure() {
   local dir runner got want
   dir="$(mktemp -d)"
   runner="$dir/fake-runner.sh"
@@ -74,7 +74,7 @@ test_legacy_tight_backpressure_keeps_combined_worker_pressure() {
   "$MATRIX_SCRIPT" >"$dir/stdout"
 
   got="$(cat "$dir/env.log")"
-  want="FIPS_CONNECTED_UDP=1 FIPS_WORKER_CHANNEL_CAP=6 FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=700 FIPS_SEND_BACKPRESSURE_DROP_AFTER=0"
+  want="FIPS_WORKER_CHANNEL_CAP=6 FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=700 FIPS_SEND_BACKPRESSURE_DROP_AFTER=0"
   assert_eq "$got" "$want" "tight-backpressure runner env"
 
   rm -rf "$dir"
@@ -94,7 +94,7 @@ test_default_scenarios_include_send_and_combined_backpressure() {
   scenarios="$(awk -F '\t' 'NR > 1 { csv = csv sep $1; sep = "," } END { print csv }' "$dir/out/summary.tsv")"
   assert_eq \
     "$scenarios" \
-    "connected-udp-on,connected-udp-off,single-encrypt-worker,tight-send-backpressure,tight-backpressure" \
+    "default,single-encrypt-worker,tight-send-backpressure,tight-backpressure" \
     "default scenario order"
 
   rm -rf "$dir"
@@ -134,7 +134,7 @@ test_ping_count_default_and_override_are_forwarded() {
   NVPN_FAKE_RUNNER_PING_LOG="$dir/ping-default.log" \
   NVPN_PLATFORM_MATRIX_RUNNER="$runner" \
   NVPN_PLATFORM_MATRIX_OUTPUT_DIR="$dir/out-default" \
-  NVPN_PLATFORM_MATRIX_SCENARIOS=connected-udp-on \
+  NVPN_PLATFORM_MATRIX_SCENARIOS=default \
   "$MATRIX_SCRIPT" >"$dir/stdout-default"
 
   got="$(cat "$dir/ping-default.log")"
@@ -144,7 +144,7 @@ test_ping_count_default_and_override_are_forwarded() {
   NVPN_FAKE_RUNNER_PING_LOG="$dir/ping-override.log" \
   NVPN_PLATFORM_MATRIX_RUNNER="$runner" \
   NVPN_PLATFORM_MATRIX_OUTPUT_DIR="$dir/out-override" \
-  NVPN_PLATFORM_MATRIX_SCENARIOS=connected-udp-on \
+  NVPN_PLATFORM_MATRIX_SCENARIOS=default \
   NVPN_PLATFORM_MATRIX_PING_COUNT=17 \
   "$MATRIX_SCRIPT" >"$dir/stdout-override"
 
@@ -155,7 +155,7 @@ test_ping_count_default_and_override_are_forwarded() {
 }
 
 test_tight_send_backpressure_env_is_isolated_from_decrypt_cap
-test_legacy_tight_backpressure_keeps_combined_worker_pressure
+test_tight_backpressure_keeps_combined_worker_pressure
 test_default_scenarios_include_send_and_combined_backpressure
 test_unknown_scenario_lists_tight_send_backpressure
 test_ping_count_default_and_override_are_forwarded

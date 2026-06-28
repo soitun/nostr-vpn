@@ -13,7 +13,7 @@
 # Benchmark-compatible daemon profiles:
 #   NVPN_DOCKER_DATAPLANE_PROFILE=linux-vnet-lan
 #   NVPN_DOCKER_PLACEMENT_PROFILE=worker-open
-#   NVPN_SOAK_EXTRA_ENV="FIPS_CONNECTED_UDP_RECV_BUF_BYTES=67108864 ..."
+#   NVPN_SOAK_EXTRA_ENV="FIPS_WORKER_CHANNEL_CAP=32768 ..."
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -68,7 +68,6 @@ ALLOW_NON_DIRECT="${NVPN_SOAK_ALLOW_NON_DIRECT:-0}"
 ALLOW_QUEUE_EVENTS="${NVPN_SOAK_ALLOW_QUEUE_EVENTS:-${NVPN_SOAK_ALLOW_QUEUE_DROPS:-0}}"
 ALLOW_QUEUE_WAIT="${NVPN_SOAK_ALLOW_QUEUE_WAIT:-$ALLOW_QUEUE_EVENTS}"
 FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
-FIPS_CONNECTED_UDP="${NVPN_SOAK_CONNECTED_UDP:-1}"
 FIPS_ENCRYPT_WORKERS="${NVPN_SOAK_ENCRYPT_WORKERS:-}"
 FIPS_DECRYPT_WORKERS="${NVPN_SOAK_DECRYPT_WORKERS:-}"
 FIPS_WORKER_CHANNEL_CAP="${NVPN_SOAK_WORKER_CHANNEL_CAP:-}"
@@ -255,7 +254,7 @@ validate_daemon_extra_env() {
 daemon_env() {
   local env_string profile_env
   profile_env="$(docker_bench_effective_extra_env)"
-  env_string="$(append_env_assignment FIPS_CONNECTED_UDP "$FIPS_CONNECTED_UDP")"
+  env_string=""
   env_string+="$(append_env_assignment FIPS_ENCRYPT_WORKERS "$FIPS_ENCRYPT_WORKERS")"
   env_string+="$(append_env_assignment FIPS_DECRYPT_WORKERS "$FIPS_DECRYPT_WORKERS")"
   env_string+="$(append_env_assignment FIPS_WORKER_CHANNEL_CAP "$FIPS_WORKER_CHANNEL_CAP")"
