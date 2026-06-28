@@ -17,7 +17,6 @@ impl FipsPrivateTunnelRuntime {
             config.mesh_mtu,
             config.nostr_discovery_policy,
             config.open_discovery_max_pending,
-            Some(&config.connected_udp),
         );
         let mesh = Arc::new(
             FipsPrivateMeshRuntime::bind_with_config(

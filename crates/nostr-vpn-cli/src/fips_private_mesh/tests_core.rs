@@ -47,7 +47,6 @@
         TransportInstances, UdpConfig,
     };
     use nostr_sdk::prelude::{Keys, ToBech32};
-    use nostr_vpn_core::config::ConnectedUdpConfig;
     use nostr_vpn_core::config::{AppConfig, PendingOutboundJoinRequest, derive_mesh_tunnel_ip};
     use nostr_vpn_core::data_plane::MeshPeerStatus;
     use nostr_vpn_core::fips_control::{

@@ -113,7 +113,6 @@ fn fips_endpoint_config(
         mesh_mtu,
         nostr_discovery_policy,
         FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-        None,
     )
 }
 
@@ -123,10 +122,8 @@ fn fips_endpoint_config_with_open_discovery_limit(
     mesh_mtu: MeshMtu,
     nostr_discovery_policy: NostrDiscoveryPolicy,
     open_discovery_max_pending: usize,
-    connected_udp: Option<&ConnectedUdpConfig>,
 ) -> Config {
     let mut config = Config::new();
-    apply_connected_udp_config(&mut config, connected_udp);
     config.node.control.enabled = false;
     // App mesh peers may be routable only through already-connected
     // neighbors when direct NAT traversal fails. Reply-learned routing lets
@@ -250,18 +247,6 @@ fn fips_endpoint_config_with_open_discovery_limit(
         })
         .collect();
     config
-}
-
-fn apply_connected_udp_config(config: &mut Config, connected_udp: Option<&ConnectedUdpConfig>) {
-    let Some(connected_udp) = connected_udp else {
-        return;
-    };
-    if let Some(enabled) = connected_udp.enabled {
-        config.node.connected_udp.enabled = enabled;
-    }
-    if let Some(fd_reserve) = connected_udp.fd_reserve {
-        config.node.connected_udp.fd_reserve = fd_reserve;
-    }
 }
 
 fn fips_endpoint_peers_from_mesh(
@@ -426,7 +411,6 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) paid_route_payment_relays: Vec<String>,
     pub(crate) wireguard_exit: WireGuardExitConfig,
     pub(crate) exit_node_leak_protection: bool,
-    connected_udp: ConnectedUdpConfig,
     nostr_discovery_enabled: bool,
     nostr_discovery_policy: NostrDiscoveryPolicy,
     open_discovery_max_pending: usize,

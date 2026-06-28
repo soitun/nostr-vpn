@@ -21,7 +21,6 @@ impl FipsPrivateTunnelRuntime {
             config.mesh_mtu,
             config.nostr_discovery_policy,
             config.open_discovery_max_pending,
-            Some(&config.connected_udp),
         );
         let local_allowed_ips = config.local_allowed_ips();
         let mesh = Arc::new(

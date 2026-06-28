@@ -209,7 +209,6 @@ impl FipsPrivateTunnelConfig {
             paid_route_payment_relays: Vec::new(),
             wireguard_exit: app.wireguard_exit.clone(),
             exit_node_leak_protection: app.exit_node_leak_protection,
-            connected_udp: app.node.connected_udp.clone(),
             nostr_discovery_enabled: app.fips_nostr_discovery_enabled,
             nostr_discovery_policy,
             open_discovery_max_pending,
