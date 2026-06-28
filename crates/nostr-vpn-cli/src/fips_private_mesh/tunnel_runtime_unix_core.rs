@@ -57,13 +57,8 @@ impl FipsPrivateTunnelRuntime {
         let mesh_send_task = {
             let mesh = Arc::clone(&mesh);
             tokio::spawn(async move {
-                while let Some(mut batch) = packet_rx.recv().await {
-                    let drained = batch.len();
-                    send_mesh_packet_batch_or_log(&mesh, &mut batch).await;
-
-                    if packet_rx.has_bulk_backlog() || drained >= FIPS_MESH_SEND_BURST {
-                        tokio::task::yield_now().await;
-                    }
+                while let Some(batch) = packet_rx.recv().await {
+                    send_mesh_packet_batch_turns(&mesh, &mut packet_rx, batch).await;
                 }
             })
         };
@@ -492,4 +487,117 @@ impl FipsPrivateTunnelRuntime {
         self.exit_node_runtime = crate::MacosExitNodeRuntime::default();
     }
 
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn send_mesh_packet_batch_turns(
+    mesh: &FipsPrivateMeshRuntime,
+    packet_rx: &mut TunPipelineQueueRx,
+    batch: TunPipelineBatch,
+) {
+    let mut send_runs = Vec::new();
+    if batch.first().map(TunPipelinePacket::lane) == Some(TunPipelineLane::Priority) {
+        send_mesh_packet_priority_turns(mesh, batch, &mut send_runs).await;
+        return;
+    }
+
+    let mut packets = batch.into_iter();
+    while !packets.as_slice().is_empty() {
+        send_mesh_waiting_priority_packets(mesh, packet_rx, &mut send_runs).await;
+
+        let turn_capacity = mesh_send_bulk_turn_capacity(packet_rx);
+        let drained = packets.as_slice().len().min(turn_capacity);
+        send_mesh_packet_turn_or_log(
+            mesh,
+            packets.by_ref().take(drained),
+            drained,
+            turn_capacity,
+            &mut send_runs,
+        )
+        .await;
+
+        send_mesh_waiting_priority_packets(mesh, packet_rx, &mut send_runs).await;
+
+        if !packets.as_slice().is_empty()
+            || packet_rx.has_bulk_backlog()
+            || drained >= FIPS_MESH_SEND_BURST
+        {
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn send_mesh_waiting_priority_packets(
+    mesh: &FipsPrivateMeshRuntime,
+    packet_rx: &mut TunPipelineQueueRx,
+    send_runs: &mut Vec<FipsEndpointSendRun>,
+) {
+    while let Some(priority) = packet_rx.try_recv_priority() {
+        send_mesh_packet_priority_turns(mesh, priority, send_runs).await;
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn send_mesh_packet_priority_turns(
+    mesh: &FipsPrivateMeshRuntime,
+    batch: TunPipelineBatch,
+    send_runs: &mut Vec<FipsEndpointSendRun>,
+) {
+    let mut packets = batch.into_iter();
+    while !packets.as_slice().is_empty() {
+        let drained = packets.as_slice().len().min(FIPS_MESH_SEND_BURST);
+        send_mesh_packet_turn_or_log(
+            mesh,
+            packets.by_ref().take(drained),
+            drained,
+            FIPS_MESH_SEND_BURST,
+            send_runs,
+        )
+        .await;
+
+        if !packets.as_slice().is_empty() || drained >= FIPS_MESH_SEND_BURST {
+            tokio::task::yield_now().await;
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn mesh_send_bulk_turn_capacity(packet_rx: &TunPipelineQueueRx) -> usize {
+    let backlog = packet_rx.bulk_backlog_packets();
+    let high_backlog = (packet_rx.bulk_backlog_capacity() / 2).max(1);
+    if backlog >= high_backlog {
+        FIPS_MESH_SEND_HIGH_BACKLOG_BURST
+    } else if backlog > 0 {
+        FIPS_MESH_SEND_BACKLOG_BURST
+    } else {
+        FIPS_MESH_SEND_BURST
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn send_mesh_packet_turn_or_log<I>(
+    mesh: &FipsPrivateMeshRuntime,
+    packets: I,
+    packet_count: usize,
+    turn_capacity: usize,
+    send_runs: &mut Vec<FipsEndpointSendRun>,
+) where
+    I: IntoIterator<Item = TunPipelinePacket>,
+{
+    let packets = packets.into_iter().map(|packet| {
+        crate::pipeline_profile::record_since(
+            crate::pipeline_profile::Stage::TunToMeshQueueWait,
+            packet.queued_at,
+        );
+        packet
+    });
+
+    let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshSend);
+    if let Err(error) = mesh
+        .send_tun_pipeline_packet_turn(packets, packet_count, turn_capacity, send_runs)
+        .await
+    {
+        eprintln!("fips: failed to send tunnel packet: {error}");
+    }
 }

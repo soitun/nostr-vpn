@@ -20,6 +20,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SUMMARY_LIB="$ROOT_DIR/scripts/lib-docker-bench-summary.sh"
 # shellcheck source=scripts/lib-docker-bench-summary.sh
 source "$SUMMARY_LIB"
+docker_bench_apply_local_fips_patch_default
 PROJECT_NAME="${PROJECT_NAME:-nostr-vpn-soak-fips}"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml")
 

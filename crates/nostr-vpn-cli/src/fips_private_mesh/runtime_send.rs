@@ -140,19 +140,40 @@ impl FipsPrivateMeshRuntime {
         &self,
         packets: &mut Vec<TunPipelinePacket>,
     ) -> Result<usize> {
-        if packets.is_empty() {
+        let input_packets = packets.len();
+        let mut runs = Vec::new();
+        self.send_tun_pipeline_packet_turn(
+            packets.drain(..),
+            input_packets,
+            FIPS_MESH_SEND_BURST,
+            &mut runs,
+        )
+        .await
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    async fn send_tun_pipeline_packet_turn<I>(
+        &self,
+        packets: I,
+        input_packets: usize,
+        turn_capacity: usize,
+        runs: &mut Vec<FipsEndpointSendRun>,
+    ) -> Result<usize>
+    where
+        I: IntoIterator<Item = TunPipelinePacket>,
+    {
+        if input_packets == 0 {
             return Ok(0);
         }
 
-        let input_packets = packets.len();
+        debug_assert!(runs.is_empty());
         let mesh = self.mesh.load();
         let peer_identities = self.peer_identities.load();
-        let mut runs = Vec::new();
         let mut routed_packets = 0usize;
 
         {
             let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRoute);
-            for packet in packets.drain(..) {
+            for packet in packets {
                 let class = packet.class;
                 let packet_debug = fips_unix_packet_debug_enabled();
                 let debug_description = packet_debug.then(|| describe_ip_packet(&packet.bytes));
@@ -173,7 +194,7 @@ impl FipsPrivateMeshRuntime {
                 let participant_key = outgoing.participant_pubkey_bytes.copied();
                 let payload = FipsEndpointPayload::from_classified(outgoing.bytes, class);
                 Self::push_endpoint_send_run(
-                    &mut runs,
+                    runs,
                     &peer_identities,
                     outgoing.participant_pubkey,
                     participant_key,
@@ -190,12 +211,12 @@ impl FipsPrivateMeshRuntime {
             input_packets,
             routed_packets,
             run_count,
-            FIPS_MESH_SEND_BURST,
+            turn_capacity,
         );
 
         let _t =
             crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
-        self.send_endpoint_send_runs(runs).await
+        self.send_endpoint_send_runs(runs.drain(..)).await
     }
 
     fn push_endpoint_send_run(
@@ -233,7 +254,10 @@ impl FipsPrivateMeshRuntime {
         }
     }
 
-    async fn send_endpoint_send_runs(&self, runs: Vec<FipsEndpointSendRun>) -> Result<usize> {
+    async fn send_endpoint_send_runs<I>(&self, runs: I) -> Result<usize>
+    where
+        I: IntoIterator<Item = FipsEndpointSendRun>,
+    {
         let mut sent = 0usize;
         for run in runs {
             match run {

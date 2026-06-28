@@ -300,24 +300,6 @@ fn spawn_tun_read_task(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn send_mesh_packet_batch_or_log(
-    mesh: &FipsPrivateMeshRuntime,
-    packets: &mut Vec<TunPipelinePacket>,
-) {
-    for packet in packets.iter() {
-        crate::pipeline_profile::record_since(
-            crate::pipeline_profile::Stage::TunToMeshQueueWait,
-            packet.queued_at,
-        );
-    }
-
-    let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshSend);
-    if let Err(error) = mesh.send_tun_pipeline_packet_batch(packets).await {
-        eprintln!("fips: failed to send tunnel packet: {error}");
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn fips_blocking_mesh_recv_enabled() -> bool {
     let value = std::env::var("NVPN_FIPS_BLOCKING_MESH_RECV").ok();
     fips_blocking_mesh_recv_enabled_from_env(value.as_deref())

@@ -204,6 +204,21 @@ impl TunPipelineQueueTx {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TunPipelineQueueRx {
+    fn try_recv_priority(&mut self) -> Option<TunPipelineBatch> {
+        if self.priority_closed {
+            return None;
+        }
+
+        match self.priority.try_recv() {
+            Ok(batch) => Some(batch),
+            Err(mpsc::error::TryRecvError::Empty) => None,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.priority_closed = true;
+                None
+            }
+        }
+    }
+
     fn bulk_backlog_packets(&self) -> usize {
         self.bulk_queued_packets
             .load(std::sync::atomic::Ordering::Relaxed)

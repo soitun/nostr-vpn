@@ -105,6 +105,10 @@ const FIPS_TUN_READ_BURST: usize = 64;
 const FIPS_TUN_WRITE_BURST: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_SEND_BURST: usize = 64;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const FIPS_MESH_SEND_BACKLOG_BURST: usize = 16;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const FIPS_MESH_SEND_HIGH_BACKLOG_BURST: usize = 8;
 #[cfg(any(target_os = "macos", test))]
 const MACOS_UDP_SEND_BUF_MIN_MULTIPLIER: usize = 4;
 const MIN_FIPS_UDP_SEND_BUF_SIZE: usize = 64 * 1024;
