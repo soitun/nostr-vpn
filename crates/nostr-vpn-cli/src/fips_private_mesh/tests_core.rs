@@ -35,9 +35,8 @@
     use super::{
         BorrowedTunFd, TunPipelineLane, TunPipelinePacket, TunPipelineQueueTx,
         TunQueueSubmit, TunWriteBatch, parse_fips_tun_to_mesh_queue_cap,
-        coalesce_discardable_tun_bulk_turn_from_backlog, push_mesh_packet_for_tun,
-        raw_write_packet_to_tun, release_tun_bulk_packet_slots,
-        submit_tun_packet_batch_to_mesh_queue,
+        coalesce_tun_bulk_turn_from_backlog, push_mesh_packet_for_tun, raw_write_packet_to_tun,
+        release_tun_bulk_packet_slots, submit_tun_packet_batch_to_mesh_queue,
         submit_tun_packet_batch_to_mesh_queue_with_backpressure,
         tun_pipeline_packet_lane,
     };
@@ -864,12 +863,12 @@
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
-    async fn tun_to_mesh_discardable_bulk_turn_coalesces_queued_batches_to_capacity() {
+    async fn tun_to_mesh_bulk_turn_coalesces_queued_batches_to_capacity() {
         let (tx, mut rx) = TunPipelineQueueTx::channel(4);
-        let first = test_ipv6_udp_packet(64);
-        let second = test_ipv6_udp_packet(65);
-        let third = test_ipv6_udp_packet(66);
-        let fourth = test_ipv6_udp_packet(67);
+        let first = test_ipv6_tcp_packet(0x18, 512);
+        let second = test_ipv6_tcp_packet(0x18, 513);
+        let third = test_ipv6_tcp_packet(0x18, 514);
+        let fourth = test_ipv6_tcp_packet(0x18, 515);
 
         assert_eq!(
             submit_tun_packet_batch_to_mesh_queue(
@@ -900,9 +899,7 @@
         assert_eq!(turn.len(), 1);
         assert_eq!(rx.bulk_backlog_packets(), 3);
 
-        assert!(
-            coalesce_discardable_tun_bulk_turn_from_backlog(&mut rx, &mut turn, 4).is_none()
-        );
+        coalesce_tun_bulk_turn_from_backlog(&mut rx, &mut turn, 4);
 
         assert_eq!(
             turn.iter()
@@ -916,11 +913,11 @@
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
-    async fn tun_to_mesh_discardable_bulk_turn_coalescing_stops_when_turn_is_full() {
+    async fn tun_to_mesh_bulk_turn_coalescing_stops_when_turn_is_full() {
         let (tx, mut rx) = TunPipelineQueueTx::channel(3);
-        let first = test_ipv6_udp_packet(64);
-        let second = test_ipv6_udp_packet(65);
-        let third = test_ipv6_udp_packet(66);
+        let first = test_ipv6_tcp_packet(0x18, 512);
+        let second = test_ipv6_tcp_packet(0x18, 513);
+        let third = test_ipv6_tcp_packet(0x18, 514);
 
         assert_eq!(
             submit_tun_packet_batch_to_mesh_queue(
@@ -944,9 +941,7 @@
         assert_eq!(turn.len(), 2);
         assert_eq!(rx.bulk_backlog_packets(), 1);
 
-        assert!(
-            coalesce_discardable_tun_bulk_turn_from_backlog(&mut rx, &mut turn, 2).is_none()
-        );
+        coalesce_tun_bulk_turn_from_backlog(&mut rx, &mut turn, 2);
 
         assert_eq!(turn.len(), 2);
         assert_eq!(turn[0].bytes, first);
@@ -956,76 +951,6 @@
         let queued = rx.recv().await.expect("remaining bulk batch");
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].bytes, third);
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[tokio::test]
-    async fn tun_to_mesh_discardable_bulk_turn_defers_reliable_bulk_batch() {
-        let (tx, mut rx) = TunPipelineQueueTx::channel(2);
-        let discardable = test_ipv6_udp_packet(64);
-        let reliable = test_ipv6_tcp_packet(0x18, 512);
-
-        assert_eq!(
-            submit_tun_packet_batch_to_mesh_queue(
-                &tx,
-                vec![test_pipeline_packet(discardable.clone())],
-            ),
-            TunQueueSubmit::Enqueued
-        );
-        assert_eq!(
-            submit_tun_packet_batch_to_mesh_queue(
-                &tx,
-                vec![test_pipeline_packet(reliable.clone())],
-            ),
-            TunQueueSubmit::Enqueued
-        );
-
-        let mut turn = rx.recv().await.expect("discardable bulk batch");
-        let deferred =
-            coalesce_discardable_tun_bulk_turn_from_backlog(&mut rx, &mut turn, 2)
-                .expect("reliable batch should be deferred to the next turn");
-
-        assert_eq!(turn.len(), 1);
-        assert_eq!(turn[0].bytes, discardable);
-        assert_eq!(deferred.len(), 1);
-        assert_eq!(deferred[0].bytes, reliable);
-        assert_eq!(rx.bulk_backlog_packets(), 0);
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[tokio::test]
-    async fn tun_to_mesh_reliable_bulk_turn_does_not_coalesce() {
-        let (tx, mut rx) = TunPipelineQueueTx::channel(2);
-        let first = test_ipv6_tcp_packet(0x18, 512);
-        let second = test_ipv6_tcp_packet(0x18, 513);
-
-        assert_eq!(
-            submit_tun_packet_batch_to_mesh_queue(
-                &tx,
-                vec![test_pipeline_packet(first.clone())],
-            ),
-            TunQueueSubmit::Enqueued
-        );
-        assert_eq!(
-            submit_tun_packet_batch_to_mesh_queue(
-                &tx,
-                vec![test_pipeline_packet(second.clone())],
-            ),
-            TunQueueSubmit::Enqueued
-        );
-
-        let mut turn = rx.recv().await.expect("reliable bulk batch");
-        assert!(
-            coalesce_discardable_tun_bulk_turn_from_backlog(&mut rx, &mut turn, 2).is_none()
-        );
-
-        assert_eq!(turn.len(), 1);
-        assert_eq!(turn[0].bytes, first);
-        assert_eq!(rx.bulk_backlog_packets(), 1);
-
-        let queued = rx.recv().await.expect("second reliable batch");
-        assert_eq!(queued.len(), 1);
-        assert_eq!(queued[0].bytes, second);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

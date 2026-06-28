@@ -505,8 +505,7 @@ async fn send_mesh_packet_batch_turns(
         send_mesh_waiting_priority_packets(mesh, packet_rx, &mut send_runs).await;
 
         let turn_capacity = mesh_send_bulk_turn_capacity(packet_rx);
-        let deferred =
-            coalesce_discardable_tun_bulk_turn_from_backlog(packet_rx, &mut pending, turn_capacity);
+        coalesce_tun_bulk_turn_from_backlog(packet_rx, &mut pending, turn_capacity);
         let drained = pending.len().min(turn_capacity);
         let rest = if pending.len() > drained {
             pending.split_off(drained)
@@ -514,10 +513,6 @@ async fn send_mesh_packet_batch_turns(
             Vec::new()
         };
         let turn = std::mem::replace(&mut pending, rest);
-        if let Some(mut deferred) = deferred {
-            deferred.extend(pending);
-            pending = deferred;
-        }
         send_mesh_packet_turn_or_log(
             mesh,
             turn,
@@ -536,34 +531,18 @@ async fn send_mesh_packet_batch_turns(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn coalesce_discardable_tun_bulk_turn_from_backlog(
+fn coalesce_tun_bulk_turn_from_backlog(
     packet_rx: &mut TunPipelineQueueRx,
     pending: &mut TunPipelineBatch,
     turn_capacity: usize,
-) -> Option<TunPipelineBatch> {
-    if !tun_pipeline_batch_is_discardable_bulk(pending) {
-        return None;
-    }
-
+) {
     let turn_capacity = turn_capacity.max(1);
     while pending.len() < turn_capacity {
         let Some(batch) = packet_rx.try_recv_bulk_batch() else {
             break;
         };
-        if !tun_pipeline_batch_is_discardable_bulk(&batch) {
-            return Some(batch);
-        }
         pending.extend(batch);
     }
-    None
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn tun_pipeline_batch_is_discardable_bulk(batch: &[TunPipelinePacket]) -> bool {
-    !batch.is_empty()
-        && batch
-            .iter()
-            .all(|packet| packet.lane() == TunPipelineLane::Bulk && packet.class.drop_on_backpressure())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
