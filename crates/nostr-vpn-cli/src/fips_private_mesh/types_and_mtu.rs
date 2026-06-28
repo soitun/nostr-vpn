@@ -79,6 +79,10 @@ enum FipsMeshRecvWorker {
 impl TunPipelinePacket {
     fn new(bytes: Vec<u8>) -> Self {
         let class = classify_endpoint_payload(&bytes);
+        Self::from_classified(bytes, class)
+    }
+
+    fn from_classified(bytes: Vec<u8>, class: EndpointPayloadClass) -> Self {
         Self {
             bytes,
             class,

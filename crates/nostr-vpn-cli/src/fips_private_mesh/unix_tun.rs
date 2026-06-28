@@ -177,6 +177,16 @@ fn push_tun_pipeline_packet_owned(batch: &mut TunPipelineBatch, mut bytes: Vec<u
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn push_tun_pipeline_packet_owned_finalized(batch: &mut TunPipelineBatch, bytes: Vec<u8>) {
+    let class = classify_endpoint_payload(&bytes);
+    push_tun_pipeline_packet_owned_finalized_classified(batch, bytes, class);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn push_tun_pipeline_packet_owned_finalized_classified(
+    batch: &mut TunPipelineBatch,
+    bytes: Vec<u8>,
+    class: EndpointPayloadClass,
+) {
     if fips_unix_packet_debug_enabled() {
         eprintln!(
             "fips: TUN -> mesh {} bytes {}",
@@ -184,7 +194,7 @@ fn push_tun_pipeline_packet_owned_finalized(batch: &mut TunPipelineBatch, bytes:
             describe_ip_packet(&bytes)
         );
     }
-    batch.push(TunPipelinePacket::new(bytes));
+    batch.push(TunPipelinePacket::from_classified(bytes, class));
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

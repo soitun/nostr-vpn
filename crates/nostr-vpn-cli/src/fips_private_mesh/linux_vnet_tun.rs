@@ -641,6 +641,7 @@ fn linux_vnet_gso_split(
     let csum_start = usize::from(hdr.csum_start);
     let hdr_len = usize::from(hdr.hdr_len);
     let mut next_segment_data_at = hdr_len;
+    let mut repeated_segment_class: Option<EndpointPayloadClass> = None;
     let mut count = 0_usize;
     while next_segment_data_at < packet.len() {
         let next_segment_end =
@@ -687,7 +688,20 @@ fn linux_vnet_gso_split(
         let out_csum_at = csum_start + usize::from(hdr.csum_offset);
         out[out_csum_at..out_csum_at + 2].copy_from_slice(&transport_checksum.to_be_bytes());
 
-        push_tun_pipeline_packet_owned_finalized(batch, out);
+        let is_final_segment = next_segment_end == packet.len();
+        let class = if protocol == LINUX_IPPROTO_TCP && is_final_segment {
+            classify_endpoint_payload(&out)
+        } else {
+            match repeated_segment_class {
+                Some(class) => class,
+                None => {
+                    let class = classify_endpoint_payload(&out);
+                    repeated_segment_class = Some(class);
+                    class
+                }
+            }
+        };
+        push_tun_pipeline_packet_owned_finalized_classified(batch, out, class);
         count += 1;
         next_segment_data_at = next_segment_end;
     }
@@ -809,6 +823,35 @@ mod linux_vnet_tun_tests {
         assert_eq!(linux_vnet_checksum(&second[..20], 0), 0xffff);
         assert_eq!(ipv4_transport_sum(first), 0xffff);
         assert_eq!(ipv4_transport_sum(second), 0xffff);
+    }
+
+    #[test]
+    fn linux_vnet_tcp4_gso_read_preserves_final_tiny_segment_priority() {
+        let packet = ipv4_tcp_packet(1000, 2500, 0x18);
+        let mut frame = vec![0_u8; LINUX_VIRTIO_NET_HDR_LEN + packet.len()];
+        LinuxVirtioNetHdr {
+            flags: LINUX_VIRTIO_NET_HDR_F_NEEDS_CSUM,
+            gso_type: LINUX_VIRTIO_NET_HDR_GSO_TCPV4,
+            hdr_len: 40,
+            gso_size: 1200,
+            csum_start: 20,
+            csum_offset: 16,
+        }
+        .encode(&mut frame[..LINUX_VIRTIO_NET_HDR_LEN]);
+        frame[LINUX_VIRTIO_NET_HDR_LEN..].copy_from_slice(&packet);
+
+        let mut batch = Vec::new();
+        let count = handle_linux_vnet_read(&mut frame, &mut batch).expect("tcp4 gso read");
+        assert_eq!(count, 3);
+        assert_eq!(batch.len(), 3);
+
+        assert_eq!(batch[0].lane(), TunPipelineLane::Bulk);
+        assert_eq!(batch[1].lane(), TunPipelineLane::Bulk);
+        assert_eq!(batch[2].lane(), TunPipelineLane::Priority);
+        assert_eq!(batch[0].bytes[33] & LINUX_TCP_FLAG_PSH, 0);
+        assert_eq!(batch[1].bytes[33] & LINUX_TCP_FLAG_PSH, 0);
+        assert_ne!(batch[2].bytes[33] & LINUX_TCP_FLAG_PSH, 0);
+        assert_eq!(batch[2].bytes.len(), 140);
     }
 
     #[test]
