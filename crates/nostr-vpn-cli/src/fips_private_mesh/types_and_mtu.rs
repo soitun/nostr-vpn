@@ -248,6 +248,25 @@ impl TunPipelineQueueRx {
         self.bulk_packet_capacity
     }
 
+    fn try_recv_bulk_batch(&mut self) -> Option<TunPipelineBatch> {
+        if self.bulk_closed {
+            return None;
+        }
+
+        match self.bulk.try_recv() {
+            Ok(batch) => {
+                release_tun_bulk_packet_slots(&self.bulk_queued_packets, batch.len());
+                self.bulk_available.notify_waiters();
+                Some(batch)
+            }
+            Err(mpsc::error::TryRecvError::Empty) => None,
+            Err(mpsc::error::TryRecvError::Disconnected) => {
+                self.bulk_closed = true;
+                None
+            }
+        }
+    }
+
     async fn recv(&mut self) -> Option<TunPipelineBatch> {
         loop {
             match self.priority.try_recv() {
