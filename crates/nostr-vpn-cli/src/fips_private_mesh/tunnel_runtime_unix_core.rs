@@ -504,7 +504,7 @@ async fn send_mesh_packet_batch_turns(
     while !packets.as_slice().is_empty() {
         send_mesh_waiting_priority_packets(mesh, packet_rx, &mut send_runs).await;
 
-        let turn_capacity = FIPS_MESH_SEND_BURST;
+        let turn_capacity = mesh_send_bulk_turn_capacity(packet_rx);
         let drained = packets.as_slice().len().min(turn_capacity);
         send_mesh_packet_turn_or_log(
             mesh,
@@ -561,6 +561,19 @@ async fn send_mesh_packet_priority_turns(
         if !packets.as_slice().is_empty() || drained >= FIPS_MESH_SEND_BURST {
             tokio::task::yield_now().await;
         }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn mesh_send_bulk_turn_capacity(packet_rx: &TunPipelineQueueRx) -> usize {
+    let backlog = packet_rx.bulk_backlog_packets();
+    let high_backlog = (packet_rx.bulk_backlog_capacity() / 2).max(1);
+    if backlog >= high_backlog {
+        FIPS_MESH_SEND_HIGH_BACKLOG_BURST
+    } else if backlog > 0 {
+        FIPS_MESH_SEND_BACKLOG_BURST
+    } else {
+        FIPS_MESH_SEND_BURST
     }
 }
 

@@ -119,8 +119,9 @@
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn mesh_send_turn_keeps_fixed_wireguard_sized_bulk_turns() {
-        assert_eq!(super::FIPS_MESH_SEND_BURST, 64);
+    fn mesh_send_backlog_turns_stay_below_base_turn() {
+        assert!(super::FIPS_MESH_SEND_HIGH_BACKLOG_BURST < super::FIPS_MESH_SEND_BACKLOG_BURST);
+        assert!(super::FIPS_MESH_SEND_BACKLOG_BURST < super::FIPS_MESH_SEND_BURST);
     }
 
     #[test]
