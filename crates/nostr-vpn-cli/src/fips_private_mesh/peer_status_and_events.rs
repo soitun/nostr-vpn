@@ -493,6 +493,25 @@ fn filter_static_tunnel_endpoints_with_policy(
     local_subnets: &[Ipv4Subnet],
     allow_routed_private_endpoints: bool,
 ) -> Vec<(String, Vec<String>)> {
+    filter_static_tunnel_endpoints_with_policy_and_route_check(
+        groups,
+        tunnel_ips,
+        local_subnets,
+        allow_routed_private_endpoints,
+        private_endpoint_directly_routed_on_current_underlay,
+    )
+}
+
+fn filter_static_tunnel_endpoints_with_policy_and_route_check<F>(
+    groups: Vec<(String, Vec<String>)>,
+    tunnel_ips: &HashSet<IpAddr>,
+    local_subnets: &[Ipv4Subnet],
+    allow_routed_private_endpoints: bool,
+    route_check: F,
+) -> Vec<(String, Vec<String>)>
+where
+    F: Fn(Ipv4Addr) -> bool + Copy,
+{
     groups
         .into_iter()
         .filter_map(|(participant, addrs)| {
@@ -501,7 +520,11 @@ fn filter_static_tunnel_endpoints_with_policy(
                 .filter(|addr| {
                     !endpoint_uses_tunnel_ip(addr, tunnel_ips)
                         && (allow_routed_private_endpoints
-                            || static_endpoint_allowed_on_current_underlay(addr, local_subnets))
+                            || static_endpoint_allowed_on_current_underlay_with_route_check(
+                                addr,
+                                local_subnets,
+                                route_check,
+                            ))
                 })
                 .collect::<Vec<_>>();
             (!addrs.is_empty()).then_some((participant, addrs))

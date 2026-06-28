@@ -583,7 +583,7 @@
         tunnel_ips.insert(IpAddr::V4(Ipv4Addr::new(10, 44, 1, 2)));
         let local_subnets = vec![Ipv4Subnet::new(Ipv4Addr::new(192, 168, 50, 10), 24)];
 
-        let filtered = filter_static_tunnel_endpoints(
+        let filtered = filter_static_tunnel_endpoints_with_policy_and_route_check(
             vec![(
                 "peer".to_string(),
                 vec![
@@ -598,6 +598,8 @@
             )],
             &tunnel_ips,
             &local_subnets,
+            false,
+            |_| true,
         );
 
         assert_eq!(
@@ -647,7 +649,7 @@
             Ipv4Subnet::new(Ipv4Addr::new(192, 168, 122, 0), 24),
         ];
 
-        let filtered = filter_static_tunnel_endpoints(
+        let filtered = filter_static_tunnel_endpoints_with_policy_and_route_check(
             vec![(
                 "peer".to_string(),
                 vec![
@@ -657,6 +659,8 @@
             )],
             &tunnel_ips,
             &local_subnets,
+            false,
+            |_| true,
         );
 
         assert_eq!(

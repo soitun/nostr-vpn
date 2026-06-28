@@ -16,7 +16,8 @@
         cap_recent_non_roster_transit_endpoints, control_frame_destination_peer,
         control_frame_source_pubkey, drain_event_batch, endpoint_identity_for_send,
         filter_stamped_tunnel_endpoints, filter_static_tunnel_endpoints,
-        filter_static_tunnel_endpoints_with_policy, fips_endpoint_config,
+        filter_static_tunnel_endpoints_with_policy,
+        filter_static_tunnel_endpoints_with_policy_and_route_check, fips_endpoint_config,
         fips_endpoint_config_with_open_discovery_limit, fips_endpoint_peers_from_mesh,
         fips_lan_discovery_scope, fips_peer_address_from_hint,
         fips_tunnel_requires_endpoint_restart, linux_cap_eff_has_net_admin,
@@ -114,6 +115,12 @@
             assert_eq!(super::DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP, 256);
             assert_eq!(super::DEFAULT_FIPS_UDP_SEND_BUF_SIZE, Some(256 * 1024));
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_mesh_send_turn_keeps_tun_read_sized_bulk_turns() {
+        assert_eq!(super::FIPS_MESH_SEND_BURST, super::FIPS_TUN_READ_BURST);
     }
 
     #[test]
