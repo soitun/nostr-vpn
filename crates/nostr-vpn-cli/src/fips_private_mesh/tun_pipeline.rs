@@ -18,6 +18,7 @@ fn submit_tun_packet_batch_to_mesh_queue(
     packet_tx: &TunPipelineQueueTx,
     batch: TunPipelineBatch,
 ) -> TunQueueSubmit {
+    record_tun_pipeline_submit_batch(&batch);
     match tun_pipeline_split_batch_by_lane(batch) {
         TunPipelineSubmitBatches::Empty => TunQueueSubmit::Enqueued,
         TunPipelineSubmitBatches::Single { lane, batch } => {
@@ -41,6 +42,7 @@ async fn submit_tun_packet_batch_to_mesh_queue_with_backpressure(
     batch: TunPipelineBatch,
     max_bulk_chunk_packets: usize,
 ) -> TunQueueSubmit {
+    record_tun_pipeline_submit_batch(&batch);
     match tun_pipeline_split_batch_by_lane(batch) {
         TunPipelineSubmitBatches::Empty => TunQueueSubmit::Enqueued,
         TunPipelineSubmitBatches::Single { lane, batch } => match lane {
@@ -111,6 +113,32 @@ fn tun_pipeline_split_batch_by_lane(batch: TunPipelineBatch) -> TunPipelineSubmi
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn record_tun_pipeline_submit_batch(batch: &[TunPipelinePacket]) {
+    if batch.is_empty() || !crate::pipeline_profile::enabled() {
+        return;
+    }
+
+    let mut priority_packets = 0usize;
+    let mut reliable_bulk_packets = 0usize;
+    let mut discardable_bulk_packets = 0usize;
+    for packet in batch {
+        match packet.lane() {
+            TunPipelineLane::Priority => priority_packets += 1,
+            TunPipelineLane::Bulk if packet.class.drop_on_backpressure() => {
+                discardable_bulk_packets += 1
+            }
+            TunPipelineLane::Bulk => reliable_bulk_packets += 1,
+        }
+    }
+
+    crate::pipeline_profile::record_tun_to_mesh_submit_batch(
+        priority_packets,
+        reliable_bulk_packets,
+        discardable_bulk_packets,
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn submit_tun_packet_batch_to_lane(
     packet_tx: &TunPipelineQueueTx,
     lane: TunPipelineLane,
@@ -132,6 +160,12 @@ fn submit_tun_bulk_batch(
     batch: TunPipelineBatch,
 ) -> TunQueueSubmit {
     let packet_count = batch.len();
+    crate::pipeline_profile::record_tun_to_mesh_bulk_admission(
+        packet_count,
+        packet_tx
+            .bulk_queued_packets
+            .load(std::sync::atomic::Ordering::Relaxed),
+    );
     if packet_tx.bulk.is_closed() {
         return TunQueueSubmit::Closed;
     }

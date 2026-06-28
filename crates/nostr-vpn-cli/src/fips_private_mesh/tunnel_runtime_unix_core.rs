@@ -568,13 +568,15 @@ async fn send_mesh_packet_priority_turns(
 fn mesh_send_bulk_turn_capacity(packet_rx: &TunPipelineQueueRx) -> usize {
     let backlog = packet_rx.bulk_backlog_packets();
     let high_backlog = (packet_rx.bulk_backlog_capacity() / 2).max(1);
-    if backlog >= high_backlog {
+    let turn_capacity = if backlog >= high_backlog {
         FIPS_MESH_SEND_HIGH_BACKLOG_BURST
     } else if backlog > 0 {
         FIPS_MESH_SEND_BACKLOG_BURST
     } else {
         FIPS_MESH_SEND_BURST
-    }
+    };
+    crate::pipeline_profile::record_mesh_send_bulk_turn(backlog, turn_capacity);
+    turn_capacity
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

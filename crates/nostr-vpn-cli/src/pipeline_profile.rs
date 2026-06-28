@@ -6,7 +6,7 @@ use std::sync::atomic::{
 use std::time::Instant;
 
 const N_STAGES: usize = 7;
-const N_COUNTERS: usize = 28;
+const N_COUNTERS: usize = 39;
 const HIST_BUCKETS: usize = 48;
 
 #[derive(Copy, Clone)]
@@ -66,6 +66,17 @@ pub(crate) enum Counter {
     TunReadVnetGsoFrames = 25,
     TunReadVnetGsoSegments = 26,
     TunReadVnetGsoSegmentBytes = 27,
+    TunToMeshSubmitBatches = 28,
+    TunToMeshSubmitPackets = 29,
+    TunToMeshSubmitPriorityPackets = 30,
+    TunToMeshSubmitReliableBulkPackets = 31,
+    TunToMeshSubmitDiscardableBulkPackets = 32,
+    TunToMeshBulkAdmissionBatches = 33,
+    TunToMeshBulkAdmissionPackets = 34,
+    TunToMeshBulkQueuedPacketsAtAdmission = 35,
+    MeshSendBulkTurnDecisions = 36,
+    MeshSendBulkTurnBacklogPackets = 37,
+    MeshSendBulkTurnCapacityPackets = 38,
 }
 
 impl Counter {
@@ -101,6 +112,23 @@ impl Counter {
             Counter::TunReadVnetGsoFrames => "nvpn_tun_read_vnet_gso_frames",
             Counter::TunReadVnetGsoSegments => "nvpn_tun_read_vnet_gso_segments",
             Counter::TunReadVnetGsoSegmentBytes => "nvpn_tun_read_vnet_gso_segment_bytes",
+            Counter::TunToMeshSubmitBatches => "nvpn_tun_to_mesh_submit_batches",
+            Counter::TunToMeshSubmitPackets => "nvpn_tun_to_mesh_submit_packets",
+            Counter::TunToMeshSubmitPriorityPackets => "nvpn_tun_to_mesh_submit_priority_packets",
+            Counter::TunToMeshSubmitReliableBulkPackets => {
+                "nvpn_tun_to_mesh_submit_reliable_bulk_packets"
+            }
+            Counter::TunToMeshSubmitDiscardableBulkPackets => {
+                "nvpn_tun_to_mesh_submit_discardable_bulk_packets"
+            }
+            Counter::TunToMeshBulkAdmissionBatches => "nvpn_tun_to_mesh_bulk_admission_batches",
+            Counter::TunToMeshBulkAdmissionPackets => "nvpn_tun_to_mesh_bulk_admission_packets",
+            Counter::TunToMeshBulkQueuedPacketsAtAdmission => {
+                "nvpn_tun_to_mesh_bulk_queued_packets_at_admission"
+            }
+            Counter::MeshSendBulkTurnDecisions => "nvpn_mesh_send_bulk_turn_decisions",
+            Counter::MeshSendBulkTurnBacklogPackets => "nvpn_mesh_send_bulk_turn_backlog_packets",
+            Counter::MeshSendBulkTurnCapacityPackets => "nvpn_mesh_send_bulk_turn_capacity_packets",
         }
     }
 }
@@ -135,6 +163,17 @@ fn counter_from_index(idx: usize) -> Counter {
         25 => Counter::TunReadVnetGsoFrames,
         26 => Counter::TunReadVnetGsoSegments,
         27 => Counter::TunReadVnetGsoSegmentBytes,
+        28 => Counter::TunToMeshSubmitBatches,
+        29 => Counter::TunToMeshSubmitPackets,
+        30 => Counter::TunToMeshSubmitPriorityPackets,
+        31 => Counter::TunToMeshSubmitReliableBulkPackets,
+        32 => Counter::TunToMeshSubmitDiscardableBulkPackets,
+        33 => Counter::TunToMeshBulkAdmissionBatches,
+        34 => Counter::TunToMeshBulkAdmissionPackets,
+        35 => Counter::TunToMeshBulkQueuedPacketsAtAdmission,
+        36 => Counter::MeshSendBulkTurnDecisions,
+        37 => Counter::MeshSendBulkTurnBacklogPackets,
+        38 => Counter::MeshSendBulkTurnCapacityPackets,
         _ => unreachable!(),
     }
 }
@@ -211,6 +250,60 @@ pub(crate) fn record_tun_to_mesh_bulk_drop_packet_cap(packets: usize) {
 
 pub(crate) fn record_tun_to_mesh_bulk_drop_channel_full(packets: usize) {
     record_tun_to_mesh_bulk_drop(Counter::TunToMeshBulkDroppedChannelFull, packets);
+}
+
+pub(crate) fn record_tun_to_mesh_submit_batch(
+    priority_packets: usize,
+    reliable_bulk_packets: usize,
+    discardable_bulk_packets: usize,
+) {
+    let packets = priority_packets
+        .saturating_add(reliable_bulk_packets)
+        .saturating_add(discardable_bulk_packets);
+    if packets == 0 || !enabled() {
+        return;
+    }
+    increment_counter_by(Counter::TunToMeshSubmitBatches, 1);
+    increment_counter_by(Counter::TunToMeshSubmitPackets, packets as u64);
+    increment_counter_by(
+        Counter::TunToMeshSubmitPriorityPackets,
+        priority_packets as u64,
+    );
+    increment_counter_by(
+        Counter::TunToMeshSubmitReliableBulkPackets,
+        reliable_bulk_packets as u64,
+    );
+    increment_counter_by(
+        Counter::TunToMeshSubmitDiscardableBulkPackets,
+        discardable_bulk_packets as u64,
+    );
+}
+
+pub(crate) fn record_tun_to_mesh_bulk_admission(packets: usize, queued_packets: usize) {
+    if packets == 0 || !enabled() {
+        return;
+    }
+    increment_counter_by(Counter::TunToMeshBulkAdmissionBatches, 1);
+    increment_counter_by(Counter::TunToMeshBulkAdmissionPackets, packets as u64);
+    increment_counter_by(
+        Counter::TunToMeshBulkQueuedPacketsAtAdmission,
+        queued_packets as u64,
+    );
+}
+
+pub(crate) fn record_mesh_send_bulk_turn(backlog_packets: usize, turn_capacity: usize) {
+    if !enabled() {
+        return;
+    }
+    increment_counter_by(Counter::MeshSendBulkTurnDecisions, 1);
+    increment_counter_by(
+        Counter::MeshSendBulkTurnBacklogPackets,
+        backlog_packets as u64,
+    );
+    increment_counter_by(
+        Counter::MeshSendBulkTurnCapacityPackets,
+        turn_capacity as u64,
+    );
 }
 
 fn record_tun_to_mesh_bulk_drop(cause: Counter, packets: usize) {
@@ -485,7 +578,7 @@ mod tests {
 
     #[test]
     fn mesh_send_pipeline_names_are_stable() {
-        assert_eq!(N_COUNTERS, 28);
+        assert_eq!(N_COUNTERS, 39);
         assert_eq!(
             Counter::TunToMeshBulkDroppedBatches.name(),
             "nvpn_tun_to_mesh_bulk_dropped_batches"
@@ -507,6 +600,18 @@ mod tests {
         assert_eq!(
             Counter::TunReadVnetGsoSegments.name(),
             "nvpn_tun_read_vnet_gso_segments"
+        );
+        assert_eq!(
+            Counter::TunToMeshSubmitDiscardableBulkPackets.name(),
+            "nvpn_tun_to_mesh_submit_discardable_bulk_packets"
+        );
+        assert_eq!(
+            Counter::TunToMeshBulkQueuedPacketsAtAdmission.name(),
+            "nvpn_tun_to_mesh_bulk_queued_packets_at_admission"
+        );
+        assert_eq!(
+            Counter::MeshSendBulkTurnCapacityPackets.name(),
+            "nvpn_mesh_send_bulk_turn_capacity_packets"
         );
         assert_eq!(
             Stage::TunToMeshBackpressureWait.name(),
