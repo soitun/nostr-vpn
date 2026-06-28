@@ -710,10 +710,54 @@ default            192.168.178.1      UGScg                 en0
     }
 
     #[test]
+    fn macos_route_get_rejects_private_endpoint_via_hotspot_default_gateway() {
+        let route_get = "\
+   route to: 192.168.178.57
+destination: 192.168.178.57
+    gateway: 172.20.10.1
+  interface: en0
+";
+
+        assert!(!macos_route_get_has_direct_private_endpoint_route(
+            route_get,
+            Ipv4Addr::new(192, 168, 178, 57),
+        ));
+    }
+
+    #[test]
+    fn macos_route_get_keeps_private_endpoint_on_direct_lan() {
+        let route_get = "\
+   route to: 192.168.178.57
+destination: 192.168.178.57
+    gateway: 192.168.178.57
+  interface: en0
+";
+
+        assert!(macos_route_get_has_direct_private_endpoint_route(
+            route_get,
+            Ipv4Addr::new(192, 168, 178, 57),
+        ));
+    }
+
+    #[test]
+    fn linux_route_get_rejects_private_endpoint_via_default_gateway() {
+        assert!(!linux_route_get_has_direct_private_endpoint_route(
+            "192.168.178.57 via 172.20.10.1 dev wlan0 src 172.20.10.2 uid 501"
+        ));
+    }
+
+    #[test]
+    fn linux_route_get_keeps_private_endpoint_on_direct_lan() {
+        assert!(linux_route_get_has_direct_private_endpoint_route(
+            "192.168.178.57 dev eth0 src 192.168.178.55 uid 1000"
+        ));
+    }
+
+    #[test]
     fn stamped_endpoint_filter_drops_stale_private_hints() {
         let mut tunnel_ips = HashSet::new();
         tunnel_ips.insert(IpAddr::V4(Ipv4Addr::new(10, 44, 1, 2)));
-        let local_subnets = vec![Ipv4Subnet::new(Ipv4Addr::new(192, 168, 50, 10), 24)];
+        let local_subnets = Vec::new();
 
         let filtered = filter_stamped_tunnel_endpoints(
             vec![(
@@ -738,13 +782,37 @@ default            192.168.178.1      UGScg                 en0
             vec![(
                 "peer".to_string(),
                 vec![
-                    ("192.168.50.57:51820".to_string(), 100),
-                    ("udp:192.168.50.58:51820".to_string(), 101),
                     ("203.0.113.9:51820".to_string(), 106),
                     ("peer.example.com:443".to_string(), 107),
                 ],
             )]
         );
+    }
+
+    #[test]
+    fn static_endpoint_filter_requires_subnet_and_direct_route_for_private_hints() {
+        let local_subnets = vec![Ipv4Subnet::new(Ipv4Addr::new(192, 168, 50, 10), 24)];
+
+        assert!(static_endpoint_allowed_on_current_underlay_with_route_check(
+            "192.168.50.57:51820",
+            &local_subnets,
+            |_| true,
+        ));
+        assert!(!static_endpoint_allowed_on_current_underlay_with_route_check(
+            "192.168.50.57:51820",
+            &local_subnets,
+            |_| false,
+        ));
+        assert!(!static_endpoint_allowed_on_current_underlay_with_route_check(
+            "192.168.51.57:51820",
+            &local_subnets,
+            |_| true,
+        ));
+        assert!(static_endpoint_allowed_on_current_underlay_with_route_check(
+            "203.0.113.9:51820",
+            &local_subnets,
+            |_| false,
+        ));
     }
 
     #[test]

@@ -20,12 +20,15 @@
         fips_endpoint_config_with_open_discovery_limit, fips_endpoint_peers_from_mesh,
         fips_lan_discovery_scope, fips_peer_address_from_hint,
         fips_tunnel_requires_endpoint_restart, linux_cap_eff_has_net_admin,
-        linux_private_ipv4_route_subnets_from_ip_route, linux_tun_setup_error,
-        macos_private_ipv4_route_subnets_from_netstat, mesh_status_from_endpoint_peer,
-        other_endpoint_peer_statuses, parse_fips_nostr_discovery_policy,
-        parse_linux_tun_tx_queue_len, participant_pubkey_bytes, parse_fips_mesh_recv_burst,
-        peer_activity_map, peer_identity_map, strip_cidr, tag_authenticated_transport_addr,
-        unix_timestamp,
+        linux_private_ipv4_route_subnets_from_ip_route,
+        linux_route_get_has_direct_private_endpoint_route, linux_tun_setup_error,
+        macos_private_ipv4_route_subnets_from_netstat,
+        macos_route_get_has_direct_private_endpoint_route, mesh_status_from_endpoint_peer,
+        other_endpoint_peer_statuses, parse_fips_mesh_recv_burst,
+        parse_fips_nostr_discovery_policy, parse_linux_tun_tx_queue_len,
+        participant_pubkey_bytes, peer_activity_map, peer_identity_map,
+        static_endpoint_allowed_on_current_underlay_with_route_check, strip_cidr,
+        tag_authenticated_transport_addr, unix_timestamp,
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{

@@ -287,7 +287,7 @@ fn linux_private_ipv4_route_subnets_from_ip_route(
     subnets
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn route_interface_is_tunnel_like(interface: &str) -> bool {
     interface.starts_with("utun")
         || interface.starts_with("tun")
@@ -370,12 +370,101 @@ fn ipv4_is_cgnat_addr(addr: Ipv4Addr) -> bool {
 }
 
 fn static_endpoint_allowed_on_current_underlay(addr: &str, local_subnets: &[Ipv4Subnet]) -> bool {
+    static_endpoint_allowed_on_current_underlay_with_route_check(
+        addr,
+        local_subnets,
+        private_endpoint_directly_routed_on_current_underlay,
+    )
+}
+
+fn static_endpoint_allowed_on_current_underlay_with_route_check(
+    addr: &str,
+    local_subnets: &[Ipv4Subnet],
+    route_check: impl Fn(Ipv4Addr) -> bool,
+) -> bool {
     match endpoint_addr_ip(addr) {
         Some(IpAddr::V4(ip)) if ipv4_static_hint_requires_local_subnet(ip) => {
-            local_subnets.iter().any(|subnet| subnet.contains(ip))
+            local_subnets.iter().any(|subnet| subnet.contains(ip)) && route_check(ip)
         }
         _ => true,
     }
+}
+
+#[cfg(target_os = "macos")]
+fn private_endpoint_directly_routed_on_current_underlay(ip: Ipv4Addr) -> bool {
+    let Ok(output) = ProcessCommand::new("route")
+        .arg("-n")
+        .arg("get")
+        .arg(ip.to_string())
+        .output()
+    else {
+        return true;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    macos_route_get_has_direct_private_endpoint_route(&stdout, ip)
+}
+
+#[cfg(target_os = "linux")]
+fn private_endpoint_directly_routed_on_current_underlay(ip: Ipv4Addr) -> bool {
+    let Ok(output) = ProcessCommand::new("ip")
+        .arg("-4")
+        .arg("route")
+        .arg("get")
+        .arg(ip.to_string())
+        .output()
+    else {
+        return true;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    linux_route_get_has_direct_private_endpoint_route(&stdout)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn private_endpoint_directly_routed_on_current_underlay(_ip: Ipv4Addr) -> bool {
+    true
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_route_get_has_direct_private_endpoint_route(output: &str, ip: Ipv4Addr) -> bool {
+    let mut gateway = None;
+    let mut interface = None;
+    for line in output.lines().map(str::trim) {
+        if let Some(value) = line.strip_prefix("gateway:") {
+            gateway = Some(value.trim());
+        } else if let Some(value) = line.strip_prefix("interface:") {
+            interface = Some(value.trim());
+        }
+    }
+    let Some(interface) = interface else {
+        return false;
+    };
+    if route_interface_is_tunnel_like(interface) {
+        return false;
+    }
+    match gateway {
+        Some(gateway) if gateway.starts_with("link#") => true,
+        Some(gateway) => gateway.parse::<Ipv4Addr>().is_ok_and(|gateway| gateway == ip),
+        None => false,
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_route_get_has_direct_private_endpoint_route(output: &str) -> bool {
+    let tokens = output.split_whitespace().collect::<Vec<_>>();
+    if tokens.windows(2).any(|pair| pair[0] == "via") {
+        return false;
+    }
+    let dev = tokens
+        .windows(2)
+        .find(|pair| pair[0] == "dev")
+        .map(|pair| pair[1]);
+    dev.is_some_and(|dev| !route_interface_is_tunnel_like(dev))
 }
 
 fn filter_static_tunnel_endpoints(
