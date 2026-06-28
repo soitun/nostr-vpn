@@ -376,19 +376,20 @@ impl FipsEndpointIdentitySendRun {
         &self,
         identity: PeerIdentity,
         participant_key: Option<ParticipantPubkeyBytes>,
-        participant: &str,
+        participant_fallback: Option<&str>,
     ) -> bool {
-        self.identity == identity && self.matches_participant(participant_key, participant)
+        self.identity == identity
+            && self.matches_participant(participant_key, participant_fallback)
     }
 
     fn matches_participant(
         &self,
         participant_key: Option<ParticipantPubkeyBytes>,
-        participant: &str,
+        participant_fallback: Option<&str>,
     ) -> bool {
         match (self.participant_key, participant_key) {
             (Some(left), Some(right)) => left == right,
-            (None, None) => self.participant_fallback.as_deref() == Some(participant),
+            (None, None) => self.participant_fallback.as_deref() == participant_fallback,
             _ => false,
         }
     }
@@ -397,6 +398,15 @@ impl FipsEndpointIdentitySendRun {
 #[derive(Debug)]
 enum FipsEndpointSendRun {
     Identity(FipsEndpointIdentitySendRun),
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Debug)]
+struct TunEndpointRouteCache {
+    destination: IpAddr,
+    participant_fallback: Option<String>,
+    participant_key: Option<ParticipantPubkeyBytes>,
+    identity: PeerIdentity,
 }
 
 #[derive(Debug, Clone, Default)]
