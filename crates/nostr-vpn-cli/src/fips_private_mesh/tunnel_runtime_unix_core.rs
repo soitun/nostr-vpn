@@ -533,7 +533,10 @@ async fn send_mesh_waiting_priority_packets(
     packet_rx: &mut TunPipelineQueueRx,
     send_runs: &mut Vec<FipsEndpointSendRun>,
 ) {
-    while let Some(priority) = packet_rx.try_recv_priority() {
+    for _ in 0..FIPS_MESH_SEND_PRIORITY_CUTIN_BATCHES {
+        let Some(priority) = packet_rx.try_recv_priority() else {
+            break;
+        };
         send_mesh_packet_priority_turns(mesh, priority, send_runs).await;
     }
 }
