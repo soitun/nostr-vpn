@@ -32,6 +32,20 @@ docker_bench_bool_enabled() {
   esac
 }
 
+docker_bench_size_to_bytes() {
+  local raw="$1"
+  local number suffix
+  [[ "$raw" =~ ^([0-9]+)([KMG])?$ ]] || return 1
+  number="${BASH_REMATCH[1]}"
+  suffix="${BASH_REMATCH[2]:-}"
+  case "$suffix" in
+    K) printf '%s\n' "$((number * 1024))" ;;
+    M) printf '%s\n' "$((number * 1024 * 1024))" ;;
+    G) printf '%s\n' "$((number * 1024 * 1024 * 1024))" ;;
+    *) printf '%s\n' "$number" ;;
+  esac
+}
+
 docker_bench_local_fips_patch_enabled() {
   if [[ -n "${NVPN_PATCH_LOCAL_FIPS+x}" ]]; then
     docker_bench_bool_enabled "$NVPN_PATCH_LOCAL_FIPS"

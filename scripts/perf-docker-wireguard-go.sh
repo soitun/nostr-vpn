@@ -67,6 +67,32 @@ cleanup() {
   fi
 }
 
+configure_iperf_socket_buffer_limits() {
+  [[ -n "$IPERF_SOCKET_BUFFER" ]] || return 0
+  local bytes service sysctl_log actual_rmem actual_wmem
+  bytes="$(docker_bench_size_to_bytes "$IPERF_SOCKET_BUFFER")" || {
+    echo "perf-wireguard-go: invalid NVPN_DOCKER_IPERF_SOCKET_BUFFER=$IPERF_SOCKET_BUFFER (expected bytes or K/M/G suffix)" >&2
+    exit 2
+  }
+  for service in node-a node-b; do
+    sysctl_log="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+      "sysctl -w net.core.rmem_max=$bytes net.core.wmem_max=$bytes" 2>&1 || true)"
+    actual_rmem="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+      'sysctl -n net.core.rmem_max' 2>/dev/null || true)"
+    actual_wmem="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+      'sysctl -n net.core.wmem_max' 2>/dev/null || true)"
+    if [[ ! "$actual_rmem" =~ ^[0-9]+$ ]] \
+      || [[ ! "$actual_wmem" =~ ^[0-9]+$ ]] \
+      || (( actual_rmem < bytes || actual_wmem < bytes )); then
+      echo "perf-wireguard-go: failed to raise UDP socket buffer sysctls in $service for NVPN_DOCKER_IPERF_SOCKET_BUFFER=$IPERF_SOCKET_BUFFER (wanted >=$bytes, got rmem_max=${actual_rmem:-unknown}, wmem_max=${actual_wmem:-unknown})" >&2
+      if [[ -n "$sysctl_log" ]]; then
+        printf '%s\n' "$sysctl_log" >&2
+      fi
+      exit 1
+    fi
+  done
+}
+
 is_true() {
   [[ "${1:-}" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ ]]
 }
@@ -332,6 +358,7 @@ main() {
   for service in node-a node-b; do
     wait_for_service "$service"
   done
+  configure_iperf_socket_buffer_limits
   docker_bench_start_cpu_stress
   run_wireguard_go_pass
   printf 'wireguard-go docker bench passed: wrote summary to %s\n' "$SUMMARY_TSV"
