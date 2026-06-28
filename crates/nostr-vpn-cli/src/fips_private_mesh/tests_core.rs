@@ -117,6 +117,13 @@
         }
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn mesh_send_backlog_turns_stay_below_base_turn() {
+        assert!(super::FIPS_MESH_SEND_HIGH_BACKLOG_BURST < super::FIPS_MESH_SEND_BACKLOG_BURST);
+        assert!(super::FIPS_MESH_SEND_BACKLOG_BURST < super::FIPS_MESH_SEND_BURST);
+    }
+
     #[test]
     fn linux_tun_tx_queue_len_env_keeps_bounded_default() {
         assert_eq!(parse_linux_tun_tx_queue_len(None, 4096), Some(4096));
@@ -836,6 +843,7 @@
     async fn tun_to_mesh_rx_exposes_bulk_backlog_for_adaptive_sender_yield() {
         let (tx, mut rx) = TunPipelineQueueTx::channel(2);
 
+        assert_eq!(rx.bulk_backlog_capacity(), 2);
         assert!(!rx.has_bulk_backlog());
         assert_eq!(
             submit_tun_packet_batch_to_mesh_queue(

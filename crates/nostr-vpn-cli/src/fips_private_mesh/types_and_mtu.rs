@@ -244,6 +244,10 @@ impl TunPipelineQueueRx {
         self.bulk_backlog_packets() > 0
     }
 
+    fn bulk_backlog_capacity(&self) -> usize {
+        self.bulk_packet_capacity
+    }
+
     async fn recv(&mut self) -> Option<TunPipelineBatch> {
         loop {
             match self.priority.try_recv() {
