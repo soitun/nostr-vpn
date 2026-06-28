@@ -117,10 +117,10 @@
         }
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn linux_mesh_send_turn_keeps_tun_read_sized_bulk_turns() {
-        assert_eq!(super::FIPS_MESH_SEND_BURST, super::FIPS_TUN_READ_BURST);
+    fn mesh_send_turn_keeps_fixed_wireguard_sized_bulk_turns() {
+        assert_eq!(super::FIPS_MESH_SEND_BURST, 64);
     }
 
     #[test]

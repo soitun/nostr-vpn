@@ -103,9 +103,7 @@ const FIPS_TUN_READ_BURST: usize = 128;
 const FIPS_TUN_READ_BURST: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const FIPS_TUN_WRITE_BURST: usize = 64;
-#[cfg(target_os = "linux")]
-const FIPS_MESH_SEND_BURST: usize = FIPS_TUN_READ_BURST;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_SEND_BURST: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const FIPS_MESH_SEND_PRIORITY_CUTIN_BATCHES: usize = 1;
