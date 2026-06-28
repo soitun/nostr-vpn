@@ -862,6 +862,7 @@ run_placement_preflight() {
     tcp)
       printf '## placement preflight (TCP %ss, %s streams)\n' \
         "$PLACEMENT_PREFLIGHT_DURATION" "$PLACEMENT_PREFLIGHT_STREAMS"
+      start_iperf_server
       local preflight_json="$RAW_DIR/nvpn-placement-preflight-tcp.json"
       local preflight_stderr="$RAW_DIR/nvpn-placement-preflight-tcp.stderr"
       if ! "${COMPOSE[@]}" exec -T node-a \
@@ -894,6 +895,7 @@ run_placement_preflight() {
 }
 
 start_iperf_server() {
+  "${COMPOSE[@]}" exec -T node-b sh -lc 'pkill -9 iperf3 >/dev/null 2>&1 || true; rm -f /tmp/iperf3-server.log'
   "${COMPOSE[@]}" exec -d node-b iperf3 -s -D --logfile /tmp/iperf3-server.log
   sleep 1
   if ! "${COMPOSE[@]}" exec -T node-b sh -lc 'pgrep -x iperf3 >/dev/null'; then
@@ -982,7 +984,6 @@ fi
 echo "alice tunnel ip: $ALICE_TUNNEL_IP"
 echo "bob   tunnel ip: $BOB_TUNNEL_IP"
 echo
-start_iperf_server
 run_placement_preflight
 PIPELINE_START_NODE_A="$(pipeline_line_count node-a)"
 PIPELINE_START_NODE_B="$(pipeline_line_count node-b)"
@@ -997,6 +998,7 @@ run_test_json() {
   local is_udp=0
   [[ "${1:-}" == "-u" ]] && is_udp=1
   printf '## %s\n' "$label"
+  start_iperf_server
   # --connect-timeout caps the 3WHS so a broken path bails out fast
   # instead of hanging on tcp_synack_retries.
   local err_path="$json_path.stderr"
