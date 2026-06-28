@@ -637,6 +637,13 @@ fn linux_vnet_gso_split(
     }
     let src = &packet[src_addr_offset..src_addr_offset + addr_len];
     let dst = &packet[src_addr_offset + addr_len..src_addr_offset + addr_len * 2];
+    let destination = if is_v6 {
+        let mut octets = [0_u8; 16];
+        octets.copy_from_slice(dst);
+        Some(IpAddr::V6(std::net::Ipv6Addr::from(octets)))
+    } else {
+        Some(IpAddr::V4(Ipv4Addr::new(dst[0], dst[1], dst[2], dst[3])))
+    };
 
     let csum_start = usize::from(hdr.csum_start);
     let hdr_len = usize::from(hdr.hdr_len);
@@ -701,7 +708,11 @@ fn linux_vnet_gso_split(
                 }
             }
         };
-        push_tun_pipeline_packet_owned_finalized_classified(batch, out, class);
+        batch.push(TunPipelinePacket::from_classified_with_destination(
+            out,
+            class,
+            destination,
+        ));
         count += 1;
         next_segment_data_at = next_segment_end;
     }
@@ -803,6 +814,14 @@ mod linux_vnet_tun_tests {
         let count = handle_linux_vnet_read(&mut frame, &mut batch).expect("tcp4 gso read");
         assert_eq!(count, 2);
         assert_eq!(batch.len(), 2);
+        assert_eq!(
+            batch[0].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 44, 0, 2)))
+        );
+        assert_eq!(
+            batch[1].destination,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 44, 0, 2)))
+        );
 
         let first = &batch[0].bytes;
         let second = &batch[1].bytes;

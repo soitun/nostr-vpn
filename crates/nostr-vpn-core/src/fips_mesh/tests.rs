@@ -1,7 +1,7 @@
 mod tests {
     use super::{FipsMeshPeerConfig, FipsMeshRuntime, endpoint_node_addr_from_pubkey_bytes};
     use nostr_sdk::prelude::{Keys, ToBech32};
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[derive(Debug, Clone)]
     struct TestPeer {
@@ -296,6 +296,29 @@ mod tests {
         assert_eq!(outgoing.endpoint_pubkey, &specific.endpoint_pubkey);
         assert_eq!(outgoing.endpoint_node_addr, &specific.endpoint_node_addr);
         assert_eq!(outgoing.bytes, packet);
+
+        let cached_destination = IpAddr::V4(Ipv4Addr::new(10, 44, 22, 44));
+        let outgoing = runtime
+            .route_outbound_packet_owned_with_peer_to_destination(
+                packet.clone(),
+                cached_destination,
+            )
+            .expect("cached destination should route through current table");
+
+        assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
+        assert_eq!(outgoing.endpoint_pubkey, &specific.endpoint_pubkey);
+        assert_eq!(outgoing.endpoint_node_addr, &specific.endpoint_node_addr);
+        assert_eq!(outgoing.bytes, packet);
+
+        assert!(
+            runtime
+                .route_outbound_packet_owned_with_peer_to_destination(
+                    packet.clone(),
+                    IpAddr::V4(Ipv4Addr::new(192, 0, 2, 44)),
+                )
+                .is_none(),
+            "cached destination must still consult the current route table"
+        );
     }
 
     #[test]

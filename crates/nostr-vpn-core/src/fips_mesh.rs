@@ -286,7 +286,16 @@ impl FipsMeshRuntime {
         &'a self,
         packet: Vec<u8>,
     ) -> Option<RoutedFipsPacket<'a>> {
-        let peer = self.route_outbound_peer(&packet)?;
+        let destination = packet_destination(&packet)?;
+        self.route_outbound_packet_owned_with_peer_to_destination(packet, destination)
+    }
+
+    pub fn route_outbound_packet_owned_with_peer_to_destination<'a>(
+        &'a self,
+        packet: Vec<u8>,
+        destination: IpAddr,
+    ) -> Option<RoutedFipsPacket<'a>> {
+        let peer = self.select_peer_for_ip(destination)?;
 
         Some(RoutedFipsPacket {
             participant_pubkey: &peer.participant_pubkey_hex,
@@ -877,7 +886,7 @@ impl IpRoute {
     }
 }
 
-fn packet_destination(packet: &[u8]) -> Option<IpAddr> {
+pub fn packet_destination(packet: &[u8]) -> Option<IpAddr> {
     match packet.first()? >> 4 {
         4 => ipv4_packet_addr(packet, 16),
         6 => ipv6_packet_addr(packet, 24),

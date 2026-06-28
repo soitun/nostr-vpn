@@ -27,6 +27,7 @@ impl AsRawFd for BorrowedTunFd {
 struct TunPipelinePacket {
     bytes: Vec<u8>,
     class: EndpointPayloadClass,
+    destination: Option<IpAddr>,
     queued_at: Option<std::time::Instant>,
 }
 
@@ -79,13 +80,24 @@ enum FipsMeshRecvWorker {
 impl TunPipelinePacket {
     fn new(bytes: Vec<u8>) -> Self {
         let class = classify_endpoint_payload(&bytes);
-        Self::from_classified(bytes, class)
+        let destination = packet_destination(&bytes);
+        Self::from_classified_with_destination(bytes, class, destination)
     }
 
     fn from_classified(bytes: Vec<u8>, class: EndpointPayloadClass) -> Self {
+        let destination = packet_destination(&bytes);
+        Self::from_classified_with_destination(bytes, class, destination)
+    }
+
+    fn from_classified_with_destination(
+        bytes: Vec<u8>,
+        class: EndpointPayloadClass,
+        destination: Option<IpAddr>,
+    ) -> Self {
         Self {
             bytes,
             class,
+            destination,
             queued_at: crate::pipeline_profile::stamp(),
         }
     }

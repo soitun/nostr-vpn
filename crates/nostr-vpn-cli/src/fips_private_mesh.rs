@@ -21,7 +21,9 @@ use nostr_vpn_core::fips_control::{
     SignedRoster, decode_fips_control_frame, encode_fips_control_frame,
     encode_fips_control_messages,
 };
-use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission};
+use nostr_vpn_core::fips_mesh::{
+    FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission, packet_destination,
+};
 use nostr_vpn_core::join_requests::MeshJoinRequest;
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_route_store::PaidRouteSellerAdmission;
