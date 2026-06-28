@@ -556,12 +556,14 @@ fn handle_linux_vnet_read(frame: &mut [u8], batch: &mut TunPipelineBatch) -> io:
     }
 
     let count = linux_vnet_gso_split(packet, hdr, gso_type, is_v6, batch)?;
-    let segment_bytes = batch
-        .iter()
-        .rev()
-        .take(count)
-        .fold(0usize, |total, packet| total.saturating_add(packet.bytes.len()));
-    crate::pipeline_profile::record_tun_read_vnet_gso_split(count, segment_bytes);
+    if crate::pipeline_profile::enabled() {
+        let segment_bytes = batch
+            .iter()
+            .rev()
+            .take(count)
+            .fold(0usize, |total, packet| total.saturating_add(packet.bytes.len()));
+        crate::pipeline_profile::record_tun_read_vnet_gso_split(count, segment_bytes);
+    }
     Ok(count)
 }
 
@@ -636,13 +638,15 @@ fn linux_vnet_gso_split(
     let src = &packet[src_addr_offset..src_addr_offset + addr_len];
     let dst = &packet[src_addr_offset + addr_len..src_addr_offset + addr_len * 2];
 
-    let mut next_segment_data_at = usize::from(hdr.hdr_len);
+    let csum_start = usize::from(hdr.csum_start);
+    let hdr_len = usize::from(hdr.hdr_len);
+    let mut next_segment_data_at = hdr_len;
     let mut count = 0_usize;
     while next_segment_data_at < packet.len() {
         let next_segment_end =
             (next_segment_data_at + usize::from(hdr.gso_size)).min(packet.len());
         let segment_data_len = next_segment_end - next_segment_data_at;
-        let total_len = usize::from(hdr.hdr_len) + segment_data_len;
+        let total_len = hdr_len + segment_data_len;
         if total_len > u16::MAX as usize {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
@@ -650,8 +654,9 @@ fn linux_vnet_gso_split(
             ));
         }
 
-        let mut out = vec![0_u8; total_len];
-        out[..ip_header_len].copy_from_slice(&packet[..ip_header_len]);
+        let mut out = Vec::with_capacity(total_len);
+        out.extend_from_slice(&packet[..hdr_len]);
+        out.extend_from_slice(&packet[next_segment_data_at..next_segment_end]);
         if !is_v6 {
             if count > 0 {
                 let id = u16::from_be_bytes([out[4], out[5]]).wrapping_add(count as u16);
@@ -664,9 +669,6 @@ fn linux_vnet_gso_split(
             out[4..6].copy_from_slice(&((total_len - ip_header_len) as u16).to_be_bytes());
         }
 
-        let csum_start = usize::from(hdr.csum_start);
-        let hdr_len = usize::from(hdr.hdr_len);
-        out[csum_start..hdr_len].copy_from_slice(&packet[csum_start..hdr_len]);
         if protocol == LINUX_IPPROTO_TCP {
             let tcp_seq = first_tcp_seq.wrapping_add(u32::from(hdr.gso_size) * count as u32);
             out[csum_start + 4..csum_start + 8].copy_from_slice(&tcp_seq.to_be_bytes());
@@ -678,8 +680,6 @@ fn linux_vnet_gso_split(
             let udp_len = (hdr.hdr_len - hdr.csum_start) + segment_data_len as u16;
             out[csum_start + 4..csum_start + 6].copy_from_slice(&udp_len.to_be_bytes());
         }
-
-        out[hdr_len..].copy_from_slice(&packet[next_segment_data_at..next_segment_end]);
 
         let transport_len = total_len - csum_start;
         let pseudo_sum = linux_vnet_pseudo_header_sum(protocol, src, dst, transport_len as u16);

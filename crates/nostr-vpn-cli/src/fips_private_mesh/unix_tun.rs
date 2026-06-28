@@ -204,6 +204,7 @@ fn spawn_tun_read_task(
     tokio::spawn(async move {
         let mut buf = vec![0_u8; tun.read_buffer_len()];
         let mut batch = Vec::with_capacity(FIPS_TUN_READ_BURST);
+        let pipeline_profile_enabled = crate::pipeline_profile::enabled();
         loop {
             if !packet_tx
                 .wait_for_tun_read_bulk_headroom(1)
@@ -242,8 +243,10 @@ fn spawn_tun_read_task(
                     }
                     Ok(packet_count) => {
                         debug_assert_eq!(batch.len(), before_len + packet_count);
-                        for packet in &batch[before_len..] {
-                            drained_bytes = drained_bytes.saturating_add(packet.bytes.len());
+                        if pipeline_profile_enabled {
+                            for packet in &batch[before_len..] {
+                                drained_bytes = drained_bytes.saturating_add(packet.bytes.len());
+                            }
                         }
                         drained += packet_count;
                         if drained >= FIPS_TUN_READ_BURST {
@@ -269,11 +272,13 @@ fn spawn_tun_read_task(
             drop(guard);
 
             if !batch.is_empty() {
-                crate::pipeline_profile::record_tun_read_batch(
-                    batch.len(),
-                    drained_bytes,
-                    FIPS_TUN_READ_BURST,
-                );
+                if pipeline_profile_enabled {
+                    crate::pipeline_profile::record_tun_read_batch(
+                        batch.len(),
+                        drained_bytes,
+                        FIPS_TUN_READ_BURST,
+                    );
+                }
                 let pending =
                     std::mem::replace(&mut batch, Vec::with_capacity(FIPS_TUN_READ_BURST));
                 match submit_tun_packet_batch_to_mesh_queue_with_backpressure(
@@ -360,19 +365,22 @@ fn spawn_mesh_recv_task(
         let mut messages = Vec::with_capacity(recv_burst);
         let mut events = Vec::with_capacity(recv_burst);
         let mut packet_batch = TunWriteBatch::with_capacity(recv_burst);
+        let pipeline_profile_enabled = crate::pipeline_profile::enabled();
         loop {
             match mesh
                 .recv_mesh_event_batch_into(&mut messages, &mut events, recv_burst)
                 .await
             {
                 Ok(Some(drained)) => {
-                    let (packet_count, packet_bytes) = mesh_event_packet_stats(&events);
-                    crate::pipeline_profile::record_mesh_recv_batch(
-                        drained,
-                        packet_count,
-                        packet_bytes,
-                        recv_burst,
-                    );
+                    if pipeline_profile_enabled {
+                        let (packet_count, packet_bytes) = mesh_event_packet_stats(&events);
+                        crate::pipeline_profile::record_mesh_recv_batch(
+                            drained,
+                            packet_count,
+                            packet_bytes,
+                            recv_burst,
+                        );
+                    }
                     packet_batch.clear();
                     for event in events.drain(..) {
                         if !forward_mesh_event_to_tun_batched(
@@ -416,6 +424,7 @@ fn spawn_blocking_mesh_recv_worker(
         .spawn(move || {
             let recv_burst = fips_mesh_recv_burst();
             let mut packet_batch = TunWriteBatch::with_capacity(recv_burst);
+            let pipeline_profile_enabled = crate::pipeline_profile::enabled();
             while !thread_stop.load(Ordering::Acquire) {
                 packet_batch.clear();
                 let mut packet_count = 0usize;
@@ -425,8 +434,10 @@ fn spawn_blocking_mesh_recv_worker(
                     mesh.recv_mesh_event_batch_blocking_for_each(recv_burst, &thread_stop, |event| {
                         match event {
                             FipsPrivateMeshEvent::Packet(packet) => {
-                                packet_count = packet_count.saturating_add(1);
-                                packet_bytes = packet_bytes.saturating_add(packet.len());
+                                if pipeline_profile_enabled {
+                                    packet_count = packet_count.saturating_add(1);
+                                    packet_bytes = packet_bytes.saturating_add(packet.len());
+                                }
                                 push_mesh_packet_for_tun(packet, &mut packet_batch);
                                 true
                             }
@@ -443,12 +454,14 @@ fn spawn_blocking_mesh_recv_worker(
                     });
                 match received {
                     Ok(Some(drained)) => {
-                        crate::pipeline_profile::record_mesh_recv_batch(
-                            drained,
-                            packet_count,
-                            packet_bytes,
-                            recv_burst,
-                        );
+                        if pipeline_profile_enabled {
+                            crate::pipeline_profile::record_mesh_recv_batch(
+                                drained,
+                                packet_count,
+                                packet_bytes,
+                                recv_burst,
+                            );
+                        }
                         flush_mesh_packet_batch_to_tun_blocking(
                             tun_fd,
                             &mut packet_batch,
