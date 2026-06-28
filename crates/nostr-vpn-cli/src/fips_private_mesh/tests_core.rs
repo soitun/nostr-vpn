@@ -899,6 +899,95 @@
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
+    async fn tun_to_mesh_discardable_bulk_drops_without_waiting_for_headroom() {
+        let (tx, mut rx) = TunPipelineQueueTx::channel(1);
+        let queued_bulk = test_ipv6_tcp_packet(0x18, 512);
+        let discardable_bulk = test_ipv6_udp_packet(64);
+
+        assert_eq!(
+            submit_tun_packet_batch_to_mesh_queue(
+                &tx,
+                vec![test_pipeline_packet(queued_bulk.clone())],
+            ),
+            TunQueueSubmit::Enqueued
+        );
+
+        let submit = submit_tun_packet_batch_to_mesh_queue_with_backpressure(
+            &tx,
+            vec![test_pipeline_packet(discardable_bulk)],
+            1,
+        );
+        assert_eq!(
+            tokio::time::timeout(Duration::from_millis(20), submit)
+                .await
+                .expect("discardable bulk should not wait for queue headroom"),
+            TunQueueSubmit::DroppedBulk
+        );
+
+        let queued = rx.recv().await.expect("queued reliable bulk");
+        assert_eq!(queued.len(), 1);
+        assert_eq!(queued[0].bytes, queued_bulk);
+        assert!(
+            rx.bulk.try_recv().is_err(),
+            "discardable drop must not leave a hidden batch queued"
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn tun_to_mesh_reliable_or_mixed_bulk_still_waits_for_headroom() {
+        let (tx, mut rx) = TunPipelineQueueTx::channel(2);
+        let queued_first = test_ipv6_tcp_packet(0x18, 512);
+        let queued_second = test_ipv6_tcp_packet(0x18, 513);
+        let reliable_bulk = test_ipv6_tcp_packet(0x18, 514);
+        let discardable_bulk = test_ipv6_udp_packet(64);
+
+        assert_eq!(
+            submit_tun_packet_batch_to_mesh_queue(
+                &tx,
+                vec![
+                    test_pipeline_packet(queued_first.clone()),
+                    test_pipeline_packet(queued_second.clone()),
+                ],
+            ),
+            TunQueueSubmit::Enqueued
+        );
+
+        let submit = submit_tun_packet_batch_to_mesh_queue_with_backpressure(
+            &tx,
+            vec![
+                test_pipeline_packet(reliable_bulk.clone()),
+                test_pipeline_packet(discardable_bulk.clone()),
+            ],
+            2,
+        );
+        tokio::pin!(submit);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut submit)
+                .await
+                .is_err(),
+            "mixed bulk containing reliable packets should wait for queue headroom"
+        );
+
+        let queued = rx.recv().await.expect("queued reliable bulk");
+        assert_eq!(queued.len(), 2);
+        assert_eq!(queued[0].bytes, queued_first);
+        assert_eq!(queued[1].bytes, queued_second);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), &mut submit)
+                .await
+                .expect("mixed bulk should finish after slots are released"),
+            TunQueueSubmit::Enqueued
+        );
+
+        let mixed = rx.recv().await.expect("mixed bulk batch");
+        assert_eq!(mixed.len(), 2);
+        assert_eq!(mixed[0].bytes, reliable_bulk);
+        assert_eq!(mixed[1].bytes, discardable_bulk);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
     async fn tun_to_mesh_backpressured_submission_splits_oversized_bulk_batch() {
         let (tx, mut rx) = TunPipelineQueueTx::channel(2);
         let first = test_ipv6_tcp_packet(0x18, 512);
