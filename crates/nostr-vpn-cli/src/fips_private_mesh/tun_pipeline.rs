@@ -200,9 +200,17 @@ async fn submit_tun_bulk_batch_with_backpressure(
     max_chunk_packets: usize,
 ) -> TunQueueSubmit {
     let max_chunk_packets = packet_tx.tun_read_backpressure_min_slots(max_chunk_packets);
+    let discardable_only = tun_pipeline_bulk_batch_is_discardable(&batch);
     while !batch.is_empty() {
         let chunk_len = batch.len().min(max_chunk_packets);
-        if !packet_tx.wait_for_tun_read_bulk_slots(chunk_len).await {
+        let bulk_slots_ready = if discardable_only {
+            packet_tx
+                .wait_for_tun_read_discardable_bulk_slots(chunk_len)
+                .await
+        } else {
+            packet_tx.wait_for_tun_read_bulk_slots(chunk_len).await
+        };
+        if !bulk_slots_ready {
             return TunQueueSubmit::Closed;
         }
         let rest = if batch.len() > chunk_len {
@@ -218,6 +226,14 @@ async fn submit_tun_bulk_batch_with_backpressure(
         }
     }
     TunQueueSubmit::Enqueued
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn tun_pipeline_bulk_batch_is_discardable(batch: &[TunPipelinePacket]) -> bool {
+    !batch.is_empty()
+        && batch
+            .iter()
+            .all(|packet| packet.class.drop_on_backpressure())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

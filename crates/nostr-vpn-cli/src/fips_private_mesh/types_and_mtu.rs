@@ -165,7 +165,20 @@ impl TunPipelineQueueTx {
     }
 
     fn bulk_available_packet_slots(&self) -> usize {
-        self.bulk_packet_capacity.saturating_sub(
+        self.bulk_available_packet_slots_with_capacity(self.bulk_packet_capacity)
+    }
+
+    fn discardable_bulk_packet_capacity(&self) -> usize {
+        self.bulk_packet_capacity
+            .min(FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP)
+    }
+
+    fn discardable_bulk_available_packet_slots(&self) -> usize {
+        self.bulk_available_packet_slots_with_capacity(self.discardable_bulk_packet_capacity())
+    }
+
+    fn bulk_available_packet_slots_with_capacity(&self, capacity: usize) -> usize {
+        capacity.saturating_sub(
             self.bulk_queued_packets
                 .load(std::sync::atomic::Ordering::Relaxed),
         )
@@ -182,7 +195,15 @@ impl TunPipelineQueueTx {
     }
 
     fn tun_read_backpressure_min_slots(&self, read_burst: usize) -> usize {
-        read_burst.max(1).min(self.bulk_packet_capacity)
+        self.tun_read_backpressure_min_slots_for_capacity(read_burst, self.bulk_packet_capacity)
+    }
+
+    fn tun_read_backpressure_min_slots_for_capacity(
+        &self,
+        read_burst: usize,
+        capacity: usize,
+    ) -> usize {
+        read_burst.max(1).min(capacity.max(1))
     }
 
     async fn wait_for_tun_read_bulk_headroom(&self, read_burst: usize) -> bool {
@@ -190,12 +211,29 @@ impl TunPipelineQueueTx {
     }
 
     async fn wait_for_tun_read_bulk_slots(&self, slots: usize) -> bool {
-        let needed = self.tun_read_backpressure_min_slots(slots);
+        self.wait_for_tun_read_bulk_slots_with_capacity(slots, self.bulk_packet_capacity)
+            .await
+    }
+
+    async fn wait_for_tun_read_discardable_bulk_slots(&self, slots: usize) -> bool {
+        self.wait_for_tun_read_bulk_slots_with_capacity(
+            slots,
+            self.discardable_bulk_packet_capacity(),
+        )
+        .await
+    }
+
+    async fn wait_for_tun_read_bulk_slots_with_capacity(
+        &self,
+        slots: usize,
+        capacity: usize,
+    ) -> bool {
+        let needed = self.tun_read_backpressure_min_slots_for_capacity(slots, capacity);
         loop {
             if self.bulk.is_closed() {
                 return false;
             }
-            if self.bulk_available_packet_slots() >= needed {
+            if self.bulk_available_packet_slots_with_capacity(capacity) >= needed {
                 return true;
             }
 
@@ -203,7 +241,7 @@ impl TunPipelineQueueTx {
             if self.bulk.is_closed() {
                 return false;
             }
-            if self.bulk_available_packet_slots() >= needed {
+            if self.bulk_available_packet_slots_with_capacity(capacity) >= needed {
                 return true;
             }
 

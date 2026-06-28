@@ -177,6 +177,8 @@ const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = macos_tun_to_mesh_queue_cap(
 const MIN_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 1;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 65_536;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP: usize = 1024;
 #[cfg(target_os = "macos")]
 const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(macos_default_udp_send_buf_size());
 #[cfg(not(target_os = "macos"))]

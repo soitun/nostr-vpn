@@ -34,9 +34,9 @@
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
         BorrowedTunFd, TunPipelineLane, TunPipelinePacket, TunPipelineQueueTx,
-        TunQueueSubmit, TunWriteBatch, parse_fips_tun_to_mesh_queue_cap,
-        push_mesh_packet_for_tun, raw_write_packet_to_tun, release_tun_bulk_packet_slots,
-        submit_tun_packet_batch_to_mesh_queue,
+        TunQueueSubmit, TunWriteBatch, FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP,
+        parse_fips_tun_to_mesh_queue_cap, push_mesh_packet_for_tun, raw_write_packet_to_tun,
+        release_tun_bulk_packet_slots, submit_tun_packet_batch_to_mesh_queue,
         submit_tun_packet_batch_to_mesh_queue_with_backpressure,
         tun_pipeline_packet_lane,
     };
@@ -936,6 +936,85 @@
         let second_chunk = rx.recv().await.expect("second bulk chunk");
         assert_eq!(second_chunk.len(), 1);
         assert_eq!(second_chunk[0].bytes, third);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn tun_to_mesh_discardable_bulk_waits_at_high_water() {
+        let capacity = FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP * 2;
+        let (tx, mut rx) = TunPipelineQueueTx::channel(capacity);
+        let queued = (0..FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP)
+            .map(|_| test_pipeline_packet(test_ipv6_udp_packet(8)))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            submit_tun_packet_batch_to_mesh_queue(&tx, queued),
+            TunQueueSubmit::Enqueued
+        );
+        assert_eq!(
+            tx.discardable_bulk_available_packet_slots(),
+            0,
+            "discardable high-water budget should be full"
+        );
+        assert_eq!(
+            tx.bulk_available_packet_slots(),
+            FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP,
+            "full reliable bulk capacity still has room"
+        );
+
+        let submit = submit_tun_packet_batch_to_mesh_queue_with_backpressure(
+            &tx,
+            vec![test_pipeline_packet(test_ipv6_udp_packet(8))],
+            1,
+        );
+        tokio::pin!(submit);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), &mut submit)
+                .await
+                .is_err(),
+            "discardable bulk should wait once its high-water budget is full"
+        );
+
+        let first = rx.recv().await.expect("queued discardable bulk");
+        assert_eq!(first.len(), FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP);
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(1), &mut submit)
+                .await
+                .expect("discardable bulk should continue after high-water slots release"),
+            TunQueueSubmit::Enqueued
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
+    async fn tun_to_mesh_reliable_bulk_uses_capacity_above_discardable_high_water() {
+        let capacity = FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP * 2;
+        let (tx, mut rx) = TunPipelineQueueTx::channel(capacity);
+        let queued = (0..FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP)
+            .map(|_| test_pipeline_packet(test_ipv6_udp_packet(8)))
+            .collect::<Vec<_>>();
+        let reliable = test_ipv6_tcp_packet(0x18, 512);
+
+        assert_eq!(
+            submit_tun_packet_batch_to_mesh_queue(&tx, queued),
+            TunQueueSubmit::Enqueued
+        );
+        assert_eq!(
+            submit_tun_packet_batch_to_mesh_queue_with_backpressure(
+                &tx,
+                vec![test_pipeline_packet(reliable.clone())],
+                1,
+            )
+            .await,
+            TunQueueSubmit::Enqueued,
+            "reliable bulk should keep the full queue capacity"
+        );
+
+        let first = rx.recv().await.expect("queued discardable bulk");
+        assert_eq!(first.len(), FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP);
+        let second = rx.recv().await.expect("queued reliable bulk");
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].bytes, reliable);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
