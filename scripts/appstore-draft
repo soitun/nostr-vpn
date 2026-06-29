@@ -17,7 +17,7 @@ ACTION="${1:-put}"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/appstore-draft <put|status>
+usage: ./scripts/appstore-draft <put|submit|status>
 
 Creates or updates the editable iOS App Store version draft for the workspace
 version, links the matching App Store Connect build, updates en-US metadata,
@@ -33,11 +33,15 @@ Environment:
   NVPN_APPSTORE_KEYWORDS      optional keywords override
   NVPN_APPSTORE_SUPPORT_URL   optional support URL override
   NVPN_APPSTORE_PRIVACY_URL   optional privacy policy URL override
+  NVPN_APPSTORE_MARKETING_URL optional marketing URL override
+  NVPN_APPSTORE_COPYRIGHT     optional copyright override
+  NVPN_APPSTORE_CATEGORY_ID   optional primary category id (default UTILITIES)
+  NVPN_APPSTORE_REVIEW_*      optional App Review contact/notes overrides
 EOF
 }
 
 case "$ACTION" in
-  put|status)
+  put|submit|status)
     ;;
   -h|--help|help)
     usage
@@ -112,10 +116,21 @@ DEFAULT_WHATS_NEW = """Initial public launch draft for the current Nostr VPN rel
 This build includes native mobile network management, device presence, MagicDNS names, private mesh routing, WireGuard upstream settings, and TestFlight hardening."""
 DEFAULT_KEYWORDS = "VPN,mesh,WireGuard,Nostr,private network,LAN,peer-to-peer,DNS"
 DEFAULT_SUPPORT_URL = "https://github.com/mmalmi/nostr-vpn/issues"
-DEFAULT_PRIVACY_URL = (
-    "https://sites.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/"
-    "nostr-vpn-privacy/index.html?reload=1"
-)
+DEFAULT_MARKETING_URL = "https://nostrvpn.org/"
+DEFAULT_PRIVACY_URL = "https://nostrvpn.org/privacy/"
+DEFAULT_COPYRIGHT = "2026 Sirius Business Oy"
+DEFAULT_CATEGORY_ID = "UTILITIES"
+DEFAULT_CONTENT_RIGHTS_DECLARATION = "DOES_NOT_USE_THIRD_PARTY_CONTENT"
+DEFAULT_PRICE_TERRITORY = "USA"
+DEFAULT_REVIEW_CONTACT_FIRST = "Sirius"
+DEFAULT_REVIEW_CONTACT_LAST = "Business"
+DEFAULT_REVIEW_CONTACT_PHONE = "+35868028660"
+DEFAULT_REVIEW_CONTACT_EMAIL = "nostrvpn@siriusbusiness.fi"
+DEFAULT_REVIEW_NOTES = """Nostr VPN is a private mesh VPN for networks, peers, relays, routes, and exit nodes that the user configures.
+
+No demo account is required. To review the app, create a network in the app, add/import a peer invite if you have another device, and start the VPN from the Devices tab. The app shows the required VPN data-use disclosure before enabling the tunnel, then iOS shows the system VPN permission prompt.
+
+Nostr VPN is not a public VPN, public proxy, anonymity, stealth, or censorship-circumvention service. Sirius Business does not sell VPN data, use it for ads or tracking, or disclose it to third parties."""
 
 
 def fail(message, code=1):
@@ -125,6 +140,13 @@ def fail(message, code=1):
 
 def env_value(name, default=""):
     return os.environ.get(name, "").strip() or default
+
+
+def required_metadata_value(name, current, label, default=""):
+    value = env_value(name, current or default)
+    if not value:
+        fail(f"{name} or existing {label} is required")
+    return value
 
 
 def b64url(data):
@@ -306,7 +328,7 @@ def ensure_version(app_id):
                     "usesIdfa": False,
                     "copyright": env_value(
                         "NVPN_APPSTORE_COPYRIGHT",
-                        "2026 Martti Malmi",
+                        DEFAULT_COPYRIGHT,
                     ),
                 },
             )
@@ -326,7 +348,7 @@ def ensure_version(app_id):
                 "usesIdfa": False,
                 "copyright": env_value(
                     "NVPN_APPSTORE_COPYRIGHT",
-                    "2026 Martti Malmi",
+                    DEFAULT_COPYRIGHT,
                 ),
             },
         )
@@ -377,7 +399,7 @@ def metadata_attrs(existing=None):
     }
     marketing_url = env_value(
         "NVPN_APPSTORE_MARKETING_URL",
-        current.get("marketingUrl") or "https://github.com/mmalmi/nostr-vpn",
+        current.get("marketingUrl") or DEFAULT_MARKETING_URL,
     )
     if marketing_url:
         attrs["marketingUrl"] = marketing_url
@@ -463,6 +485,410 @@ def ensure_localization(version_id):
             },
         )
     return require_ok(status, body, "Create App Store localization").get("data")
+
+
+def app_infos(app_id):
+    return get_all(
+        f"apps/{app_id}/appInfos",
+        {
+            "fields[appInfos]": (
+                "state,appStoreState,appStoreAgeRating,appInfoLocalizations,"
+                "ageRatingDeclaration,primaryCategory"
+            ),
+            "limit": "200",
+        },
+    )
+
+
+def ensure_app_info(app_id):
+    infos = app_infos(app_id)
+    editable = [
+        info
+        for info in infos
+        if (
+            info.get("attributes", {}).get("state")
+            in {
+                "PREPARE_FOR_SUBMISSION",
+                "DEVELOPER_REJECTED",
+                "REJECTED",
+                "REPLACED_WITH_NEW_INFO",
+            }
+            or info.get("attributes", {}).get("appStoreState")
+            in {"PREPARE_FOR_SUBMISSION", "DEVELOPER_REJECTED", "REJECTED"}
+        )
+    ]
+    if editable:
+        return editable[0]
+    if infos:
+        return infos[0]
+    fail("No App Info record is visible for the app")
+
+
+def app_info_localizations(app_info_id):
+    return get_all(
+        f"appInfos/{app_info_id}/appInfoLocalizations",
+        {
+            "fields[appInfoLocalizations]": (
+                "locale,name,subtitle,privacyPolicyUrl,privacyChoicesUrl,privacyPolicyText"
+            ),
+            "limit": "200",
+        },
+    )
+
+
+def ensure_app_info_localization(app_info_id):
+    existing = None
+    for localization in app_info_localizations(app_info_id):
+        if localization.get("attributes", {}).get("locale") == LOCALE:
+            existing = localization
+            break
+    if existing is None:
+        localizations = app_info_localizations(app_info_id)
+        existing = localizations[0] if localizations else None
+
+    attrs = existing.get("attributes", {}) if existing else {}
+    localization_attrs = {
+        "name": required_metadata_value(
+            "NVPN_APPSTORE_APP_NAME",
+            attrs.get("name"),
+            "app name",
+            "Nostr VPN",
+        ),
+        "privacyPolicyUrl": required_metadata_value(
+            "NVPN_APPSTORE_PRIVACY_URL",
+            attrs.get("privacyPolicyUrl"),
+            "privacy policy URL",
+            DEFAULT_PRIVACY_URL,
+        ),
+    }
+    subtitle = env_value("NVPN_APPSTORE_SUBTITLE", attrs.get("subtitle") or "")
+    if subtitle:
+        localization_attrs["subtitle"] = subtitle
+    privacy_choices_url = env_value(
+        "NVPN_APPSTORE_PRIVACY_CHOICES_URL",
+        attrs.get("privacyChoicesUrl") or "",
+    )
+    if privacy_choices_url:
+        localization_attrs["privacyChoicesUrl"] = privacy_choices_url
+
+    if existing:
+        status, body = request(
+            "PATCH",
+            f"appInfoLocalizations/{existing['id']}",
+            body={
+                "data": {
+                    "type": "appInfoLocalizations",
+                    "id": existing["id"],
+                    "attributes": localization_attrs,
+                }
+            },
+        )
+        return require_ok(status, body, "Update App Info localization").get("data")
+
+    localization_attrs["locale"] = LOCALE
+    status, body = request(
+        "POST",
+        "appInfoLocalizations",
+        body={
+            "data": {
+                "type": "appInfoLocalizations",
+                "attributes": localization_attrs,
+                "relationships": {
+                    "appInfo": {"data": {"type": "appInfos", "id": app_info_id}}
+                },
+            }
+        },
+    )
+    return require_ok(status, body, "Create App Info localization").get("data")
+
+
+def primary_category_id():
+    category_id = env_value("NVPN_APPSTORE_CATEGORY_ID", DEFAULT_CATEGORY_ID)
+    categories = get_all(
+        "appCategories",
+        {
+            "filter[platforms]": "IOS",
+            "limit": "200",
+        },
+    )
+    for category in categories:
+        if category.get("id") == category_id:
+            return category_id
+    fail(f"App Store category id {category_id} is not visible for iOS")
+
+
+def ensure_primary_category(app_info_id):
+    category_id = primary_category_id()
+    status, body = request(
+        "PATCH",
+        f"appInfos/{app_info_id}",
+        body={
+            "data": {
+                "type": "appInfos",
+                "id": app_info_id,
+                "relationships": {
+                    "primaryCategory": {
+                        "data": {"type": "appCategories", "id": category_id}
+                    }
+                },
+            }
+        },
+    )
+    require_ok(status, body, "Update App Info primary category")
+    return category_id
+
+
+def age_rating_declaration_id(app_info_id):
+    status, body = request(
+        "GET",
+        f"appInfos/{app_info_id}/relationships/ageRatingDeclaration",
+    )
+    data = require_ok(status, body, "Read age rating declaration").get("data")
+    if not data or not data.get("id"):
+        fail("No age rating declaration is visible for the app info")
+    return data["id"]
+
+
+def ensure_age_rating(app_info_id):
+    declaration_id = age_rating_declaration_id(app_info_id)
+    attrs = {
+        "advertising": False,
+        "alcoholTobaccoOrDrugUseOrReferences": "NONE",
+        "contests": "NONE",
+        "gambling": False,
+        "gamblingSimulated": "NONE",
+        "gunsOrOtherWeapons": "NONE",
+        "healthOrWellnessTopics": False,
+        "lootBox": False,
+        "medicalOrTreatmentInformation": "NONE",
+        "messagingAndChat": False,
+        "parentalControls": False,
+        "profanityOrCrudeHumor": "NONE",
+        "ageAssurance": False,
+        "sexualContentGraphicAndNudity": "NONE",
+        "sexualContentOrNudity": "NONE",
+        "horrorOrFearThemes": "NONE",
+        "matureOrSuggestiveThemes": "NONE",
+        # VPNs can route ordinary web traffic through user-configured exits.
+        "unrestrictedWebAccess": True,
+        "userGeneratedContent": False,
+        "violenceCartoonOrFantasy": "NONE",
+        "violenceRealisticProlongedGraphicOrSadistic": "NONE",
+        "violenceRealistic": "NONE",
+        "ageRatingOverrideV2": "NONE",
+        "koreaAgeRatingOverride": "NONE",
+    }
+    status, body = request(
+        "PATCH",
+        f"ageRatingDeclarations/{declaration_id}",
+        body={
+            "data": {
+                "type": "ageRatingDeclarations",
+                "id": declaration_id,
+                "attributes": attrs,
+            }
+        },
+    )
+    return require_ok(status, body, "Update age rating declaration").get("data")
+
+
+def app_store_review_detail(version_id):
+    status, body = request(
+        "GET",
+        f"appStoreVersions/{version_id}/appStoreReviewDetail",
+        {
+            "fields[appStoreReviewDetails]": (
+                "contactFirstName,contactLastName,contactPhone,contactEmail,"
+                "demoAccountName,demoAccountRequired,notes"
+            )
+        },
+    )
+    if status == 404:
+        return None
+    return require_ok(status, body, "Read App Review detail").get("data")
+
+
+def review_detail_attrs(existing=None):
+    current = existing.get("attributes", {}) if existing else {}
+    return {
+        "contactFirstName": required_metadata_value(
+            "NVPN_APPSTORE_REVIEW_CONTACT_FIRST_NAME",
+            current.get("contactFirstName"),
+            "App Review contact first name",
+            DEFAULT_REVIEW_CONTACT_FIRST,
+        ),
+        "contactLastName": required_metadata_value(
+            "NVPN_APPSTORE_REVIEW_CONTACT_LAST_NAME",
+            current.get("contactLastName"),
+            "App Review contact last name",
+            DEFAULT_REVIEW_CONTACT_LAST,
+        ),
+        "contactPhone": required_metadata_value(
+            "NVPN_APPSTORE_REVIEW_CONTACT_PHONE",
+            current.get("contactPhone"),
+            "App Review contact phone",
+            DEFAULT_REVIEW_CONTACT_PHONE,
+        ),
+        "contactEmail": required_metadata_value(
+            "NVPN_APPSTORE_REVIEW_CONTACT_EMAIL",
+            current.get("contactEmail"),
+            "App Review contact email",
+            DEFAULT_REVIEW_CONTACT_EMAIL,
+        ),
+        "demoAccountRequired": False,
+        "notes": env_value(
+            "NVPN_APPSTORE_REVIEW_NOTES",
+            current.get("notes") or DEFAULT_REVIEW_NOTES,
+        ),
+    }
+
+
+def ensure_review_detail(version_id):
+    detail = app_store_review_detail(version_id)
+    attrs = review_detail_attrs(detail)
+    if detail:
+        status, body = request(
+            "PATCH",
+            f"appStoreReviewDetails/{detail['id']}",
+            body={
+                "data": {
+                    "type": "appStoreReviewDetails",
+                    "id": detail["id"],
+                    "attributes": attrs,
+                }
+            },
+        )
+        return require_ok(status, body, "Update App Review detail").get("data")
+
+    status, body = request(
+        "POST",
+        "appStoreReviewDetails",
+        body={
+            "data": {
+                "type": "appStoreReviewDetails",
+                "attributes": attrs,
+                "relationships": {
+                    "appStoreVersion": {
+                        "data": {"type": "appStoreVersions", "id": version_id}
+                    }
+                },
+            }
+        },
+    )
+    return require_ok(status, body, "Create App Review detail").get("data")
+
+
+def ensure_content_rights(app_id):
+    declaration = env_value(
+        "NVPN_APPSTORE_CONTENT_RIGHTS_DECLARATION",
+        DEFAULT_CONTENT_RIGHTS_DECLARATION,
+    )
+    status, body = request(
+        "PATCH",
+        f"apps/{app_id}",
+        body={
+            "data": {
+                "type": "apps",
+                "id": app_id,
+                "attributes": {
+                    "contentRightsDeclaration": declaration,
+                },
+            }
+        },
+    )
+    return require_ok(status, body, "Update content rights declaration").get("data")
+
+
+def price_territory():
+    return env_value("NVPN_APPSTORE_PRICE_TERRITORY", DEFAULT_PRICE_TERRITORY)
+
+
+def free_price_point(app_id):
+    territory = price_territory()
+    price_points = get_all(
+        f"apps/{app_id}/appPricePoints",
+        {
+            "filter[territory]": territory,
+            "fields[appPricePoints]": "customerPrice,proceeds,territory",
+            "limit": "200",
+        },
+    )
+    for price_point in price_points:
+        price = price_point.get("attributes", {}).get("customerPrice")
+        if price in {"0", "0.0", "0.00"}:
+            return price_point
+    fail(f"No free App Store price point is visible for territory {territory}")
+
+
+def app_price_schedule_id(app_id):
+    status, body = request("GET", f"apps/{app_id}/appPriceSchedule")
+    if status == 404:
+        return None
+    data = require_ok(status, body, "Read app price schedule").get("data")
+    return data.get("id") if data else None
+
+
+def app_price_schedule_manual_prices(schedule_id):
+    status, body = request(
+        "GET",
+        f"appPriceSchedules/{schedule_id}/manualPrices",
+        {
+            "fields[appPrices]": "startDate,endDate,appPricePoint",
+            "limit": "200",
+        },
+    )
+    if status == 404:
+        return []
+    return require_ok(status, body, "Read app price schedule manual prices").get("data", [])
+
+
+def ensure_free_price_schedule(app_id):
+    schedule_id = app_price_schedule_id(app_id)
+    if schedule_id and app_price_schedule_manual_prices(schedule_id):
+        return schedule_id
+
+    territory = price_territory()
+    price_point = free_price_point(app_id)
+    local_price_id = "${free-price}"
+    status, body = request(
+        "POST",
+        "appPriceSchedules",
+        body={
+            "data": {
+                "type": "appPriceSchedules",
+                "relationships": {
+                    "app": {"data": {"type": "apps", "id": app_id}},
+                    "baseTerritory": {
+                        "data": {"type": "territories", "id": territory}
+                    },
+                    "manualPrices": {
+                        "data": [{"type": "appPrices", "id": local_price_id}]
+                    },
+                },
+            },
+            "included": [
+                {
+                    "type": "appPrices",
+                    "id": local_price_id,
+                    "attributes": {},
+                    "relationships": {
+                        "appPricePoint": {
+                            "data": {
+                                "type": "appPricePoints",
+                                "id": price_point["id"],
+                            }
+                        }
+                    },
+                }
+            ],
+        },
+    )
+    if status == 409:
+        schedule_id = app_price_schedule_id(app_id)
+        if schedule_id and app_price_schedule_manual_prices(schedule_id):
+            return schedule_id
+    data = require_ok(status, body, "Create free app price schedule").get("data")
+    return data.get("id")
 
 
 def find_build(app_id):
@@ -635,6 +1061,110 @@ def wait_for_screenshots(screenshots):
     )
 
 
+def review_submissions(app_id):
+    return get_all(
+        f"apps/{app_id}/reviewSubmissions",
+        {
+            "filter[platform]": "IOS",
+            "fields[reviewSubmissions]": "platform,state,submittedDate,appStoreVersionForReview",
+            "include": "appStoreVersionForReview",
+            "limit": "50",
+        },
+    )
+
+
+def active_review_submission(app_id):
+    active_states = {
+        "READY_FOR_REVIEW",
+        "WAITING_FOR_REVIEW",
+        "IN_REVIEW",
+        "UNRESOLVED_ISSUES",
+        "CANCELING",
+        "COMPLETING",
+    }
+    for submission in review_submissions(app_id):
+        if submission.get("attributes", {}).get("state") in active_states:
+            return submission
+    return None
+
+
+def create_review_submission(app_id):
+    status, body = request(
+        "POST",
+        "reviewSubmissions",
+        body={
+            "data": {
+                "type": "reviewSubmissions",
+                "attributes": {"platform": "IOS"},
+                "relationships": {
+                    "app": {"data": {"type": "apps", "id": app_id}}
+                },
+            }
+        },
+    )
+    if status == 409:
+        existing = active_review_submission(app_id)
+        if existing:
+            return existing
+    return require_ok(status, body, "Create review submission").get("data")
+
+
+def add_review_submission_item(submission_id, version_id):
+    status, body = request(
+        "POST",
+        "reviewSubmissionItems",
+        body={
+            "data": {
+                "type": "reviewSubmissionItems",
+                "relationships": {
+                    "reviewSubmission": {
+                        "data": {
+                            "type": "reviewSubmissions",
+                            "id": submission_id,
+                        }
+                    },
+                    "appStoreVersion": {
+                        "data": {
+                            "type": "appStoreVersions",
+                            "id": version_id,
+                        }
+                    },
+                },
+            }
+        },
+    )
+    if status == 409:
+        fail(
+            "Create review submission item failed: HTTP 409\n"
+            + json.dumps(body, indent=2)
+        )
+    return require_ok(status, body, "Create review submission item").get("data")
+
+
+def submit_review_submission(app_id, version_id):
+    submission = active_review_submission(app_id) or create_review_submission(app_id)
+    state = submission.get("attributes", {}).get("state")
+    if state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+        print(f"App Store review submission already submitted: {state}")
+        return submission
+    if state in {"UNRESOLVED_ISSUES", "CANCELING", "COMPLETING"}:
+        fail(f"App Store review submission is already active in state {state}")
+
+    add_review_submission_item(submission["id"], version_id)
+    status, body = request(
+        "PATCH",
+        f"reviewSubmissions/{submission['id']}",
+        body={
+            "data": {
+                "type": "reviewSubmissions",
+                "id": submission["id"],
+                "attributes": {"submitted": True},
+            }
+        },
+    )
+    return require_ok(status, body, "Submit App Store review submission").get("data")
+
+
 def upload_screenshots(localization_id):
     if not SCREENSHOT_ROOT.is_dir():
         fail(f"Screenshot directory not found: {SCREENSHOT_ROOT}")
@@ -675,15 +1205,43 @@ if ACTION == "status":
 
 version = ensure_version(app["id"])
 localization = ensure_localization(version["id"])
+app_info = ensure_app_info(app["id"])
+app_info_localization = ensure_app_info_localization(app_info["id"])
+category_id = ensure_primary_category(app_info["id"])
+age_rating = ensure_age_rating(app_info["id"])
+review_detail = ensure_review_detail(version["id"])
+content_rights = ensure_content_rights(app["id"])
+price_schedule_id = ensure_free_price_schedule(app["id"])
 build = find_build(app["id"])
 if build is None:
     fail(f"Build {BUILD_NUMBER} is not visible in App Store Connect")
 link_build(version["id"], build)
 screenshots = upload_screenshots(localization["id"])
+submission = None
+if ACTION == "submit":
+    submission = submit_review_submission(app["id"], version["id"])
 
 print(f"Updated App Store draft {VERSION_NAME} for {BUNDLE_ID}")
 print(f"Version: {version['id']}")
 print(f"Localization: {localization['id']} ({LOCALE})")
+print(
+    f"App Info localization: {app_info_localization['id']} "
+    f"({app_info_localization.get('attributes', {}).get('privacyPolicyUrl')})"
+)
+print(f"Primary category: {category_id}")
+print(f"Age rating declaration: {age_rating['id']}")
+print(f"App Review detail: {review_detail['id']}")
+print(
+    "Content rights: "
+    f"{content_rights.get('attributes', {}).get('contentRightsDeclaration')}"
+)
+print(f"Price schedule: {price_schedule_id}")
 print(f"Build: {BUILD_NUMBER} [{build['id']}]")
 print(f"Screenshots uploaded: {len(screenshots)}")
+if submission:
+    print(
+        "App Store review submission: "
+        f"{submission['id']} "
+        f"{submission.get('attributes', {}).get('state') or 'submitted'}"
+    )
 PY
