@@ -190,7 +190,7 @@ run_ios_upload() {
     echo "Install Apple's Transporter app or set NVPN_ITMS_TRANSPORTER." >&2
     exit 1
   fi
-  echo "Uploading $ipa to App Store Connect (TestFlight Internal)..."
+  echo "Uploading $ipa to App Store Connect..."
   "$transporter" \
     -m upload \
     -assetFile "$ipa" \
@@ -199,7 +199,7 @@ run_ios_upload() {
     -t "$IOS_UPLOAD_TRANSPORT" \
     -v informational \
     -throughput
-  echo "Upload submitted. Build will appear in TestFlight Internal once Apple"
+  echo "Upload submitted. Build will appear in App Store Connect once Apple"
   echo "finishes processing (typically 5-15 minutes)."
 }
 

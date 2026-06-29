@@ -13,7 +13,7 @@
 - [Latest releases on git.iris.to](https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn?tab=releases)
 - [GitHub mirror releases](https://github.com/mmalmi/nostr-vpn/releases/latest)
 - CLI from crates.io: `cargo install nvpn`
-- [iOS TestFlight beta](https://testflight.apple.com/join/jPRVxbSv) exists, but public access is not live yet
+- [iOS TestFlight beta](https://testflight.apple.com/join/58sg4agv) is pending Beta App Review
 
 Release artifacts currently cover native Apple Silicon macOS, Linux x64, Windows x64, Android arm64, and headless CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64. Intel macOS is source-only for now.
 
