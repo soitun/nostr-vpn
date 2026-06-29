@@ -170,6 +170,7 @@ impl FipsPrivateMeshRuntime {
         let mesh = self.mesh.load();
         let peer_identities = self.peer_identities.load();
         let mut routed_packets = 0usize;
+        let mut cached_destination_peer = None;
 
         {
             let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRoute);
@@ -178,15 +179,18 @@ impl FipsPrivateMeshRuntime {
                 let destination = packet.destination;
                 let packet_debug = fips_unix_packet_debug_enabled();
                 let debug_description = packet_debug.then(|| describe_ip_packet(&packet.bytes));
-                let outgoing = match destination {
-                    Some(destination) => mesh
-                        .route_outbound_packet_owned_with_peer_to_destination(
-                            packet.bytes,
-                            destination,
-                        ),
-                    None => mesh.route_outbound_packet_owned_with_peer(packet.bytes),
+                let routed = match destination {
+                    Some(destination) => cached_tun_destination_route(
+                        &mesh,
+                        &mut cached_destination_peer,
+                        destination,
+                        packet.bytes,
+                    ),
+                    None => mesh
+                        .route_outbound_packet_owned_with_peer(packet.bytes)
+                        .map(RoutedTunPipelinePacket::from),
                 };
-                let Some(outgoing) = outgoing else {
+                let Some(routed) = routed else {
                     if let Some(description) = debug_description {
                         eprintln!("fips: TUN packet had no FIPS route {description}");
                     }
@@ -196,18 +200,18 @@ impl FipsPrivateMeshRuntime {
                 if packet_debug {
                     eprintln!(
                         "fips: TUN packet routed to {} {}",
-                        outgoing.participant_pubkey,
-                        describe_ip_packet(&outgoing.bytes)
+                        routed.participant_pubkey,
+                        describe_ip_packet(&routed.bytes)
                     );
                 }
-                let participant_key = outgoing.participant_pubkey_bytes.copied();
-                let payload = FipsEndpointPayload::from_classified(outgoing.bytes, class);
+                let participant_key = routed.participant_pubkey_bytes;
+                let payload = FipsEndpointPayload::from_classified(routed.bytes, class);
                 Self::push_endpoint_send_run(
                     runs,
                     &peer_identities,
-                    outgoing.participant_pubkey,
+                    routed.participant_pubkey,
                     participant_key,
-                    outgoing.endpoint_node_addr,
+                    &routed.endpoint_node_addr,
                     payload,
                 );
             }
@@ -237,6 +241,14 @@ impl FipsPrivateMeshRuntime {
         payload: FipsEndpointPayload,
     ) {
         let bytes_len = payload.len();
+
+        if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
+            && run.matches_endpoint(endpoint_node_addr, participant_key, participant_pubkey)
+        {
+            run.bytes_len += bytes_len;
+            run.payloads.push(payload);
+            return;
+        }
 
         if let Some(identity) = endpoint_identity_for_send(
             peer_identities,
@@ -293,4 +305,48 @@ impl FipsPrivateMeshRuntime {
         Ok(sent)
     }
 
+}
+
+struct RoutedTunPipelinePacket<'a> {
+    participant_pubkey: &'a str,
+    participant_pubkey_bytes: Option<ParticipantPubkeyBytes>,
+    endpoint_node_addr: [u8; 16],
+    bytes: Vec<u8>,
+}
+
+impl<'a> From<nostr_vpn_core::fips_mesh::RoutedFipsPacket<'a>>
+    for RoutedTunPipelinePacket<'a>
+{
+    fn from(value: nostr_vpn_core::fips_mesh::RoutedFipsPacket<'a>) -> Self {
+        Self {
+            participant_pubkey: value.participant_pubkey,
+            participant_pubkey_bytes: value.participant_pubkey_bytes.copied(),
+            endpoint_node_addr: *value.endpoint_node_addr,
+            bytes: value.bytes,
+        }
+    }
+}
+
+fn cached_tun_destination_route<'a>(
+    mesh: &'a FipsMeshRuntime,
+    cached: &mut Option<(IpAddr, RoutedFipsPeer<'a>)>,
+    destination: IpAddr,
+    bytes: Vec<u8>,
+) -> Option<RoutedTunPipelinePacket<'a>> {
+    let peer = if let Some((cached_destination, peer)) = cached.as_ref()
+        && *cached_destination == destination
+    {
+        *peer
+    } else {
+        let peer = mesh.route_outbound_destination_peer(destination)?;
+        *cached = Some((destination, peer));
+        peer
+    };
+
+    Some(RoutedTunPipelinePacket {
+        participant_pubkey: peer.participant_pubkey,
+        participant_pubkey_bytes: peer.participant_pubkey_bytes.copied(),
+        endpoint_node_addr: *peer.endpoint_node_addr,
+        bytes,
+    })
 }

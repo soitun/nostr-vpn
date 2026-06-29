@@ -22,7 +22,7 @@ use nostr_vpn_core::fips_control::{
     encode_fips_control_messages,
 };
 use nostr_vpn_core::fips_mesh::{
-    FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission, packet_destination,
+    FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission, RoutedFipsPeer, packet_destination,
 };
 use nostr_vpn_core::join_requests::MeshJoinRequest;
 #[cfg(feature = "paid-exit")]

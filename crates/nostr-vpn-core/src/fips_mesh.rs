@@ -259,12 +259,16 @@ impl FipsMeshRuntime {
     pub fn route_outbound_packet_peer<'a>(&'a self, packet: &[u8]) -> Option<RoutedFipsPeer<'a>> {
         let peer = self.route_outbound_peer(packet)?;
 
-        Some(RoutedFipsPeer {
-            participant_pubkey: &peer.participant_pubkey_hex,
-            participant_pubkey_bytes: peer.participant_pubkey.as_ref(),
-            endpoint_pubkey: peer.endpoint_pubkey.as_ref()?,
-            endpoint_node_addr: peer.endpoint_node_addr.as_ref()?,
-        })
+        Some(routed_fips_peer(peer)?)
+    }
+
+    pub fn route_outbound_destination_peer<'a>(
+        &'a self,
+        destination: IpAddr,
+    ) -> Option<RoutedFipsPeer<'a>> {
+        let peer = self.select_peer_for_ip(destination)?;
+
+        Some(routed_fips_peer(peer)?)
     }
 
     pub fn route_outbound_packet_with_peer<'a>(
@@ -273,13 +277,7 @@ impl FipsMeshRuntime {
     ) -> Option<RoutedFipsPacket<'a>> {
         let peer = self.route_outbound_peer(packet)?;
 
-        Some(RoutedFipsPacket {
-            participant_pubkey: &peer.participant_pubkey_hex,
-            participant_pubkey_bytes: peer.participant_pubkey.as_ref(),
-            endpoint_pubkey: peer.endpoint_pubkey.as_ref()?,
-            endpoint_node_addr: peer.endpoint_node_addr.as_ref()?,
-            bytes: packet.to_vec(),
-        })
+        Some(routed_fips_packet(peer, packet.to_vec())?)
     }
 
     pub fn route_outbound_packet_owned_with_peer<'a>(
@@ -297,13 +295,7 @@ impl FipsMeshRuntime {
     ) -> Option<RoutedFipsPacket<'a>> {
         let peer = self.select_peer_for_ip(destination)?;
 
-        Some(RoutedFipsPacket {
-            participant_pubkey: &peer.participant_pubkey_hex,
-            participant_pubkey_bytes: peer.participant_pubkey.as_ref(),
-            endpoint_pubkey: peer.endpoint_pubkey.as_ref()?,
-            endpoint_node_addr: peer.endpoint_node_addr.as_ref()?,
-            bytes: packet,
-        })
+        Some(routed_fips_packet(peer, packet)?)
     }
 
     fn route_outbound_peer(&self, packet: &[u8]) -> Option<&FipsMeshPeerRuntime> {
@@ -612,6 +604,26 @@ impl FipsMeshRuntime {
             .filter(|route| route.matches(destination))
             .max_by_key(|route| route.prefix_len)
     }
+}
+
+fn routed_fips_peer(peer: &FipsMeshPeerRuntime) -> Option<RoutedFipsPeer<'_>> {
+    Some(RoutedFipsPeer {
+        participant_pubkey: &peer.participant_pubkey_hex,
+        participant_pubkey_bytes: peer.participant_pubkey.as_ref(),
+        endpoint_pubkey: peer.endpoint_pubkey.as_ref()?,
+        endpoint_node_addr: peer.endpoint_node_addr.as_ref()?,
+    })
+}
+
+fn routed_fips_packet(peer: &FipsMeshPeerRuntime, bytes: Vec<u8>) -> Option<RoutedFipsPacket<'_>> {
+    let peer = routed_fips_peer(peer)?;
+    Some(RoutedFipsPacket {
+        participant_pubkey: peer.participant_pubkey,
+        participant_pubkey_bytes: peer.participant_pubkey_bytes,
+        endpoint_pubkey: peer.endpoint_pubkey,
+        endpoint_node_addr: peer.endpoint_node_addr,
+        bytes,
+    })
 }
 
 fn normalize_paid_route_admissions(

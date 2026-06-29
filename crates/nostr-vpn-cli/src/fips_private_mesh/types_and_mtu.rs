@@ -392,6 +392,16 @@ impl FipsEndpointIdentitySendRun {
             _ => false,
         }
     }
+
+    fn matches_endpoint(
+        &self,
+        endpoint_node_addr: &[u8; 16],
+        participant_key: Option<ParticipantPubkeyBytes>,
+        participant: &str,
+    ) -> bool {
+        self.identity.node_addr().as_bytes() == endpoint_node_addr
+            && self.matches_participant(participant_key, participant)
+    }
 }
 
 #[derive(Debug)]
