@@ -116,9 +116,7 @@ capture_device() {
 
   capture_tab "$device" "$display_type" "$width" "$height" devices 01
   capture_tab "$device" "$display_type" "$width" "$height" internet 02
-  capture_tab "$device" "$display_type" "$width" "$height" public-exits 03
-  capture_tab "$device" "$display_type" "$width" "$height" wallet 04
-  capture_tab "$device" "$display_type" "$width" "$height" settings 05
+  capture_tab "$device" "$display_type" "$width" "$height" settings 03
 }
 
 case "${1:-capture}" in

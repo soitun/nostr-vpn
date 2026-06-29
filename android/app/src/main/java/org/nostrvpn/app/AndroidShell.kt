@@ -87,9 +87,26 @@ private enum class Page(val title: String) {
     Settings("Settings"),
 }
 
+private object PaidInternetFeature {
+    val enabled: Boolean
+        get() {
+            if (!BuildConfig.DEBUG) {
+                return false
+            }
+            return enabledFlag(System.getProperty("nvpn.enablePaidInternet")) ||
+                enabledFlag(System.getenv("NVPN_ENABLE_PAID_INTERNET"))
+        }
+
+    private fun enabledFlag(value: String?): Boolean =
+        when (value?.trim()?.lowercase()) {
+            "1", "true", "yes", "on" -> true
+            else -> false
+        }
+}
+
 private fun Page.visibleIn(state: AppState): Boolean =
     when (this) {
-        Page.PublicExits, Page.Wallet -> state.paidRouteMarket.supported
+        Page.PublicExits, Page.Wallet -> PaidInternetFeature.enabled && state.paidRouteMarket.supported
         Page.Devices, Page.Internet, Page.Settings -> true
     }
 
@@ -1006,7 +1023,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
             }
         }
     }
-    if (state.paidExitSeller.supported) {
+    if (PaidInternetFeature.enabled && state.paidExitSeller.supported) {
         item { PaidExitSellerStatusCard(state) }
     }
     item { WireGuardSettingsCard(state, dispatch, importWireGuardConfigFile) }

@@ -4,6 +4,29 @@ import SwiftUI
 
 private let searchVisibilityThreshold = 7
 
+private enum PaidInternetFeature {
+    static var enabled: Bool {
+        #if DEBUG
+        let arguments = Set(CommandLine.arguments)
+        if arguments.contains("--nvpn-enable-paid-internet") {
+            return true
+        }
+        return enabledFlag(ProcessInfo.processInfo.environment["NVPN_ENABLE_PAID_INTERNET"])
+        #else
+        return false
+        #endif
+    }
+
+    private static func enabledFlag(_ value: String?) -> Bool {
+        switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on":
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 struct RootView: View {
     @ObservedObject var manager: AppManager
 
@@ -76,14 +99,16 @@ struct RootView: View {
 
     private static func initialSidebarItem() -> SidebarItem {
         let arguments = Set(CommandLine.arguments)
-        if arguments.contains("--nvpn-screenshot-paid-seller") {
-            return .sellExit
-        }
-        if arguments.contains("--nvpn-screenshot-paid-market") {
-            return .publicExits
-        }
-        if arguments.contains("--nvpn-screenshot-paid-wallet") {
-            return .wallet
+        if PaidInternetFeature.enabled {
+            if arguments.contains("--nvpn-screenshot-paid-seller") {
+                return .sellExit
+            }
+            if arguments.contains("--nvpn-screenshot-paid-market") {
+                return .publicExits
+            }
+            if arguments.contains("--nvpn-screenshot-paid-wallet") {
+                return .wallet
+            }
         }
         if arguments.contains("--nvpn-screenshot-exit-nodes")
             || arguments.contains("--nvpn-screenshot-upstream") {
@@ -118,11 +143,11 @@ struct RootView: View {
     }
 
     private var paidRouteMarketAvailable: Bool {
-        state.paidRouteMarket.supported
+        PaidInternetFeature.enabled && state.paidRouteMarket.supported
     }
 
     private var paidExitSellerAvailable: Bool {
-        state.paidExitSeller.supported
+        PaidInternetFeature.enabled && state.paidExitSeller.supported
     }
 
     private var paidInternetAvailable: Bool {
@@ -1347,7 +1372,6 @@ struct RootView: View {
     }
 
     private var internetChoiceSettings: some View {
-        let publicSession = state.paidRouteMarket.sessions.first { paidRouteSessionIsSelected($0) }
         return surface {
             sectionHeader("Use Internet", systemImage: "network")
             VStack(spacing: 8) {
@@ -1360,13 +1384,16 @@ struct RootView: View {
                     manager.selectDirectExit()
                 }
 
-                routeChoice(
-                    title: "Bought internet",
-                    subtitle: publicSession.map(paidPublicExitSubtitle) ?? "Connect in Buy Internet",
-                    selected: publicSession != nil,
-                    enabled: true
-                ) {
-                    selectedSidebarItem = .publicExits
+                if paidRouteMarketAvailable {
+                    let publicSession = state.paidRouteMarket.sessions.first { paidRouteSessionIsSelected($0) }
+                    routeChoice(
+                        title: "Bought internet",
+                        subtitle: publicSession.map(paidPublicExitSubtitle) ?? "Connect in Buy Internet",
+                        selected: publicSession != nil,
+                        enabled: true
+                    ) {
+                        selectedSidebarItem = .publicExits
+                    }
                 }
 
                 routeChoice(
