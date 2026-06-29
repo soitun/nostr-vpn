@@ -26,6 +26,7 @@ cashu-service = { workspace = true, optional = true }
 # and let target-specific overrides below opt back in.
 boringtun = { workspace = true }
 nostr-sdk.workspace = true
+nostr-identity.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

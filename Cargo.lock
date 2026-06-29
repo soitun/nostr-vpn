@@ -3168,6 +3168,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nostr-identity"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ccac8542fe1d5c56b6ffec6d62f789f5487a0eae0bfdf6d92d7ac7d36c191ce"
+dependencies = [
+ "anyhow",
+ "nostr-sdk",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "nostr-relay-pool"
 version = "0.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3244,6 +3258,7 @@ dependencies = [
  "keyring-core",
  "libc",
  "netdev",
+ "nostr-identity",
  "nostr-sdk",
  "security-framework 2.11.1",
  "security-framework-sys",
