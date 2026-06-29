@@ -1575,6 +1575,13 @@ test_nvpn_perf_docker_records_daemon_cpu_phase_artifact() {
   assert_file_contains "$script" "docker_bench_iperf_transfer_bytes" "nvpn Docker perf transfer-byte accounting"
 }
 
+test_wireguard_go_perf_docker_records_cpu_phase_artifact() {
+  local script="$ROOT_DIR/scripts/perf-docker-wireguard-go.sh"
+  assert_file_contains "$script" "wireguard-go-cpu-phases.tsv" "wireguard-go Docker perf CPU artifact"
+  assert_file_contains "$script" "append_wireguard_go_cpu_phase_rows" "wireguard-go Docker perf phase CPU rows"
+  assert_file_contains "$script" "docker_bench_iperf_transfer_bytes" "wireguard-go Docker perf transfer-byte accounting"
+}
+
 test_json_and_ping_parsers
 test_cpu_accounting_helpers
 test_udp1000_parallel_bandwidth_helpers_preserve_total_target
@@ -1612,5 +1619,6 @@ test_docker_comparison_relaxes_udp_bulk_loss_under_cpu_stress
 test_docker_comparison_selects_wireguard_go_reference
 test_docker_comparison_labels_same_backend_profiles
 test_nvpn_perf_docker_records_daemon_cpu_phase_artifact
+test_wireguard_go_perf_docker_records_cpu_phase_artifact
 
 printf 'docker benchmark summary self-test passed\n'

@@ -31,6 +31,7 @@ WIREGUARD_GO_REPO_PATH="${NVPN_WIREGUARD_GO_REPO_PATH:-$ROOT_DIR/../wireguard-go
 OUTPUT_DIR="${NVPN_WIREGUARD_GO_DOCKER_OUTPUT_DIR:-$ROOT_DIR/artifacts/wireguard-go-docker/$(date -u +%Y%m%dT%H%M%SZ)}"
 RAW_DIR="$OUTPUT_DIR/raw"
 SUMMARY_TSV="$OUTPUT_DIR/summary.tsv"
+WIREGUARD_GO_CPU_PHASES="$RAW_DIR/wireguard-go-cpu-phases.tsv"
 ALICE_TUN="10.44.0.1"
 BOB_TUN="10.44.0.2"
 ALICE_BRIDGE="10.203.0.10"
@@ -218,10 +219,108 @@ collect_backend_artifacts() {
   done
 }
 
+write_wireguard_go_cpu_phase_header() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    phase service pid_start pid_end \
+    cpu_jiffies_start cpu_jiffies_end clk_tck \
+    cpu_seconds transfer_bytes cpu_seconds_per_gbit cpu_seconds_per_gbyte \
+    >"$WIREGUARD_GO_CPU_PHASES"
+}
+
+wireguard_go_cpu_sample() {
+  local service="$1"
+  "${COMPOSE[@]}" exec -T "$service" sh -lc '
+    pid="$(pgrep -x wireguard-go 2>/dev/null | head -n 1 || true)"
+    clk="$(getconf CLK_TCK 2>/dev/null || printf 100)"
+    if [ -n "$pid" ] && [ -r "/proc/$pid/stat" ]; then
+      jiffies="$(awk "{ print \$14 + \$15 }" "/proc/$pid/stat" 2>/dev/null || true)"
+      printf "%s\t%s\t%s\n" "${pid:-na}" "${jiffies:-na}" "${clk:-100}"
+    else
+      printf "na\tna\t%s\n" "${clk:-100}"
+    fi
+  ' 2>/dev/null | tr -d '\r' || printf 'na\tna\t100\n'
+}
+
+wireguard_go_cpu_sample_cpu_seconds() {
+  local start_sample="$1"
+  local end_sample="$2"
+  local start_pid start_jiffies start_clk end_pid end_jiffies end_clk clk_tck
+  IFS=$'\t' read -r start_pid start_jiffies start_clk <<<"$start_sample"
+  IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
+  if [[ "$start_pid" != "$end_pid" || ! "$start_pid" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  clk_tck="$end_clk"
+  [[ "$clk_tck" =~ ^[1-9][0-9]*$ ]] || clk_tck="$start_clk"
+  docker_bench_cpu_seconds_from_jiffies "$start_jiffies" "$end_jiffies" "$clk_tck"
+}
+
+append_wireguard_go_cpu_phase_service_row() {
+  local phase="$1"
+  local service="$2"
+  local transfer_bytes="$3"
+  local start_sample="$4"
+  local end_sample="$5"
+  local start_pid start_jiffies start_clk end_pid end_jiffies end_clk clk_tck
+  local cpu_seconds cpu_per_gbit cpu_per_gbyte
+  IFS=$'\t' read -r start_pid start_jiffies start_clk <<<"$start_sample"
+  IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
+  clk_tck="$end_clk"
+  [[ "$clk_tck" =~ ^[1-9][0-9]*$ ]] || clk_tck="$start_clk"
+  if [[ "$start_pid" == "$end_pid" && "$start_pid" =~ ^[0-9]+$ ]]; then
+    cpu_seconds="$(docker_bench_cpu_seconds_from_jiffies "$start_jiffies" "$end_jiffies" "$clk_tck")"
+  else
+    cpu_seconds=""
+  fi
+  cpu_per_gbit="$(docker_bench_cpu_seconds_per_gbit "$cpu_seconds" "$transfer_bytes")"
+  cpu_per_gbyte="$(docker_bench_cpu_seconds_per_gbyte "$cpu_seconds" "$transfer_bytes")"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$phase" \
+    "$service" \
+    "$(docker_bench_tsv_field "${start_pid:-na}")" \
+    "$(docker_bench_tsv_field "${end_pid:-na}")" \
+    "$(docker_bench_tsv_field "${start_jiffies:-na}")" \
+    "$(docker_bench_tsv_field "${end_jiffies:-na}")" \
+    "$(docker_bench_tsv_field "${clk_tck:-na}")" \
+    "$cpu_seconds" \
+    "$(docker_bench_tsv_field "$transfer_bytes")" \
+    "$cpu_per_gbit" \
+    "$cpu_per_gbyte" >>"$WIREGUARD_GO_CPU_PHASES"
+}
+
+append_wireguard_go_cpu_phase_rows() {
+  local phase="$1"
+  local transfer_bytes="$2"
+  local start_a="$3"
+  local start_b="$4"
+  local end_a="$5"
+  local end_b="$6"
+  local cpu_a cpu_b cpu_both cpu_per_gbit cpu_per_gbyte
+  append_wireguard_go_cpu_phase_service_row "$phase" node-a "$transfer_bytes" "$start_a" "$end_a"
+  append_wireguard_go_cpu_phase_service_row "$phase" node-b "$transfer_bytes" "$start_b" "$end_b"
+  cpu_a="$(wireguard_go_cpu_sample_cpu_seconds "$start_a" "$end_a")"
+  cpu_b="$(wireguard_go_cpu_sample_cpu_seconds "$start_b" "$end_b")"
+  if docker_bench_is_number "$cpu_a" && docker_bench_is_number "$cpu_b"; then
+    cpu_both="$(awk -v a="$cpu_a" -v b="$cpu_b" 'BEGIN { printf "%.6f", a + b }')"
+  else
+    cpu_both=""
+  fi
+  cpu_per_gbit="$(docker_bench_cpu_seconds_per_gbit "$cpu_both" "$transfer_bytes")"
+  cpu_per_gbyte="$(docker_bench_cpu_seconds_per_gbyte "$cpu_both" "$transfer_bytes")"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$phase" both na na na na na \
+    "$cpu_both" \
+    "$(docker_bench_tsv_field "$transfer_bytes")" \
+    "$cpu_per_gbit" \
+    "$cpu_per_gbyte" >>"$WIREGUARD_GO_CPU_PHASES"
+}
+
 run_test_json() {
-  local label="$1"
-  local json_path="$2"
-  shift 2
+  local phase="$1"
+  local label="$2"
+  local json_path="$3"
+  shift 3
+  local cpu_start_node_a cpu_start_node_b cpu_end_node_a cpu_end_node_b transfer_bytes
   local is_udp=0
   [[ "${1:-}" == "-u" ]] && is_udp=1
   printf '## %s\n' "$label"
@@ -235,16 +334,28 @@ run_test_json() {
     iperf_cmd+=("${IPERF_SOCKET_BUFFER_ARGS[@]}")
   fi
   iperf_cmd+=("$@")
+  cpu_start_node_a="$(wireguard_go_cpu_sample node-a)"
+  cpu_start_node_b="$(wireguard_go_cpu_sample node-b)"
   if ! "${COMPOSE[@]}" exec -T node-a "${iperf_cmd[@]}" >"$json_path" 2>"$err_path"; then
     cat "$err_path" >&2
     cat "$json_path" >&2
     return 1
   fi
+  cpu_end_node_a="$(wireguard_go_cpu_sample node-a)"
+  cpu_end_node_b="$(wireguard_go_cpu_sample node-b)"
   if jq -e 'has("error")' "$json_path" >/dev/null; then
     cat "$err_path" >&2
     cat "$json_path" >&2
     return 1
   fi
+  transfer_bytes="$(docker_bench_iperf_transfer_bytes "$json_path")"
+  append_wireguard_go_cpu_phase_rows \
+    "$phase" \
+    "$transfer_bytes" \
+    "$cpu_start_node_a" \
+    "$cpu_start_node_b" \
+    "$cpu_end_node_a" \
+    "$cpu_end_node_b"
   rm -f "$err_path"
   printf '  receiver: %s Mbps' "$(docker_bench_iperf_mbps "$json_path")"
   if (( is_udp )); then
@@ -294,8 +405,20 @@ write_udp_receiver_limits() {
 
 run_ping_summary() {
   local output_path="$1"
+  local cpu_start_node_a cpu_start_node_b cpu_end_node_a cpu_end_node_b
   printf '## ping (300 packets, 10ms apart) over wg0\n'
+  cpu_start_node_a="$(wireguard_go_cpu_sample node-a)"
+  cpu_start_node_b="$(wireguard_go_cpu_sample node-b)"
   "${COMPOSE[@]}" exec -T node-a ping -c 300 -i 0.01 -q "$BOB_TUN" >"$output_path" 2>&1
+  cpu_end_node_a="$(wireguard_go_cpu_sample node-a)"
+  cpu_end_node_b="$(wireguard_go_cpu_sample node-b)"
+  append_wireguard_go_cpu_phase_rows \
+    ping \
+    "" \
+    "$cpu_start_node_a" \
+    "$cpu_start_node_b" \
+    "$cpu_end_node_a" \
+    "$cpu_end_node_b"
   tail -3 "$output_path"
   echo
 }
@@ -322,14 +445,14 @@ run_wireguard_go_pass() {
   "${COMPOSE[@]}" exec -d node-b sh -lc "iperf3 -s -D --logfile /tmp/iperf3-server.log"
   sleep 1
 
-  run_test_json "TCP single stream" "$tcp_single_json"
-  run_test_json "TCP 4 streams" "$tcp_4_json" -P 4
-  run_test_json "TCP 8 streams" "$tcp_8_json" -P 8
-  run_test_json "UDP 200 Mbit target" "$udp_200_json" -u -b 200M
+  run_test_json tcp-single "TCP single stream" "$tcp_single_json"
+  run_test_json tcp-4 "TCP 4 streams" "$tcp_4_json" -P 4
+  run_test_json tcp-8 "TCP 8 streams" "$tcp_8_json" -P 8
+  run_test_json udp-200 "UDP 200 Mbit target" "$udp_200_json" -u -b 200M
   if [[ ${#UDP1000_PARALLEL_ARGS[@]} -gt 0 ]]; then
-    run_test_json "UDP 1000 Mbit target" "$udp_1000_json" -u -b "$UDP1000_PER_STREAM_BANDWIDTH" "${UDP1000_PARALLEL_ARGS[@]}"
+    run_test_json udp-1000 "UDP 1000 Mbit target" "$udp_1000_json" -u -b "$UDP1000_PER_STREAM_BANDWIDTH" "${UDP1000_PARALLEL_ARGS[@]}"
   else
-    run_test_json "UDP 1000 Mbit target" "$udp_1000_json" -u -b "$UDP1000_BANDWIDTH"
+    run_test_json udp-1000 "UDP 1000 Mbit target" "$udp_1000_json" -u -b "$UDP1000_BANDWIDTH"
   fi
   write_iperf_socket_buffer_summary
   write_udp_receiver_limits
@@ -352,6 +475,7 @@ main() {
   trap cleanup EXIT
   cleanup
   docker_bench_init_summary
+  write_wireguard_go_cpu_phase_header
   docker_bench_write_metadata wireguard-go "$DURATION"
   write_wireguard_go_source_metadata
   start_compose_services
