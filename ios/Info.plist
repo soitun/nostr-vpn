@@ -18,6 +18,10 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>NVPNAppGroupIdentifier</key>
+	<string>$(NVPN_IOS_APP_GROUP_IDENTIFIER)</string>
+	<key>NVPNPacketTunnelBundleIdentifier</key>
+	<string>$(NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID)</string>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

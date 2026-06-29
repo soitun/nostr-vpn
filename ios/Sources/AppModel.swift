@@ -5,7 +5,9 @@ import UIKit
 
 @MainActor
 final class AppModel: ObservableObject {
-    nonisolated static let appGroupIdentifier = "group.to.iris.nvpn"
+    nonisolated static let appGroupIdentifier = Bundle.main.object(
+        forInfoDictionaryKey: "NVPNAppGroupIdentifier"
+    ) as? String ?? "group.to.iris.nvpn"
     private static let configFileName = "config.toml"
     private static let mobileRuntimeStateFileName = "mobile-runtime-state.json"
     static let vpnDisclosureAcceptedKey = "vpnDisclosureAccepted"

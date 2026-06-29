@@ -2,7 +2,9 @@ import Foundation
 import NetworkExtension
 import Darwin
 
-private let appGroupIdentifier = "group.to.iris.nvpn"
+private let appGroupIdentifier = Bundle.main.object(
+    forInfoDictionaryKey: "NVPNAppGroupIdentifier"
+) as? String ?? "group.to.iris.nvpn"
 private let defaultMobileMtu = 1150
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
