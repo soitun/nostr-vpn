@@ -47,6 +47,8 @@ env (read from .env.release.local or shell):
   NVPN_ASC_AUTH_KEY_ISSUER_ID    Issuer ID
   NVPN_IOS_TEAM_ID               Apple developer team id (default J8PPJKD7TA)
   NVPN_IOS_BUNDLE_ID             App bundle id (default to.iris.nvpn)
+  NVPN_IOS_EXPORT_SIGNING_CERTIFICATE
+                                  export signing certificate (default from profile env)
   NVPN_ITMS_TRANSPORTER          iTMSTransporter path
   NVPN_IOS_UPLOAD_TRANSPORT      Transporter delivery method (default HTTP)
 EOF
@@ -81,6 +83,7 @@ write_export_options() {
   local app_uuid="$1"
   local tunnel_uuid="$2"
   local testflight_internal_only
+  local signing_certificate="${NVPN_IOS_EXPORT_SIGNING_CERTIFICATE:-${NVPN_IOS_CODE_SIGN_IDENTITY:-Apple Distribution}}"
   if bool_is_true "$IOS_INTERNAL_ONLY"; then
     testflight_internal_only="<true/>"
   else
@@ -100,7 +103,7 @@ write_export_options() {
   <key>signingStyle</key>
   <string>manual</string>
   <key>signingCertificate</key>
-  <string>Apple Distribution</string>
+  <string>$signing_certificate</string>
   <key>uploadSymbols</key>
   <true/>
   <key>uploadBitcode</key>
