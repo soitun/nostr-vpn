@@ -793,6 +793,10 @@ docker_bench_iperf_retrans() {
   jq -r '(.end.sum_sent.retransmits // .end.sum.retransmits // 0)' "$1"
 }
 
+docker_bench_iperf_transfer_bytes() {
+  jq -r '(.end.sum_received.bytes // .end.sum.bytes // .end.sum_sent.bytes // 0)' "$1"
+}
+
 docker_bench_iperf_loss_pct() {
   docker_bench_json_number '(.end.sum.lost_percent // .end.sum_received.lost_percent // 0)' "$1"
 }
@@ -890,6 +894,44 @@ docker_bench_guard_threshold() {
 
 docker_bench_is_number() {
   [[ "${1:-}" =~ ^[0-9]+([.][0-9]+)?$ ]]
+}
+
+docker_bench_cpu_seconds_from_jiffies() {
+  local start_jiffies="$1"
+  local end_jiffies="$2"
+  local clk_tck="$3"
+  if [[ ! "$start_jiffies" =~ ^[0-9]+$ ]] \
+    || [[ ! "$end_jiffies" =~ ^[0-9]+$ ]] \
+    || [[ ! "$clk_tck" =~ ^[1-9][0-9]*$ ]] \
+    || (( end_jiffies < start_jiffies )); then
+    return 0
+  fi
+  awk -v start="$start_jiffies" -v end="$end_jiffies" -v clk="$clk_tck" \
+    'BEGIN { printf "%.6f", (end - start) / clk }'
+}
+
+docker_bench_cpu_seconds_per_gbit() {
+  local cpu_seconds="$1"
+  local transfer_bytes="$2"
+  if ! docker_bench_is_number "$cpu_seconds" \
+    || [[ ! "$transfer_bytes" =~ ^[0-9]+$ ]] \
+    || (( transfer_bytes <= 0 )); then
+    return 0
+  fi
+  awk -v cpu="$cpu_seconds" -v bytes="$transfer_bytes" \
+    'BEGIN { printf "%.6f", cpu / ((bytes * 8) / 1000000000) }'
+}
+
+docker_bench_cpu_seconds_per_gbyte() {
+  local cpu_seconds="$1"
+  local transfer_bytes="$2"
+  if ! docker_bench_is_number "$cpu_seconds" \
+    || [[ ! "$transfer_bytes" =~ ^[0-9]+$ ]] \
+    || (( transfer_bytes <= 0 )); then
+    return 0
+  fi
+  awk -v cpu="$cpu_seconds" -v bytes="$transfer_bytes" \
+    'BEGIN { printf "%.6f", cpu / (bytes / 1000000000) }'
 }
 
 docker_bench_guard_record_failure() {

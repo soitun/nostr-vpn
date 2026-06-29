@@ -60,6 +60,7 @@ RAW_DIR="$OUTPUT_DIR/raw"
 SUMMARY_TSV="$OUTPUT_DIR/summary.tsv"
 PIPELINE_PHASE_RANGES="$RAW_DIR/nvpn-pipeline-phase-ranges.tsv"
 PIPELINE_PHASE_SUMMARY="$RAW_DIR/nvpn-pipeline-phase-summary.tsv"
+DAEMON_CPU_PHASES="$RAW_DIR/nvpn-daemon-cpu-phases.tsv"
 PIPELINE_TRACE="${NVPN_DOCKER_PIPELINE_TRACE:-1}"
 PIPELINE_INTERVAL_SECS="${NVPN_DOCKER_PIPELINE_INTERVAL_SECS:-5}"
 EXTRA_CONNECT_ENV=""
@@ -635,6 +636,102 @@ write_pipeline_phase_summary() {
   done <"$ranges_path"
 }
 
+write_daemon_cpu_phase_header() {
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    phase service pid_start pid_end \
+    cpu_jiffies_start cpu_jiffies_end clk_tck \
+    cpu_seconds transfer_bytes cpu_seconds_per_gbit cpu_seconds_per_gbyte \
+    >"$DAEMON_CPU_PHASES"
+}
+
+daemon_cpu_sample() {
+  local service="$1"
+  "${COMPOSE[@]}" exec -T "$service" sh -lc '
+    pid="$(pgrep -x nvpn 2>/dev/null | head -n 1 || true)"
+    clk="$(getconf CLK_TCK 2>/dev/null || printf 100)"
+    if [ -n "$pid" ] && [ -r "/proc/$pid/stat" ]; then
+      jiffies="$(awk "{ print \$14 + \$15 }" "/proc/$pid/stat" 2>/dev/null || true)"
+      printf "%s\t%s\t%s\n" "${pid:-na}" "${jiffies:-na}" "${clk:-100}"
+    else
+      printf "na\tna\t%s\n" "${clk:-100}"
+    fi
+  ' 2>/dev/null | tr -d '\r' || printf 'na\tna\t100\n'
+}
+
+daemon_cpu_sample_cpu_seconds() {
+  local start_sample="$1"
+  local end_sample="$2"
+  local start_pid start_jiffies start_clk end_pid end_jiffies end_clk clk_tck
+  IFS=$'\t' read -r start_pid start_jiffies start_clk <<<"$start_sample"
+  IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
+  if [[ "$start_pid" != "$end_pid" || ! "$start_pid" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  clk_tck="$end_clk"
+  [[ "$clk_tck" =~ ^[1-9][0-9]*$ ]] || clk_tck="$start_clk"
+  docker_bench_cpu_seconds_from_jiffies "$start_jiffies" "$end_jiffies" "$clk_tck"
+}
+
+append_daemon_cpu_phase_service_row() {
+  local phase="$1"
+  local service="$2"
+  local transfer_bytes="$3"
+  local start_sample="$4"
+  local end_sample="$5"
+  local start_pid start_jiffies start_clk end_pid end_jiffies end_clk clk_tck
+  local cpu_seconds cpu_per_gbit cpu_per_gbyte
+  IFS=$'\t' read -r start_pid start_jiffies start_clk <<<"$start_sample"
+  IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
+  clk_tck="$end_clk"
+  [[ "$clk_tck" =~ ^[1-9][0-9]*$ ]] || clk_tck="$start_clk"
+  if [[ "$start_pid" == "$end_pid" && "$start_pid" =~ ^[0-9]+$ ]]; then
+    cpu_seconds="$(docker_bench_cpu_seconds_from_jiffies "$start_jiffies" "$end_jiffies" "$clk_tck")"
+  else
+    cpu_seconds=""
+  fi
+  cpu_per_gbit="$(docker_bench_cpu_seconds_per_gbit "$cpu_seconds" "$transfer_bytes")"
+  cpu_per_gbyte="$(docker_bench_cpu_seconds_per_gbyte "$cpu_seconds" "$transfer_bytes")"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$phase" \
+    "$service" \
+    "$(docker_bench_tsv_field "${start_pid:-na}")" \
+    "$(docker_bench_tsv_field "${end_pid:-na}")" \
+    "$(docker_bench_tsv_field "${start_jiffies:-na}")" \
+    "$(docker_bench_tsv_field "${end_jiffies:-na}")" \
+    "$(docker_bench_tsv_field "${clk_tck:-na}")" \
+    "$cpu_seconds" \
+    "$(docker_bench_tsv_field "$transfer_bytes")" \
+    "$cpu_per_gbit" \
+    "$cpu_per_gbyte" >>"$DAEMON_CPU_PHASES"
+}
+
+append_daemon_cpu_phase_rows() {
+  local phase="$1"
+  local transfer_bytes="$2"
+  local start_a="$3"
+  local start_b="$4"
+  local end_a="$5"
+  local end_b="$6"
+  local cpu_a cpu_b cpu_both cpu_per_gbit cpu_per_gbyte
+  append_daemon_cpu_phase_service_row "$phase" node-a "$transfer_bytes" "$start_a" "$end_a"
+  append_daemon_cpu_phase_service_row "$phase" node-b "$transfer_bytes" "$start_b" "$end_b"
+  cpu_a="$(daemon_cpu_sample_cpu_seconds "$start_a" "$end_a")"
+  cpu_b="$(daemon_cpu_sample_cpu_seconds "$start_b" "$end_b")"
+  if docker_bench_is_number "$cpu_a" && docker_bench_is_number "$cpu_b"; then
+    cpu_both="$(awk -v a="$cpu_a" -v b="$cpu_b" 'BEGIN { printf "%.6f", a + b }')"
+  else
+    cpu_both=""
+  fi
+  cpu_per_gbit="$(docker_bench_cpu_seconds_per_gbit "$cpu_both" "$transfer_bytes")"
+  cpu_per_gbyte="$(docker_bench_cpu_seconds_per_gbyte "$cpu_both" "$transfer_bytes")"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$phase" both na na na na na \
+    "$cpu_both" \
+    "$(docker_bench_tsv_field "$transfer_bytes")" \
+    "$cpu_per_gbit" \
+    "$cpu_per_gbyte" >>"$DAEMON_CPU_PHASES"
+}
+
 capture_nvpn_diagnostics() {
   local exit_status="${1:-0}"
   [[ "$DIAGNOSTICS_READY" == "1" ]] || return 0
@@ -934,6 +1031,7 @@ start_iperf_server() {
 cleanup
 docker_bench_init_summary
 write_pipeline_phase_range_header "$PIPELINE_PHASE_RANGES"
+write_daemon_cpu_phase_header
 docker_bench_write_metadata nvpn "$DURATION"
 start_compose_services
 for service in node-a node-b; do
@@ -1022,6 +1120,7 @@ run_test_json() {
   local json_path="$3"
   shift 3
   local phase_start_node_a phase_start_node_b phase_end_node_a phase_end_node_b
+  local cpu_start_node_a cpu_start_node_b cpu_end_node_a cpu_end_node_b transfer_bytes
   local is_udp=0
   [[ "${1:-}" == "-u" ]] && is_udp=1
   printf '## %s\n' "$label"
@@ -1040,16 +1139,28 @@ run_test_json() {
   iperf_cmd+=("$@")
   phase_start_node_a="$(pipeline_line_count node-a)"
   phase_start_node_b="$(pipeline_line_count node-b)"
+  cpu_start_node_a="$(daemon_cpu_sample node-a)"
+  cpu_start_node_b="$(daemon_cpu_sample node-b)"
   if ! "${COMPOSE[@]}" exec -T node-a "${iperf_cmd[@]}" >"$json_path" 2>"$err_path"; then
     cat "$err_path" >&2
     cat "$json_path" >&2
     return 1
   fi
+  cpu_end_node_a="$(daemon_cpu_sample node-a)"
+  cpu_end_node_b="$(daemon_cpu_sample node-b)"
   if jq -e 'has("error")' "$json_path" >/dev/null; then
     cat "$err_path" >&2
     cat "$json_path" >&2
     return 1
   fi
+  transfer_bytes="$(docker_bench_iperf_transfer_bytes "$json_path")"
+  append_daemon_cpu_phase_rows \
+    "$phase" \
+    "$transfer_bytes" \
+    "$cpu_start_node_a" \
+    "$cpu_start_node_b" \
+    "$cpu_end_node_a" \
+    "$cpu_end_node_b"
   phase_end_node_a="$(pipeline_line_count node-a)"
   phase_end_node_b="$(pipeline_line_count node-b)"
   append_pipeline_phase_range \
@@ -1089,10 +1200,21 @@ write_iperf_socket_buffer_summary
 printf '## ping (300 packets, 10ms apart) over mesh\n'
 ping_start_node_a="$(pipeline_line_count node-a)"
 ping_start_node_b="$(pipeline_line_count node-b)"
+ping_cpu_start_node_a="$(daemon_cpu_sample node-a)"
+ping_cpu_start_node_b="$(daemon_cpu_sample node-b)"
 "${COMPOSE[@]}" exec -T node-a ping -c 300 -i 0.01 -q "$BOB_TUNNEL_IP" >"$ping_output" 2>&1
+ping_cpu_end_node_a="$(daemon_cpu_sample node-a)"
+ping_cpu_end_node_b="$(daemon_cpu_sample node-b)"
 ping_end_node_a="$(pipeline_line_count node-a)"
 ping_end_node_b="$(pipeline_line_count node-b)"
 append_pipeline_phase_range ping "$ping_start_node_a" "$ping_end_node_a" "$ping_start_node_b" "$ping_end_node_b"
+append_daemon_cpu_phase_rows \
+  ping \
+  "" \
+  "$ping_cpu_start_node_a" \
+  "$ping_cpu_start_node_b" \
+  "$ping_cpu_end_node_a" \
+  "$ping_cpu_end_node_b"
 tail -3 "$ping_output"
 
 docker_bench_append_summary_row \

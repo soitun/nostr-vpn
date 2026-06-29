@@ -73,7 +73,8 @@ write_tcp_json() {
 {
   "end": {
     "sum_received": {
-      "bits_per_second": 1234567890
+      "bits_per_second": 1234567890,
+      "bytes": 125000000
     },
     "sum_sent": {
       "retransmits": 7
@@ -90,6 +91,7 @@ write_udp_json() {
   "end": {
     "sum": {
       "bits_per_second": 987654321,
+      "bytes": 62500000,
       "lost_percent": 1.25
     }
   }
@@ -120,14 +122,27 @@ test_json_and_ping_parsers() {
 
   assert_eq "$(docker_bench_iperf_mbps "$tcp_json")" "1234.568" "TCP receiver Mbps"
   assert_eq "$(docker_bench_iperf_retrans "$tcp_json")" "7" "TCP retransmits"
+  assert_eq "$(docker_bench_iperf_transfer_bytes "$tcp_json")" "125000000" "TCP transfer bytes"
   assert_eq "$(docker_bench_iperf_mbps "$udp_json")" "987.654" "UDP receiver Mbps"
   assert_eq "$(docker_bench_iperf_loss_pct "$udp_json")" "1.25" "UDP loss"
+  assert_eq "$(docker_bench_iperf_transfer_bytes "$udp_json")" "62500000" "UDP transfer bytes"
   stats="$(docker_bench_parse_ping_loss_avg "$ping_output")"
   read -r loss avg <<<"$stats"
   assert_eq "$loss" "0.333333" "ping loss"
   assert_eq "$avg" "1.234" "ping avg"
 
   rm -rf "$dir"
+}
+
+test_cpu_accounting_helpers() {
+  local invalid
+  assert_eq "$(docker_bench_cpu_seconds_from_jiffies 100 250 100)" "1.500000" "CPU jiffies to seconds"
+  assert_eq "$(docker_bench_cpu_seconds_per_gbit 2.5 125000000)" "2.500000" "CPU seconds per Gbit"
+  assert_eq "$(docker_bench_cpu_seconds_per_gbyte 2.5 125000000)" "20.000000" "CPU seconds per GB"
+  invalid="$(docker_bench_cpu_seconds_from_jiffies 250 100 100)"
+  assert_eq "$invalid" "" "invalid negative jiffies delta"
+  invalid="$(docker_bench_cpu_seconds_per_gbit 2.5 0)"
+  assert_eq "$invalid" "" "missing transfer bytes"
 }
 
 test_udp1000_parallel_bandwidth_helpers_preserve_total_target() {
@@ -1553,7 +1568,15 @@ test_docker_comparison_labels_same_backend_profiles() {
   rm -rf "$dir"
 }
 
+test_nvpn_perf_docker_records_daemon_cpu_phase_artifact() {
+  local script="$ROOT_DIR/scripts/perf-docker.sh"
+  assert_file_contains "$script" "nvpn-daemon-cpu-phases.tsv" "nvpn Docker perf daemon CPU artifact"
+  assert_file_contains "$script" "append_daemon_cpu_phase_rows" "nvpn Docker perf phase CPU rows"
+  assert_file_contains "$script" "docker_bench_iperf_transfer_bytes" "nvpn Docker perf transfer-byte accounting"
+}
+
 test_json_and_ping_parsers
+test_cpu_accounting_helpers
 test_udp1000_parallel_bandwidth_helpers_preserve_total_target
 test_summary_row
 test_metadata_writer_records_cpu_stress
@@ -1588,5 +1611,6 @@ test_docker_benchmark_pipeline_hard_event_guard_allows_named_bulk_events
 test_docker_comparison_relaxes_udp_bulk_loss_under_cpu_stress
 test_docker_comparison_selects_wireguard_go_reference
 test_docker_comparison_labels_same_backend_profiles
+test_nvpn_perf_docker_records_daemon_cpu_phase_artifact
 
 printf 'docker benchmark summary self-test passed\n'
