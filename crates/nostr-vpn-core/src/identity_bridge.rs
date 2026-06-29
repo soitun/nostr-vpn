@@ -19,10 +19,11 @@ use crate::fips_control::{NetworkRoster, SignedRoster};
 /// Canonical NostrIdentity/AppKey roster events live in `nostr-identity` kind 7368.
 ///
 /// Nostr VPN keeps its legacy signed network roster as kind 30388. This module
-/// is only a bridge projection from that roster into canonical-shaped identity
-/// metadata; it does not write, parse, or mutate 7368 events.
+/// bridges that roster into canonical-shaped identity metadata and provides
+/// scan/link approval helpers without replacing the accepted legacy roster.
 pub const CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND: u16 = KIND_NOSTR_IDENTITY_ROSTER_OP;
 pub const CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE: &str = IDENTITY_GRAPH_ROSTER_TYPE;
+pub const LEGACY_SIGNED_NETWORK_ROSTER_KIND: u16 = 30_388;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,6 +70,26 @@ pub struct RosterAppKeyIdentity {
     pub facet: NostrIdentityAppKeyFacet,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legacy_network_alias: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RosterIdentityBridgeSource {
+    LegacySignedNetworkRoster,
+    NostrIdentityRosterOp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ParsedIdentityRosterBridgeEvent {
+    pub source: RosterIdentityBridgeSource,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_id: Option<String>,
+    pub op_id: String,
+    pub signer_pubkey: String,
+    pub signed_at: u64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub identities: Vec<RosterAppKeyIdentity>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +141,51 @@ pub fn signed_roster_app_key_identities(
 ) -> Result<Vec<RosterAppKeyIdentity>> {
     signed_roster.verify()?;
     roster_app_key_identities(&signed_roster.roster()?, profile_ids_by_pubkey)
+}
+
+pub fn parse_identity_roster_bridge_event(
+    event: &Event,
+    profile_ids_by_pubkey: &BTreeMap<String, NostrIdentityId>,
+) -> Result<Option<ParsedIdentityRosterBridgeEvent>> {
+    match u16::from(event.kind) {
+        LEGACY_SIGNED_NETWORK_ROSTER_KIND => {
+            let signed_roster = SignedRoster::from_event(event.clone())?;
+            Ok(Some(ParsedIdentityRosterBridgeEvent {
+                source: RosterIdentityBridgeSource::LegacySignedNetworkRoster,
+                network_id: Some(signed_roster.network_id()?),
+                op_id: signed_roster.content_hash(),
+                signer_pubkey: signed_roster.signer_pubkey_hex()?,
+                signed_at: signed_roster.signed_at(),
+                identities: signed_roster_app_key_identities(
+                    &signed_roster,
+                    profile_ids_by_pubkey,
+                )?,
+            }))
+        }
+        CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND => {
+            if !event.tags.iter().any(|tag| {
+                let parts = tag.as_slice();
+                parts.first().is_some_and(|name| name == "type")
+                    && parts
+                        .get(1)
+                        .is_some_and(|value| value == CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE)
+            }) {
+                return Ok(None);
+            }
+            let Some(identity) = parse_roster_app_key_sidecar_event(event)? else {
+                return Ok(None);
+            };
+            Ok(Some(ParsedIdentityRosterBridgeEvent {
+                source: RosterIdentityBridgeSource::NostrIdentityRosterOp,
+                network_id: None,
+                op_id: event.id.to_hex(),
+                signer_pubkey: event.pubkey.to_hex(),
+                signed_at: event.created_at.as_secs(),
+                identities: vec![identity],
+            }))
+        }
+        _ => Ok(None),
+    }
 }
 
 pub fn build_roster_app_key_sidecar_event(
@@ -243,6 +309,36 @@ pub fn build_device_approval_sidecar(
         roster_op_event,
         receipt_event,
     })
+}
+
+pub fn build_device_approval_for_link_request(
+    signer_keys: &Keys,
+    link_request: &SignedIdentityLinkRequest,
+    parents: Vec<String>,
+    actor_seq: Option<u64>,
+    approved_at: u64,
+) -> Result<NostrIdentityDeviceApprovalSidecar> {
+    let signer_pubkey = signer_keys.public_key().to_hex();
+    if signer_pubkey != link_request.content.admin_pubkey {
+        return Err(anyhow!(
+            "identity link request admin does not match approval signer"
+        ));
+    }
+    if link_request.signer_pubkey != link_request.content.joining_pubkey {
+        return Err(anyhow!(
+            "identity link request signer does not match joining device"
+        ));
+    }
+    build_device_approval_sidecar(
+        signer_keys,
+        NostrIdentityId::from_uuid(link_request.content.identity),
+        &link_request.signer_pubkey,
+        &link_request.content.joining_pubkey,
+        &link_request.content.client_nonce,
+        parents,
+        actor_seq,
+        approved_at,
+    )
 }
 
 fn normalize_pubkey_set(values: &[String], role: &str) -> Result<BTreeSet<String>> {

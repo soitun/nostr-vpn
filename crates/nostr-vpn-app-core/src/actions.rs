@@ -42,6 +42,7 @@ pub enum NativeAppAction {
         network_id: String,
         enabled: bool,
     },
+    #[serde(alias = "request_device_approval")]
     RequestNetworkJoin {
         network_id: String,
     },
@@ -83,10 +84,12 @@ pub enum NativeAppAction {
         network_id: String,
         npub: String,
     },
+    #[serde(alias = "approve_device_link")]
     AcceptJoinRequest {
         network_id: String,
         requester_npub: String,
     },
+    #[serde(alias = "reject_device_link")]
     RejectJoinRequest {
         network_id: String,
         requester_npub: String,
@@ -282,6 +285,44 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<NativeAppAction>(&encoded).expect("parse action"),
             action
+        );
+    }
+
+    #[test]
+    fn approval_action_aliases_keep_legacy_join_request_payloads_compatible() {
+        let request = serde_json::from_str::<NativeAppAction>(
+            r#"{"type":"request_device_approval","networkId":"net-1"}"#,
+        )
+        .expect("parse request approval alias");
+        assert_eq!(
+            request,
+            NativeAppAction::RequestNetworkJoin {
+                network_id: "net-1".to_string()
+            }
+        );
+
+        let approve = serde_json::from_str::<NativeAppAction>(
+            r#"{"type":"approve_device_link","networkId":"net-1","requesterNpub":"npub1requester"}"#,
+        )
+        .expect("parse approve alias");
+        assert_eq!(
+            approve,
+            NativeAppAction::AcceptJoinRequest {
+                network_id: "net-1".to_string(),
+                requester_npub: "npub1requester".to_string(),
+            }
+        );
+
+        let reject = serde_json::from_str::<NativeAppAction>(
+            r#"{"type":"reject_device_link","networkId":"net-1","requesterNpub":"npub1requester"}"#,
+        )
+        .expect("parse reject alias");
+        assert_eq!(
+            reject,
+            NativeAppAction::RejectJoinRequest {
+                network_id: "net-1".to_string(),
+                requester_npub: "npub1requester".to_string(),
+            }
         );
     }
 

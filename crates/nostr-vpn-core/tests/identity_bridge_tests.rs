@@ -7,9 +7,10 @@ use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::{
     CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND, CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE,
     NostrIdentityCapabilities, NostrIdentityId, NostrIdentityKeyPurpose, NostrIdentityRosterOp,
-    RosterAppKeyRole, build_device_approval_sidecar, build_identity_link_request_from_manual_npub,
+    RosterAppKeyRole, RosterIdentityBridgeSource, build_device_approval_for_link_request,
+    build_device_approval_sidecar, build_identity_link_request_from_manual_npub,
     build_roster_app_key_sidecar_event, parse_identity_link_request_event_for_invite_pubkey,
-    parse_nostr_identity_device_approval_receipt_event,
+    parse_identity_roster_bridge_event, parse_nostr_identity_device_approval_receipt_event,
     parse_nostr_identity_device_approval_receipt_roster_op, parse_roster_app_key_sidecar_event,
     roster_app_key_identities, signed_roster_app_key_identities,
 };
@@ -135,6 +136,74 @@ fn signed_roster_bridge_does_not_change_30388_wire_tags() {
 }
 
 #[test]
+fn unified_bridge_accepts_legacy_signed_rosters_and_identity_roster_ops() {
+    let admin = Keys::generate();
+    let member = Keys::generate();
+    let admin_hex = admin.public_key().to_hex();
+    let member_hex = member.public_key().to_hex();
+    let profile_id = NostrIdentityId::from_uuid(
+        Uuid::parse_str("15151515-2626-4747-8888-999999999999").expect("uuid"),
+    );
+    let roster = NetworkRoster {
+        network_name: "Home".to_string(),
+        devices: vec![member_hex.clone()],
+        admins: vec![admin_hex.clone()],
+        aliases: HashMap::from([(member_hex.clone(), "phone".to_string())]),
+        signed_at: 1_726_000_010,
+    };
+    let signed = SignedRoster::sign("mesh-home", roster, &admin).expect("sign roster");
+
+    let legacy = parse_identity_roster_bridge_event(
+        &signed.event,
+        &BTreeMap::from([(member_hex.clone(), profile_id)]),
+    )
+    .expect("parse legacy bridge event")
+    .expect("legacy bridge event");
+
+    assert_eq!(
+        legacy.source,
+        RosterIdentityBridgeSource::LegacySignedNetworkRoster
+    );
+    assert_eq!(legacy.network_id.as_deref(), Some("mesh-home"));
+    assert_eq!(legacy.signer_pubkey, admin_hex);
+    assert_eq!(legacy.signed_at, 1_726_000_010);
+    assert_eq!(legacy.identities.len(), 2);
+    assert!(legacy.identities.iter().any(|identity| {
+        identity.role == RosterAppKeyRole::Admin
+            && identity.facet.pubkey == admin.public_key().to_hex()
+    }));
+    assert!(legacy.identities.iter().any(|identity| {
+        identity.role == RosterAppKeyRole::Member
+            && identity.facet.pubkey == member_hex
+            && identity.facet.profile_id == Some(profile_id)
+    }));
+
+    let sidecar = build_roster_app_key_sidecar_event(
+        &admin,
+        profile_id,
+        &member.public_key().to_hex(),
+        RosterAppKeyRole::Member,
+        Vec::new(),
+        None,
+        1_726_000_011,
+    )
+    .expect("build sidecar");
+    let canonical = parse_identity_roster_bridge_event(&sidecar, &BTreeMap::new())
+        .expect("parse canonical bridge event")
+        .expect("canonical bridge event");
+
+    assert_eq!(
+        canonical.source,
+        RosterIdentityBridgeSource::NostrIdentityRosterOp
+    );
+    assert_eq!(canonical.network_id, None);
+    assert_eq!(canonical.signer_pubkey, admin.public_key().to_hex());
+    assert_eq!(canonical.signed_at, 1_726_000_011);
+    assert_eq!(canonical.identities.len(), 1);
+    assert_eq!(canonical.identities[0].facet.pubkey, member_hex);
+}
+
+#[test]
 fn bridge_builds_and_parses_canonical_roster_sidecar_facts() {
     let admin = Keys::generate();
     let member = Keys::generate();
@@ -221,6 +290,54 @@ fn scan_to_approve_link_request_accepts_manual_npub_inputs() {
     );
     assert_eq!(parsed.content.client_nonce, "join request from phone");
     assert_eq!(parsed.content.label.as_deref(), Some("phone"));
+}
+
+#[test]
+fn approval_can_be_built_directly_from_a_scanned_link_request() {
+    let admin = Keys::generate();
+    let joining_device = Keys::generate();
+    let profile_id = NostrIdentityId::from_uuid(
+        Uuid::parse_str("35353535-4646-4747-8888-999999999999").expect("uuid"),
+    );
+    let request = build_identity_link_request_from_manual_npub(
+        &joining_device,
+        profile_id,
+        &admin.public_key().to_bech32().expect("admin npub"),
+        &admin.public_key().to_bech32().expect("invite npub"),
+        "scan-secret",
+        Some("Laptop".to_string()),
+        1_726_000_250,
+    )
+    .expect("build link request");
+    let signed_request = parse_identity_link_request_event_for_invite_pubkey(
+        &request,
+        &admin,
+        admin.public_key().to_hex(),
+    )
+    .expect("parse link request");
+
+    let approval = build_device_approval_for_link_request(
+        &admin,
+        &signed_request,
+        Vec::new(),
+        None,
+        1_726_000_260,
+    )
+    .expect("build approval from link request");
+
+    let receipt = parse_nostr_identity_device_approval_receipt_event(
+        &approval.receipt_event,
+        &joining_device,
+    )
+    .expect("parse approval receipt");
+    assert_eq!(receipt.profile_id, profile_id);
+    assert_eq!(receipt.request_pubkey, joining_device.public_key().to_hex());
+    assert_eq!(
+        receipt.device_app_key_pubkey,
+        joining_device.public_key().to_hex()
+    );
+    assert_eq!(receipt.approved_by_pubkey, admin.public_key().to_hex());
+    assert_eq!(receipt.request_secret, "scan-secret");
 }
 
 #[test]
