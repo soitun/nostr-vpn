@@ -1,11 +1,17 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 pub use nostr_identity::{
-    IDENTITY_GRAPH_ROSTER_TYPE, KIND_NOSTR_IDENTITY_ROSTER_OP, NostrIdentityCapabilities,
-    NostrIdentityId, NostrIdentityKeyPurpose,
+    IDENTITY_GRAPH_ROSTER_TYPE, KIND_NOSTR_IDENTITY_ROSTER_OP,
+    NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA, NostrIdentityCapabilities,
+    NostrIdentityDeviceApprovalReceipt, NostrIdentityError, NostrIdentityFacet, NostrIdentityId,
+    NostrIdentityKeyPurpose, NostrIdentityRosterOp, SignedIdentityLinkRequest,
+    SignedNostrIdentityRosterOp, build_nostr_identity_device_approval_receipt_event,
+    parse_identity_link_request_event_for_invite_pubkey,
+    parse_nostr_identity_device_approval_receipt_event,
+    parse_nostr_identity_device_approval_receipt_roster_op,
 };
-use nostr_sdk::prelude::PublicKey;
+use nostr_sdk::prelude::{Event, JsonUtil, Keys, PublicKey};
 use serde::{Deserialize, Serialize};
 
 use crate::fips_control::{NetworkRoster, SignedRoster};
@@ -65,6 +71,12 @@ pub struct RosterAppKeyIdentity {
     pub legacy_network_alias: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NostrIdentityDeviceApprovalSidecar {
+    pub roster_op_event: Event,
+    pub receipt_event: Event,
+}
+
 pub fn roster_app_key_identities(
     roster: &NetworkRoster,
     profile_ids_by_pubkey: &BTreeMap<String, NostrIdentityId>,
@@ -108,6 +120,129 @@ pub fn signed_roster_app_key_identities(
 ) -> Result<Vec<RosterAppKeyIdentity>> {
     signed_roster.verify()?;
     roster_app_key_identities(&signed_roster.roster()?, profile_ids_by_pubkey)
+}
+
+pub fn build_roster_app_key_sidecar_event(
+    signer_keys: &Keys,
+    profile_id: NostrIdentityId,
+    pubkey: &str,
+    role: RosterAppKeyRole,
+    parents: Vec<String>,
+    actor_seq: Option<u64>,
+    created_at: u64,
+) -> Result<Event> {
+    let pubkey = normalize_pubkey(pubkey, "sidecar app key")?;
+    let created_at_i64 = i64::try_from(created_at).context("sidecar created_at overflows i64")?;
+    let capabilities = match role {
+        RosterAppKeyRole::Admin => NostrIdentityCapabilities::app_admin(),
+        RosterAppKeyRole::Member => NostrIdentityCapabilities::app_writer(),
+    };
+    let facet = NostrIdentityFacet::app_key(pubkey, created_at_i64, None, capabilities)
+        .with_profile_id(profile_id);
+
+    nostr_identity::build_nostr_identity_roster_op_event(
+        signer_keys,
+        profile_id,
+        parents,
+        actor_seq,
+        NostrIdentityRosterOp::AddFacet { facet },
+        created_at_i64,
+    )
+    .map_err(|error| anyhow!("failed to build NostrIdentity roster sidecar: {error}"))
+}
+
+pub fn parse_roster_app_key_sidecar_event(event: &Event) -> Result<Option<RosterAppKeyIdentity>> {
+    let signed = nostr_identity::parse_nostr_identity_roster_op_event(event)
+        .map_err(|error| anyhow!("failed to parse NostrIdentity roster sidecar: {error}"))?;
+    let NostrIdentityRosterOp::AddFacet { facet } = signed.content.op else {
+        return Ok(None);
+    };
+    if !facet.purposes.contains(&NostrIdentityKeyPurpose::AppKey) {
+        return Ok(None);
+    }
+    let pubkey = normalize_pubkey(&facet.pubkey, "sidecar app key")?;
+    let role = if facet.capabilities.can_admin_profile {
+        RosterAppKeyRole::Admin
+    } else {
+        RosterAppKeyRole::Member
+    };
+    Ok(Some(RosterAppKeyIdentity {
+        role,
+        facet: NostrIdentityAppKeyFacet {
+            pubkey,
+            profile_id: facet.profile_id,
+            purposes: facet.purposes,
+            capabilities: facet.capabilities,
+            label: facet.label,
+        },
+        legacy_network_alias: None,
+    }))
+}
+
+pub fn build_identity_link_request_from_manual_npub(
+    joining_keys: &Keys,
+    profile_id: NostrIdentityId,
+    admin_npub: &str,
+    invite_npub: &str,
+    client_nonce: impl Into<String>,
+    label: Option<String>,
+    requested_at: u64,
+) -> Result<Event> {
+    let admin_pubkey = normalize_pubkey(admin_npub, "identity link request admin")?;
+    let invite_pubkey = normalize_pubkey(invite_npub, "identity link request invite")?;
+    nostr_identity::build_identity_link_request_event(
+        joining_keys,
+        profile_id.as_uuid(),
+        admin_pubkey,
+        invite_pubkey,
+        client_nonce.into(),
+        label,
+        requested_at,
+    )
+    .map_err(|error| anyhow!("failed to build NostrIdentity link request: {error}"))
+}
+
+pub fn build_device_approval_sidecar(
+    signer_keys: &Keys,
+    profile_id: NostrIdentityId,
+    request_pubkey: &str,
+    device_app_key_pubkey: &str,
+    request_secret: &str,
+    parents: Vec<String>,
+    actor_seq: Option<u64>,
+    approved_at: u64,
+) -> Result<NostrIdentityDeviceApprovalSidecar> {
+    let request_pubkey = normalize_pubkey(request_pubkey, "approval request")?;
+    let device_app_key_pubkey = normalize_pubkey(device_app_key_pubkey, "approval device")?;
+    let approved_at_i64 =
+        i64::try_from(approved_at).context("approval approved_at overflows i64")?;
+    let roster_op_event = build_roster_app_key_sidecar_event(
+        signer_keys,
+        profile_id,
+        &device_app_key_pubkey,
+        RosterAppKeyRole::Member,
+        parents,
+        actor_seq,
+        approved_at,
+    )?;
+    let receipt = NostrIdentityDeviceApprovalReceipt {
+        schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
+        profile_id,
+        request_pubkey,
+        device_app_key_pubkey,
+        approved_by_pubkey: signer_keys.public_key().to_hex(),
+        approved_at: approved_at_i64,
+        request_secret: request_secret.trim().to_string(),
+        subject_pubkey: None,
+        roster_op_id: Some(roster_op_event.id.to_hex()),
+        signed_roster_event: Some(roster_op_event.as_json()),
+    };
+    let receipt_event = build_nostr_identity_device_approval_receipt_event(signer_keys, receipt)
+        .map_err(|error| anyhow!("failed to build NostrIdentity approval receipt: {error}"))?;
+    Ok(NostrIdentityDeviceApprovalSidecar {
+        roster_op_event,
+        receipt_event,
+    })
 }
 
 fn normalize_pubkey_set(values: &[String], role: &str) -> Result<BTreeSet<String>> {

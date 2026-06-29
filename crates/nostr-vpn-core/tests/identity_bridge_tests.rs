@@ -1,10 +1,16 @@
 use std::collections::{BTreeMap, HashMap};
 
+use nostr_sdk::ToBech32;
 use nostr_sdk::prelude::Keys;
+use nostr_sdk::prelude::{Event, JsonUtil};
 use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::{
     CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND, CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE,
-    NostrIdentityCapabilities, NostrIdentityId, NostrIdentityKeyPurpose, RosterAppKeyRole,
+    NostrIdentityCapabilities, NostrIdentityId, NostrIdentityKeyPurpose, NostrIdentityRosterOp,
+    RosterAppKeyRole, build_device_approval_sidecar, build_identity_link_request_from_manual_npub,
+    build_roster_app_key_sidecar_event, parse_identity_link_request_event_for_invite_pubkey,
+    parse_nostr_identity_device_approval_receipt_event,
+    parse_nostr_identity_device_approval_receipt_roster_op, parse_roster_app_key_sidecar_event,
     roster_app_key_identities, signed_roster_app_key_identities,
 };
 use uuid::Uuid;
@@ -126,4 +132,154 @@ fn signed_roster_bridge_does_not_change_30388_wire_tags() {
     signed
         .verify()
         .expect("legacy signed roster still verifies");
+}
+
+#[test]
+fn bridge_builds_and_parses_canonical_roster_sidecar_facts() {
+    let admin = Keys::generate();
+    let member = Keys::generate();
+    let profile_id = NostrIdentityId::from_uuid(
+        Uuid::parse_str("22222222-3333-4444-8555-666666666666").expect("uuid"),
+    );
+    let created_at = 1_726_000_100;
+
+    let event = build_roster_app_key_sidecar_event(
+        &admin,
+        profile_id,
+        &member.public_key().to_bech32().expect("member npub"),
+        RosterAppKeyRole::Member,
+        Vec::new(),
+        None,
+        created_at,
+    )
+    .expect("build sidecar");
+
+    assert_eq!(u16::from(event.kind), CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND);
+    assert!(event.content.is_empty());
+    assert!(event.tags.iter().any(|tag| {
+        let parts = tag.as_slice();
+        parts.first() == Some(&"type".to_string())
+            && parts.get(1) == Some(&CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE.to_string())
+    }));
+    assert!(event.tags.iter().any(|tag| {
+        let parts = tag.as_slice();
+        parts.first() == Some(&"key_pubkey".to_string())
+            && parts.get(1) == Some(&member.public_key().to_hex())
+    }));
+
+    let parsed = parse_roster_app_key_sidecar_event(&event)
+        .expect("parse sidecar")
+        .expect("sidecar app key identity");
+
+    assert_eq!(parsed.role, RosterAppKeyRole::Member);
+    assert_eq!(parsed.facet.pubkey, member.public_key().to_hex());
+    assert_eq!(parsed.facet.profile_id, Some(profile_id));
+    assert_eq!(
+        parsed.facet.purposes,
+        [NostrIdentityKeyPurpose::AppKey].into_iter().collect()
+    );
+    assert_eq!(
+        parsed.facet.capabilities,
+        NostrIdentityCapabilities::app_writer()
+    );
+}
+
+#[test]
+fn scan_to_approve_link_request_accepts_manual_npub_inputs() {
+    let joining_device = Keys::generate();
+    let admin = Keys::generate();
+    let invite = Keys::generate();
+    let profile_id = NostrIdentityId::from_uuid(
+        Uuid::parse_str("33333333-4444-4555-8666-777777777777").expect("uuid"),
+    );
+
+    let event = build_identity_link_request_from_manual_npub(
+        &joining_device,
+        profile_id,
+        &admin.public_key().to_bech32().expect("admin npub"),
+        &invite.public_key().to_bech32().expect("invite npub"),
+        "join request from phone",
+        Some(" phone ".to_string()),
+        1_726_000_200,
+    )
+    .expect("build link request");
+
+    assert_eq!(u16::from(event.kind), CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND);
+    let parsed = parse_identity_link_request_event_for_invite_pubkey(
+        &event,
+        &invite,
+        invite.public_key().to_hex(),
+    )
+    .expect("parse link request");
+
+    assert_eq!(parsed.content.identity, profile_id.as_uuid());
+    assert_eq!(parsed.content.admin_pubkey, admin.public_key().to_hex());
+    assert_eq!(parsed.content.invite_pubkey, invite.public_key().to_hex());
+    assert_eq!(
+        parsed.content.joining_pubkey,
+        joining_device.public_key().to_hex()
+    );
+    assert_eq!(parsed.content.client_nonce, "join request from phone");
+    assert_eq!(parsed.content.label.as_deref(), Some("phone"));
+}
+
+#[test]
+fn approval_sidecar_embeds_canonical_roster_op_and_parses_receipt() {
+    let admin = Keys::generate();
+    let request = Keys::generate();
+    let device = Keys::generate();
+    let profile_id = NostrIdentityId::from_uuid(
+        Uuid::parse_str("44444444-5555-4666-8777-888888888888").expect("uuid"),
+    );
+
+    let approval = build_device_approval_sidecar(
+        &admin,
+        profile_id,
+        &request.public_key().to_bech32().expect("request npub"),
+        &device.public_key().to_bech32().expect("device npub"),
+        "scan-secret",
+        Vec::new(),
+        None,
+        1_726_000_300,
+    )
+    .expect("build approval sidecar");
+
+    assert_ne!(u16::from(approval.roster_op_event.kind), 30_388);
+    assert_eq!(
+        u16::from(approval.roster_op_event.kind),
+        CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND
+    );
+    assert_eq!(
+        u16::from(approval.receipt_event.kind),
+        CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND
+    );
+
+    let receipt =
+        parse_nostr_identity_device_approval_receipt_event(&approval.receipt_event, &request)
+            .expect("parse receipt");
+    assert_eq!(receipt.profile_id, profile_id);
+    assert_eq!(receipt.request_pubkey, request.public_key().to_hex());
+    assert_eq!(receipt.device_app_key_pubkey, device.public_key().to_hex());
+    assert_eq!(receipt.approved_by_pubkey, admin.public_key().to_hex());
+    assert_eq!(receipt.request_secret, "scan-secret");
+    assert_eq!(
+        receipt.signed_roster_event.as_deref(),
+        Some(
+            Event::from_json(&approval.roster_op_event.as_json())
+                .unwrap()
+                .as_json()
+        )
+        .as_deref()
+    );
+
+    let roster_op = parse_nostr_identity_device_approval_receipt_roster_op(&receipt)
+        .expect("receipt roster op");
+    match roster_op.content.op {
+        NostrIdentityRosterOp::AddFacet { facet } => {
+            assert_eq!(facet.pubkey, device.public_key().to_hex());
+            assert_eq!(facet.profile_id, Some(profile_id));
+            assert_eq!(facet.capabilities, NostrIdentityCapabilities::app_writer());
+        }
+        other => panic!("expected add facet, got {other:?}"),
+    }
 }
