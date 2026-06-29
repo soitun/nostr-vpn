@@ -279,7 +279,7 @@ private struct NetworkStatusDot: View {
 
 /// First screen on a fresh install AND the screen reachable from the
 /// header switcher's "Add network" item. Same content in both contexts:
-/// create, join via invite, or pick up a nearby invite.
+/// create, link by QR/code, or pick up a nearby link.
 private struct AddNetworkPage: View {
     @ObservedObject var model: AppModel
     /// Called once the user lands on a network — used by the sheet
@@ -344,7 +344,7 @@ private struct DevicesPage: View {
                         Button {
                             addDevicePresented = true
                         } label: {
-                            Label("Add device", systemImage: "plus")
+                            Label("Link device", systemImage: "person.badge.plus")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
@@ -356,19 +356,19 @@ private struct DevicesPage: View {
                     ForEach(network.inboundJoinRequests) { request in
                         JoinRequestRow(request: request) {
                             model.dispatch(
-                                NativeActions.acceptJoinRequest(
+                                NativeActions.approveDeviceLink(
                                     networkId: network.id,
                                     requesterNpub: request.requesterNpub
                                 ),
-                                status: "Accepting request"
+                                status: "Approving device"
                             )
                         } reject: {
                             model.dispatch(
-                                NativeActions.rejectJoinRequest(
+                                NativeActions.rejectDeviceLink(
                                     networkId: network.id,
                                     requesterNpub: request.requesterNpub
                                 ),
-                                status: "Rejecting request"
+                                status: "Rejecting approval request"
                             )
                         }
                     }
@@ -392,7 +392,7 @@ private struct DevicesPage: View {
             if let network {
                 NavigationStack {
                     AddDeviceSheet(model: model, network: network)
-                        .navigationTitle("Add Device")
+                        .navigationTitle("Link Device")
                         .navigationBarTitleDisplayMode(.inline)
                         .toolbar {
                             ToolbarItem(placement: .cancellationAction) {
@@ -419,7 +419,7 @@ private struct DevicesPage: View {
             }
             Button("Cancel", role: .cancel) { pendingNetworkRemoval = nil }
         } message: { _ in
-            Text("Removes the network from this device. You can rejoin later with the invite.")
+            Text("Removes the network from this device. You can link it again later.")
         }
     }
 
@@ -478,7 +478,7 @@ private struct VpnDisclosureSheet: View {
                     .font(.title2.weight(.semibold))
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text("Nostr VPN is a private VPN and generic WireGuard exit-node utility. It is not a public VPN, anonymity, stealth, or consumer proxy service.")
-                Text("The app uses VPN data only to operate networks you configure: device identity, peer lists, internet-sharing settings, endpoints, invite/join metadata, traffic counters, and connection health.")
+                Text("The app uses VPN data only to operate networks you configure: device identity, peer lists, internet-sharing settings, endpoints, link approval metadata, traffic counters, and connection health.")
                 Text("Packet traffic is encrypted. User-selected peers, relays, bridge paths, and internet providers receive only the data needed to provide the connection you asked them to provide.")
                 Text("The developer does not sell VPN data, use it for ads or tracking, or disclose it to third parties.")
                 Spacer()
@@ -555,7 +555,7 @@ private struct JoinNetworkCard: View {
     }
 
     var body: some View {
-        SetupCard(title: "Join Network", systemImage: "arrow.down.circle.fill", tint: AppColors.join) {
+        SetupCard(title: "Link Network", systemImage: "arrow.down.circle.fill", tint: AppColors.join) {
             TextField("nvpn://invite/…", text: $inviteInput)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
@@ -563,7 +563,7 @@ private struct JoinNetworkCard: View {
                 .onChange(of: inviteInput) { _, newValue in
                     let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
                     if trimmed.lowercased().hasPrefix("nvpn://invite/") {
-                        model.importInvite(trimmed)
+                        model.linkNetwork(trimmed)
                         inviteInput = ""
                     }
                 }
@@ -587,9 +587,9 @@ private struct JoinNetworkCard: View {
             }
             .controlSize(.regular)
 
-            DisclosureGroup("Add manually", isExpanded: $manualExpanded) {
+            DisclosureGroup("Legacy manual join", isExpanded: $manualExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Both sides add each other. Enter their Device ID and network ID here, then have them add your Device ID.")
+                    Text("Use this only when link approval isn't available. Enter the admin's Device ID and network ID, then have them add your Device ID to the compatible signed roster.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     TextField("Admin Device ID", text: $manualAdminId)
@@ -614,7 +614,7 @@ private struct JoinNetworkCard: View {
                         let mesh = normalizeNetworkIdInput(manualNetworkId)
                         model.dispatch(
                             NativeActions.manualAddNetwork(adminNpub: admin, meshNetworkId: mesh),
-                            status: "Adding network"
+                            status: "Adding legacy network"
                         )
                         manualAdminId = ""
                         manualNetworkId = ""
@@ -629,16 +629,16 @@ private struct JoinNetworkCard: View {
 
             if let network = requestNetwork {
                 if !joinRequestStatus.isEmpty || network.outboundJoinRequest != nil {
-                    Pill("Join request sent", tint: .orange)
+                    Pill("Approval requested", tint: .orange)
                 } else if !network.inviteInviterNpub.isEmpty {
                     Button {
                         model.dispatch(
-                            NativeActions.requestNetworkJoin(networkId: network.id),
-                            status: "Requesting access"
+                            NativeActions.requestDeviceApproval(networkId: network.id),
+                            status: "Requesting approval"
                         )
-                        joinRequestStatus = "Join request sent"
+                        joinRequestStatus = "Approval requested"
                     } label: {
-                        Label("Request Access", systemImage: "person.badge.plus")
+                        Label("Request Approval", systemImage: "person.badge.plus")
                     }
                     .buttonStyle(.bordered)
                 }
@@ -646,19 +646,16 @@ private struct JoinNetworkCard: View {
         }
         .sheet(isPresented: $qrScannerPresented) {
             QRCodeScannerSheet { code in
-                model.importInvite(code)
+                model.linkNetwork(code)
                 qrScannerPresented = false
             }
         }
     }
 }
 
-/// Admin-only sheet for adding a device to YOUR network. Two paths:
-/// share an invite (QR / copy / broadcast) for the other device to import,
-/// or directly add by Device ID. Joining someone else's network and
-/// finding nearby networks belong to the Add Network page, not here —
-/// they're the "I want IN to a network" direction, not "I want THEM in
-/// MY network".
+/// Admin-only sheet for linking a device to YOUR network. The preferred path
+/// is scan/copy/broadcast + approve; direct Device ID entry remains for
+/// compatible signed-roster clients.
 private struct AddDeviceSheet: View {
     @ObservedObject var model: AppModel
     let network: NetworkState
@@ -672,19 +669,19 @@ private struct AddDeviceSheet: View {
                 ForEach(network.inboundJoinRequests) { request in
                     JoinRequestRow(request: request) {
                         model.dispatch(
-                            NativeActions.acceptJoinRequest(
+                            NativeActions.approveDeviceLink(
                                 networkId: network.id,
                                 requesterNpub: request.requesterNpub
                             ),
-                            status: "Accepting request"
+                            status: "Approving device"
                         )
                     } reject: {
                         model.dispatch(
-                            NativeActions.rejectJoinRequest(
+                            NativeActions.rejectDeviceLink(
                                 networkId: network.id,
                                 requesterNpub: request.requesterNpub
                             ),
-                            status: "Rejecting request"
+                            status: "Rejecting approval request"
                         )
                     }
                 }
@@ -703,21 +700,17 @@ private struct AddDeviceSheet: View {
     }
 }
 
-/// Shown to the admin in the Add Device sheet so they can dictate
-/// (text/Signal/etc.) the two values another device needs to join
-/// manually: the admin's own Device ID + the network ID. The other
-/// device pastes both into Join Network → Add manually. Both sides
-/// then have to add each other's Device IDs for the pairing to
-/// complete.
+/// Legacy compatibility path for cases where scan/link approval is not
+/// available. It exposes the signed-roster values used by older clients.
 private struct ManualPairingInfoCard: View {
     @ObservedObject var model: AppModel
     let network: NetworkState
 
     var body: some View {
         AppCard {
-            Text("For manual join")
+            Text("Legacy manual pairing")
                 .font(.headline)
-            Text("If the other device can't scan or paste an invite, share these two values. They'll enter them under Join Network → Add manually. You still need to add their Device ID below for the pairing to complete.")
+            Text("Use this only when link approval isn't available. Share these values with the other device, then add its Device ID below to keep the compatible signed roster in sync.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             VStack(alignment: .leading, spacing: 4) {
@@ -767,9 +760,9 @@ private struct InviteToMyNetworkCard: View {
     @ViewBuilder
     private var inviteControls: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Invite to my network")
+            Text("Link a device")
                 .font(.headline)
-            Text("Share this code with another device to give it access to your network.")
+            Text("Have the other device scan or open this link, then approve its request below.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ViewThatFits(in: .horizontal) {
@@ -791,27 +784,27 @@ private struct InviteToMyNetworkCard: View {
                     Label("Share", systemImage: "square.and.arrow.up")
                 }
             }
-            Toggle("Allow join requests", isOn: Binding(
+            Toggle("Allow approval requests", isOn: Binding(
                 get: { network.joinRequestsEnabled },
                 set: { enabled in
                     model.dispatch(
                         NativeActions.setJoinRequests(networkId: network.id, enabled: enabled),
-                        status: "Saving join request setting"
+                        status: "Saving approval setting"
                     )
                 }
             ))
             .disabled(!network.localIsAdmin || model.actionInFlight)
             Button {
                 if model.state.inviteBroadcastActive {
-                    model.dispatch(NativeActions.stopInviteBroadcast(), status: "Stopped nearby sharing")
+                    model.dispatch(NativeActions.stopInviteBroadcast(), status: "Stopped sharing link")
                 } else {
-                    model.dispatch(NativeActions.startInviteBroadcast(), status: "Sharing nearby")
+                    model.dispatch(NativeActions.startInviteBroadcast(), status: "Sharing link nearby")
                 }
             } label: {
                 Label(
                     model.state.inviteBroadcastActive
-                        ? "Sharing nearby · \(formatRemaining(model.state.inviteBroadcastRemainingSecs))"
-                        : "Share invite nearby",
+                        ? "Sharing link · \(formatRemaining(model.state.inviteBroadcastRemainingSecs))"
+                        : "Share link nearby",
                     systemImage: model.state.inviteBroadcastActive ? "stop.circle" : "dot.radiowaves.left.and.right"
                 )
             }
@@ -832,7 +825,7 @@ private struct InviteToMyNetworkCard: View {
         Button(role: .destructive) {
             model.dispatch(
                 NativeActions.resetNetworkInvite(networkId: network.id),
-                status: "Resetting invite"
+                status: "Resetting link"
             )
         } label: {
             Label("Reset", systemImage: "arrow.clockwise")
@@ -1907,9 +1900,9 @@ private struct AddDeviceCard: View {
 
     var body: some View {
         AppCard {
-            Text("Add by Device ID")
+            Text("Legacy add by Device ID")
                 .font(.headline)
-            Text("Manual pairing: enter the other device's Device ID. They also need to add yours.")
+            Text("Manual compatibility path: add the other device directly to this signed roster. Prefer link approval when both devices support it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             TextField("Device ID", text: $deviceId)
@@ -1947,7 +1940,7 @@ private struct JoinRequestRow: View {
         AppCard {
             HStack {
                 VStack(alignment: .leading) {
-                    Text(request.requesterNodeName.isEmpty ? "Join request" : request.requesterNodeName)
+                    Text(request.requesterNodeName.isEmpty ? "Device approval request" : request.requesterNodeName)
                         .font(.headline)
                     WrappingIdentifierText(
                         value: request.requesterNpub,
@@ -1962,7 +1955,7 @@ private struct JoinRequestRow: View {
                 HStack(spacing: 8) {
                     Button("Reject", role: .destructive, action: reject)
                         .buttonStyle(.bordered)
-                    Button("Accept", action: accept)
+                    Button("Approve", action: accept)
                         .buttonStyle(.borderedProminent)
                 }
             }
@@ -1976,7 +1969,7 @@ private struct NearbyCard: View {
     var body: some View {
         AppCard {
             HStack {
-                Text("Nearby invites")
+                Text("Nearby links")
                     .font(.headline)
                 Spacer()
                 Button {
@@ -1995,7 +1988,7 @@ private struct NearbyCard: View {
                 .buttonStyle(.bordered)
             }
             if model.state.lanPeers.isEmpty {
-                Text(model.state.nearbyDiscoveryActive ? "No nearby invites yet" : "Tap above to find nearby")
+                Text(model.state.nearbyDiscoveryActive ? "No nearby links yet" : "Tap above to find nearby")
                     .foregroundStyle(.secondary)
                     .font(.footnote)
             } else {
@@ -2009,8 +2002,8 @@ private struct NearbyCard: View {
                                 .foregroundStyle(.secondary)
                         }
                         Spacer()
-                        Button("Join") {
-                            model.importInvite(peer.invite)
+                        Button("Link") {
+                            model.linkNetwork(peer.invite)
                         }
                     }
                 }

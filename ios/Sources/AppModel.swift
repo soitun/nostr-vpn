@@ -278,7 +278,11 @@ final class AppModel: ObservableObject {
             return
         }
         debugLog("importInvite len=\(trimmed.count)")
-        dispatch(NativeActions.importInvite(trimmed), status: "Importing")
+        dispatch(NativeActions.linkNetwork(trimmed), status: "Linking network")
+    }
+
+    func linkNetwork(_ link: String) {
+        importInvite(link)
     }
 
     func handle(url: URL) {

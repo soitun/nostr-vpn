@@ -123,6 +123,10 @@ enum NativeActions {
         ["type": "import_network_invite", "invite": invite]
     }
 
+    static func linkNetwork(_ link: String) -> [String: Any] {
+        importInvite(link)
+    }
+
     static func resetNetworkInvite(networkId: String) -> [String: Any] {
         ["type": "reset_network_invite", "networkId": networkId]
     }
@@ -165,6 +169,10 @@ enum NativeActions {
 
     static func requestNetworkJoin(networkId: String) -> [String: Any] {
         ["type": "request_network_join", "networkId": networkId]
+    }
+
+    static func requestDeviceApproval(networkId: String) -> [String: Any] {
+        ["type": "request_device_approval", "networkId": networkId]
     }
 
     static func updateSettings(_ patch: [String: Any]) -> [String: Any] {
@@ -348,6 +356,22 @@ enum NativeActions {
     static func acceptJoinRequest(networkId: String, requesterNpub: String) -> [String: Any] {
         [
             "type": "accept_join_request",
+            "networkId": networkId,
+            "requesterNpub": requesterNpub,
+        ]
+    }
+
+    static func approveDeviceLink(networkId: String, requesterNpub: String) -> [String: Any] {
+        [
+            "type": "approve_device_link",
+            "networkId": networkId,
+            "requesterNpub": requesterNpub,
+        ]
+    }
+
+    static func rejectDeviceLink(networkId: String, requesterNpub: String) -> [String: Any] {
+        [
+            "type": "reject_device_link",
             "networkId": networkId,
             "requesterNpub": requesterNpub,
         ]

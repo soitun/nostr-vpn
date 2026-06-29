@@ -319,7 +319,11 @@ final class AppManager: ObservableObject {
         // than holding the same text the user just submitted (and so a stale
         // invite from a prior session doesn't quietly re-fire).
         inviteInput = ""
-        dispatch(.importNetworkInvite(invite: trimmed), status: "Importing invite")
+        dispatch(.importNetworkInvite(invite: trimmed), status: "Linking network")
+    }
+
+    func linkNetwork(_ link: String) {
+        importInvite(link)
     }
 
     func chooseInviteQrImage() {
@@ -945,23 +949,31 @@ final class AppManager: ObservableObject {
     }
 
     func setJoinRequests(networkId: String, enabled: Bool) {
-        dispatch(.setNetworkJoinRequestsEnabled(networkId: networkId, enabled: enabled), status: "Saving join request setting")
+        dispatch(.setNetworkJoinRequestsEnabled(networkId: networkId, enabled: enabled), status: "Saving approval setting")
     }
 
     func resetNetworkInvite(networkId: String) {
-        dispatch(.resetNetworkInvite(networkId: networkId), status: "Resetting invite")
+        dispatch(.resetNetworkInvite(networkId: networkId), status: "Resetting link")
     }
 
     func requestNetworkJoin(networkId: String) {
-        dispatch(.requestNetworkJoin(networkId: networkId), status: "Requesting network join")
+        dispatch(.requestNetworkJoin(networkId: networkId), status: "Requesting approval")
+    }
+
+    func requestDeviceApproval(networkId: String) {
+        requestNetworkJoin(networkId: networkId)
     }
 
     func acceptJoinRequest(networkId: String, requesterNpub: String) {
-        dispatch(.acceptJoinRequest(networkId: networkId, requesterNpub: requesterNpub), status: "Accepting join request")
+        dispatch(.acceptJoinRequest(networkId: networkId, requesterNpub: requesterNpub), status: "Approving device")
+    }
+
+    func approveDeviceLink(networkId: String, requesterNpub: String) {
+        dispatch(.acceptJoinRequest(networkId: networkId, requesterNpub: requesterNpub), status: "Approving device")
     }
 
     func rejectJoinRequest(networkId: String, requesterNpub: String) {
-        dispatch(.rejectJoinRequest(networkId: networkId, requesterNpub: requesterNpub), status: "Rejecting join request")
+        dispatch(.rejectJoinRequest(networkId: networkId, requesterNpub: requesterNpub), status: "Rejecting approval request")
     }
 
     func setParticipantAlias(npub: String, alias: String) {
@@ -1029,11 +1041,11 @@ final class AppManager: ObservableObject {
     }
 
     func startInviteBroadcast() {
-        dispatch(.startInviteBroadcast, status: "Sharing nearby")
+        dispatch(.startInviteBroadcast, status: "Sharing link nearby")
     }
 
     func stopInviteBroadcast() {
-        dispatch(.stopInviteBroadcast, status: "Stopped nearby sharing")
+        dispatch(.stopInviteBroadcast, status: "Stopped sharing link")
     }
 
     func startNearbyDiscovery() {
@@ -2147,7 +2159,7 @@ enum QrImportError: LocalizedError {
         case .unreadableImage:
             return "Could not read the selected image."
         case .noQrCode:
-            return "No QR invite was found in the selected image."
+            return "No link QR code was found in the selected image."
         }
     }
 }
