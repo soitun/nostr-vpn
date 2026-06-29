@@ -314,7 +314,7 @@ run_fips() {
   run fips_cargo_test -p fips-core update_peers -- --nocapture
   run fips_cargo_test -p fips-core non_reconnect -- --nocapture
   run fips_cargo_test -p fips-core active_fallback -- --nocapture
-  run fips_cargo_test -p fips-core worker_batch_size_parse_stays_within_safe_default_turn -- --nocapture
+  run fips_cargo_test -p fips-core turn_runner_batches_admission_and_reuses_work_buffer -- --nocapture
   run fips_cargo_test -p fips-core live_route_table_outbound_source_preserves_tun_slice_after_endpoint_batch_overrun -- --nocapture
   run fips_cargo_test -p fips-core endpoint_event_queue_owns_backlog_message_count -- --nocapture
   run fips_cargo_test -p fips-core endpoint_event_queue_splits_mixed_batch_into_priority_and_bulk_lanes -- --nocapture
