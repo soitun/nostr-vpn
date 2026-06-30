@@ -107,7 +107,6 @@
 
         #[cfg(target_os = "macos")]
         {
-            assert_eq!(super::FIPS_MESH_SEND_BURST, 64);
             assert_eq!(super::DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP, 256);
             assert_eq!(super::DEFAULT_FIPS_UDP_SEND_BUF_SIZE, Some(256 * 1024));
         }

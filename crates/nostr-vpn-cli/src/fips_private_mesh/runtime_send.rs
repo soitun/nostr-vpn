@@ -145,7 +145,7 @@ impl FipsPrivateMeshRuntime {
         self.send_tun_pipeline_packet_turn(
             packets.drain(..),
             input_packets,
-            FIPS_MESH_SEND_BURST,
+            input_packets,
             &mut runs,
         )
         .await
