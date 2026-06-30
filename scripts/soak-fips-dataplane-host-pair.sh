@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Host/VM pair FIPS dataplane baseline/soak for an already configured local
-# daemon and one SSH-reachable Linux/VM peer.
+# Host/VM pair nvpn+FIPS dataplane baseline/soak for an already configured
+# local daemon and one SSH-reachable Linux/VM peer.
 #
 # This is intentionally environment-driven so local hostnames, usernames, IPs,
 # and config paths stay out of committed files. It does not install daemons or

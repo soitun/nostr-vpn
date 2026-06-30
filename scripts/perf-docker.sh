@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Throughput / latency benchmark over a 2-node FIPS overlay mesh inside docker.
+# Throughput / latency benchmark over a 2-node nvpn+FIPS overlay mesh inside docker.
 #
 # Spins up node-a + node-b on a private bridge subnet (10.203.0.0/24) with
 # static peer endpoints, brings the mesh up, then runs iperf3 in both

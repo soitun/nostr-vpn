@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Short Linux/docker platform-split matrix for FIPS dataplane changes.
+# Short Linux/docker platform-split matrix for nvpn+FIPS dataplane changes.
 #
 # This wraps e2e-fips-perf-regression-docker.sh so default-path, worker-count,
 # and backpressure knobs are exercised through the same direct-path and

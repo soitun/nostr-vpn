@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local self-tests for the Docker FIPS soak harness helpers.
+# Local self-tests for the Docker nvpn+FIPS soak harness helpers.
 #
 # These tests do not start Docker. They pin the ping parser and latency guard
 # behavior that makes long soak samples useful for tail-latency regressions.
@@ -12,7 +12,7 @@ SOAK_SCRIPT="$ROOT_DIR/scripts/soak-fips-dataplane-docker.sh"
 source "$SOAK_SCRIPT"
 
 fail() {
-  printf 'fips soak harness self-test failed: %s\n' "$*" >&2
+  printf 'nvpn+FIPS soak harness self-test failed: %s\n' "$*" >&2
   exit 1
 }
 
@@ -741,4 +741,4 @@ test_pipeline_priority_queue_wait_guard
 test_pipeline_hard_event_policy
 test_pipeline_priority_hard_event_guard
 
-printf 'fips soak harness self-test passed\n'
+printf 'nvpn+FIPS soak harness self-test passed\n'

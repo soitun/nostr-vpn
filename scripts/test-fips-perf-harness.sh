@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local self-tests for the Docker FIPS perf harness helpers.
+# Local self-tests for the Docker nvpn+FIPS perf harness helpers.
 #
 # These tests do not start Docker. They pin the ping parser and threshold guard
 # behavior so p95/p99 latency in phase summaries is also a real pass/fail signal.
@@ -12,7 +12,7 @@ PERF_SCRIPT="$ROOT_DIR/scripts/e2e-fips-perf-regression-docker.sh"
 source "$PERF_SCRIPT"
 
 fail() {
-  printf 'fips perf harness self-test failed: %s\n' "$*" >&2
+  printf 'nvpn+FIPS perf harness self-test failed: %s\n' "$*" >&2
   exit 1
 }
 
@@ -972,10 +972,18 @@ test_phase_argument_selection() {
       source "$1"
       parse_args --phase clean-underlay --phase rx-maintenance-fault
       validate_perf_phases
-      printf "%s\n" "$PERF_PHASES"
+      phase_enabled unimpaired-underlay
+      phase_enabled rx-maintenance-fault
+      printf "ok\n"
     ' bash "$PERF_SCRIPT"
   )"
-  assert_eq "$got" "clean-underlay,rx-maintenance-fault" "repeated --phase selection"
+  assert_eq "$got" "ok" "legacy clean-underlay alias selection"
+
+  got="$(bash "$PERF_SCRIPT" --list-phases)"
+  assert_eq \
+    "$got" \
+    $'unimpaired-underlay\nconstrained-underlay\nworker-queue-pressure\nrx-maintenance-fault\nalias: clean-underlay=unimpaired-underlay' \
+    "phase list includes canonical names and alias"
 
   got="$(
     bash -c '
@@ -1048,6 +1056,7 @@ test_phase_summary_pipeline_columns() {
       "decrypt_worker_bulk_dropped:max_rate_per_sec=1,total=4" \
       "[pipe node-a]" \
       "[pipe node-b]"
+    append_phase_note "unimpaired-underlay"
   )
 
   header_fields="$(awk -F '\t' 'NR == 1 { print NF }' "$dir/phase-summary.tsv")"
@@ -1095,6 +1104,8 @@ test_phase_summary_pipeline_columns() {
   assert_eq "$hard_b" "decrypt_worker_bulk_dropped:max_rate_per_sec=1,total=4" "phase summary node-b hard events"
   assert_eq "$raw_a" "[pipe node-a]" "phase summary node-a raw pipeline"
   assert_eq "$raw_b" "[pipe node-b]" "phase summary node-b raw pipeline"
+  assert_file_contains "$dir/phase-notes.tsv" "unimpaired-underlay" "phase notes canonical unimpaired lane"
+  assert_file_contains "$dir/phase-notes.tsv" "not the peak perf-docker.sh clean throughput lane" "phase notes explains loaded lane"
 
   rm -rf "$dir"
 }
@@ -1326,19 +1337,19 @@ test_selected_pipeline_summary_artifact() {
   (
     PERF_OUTPUT_DIR="$dir"
     write_selected_pipeline_summary \
-      "clean-underlay" \
+      "unimpaired-underlay" \
       "node-a" \
       "[pipe node-a selected]"
     write_selected_pipeline_summary \
-      "clean-underlay" \
+      "unimpaired-underlay" \
       "node-b" \
       "[pipe node-b selected] | [nvpn-pipe node-b selected]"
-    write_selected_pipeline_summary "clean-underlay" "node-c" ""
+    write_selected_pipeline_summary "unimpaired-underlay" "node-c" ""
   )
 
-  node_a_path="$dir/raw/clean-underlay-node-a-selected-pipeline.txt"
-  node_b_path="$dir/raw/clean-underlay-node-b-selected-pipeline.txt"
-  empty_path="$dir/raw/clean-underlay-node-c-selected-pipeline.txt"
+  node_a_path="$dir/raw/unimpaired-underlay-node-a-selected-pipeline.txt"
+  node_b_path="$dir/raw/unimpaired-underlay-node-b-selected-pipeline.txt"
+  empty_path="$dir/raw/unimpaired-underlay-node-c-selected-pipeline.txt"
   assert_eq "$(cat "$node_a_path")" "[pipe node-a selected]" "selected node-a pipeline artifact"
   assert_eq "$(cat "$node_b_path")" "[pipe node-b selected] | [nvpn-pipe node-b selected]" "selected node-b pipeline artifact"
   if [[ -e "$empty_path" ]]; then
@@ -1471,4 +1482,4 @@ test_nvpn_perf_docker_placement_hunt_hooks
 test_nvpn_perf_docker_identity_hooks
 test_host_snapshot_artifact
 
-printf 'fips perf harness self-test passed\n'
+printf 'nvpn+FIPS perf harness self-test passed\n'

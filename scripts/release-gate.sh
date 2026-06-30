@@ -227,7 +227,7 @@ release_gate_perf_output_dir() {
   elif [[ -n "${NVPN_PERF_OUTPUT_DIR:-}" ]]; then
     printf '%s\n' "$NVPN_PERF_OUTPUT_DIR"
   else
-    printf '%s/artifacts/release-gate-fips-perf-%s\n' \
+    printf '%s/artifacts/release-gate-nvpn-fips-perf-%s\n' \
       "$ROOT_DIR" "$(date -u +%Y%m%dT%H%M%SZ)"
   fi
 }
@@ -375,7 +375,7 @@ case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
         ;;
       *)
         perf_output_dir="$(release_gate_perf_output_dir)"
-        echo "Writing Docker FIPS perf artifacts to $perf_output_dir"
+        echo "Writing Docker nvpn+FIPS perf artifacts to $perf_output_dir"
         NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}" \
           NVPN_PERF_OUTPUT_DIR="$perf_output_dir" \
           ./scripts/e2e-fips-perf-regression-docker.sh

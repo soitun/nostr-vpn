@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Local self-test for the Docker FIPS soak summarizer.
+# Local self-test for the Docker nvpn+FIPS soak summarizer.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SUMMARIZER="$ROOT_DIR/scripts/summarize-fips-soak-docker.sh"
 
 fail() {
-  printf 'fips soak summary self-test failed: %s\n' "$*" >&2
+  printf 'nvpn+FIPS soak summary self-test failed: %s\n' "$*" >&2
   exit 1
 }
 
@@ -42,4 +42,4 @@ assert_eq "$(jq -r '.pipeline.node_b_fips_top_priority_wait' "$tmpdir/summary.js
 assert_eq "$(jq -r '.pipeline.node_a_fips_hard_events' "$tmpdir/summary.json")" "encrypt_worker_bulk_dropped:max_rate_per_sec=5,total=10;fmp_aead_completion_aead_failed:max_rate_per_sec=1,total=1;fsp_aead_completion_aead_failed:max_rate_per_sec=2,total=2;fsp_aead_completion_epoch_mismatch:max_rate_per_sec=4,total=4" "node-a FIPS hard events"
 assert_eq "$(jq -r '.pipeline.node_a_nvpn_hard_events' "$tmpdir/summary.json")" "nvpn_tun_to_mesh_bulk_dropped:max_rate_per_sec=2,total=7;nvpn_tun_to_mesh_bulk_dropped_batches:max_rate_per_sec=1,total=3;nvpn_tun_to_mesh_bulk_dropped_packet_cap:max_rate_per_sec=2,total=7" "node-a nvpn hard events"
 
-printf 'fips soak summary self-test passed\n'
+printf 'nvpn+FIPS soak summary self-test passed\n'

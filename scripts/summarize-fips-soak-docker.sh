@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Summarize one Docker FIPS soak samples.ndjson artifact.
+# Summarize one Docker nvpn+FIPS soak samples.ndjson artifact.
 set -euo pipefail
 
 INPUT="${1:-}"
@@ -7,7 +7,7 @@ SUMMARY_TSV="${2:-}"
 SUMMARY_JSON="${3:-}"
 
 die() {
-  printf 'fips soak summary failed: %s\n' "$*" >&2
+  printf 'nvpn+FIPS soak summary failed: %s\n' "$*" >&2
   exit 1
 }
 

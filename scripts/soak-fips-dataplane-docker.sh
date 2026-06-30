@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Long-running FIPS dataplane soak for the docker/VM path.
+# Long-running nvpn+FIPS dataplane soak for the docker/VM path.
 #
 # Defaults to 30 minutes. Override NVPN_SOAK_DURATION_SECS for shorter local
 # checks, or 3600 for a one-hour run. This intentionally validates only the
@@ -85,7 +85,7 @@ cleanup() {
 
 dump_debug() {
   set +e
-  echo "fips soak failed, collecting debug output..."
+  echo "nvpn+FIPS soak failed, collecting debug output..."
   "${COMPOSE[@]}" ps || true
   for service in node-a node-b; do
     echo "--- logs: $service ---"
@@ -120,7 +120,7 @@ validate_expected_fsp_owner_placement() {
   case "$EXPECT_FSP_OWNER_PLACEMENT" in
     "" | any | same | owner-same | mismatch | owner-mismatch | local | handoff | worker-open) ;;
     *)
-      echo "fips soak failed: unknown expected FSP owner placement '$EXPECT_FSP_OWNER_PLACEMENT' (known: any, same, owner-same, mismatch, owner-mismatch, local, handoff, worker-open)" >&2
+      echo "nvpn+FIPS soak failed: unknown expected FSP owner placement '$EXPECT_FSP_OWNER_PLACEMENT' (known: any, same, owner-same, mismatch, owner-mismatch, local, handoff, worker-open)" >&2
       return 2
       ;;
   esac
@@ -162,7 +162,7 @@ assert_expected_fsp_owner_placement_sample() {
   esac
 
   if [[ "$ok" != "1" ]]; then
-    printf 'fips soak failed: expected %s FSP owner placement %s, got kind=%s summary=%s\n' \
+    printf 'nvpn+FIPS soak failed: expected %s FSP owner placement %s, got kind=%s summary=%s\n' \
       "$label" "$expected" "${kind:-unknown}" "${summary:-none}" >&2
     return 2
   fi
@@ -194,7 +194,7 @@ assert_expected_fsp_owner_placement_any_sample() {
   done
 
   if [[ "$ok" != "1" ]]; then
-    printf 'fips soak failed: expected any FIPS FSP owner placement %s, got %s\n' \
+    printf 'nvpn+FIPS soak failed: expected any FIPS FSP owner placement %s, got %s\n' \
       "$EXPECT_FSP_OWNER_PLACEMENT" "$summaries" >&2
     return 2
   fi
@@ -212,7 +212,7 @@ wait_for_service() {
     sleep 1
   done
 
-  echo "fips soak failed: service '$service' did not reach running state" >&2
+  echo "nvpn+FIPS soak failed: service '$service' did not reach running state" >&2
   exit 1
 }
 
@@ -312,7 +312,7 @@ wait_for_peer_status() {
   done
 
   printf '%s\n' "$status"
-  echo "fips soak failed: $label did not converge to expected direct path $expected_ip" >&2
+  echo "nvpn+FIPS soak failed: $label did not converge to expected direct path $expected_ip" >&2
   return 1
 }
 
@@ -374,7 +374,7 @@ assert_float_at_most() {
   awk -v actual="$actual" -v max="$max" -v label="$label" '
     BEGIN {
       if ((actual + 0) > (max + 0)) {
-        printf "fips soak failed: %s %.1f above maximum %.1f\n", label, actual, max > "/dev/stderr"
+        printf "nvpn+FIPS soak failed: %s %.1f above maximum %.1f\n", label, actual, max > "/dev/stderr"
         exit 1
       }
     }
@@ -399,7 +399,7 @@ assert_float_drift_at_most() {
       factor_limit = baseline * max_factor
       limit = (delta_limit > factor_limit) ? delta_limit : factor_limit
       if ((actual + 0) > limit) {
-        printf "fips soak failed: %s %.1f drifted above baseline %.1f limit %.1f\n", label, actual, baseline, limit > "/dev/stderr"
+        printf "nvpn+FIPS soak failed: %s %.1f drifted above baseline %.1f limit %.1f\n", label, actual, baseline, limit > "/dev/stderr"
         exit 1
       }
     }
@@ -461,25 +461,25 @@ assert_fips_timestamp_fresh() {
   local max_age="$5"
   local age future_by
   if [[ -z "$last_seen" || "$last_seen" == "null" ]]; then
-    echo "fips soak failed: $label $field is missing" >&2
+    echo "nvpn+FIPS soak failed: $label $field is missing" >&2
     exit 1
   fi
   if ! is_uint "$last_seen"; then
-    echo "fips soak failed: $label $field is not numeric: $last_seen" >&2
+    echo "nvpn+FIPS soak failed: $label $field is not numeric: $last_seen" >&2
     exit 1
   fi
   if ! is_uint "$now"; then
-    echo "fips soak failed: $label sample timestamp is not numeric: $now" >&2
+    echo "nvpn+FIPS soak failed: $label sample timestamp is not numeric: $now" >&2
     exit 1
   fi
   if (( last_seen > now + MAX_FIPS_LAST_SEEN_FUTURE_SKEW_SECS )); then
     future_by=$((last_seen - now))
-    echo "fips soak failed: $label $field is ${future_by}s in the future ($field=$last_seen now=$now)" >&2
+    echo "nvpn+FIPS soak failed: $label $field is ${future_by}s in the future ($field=$last_seen now=$now)" >&2
     exit 1
   fi
   age="$(fips_last_seen_age_secs "$last_seen" "$now")"
   if (( age > max_age )); then
-    echo "fips soak failed: $label $field is stale (age=${age}s max=${max_age}s $field=$last_seen now=$now)" >&2
+    echo "nvpn+FIPS soak failed: $label $field is stale (age=${age}s max=${max_age}s $field=$last_seen now=$now)" >&2
     exit 1
   fi
 }
@@ -490,11 +490,11 @@ assert_counter_advanced() {
   local label="$3"
   [[ -z "$previous" ]] && return
   if [[ ! "$actual" =~ ^[0-9]+$ || ! "$previous" =~ ^[0-9]+$ ]]; then
-    echo "fips soak failed: $label counter is not numeric (actual=$actual previous=$previous)" >&2
+    echo "nvpn+FIPS soak failed: $label counter is not numeric (actual=$actual previous=$previous)" >&2
     exit 1
   fi
   if (( actual <= previous )); then
-    echo "fips soak failed: $label counter did not advance (actual=$actual previous=$previous)" >&2
+    echo "nvpn+FIPS soak failed: $label counter did not advance (actual=$actual previous=$previous)" >&2
     exit 1
   fi
 }
@@ -510,7 +510,7 @@ record_rekey_progress() {
     current=$((current + 1))
     printf -v "$counter_var" '%s' "$current"
     if (( current > MAX_CONSECUTIVE_REKEY_SAMPLES )); then
-      echo "fips soak failed: $label rekey state stayed active for ${current} consecutive sample(s) (in_progress=$in_progress draining=$draining)" >&2
+      echo "nvpn+FIPS soak failed: $label rekey state stayed active for ${current} consecutive sample(s) (in_progress=$in_progress draining=$draining)" >&2
       exit 1
     fi
   else
@@ -534,7 +534,7 @@ record_srtt_progress() {
   current=$((current + 1))
   printf -v "$counter_var" '%s' "$current"
   if (( current > MAX_CONSECUTIVE_HIGH_SRTT_SAMPLES )); then
-    echo "fips soak failed: $label FIPS SRTT stayed above ${MAX_SRTT_MS}ms for ${current} consecutive sample(s) (srtt_ms=$srtt)" >&2
+    echo "nvpn+FIPS soak failed: $label FIPS SRTT stayed above ${MAX_SRTT_MS}ms for ${current} consecutive sample(s) (srtt_ms=$srtt)" >&2
     exit 1
   fi
 }
@@ -560,7 +560,7 @@ record_direct_probe_progress() {
       current_overdue=0
     fi
     if (( current_overdue > MAX_CONSECUTIVE_DIRECT_PROBE_OVERDUE_SAMPLES )); then
-      echo "fips soak failed: $label direct probe stayed overdue for ${current_overdue} consecutive sample(s) (retry_after_ms=$retry_after_ms now_ms=$now_ms pending_samples=$current_pending)" >&2
+      echo "nvpn+FIPS soak failed: $label direct probe stayed overdue for ${current_overdue} consecutive sample(s) (retry_after_ms=$retry_after_ms now_ms=$now_ms pending_samples=$current_pending)" >&2
       exit 1
     fi
   else
@@ -591,7 +591,7 @@ ping_probe() {
   output="$("${COMPOSE[@]}" exec -T "$service" ping \
     -c "$PING_COUNT" -i "$PING_INTERVAL" -W 2 "$target_ip" 2>&1)"
   if ! stats="$(printf '%s\n' "$output" | parse_ping_stats)"; then
-    echo "fips soak failed: could not parse ping stats for $label" >&2
+    echo "nvpn+FIPS soak failed: could not parse ping stats for $label" >&2
     printf '%s\n' "$output" >&2
     exit 1
   fi
@@ -616,15 +616,15 @@ iperf_probe() {
   else
     code=$?
     if [[ "$code" -eq 124 || "$code" -eq 137 ]]; then
-      echo "fips soak failed: iperf $label timed out after ${IPERF_TIMEOUT_SECS}s" >&2
+      echo "nvpn+FIPS soak failed: iperf $label timed out after ${IPERF_TIMEOUT_SECS}s" >&2
     else
-      echo "fips soak failed: iperf $label failed with exit $code" >&2
+      echo "nvpn+FIPS soak failed: iperf $label failed with exit $code" >&2
     fi
     printf '%s\n' "$json" >&2
     exit 1
   fi
   if ! mbps="$(printf '%s\n' "$json" | jq -er '((.end.sum_received.bits_per_second // .end.sum.bits_per_second // .end.sum_sent.bits_per_second) | select(type == "number")) / 1000000')"; then
-    echo "fips soak failed: iperf $label returned no throughput result" >&2
+    echo "nvpn+FIPS soak failed: iperf $label returned no throughput result" >&2
     printf '%s\n' "$json" >&2
     exit 1
   fi
@@ -652,12 +652,12 @@ assert_peer_path() {
   reachable="$(peer_field "$status" "$peer" reachable)"
   transport_addr="$(peer_field "$status" "$peer" fips_transport_addr)"
   if [[ "$reachable" != "true" ]]; then
-    echo "fips soak failed: $label peer is not reachable" >&2
+    echo "nvpn+FIPS soak failed: $label peer is not reachable" >&2
     printf '%s\n' "$status" >&2
     exit 1
   fi
   if [[ "$ALLOW_NON_DIRECT" == "0" && "$transport_addr" != "$expected_ip:"* ]]; then
-    echo "fips soak failed: $label route changed away from direct UDP path (addr=$transport_addr expected_ip=$expected_ip)" >&2
+    echo "nvpn+FIPS soak failed: $label route changed away from direct UDP path (addr=$transport_addr expected_ip=$expected_ip)" >&2
     printf '%s\n' "$status" >&2
     exit 1
   fi
@@ -1188,7 +1188,7 @@ assert_pipeline_fresh() {
   local count previous_count stale_count
   count="$(jq -r '.line_count // 0' <<<"$sample")"
   if [[ ! "$count" =~ ^[0-9]+$ ]]; then
-    echo "fips soak failed: $label pipeline line count is not numeric (count=$count)" >&2
+    echo "nvpn+FIPS soak failed: $label pipeline line count is not numeric (count=$count)" >&2
     exit 1
   fi
   previous_count="${!counter_var}"
@@ -1197,7 +1197,7 @@ assert_pipeline_fresh() {
     stale_count=$((stale_count + 1))
     printf -v "$stale_counter_var" '%s' "$stale_count"
     if (( stale_count > MAX_CONSECUTIVE_PIPELINE_STALE_SAMPLES )); then
-      echo "fips soak failed: $label pipeline summaries did not advance for $stale_count consecutive sample(s) (count=$count previous=$previous_count)" >&2
+      echo "nvpn+FIPS soak failed: $label pipeline summaries did not advance for $stale_count consecutive sample(s) (count=$count previous=$previous_count)" >&2
       write_pipeline_failure_artifact "$label" "stale" "count=$count previous=$previous_count stale=$stale_count" "$sample"
       jq -c '{line_count, raw, load_raw, peak_wait_raw, recent}' <<<"$sample" >&2
       exit 1
@@ -1329,7 +1329,7 @@ assert_pipeline_ok() {
   if is_true "$FAIL_ON_PRIORITY_HARD_EVENTS"; then
     priority_hard_events="$(pipeline_priority_hard_events "$sample")"
     if [[ -n "$priority_hard_events" ]]; then
-      echo "fips soak failed: $label observed priority/control hard pipeline events: $priority_hard_events" >&2
+      echo "nvpn+FIPS soak failed: $label observed priority/control hard pipeline events: $priority_hard_events" >&2
       write_pipeline_failure_artifact "$label" "priority-hard-events" "$priority_hard_events" "$sample"
       jq -c '{raw, load_raw, peak_wait_raw, rates_per_sec, max_rates_per_sec, max_totals, seen}' <<<"$sample" >&2
       exit 1
@@ -1337,7 +1337,7 @@ assert_pipeline_ok() {
   fi
   priority_queue_waits="$(pipeline_priority_queue_wait_violations "$sample")"
   if [[ -n "$priority_queue_waits" ]]; then
-    echo "fips soak failed: $label priority queue wait exceeded threshold: $priority_queue_waits" >&2
+    echo "nvpn+FIPS soak failed: $label priority queue wait exceeded threshold: $priority_queue_waits" >&2
     write_pipeline_failure_artifact "$label" "priority-queue-wait" "$priority_queue_waits" "$sample"
     jq -c '{raw, load_raw, peak_wait_raw, queue_wait_ms}' <<<"$sample" >&2
     exit 1
@@ -1345,7 +1345,7 @@ assert_pipeline_ok() {
   if [[ "$ALLOW_QUEUE_EVENTS" != "1" ]]; then
     hard_events="$(pipeline_hard_events "$sample")"
     if [[ -n "$hard_events" ]]; then
-      echo "fips soak failed: $label observed hard pipeline events: $hard_events" >&2
+      echo "nvpn+FIPS soak failed: $label observed hard pipeline events: $hard_events" >&2
       write_pipeline_failure_artifact "$label" "hard-events" "$hard_events" "$sample"
       jq -c '{raw, load_raw, peak_wait_raw, rates_per_sec, max_rates_per_sec, max_totals, seen}' <<<"$sample" >&2
       exit 1
@@ -1354,7 +1354,7 @@ assert_pipeline_ok() {
   if [[ "$ALLOW_QUEUE_WAIT" != "1" ]]; then
     queue_waits="$(pipeline_queue_wait_violations "$sample")"
     if [[ -n "$queue_waits" ]]; then
-      echo "fips soak failed: $label queue wait exceeded threshold: $queue_waits" >&2
+      echo "nvpn+FIPS soak failed: $label queue wait exceeded threshold: $queue_waits" >&2
       write_pipeline_failure_artifact "$label" "queue-wait" "$queue_waits" "$sample"
       jq -c '{raw, load_raw, peak_wait_raw, queue_wait_ms}' <<<"$sample" >&2
       exit 1
@@ -1815,7 +1815,7 @@ while (( SECONDS < end_at )); do
   fi
 done
 
-echo "fips soak passed: wrote samples to $SAMPLES"
+echo "nvpn+FIPS soak passed: wrote samples to $SAMPLES"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then

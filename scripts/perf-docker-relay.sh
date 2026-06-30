@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 3-node FIPS overlay perf bench: A and B can only reach each other through C.
+# 3-node nvpn+FIPS overlay perf bench: A and B can only reach each other through C.
 #
 # Topology (docker bridge 10.203.0.0/24):
 #   A (.10)  ──┐                    ┌──  B (.11)

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release-gate FIPS dataplane regression check.
+# Release-gate nvpn+FIPS dataplane regression check.
 #
 # This is not a benchmark leaderboard. It is a conservative pass/fail guard for
 # the failure modes that hurt interactive traffic: collapsed TCP throughput,
@@ -16,7 +16,8 @@ COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml"
 
 NETWORK_ID="${NVPN_PERF_NETWORK_ID:-docker-fips-perf}"
 CONFIG_PATH="/root/.config/nvpn/config.toml"
-KNOWN_PERF_PHASES="clean-underlay,constrained-underlay,worker-queue-pressure,rx-maintenance-fault"
+KNOWN_PERF_PHASES="unimpaired-underlay,constrained-underlay,worker-queue-pressure,rx-maintenance-fault"
+PERF_PHASE_ALIASES="clean-underlay=unimpaired-underlay"
 DURATION="${NVPN_PERF_DURATION_SECS:-8}"
 LOAD_DURATION="${NVPN_PERF_LOAD_DURATION_SECS:-12}"
 IPERF_INTERVAL_SECS="${NVPN_PERF_IPERF_INTERVAL_SECS:-1}"
@@ -99,6 +100,7 @@ EXTRA_ENV="${NVPN_PERF_EXTRA_ENV:-}"
 DIRECT_COUNTER_COMMENT="nvpn-direct-underlay"
 PERF_OUTPUT_DIR="${NVPN_PERF_OUTPUT_DIR:-}"
 PHASE_SUMMARY=""
+PHASE_NOTES=""
 FAILURE_SUMMARY=""
 CURRENT_PHASE=""
 CURRENT_STEP=""
@@ -131,26 +133,28 @@ usage() {
   cat <<EOF
 Usage: $(basename "$0") [--phase NAME ...] [--phases CSV]
 
-Runs the Docker FIPS dataplane perf regression. Use a targeted phase while
+Runs the Docker nvpn+FIPS dataplane perf regression. Use a targeted phase while
 iterating on a metric, then run the default full matrix before committing.
 
 Known phases:
   $KNOWN_PERF_PHASES
+Aliases:
+  $PERF_PHASE_ALIASES
 
 Examples:
   $(basename "$0") --phase rx-maintenance-fault
-  $(basename "$0") --phases clean-underlay,rx-maintenance-fault
+  $(basename "$0") --phases unimpaired-underlay,rx-maintenance-fault
   NVPN_PERF_PHASES=worker-queue-pressure $(basename "$0")
   NVPN_PERF_SKIP_BUILD=1 $(basename "$0")
   NVPN_E2E_BUILDER_IMAGE=local-rust NVPN_E2E_RUNTIME_IMAGE=local-runtime $(basename "$0")
-  NVPN_PERF_PIPELINE_INTERVAL_SECS=1 $(basename "$0") --phase clean-underlay
-  NVPN_PERF_MAX_TCP_RETRANS=1000 $(basename "$0") --phase clean-underlay
-  NVPN_PERF_MIN_IPERF_INTERVAL_MBIT=1 NVPN_PERF_MAX_IPERF_STALL_INTERVALS=0 $(basename "$0") --phase clean-underlay
-  NVPN_DOCKER_IPERF_TIMEOUT_SECS=20 $(basename "$0") --phase clean-underlay
-  NVPN_DOCKER_CPU_STRESS=1 NVPN_DOCKER_CPU_STRESS_SIDES=remote $(basename "$0") --phase clean-underlay
+  NVPN_PERF_PIPELINE_INTERVAL_SECS=1 $(basename "$0") --phase unimpaired-underlay
+  NVPN_PERF_MAX_TCP_RETRANS=1000 $(basename "$0") --phase unimpaired-underlay
+  NVPN_PERF_MIN_IPERF_INTERVAL_MBIT=1 NVPN_PERF_MAX_IPERF_STALL_INTERVALS=0 $(basename "$0") --phase unimpaired-underlay
+  NVPN_DOCKER_IPERF_TIMEOUT_SECS=20 $(basename "$0") --phase unimpaired-underlay
+  NVPN_DOCKER_CPU_STRESS=1 NVPN_DOCKER_CPU_STRESS_SIDES=remote $(basename "$0") --phase unimpaired-underlay
   NVPN_PERF_FAIL_ON_PRIORITY_HARD_EVENTS=0 $(basename "$0") --phase worker-queue-pressure
-  NVPN_PERF_MAX_PRIORITY_QUEUE_WAIT_MS=0 $(basename "$0") --phase clean-underlay
-  NVPN_PERF_MIN_PRIORITY_QUEUE_WAIT_RATE_PER_SEC=0 $(basename "$0") --phase clean-underlay
+  NVPN_PERF_MAX_PRIORITY_QUEUE_WAIT_MS=0 $(basename "$0") --phase unimpaired-underlay
+  NVPN_PERF_MIN_PRIORITY_QUEUE_WAIT_RATE_PER_SEC=0 $(basename "$0") --phase unimpaired-underlay
   NVPN_PERF_RX_MAINT_MAX_PRIORITY_QUEUE_WAIT_MS=200 $(basename "$0") --phase rx-maintenance-fault
 EOF
 }
@@ -181,6 +185,7 @@ parse_args() {
         ;;
       --list-phases)
         printf '%s\n' "$KNOWN_PERF_PHASES" | tr ',' '\n'
+        printf 'alias: %s\n' "$PERF_PHASE_ALIASES"
         exit 0
         ;;
       -h|--help)
@@ -211,7 +216,7 @@ cleanup() {
 
 dump_debug() {
   set +e
-  echo "fips perf regression e2e failed, collecting debug output..."
+  echo "nvpn+FIPS perf regression e2e failed, collecting debug output..."
   "${COMPOSE[@]}" ps || true
   for service in node-a node-b; do
     echo "--- logs: $service ---"
@@ -251,7 +256,7 @@ wait_for_service() {
     sleep 1
   done
 
-  echo "fips perf regression e2e failed: service '$service' did not reach running state" >&2
+  echo "nvpn+FIPS perf regression e2e failed: service '$service' did not reach running state" >&2
   exit 1
 }
 
@@ -281,7 +286,7 @@ wait_for_mesh() {
     sleep 1
   done
 
-  echo "fips perf regression e2e failed: mesh did not converge to 1/1" >&2
+  echo "nvpn+FIPS perf regression e2e failed: mesh did not converge to 1/1" >&2
   return 1
 }
 
@@ -337,7 +342,7 @@ assert_direct_counter_advanced() {
   esac
   if (( delta <= 0 )); then
     append_failure_summary "$label direct UDP underlay bytes delta" ">" "$delta" "0"
-    echo "fips perf regression e2e failed: $label did not use the configured direct UDP underlay path (before=$before after=$after)" >&2
+    echo "nvpn+FIPS perf regression e2e failed: $label did not use the configured direct UDP underlay path (before=$before after=$after)" >&2
     exit 1
   fi
   LAST_DIRECT_DELTA="$delta"
@@ -352,7 +357,7 @@ assert_float_at_least() {
   if ! awk -v actual="$actual" -v min="$min" \
     'BEGIN { exit !((actual + 0) >= (min + 0)) }'; then
     append_failure_summary "$label" ">=" "$actual" "$min"
-    printf 'fips perf regression e2e failed: %s %.1f below minimum %.1f\n' \
+    printf 'nvpn+FIPS perf regression e2e failed: %s %.1f below minimum %.1f\n' \
       "$label" "$actual" "$min" >&2
     exit 1
   fi
@@ -365,7 +370,7 @@ assert_float_at_most() {
   if ! awk -v actual="$actual" -v max="$max" \
     'BEGIN { exit !((actual + 0) <= (max + 0)) }'; then
     append_failure_summary "$label" "<=" "$actual" "$max"
-    printf 'fips perf regression e2e failed: %s %.1f above maximum %.1f\n' \
+    printf 'nvpn+FIPS perf regression e2e failed: %s %.1f above maximum %.1f\n' \
       "$label" "$actual" "$max" >&2
     exit 1
   fi
@@ -379,7 +384,7 @@ assert_int_at_most_if_set() {
   if ! awk -v actual="$actual" -v max="$max" \
     'BEGIN { exit !((actual + 0) <= (max + 0)) }'; then
     append_failure_summary "$label" "<=" "$actual" "$max"
-    printf 'fips perf regression e2e failed: %s %s above maximum %s\n' \
+    printf 'nvpn+FIPS perf regression e2e failed: %s %s above maximum %s\n' \
       "$label" "$actual" "$max" >&2
     exit 1
   fi
@@ -392,13 +397,24 @@ trim() {
   printf '%s' "$value"
 }
 
+canonical_perf_phase() {
+  case "$1" in
+    clean-underlay)
+      printf '%s' "unimpaired-underlay"
+      ;;
+    *)
+      printf '%s' "$1"
+      ;;
+  esac
+}
+
 phase_enabled() {
   local wanted="$1"
   local raw phase
   local -a raw_phases
   IFS=',' read -r -a raw_phases <<<"$PERF_PHASES"
   for raw in "${raw_phases[@]}"; do
-    phase="$(trim "$raw")"
+    phase="$(canonical_perf_phase "$(trim "$raw")")"
     if [[ "$phase" == "$wanted" ]]; then
       return 0
     fi
@@ -412,22 +428,22 @@ validate_perf_phases() {
   local -a raw_phases
   IFS=',' read -r -a raw_phases <<<"$PERF_PHASES"
   for raw in "${raw_phases[@]}"; do
-    phase="$(trim "$raw")"
+    phase="$(canonical_perf_phase "$(trim "$raw")")"
     [[ -z "$phase" ]] && continue
     case "$phase" in
-      clean-underlay|constrained-underlay|worker-queue-pressure|rx-maintenance-fault)
+      unimpaired-underlay|constrained-underlay|worker-queue-pressure|rx-maintenance-fault)
         selected=$((selected + 1))
         ;;
       *)
         echo "NVPN_PERF_PHASES contains unknown phase: $phase" >&2
-        echo "known phases: clean-underlay, constrained-underlay, worker-queue-pressure, rx-maintenance-fault" >&2
+        echo "known phases: $KNOWN_PERF_PHASES (alias: $PERF_PHASE_ALIASES)" >&2
         exit 2
         ;;
     esac
   done
   if (( selected == 0 )); then
     echo "NVPN_PERF_PHASES must include at least one known phase" >&2
-    echo "known phases: clean-underlay, constrained-underlay, worker-queue-pressure, rx-maintenance-fault" >&2
+    echo "known phases: $KNOWN_PERF_PHASES (alias: $PERF_PHASE_ALIASES)" >&2
     exit 2
   fi
 }
@@ -458,7 +474,7 @@ assert_iperf_progress_ok() {
   local stall_count
   stall_count="$(printf '%s\n' "$json" | iperf_stall_interval_count "$MIN_IPERF_INTERVAL_MBIT")"
   if ! [[ "$stall_count" =~ ^[0-9]+$ ]]; then
-    echo "fips perf regression e2e failed: unable to count iperf stalled intervals for $label" >&2
+    echo "nvpn+FIPS perf regression e2e failed: unable to count iperf stalled intervals for $label" >&2
     exit 1
   fi
   if (( stall_count > MAX_IPERF_STALL_INTERVALS )); then
@@ -467,7 +483,7 @@ assert_iperf_progress_ok() {
       "<=" \
       "$stall_count" \
       "$MAX_IPERF_STALL_INTERVALS"
-    echo "fips perf regression e2e failed: $label had $stall_count iperf interval(s) below ${MIN_IPERF_INTERVAL_MBIT} Mbps" >&2
+    echo "nvpn+FIPS perf regression e2e failed: $label had $stall_count iperf interval(s) below ${MIN_IPERF_INTERVAL_MBIT} Mbps" >&2
     exit 1
   fi
 }
@@ -604,17 +620,17 @@ run_iperf_json() {
     fi
 
     if [[ "$attempt" -lt 3 ]]; then
-      echo "fips perf regression e2e: retrying iperf $label after attempt $attempt produced no throughput result" >&2
+      echo "nvpn+FIPS perf regression e2e: retrying iperf $label after attempt $attempt produced no throughput result" >&2
       start_iperf_server
       continue
     fi
 
     if [[ "$code" -eq 124 || "$code" -eq 137 ]]; then
-      echo "fips perf regression e2e failed: iperf $label timed out after ${IPERF_TIMEOUT_SECS}s" >&2
+      echo "nvpn+FIPS perf regression e2e failed: iperf $label timed out after ${IPERF_TIMEOUT_SECS}s" >&2
     elif [[ "$code" -ne 0 ]]; then
-      echo "fips perf regression e2e failed: iperf $label failed with exit $code" >&2
+      echo "nvpn+FIPS perf regression e2e failed: iperf $label failed with exit $code" >&2
     else
-      echo "fips perf regression e2e failed: iperf $label returned no throughput result" >&2
+      echo "nvpn+FIPS perf regression e2e failed: iperf $label returned no throughput result" >&2
     fi
     printf '%s\n' "$output" >&2
     exit 1
@@ -678,7 +694,7 @@ assert_ping_ok() {
   local max_p99="${7:-$max_max}"
   local stats loss avg p95 p99 max
   if ! stats="$(printf '%s\n' "$output" | parse_ping_stats)"; then
-    echo "fips perf regression e2e failed: could not parse ping stats for $label" >&2
+    echo "nvpn+FIPS perf regression e2e failed: could not parse ping stats for $label" >&2
     printf '%s\n' "$output" >&2
     exit 1
   fi
@@ -1290,7 +1306,7 @@ assert_no_priority_hard_events() {
   violations="$(printf '%s\n' "$summary" | priority_hard_event_violations_from_summary)"
   if [[ -n "$violations" ]]; then
     append_failure_summary "$label priority/control hard events" "==" "$violations" "none"
-    echo "fips perf regression e2e failed: $label priority/control hard events observed: $violations" >&2
+    echo "nvpn+FIPS perf regression e2e failed: $label priority/control hard events observed: $violations" >&2
     exit 1
   fi
 }
@@ -1402,7 +1418,7 @@ assert_priority_queue_wait_ok() {
   violations="$(pipeline_priority_queue_wait_violations "$service" "$start_line" "$threshold_ms" "$min_rate_per_sec")"
   if [[ -n "$violations" ]]; then
     append_failure_summary "$label priority queue wait max ms (rate >= ${min_rate_per_sec}/s)" "<=" "$violations" "$threshold_ms"
-    echo "fips perf regression e2e failed: $label priority queue waits exceeded ${threshold_ms}ms at >=${min_rate_per_sec}/s: $violations" >&2
+    echo "nvpn+FIPS perf regression e2e failed: $label priority queue waits exceeded ${threshold_ms}ms at >=${min_rate_per_sec}/s: $violations" >&2
     exit 1
   fi
 }
@@ -1648,6 +1664,25 @@ append_phase_summary() {
   printf '\n' >>"$PHASE_SUMMARY"
 }
 
+phase_note() {
+  case "$1" in
+    unimpaired-underlay)
+      printf '%s' "e2e loaded-liveness/regression gate on an unimpaired underlay; runs TCP load plus ping/liveness checks, not the peak perf-docker.sh clean throughput lane"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+append_phase_note() {
+  [[ -z "$PHASE_NOTES" ]] && return
+  local phase="$1" note
+  note="$(phase_note "$phase" 2>/dev/null || true)"
+  [[ -z "$note" ]] && return
+  printf '%s\t%s\n' "$(tsv_field "$phase")" "$(tsv_field "$note")" >>"$PHASE_NOTES"
+}
+
 refresh_failure_context() {
   [[ -z "${CURRENT_PHASE:-}" ]] && return
 
@@ -1714,14 +1749,17 @@ init_phase_summary() {
   [[ -z "$PERF_OUTPUT_DIR" ]] && return
   mkdir -p "$PERF_OUTPUT_DIR"
   PHASE_SUMMARY="$PERF_OUTPUT_DIR/phase-summary.tsv"
+  PHASE_NOTES="$PERF_OUTPUT_DIR/phase-notes.tsv"
   FAILURE_SUMMARY="$PERF_OUTPUT_DIR/failure-summary.tsv"
   printf '%s\n' \
     'phase	forward_mbps	forward_retrans	reverse_mbps	reverse_retrans	forward_load_mbps	forward_load_retrans	forward_load_ping_loss_percent	forward_load_ping_avg_ms	forward_load_ping_p95_ms	forward_load_ping_p99_ms	forward_load_ping_max_ms	reverse_load_mbps	reverse_load_retrans	reverse_load_ping_loss_percent	reverse_load_ping_avg_ms	reverse_load_ping_p95_ms	reverse_load_ping_p99_ms	reverse_load_ping_max_ms	post_ping_loss_percent	post_ping_avg_ms	post_ping_p95_ms	post_ping_p99_ms	post_ping_max_ms	direct_bytes_node_a	direct_bytes_node_b	pipeline_top_queue_wait_node_a	pipeline_top_queue_wait_node_b	pipeline_fmp_worker_batch_node_a	pipeline_fmp_worker_batch_node_b	pipeline_fmp_worker_dispatch_spread_node_a	pipeline_fmp_worker_dispatch_spread_node_b	pipeline_decrypt_worker_batch_node_a	pipeline_decrypt_worker_batch_node_b	pipeline_decrypt_worker_spread_node_a	pipeline_decrypt_worker_spread_node_b	pipeline_decrypt_worker_turn_mix_node_a	pipeline_decrypt_worker_turn_mix_node_b	pipeline_linux_bulk_container_node_a	pipeline_linux_bulk_container_node_b	pipeline_udp_send_batch_node_a	pipeline_udp_send_batch_node_b	pipeline_hard_events_node_a	pipeline_hard_events_node_b	pipeline_node_a	pipeline_node_b' \
     >"$PHASE_SUMMARY"
+  printf 'phase\tnote\n' >"$PHASE_NOTES"
   printf '%s\n' \
     'label	comparison	actual	threshold	phase	step	forward_mbps	forward_retrans	reverse_mbps	reverse_retrans	probe_mbps	probe_retrans	ping_loss_percent	ping_avg_ms	ping_p95_ms	ping_p99_ms	ping_max_ms	direct_bytes_node_a	direct_bytes_node_b	pipeline_node_a	pipeline_node_b' \
     >"$FAILURE_SUMMARY"
   echo "writing perf phase summary to $PHASE_SUMMARY"
+  echo "writing perf phase notes to $PHASE_NOTES"
   echo "writing perf failure summary to $FAILURE_SUMMARY"
   echo "writing raw perf artifacts to $PERF_OUTPUT_DIR/raw"
 }
@@ -1795,9 +1833,9 @@ run_concurrent_probe() {
     copy_perf_artifact "$phase" "$label TCP load" "iperf.json" "$json_path"
     copy_perf_artifact "$phase" "$label TCP load" "iperf.stderr" "$err_path"
     if [[ "$iperf_status" -eq 124 || "$iperf_status" -eq 137 ]]; then
-      echo "fips perf regression e2e failed: $phase $label iperf timed out after ${IPERF_TIMEOUT_SECS}s" >&2
+      echo "nvpn+FIPS perf regression e2e failed: $phase $label iperf timed out after ${IPERF_TIMEOUT_SECS}s" >&2
     else
-      echo "fips perf regression e2e failed: $phase $label iperf failed with exit $iperf_status" >&2
+      echo "nvpn+FIPS perf regression e2e failed: $phase $label iperf failed with exit $iperf_status" >&2
     fi
     cat "$err_path" >&2
     exit 1
@@ -1808,7 +1846,7 @@ run_concurrent_probe() {
   write_iperf_server_artifacts_from_file "$phase" "$label TCP load" "$json_path"
   write_iperf_sender_artifacts_from_file "$phase" "$label TCP load" "$json_path"
   if ! mbps="$(iperf_mbps <"$json_path")"; then
-    echo "fips perf regression e2e failed: $phase $label iperf returned no throughput result" >&2
+    echo "nvpn+FIPS perf regression e2e failed: $phase $label iperf returned no throughput result" >&2
     cat "$err_path" >&2
     cat "$json_path" >&2
     exit 1
@@ -1858,6 +1896,12 @@ run_perf_phase() {
   fi
 
   echo "--- phase: $phase ---"
+  local note
+  note="$(phase_note "$phase" 2>/dev/null || true)"
+  if [[ -n "$note" ]]; then
+    echo "phase note: $note"
+    append_phase_note "$phase"
+  fi
   echo "thresholds: tcp>=${min_tcp}M reverse>=${min_reverse_tcp}M tcp_retrans<=${max_retrans_label} priority_hard_events<=${priority_hard_event_label} priority_queue_wait_max<=${priority_wait_label} during_ping_loss<=${max_loss}% during_ping_avg<=${max_avg}ms during_ping_p95<=${max_p95}ms during_ping_p99<=${max_p99}ms during_ping_max<=${max_max}ms post_ping_loss<=${post_max_loss}% post_ping_avg<=${post_max_avg}ms post_ping_p95<=${post_max_p95}ms post_ping_p99<=${post_max_p99}ms post_ping_max<=${post_max_max}ms"
 
   local direct_before_a direct_before_b pipeline_start_a pipeline_start_b
@@ -2064,7 +2108,7 @@ apply_underlay_rate_limit() {
     set -eu
     dev=\$(sh -c '$underlay_dev_for_peer_cmd' _ '$peer_ip')
     if [ -z \"\$dev\" ]; then
-      echo \"fips perf regression e2e failed: could not resolve underlay device for $peer_ip\" >&2
+      echo \"nvpn+FIPS perf regression e2e failed: could not resolve underlay device for $peer_ip\" >&2
       exit 1
     fi
     tc qdisc replace dev \"\$dev\" root tbf rate '${rate_mbit}'mbit burst '${burst_kb}'kb latency '${latency_ms}'ms
@@ -2148,7 +2192,7 @@ run_rx_maintenance_fault_phase() {
   for service in node-a node-b; do
     if ! "${COMPOSE[@]}" exec -T "$service" sh -lc \
       "grep -q 'RX loop slow maintenance timed out' /tmp/connect.log"; then
-      echo "fips perf regression e2e failed: $service did not observe forced rx-loop maintenance timeout" >&2
+      echo "nvpn+FIPS perf regression e2e failed: $service did not observe forced rx-loop maintenance timeout" >&2
       exit 1
     fi
   done
@@ -2216,11 +2260,11 @@ done
 ALICE_NPUB="$(nostr_pubkey_from_config node-a)"
 BOB_NPUB="$(nostr_pubkey_from_config node-b)"
 if [[ -z "$ALICE_NPUB" || -z "$BOB_NPUB" ]]; then
-  echo "fips perf regression e2e failed: unable to resolve node npubs from config" >&2
+  echo "nvpn+FIPS perf regression e2e failed: unable to resolve node npubs from config" >&2
   exit 1
 fi
 if [[ "$ALICE_NPUB" == "$BOB_NPUB" ]]; then
-  echo "fips perf regression e2e failed: node-a and node-b generated the same nostr pubkey" >&2
+  echo "nvpn+FIPS perf regression e2e failed: node-a and node-b generated the same nostr pubkey" >&2
   exit 1
 fi
 
@@ -2256,11 +2300,11 @@ fi
 ALICE_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip | tr -d '\r')"
 BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip | tr -d '\r')"
 if [[ -z "$ALICE_TUNNEL_IP" || -z "$BOB_TUNNEL_IP" ]]; then
-  echo "fips perf regression e2e failed: unable to derive both tunnel IPs" >&2
+  echo "nvpn+FIPS perf regression e2e failed: unable to derive both tunnel IPs" >&2
   exit 1
 fi
 if [[ "$ALICE_TUNNEL_IP" == "$BOB_TUNNEL_IP" ]]; then
-  echo "fips perf regression e2e failed: derived duplicate tunnel IP $ALICE_TUNNEL_IP for distinct peers on network_id=$NETWORK_ID" >&2
+  echo "nvpn+FIPS perf regression e2e failed: derived duplicate tunnel IP $ALICE_TUNNEL_IP for distinct peers on network_id=$NETWORK_ID" >&2
   echo "  node-a pubkey prefix: ${ALICE_NPUB:0:16}" >&2
   echo "  node-b pubkey prefix: ${BOB_NPUB:0:16}" >&2
   echo "  retry with NVPN_PERF_NETWORK_ID set to a unique value or investigate tunnel IP allocation" >&2
@@ -2276,7 +2320,7 @@ wait_for_mesh
 baseline_direct_a="$(direct_underlay_bytes node-a)"
 baseline_direct_b="$(direct_underlay_bytes node-b)"
 if ! "${COMPOSE[@]}" exec -T node-a ping -c 3 -W 2 "$BOB_TUNNEL_IP" >/dev/null; then
-  echo "fips perf regression e2e failed: baseline tunnel ping failed" >&2
+  echo "nvpn+FIPS perf regression e2e failed: baseline tunnel ping failed" >&2
   exit 1
 fi
 assert_direct_counter_advanced node-a "$baseline_direct_a" "baseline node-a"
@@ -2285,9 +2329,9 @@ docker_bench_start_cpu_stress
 
 echo "alice tunnel ip: $ALICE_TUNNEL_IP"
 echo "bob   tunnel ip: $BOB_TUNNEL_IP"
-if phase_enabled "clean-underlay"; then
+if phase_enabled "unimpaired-underlay"; then
   run_perf_phase \
-    "clean-underlay" \
+    "unimpaired-underlay" \
     "$MIN_TCP_MBIT" \
     "$MIN_REVERSE_TCP_MBIT" \
     "$MAX_PING_LOSS_PERCENT" \
@@ -2296,13 +2340,13 @@ if phase_enabled "clean-underlay"; then
     "$MAX_PING_P99_MS" \
     "$MAX_PING_MAX_MS"
 else
-  echo "Skipping clean-underlay phase because NVPN_PERF_PHASES=$PERF_PHASES"
+  echo "Skipping unimpaired-underlay phase because NVPN_PERF_PHASES=$PERF_PHASES"
 fi
 run_constrained_underlay_phase
 run_worker_queue_pressure_phase
 run_rx_maintenance_fault_phase
 
-echo "fips perf regression docker e2e passed: throughput stayed above floor and pings did not wedge under or after TCP load"
+echo "nvpn+FIPS perf regression docker e2e passed: throughput stayed above floor and pings did not wedge under or after TCP load"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
