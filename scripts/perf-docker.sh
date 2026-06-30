@@ -772,6 +772,9 @@ capture_nvpn_diagnostics() {
     "${COMPOSE[@]}" exec -T "$service" sh -lc \
       'ps -eo pid,ppid,stat,pcpu,pmem,comm,args 2>/dev/null | head -80 || true' \
       >"$prefix-ps.txt" 2>/dev/null || true
+    "${COMPOSE[@]}" exec -T "$service" sh -lc \
+      'pid="$(pgrep -x nvpn | head -1 || true)"; if [ -n "$pid" ]; then ps -L -p "$pid" -o pid,tid,psr,stat,pcpu,pmem,comm,args 2>/dev/null | awk '\''NR == 1 { print; next } $2 != $1'\'' | { IFS= read -r header && printf "%s\n" "$header"; sort -k5 -nr; } || true; fi' \
+      >"$prefix-threads.txt" 2>/dev/null || true
     "${COMPOSE[@]}" exec -T "$service" sh -lc 'cat /tmp/iperf3-server.log 2>/dev/null || true' \
       >"$prefix-iperf3-server.log" 2>/dev/null || true
     [[ -s "$prefix-iperf3-server.log" ]] || rm -f "$prefix-iperf3-server.log"
@@ -1018,11 +1021,12 @@ run_placement_preflight() {
 }
 
 start_iperf_server() {
-  "${COMPOSE[@]}" exec -T node-b sh -lc 'pkill -9 iperf3 >/dev/null 2>&1 || true; rm -f /tmp/iperf3-server.log'
-  "${COMPOSE[@]}" exec -d node-b iperf3 -s -D --logfile /tmp/iperf3-server.log
+  "${COMPOSE[@]}" exec -T node-b sh -lc 'pkill -9 iperf3 >/dev/null 2>&1 || true; rm -f /tmp/iperf3-server.log /tmp/iperf3-server.out'
+  "${COMPOSE[@]}" exec -T node-b sh -lc 'nohup iperf3 -s --logfile /tmp/iperf3-server.log >/tmp/iperf3-server.out 2>&1 &'
   sleep 1
-  if ! "${COMPOSE[@]}" exec -T node-b sh -lc 'pgrep -x iperf3 >/dev/null'; then
+  if ! "${COMPOSE[@]}" exec -T node-b sh -lc 'ss -ltn sport = :5201 | grep -q LISTEN'; then
     echo "perf: iperf3 server failed to start" >&2
+    "${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/iperf3-server.out 2>/dev/null || true' >&2 || true
     "${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/iperf3-server.log 2>/dev/null || true' >&2 || true
     exit 1
   fi
