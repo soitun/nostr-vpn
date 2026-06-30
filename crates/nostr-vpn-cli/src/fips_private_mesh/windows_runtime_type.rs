@@ -1,0 +1,19 @@
+#[cfg(target_os = "windows")]
+pub(crate) struct FipsPrivateTunnelRuntime {
+    iface: String,
+    mesh: Arc<FipsPrivateMeshRuntime>,
+    config: FipsPrivateTunnelConfig,
+    session: Arc<Session>,
+    stop: Arc<AtomicBool>,
+    tun_read_thread: ThreadJoinHandle<()>,
+    mesh_send_task: JoinHandle<()>,
+    mesh_recv_task: JoinHandle<()>,
+    event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,
+    interface_index: u32,
+    route_targets: Vec<String>,
+    /// Same shape as the macOS variant: a userspace WG upstream
+    /// tunnel (boringtun + a *separate* WinTun adapter, distinct from
+    /// the FIPS adapter above) that the daemon reconciles whenever
+    /// `wireguard_exit` changes.
+    wg_upstream: Option<crate::wg_upstream_runtime::DaemonWgUpstream>,
+}

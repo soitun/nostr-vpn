@@ -338,6 +338,7 @@ include!("fips_private_mesh/time.rs");
 #[cfg(test)]
 mod tests {
     include!("fips_private_mesh/tests_core.rs");
+    include!("fips_private_mesh/tests_tun_pipeline.rs");
     include!("fips_private_mesh/tests_status.rs");
     include!("fips_private_mesh/tests_runtime.rs");
     include!("fips_private_mesh/tests_config.rs");
