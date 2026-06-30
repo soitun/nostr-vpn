@@ -225,10 +225,9 @@
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
-    async fn tun_to_mesh_rx_exposes_bulk_backlog_for_adaptive_sender_yield() {
+    async fn tun_to_mesh_rx_exposes_bulk_backlog_for_sender_yield() {
         let (tx, mut rx) = TunPipelineQueueTx::channel(2);
 
-        assert_eq!(rx.bulk_backlog_capacity(), 2);
         assert!(!rx.has_bulk_backlog());
         assert_eq!(
             submit_tun_packet_batch_to_mesh_queue(
