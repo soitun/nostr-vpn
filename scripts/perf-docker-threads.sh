@@ -4,11 +4,22 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SUMMARY_LIB="$ROOT_DIR/scripts/lib-docker-bench-summary.sh"
+# shellcheck source=scripts/lib-docker-bench-summary.sh
+source "$SUMMARY_LIB"
+docker_bench_apply_local_fips_patch_default
 PROJECT_NAME="${PROJECT_NAME:-nvpn-perf}"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml")
 
 NETWORK_ID="docker-perf"
 DURATION="${DURATION:-25}"
+EXTRA_CONNECT_ENV="$(docker_bench_effective_extra_env)"
+docker_bench_validate_connect_env_scope "$EXTRA_CONNECT_ENV"
+docker_bench_validate_extra_env_assignments "$EXTRA_CONNECT_ENV"
+CONNECT_ENV_PREFIX=""
+if [[ -n "$EXTRA_CONNECT_ENV" ]]; then
+  CONNECT_ENV_PREFIX="$EXTRA_CONNECT_ENV "
+fi
 
 cleanup() {
   if [[ -z "${KEEP:-}" ]]; then
@@ -57,12 +68,21 @@ ALICE_NPUB="$(nostr_pubkey_from_config node-a)"
 BOB_NPUB="$(nostr_pubkey_from_config node-b)"
 
 "${COMPOSE[@]}" exec -T node-a nvpn set \
+  --participant "$ALICE_NPUB" \
+  --participant "$BOB_NPUB" >/dev/null
+"${COMPOSE[@]}" exec -T node-b nvpn set \
+  --participant "$ALICE_NPUB" \
+  --participant "$BOB_NPUB" >/dev/null
+
+"${COMPOSE[@]}" exec -T node-a nvpn set \
   --network-id "$NETWORK_ID" \
   --participant "$ALICE_NPUB" \
   --participant "$BOB_NPUB" \
   --endpoint "10.203.0.10:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \
+  --fips-nostr-discovery-enabled false \
+  --fips-bootstrap-enabled false \
   --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" >/dev/null
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
@@ -72,12 +92,14 @@ BOB_NPUB="$(nostr_pubkey_from_config node-b)"
   --endpoint "10.203.0.11:51820" \
   --listen-port 51820 \
   --fips-advertise-endpoint true \
+  --fips-nostr-discovery-enabled false \
+  --fips-bootstrap-enabled false \
   --fips-peer-endpoint "$ALICE_NPUB=10.203.0.10:51820" >/dev/null
 
 BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip | tr -d '\r')"
 
-"${COMPOSE[@]}" exec -d node-a sh -lc "nvpn connect > /tmp/connect.log 2>&1"
-"${COMPOSE[@]}" exec -d node-b sh -lc "nvpn connect > /tmp/connect.log 2>&1"
+"${COMPOSE[@]}" exec -d node-a sh -lc "${CONNECT_ENV_PREFIX}nvpn connect > /tmp/connect.log 2>&1"
+"${COMPOSE[@]}" exec -d node-b sh -lc "${CONNECT_ENV_PREFIX}nvpn connect > /tmp/connect.log 2>&1"
 
 for _ in $(seq 1 30); do
   a="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
