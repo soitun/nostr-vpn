@@ -7,6 +7,7 @@ fn linux_ip_forward_path(family: LinuxExitNodeIpFamily) -> &'static str {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
 pub(crate) fn linux_exit_node_source_cidr(tunnel_ip: &str) -> Option<String> {
     let octets = strip_cidr(tunnel_ip).parse::<Ipv4Addr>().ok()?.octets();
     if octets[0] == 10 && octets[1] == 44 {
@@ -336,7 +337,6 @@ pub(crate) fn linux_iptables_delete_rule(
 }
 
 #[cfg(any(test, not(target_os = "windows")))]
-#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
 #[allow(dead_code)]
 pub(crate) fn apply_local_interface_network_with_mtu(
     iface: &str,

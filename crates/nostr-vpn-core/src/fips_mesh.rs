@@ -259,7 +259,7 @@ impl FipsMeshRuntime {
     pub fn route_outbound_packet_peer<'a>(&'a self, packet: &[u8]) -> Option<RoutedFipsPeer<'a>> {
         let peer = self.route_outbound_peer(packet)?;
 
-        Some(routed_fips_peer(peer)?)
+        routed_fips_peer(peer)
     }
 
     pub fn route_outbound_destination_peer<'a>(
@@ -268,7 +268,7 @@ impl FipsMeshRuntime {
     ) -> Option<RoutedFipsPeer<'a>> {
         let peer = self.select_peer_for_ip(destination)?;
 
-        Some(routed_fips_peer(peer)?)
+        routed_fips_peer(peer)
     }
 
     pub fn route_outbound_packet_with_peer<'a>(
@@ -277,7 +277,7 @@ impl FipsMeshRuntime {
     ) -> Option<RoutedFipsPacket<'a>> {
         let peer = self.route_outbound_peer(packet)?;
 
-        Some(routed_fips_packet(peer, packet.to_vec())?)
+        routed_fips_packet(peer, packet.to_vec())
     }
 
     pub fn route_outbound_packet_owned_with_peer<'a>(
@@ -295,7 +295,7 @@ impl FipsMeshRuntime {
     ) -> Option<RoutedFipsPacket<'a>> {
         let peer = self.select_peer_for_ip(destination)?;
 
-        Some(routed_fips_packet(peer, packet)?)
+        routed_fips_packet(peer, packet)
     }
 
     fn route_outbound_peer(&self, packet: &[u8]) -> Option<&FipsMeshPeerRuntime> {

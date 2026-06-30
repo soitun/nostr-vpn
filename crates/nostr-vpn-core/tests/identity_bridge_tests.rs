@@ -6,11 +6,12 @@ use nostr_sdk::prelude::{Event, JsonUtil};
 use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::{
     CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND, CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE,
-    NostrIdentityCapabilities, NostrIdentityId, NostrIdentityKeyPurpose, NostrIdentityRosterOp,
-    RosterAppKeyRole, RosterIdentityBridgeSource, build_device_approval_for_link_request,
-    build_device_approval_sidecar, build_identity_link_request_from_manual_npub,
-    build_roster_app_key_sidecar_event, parse_identity_link_request_event_for_invite_pubkey,
-    parse_identity_roster_bridge_event, parse_nostr_identity_device_approval_receipt_event,
+    NostrIdentityCapabilities, NostrIdentityDeviceApprovalSidecarRequest, NostrIdentityId,
+    NostrIdentityKeyPurpose, NostrIdentityRosterOp, RosterAppKeyRole, RosterIdentityBridgeSource,
+    build_device_approval_for_link_request, build_device_approval_sidecar,
+    build_identity_link_request_from_manual_npub, build_roster_app_key_sidecar_event,
+    parse_identity_link_request_event_for_invite_pubkey, parse_identity_roster_bridge_event,
+    parse_nostr_identity_device_approval_receipt_event,
     parse_nostr_identity_device_approval_receipt_roster_op, parse_roster_app_key_sidecar_event,
     roster_app_key_identities, signed_roster_app_key_identities,
 };
@@ -351,13 +352,15 @@ fn approval_sidecar_embeds_canonical_roster_op_and_parses_receipt() {
 
     let approval = build_device_approval_sidecar(
         &admin,
-        profile_id,
-        &request.public_key().to_bech32().expect("request npub"),
-        &device.public_key().to_bech32().expect("device npub"),
-        "scan-secret",
-        Vec::new(),
-        None,
-        1_726_000_300,
+        NostrIdentityDeviceApprovalSidecarRequest {
+            profile_id,
+            request_pubkey: request.public_key().to_bech32().expect("request npub"),
+            device_app_key_pubkey: device.public_key().to_bech32().expect("device npub"),
+            request_secret: "scan-secret".to_string(),
+            parents: Vec::new(),
+            actor_seq: None,
+            approved_at: 1_726_000_300,
+        },
     )
     .expect("build approval sidecar");
 
@@ -382,7 +385,7 @@ fn approval_sidecar_embeds_canonical_roster_op_and_parses_receipt() {
     assert_eq!(
         receipt.signed_roster_event.as_deref(),
         Some(
-            Event::from_json(&approval.roster_op_event.as_json())
+            Event::from_json(approval.roster_op_event.as_json())
                 .unwrap()
                 .as_json()
         )

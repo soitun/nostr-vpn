@@ -55,8 +55,6 @@ fn fips_peer_ping_interval_secs(last_seen_at: Option<u64>, link_connected: bool,
         FIPS_PEER_ACTIVE_PING_INTERVAL_SECS
     } else if link_connected {
         FIPS_PEER_LINK_PING_INTERVAL_SECS
-    } else if last_seen_at.is_some() {
-        FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS
     } else {
         FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS
     }

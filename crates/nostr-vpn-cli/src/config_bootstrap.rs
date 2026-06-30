@@ -186,7 +186,7 @@ pub(crate) fn default_cli_install_path() -> PathBuf {
             return dir.join("nvpn.exe");
         }
 
-        return PathBuf::from("nvpn.exe");
+        PathBuf::from("nvpn.exe")
     }
 
     #[cfg(not(target_os = "windows"))]

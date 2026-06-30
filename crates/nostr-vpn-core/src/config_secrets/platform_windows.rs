@@ -82,14 +82,14 @@ mod platform {
     }
 
     fn dpapi_protect(plaintext: &[u8]) -> Result<Vec<u8>> {
-        let mut input = CRYPT_INTEGER_BLOB {
+        let input = CRYPT_INTEGER_BLOB {
             cbData: u32::try_from(plaintext.len()).context("secret is too large for DPAPI")?,
             pbData: plaintext.as_ptr().cast_mut(),
         };
         let mut output = CRYPT_INTEGER_BLOB::default();
         let ok = unsafe {
             CryptProtectData(
-                &mut input,
+                &input,
                 std::ptr::null(),
                 std::ptr::null(),
                 std::ptr::null(),
@@ -106,14 +106,14 @@ mod platform {
     }
 
     fn dpapi_unprotect(ciphertext: &[u8]) -> Result<Vec<u8>> {
-        let mut input = CRYPT_INTEGER_BLOB {
+        let input = CRYPT_INTEGER_BLOB {
             cbData: u32::try_from(ciphertext.len()).context("secret is too large for DPAPI")?,
             pbData: ciphertext.as_ptr().cast_mut(),
         };
         let mut output = CRYPT_INTEGER_BLOB::default();
         let ok = unsafe {
             CryptUnprotectData(
-                &mut input,
+                &input,
                 std::ptr::null_mut(),
                 std::ptr::null(),
                 std::ptr::null(),

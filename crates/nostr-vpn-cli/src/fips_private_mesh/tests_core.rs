@@ -23,9 +23,8 @@
         linux_route_get_has_direct_private_endpoint_route, linux_tun_setup_error,
         macos_private_ipv4_route_subnets_from_netstat,
         macos_route_get_has_direct_private_endpoint_route, mesh_status_from_endpoint_peer,
-        other_endpoint_peer_statuses, parse_fips_mesh_recv_burst,
-        parse_fips_nostr_discovery_policy, parse_linux_tun_tx_queue_len,
-        participant_pubkey_bytes, peer_activity_map, peer_identity_map,
+        other_endpoint_peer_statuses, parse_fips_nostr_discovery_policy,
+        parse_linux_tun_tx_queue_len, participant_pubkey_bytes, peer_activity_map, peer_identity_map,
         static_endpoint_allowed_on_current_underlay_with_route_check, strip_cidr,
         tag_authenticated_transport_addr, unix_timestamp,
     };
@@ -33,8 +32,8 @@
     use super::{
         BorrowedTunFd, TunPipelineLane, TunPipelinePacket, TunPipelineQueueTx,
         TunQueueSubmit, TunWriteBatch, FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP,
-        parse_fips_tun_to_mesh_queue_cap, push_mesh_packet_for_tun, raw_write_packet_to_tun,
-        release_tun_bulk_packet_slots, submit_tun_packet_batch_to_mesh_queue,
+        parse_fips_mesh_recv_burst, parse_fips_tun_to_mesh_queue_cap, push_mesh_packet_for_tun,
+        raw_write_packet_to_tun, release_tun_bulk_packet_slots, submit_tun_packet_batch_to_mesh_queue,
         submit_tun_packet_batch_to_mesh_queue_with_backpressure,
         tun_pipeline_packet_lane,
     };
@@ -174,6 +173,7 @@
             Some("tcp:203.0.113.20:443".to_string())
         );
     }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn raw_tun_write_keeps_fd_open_and_writes_platform_frame() {
         let mut pipe_fds = [0; 2];
@@ -219,6 +219,7 @@
         assert_eq!(read as usize, expected.len());
         assert_eq!(read_buf, expected);
     }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn blocking_tun_write_keeps_fd_open_and_writes_platform_frame() {
         let mut pipe_fds = [0; 2];

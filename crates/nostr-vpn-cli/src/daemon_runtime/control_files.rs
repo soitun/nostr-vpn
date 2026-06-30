@@ -20,7 +20,10 @@ pub(crate) fn daemon_log_file_path(config_path: &Path) -> PathBuf {
 }
 
 fn runtime_open_options_no_follow() -> OpenOptions {
+    #[cfg(unix)]
     let mut options = OpenOptions::new();
+    #[cfg(not(unix))]
+    let options = OpenOptions::new();
     #[cfg(unix)]
     {
         use std::os::unix::fs::OpenOptionsExt;

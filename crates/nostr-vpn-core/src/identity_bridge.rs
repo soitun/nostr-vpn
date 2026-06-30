@@ -98,6 +98,17 @@ pub struct NostrIdentityDeviceApprovalSidecar {
     pub receipt_event: Event,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NostrIdentityDeviceApprovalSidecarRequest {
+    pub profile_id: NostrIdentityId,
+    pub request_pubkey: String,
+    pub device_app_key_pubkey: String,
+    pub request_secret: String,
+    pub parents: Vec<String>,
+    pub actor_seq: Option<u64>,
+    pub approved_at: u64,
+}
+
 pub fn roster_app_key_identities(
     roster: &NetworkRoster,
     profile_ids_by_pubkey: &BTreeMap<String, NostrIdentityId>,
@@ -270,35 +281,30 @@ pub fn build_identity_link_request_from_manual_npub(
 
 pub fn build_device_approval_sidecar(
     signer_keys: &Keys,
-    profile_id: NostrIdentityId,
-    request_pubkey: &str,
-    device_app_key_pubkey: &str,
-    request_secret: &str,
-    parents: Vec<String>,
-    actor_seq: Option<u64>,
-    approved_at: u64,
+    request: NostrIdentityDeviceApprovalSidecarRequest,
 ) -> Result<NostrIdentityDeviceApprovalSidecar> {
-    let request_pubkey = normalize_pubkey(request_pubkey, "approval request")?;
-    let device_app_key_pubkey = normalize_pubkey(device_app_key_pubkey, "approval device")?;
+    let request_pubkey = normalize_pubkey(&request.request_pubkey, "approval request")?;
+    let device_app_key_pubkey =
+        normalize_pubkey(&request.device_app_key_pubkey, "approval device")?;
     let approved_at_i64 =
-        i64::try_from(approved_at).context("approval approved_at overflows i64")?;
+        i64::try_from(request.approved_at).context("approval approved_at overflows i64")?;
     let roster_op_event = build_roster_app_key_sidecar_event(
         signer_keys,
-        profile_id,
+        request.profile_id,
         &device_app_key_pubkey,
         RosterAppKeyRole::Member,
-        parents,
-        actor_seq,
-        approved_at,
+        request.parents,
+        request.actor_seq,
+        request.approved_at,
     )?;
     let receipt = NostrIdentityDeviceApprovalReceipt {
         schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
-        profile_id,
+        profile_id: request.profile_id,
         request_pubkey,
         device_app_key_pubkey,
         approved_by_pubkey: signer_keys.public_key().to_hex(),
         approved_at: approved_at_i64,
-        request_secret: request_secret.trim().to_string(),
+        request_secret: request.request_secret.trim().to_string(),
         subject_pubkey: None,
         roster_op_id: Some(roster_op_event.id.to_hex()),
         signed_roster_event: Some(roster_op_event.as_json()),
@@ -331,13 +337,15 @@ pub fn build_device_approval_for_link_request(
     }
     build_device_approval_sidecar(
         signer_keys,
-        NostrIdentityId::from_uuid(link_request.content.identity),
-        &link_request.signer_pubkey,
-        &link_request.content.joining_pubkey,
-        &link_request.content.client_nonce,
-        parents,
-        actor_seq,
-        approved_at,
+        NostrIdentityDeviceApprovalSidecarRequest {
+            profile_id: NostrIdentityId::from_uuid(link_request.content.identity),
+            request_pubkey: link_request.signer_pubkey.clone(),
+            device_app_key_pubkey: link_request.content.joining_pubkey.clone(),
+            request_secret: link_request.content.client_nonce.clone(),
+            parents,
+            actor_seq,
+            approved_at,
+        },
     )
 }
 

@@ -21,8 +21,10 @@ use nostr_vpn_core::fips_control::{
     SignedRoster, decode_fips_control_frame, encode_fips_control_frame,
     encode_fips_control_messages,
 };
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use nostr_vpn_core::fips_mesh::packet_destination;
 use nostr_vpn_core::fips_mesh::{
-    FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission, RoutedFipsPeer, packet_destination,
+    FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission, RoutedFipsPeer,
 };
 use nostr_vpn_core::join_requests::MeshJoinRequest;
 #[cfg(feature = "paid-exit")]

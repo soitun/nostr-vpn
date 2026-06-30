@@ -704,6 +704,7 @@
         runtime.shutdown().await.expect("shutdown");
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
     async fn endpoint_data_runtime_sends_tun_pipeline_batch_without_repacking() {
         let keys = Keys::generate();
@@ -837,6 +838,7 @@
         assert_eq!(packets, vec![third]);
         runtime.shutdown().await.expect("shutdown");
     }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
     async fn endpoint_data_runtime_blocking_recv_batch_into_reuses_buffers_and_respects_limit()
     {
@@ -919,6 +921,7 @@
         runtime.shutdown().await.expect("shutdown");
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
     async fn endpoint_data_runtime_blocking_recv_batch_for_each_respects_limit() {
         let keys = Keys::generate();
