@@ -17,6 +17,7 @@
 - Linux remote: `scripts/build-nvpn-linux-musl <target>`; native glibc only same distro/glibc; never ARMv7 on ARMv6.
 - Bench both directions: `iperf3 -R`; LAN MTU only with `mesh_mtu_profile = "lan"` / `NVPN_MESH_MTU_PROFILE=lan`.
 - Remote bench: load SSH keys first (`ssh-add --apple-use-keychain <key>`).
+- Avoid unittests unless very good reason, prefer integration test coverage
 
 ## Platforms
 
