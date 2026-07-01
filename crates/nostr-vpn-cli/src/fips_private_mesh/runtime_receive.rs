@@ -103,40 +103,6 @@ impl FipsPrivateMeshRuntime {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn recv_mesh_event_batch_blocking_into(
-        &self,
-        messages: &mut Vec<FipsEndpointMessage>,
-        events: &mut Vec<FipsPrivateMeshEvent>,
-        limit: usize,
-        stop: &AtomicBool,
-    ) -> Result<Option<usize>> {
-        let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
-        events.clear();
-        loop {
-            if stop.load(Ordering::Acquire) {
-                return Ok(None);
-            }
-
-            let Some(_) = self.endpoint.blocking_recv_batch_into(messages, limit) else {
-                return Ok(None);
-            };
-            let now = Some(unix_timestamp());
-            events.reserve(messages.len());
-            for message in messages.drain(..) {
-                if stop.load(Ordering::Acquire) {
-                    return Ok(None);
-                }
-                if let Some(event) = self.endpoint_message_to_mesh_event_blocking(message, now)? {
-                    events.push(event);
-                }
-            }
-            if !events.is_empty() {
-                return Ok(Some(events.len()));
-            }
-        }
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recv_direct_endpoint_tun_batch_blocking(
         &self,
         limit: usize,
@@ -278,20 +244,6 @@ impl FipsPrivateMeshRuntime {
         let outcome = self.endpoint_message_to_mesh_event_outcome(message, now)?;
         if let Some(reply) = outcome.reply
             && let Err(error) = self.endpoint.send_to_peer(reply.peer, reply.data).await
-        {
-            eprintln!("fips: failed to reply to peer ping: {error}");
-        }
-        Ok(outcome.event)
-    }
-
-    fn endpoint_message_to_mesh_event_blocking(
-        &self,
-        message: FipsEndpointMessage,
-        now: Option<u64>,
-    ) -> Result<Option<FipsPrivateMeshEvent>> {
-        let outcome = self.endpoint_message_to_mesh_event_outcome(message, now)?;
-        if let Some(reply) = outcome.reply
-            && let Err(error) = self.endpoint.blocking_send_to_peer(reply.peer, reply.data)
         {
             eprintln!("fips: failed to reply to peer ping: {error}");
         }
@@ -608,8 +560,13 @@ impl FipsPrivateMeshRuntime {
                     data: FipsEndpointData::from(packet.to_vec()),
                     enqueued_at_ms,
                 };
-                let Some(event) = self.endpoint_message_to_mesh_event_blocking(message, now)?
-                else {
+                let outcome = self.endpoint_message_to_mesh_event_outcome(message, now)?;
+                if let Some(reply) = outcome.reply
+                    && let Err(error) = self.endpoint.blocking_send_to_peer(reply.peer, reply.data)
+                {
+                    eprintln!("fips: failed to reply to peer ping: {error}");
+                }
+                let Some(event) = outcome.event else {
                     continue;
                 };
                 if let Some(event_tx) = event_tx {
