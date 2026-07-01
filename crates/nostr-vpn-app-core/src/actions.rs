@@ -61,6 +61,10 @@ pub enum NativeAppAction {
     ImportNetworkInvite {
         invite: String,
     },
+    #[serde(alias = "import_join_request_qr_or_link")]
+    ImportJoinRequest {
+        request: String,
+    },
     /// Manual pairing: the joiner enters the admin's Device ID + mesh
     /// network id from out-of-band. We just add a local network with the
     /// admin seeded as participant + admin and let mesh discovery converge
@@ -298,6 +302,17 @@ mod tests {
             request,
             NativeAppAction::RequestNetworkJoin {
                 network_id: "net-1".to_string()
+            }
+        );
+
+        let import = serde_json::from_str::<NativeAppAction>(
+            r#"{"type":"import_join_request_qr_or_link","request":"nvpn://join-request/example"}"#,
+        )
+        .expect("parse import join request alias");
+        assert_eq!(
+            import,
+            NativeAppAction::ImportJoinRequest {
+                request: "nvpn://join-request/example".to_string(),
             }
         );
 

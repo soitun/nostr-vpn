@@ -305,6 +305,14 @@ internal fun parseScannedDeviceLinkQr(value: String): ScannedDeviceLink? {
     return null
 }
 
+internal fun looksLikeJoinRequestQrOrLink(value: String): Boolean {
+    val trimmed = value.trim()
+    if (trimmed.startsWith("nvpn://join-request/", ignoreCase = true)) return true
+    if (!trimmed.startsWith("{")) return false
+    val json = parseFlatJsonStringMap(trimmed)
+    return json["networkId"] != null && json["requesterNpub"] != null
+}
+
 private fun parseScannedDeviceJson(value: String): ScannedDeviceLink? {
     if (!value.startsWith("{")) return null
     val json = parseFlatJsonStringMap(value)

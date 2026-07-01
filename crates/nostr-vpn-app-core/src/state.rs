@@ -191,6 +191,7 @@ pub struct NetworkView {
     pub listen_for_join_requests: bool,
     pub invite_inviter_npub: String,
     pub outbound_join_request: Option<OutboundJoinRequestView>,
+    pub join_request_qr_code_or_link: String,
     pub inbound_join_requests: Vec<InboundJoinRequestView>,
     pub online_count: usize,
     pub expected_count: usize,

@@ -40,6 +40,17 @@ class DeviceQrParserTest {
     }
 
     @Test
+    fun looksLikeJoinRequestQrOrLinkAcceptsRequestUrlAndJson() {
+        assertEquals(true, looksLikeJoinRequestQrOrLink("nvpn://join-request/abc123"))
+        assertEquals(
+            true,
+            looksLikeJoinRequestQrOrLink(
+                """{"networkId":"mesh","requesterNpub":"$deviceId","nodeName":"Phone"}""",
+            ),
+        )
+    }
+
+    @Test
     fun parseScannedDeviceLinkQrRejectsNetworkInvites() {
         assertNull(parseScannedDeviceLinkQr("nvpn://invite/not-a-device"))
     }

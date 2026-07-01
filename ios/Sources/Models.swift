@@ -174,6 +174,7 @@ struct NetworkState: Decodable, Identifiable {
     var joinRequestsEnabled = false
     var inviteInviterNpub = ""
     var outboundJoinRequest: OutboundJoinRequest?
+    var joinRequestQrCodeOrLink = ""
     var inboundJoinRequests: [InboundJoinRequest] = []
     var onlineCount: UInt64 = 0
     var expectedCount: UInt64 = 0
@@ -185,7 +186,7 @@ struct NetworkState: Decodable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, enabled, networkId, localIsAdmin, joinRequestsEnabled
-        case inviteInviterNpub, outboundJoinRequest, inboundJoinRequests
+        case inviteInviterNpub, outboundJoinRequest, joinRequestQrCodeOrLink, inboundJoinRequests
         case onlineCount, expectedCount, participants
     }
 
@@ -201,6 +202,7 @@ struct NetworkState: Decodable, Identifiable {
         joinRequestsEnabled = container.bool(.joinRequestsEnabled)
         inviteInviterNpub = container.string(.inviteInviterNpub)
         outboundJoinRequest = try? container.decodeIfPresent(OutboundJoinRequest.self, forKey: .outboundJoinRequest)
+        joinRequestQrCodeOrLink = container.string(.joinRequestQrCodeOrLink)
         inboundJoinRequests = container.array(.inboundJoinRequests)
         onlineCount = container.uint64(.onlineCount)
         expectedCount = container.uint64(.expectedCount)

@@ -70,6 +70,7 @@ pub struct NativeNetworkState {
     pub invite_inviter_npub: String,
     pub admin_npubs: Vec<String>,
     pub outbound_join_request: Option<NativeOutboundJoinRequestState>,
+    pub join_request_qr_code_or_link: String,
     pub inbound_join_requests: Vec<NativeInboundJoinRequestState>,
     pub online_count: u64,
     pub expected_count: u64,

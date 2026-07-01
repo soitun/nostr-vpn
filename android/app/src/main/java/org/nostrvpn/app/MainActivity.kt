@@ -394,19 +394,25 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 QrScanPurpose.Device -> {
-                                    val scanned = parseScannedDeviceLinkQr(value)
-                                    if (scanned == null) {
-                                        "Not a Nostr VPN device QR."
-                                    } else {
+                                    if (looksLikeJoinRequestQrOrLink(value)) {
                                         showQrScanner = false
-                                        dispatch(
-                                            NativeActions.addParticipant(
-                                                qrScanNetworkId,
-                                                scanned.deviceId,
-                                                scanned.alias,
-                                            ),
-                                        )
+                                        dispatch(NativeActions.importJoinRequest(value.trim()))
                                         null
+                                    } else {
+                                        val scanned = parseScannedDeviceLinkQr(value)
+                                        if (scanned == null) {
+                                            "Not a Nostr VPN joiner QR."
+                                        } else {
+                                            showQrScanner = false
+                                            dispatch(
+                                                NativeActions.addParticipant(
+                                                    qrScanNetworkId,
+                                                    scanned.deviceId,
+                                                    scanned.alias,
+                                                ),
+                                            )
+                                            null
+                                        }
                                     }
                                 }
                             }

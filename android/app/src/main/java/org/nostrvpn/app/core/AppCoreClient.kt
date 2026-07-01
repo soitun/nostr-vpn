@@ -37,6 +37,7 @@ object NativeActions {
     fun connectVpn() = action("connect_vpn")
     fun disconnectVpn() = action("disconnect_vpn")
     fun importInvite(invite: String) = action("import_network_invite", "invite" to invite)
+    fun importJoinRequest(request: String) = action("import_join_request", "request" to request)
     fun startInviteBroadcast() = action("start_invite_broadcast")
     fun stopInviteBroadcast() = action("stop_invite_broadcast")
     fun resetNetworkInvite(networkId: String) = action("reset_network_invite", "networkId" to networkId)

@@ -98,6 +98,13 @@ impl NativeAppRuntime {
             .filter(|participant| participant.reachable)
             .count() as u64;
         let expected_count = participants.len() as u64;
+        let join_request_qr_code_or_link = network
+            .outbound_join_request
+            .as_ref()
+            .and_then(|request| {
+                active_join_request_qr_code_or_link(&self.config, network, request).ok()
+            })
+            .unwrap_or_default();
 
         NativeNetworkState {
             id: network.id.clone(),
@@ -116,6 +123,7 @@ impl NativeAppRuntime {
                 .outbound_join_request
                 .as_ref()
                 .map(native_outbound_join_request),
+            join_request_qr_code_or_link,
             inbound_join_requests: network
                 .inbound_join_requests
                 .iter()
