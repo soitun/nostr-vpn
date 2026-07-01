@@ -51,7 +51,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip44", "nip59"] }
-nostr-identity = "0.1.2"
+nostr-identity = "0.1.3"
 nostr-vpn-core = { version = "4.0.40", path = "crates/nostr-vpn-core" }
 nostr-vpn-wintun = { version = "4.0.40", path = "crates/nostr-vpn-wintun" }
 
