@@ -197,7 +197,7 @@
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
-    async fn full_tun_to_mesh_queue_drops_icmp_app_payload_without_priority_bypass() {
+    async fn full_tun_to_mesh_queue_treats_icmp_as_bulk_app_payload() {
         let (tx, mut rx) = TunPipelineQueueTx::channel(1);
         let bulk_first = test_ipv6_tcp_packet(0x18, 512);
         let bulk_dropped = test_ipv6_tcp_packet(0x18, 512);
