@@ -84,16 +84,6 @@ impl AppConfig {
                 return Ok(false);
             }
             if signed_at <= network.shared_roster_updated_at {
-                let incoming_name = network_name.trim();
-                if signed_at == network.shared_roster_updated_at
-                    && normalize_nostr_pubkey(&network.shared_roster_signed_by)
-                        .is_ok_and(|signed_by| signed_by == normalized_signed_by)
-                    && !incoming_name.is_empty()
-                    && network.name != incoming_name
-                {
-                    self.networks[network_index].name = incoming_name.to_string();
-                    return Ok(true);
-                }
                 return Ok(false);
             }
         }

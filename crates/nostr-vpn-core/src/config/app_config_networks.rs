@@ -17,14 +17,10 @@ impl AppConfig {
             let network = self
                 .network_by_id_mut(network_id)
                 .ok_or_else(|| anyhow::anyhow!("network not found"))?;
-            if network.shared_roster_updated_at > 0
-                && own_pubkey.as_deref().is_none_or(|own_pubkey| {
-                    !network.admins.iter().any(|admin| admin == own_pubkey)
-                })
-            {
-                return Err(anyhow::anyhow!(
-                    "network name is managed by the signed roster"
-                ));
+            if own_pubkey.as_deref().is_none_or(|own_pubkey| {
+                !network.admins.iter().any(|admin| admin == own_pubkey)
+            }) {
+                return Err(anyhow::anyhow!("only a network admin can rename it"));
             }
             network.name = normalized.to_string();
         }

@@ -145,7 +145,7 @@ fn apply_admin_signed_shared_roster_replaces_members_from_known_admin() {
 }
 
 #[test]
-fn apply_verified_admin_signed_shared_roster_reapplies_event_name_over_local_override() {
+fn apply_verified_admin_signed_shared_roster_applies_newer_admin_event_name() {
     let own = Keys::generate();
     let current_admin = Keys::generate();
     let own_hex = own.public_key().to_hex();
@@ -167,7 +167,7 @@ fn apply_verified_admin_signed_shared_roster_reapplies_event_name_over_local_ove
         devices: vec![own_hex],
         admins: vec![current_admin_hex],
         aliases: std::collections::HashMap::new(),
-        signed_at: 1_726_000_000,
+        signed_at: 1_726_000_001,
     };
     let signed = SignedRoster::sign("mesh-home", roster, &current_admin).expect("sign roster");
 
@@ -177,11 +177,11 @@ fn apply_verified_admin_signed_shared_roster_reapplies_event_name_over_local_ove
 
     assert!(changed);
     assert_eq!(config.networks[0].name, "Home Mesh");
-    assert_eq!(config.networks[0].shared_roster_updated_at, 1_726_000_000);
+    assert_eq!(config.networks[0].shared_roster_updated_at, 1_726_000_001);
 }
 
 #[test]
-fn rename_network_rejects_local_override_after_joined_signed_roster() {
+fn rename_network_requires_local_admin() {
     let own = Keys::generate();
     let current_admin = Keys::generate();
     let own_hex = own.public_key().to_hex();
@@ -204,7 +204,7 @@ fn rename_network_rejects_local_override_after_joined_signed_roster() {
         .expect_err("joined non-admin rename must be rejected");
 
     assert!(
-        error.to_string().contains("signed roster"),
+        error.to_string().contains("network admin"),
         "unexpected error: {error:#}"
     );
     assert_eq!(config.networks[0].name, "Home Mesh");
