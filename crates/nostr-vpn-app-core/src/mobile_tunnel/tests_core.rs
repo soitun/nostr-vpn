@@ -112,6 +112,41 @@
     }
 
     #[test]
+    fn mobile_inbound_roster_applies_event_network_name() {
+        let admin = Keys::generate();
+        let admin_hex = admin.public_key().to_hex();
+        let app = mobile_app_with_admin(admin_hex.clone());
+        let dirty = AtomicBool::new(false);
+        let signed = SignedRoster::sign(
+            "mesh",
+            NetworkRoster {
+                network_name: "Home Mesh".to_string(),
+                devices: Vec::new(),
+                admins: vec![admin_hex],
+                aliases: std::collections::HashMap::new(),
+                signed_at: 1_726_000_000,
+            },
+            &admin,
+        )
+        .expect("sign roster");
+
+        let updated = apply_mobile_roster(&app, &dirty, None, Some(&signed))
+            .expect("valid admin roster applies");
+
+        assert!(updated.is_some());
+        assert!(dirty.load(Ordering::Relaxed));
+        let name = app
+            .read()
+            .expect("app config")
+            .networks
+            .first()
+            .expect("network")
+            .name
+            .clone();
+        assert_eq!(name, "Home Mesh");
+    }
+
+    #[test]
     fn mobile_config_stays_split_tunnel_without_exit() {
         let mut app = AppConfig::generated();
         app.ensure_defaults();

@@ -23,6 +23,7 @@ use crate::fips_control::{NetworkRoster, SignedRoster};
 /// scan/link approval helpers without replacing the accepted legacy roster.
 pub const CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND: u16 = KIND_NOSTR_IDENTITY_ROSTER_OP;
 pub const CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE: &str = IDENTITY_GRAPH_ROSTER_TYPE;
+pub const CANONICAL_NETWORK_NAME_FACT: &str = "network_name";
 pub const LEGACY_SIGNED_NETWORK_ROSTER_KIND: u16 = 30_388;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,6 +86,8 @@ pub struct ParsedIdentityRosterBridgeEvent {
     pub source: RosterIdentityBridgeSource,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_name: Option<String>,
     pub op_id: String,
     pub signer_pubkey: String,
     pub signed_at: u64,
@@ -101,6 +104,7 @@ pub struct NostrIdentityDeviceApprovalSidecar {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NostrIdentityDeviceApprovalSidecarRequest {
     pub profile_id: NostrIdentityId,
+    pub network_name: Option<String>,
     pub request_pubkey: String,
     pub device_app_key_pubkey: String,
     pub request_secret: String,
@@ -161,16 +165,15 @@ pub fn parse_identity_roster_bridge_event(
     match u16::from(event.kind) {
         LEGACY_SIGNED_NETWORK_ROSTER_KIND => {
             let signed_roster = SignedRoster::from_event(event.clone())?;
+            let roster = signed_roster.roster()?;
             Ok(Some(ParsedIdentityRosterBridgeEvent {
                 source: RosterIdentityBridgeSource::LegacySignedNetworkRoster,
                 network_id: Some(signed_roster.network_id()?),
+                network_name: normalized_network_name(&roster.network_name),
                 op_id: signed_roster.content_hash(),
                 signer_pubkey: signed_roster.signer_pubkey_hex()?,
                 signed_at: signed_roster.signed_at(),
-                identities: signed_roster_app_key_identities(
-                    &signed_roster,
-                    profile_ids_by_pubkey,
-                )?,
+                identities: roster_app_key_identities(&roster, profile_ids_by_pubkey)?,
             }))
         }
         CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND => {
@@ -186,9 +189,11 @@ pub fn parse_identity_roster_bridge_event(
             let Some(identity) = parse_roster_app_key_sidecar_event(event)? else {
                 return Ok(None);
             };
+            let network_name = canonical_roster_event_network_name(event)?;
             Ok(Some(ParsedIdentityRosterBridgeEvent {
                 source: RosterIdentityBridgeSource::NostrIdentityRosterOp,
                 network_id: None,
+                network_name,
                 op_id: event.id.to_hex(),
                 signer_pubkey: event.pubkey.to_hex(),
                 signed_at: event.created_at.as_secs(),
@@ -208,22 +213,57 @@ pub fn build_roster_app_key_sidecar_event(
     actor_seq: Option<u64>,
     created_at: u64,
 ) -> Result<Event> {
-    let pubkey = normalize_pubkey(pubkey, "sidecar app key")?;
-    let created_at_i64 = i64::try_from(created_at).context("sidecar created_at overflows i64")?;
-    let capabilities = match role {
-        RosterAppKeyRole::Admin => NostrIdentityCapabilities::app_admin(),
-        RosterAppKeyRole::Member => NostrIdentityCapabilities::app_writer(),
-    };
-    let facet = NostrIdentityFacet::app_key(pubkey, created_at_i64, None, capabilities)
-        .with_profile_id(profile_id);
-
-    nostr_identity::build_nostr_identity_roster_op_event(
+    build_roster_app_key_sidecar_event_with_network_name(
         signer_keys,
         profile_id,
+        pubkey,
+        role,
         parents,
         actor_seq,
-        NostrIdentityRosterOp::AddFacet { facet },
-        created_at_i64,
+        created_at,
+        None,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn build_roster_app_key_sidecar_event_with_network_name(
+    signer_keys: &Keys,
+    profile_id: NostrIdentityId,
+    pubkey: &str,
+    role: RosterAppKeyRole,
+    parents: Vec<String>,
+    actor_seq: Option<u64>,
+    created_at: u64,
+    network_name: Option<String>,
+) -> Result<Event> {
+    let pubkey = normalize_pubkey(pubkey, "sidecar app key")?;
+    let capabilities = match role {
+        RosterAppKeyRole::Admin => nostr_identity::IDENTITY_ADMIN_CAPABILITIES,
+        RosterAppKeyRole::Member => nostr_identity::IDENTITY_APP_KEY_CAPABILITIES,
+    };
+    let key = nostr_identity::IdentityKey {
+        pubkey,
+        subject: Some(profile_id.as_uuid()),
+        purposes: vec![nostr_identity::IDENTITY_PURPOSE_APP.to_string()],
+        capabilities: capabilities
+            .iter()
+            .map(|capability| (*capability).to_string())
+            .collect(),
+        added_at: created_at,
+        label: None,
+    };
+
+    nostr_identity::build_identity_roster_op_event_with_options(
+        signer_keys,
+        profile_id.as_uuid(),
+        nostr_identity::IdentityRosterOp::AddKey { key },
+        nostr_identity::BuildIdentityRosterOpEventOptions {
+            parents,
+            actor_seq,
+            client_nonce: uuid::Uuid::new_v4().to_string(),
+            created_at,
+            extension_facts: network_name_extension_facts(network_name.as_deref()),
+        },
     )
     .map_err(|error| anyhow!("failed to build NostrIdentity roster sidecar: {error}"))
 }
@@ -286,9 +326,10 @@ pub fn build_device_approval_sidecar(
     let request_pubkey = normalize_pubkey(&request.request_pubkey, "approval request")?;
     let device_app_key_pubkey =
         normalize_pubkey(&request.device_app_key_pubkey, "approval device")?;
+    let network_name = request.network_name.clone();
     let approved_at_i64 =
         i64::try_from(request.approved_at).context("approval approved_at overflows i64")?;
-    let roster_op_event = build_roster_app_key_sidecar_event(
+    let roster_op_event = build_roster_app_key_sidecar_event_with_network_name(
         signer_keys,
         request.profile_id,
         &device_app_key_pubkey,
@@ -296,6 +337,7 @@ pub fn build_device_approval_sidecar(
         request.parents,
         request.actor_seq,
         request.approved_at,
+        network_name,
     )?;
     let receipt = NostrIdentityDeviceApprovalReceipt {
         schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
@@ -339,6 +381,7 @@ pub fn build_device_approval_for_link_request(
         signer_keys,
         NostrIdentityDeviceApprovalSidecarRequest {
             profile_id: NostrIdentityId::from_uuid(link_request.content.identity),
+            network_name: None,
             request_pubkey: link_request.signer_pubkey.clone(),
             device_app_key_pubkey: link_request.content.joining_pubkey.clone(),
             request_secret: link_request.content.client_nonce.clone(),
@@ -381,4 +424,38 @@ fn normalize_pubkey(value: &str, role: &str) -> Result<String> {
     PublicKey::parse(value.trim())
         .map(|pubkey| pubkey.to_hex())
         .map_err(|error| anyhow!("invalid roster {role} pubkey: {error}"))
+}
+
+fn network_name_extension_facts(network_name: Option<&str>) -> Vec<nostr_identity::Fact> {
+    let Some(network_name) = network_name.and_then(normalized_network_name) else {
+        return Vec::new();
+    };
+    vec![nostr_identity::fact(
+        CANONICAL_NETWORK_NAME_FACT,
+        &[&network_name],
+    )]
+}
+
+fn canonical_roster_event_network_name(event: &Event) -> Result<Option<String>> {
+    let op = nostr_identity::parse_fact_op_event(event)
+        .map_err(|error| anyhow!("failed to parse NostrIdentity roster facts: {error}"))?;
+    let mut names = op
+        .facts
+        .iter()
+        .filter(|fact| fact.predicate == CANONICAL_NETWORK_NAME_FACT)
+        .filter_map(|fact| fact.values.first())
+        .filter_map(|value| normalized_network_name(value))
+        .collect::<BTreeSet<_>>();
+    match names.len() {
+        0 => Ok(None),
+        1 => Ok(names.pop_first()),
+        _ => Err(anyhow!(
+            "canonical roster event has conflicting network_name facts"
+        )),
+    }
+}
+
+fn normalized_network_name(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
