@@ -314,7 +314,7 @@ run_fips() {
   run fips_cargo_test -p fips-core update_peers -- --nocapture
   run fips_cargo_test -p fips-core non_reconnect -- --nocapture
   run fips_cargo_test -p fips-core active_fallback -- --nocapture
-  run fips_cargo_test -p fips-core turn_runner_batches_admission_and_reuses_work_buffer -- --nocapture
+  run fips_cargo_test -p fips-core live_node_owner_routes_send_endpoint_and_tun_to_transport -- --nocapture
   run fips_cargo_test -p fips-core live_route_table_outbound_source_preserves_tun_slice_after_endpoint_batch_overrun -- --nocapture
   run fips_cargo_test -p fips-core endpoint_event_runtime_owns_attach_delivery_and_backlog -- --nocapture
   run fips_cargo_test -p fips-core endpoint_event_queue_owns_backlog_message_count -- --nocapture
@@ -323,7 +323,7 @@ run_fips() {
   run fips_cargo_test -p fips-core endpoint_event_queue_dropped_batch_counts_as_success -- --nocapture
   run fips_cargo_test -p fips-core endpoint_event_queue_partially_admits_batch_at_message_boundary -- --nocapture
   run fips_cargo_test -p fips-core endpoint_event_capacity_counts_messages_not_batches -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_event_dequeue_counts_treat_app_data_as_one_channel -- --nocapture
+  run fips_cargo_test -p fips-core endpoint_event_message_count_treats_batch_items_as_public_messages -- --nocapture
   run fips_cargo_test -p fips-core endpoint_event_queue_send_fails_after_receiver_drop -- --nocapture
   run fips_cargo_test -p fips-core endpoint_event_queue_closes_after_all_senders_drop -- --nocapture
   run fips_cargo_test -p fips-core endpoint_event_queue_async_recv_closes_when_senders_drop -- --nocapture
@@ -332,7 +332,7 @@ run_fips() {
   run fips_cargo_test -p fips-core recv_batch_into_preserves_pending_batch_tail_fifo -- --nocapture
   run fips_cargo_test -p fips-core blocking_recv_batch_for_each_respects_limit_without_message_vec_staging -- --nocapture
   run fips_cargo_test -p fips-core blocking_recv_batch_for_each_preserves_unhandled_internal_batch_tail -- --nocapture
-  run fips_cargo_test -p fips-core endpoint_command_enqueue_drops_oneway_app_bulk_when_full -- --nocapture
+  run fips_cargo_test -p fips-core endpoint_data_batch_enqueue_drops_when_full -- --nocapture
   run fips_cargo_test -p fips-core packet_channel_batch_send_amortizes_bulk_channel_items -- --nocapture
   run fips_cargo_test -p fips-core packet_channel_reuses_pooled_batch_container_after_rx_drain -- --nocapture
   run fips_cargo_test -p fips-core packet_channel_recycles_pooled_packet_buffer_when_bulk_batch_is_dropped -- --nocapture
