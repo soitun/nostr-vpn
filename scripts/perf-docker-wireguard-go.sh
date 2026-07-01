@@ -220,10 +220,10 @@ collect_backend_artifacts() {
 }
 
 write_wireguard_go_cpu_phase_header() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     phase service pid_start pid_end \
     cpu_jiffies_start cpu_jiffies_end clk_tck \
-    cpu_seconds transfer_bytes cpu_seconds_per_gbit cpu_seconds_per_gbyte \
+    cpu_seconds transfer_bytes cpu_seconds_per_gbyte \
     >"$WIREGUARD_GO_CPU_PHASES"
 }
 
@@ -262,7 +262,7 @@ append_wireguard_go_cpu_phase_service_row() {
   local start_sample="$4"
   local end_sample="$5"
   local start_pid start_jiffies start_clk end_pid end_jiffies end_clk clk_tck
-  local cpu_seconds cpu_per_gbit cpu_per_gbyte
+  local cpu_seconds cpu_per_gbyte
   IFS=$'\t' read -r start_pid start_jiffies start_clk <<<"$start_sample"
   IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
   clk_tck="$end_clk"
@@ -272,9 +272,8 @@ append_wireguard_go_cpu_phase_service_row() {
   else
     cpu_seconds=""
   fi
-  cpu_per_gbit="$(docker_bench_cpu_seconds_per_gbit "$cpu_seconds" "$transfer_bytes")"
   cpu_per_gbyte="$(docker_bench_cpu_seconds_per_gbyte "$cpu_seconds" "$transfer_bytes")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$phase" \
     "$service" \
     "$(docker_bench_tsv_field "${start_pid:-na}")" \
@@ -284,7 +283,6 @@ append_wireguard_go_cpu_phase_service_row() {
     "$(docker_bench_tsv_field "${clk_tck:-na}")" \
     "$cpu_seconds" \
     "$(docker_bench_tsv_field "$transfer_bytes")" \
-    "$cpu_per_gbit" \
     "$cpu_per_gbyte" >>"$WIREGUARD_GO_CPU_PHASES"
 }
 
@@ -295,7 +293,7 @@ append_wireguard_go_cpu_phase_rows() {
   local start_b="$4"
   local end_a="$5"
   local end_b="$6"
-  local cpu_a cpu_b cpu_both cpu_per_gbit cpu_per_gbyte
+  local cpu_a cpu_b cpu_both cpu_per_gbyte
   append_wireguard_go_cpu_phase_service_row "$phase" node-a "$transfer_bytes" "$start_a" "$end_a"
   append_wireguard_go_cpu_phase_service_row "$phase" node-b "$transfer_bytes" "$start_b" "$end_b"
   cpu_a="$(wireguard_go_cpu_sample_cpu_seconds "$start_a" "$end_a")"
@@ -305,13 +303,11 @@ append_wireguard_go_cpu_phase_rows() {
   else
     cpu_both=""
   fi
-  cpu_per_gbit="$(docker_bench_cpu_seconds_per_gbit "$cpu_both" "$transfer_bytes")"
   cpu_per_gbyte="$(docker_bench_cpu_seconds_per_gbyte "$cpu_both" "$transfer_bytes")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$phase" both na na na na na \
     "$cpu_both" \
     "$(docker_bench_tsv_field "$transfer_bytes")" \
-    "$cpu_per_gbit" \
     "$cpu_per_gbyte" >>"$WIREGUARD_GO_CPU_PHASES"
 }
 

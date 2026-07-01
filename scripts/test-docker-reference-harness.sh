@@ -137,11 +137,10 @@ test_json_and_ping_parsers() {
 test_cpu_accounting_helpers() {
   local invalid
   assert_eq "$(docker_bench_cpu_seconds_from_jiffies 100 250 100)" "1.500000" "CPU jiffies to seconds"
-  assert_eq "$(docker_bench_cpu_seconds_per_gbit 2.5 125000000)" "2.500000" "CPU seconds per Gbit"
-  assert_eq "$(docker_bench_cpu_seconds_per_gbyte 2.5 125000000)" "20.000000" "CPU seconds per GB"
+  assert_eq "$(docker_bench_cpu_seconds_per_gbyte 2.5 125000000)" "20.000000" "CPU seconds per GByte"
   invalid="$(docker_bench_cpu_seconds_from_jiffies 250 100 100)"
   assert_eq "$invalid" "" "invalid negative jiffies delta"
-  invalid="$(docker_bench_cpu_seconds_per_gbit 2.5 0)"
+  invalid="$(docker_bench_cpu_seconds_per_gbyte 2.5 0)"
   assert_eq "$invalid" "" "missing transfer bytes"
 }
 

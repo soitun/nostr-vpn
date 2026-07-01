@@ -910,18 +910,6 @@ docker_bench_cpu_seconds_from_jiffies() {
     'BEGIN { printf "%.6f", (end - start) / clk }'
 }
 
-docker_bench_cpu_seconds_per_gbit() {
-  local cpu_seconds="$1"
-  local transfer_bytes="$2"
-  if ! docker_bench_is_number "$cpu_seconds" \
-    || [[ ! "$transfer_bytes" =~ ^[0-9]+$ ]] \
-    || (( transfer_bytes <= 0 )); then
-    return 0
-  fi
-  awk -v cpu="$cpu_seconds" -v bytes="$transfer_bytes" \
-    'BEGIN { printf "%.6f", cpu / ((bytes * 8) / 1000000000) }'
-}
-
 docker_bench_cpu_seconds_per_gbyte() {
   local cpu_seconds="$1"
   local transfer_bytes="$2"
