@@ -154,6 +154,7 @@ internal fun NostrVpnApp(
     state: AppState,
     qrJson: (String) -> JSONObject,
     scanQr: () -> Unit,
+    scanDeviceQr: (String) -> Unit,
     dispatch: (JSONObject) -> Unit,
     selfUpdateState: AndroidSelfUpdateState,
     selfUpdateActions: SelfUpdateActions,
@@ -252,6 +253,7 @@ internal fun NostrVpnApp(
             state = state,
             network = network,
             qrJson = qrJson,
+            scanDeviceQr = scanDeviceQr,
             dispatch = dispatch,
             onDismiss = { showAddDevice = false },
         )
@@ -793,6 +795,7 @@ private fun AddDevicesDialog(
     state: AppState,
     network: NetworkState,
     qrJson: (String) -> JSONObject,
+    scanDeviceQr: (String) -> Unit,
     dispatch: (JSONObject) -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -871,6 +874,20 @@ private fun AddDevicesDialog(
                     network.inboundJoinRequests.forEach { request ->
                         JoinRequestCard(network, request, dispatch)
                     }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Scan joiner QR", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Scan the other device's Device ID QR to add it to this network.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Muted,
+                )
+                Button(
+                    onClick = { scanDeviceQr(network.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Scan joiner QR")
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))

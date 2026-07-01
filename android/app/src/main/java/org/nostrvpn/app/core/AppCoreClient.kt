@@ -61,6 +61,9 @@ object NativeActions {
     fun rejectJoinRequest(networkId: String, requesterNpub: String) =
         action("reject_join_request", "networkId" to networkId, "requesterNpub" to requesterNpub)
 
+    fun addParticipant(networkId: String, npub: String, alias: String? = null) =
+        action("add_participant", "networkId" to networkId, "npub" to npub, "alias" to alias)
+
     fun removeNetwork(networkId: String) = action("remove_network", "networkId" to networkId)
 
     fun setParticipantEndpointHints(npub: String, endpointHints: List<String>) =

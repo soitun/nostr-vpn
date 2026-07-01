@@ -48,6 +48,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import java.net.URI
+import java.net.URLDecoder
 import org.json.JSONObject
 import org.nostrvpn.app.core.AppState
 import org.nostrvpn.app.core.LanPeerState
@@ -271,13 +273,7 @@ internal fun AddParticipantForm(network: NetworkState, dispatch: (JSONObject) ->
         Button(
             enabled = canSubmit,
             onClick = {
-                dispatch(
-                    JSONObject()
-                        .put("type", "add_participant")
-                        .put("networkId", network.id)
-                        .put("npub", trimmedDeviceId)
-                        .put("alias", alias.trim().ifBlank { JSONObject.NULL }),
-                )
+                dispatch(NativeActions.addParticipant(network.id, trimmedDeviceId, alias.trim().ifBlank { null }))
                 deviceId = ""
                 alias = ""
             },
@@ -289,12 +285,95 @@ internal fun AddParticipantForm(network: NetworkState, dispatch: (JSONObject) ->
 
 private val BECH32_BODY_CHARSET: Set<Char> = "qpzry9x8gf2tvdw0s3jn54khce6mua7l".toSet()
 
+internal data class ScannedDeviceLink(
+    val deviceId: String,
+    val alias: String? = null,
+)
+
 /** A valid device ID is a bech32-encoded npub: `npub1` + 58 bech32 chars. */
 internal fun isValidDeviceId(value: String): Boolean {
     val trimmed = value.trim()
     if (trimmed.length != 63 || !trimmed.startsWith("npub1")) return false
     return trimmed.substring(5).all { it in BECH32_BODY_CHARSET }
 }
+
+internal fun parseScannedDeviceLinkQr(value: String): ScannedDeviceLink? {
+    val trimmed = value.trim()
+    normalizedDeviceIdCandidate(trimmed)?.let { return ScannedDeviceLink(it) }
+    parseScannedDeviceJson(trimmed)?.let { return it }
+    parseScannedDeviceUri(trimmed)?.let { return it }
+    return null
+}
+
+private fun parseScannedDeviceJson(value: String): ScannedDeviceLink? {
+    if (!value.startsWith("{")) return null
+    val json = parseFlatJsonStringMap(value)
+    val device = firstValidDeviceId(
+        json["deviceId"],
+        json["device"],
+        json["npub"],
+        json["requesterNpub"],
+    ) ?: return null
+    val alias = firstNonBlank(
+        json["name"],
+        json["nodeName"],
+        json["label"],
+    )
+    return ScannedDeviceLink(device, alias)
+}
+
+private fun parseFlatJsonStringMap(value: String): Map<String, String> =
+    Regex(""""([^"\\]+)"\s*:\s*"([^"\\]*)"""")
+        .findAll(value)
+        .associate { match -> match.groupValues[1] to match.groupValues[2] }
+
+private fun parseScannedDeviceUri(value: String): ScannedDeviceLink? {
+    val uri = runCatching { URI(value) }.getOrNull() ?: return null
+    if (!uri.scheme.equals("nvpn", ignoreCase = true)) return null
+    val params = parseQueryParams(uri.rawQuery.orEmpty())
+    val device = firstValidDeviceId(
+        params["deviceId"],
+        params["device"],
+        params["npub"],
+        params["requesterNpub"],
+        uri.host,
+        uri.rawPath.orEmpty().split('/').lastOrNull(),
+    ) ?: return null
+    val alias = firstNonBlank(params["name"], params["nodeName"], params["label"])
+    return ScannedDeviceLink(device, alias)
+}
+
+private fun parseQueryParams(query: String): Map<String, String> {
+    if (query.isBlank()) return emptyMap()
+    return query.split('&')
+        .mapNotNull { part ->
+            val key = part.substringBefore('=', missingDelimiterValue = "").trim()
+            if (key.isEmpty()) return@mapNotNull null
+            val value = part.substringAfter('=', missingDelimiterValue = "")
+            key to urlDecode(value)
+        }
+        .toMap()
+}
+
+private fun urlDecode(value: String): String =
+    runCatching { URLDecoder.decode(value, Charsets.UTF_8.name()) }.getOrDefault(value)
+
+private fun firstValidDeviceId(vararg values: String?): String? =
+    values.firstNotNullOfOrNull { normalizedDeviceIdCandidate(it.orEmpty()) }
+
+private fun normalizedDeviceIdCandidate(value: String): String? {
+    val trimmed = value.trim()
+    if (trimmed.isEmpty()) return null
+    val withoutNostrPrefix = if (trimmed.startsWith("nostr:", ignoreCase = true)) {
+        trimmed.drop(6).trim()
+    } else {
+        trimmed
+    }
+    return withoutNostrPrefix.takeIf { isValidDeviceId(it) }
+}
+
+private fun firstNonBlank(vararg values: String?): String? =
+    values.firstOrNull { !it.isNullOrBlank() }?.trim()
 
 @Composable
 internal fun NearbyCard(state: AppState, dispatch: (JSONObject) -> Unit) {

@@ -659,6 +659,8 @@ private struct JoinNetworkCard: View {
 private struct AddDeviceSheet: View {
     @ObservedObject var model: AppModel
     let network: NetworkState
+    @State private var qrScannerPresented = false
+    @State private var scanError = ""
 
     var body: some View {
         ScrollView {
@@ -685,6 +687,10 @@ private struct AddDeviceSheet: View {
                         )
                     }
                 }
+                ScanJoinerDeviceCard(
+                    scanError: scanError,
+                    scan: { qrScannerPresented = true }
+                )
                 ManualPairingInfoCard(model: model, network: network)
                 AddDeviceCard(network: network) { npub, alias in
                     model.dispatch(
@@ -697,6 +703,50 @@ private struct AddDeviceSheet: View {
         }
         .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
+        .sheet(isPresented: $qrScannerPresented) {
+            QRCodeScannerSheet { code in
+                guard let scanned = parseScannedDeviceLinkQr(code) else {
+                    scanError = "Not a Nostr VPN device QR."
+                    qrScannerPresented = false
+                    return
+                }
+                scanError = ""
+                model.dispatch(
+                    NativeActions.addParticipant(
+                        networkId: network.id,
+                        npub: scanned.deviceId,
+                        alias: scanned.alias ?? ""
+                    ),
+                    status: "Adding device"
+                )
+                qrScannerPresented = false
+            }
+        }
+    }
+}
+
+private struct ScanJoinerDeviceCard: View {
+    let scanError: String
+    let scan: () -> Void
+
+    var body: some View {
+        AppCard {
+            Text("Scan joiner QR")
+                .font(.headline)
+            Text("Scan the other device's Device ID QR to add it to this network.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button(action: scan) {
+                Label("Scan joiner QR", systemImage: "camera.viewfinder")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            if !scanError.isEmpty {
+                Text(scanError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
     }
 }
 
@@ -2557,6 +2607,106 @@ private func isHexString(_ value: String) -> Bool {
             || (65...70).contains(Int(scalar.value))
             || (97...102).contains(Int(scalar.value))
     }
+}
+
+private struct ScannedDeviceLink {
+    let deviceId: String
+    let alias: String?
+}
+
+private func parseScannedDeviceLinkQr(_ value: String) -> ScannedDeviceLink? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let deviceId = normalizedDeviceIdCandidate(trimmed) {
+        return ScannedDeviceLink(deviceId: deviceId, alias: nil)
+    }
+    if let parsed = parseScannedDeviceJson(trimmed) {
+        return parsed
+    }
+    return parseScannedDeviceUrl(trimmed)
+}
+
+private func parseScannedDeviceJson(_ value: String) -> ScannedDeviceLink? {
+    guard value.hasPrefix("{"),
+          let data = value.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data),
+          let json = object as? [String: Any]
+    else {
+        return nil
+    }
+    guard let deviceId = firstValidDeviceId(
+        jsonString(json["deviceId"]),
+        jsonString(json["device"]),
+        jsonString(json["npub"]),
+        jsonString(json["requesterNpub"])
+    ) else {
+        return nil
+    }
+    return ScannedDeviceLink(
+        deviceId: deviceId,
+        alias: firstNonBlank(
+            jsonString(json["name"]),
+            jsonString(json["nodeName"]),
+            jsonString(json["label"])
+        )
+    )
+}
+
+private func parseScannedDeviceUrl(_ value: String) -> ScannedDeviceLink? {
+    guard let components = URLComponents(string: value),
+          components.scheme?.lowercased() == "nvpn"
+    else {
+        return nil
+    }
+    var query: [String: String] = [:]
+    for item in components.queryItems ?? [] where query[item.name] == nil {
+        query[item.name] = item.value ?? ""
+    }
+    let pathCandidate = components.path
+        .split(separator: "/")
+        .last
+        .map(String.init)
+    guard let deviceId = firstValidDeviceId(
+        query["deviceId"],
+        query["device"],
+        query["npub"],
+        query["requesterNpub"],
+        components.host,
+        pathCandidate
+    ) else {
+        return nil
+    }
+    return ScannedDeviceLink(
+        deviceId: deviceId,
+        alias: firstNonBlank(query["name"], query["nodeName"], query["label"])
+    )
+}
+
+private func jsonString(_ value: Any?) -> String? {
+    value as? String
+}
+
+private func firstValidDeviceId(_ values: String?...) -> String? {
+    values.compactMap { normalizedDeviceIdCandidate($0 ?? "") }.first
+}
+
+private func normalizedDeviceIdCandidate(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+    let withoutNostrPrefix: String
+    if trimmed.lowercased().hasPrefix("nostr:") {
+        withoutNostrPrefix = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+    } else {
+        withoutNostrPrefix = trimmed
+    }
+    return isValidDeviceId(withoutNostrPrefix) ? withoutNostrPrefix : nil
+}
+
+private func firstNonBlank(_ values: String?...) -> String? {
+    values
+        .map { ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        .first { !$0.isEmpty }
 }
 
 private struct Metric: View {
