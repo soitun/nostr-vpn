@@ -98,7 +98,10 @@ async fn handle_mobile_endpoint_message(
     let source_node_addr = *message.source_peer.node_addr();
     let message_len = message.data.len();
     let packet = mesh.read().ok().and_then(|mesh| {
-        mesh.receive_endpoint_data_owned_from_node_addr(source_node_addr.as_bytes(), message.data)
+        mesh.receive_endpoint_data_owned_from_node_addr(
+            source_node_addr.as_bytes(),
+            message.data.into_vec(),
+        )
     });
     if let Some(packet) = packet {
         note_mobile_peer_rx(

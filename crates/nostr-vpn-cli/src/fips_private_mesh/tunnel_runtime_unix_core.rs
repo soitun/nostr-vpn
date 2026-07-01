@@ -49,8 +49,7 @@ impl FipsPrivateTunnelRuntime {
             .context("failed to register FIPS tunnel fd with reactor")?,
         );
 
-        let (packet_tx, mut packet_rx) =
-            TunPipelineQueueTx::channel(fips_tun_to_mesh_queue_cap());
+        let (packet_tx, mut packet_rx) = TunPipelineQueueTx::channel(fips_tun_to_mesh_queue_cap());
         let (event_tx, event_rx) = mpsc::channel::<FipsPrivateMeshEvent>(1024);
         let tun_read_task = spawn_tun_read_task(Arc::clone(&tun), Arc::clone(&tun_fd), packet_tx);
         let mesh_send_task = {
@@ -495,38 +494,11 @@ async fn send_mesh_packet_batch_turns(
     batch: TunPipelineBatch,
 ) {
     let mut send_runs = Vec::new();
-    if batch.first().map(TunPipelinePacket::lane) == Some(TunPipelineLane::Priority) {
-        send_mesh_packet_batch_or_log(mesh, batch, &mut send_runs).await;
-        return;
-    }
-
-    send_mesh_waiting_priority_packets(mesh, packet_rx, &mut send_runs).await;
-
     crate::pipeline_profile::record_mesh_send_bulk_turn(
-        packet_rx.bulk_backlog_packets(),
+        packet_rx.bulk_backlog_batches(),
         batch.len(),
     );
     send_mesh_packet_batch_or_log(mesh, batch, &mut send_runs).await;
-
-    send_mesh_waiting_priority_packets(mesh, packet_rx, &mut send_runs).await;
-
-    if packet_rx.has_bulk_backlog() {
-        tokio::task::yield_now().await;
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn send_mesh_waiting_priority_packets(
-    mesh: &FipsPrivateMeshRuntime,
-    packet_rx: &mut TunPipelineQueueRx,
-    send_runs: &mut Vec<FipsEndpointSendRun>,
-) {
-    for _ in 0..FIPS_MESH_SEND_PRIORITY_CUTIN_BATCHES {
-        let Some(priority) = packet_rx.try_recv_priority() else {
-            break;
-        };
-        send_mesh_packet_batch_or_log(mesh, priority, send_runs).await;
-    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

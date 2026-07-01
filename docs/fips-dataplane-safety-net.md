@@ -205,23 +205,21 @@ make endpoint control sends or outbound tunnel packets wait for the next
 maintenance tick.
 The endpoint command lane ownership guard pins the app-to-rx-loop message
 boundary: once `FipsEndpoint` builds a `Send` or `SendOneway` command, that
-command owns the priority/bulk lane selected from the original endpoint payload,
-and channel selection consumes the queued command lane instead of reclassifying
-payload bytes later.
+app-data command owns the bulk lane, and channel selection consumes the queued
+command lane without reclassifying payload bytes later.
 The endpoint send command ownership guard pins the next app-to-rx-loop message
 boundary: `EndpointSendCommand` owns the remote identity, payload,
-priority/bulk lane, and queue timestamp consumed by both `Send` and
+bulk lane, and queue timestamp consumed by both `Send` and
 `SendOneway`, so the response and fire-and-forget variants cannot drift into
 different perf-accounting or dispatch paths.
 The endpoint payload policy ownership guard pins the policy selected at app
-ingress: `EndpointDataPayload` owns the payload bytes plus priority/bulk lane
-and drop-on-backpressure policy, pending endpoint queues store that owner, and
-the pipelined sender consumes the stored policy instead of reclassifying raw
-payload bytes later.
+ingress: `EndpointDataPayload` owns app payload bytes as bulk/drop-on-pressure
+data, pending endpoint queues store that owner, and the pipelined sender
+consumes it without reclassifying raw payload bytes later.
 The endpoint data send ownership guard pins the next identity/payload boundary:
 `EndpointDataSend` owns the destination node address, destination public key,
-and classified endpoint payload policy consumed by identity registration, direct
-send, and pending queueing.
+and endpoint payload owner consumed by identity registration, direct send, and
+pending queueing.
 nvpn callers should keep endpoint npubs at config/UI/control edges where
 possible. The daemon and mobile hot roster-owned send paths cache FIPS
 `PeerIdentity` values keyed by normalized participant pubkey and call
@@ -1935,10 +1933,9 @@ Current Docker VM baseline for this branch:
   does not alter queue capacity, route choice, timeout policy, send backpressure
   thresholds, or Mac sender behavior.
 - FIPS `129543f` makes endpoint payload policy ownership explicit.
-  `EndpointDataPayload` owns the payload bytes plus the priority/bulk lane and
-  drop-on-backpressure policy selected at app ingress. `EndpointSendCommand`,
-  pending endpoint queues, and the pipelined send path now consume that owner
-  instead of reclassifying raw payload bytes later. The new
+  `EndpointDataPayload` owns endpoint app payload bytes as bulk/drop-on-pressure
+  data. `EndpointSendCommand`, pending endpoint queues, and the pipelined send
+  path now consume that owner instead of reclassifying raw payload bytes later. The new
   `endpoint_data_payload_owns_drop_policy_selected_at_construction` guard is in
   the fast ownership tier and Linux Docker safety runner. The guard failed
   first because the owner did not exist, then passed locally and in Linux
@@ -1948,7 +1945,7 @@ Current Docker VM baseline for this branch:
   Mac sender behavior change.
 - FIPS `36b365b` makes endpoint data send ownership explicit.
   `EndpointDataSend` owns the destination node address, destination public key,
-  and classified endpoint payload policy. `EndpointSendCommand` carries that
+  and endpoint payload owner. `EndpointSendCommand` carries that
   owner, and the rx-loop send-or-queue path consumes it when registering
   identity, sending immediately, or queueing for session recovery. The new
   `endpoint_data_send_owns_remote_identity_and_payload_policy` guard is in the

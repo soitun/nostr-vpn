@@ -166,7 +166,7 @@ fn read_plain_tun_packets_into(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn push_tun_pipeline_packet(batch: &mut TunPipelineBatch, packet: &[u8]) {
-    push_tun_pipeline_packet_owned(batch, packet.to_vec());
+    push_tun_pipeline_packet_owned(batch, copy_with_fips_endpoint_headroom(packet));
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -177,16 +177,6 @@ fn push_tun_pipeline_packet_owned(batch: &mut TunPipelineBatch, mut bytes: Vec<u
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn push_tun_pipeline_packet_owned_finalized(batch: &mut TunPipelineBatch, bytes: Vec<u8>) {
-    let class = classify_endpoint_payload(&bytes);
-    push_tun_pipeline_packet_owned_finalized_classified(batch, bytes, class);
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn push_tun_pipeline_packet_owned_finalized_classified(
-    batch: &mut TunPipelineBatch,
-    bytes: Vec<u8>,
-    class: EndpointPayloadClass,
-) {
     if fips_unix_packet_debug_enabled() {
         eprintln!(
             "fips: TUN -> mesh {} bytes {}",
@@ -194,7 +184,7 @@ fn push_tun_pipeline_packet_owned_finalized_classified(
             describe_ip_packet(&bytes)
         );
     }
-    batch.push(TunPipelinePacket::from_classified(bytes, class));
+    batch.push(TunPipelinePacket::new(bytes));
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -216,13 +206,6 @@ fn spawn_tun_read_task(
         let mut batch = Vec::with_capacity(FIPS_TUN_READ_BURST);
         let pipeline_profile_enabled = crate::pipeline_profile::enabled();
         loop {
-            if !packet_tx
-                .wait_for_tun_read_bulk_headroom(1)
-                .await
-            {
-                return;
-            }
-
             let mut guard = match tun_fd.readable().await {
                 Ok(guard) => guard,
                 Err(error) => {
@@ -291,13 +274,7 @@ fn spawn_tun_read_task(
                 }
                 let pending =
                     std::mem::replace(&mut batch, Vec::with_capacity(FIPS_TUN_READ_BURST));
-                match submit_tun_packet_batch_to_mesh_queue_with_backpressure(
-                    &packet_tx,
-                    pending,
-                    FIPS_TUN_READ_BURST,
-                )
-                .await
-                {
+                match submit_tun_packet_batch_to_mesh_queue(&packet_tx, pending) {
                     TunQueueSubmit::Enqueued | TunQueueSubmit::DroppedBulk => {}
                     TunQueueSubmit::Closed => return,
                 }
@@ -421,6 +398,36 @@ fn spawn_mesh_recv_task(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+struct BlockingMeshRecvTunSink<'a> {
+    tun_fd: BorrowedTunFd,
+    event_tx: &'a mpsc::Sender<FipsPrivateMeshEvent>,
+    stop: &'a AtomicBool,
+    packet_batch: &'a mut TunWriteBatch,
+    pipeline_profile_enabled: bool,
+    packet_count: usize,
+    packet_bytes: usize,
+    keep_running: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl FipsMeshBlockingBatchSink for BlockingMeshRecvTunSink<'_> {
+    fn handle_packet(&mut self, packet: FipsEndpointData) -> bool {
+        if self.pipeline_profile_enabled {
+            self.packet_count = self.packet_count.saturating_add(1);
+            self.packet_bytes = self.packet_bytes.saturating_add(packet.len());
+        }
+        push_mesh_packet_for_tun(packet, self.packet_batch);
+        true
+    }
+
+    fn handle_event(&mut self, event: FipsPrivateMeshEvent) -> bool {
+        flush_mesh_packet_batch_to_tun_blocking(self.tun_fd, self.packet_batch, self.stop);
+        self.keep_running = self.event_tx.blocking_send(event).is_ok();
+        self.keep_running
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn spawn_blocking_mesh_recv_worker(
     mesh: Arc<FipsPrivateMeshRuntime>,
     tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
@@ -437,31 +444,26 @@ fn spawn_blocking_mesh_recv_worker(
             let pipeline_profile_enabled = crate::pipeline_profile::enabled();
             while !thread_stop.load(Ordering::Acquire) {
                 packet_batch.clear();
-                let mut packet_count = 0usize;
-                let mut packet_bytes = 0usize;
-                let mut keep_running = true;
-                let received =
-                    mesh.recv_mesh_event_batch_blocking_for_each(recv_burst, &thread_stop, |event| {
-                        match event {
-                            FipsPrivateMeshEvent::Packet(packet) => {
-                                if pipeline_profile_enabled {
-                                    packet_count = packet_count.saturating_add(1);
-                                    packet_bytes = packet_bytes.saturating_add(packet.len());
-                                }
-                                push_mesh_packet_for_tun(packet, &mut packet_batch);
-                                true
-                            }
-                            event => {
-                                flush_mesh_packet_batch_to_tun_blocking(
-                                    tun_fd,
-                                    &mut packet_batch,
-                                    &thread_stop,
-                                );
-                                keep_running = event_tx.blocking_send(event).is_ok();
-                                keep_running
-                            }
-                        }
-                    });
+                let (received, packet_count, packet_bytes, keep_running) = {
+                    let mut sink = BlockingMeshRecvTunSink {
+                        tun_fd,
+                        event_tx: &event_tx,
+                        stop: &thread_stop,
+                        packet_batch: &mut packet_batch,
+                        pipeline_profile_enabled,
+                        packet_count: 0,
+                        packet_bytes: 0,
+                        keep_running: true,
+                    };
+                    let received =
+                        mesh.recv_mesh_event_batch_blocking_for_each(recv_burst, &thread_stop, &mut sink);
+                    (
+                        received,
+                        sink.packet_count,
+                        sink.packet_bytes,
+                        sink.keep_running,
+                    )
+                };
                 match received {
                     Ok(Some(drained)) => {
                         if pipeline_profile_enabled {
@@ -549,13 +551,13 @@ async fn cooperate_after_mesh_recv_packet() {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn push_mesh_packet_for_tun(mut packet: Vec<u8>, packet_batch: &mut TunWriteBatch) {
-    nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut packet);
+fn push_mesh_packet_for_tun(mut packet: FipsEndpointData, packet_batch: &mut TunWriteBatch) {
+    nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(packet.as_mut_slice());
     if fips_unix_packet_debug_enabled() {
         eprintln!(
             "fips: mesh -> TUN {} bytes {}",
             packet.len(),
-            describe_ip_packet(&packet)
+            describe_ip_packet(packet.as_slice())
         );
     }
     packet_batch.push(packet);
@@ -572,26 +574,20 @@ async fn flush_mesh_packet_batch_to_tun(
 
     #[cfg(target_os = "linux")]
     if tun_fd.get_ref().vnet_hdr {
-        let packet_count = packet_batch.priority.len() + packet_batch.bulk.len();
-        write_linux_vnet_packet_batch_to_tun(tun_fd, &mut packet_batch.priority).await;
-        write_linux_vnet_packet_batch_to_tun(tun_fd, &mut packet_batch.bulk).await;
+        let packet_count = packet_batch.packets.len();
+        write_linux_vnet_packet_batch_to_tun(tun_fd, &mut packet_batch.packets).await;
         for _ in 0..packet_count {
             cooperate_after_mesh_recv_packet().await;
         }
         return;
     }
 
-    for packet in packet_batch.priority.drain(..) {
-        write_packet_to_tun(tun_fd, &packet).await;
-        cooperate_after_mesh_recv_packet().await;
-    }
-
-    for packet in packet_batch.bulk.drain(..) {
+    for packet in packet_batch.packets.drain(..) {
         // Hot path. Write to TUN inline and DON'T forward Packet events
         // upstream: the control-loop consumer discards packet events. The
         // raw fd write below still waits on utun writability instead of
         // silently dropping `EWOULDBLOCK` like boringtun's helper does.
-        write_packet_to_tun(tun_fd, &packet).await;
+        write_packet_to_tun(tun_fd, packet.as_slice()).await;
         cooperate_after_mesh_recv_packet().await;
     }
 }
@@ -628,17 +624,12 @@ fn flush_mesh_packet_batch_to_tun_blocking(
 
     #[cfg(target_os = "linux")]
     if tun_fd.vnet_hdr {
-        write_linux_vnet_packet_batch_to_tun_blocking(tun_fd, &mut packet_batch.priority, stop);
-        write_linux_vnet_packet_batch_to_tun_blocking(tun_fd, &mut packet_batch.bulk, stop);
+        write_linux_vnet_packet_batch_to_tun_blocking(tun_fd, &mut packet_batch.packets, stop);
         return;
     }
 
-    for packet in packet_batch.priority.drain(..) {
-        write_packet_to_tun_blocking(tun_fd, &packet, stop);
-    }
-
-    for packet in packet_batch.bulk.drain(..) {
-        write_packet_to_tun_blocking(tun_fd, &packet, stop);
+    for packet in packet_batch.packets.drain(..) {
+        write_packet_to_tun_blocking(tun_fd, packet.as_slice(), stop);
     }
 }
 
@@ -708,19 +699,66 @@ fn write_packet_to_tun_blocking(fd: BorrowedTunFd, packet: &[u8], stop: &AtomicB
 }
 
 #[cfg(target_os = "linux")]
-async fn write_linux_vnet_packet_batch_to_tun(
+async fn write_linux_vnet_packet_batch_to_tun<P: AsRef<[u8]>>(
     tun_fd: &AsyncFd<BorrowedTunFd>,
-    packets: &mut Vec<Vec<u8>>,
+    packets: &mut Vec<P>,
 ) {
     let packet_count = packets.len();
     let packet_bytes = packets
         .iter()
-        .fold(0usize, |total, packet| total.saturating_add(packet.len()));
+        .fold(0usize, |total, packet| {
+            total.saturating_add(packet.as_ref().len())
+        });
     let frames = linux_vnet_prepare_write_frames(packets);
-    packets.clear();
     crate::pipeline_profile::record_tun_write_packets(packet_count, packet_bytes);
     for frame in frames {
-        write_linux_vnet_frame_to_tun(tun_fd, &frame).await;
+        write_linux_vnet_prepared_frame_to_tun(tun_fd, frame).await;
+    }
+    packets.clear();
+}
+
+#[cfg(target_os = "linux")]
+async fn write_linux_vnet_prepared_frame_to_tun(
+    tun_fd: &AsyncFd<BorrowedTunFd>,
+    frame: LinuxVnetPreparedWriteFrame<'_>,
+) {
+    match frame {
+        LinuxVnetPreparedWriteFrame::RawPacket(packet) => {
+            write_linux_vnet_raw_packet_to_tun(tun_fd, packet).await
+        }
+        LinuxVnetPreparedWriteFrame::Owned(frame) => {
+            write_linux_vnet_frame_to_tun(tun_fd, &frame).await
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn write_linux_vnet_raw_packet_to_tun(tun_fd: &AsyncFd<BorrowedTunFd>, packet: &[u8]) {
+    let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWrite);
+    loop {
+        match raw_write_packet_to_tun(tun_fd.get_ref(), packet, 0) {
+            Ok(()) => {
+                crate::pipeline_profile::record_tun_write_frame(
+                    LINUX_VIRTIO_NET_HDR_LEN + packet.len(),
+                );
+                return;
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                crate::pipeline_profile::record_tun_write_would_block();
+                match tun_fd.writable().await {
+                    Ok(mut guard) => guard.clear_ready(),
+                    Err(error) => {
+                        eprintln!("fips: tunnel write readiness failed: {error}");
+                        return;
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("fips: tunnel write failed: {error}");
+                return;
+            }
+        }
     }
 }
 
@@ -753,20 +791,71 @@ async fn write_linux_vnet_frame_to_tun(tun_fd: &AsyncFd<BorrowedTunFd>, frame: &
 }
 
 #[cfg(target_os = "linux")]
-fn write_linux_vnet_packet_batch_to_tun_blocking(
+fn write_linux_vnet_packet_batch_to_tun_blocking<P: AsRef<[u8]>>(
     tun_fd: BorrowedTunFd,
-    packets: &mut Vec<Vec<u8>>,
+    packets: &mut Vec<P>,
     stop: &AtomicBool,
 ) {
     let packet_count = packets.len();
     let packet_bytes = packets
         .iter()
-        .fold(0usize, |total, packet| total.saturating_add(packet.len()));
+        .fold(0usize, |total, packet| {
+            total.saturating_add(packet.as_ref().len())
+        });
     let frames = linux_vnet_prepare_write_frames(packets);
-    packets.clear();
     crate::pipeline_profile::record_tun_write_packets(packet_count, packet_bytes);
     for frame in frames {
-        write_linux_vnet_frame_to_tun_blocking(tun_fd, &frame, stop);
+        write_linux_vnet_prepared_frame_to_tun_blocking(tun_fd, frame, stop);
+    }
+    packets.clear();
+}
+
+#[cfg(target_os = "linux")]
+fn write_linux_vnet_prepared_frame_to_tun_blocking(
+    tun_fd: BorrowedTunFd,
+    frame: LinuxVnetPreparedWriteFrame<'_>,
+    stop: &AtomicBool,
+) {
+    match frame {
+        LinuxVnetPreparedWriteFrame::RawPacket(packet) => {
+            write_linux_vnet_raw_packet_to_tun_blocking(tun_fd, packet, stop)
+        }
+        LinuxVnetPreparedWriteFrame::Owned(frame) => {
+            write_linux_vnet_frame_to_tun_blocking(tun_fd, &frame, stop)
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn write_linux_vnet_raw_packet_to_tun_blocking(
+    tun_fd: BorrowedTunFd,
+    packet: &[u8],
+    stop: &AtomicBool,
+) {
+    let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWrite);
+    loop {
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
+        match raw_write_packet_to_tun(&tun_fd, packet, 0) {
+            Ok(()) => {
+                crate::pipeline_profile::record_tun_write_frame(
+                    LINUX_VIRTIO_NET_HDR_LEN + packet.len(),
+                );
+                return;
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                crate::pipeline_profile::record_tun_write_would_block();
+                if !wait_fd_writable_blocking(tun_fd.as_raw_fd(), stop) {
+                    return;
+                }
+            }
+            Err(error) => {
+                eprintln!("fips: tunnel write failed: {error}");
+                return;
+            }
+        }
     }
 }
 

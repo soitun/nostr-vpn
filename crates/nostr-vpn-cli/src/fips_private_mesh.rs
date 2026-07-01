@@ -4,12 +4,10 @@ use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
 use fips_endpoint::{
-    Config, ConnectPolicy, FipsEndpoint, FipsEndpointError, FipsEndpointMessage,
-    FipsEndpointPayload, FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress,
-    PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
+    Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointError, FipsEndpointMessage,
+    FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
+    PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
 };
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use fips_endpoint::{EndpointPayloadClass, EndpointPayloadLane, classify_endpoint_payload};
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
     AppConfig, WireGuardExitConfig, derive_mesh_tunnel_ip, normalize_nostr_pubkey,
@@ -41,9 +39,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::sync::{Mutex, RwLock};
 #[cfg(target_os = "windows")]
@@ -53,8 +49,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::io::Interest;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use tokio::io::unix::AsyncFd;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use tokio::sync::Notify;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use tokio::sync::mpsc;
 
@@ -107,8 +101,6 @@ const FIPS_TUN_READ_BURST: usize = 128;
 const FIPS_TUN_READ_BURST: usize = 64;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const FIPS_TUN_WRITE_BURST: usize = 64;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const FIPS_MESH_SEND_PRIORITY_CUTIN_BATCHES: usize = 1;
 #[cfg(any(target_os = "macos", test))]
 const MACOS_UDP_SEND_BUF_MIN_MULTIPLIER: usize = 4;
 const MIN_FIPS_UDP_SEND_BUF_SIZE: usize = 64 * 1024;
@@ -173,8 +165,6 @@ const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = macos_tun_to_mesh_queue_cap(
 const MIN_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 1;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 65_536;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP: usize = 1024;
 #[cfg(target_os = "macos")]
 const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(macos_default_udp_send_buf_size());
 #[cfg(not(target_os = "macos"))]

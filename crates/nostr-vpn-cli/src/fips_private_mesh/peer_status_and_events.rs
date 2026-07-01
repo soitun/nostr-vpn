@@ -721,7 +721,7 @@ pub(crate) struct FipsRelayStatus {
 
 #[derive(Debug, Clone)]
 pub(crate) enum FipsPrivateMeshEvent {
-    Packet(Vec<u8>),
+    Packet(FipsEndpointData),
     Presence {
         participant_pubkey: String,
         last_seen_at: u64,

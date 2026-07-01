@@ -109,7 +109,7 @@ fn spawn_windows_fips_mesh_recv_task(
                     for event in events.drain(..) {
                         match event {
                             FipsPrivateMeshEvent::Packet(packet) => {
-                                packets.push(packet);
+                                packets.push(packet.into_vec());
                             }
                             event => {
                                 write_windows_fips_packet_batch(&session, &mut packets);

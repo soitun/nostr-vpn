@@ -96,7 +96,7 @@ mod linux_vnet_tun_tests {
     }
 
     #[test]
-    fn linux_vnet_tcp4_gso_read_preserves_final_tiny_segment_priority() {
+    fn linux_vnet_tcp4_gso_read_keeps_final_tiny_segment_in_order() {
         let packet = ipv4_tcp_packet(1000, 2500, 0x18);
         let mut frame = vec![0_u8; LINUX_VIRTIO_NET_HDR_LEN + packet.len()];
         LinuxVirtioNetHdr {
@@ -115,9 +115,6 @@ mod linux_vnet_tun_tests {
         assert_eq!(count, 3);
         assert_eq!(batch.len(), 3);
 
-        assert_eq!(batch[0].lane(), TunPipelineLane::Bulk);
-        assert_eq!(batch[1].lane(), TunPipelineLane::Bulk);
-        assert_eq!(batch[2].lane(), TunPipelineLane::Priority);
         assert_eq!(batch[0].bytes[33] & LINUX_TCP_FLAG_PSH, 0);
         assert_eq!(batch[1].bytes[33] & LINUX_TCP_FLAG_PSH, 0);
         assert_ne!(batch[2].bytes[33] & LINUX_TCP_FLAG_PSH, 0);
@@ -176,7 +173,8 @@ mod linux_vnet_tun_tests {
         let frames = linux_vnet_prepare_write_frames(&packets);
         assert_eq!(frames.len(), 1);
 
-        let hdr = LinuxVirtioNetHdr::decode(&frames[0]).expect("virtio header");
+        let frame = prepared_write_frame_bytes(&frames[0]);
+        let hdr = LinuxVirtioNetHdr::decode(&frame).expect("virtio header");
         assert_eq!(hdr.flags, LINUX_VIRTIO_NET_HDR_F_NEEDS_CSUM);
         assert_eq!(hdr.gso_type, LINUX_VIRTIO_NET_HDR_GSO_TCPV4);
         assert_eq!(hdr.hdr_len, 40);
@@ -184,7 +182,7 @@ mod linux_vnet_tun_tests {
         assert_eq!(hdr.csum_start, 20);
         assert_eq!(hdr.csum_offset, 16);
 
-        let packet = &frames[0][LINUX_VIRTIO_NET_HDR_LEN..];
+        let packet = &frame[LINUX_VIRTIO_NET_HDR_LEN..];
         assert_eq!(packet.len(), 20 + 20 + 1400);
         assert_eq!(u16::from_be_bytes([packet[2], packet[3]]), 1440);
         assert_eq!(linux_vnet_checksum(&packet[..20], 0), 0xffff);
@@ -219,11 +217,12 @@ mod linux_vnet_tun_tests {
         let frames = linux_vnet_prepare_write_frames(&packets);
         assert_eq!(frames.len(), 1);
 
-        let hdr = LinuxVirtioNetHdr::decode(&frames[0]).expect("virtio header");
+        let frame = prepared_write_frame_bytes(&frames[0]);
+        let hdr = LinuxVirtioNetHdr::decode(&frame).expect("virtio header");
         assert_eq!(hdr.gso_type, LINUX_VIRTIO_NET_HDR_GSO_TCPV4);
         assert_eq!(hdr.gso_size, 800);
 
-        let packet = &frames[0][LINUX_VIRTIO_NET_HDR_LEN..];
+        let packet = &frame[LINUX_VIRTIO_NET_HDR_LEN..];
         assert_eq!(
             u32::from_be_bytes([packet[24], packet[25], packet[26], packet[27]]),
             first_seq
@@ -245,6 +244,7 @@ mod linux_vnet_tun_tests {
         let frames = linux_vnet_prepare_write_frames(&packets);
         assert_eq!(frames.len(), 2);
         for frame in frames {
+            let frame = prepared_write_frame_bytes(&frame);
             let hdr = LinuxVirtioNetHdr::decode(&frame).expect("virtio header");
             assert_eq!(hdr.gso_type, LINUX_VIRTIO_NET_HDR_GSO_NONE);
             assert_eq!(hdr.gso_size, 0);
@@ -263,10 +263,23 @@ mod linux_vnet_tun_tests {
         assert_eq!(frames.len(), 2);
 
         for (frame, packet) in frames.iter().zip([first, second]) {
-            let hdr = LinuxVirtioNetHdr::decode(frame).expect("virtio header");
+            assert!(matches!(frame, LinuxVnetPreparedWriteFrame::RawPacket(_)));
+            let frame = prepared_write_frame_bytes(frame);
+            let hdr = LinuxVirtioNetHdr::decode(&frame).expect("virtio header");
             assert_eq!(hdr.gso_type, LINUX_VIRTIO_NET_HDR_GSO_NONE);
             assert_eq!(hdr.gso_size, 0);
             assert_eq!(&frame[LINUX_VIRTIO_NET_HDR_LEN..], packet.as_slice());
+        }
+    }
+
+    fn prepared_write_frame_bytes(frame: &LinuxVnetPreparedWriteFrame<'_>) -> Vec<u8> {
+        match frame {
+            LinuxVnetPreparedWriteFrame::RawPacket(packet) => {
+                let mut bytes = vec![0_u8; LINUX_VIRTIO_NET_HDR_LEN];
+                bytes.extend_from_slice(packet);
+                bytes
+            }
+            LinuxVnetPreparedWriteFrame::Owned(bytes) => bytes.clone(),
         }
     }
 

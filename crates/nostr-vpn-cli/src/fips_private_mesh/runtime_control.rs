@@ -125,9 +125,8 @@ impl FipsPrivateMeshRuntime {
                 hex::encode(endpoint_node_addr)
             )
         })?;
-        let payload = FipsEndpointPayload::new(data);
         self.endpoint
-            .send_classified_batch_to_peer(identity, vec![payload])
+            .send_batch_to_peer(identity, vec![data])
             .await
             .context("failed to send private packet over FIPS endpoint data")
     }

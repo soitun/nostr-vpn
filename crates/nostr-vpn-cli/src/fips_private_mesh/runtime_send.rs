@@ -126,7 +126,7 @@ impl FipsPrivateMeshRuntime {
                 outgoing.participant_pubkey,
                 participant_key,
                 outgoing.endpoint_node_addr,
-                FipsEndpointPayload::new(outgoing.bytes),
+                outgoing.bytes,
             );
         }
         drop(peer_identities);
@@ -175,7 +175,6 @@ impl FipsPrivateMeshRuntime {
         {
             let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRoute);
             for packet in packets {
-                let class = packet.class;
                 let destination = packet.destination;
                 let packet_debug = fips_unix_packet_debug_enabled();
                 let debug_description = packet_debug.then(|| describe_ip_packet(&packet.bytes));
@@ -205,14 +204,13 @@ impl FipsPrivateMeshRuntime {
                     );
                 }
                 let participant_key = routed.participant_pubkey_bytes;
-                let payload = FipsEndpointPayload::from_classified(routed.bytes, class);
                 Self::push_endpoint_send_run(
                     runs,
                     &peer_identities,
                     routed.participant_pubkey,
                     participant_key,
                     &routed.endpoint_node_addr,
-                    payload,
+                    routed.bytes,
                 );
             }
         }
@@ -238,7 +236,7 @@ impl FipsPrivateMeshRuntime {
         participant_pubkey: &str,
         participant_key: Option<ParticipantPubkeyBytes>,
         endpoint_node_addr: &[u8; 16],
-        payload: FipsEndpointPayload,
+        payload: Vec<u8>,
     ) {
         let bytes_len = payload.len();
 
@@ -285,7 +283,7 @@ impl FipsPrivateMeshRuntime {
                 FipsEndpointSendRun::Identity(run) => {
                     let packet_count = run.payloads.len();
                     self.endpoint
-                        .send_classified_batch_to_peer(run.identity, run.payloads)
+                        .send_batch_to_peer(run.identity, run.payloads)
                         .await
                         .with_context(|| {
                             format!(

@@ -30,17 +30,14 @@
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
-        BorrowedTunFd, TunPipelineLane, TunPipelinePacket, TunPipelineQueueTx,
-        TunQueueSubmit, TunWriteBatch, FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP,
+        BorrowedTunFd, TunPipelinePacket, TunPipelineQueueTx, TunQueueSubmit, TunWriteBatch,
         parse_fips_mesh_recv_burst, parse_fips_tun_to_mesh_queue_cap, push_mesh_packet_for_tun,
-        raw_write_packet_to_tun, release_tun_bulk_packet_slots, submit_tun_packet_batch_to_mesh_queue,
-        submit_tun_packet_batch_to_mesh_queue_with_backpressure,
-        tun_pipeline_packet_lane,
+        raw_write_packet_to_tun, submit_tun_packet_batch_to_mesh_queue,
     };
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
     use fips_endpoint::{
-        Config, ConnectPolicy, FipsEndpointPayload, FipsEndpointPeer, NodeAddr,
+        Config, ConnectPolicy, FipsEndpointPeer, NodeAddr,
         NostrDiscoveryPolicy, PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode,
         TransportInstances, UdpConfig,
     };
@@ -56,7 +53,7 @@
     use std::collections::{HashMap, HashSet};
     use std::net::{IpAddr, Ipv4Addr, UdpSocket};
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::atomic::AtomicBool;
     use std::time::Duration;
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -91,6 +88,7 @@
             65_536
         );
         assert_eq!(parse_fips_tun_to_mesh_queue_cap(Some("4096"), 1024), 4096);
+
     }
 
     #[test]
@@ -579,7 +577,7 @@
             &participant,
             Some(participant_key),
             &endpoint_node_addr,
-            FipsEndpointPayload::new(vec![1]),
+            vec![1],
         );
         FipsPrivateMeshRuntime::push_endpoint_send_run(
             &mut runs,
@@ -587,7 +585,7 @@
             &participant,
             Some(participant_key),
             &endpoint_node_addr,
-            FipsEndpointPayload::new(vec![2]),
+            vec![2],
         );
 
         assert_eq!(runs.len(), 1);

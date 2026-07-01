@@ -99,10 +99,10 @@ pub struct RoutedFipsPeer<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct AcceptedFipsPacket<'a> {
+pub struct AcceptedFipsPacket<'a, B = Vec<u8>> {
     pub source_pubkey: &'a str,
     pub source_pubkey_bytes: Option<&'a [u8; 32]>,
-    pub bytes: Vec<u8>,
+    pub bytes: B,
 }
 
 #[derive(Debug, Clone)]
@@ -369,12 +369,15 @@ impl FipsMeshRuntime {
         })
     }
 
-    pub fn receive_endpoint_data_owned_with_source_node_addr<'a>(
+    pub fn receive_endpoint_data_owned_with_source_node_addr<'a, B>(
         &'a self,
         source_node_addr: &[u8; 16],
-        data: Vec<u8>,
-    ) -> Option<AcceptedFipsPacket<'a>> {
-        let peer = self.admit_endpoint_data_from_node_addr(source_node_addr, &data)?;
+        data: B,
+    ) -> Option<AcceptedFipsPacket<'a, B>>
+    where
+        B: AsRef<[u8]>,
+    {
+        let peer = self.admit_endpoint_data_from_node_addr(source_node_addr, data.as_ref())?;
 
         Some(AcceptedFipsPacket {
             source_pubkey: &peer.participant_pubkey_hex,

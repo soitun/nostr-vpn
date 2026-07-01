@@ -698,8 +698,8 @@
             FipsPrivateMeshEvent::Packet(packet) => packet,
             event => panic!("expected packet event, got {event:?}"),
         });
-        assert_eq!(packets.next(), Some(first));
-        assert_eq!(packets.next(), Some(second));
+        assert_eq!(packets.next().map(Vec::from), Some(first));
+        assert_eq!(packets.next().map(Vec::from), Some(second));
         assert_peer_data_activity(&runtime, &participant_pubkey, expected_endpoint_data_bytes);
         runtime.shutdown().await.expect("shutdown");
     }
@@ -953,40 +953,46 @@
 
         let runtime = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let stop = AtomicBool::new(false);
-            let mut events = Vec::with_capacity(8);
+            let mut packets = Vec::with_capacity(8);
+            struct PacketSink<'a> {
+                packets: &'a mut Vec<super::FipsEndpointData>,
+            }
+            impl super::FipsMeshBlockingBatchSink for PacketSink<'_> {
+                fn handle_packet(&mut self, packet: super::FipsEndpointData) -> bool {
+                    self.packets.push(packet);
+                    true
+                }
+
+                fn handle_event(&mut self, event: FipsPrivateMeshEvent) -> bool {
+                    panic!("expected packet callback, got event {event:?}")
+                }
+            }
 
             let received = runtime
-                .recv_mesh_event_batch_blocking_for_each(2, &stop, |event| {
-                    events.push(event);
-                    true
-                })?
+                .recv_mesh_event_batch_blocking_for_each(
+                    2,
+                    &stop,
+                    &mut PacketSink {
+                        packets: &mut packets,
+                    },
+                )?
                 .expect("batch should contain admitted packets");
             assert_eq!(received, 2);
 
-            let packets: Vec<_> = events
-                .drain(..)
-                .map(|event| match event {
-                    FipsPrivateMeshEvent::Packet(packet) => packet,
-                    event => panic!("expected packet event, got {event:?}"),
-                })
-                .collect();
             assert_eq!(packets, vec![first, second]);
+            packets.clear();
 
             let received = runtime
-                .recv_mesh_event_batch_blocking_for_each(8, &stop, |event| {
-                    events.push(event);
-                    true
-                })?
+                .recv_mesh_event_batch_blocking_for_each(
+                    8,
+                    &stop,
+                    &mut PacketSink {
+                        packets: &mut packets,
+                    },
+                )?
                 .expect("batch should contain admitted packets");
             assert_eq!(received, 1);
 
-            let packets: Vec<_> = events
-                .drain(..)
-                .map(|event| match event {
-                    FipsPrivateMeshEvent::Packet(packet) => packet,
-                    event => panic!("expected packet event, got {event:?}"),
-                })
-                .collect();
             assert_eq!(packets, vec![third]);
 
             Ok(runtime)

@@ -94,7 +94,7 @@ impl FipsPrivateMeshRuntime {
         &self,
         limit: usize,
         stop: &AtomicBool,
-        mut handle_event: impl FnMut(FipsPrivateMeshEvent) -> bool,
+        sink: &mut impl FipsMeshBlockingBatchSink,
     ) -> Result<Option<usize>> {
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
         loop {
@@ -105,30 +105,50 @@ impl FipsPrivateMeshRuntime {
             let now = Some(unix_timestamp());
             let mut emitted = 0usize;
             let mut pending_error: Option<anyhow::Error> = None;
+            let mut data_rx_notes = FipsDataRxBatchNotes::default();
+            let mesh = self.mesh.load();
             let received = self.endpoint.blocking_recv_batch_for_each(limit, |message| {
                 if stop.load(Ordering::Acquire) {
                     return false;
                 }
-                let outcome = match self.endpoint_message_to_mesh_event_outcome(message, now) {
+                let outcome = match self.endpoint_message_to_mesh_event_outcome_inner_with_mesh(
+                    message, now, true, &mesh,
+                ) {
                     Ok(outcome) => outcome,
                     Err(error) => {
                         pending_error = Some(error);
                         return false;
                     }
                 };
-                if let Some(reply) = outcome.reply
+                let FipsEndpointMessageOutcome {
+                    event,
+                    packet,
+                    reply,
+                    data_rx,
+                } = outcome;
+                if let Some(note) = data_rx {
+                    data_rx_notes.push(note);
+                }
+                if let Some(reply) = reply
                     && let Err(error) = self.endpoint.blocking_send_to_peer(reply.peer, reply.data)
                 {
                     pending_error = Some(error.into());
                     return false;
                 }
-                if let Some(event) = outcome.event {
+                if let Some(packet) = packet {
                     emitted = emitted.saturating_add(1);
-                    return handle_event(event);
+                    return sink.handle_packet(packet);
+                }
+                if let Some(event) = event {
+                    emitted = emitted.saturating_add(1);
+                    return sink.handle_event(event);
                 }
                 true
             });
 
+            if let Err(error) = self.note_data_rx_batch(&mut data_rx_notes, now) {
+                pending_error = Some(error);
+            }
             if let Some(error) = pending_error {
                 return Err(error);
             }
@@ -182,7 +202,9 @@ impl FipsPrivateMeshRuntime {
         {
             eprintln!("fips: failed to reply to peer ping: {error}");
         }
-        Ok(outcome.event)
+        Ok(outcome
+            .event
+            .or_else(|| outcome.packet.map(FipsPrivateMeshEvent::Packet)))
     }
 
     fn endpoint_message_to_mesh_event_blocking(
@@ -196,7 +218,9 @@ impl FipsPrivateMeshRuntime {
         {
             eprintln!("fips: failed to reply to peer ping: {error}");
         }
-        Ok(outcome.event)
+        Ok(outcome
+            .event
+            .or_else(|| outcome.packet.map(FipsPrivateMeshEvent::Packet)))
     }
 
     fn endpoint_message_to_mesh_event_outcome(
@@ -204,11 +228,33 @@ impl FipsPrivateMeshRuntime {
         message: FipsEndpointMessage,
         now: Option<u64>,
     ) -> Result<FipsEndpointMessageOutcome> {
+        self.endpoint_message_to_mesh_event_outcome_inner(message, now, false)
+    }
+
+    fn endpoint_message_to_mesh_event_outcome_inner(
+        &self,
+        message: FipsEndpointMessage,
+        now: Option<u64>,
+        defer_data_rx: bool,
+    ) -> Result<FipsEndpointMessageOutcome> {
+        let mesh = self.mesh.load();
+        self.endpoint_message_to_mesh_event_outcome_inner_with_mesh(
+            message,
+            now,
+            defer_data_rx,
+            &mesh,
+        )
+    }
+
+    fn endpoint_message_to_mesh_event_outcome_inner_with_mesh(
+        &self,
+        message: FipsEndpointMessage,
+        now: Option<u64>,
+        defer_data_rx: bool,
+        mesh: &FipsMeshRuntime,
+    ) -> Result<FipsEndpointMessageOutcome> {
         if let Some(frame) = self.decode_endpoint_control_frame(&message)? {
-            let source_pubkey = {
-                let mesh = self.mesh.load();
-                control_frame_source_pubkey(&mesh, message.source_peer, &frame)
-            };
+            let source_pubkey = control_frame_source_pubkey(mesh, message.source_peer, &frame);
             let Some(source_pubkey) = source_pubkey else {
                 return Ok(FipsEndpointMessageOutcome::none());
             };
@@ -290,24 +336,82 @@ impl FipsPrivateMeshRuntime {
 
         let data_len = message.data.len();
         let source_node_addr = *message.source_peer.node_addr();
-        let mesh = self.mesh.load();
         if let Some(packet) = mesh.receive_endpoint_data_owned_with_source_node_addr(
             source_node_addr.as_bytes(),
             message.data,
         ) {
             let now = now.unwrap_or_else(unix_timestamp);
-            self.note_data_rx(
-                packet.source_pubkey,
-                packet.source_pubkey_bytes,
-                data_len,
-                now,
-            )?;
+            if defer_data_rx {
+                return Ok(FipsEndpointMessageOutcome::packet_with_deferred_data_rx(
+                    packet.bytes,
+                    packet.source_pubkey,
+                    packet.source_pubkey_bytes,
+                    data_len,
+                ));
+            }
+            self.note_data_rx(packet.source_pubkey, packet.source_pubkey_bytes, data_len, now)?;
             return Ok(FipsEndpointMessageOutcome::event(
                 FipsPrivateMeshEvent::Packet(packet.bytes),
             ));
         }
 
         Ok(FipsEndpointMessageOutcome::none())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn note_data_rx_batch(
+        &self,
+        notes: &mut FipsDataRxBatchNotes,
+        now: Option<u64>,
+    ) -> Result<()> {
+        if notes.is_empty() {
+            return Ok(());
+        }
+        let now = now.unwrap_or_else(unix_timestamp);
+        let peer_activity = self.peer_activity.load();
+        let mut presence_notes = Vec::new();
+        for note in notes.drain() {
+            if let Some(participant_key) = note.participant_key {
+                if let Some(activity) = peer_activity.get(&participant_key) {
+                    activity.note_rx(note.bytes, now, FipsPeerRxKind::Data);
+                    continue;
+                }
+                presence_notes.push((hex::encode(participant_key), note.bytes));
+                continue;
+            }
+            if let Some(participant) = note.participant {
+                presence_notes.push((participant, note.bytes));
+            }
+        }
+        drop(peer_activity);
+        if presence_notes.is_empty() {
+            return Ok(());
+        }
+
+        let mut presence = self
+            .presence
+            .write()
+            .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
+        for (participant, bytes) in presence_notes {
+            if let Some(entry) = presence.get_mut(&participant) {
+                entry.last_seen_at = Some(now);
+                entry.last_data_seen_at = Some(now);
+                entry.rx_bytes = entry.rx_bytes.saturating_add(bytes as u64);
+                entry.error = None;
+            } else {
+                presence.insert(
+                    participant,
+                    FipsPeerPresence {
+                        last_seen_at: Some(now),
+                        last_data_seen_at: Some(now),
+                        rx_bytes: bytes as u64,
+                        error: None,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        Ok(())
     }
 
     fn decode_endpoint_control_frame(
@@ -343,7 +447,7 @@ impl FipsPrivateMeshRuntime {
     pub(crate) async fn recv_tunnel_packet(&self) -> Result<Option<Vec<u8>>> {
         loop {
             match self.recv_mesh_event().await? {
-                Some(FipsPrivateMeshEvent::Packet(packet)) => return Ok(Some(packet)),
+                Some(FipsPrivateMeshEvent::Packet(packet)) => return Ok(Some(packet.into_vec())),
                 Some(_) => {}
                 None => return Ok(None),
             }

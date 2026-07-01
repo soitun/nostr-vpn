@@ -26,45 +26,35 @@ impl AsRawFd for BorrowedTunFd {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct TunPipelinePacket {
     bytes: Vec<u8>,
-    class: EndpointPayloadClass,
     destination: Option<IpAddr>,
     queued_at: Option<std::time::Instant>,
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+// Enough for FSP header + inner header + tag, session-datagram header,
+// and outer FMP header + timestamp + tag without another hot-path allocation.
+const FIPS_ENDPOINT_PACKET_HEADROOM: usize = 128;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 type TunPipelineBatch = Vec<TunPipelinePacket>;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct TunWriteBatch {
-    priority: Vec<Vec<u8>>,
-    bulk: Vec<Vec<u8>>,
+    packets: Vec<FipsEndpointData>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct TunPipelineQueueTx {
-    priority: mpsc::UnboundedSender<TunPipelineBatch>,
     bulk: mpsc::Sender<TunPipelineBatch>,
     bulk_queued_packets: Arc<AtomicUsize>,
     bulk_packet_capacity: usize,
-    bulk_available: Arc<Notify>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct TunPipelineQueueRx {
-    priority: mpsc::UnboundedReceiver<TunPipelineBatch>,
     bulk: mpsc::Receiver<TunPipelineBatch>,
     bulk_queued_packets: Arc<AtomicUsize>,
-    bulk_packet_capacity: usize,
-    bulk_available: Arc<Notify>,
-    priority_closed: bool,
     bulk_closed: bool,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TunPipelineLane {
-    Priority,
-    Bulk,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -79,34 +69,37 @@ enum FipsMeshRecvWorker {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TunPipelinePacket {
     fn new(bytes: Vec<u8>) -> Self {
-        let class = classify_endpoint_payload(&bytes);
         let destination = packet_destination(&bytes);
-        Self::from_classified_with_destination(bytes, class, destination)
+        Self::from_destination(bytes, destination)
     }
 
-    fn from_classified(bytes: Vec<u8>, class: EndpointPayloadClass) -> Self {
-        let destination = packet_destination(&bytes);
-        Self::from_classified_with_destination(bytes, class, destination)
-    }
-
-    fn from_classified_with_destination(
-        bytes: Vec<u8>,
-        class: EndpointPayloadClass,
-        destination: Option<IpAddr>,
-    ) -> Self {
+    fn from_destination(mut bytes: Vec<u8>, destination: Option<IpAddr>) -> Self {
+        reserve_fips_endpoint_headroom(&mut bytes);
         Self {
             bytes,
-            class,
             destination,
             queued_at: crate::pipeline_profile::stamp(),
         }
     }
+}
 
-    fn lane(&self) -> TunPipelineLane {
-        match self.class.lane() {
-            EndpointPayloadLane::Priority => TunPipelineLane::Priority,
-            EndpointPayloadLane::Bulk => TunPipelineLane::Bulk,
-        }
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn vec_with_fips_endpoint_headroom(len: usize) -> Vec<u8> {
+    Vec::with_capacity(len.saturating_add(FIPS_ENDPOINT_PACKET_HEADROOM))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn copy_with_fips_endpoint_headroom(bytes: &[u8]) -> Vec<u8> {
+    let mut owned = vec_with_fips_endpoint_headroom(bytes.len());
+    owned.extend_from_slice(bytes);
+    owned
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn reserve_fips_endpoint_headroom(bytes: &mut Vec<u8>) {
+    let needed = bytes.len().saturating_add(FIPS_ENDPOINT_PACKET_HEADROOM);
+    if bytes.capacity() < needed {
+        bytes.reserve(needed - bytes.capacity());
     }
 }
 
@@ -114,206 +107,107 @@ impl TunPipelinePacket {
 impl TunWriteBatch {
     fn with_capacity(capacity: usize) -> Self {
         Self {
-            priority: Vec::with_capacity(capacity.min(16)),
-            bulk: Vec::with_capacity(capacity),
+            packets: Vec::with_capacity(capacity),
         }
     }
 
     fn clear(&mut self) {
-        self.priority.clear();
-        self.bulk.clear();
+        self.packets.clear();
     }
 
     fn is_empty(&self) -> bool {
-        self.priority.is_empty() && self.bulk.is_empty()
+        self.packets.is_empty()
     }
 
-    fn push(&mut self, packet: Vec<u8>) {
-        match classify_endpoint_payload(&packet).lane() {
-            EndpointPayloadLane::Priority => self.priority.push(packet),
-            EndpointPayloadLane::Bulk => self.bulk.push(packet),
-        }
+    fn push(&mut self, packet: FipsEndpointData) {
+        self.packets.push(packet);
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TunPipelineQueueTx {
-    fn channel(capacity: usize) -> (Self, TunPipelineQueueRx) {
-        let capacity = capacity.max(1);
-        let (priority_tx, priority_rx) = mpsc::unbounded_channel();
-        let (bulk_tx, bulk_rx) = mpsc::channel(capacity);
+    fn channel(packet_capacity: usize) -> (Self, TunPipelineQueueRx) {
+        let packet_capacity = packet_capacity.max(1);
+        let (bulk_tx, bulk_rx) = mpsc::channel(packet_capacity);
         let bulk_queued_packets = Arc::new(AtomicUsize::new(0));
-        let bulk_available = Arc::new(Notify::new());
         (
             Self {
-                priority: priority_tx,
                 bulk: bulk_tx,
                 bulk_queued_packets: Arc::clone(&bulk_queued_packets),
-                bulk_packet_capacity: capacity,
-                bulk_available: Arc::clone(&bulk_available),
+                bulk_packet_capacity: packet_capacity,
             },
             TunPipelineQueueRx {
-                priority: priority_rx,
                 bulk: bulk_rx,
                 bulk_queued_packets,
-                bulk_packet_capacity: capacity,
-                bulk_available,
-                priority_closed: false,
                 bulk_closed: false,
             },
         )
     }
 
-    fn bulk_available_packet_slots(&self) -> usize {
-        self.bulk_available_packet_slots_with_capacity(self.bulk_packet_capacity)
-    }
-
-    fn discardable_bulk_packet_capacity(&self) -> usize {
-        self.bulk_packet_capacity
-            .min(FIPS_TUN_DISCARDABLE_BULK_BACKPRESSURE_CAP)
-    }
-
-    fn discardable_bulk_available_packet_slots(&self) -> usize {
-        self.bulk_available_packet_slots_with_capacity(self.discardable_bulk_packet_capacity())
-    }
-
-    fn bulk_available_packet_slots_with_capacity(&self, capacity: usize) -> usize {
-        capacity.saturating_sub(
-            self.bulk_queued_packets
-                .load(std::sync::atomic::Ordering::Relaxed),
-        )
-    }
-
-    fn tun_read_backpressure_ready(&self, read_burst: usize) -> bool {
-        self.tun_read_backpressure_ready_for_slots(read_burst)
-    }
-
-    fn tun_read_backpressure_ready_for_slots(&self, slots: usize) -> bool {
-        self.bulk.is_closed()
-            || self.bulk_available_packet_slots()
-                >= self.tun_read_backpressure_min_slots(slots)
-    }
-
-    fn tun_read_backpressure_min_slots(&self, read_burst: usize) -> usize {
-        self.tun_read_backpressure_min_slots_for_capacity(read_burst, self.bulk_packet_capacity)
-    }
-
-    fn tun_read_backpressure_min_slots_for_capacity(
-        &self,
-        read_burst: usize,
-        capacity: usize,
-    ) -> usize {
-        read_burst.max(1).min(capacity.max(1))
-    }
-
-    async fn wait_for_tun_read_bulk_headroom(&self, read_burst: usize) -> bool {
-        self.wait_for_tun_read_bulk_slots(read_burst).await
-    }
-
-    async fn wait_for_tun_read_bulk_slots(&self, slots: usize) -> bool {
-        self.wait_for_tun_read_bulk_slots_with_capacity(slots, self.bulk_packet_capacity)
-            .await
-    }
-
-    async fn wait_for_tun_read_discardable_bulk_slots(&self, slots: usize) -> bool {
-        self.wait_for_tun_read_bulk_slots_with_capacity(
-            slots,
-            self.discardable_bulk_packet_capacity(),
-        )
-        .await
-    }
-
-    async fn wait_for_tun_read_bulk_slots_with_capacity(
-        &self,
-        slots: usize,
-        capacity: usize,
-    ) -> bool {
-        let needed = self.tun_read_backpressure_min_slots_for_capacity(slots, capacity);
-        loop {
-            if self.bulk.is_closed() {
-                return false;
-            }
-            if self.bulk_available_packet_slots_with_capacity(capacity) >= needed {
-                return true;
-            }
-
-            let notified = self.bulk_available.notified();
-            if self.bulk.is_closed() {
-                return false;
-            }
-            if self.bulk_available_packet_slots_with_capacity(capacity) >= needed {
-                return true;
-            }
-
-            let _timer = crate::pipeline_profile::Timer::start(
-                crate::pipeline_profile::Stage::TunToMeshBackpressureWait,
-            );
-            tokio::select! {
-                _ = notified => {}
-                _ = self.bulk.closed() => return false,
-            }
+    fn try_reserve_bulk_packets(&self, packet_count: usize) -> bool {
+        if packet_count == 0 {
+            return true;
         }
+        if packet_count > self.bulk_packet_capacity {
+            return false;
+        }
+        self.bulk_queued_packets
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                let next = current.checked_add(packet_count)?;
+                (next <= self.bulk_packet_capacity).then_some(next)
+            })
+            .is_ok()
+    }
+
+    fn release_bulk_packets(&self, packet_count: usize) {
+        release_tun_pipeline_bulk_packets(&self.bulk_queued_packets, packet_count);
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TunPipelineQueueRx {
-    fn try_recv_priority(&mut self) -> Option<TunPipelineBatch> {
-        if self.priority_closed {
-            return None;
-        }
-
-        match self.priority.try_recv() {
-            Ok(batch) => Some(batch),
-            Err(mpsc::error::TryRecvError::Empty) => None,
-            Err(mpsc::error::TryRecvError::Disconnected) => {
-                self.priority_closed = true;
-                None
-            }
-        }
+    fn bulk_backlog_batches(&self) -> usize {
+        self.bulk.len()
     }
 
     fn bulk_backlog_packets(&self) -> usize {
-        self.bulk_queued_packets
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn has_bulk_backlog(&self) -> bool {
-        self.bulk_backlog_packets() > 0
+        self.bulk_queued_packets.load(Ordering::Acquire)
     }
 
     async fn recv(&mut self) -> Option<TunPipelineBatch> {
         loop {
-            match self.priority.try_recv() {
-                Ok(batch) => return Some(batch),
-                Err(mpsc::error::TryRecvError::Empty) => {}
-                Err(mpsc::error::TryRecvError::Disconnected) => self.priority_closed = true,
-            }
-
-            if self.priority_closed && self.bulk_closed {
+            if self.bulk_closed {
                 return None;
             }
 
-            tokio::select! {
-                biased;
-                batch = self.priority.recv(), if !self.priority_closed => {
-                    match batch {
-                        Some(batch) => return Some(batch),
-                        None => self.priority_closed = true,
-                    }
+            match self.bulk.recv().await {
+                Some(batch) => {
+                    self.release_bulk_batch(&batch);
+                    return Some(batch);
                 }
-                batch = self.bulk.recv(), if !self.bulk_closed => {
-                    match batch {
-                        Some(batch) => {
-                            release_tun_bulk_packet_slots(&self.bulk_queued_packets, batch.len());
-                            self.bulk_available.notify_waiters();
-                            return Some(batch);
-                        }
-                        None => self.bulk_closed = true,
-                    }
-                }
+                None => self.bulk_closed = true,
             }
         }
+    }
+
+    fn release_bulk_batch(&self, batch: &TunPipelineBatch) {
+        release_tun_pipeline_bulk_packets(&self.bulk_queued_packets, batch.len());
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for TunPipelineQueueRx {
+    fn drop(&mut self) {
+        while let Ok(batch) = self.bulk.try_recv() {
+            self.release_bulk_batch(&batch);
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn release_tun_pipeline_bulk_packets(queued_packets: &AtomicUsize, packet_count: usize) {
+    if packet_count > 0 {
+        queued_packets.fetch_sub(packet_count, Ordering::AcqRel);
     }
 }
 
@@ -332,29 +226,107 @@ struct FipsEndpointControlReply {
 
 struct FipsEndpointMessageOutcome {
     event: Option<FipsPrivateMeshEvent>,
+    packet: Option<FipsEndpointData>,
     reply: Option<FipsEndpointControlReply>,
+    data_rx: Option<FipsDataRxNote>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+trait FipsMeshBlockingBatchSink {
+    fn handle_packet(&mut self, packet: FipsEndpointData) -> bool;
+    fn handle_event(&mut self, event: FipsPrivateMeshEvent) -> bool;
 }
 
 impl FipsEndpointMessageOutcome {
     fn event(event: FipsPrivateMeshEvent) -> Self {
         Self {
             event: Some(event),
+            packet: None,
             reply: None,
+            data_rx: None,
         }
     }
 
     fn event_with_reply(event: FipsPrivateMeshEvent, peer: PeerIdentity, data: Vec<u8>) -> Self {
         Self {
             event: Some(event),
+            packet: None,
             reply: Some(FipsEndpointControlReply { peer, data }),
+            data_rx: None,
         }
     }
 
     fn none() -> Self {
         Self {
             event: None,
+            packet: None,
             reply: None,
+            data_rx: None,
         }
+    }
+
+    fn packet_with_deferred_data_rx(
+        packet: FipsEndpointData,
+        participant: &str,
+        participant_key: Option<&ParticipantPubkeyBytes>,
+        bytes: usize,
+    ) -> Self {
+        Self {
+            event: None,
+            packet: Some(packet),
+            reply: None,
+            data_rx: Some(FipsDataRxNote::new(participant, participant_key, bytes)),
+        }
+    }
+}
+
+struct FipsDataRxNote {
+    participant: Option<String>,
+    participant_key: Option<ParticipantPubkeyBytes>,
+    bytes: usize,
+}
+
+impl FipsDataRxNote {
+    fn new(
+        participant: &str,
+        participant_key: Option<&ParticipantPubkeyBytes>,
+        bytes: usize,
+    ) -> Self {
+        let participant_key = participant_key.copied();
+        Self {
+            participant: participant_key.is_none().then(|| participant.to_string()),
+            participant_key,
+            bytes,
+        }
+    }
+}
+
+#[derive(Default)]
+struct FipsDataRxBatchNotes {
+    entries: Vec<FipsDataRxNote>,
+}
+
+impl FipsDataRxBatchNotes {
+    fn push(&mut self, note: FipsDataRxNote) {
+        if let Some(entry) = self.entries.iter_mut().find(|entry| {
+            match (entry.participant_key, note.participant_key) {
+                (Some(left), Some(right)) => left == right,
+                (None, None) => entry.participant == note.participant,
+                _ => false,
+            }
+        }) {
+            entry.bytes = entry.bytes.saturating_add(note.bytes);
+            return;
+        }
+        self.entries.push(note);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = FipsDataRxNote> + '_ {
+        self.entries.drain(..)
     }
 }
 
@@ -363,7 +335,7 @@ struct FipsEndpointIdentitySendRun {
     participant_fallback: Option<String>,
     participant_key: Option<ParticipantPubkeyBytes>,
     identity: PeerIdentity,
-    payloads: Vec<FipsEndpointPayload>,
+    payloads: Vec<Vec<u8>>,
     bytes_len: usize,
 }
 
