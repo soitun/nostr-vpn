@@ -365,6 +365,7 @@ impl LinuxVnetWritePreparer {
         tun_fd: &BorrowedTunFd,
         packets: &P,
         frame_index: usize,
+        write_gate: Option<&Mutex<()>>,
     ) -> io::Result<usize> {
         let Self {
             vectored_frames,
@@ -376,6 +377,7 @@ impl LinuxVnetWritePreparer {
             packets,
             &vectored_frames[frame_index],
             write_iov,
+            write_gate,
         )
     }
 

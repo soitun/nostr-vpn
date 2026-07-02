@@ -456,6 +456,7 @@ fn spawn_blocking_mesh_recv_worker(
 ) -> FipsMeshRecvWorker {
     let stop = Arc::new(AtomicBool::new(false));
     let tun_fd = *tun_fd.get_ref();
+    let direct_tun_write_gate = Arc::new(Mutex::new(()));
     let lane_count = mesh
         .direct_endpoint_rx
         .as_ref()
@@ -465,6 +466,7 @@ fn spawn_blocking_mesh_recv_worker(
     for lane in 0..lane_count {
         let mesh = Arc::clone(&mesh);
         let thread_stop = Arc::clone(&stop);
+        let direct_tun_write_gate = Arc::clone(&direct_tun_write_gate);
         let thread = std::thread::Builder::new()
             .name(format!("nvpn-fips-mesh-recv-{lane}"))
             .spawn(move || {
@@ -506,6 +508,7 @@ fn spawn_blocking_mesh_recv_worker(
                                 tun_fd,
                                 &mut packet_batch,
                                 &thread_stop,
+                                &direct_tun_write_gate,
                                 #[cfg(target_os = "linux")]
                                 &mut vnet_write_preparer,
                             );
@@ -525,6 +528,7 @@ fn spawn_blocking_mesh_recv_worker(
                             tun_fd,
                             &mut packet_batch,
                             &thread_stop,
+                            &direct_tun_write_gate,
                             #[cfg(target_os = "linux")]
                             &mut vnet_write_preparer,
                         );
@@ -541,6 +545,7 @@ fn spawn_blocking_mesh_recv_worker(
                             tun_fd,
                             &mut packet_batch,
                             &thread_stop,
+                            &direct_tun_write_gate,
                             #[cfg(target_os = "linux")]
                             &mut vnet_write_preparer,
                         );
@@ -699,13 +704,14 @@ fn flush_mesh_packet_batch_to_tun_blocking(
             packet_bytes,
             stop,
             vnet_write_preparer,
+            None,
         );
         packet_batch.clear();
         return;
     }
 
     for packet in packet_batch.drain_packets() {
-        write_packet_to_tun_blocking(tun_fd, packet.as_slice(), stop);
+        write_packet_to_tun_blocking(tun_fd, packet.as_slice(), stop, None);
     }
 }
 
@@ -714,6 +720,7 @@ fn flush_direct_endpoint_packet_batch_to_tun_blocking(
     tun_fd: BorrowedTunFd,
     packet_batch: &mut DirectTunWriteBatch,
     stop: &AtomicBool,
+    direct_tun_write_gate: &Mutex<()>,
     #[cfg(target_os = "linux")] vnet_write_preparer: &mut LinuxVnetWritePreparer,
 ) {
     if packet_batch.is_empty() {
@@ -731,13 +738,14 @@ fn flush_direct_endpoint_packet_batch_to_tun_blocking(
             packet_bytes,
             stop,
             vnet_write_preparer,
+            Some(direct_tun_write_gate),
         );
         packet_batch.clear();
         return;
     }
 
     for packet in packet_batch.run_slices() {
-        write_packet_to_tun_blocking(tun_fd, packet, stop);
+        write_packet_to_tun_blocking(tun_fd, packet, stop, Some(direct_tun_write_gate));
     }
     packet_batch.clear();
 }
@@ -776,7 +784,12 @@ async fn write_packet_to_tun(tun_fd: &AsyncFd<BorrowedTunFd>, packet: &[u8]) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn write_packet_to_tun_blocking(fd: BorrowedTunFd, packet: &[u8], stop: &AtomicBool) {
+fn write_packet_to_tun_blocking(
+    fd: BorrowedTunFd,
+    packet: &[u8],
+    stop: &AtomicBool,
+    write_gate: Option<&Mutex<()>>,
+) {
     let Some(address_family) = tunnel_packet_address_family(packet) else {
         return;
     };
@@ -786,7 +799,7 @@ fn write_packet_to_tun_blocking(fd: BorrowedTunFd, packet: &[u8], stop: &AtomicB
         if stop.load(Ordering::Acquire) {
             return;
         }
-        match raw_write_packet_to_tun(&fd, packet, address_family) {
+        match raw_write_packet_to_tun_gated(&fd, packet, address_family, write_gate) {
             Ok(()) => {
                 crate::pipeline_profile::record_tun_write_packet(packet.len());
                 crate::pipeline_profile::record_tun_write_frame(packet.len());
@@ -907,7 +920,7 @@ async fn write_linux_vnet_vectored_frame_to_tun<P: LinuxVnetPacketBatch + ?Sized
 ) {
     let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWrite);
     loop {
-        match preparer.write_vectored_frame_to_tun(tun_fd.get_ref(), packets, frame_index) {
+        match preparer.write_vectored_frame_to_tun(tun_fd.get_ref(), packets, frame_index, None) {
             Ok(written) => {
                 crate::pipeline_profile::record_tun_write_frame(written);
                 return;
@@ -939,6 +952,7 @@ fn write_linux_vnet_packet_batch_to_tun_blocking<P: LinuxVnetPacketBatch + ?Size
     packet_bytes: usize,
     stop: &AtomicBool,
     preparer: &mut LinuxVnetWritePreparer,
+    write_gate: Option<&Mutex<()>>,
 ) {
     preparer.prepare(packets);
     crate::pipeline_profile::record_tun_write_packets(packet_count, packet_bytes);
@@ -950,6 +964,7 @@ fn write_linux_vnet_packet_batch_to_tun_blocking<P: LinuxVnetPacketBatch + ?Size
             preparer,
             frame,
             stop,
+            write_gate,
         );
     }
 }
@@ -961,6 +976,7 @@ fn write_linux_vnet_prepared_frame_to_tun_blocking<P: LinuxVnetPacketBatch + ?Si
     preparer: &mut LinuxVnetWritePreparer,
     frame: LinuxVnetPreparedWriteFrame,
     stop: &AtomicBool,
+    write_gate: Option<&Mutex<()>>,
 ) {
     match frame {
         LinuxVnetPreparedWriteFrame::RawPacket(packet_index) => {
@@ -968,6 +984,7 @@ fn write_linux_vnet_prepared_frame_to_tun_blocking<P: LinuxVnetPacketBatch + ?Si
                 tun_fd,
                 packets.packet_slice(packet_index),
                 stop,
+                write_gate,
             )
         }
         LinuxVnetPreparedWriteFrame::Vectored(frame_index) => {
@@ -977,6 +994,7 @@ fn write_linux_vnet_prepared_frame_to_tun_blocking<P: LinuxVnetPacketBatch + ?Si
                 preparer,
                 frame_index,
                 stop,
+                write_gate,
             )
         }
     }
@@ -987,13 +1005,14 @@ fn write_linux_vnet_raw_packet_to_tun_blocking(
     tun_fd: BorrowedTunFd,
     packet: &[u8],
     stop: &AtomicBool,
+    write_gate: Option<&Mutex<()>>,
 ) {
     let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWrite);
     loop {
         if stop.load(Ordering::Acquire) {
             return;
         }
-        match raw_write_packet_to_tun(&tun_fd, packet, 0) {
+        match raw_write_packet_to_tun_gated(&tun_fd, packet, 0, write_gate) {
             Ok(()) => {
                 crate::pipeline_profile::record_tun_write_frame(
                     LINUX_VIRTIO_NET_HDR_LEN + packet.len(),
@@ -1020,13 +1039,14 @@ fn write_linux_vnet_frame_to_tun_blocking(
     tun_fd: BorrowedTunFd,
     frame: &[u8],
     stop: &AtomicBool,
+    write_gate: Option<&Mutex<()>>,
 ) {
     let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWrite);
     loop {
         if stop.load(Ordering::Acquire) {
             return;
         }
-        match raw_write_linux_vnet_frame_to_tun(&tun_fd, frame) {
+        match raw_write_linux_vnet_frame_to_tun_gated(&tun_fd, frame, write_gate) {
             Ok(()) => {
                 crate::pipeline_profile::record_tun_write_frame(frame.len());
                 return;
@@ -1053,13 +1073,14 @@ fn write_linux_vnet_vectored_frame_to_tun_blocking<P: LinuxVnetPacketBatch + ?Si
     preparer: &mut LinuxVnetWritePreparer,
     frame_index: usize,
     stop: &AtomicBool,
+    write_gate: Option<&Mutex<()>>,
 ) {
     let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWrite);
     loop {
         if stop.load(Ordering::Acquire) {
             return;
         }
-        match preparer.write_vectored_frame_to_tun(&tun_fd, packets, frame_index) {
+        match preparer.write_vectored_frame_to_tun(&tun_fd, packets, frame_index, write_gate) {
             Ok(written) => {
                 crate::pipeline_profile::record_tun_write_frame(written);
                 return;
@@ -1115,6 +1136,29 @@ fn tunnel_packet_address_family(packet: &[u8]) -> Option<u8> {
         Some(4) | Some(6) => Some(0),
         _ => None,
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn with_tun_write_gate<T>(write_gate: Option<&Mutex<()>>, write: impl FnOnce() -> T) -> T {
+    let Some(write_gate) = write_gate else {
+        return write();
+    };
+    let _guard = write_gate
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    write()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn raw_write_packet_to_tun_gated(
+    tun_fd: &BorrowedTunFd,
+    packet: &[u8],
+    address_family: u8,
+    write_gate: Option<&Mutex<()>>,
+) -> io::Result<()> {
+    with_tun_write_gate(write_gate, || {
+        raw_write_packet_to_tun(tun_fd, packet, address_family)
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -1195,11 +1239,21 @@ fn raw_write_linux_vnet_frame_to_tun(tun_fd: &BorrowedTunFd, frame: &[u8]) -> io
 }
 
 #[cfg(target_os = "linux")]
+fn raw_write_linux_vnet_frame_to_tun_gated(
+    tun_fd: &BorrowedTunFd,
+    frame: &[u8],
+    write_gate: Option<&Mutex<()>>,
+) -> io::Result<()> {
+    with_tun_write_gate(write_gate, || raw_write_linux_vnet_frame_to_tun(tun_fd, frame))
+}
+
+#[cfg(target_os = "linux")]
 fn raw_write_linux_vnet_vectored_frame_to_tun<P: LinuxVnetPacketBatch + ?Sized>(
     tun_fd: &BorrowedTunFd,
     packets: &P,
     frame: &LinuxVnetWriteFrame,
     iov: &mut Vec<libc::iovec>,
+    write_gate: Option<&Mutex<()>>,
 ) -> io::Result<usize> {
     let first_packet = packets.packet_slice(frame.first_packet_index);
     let first_payload = &first_packet[frame.first_payload_offset..];
@@ -1249,13 +1303,13 @@ fn raw_write_linux_vnet_vectored_frame_to_tun<P: LinuxVnetPacketBatch + ?Sized>(
             iov_len: payload.len(),
         });
     }
-    let written = unsafe {
+    let written = with_tun_write_gate(write_gate, || unsafe {
         libc::writev(
             tun_fd.as_raw_fd(),
             iov.as_ptr(),
             iov.len() as libc::c_int,
         )
-    };
+    });
     let result = raw_tun_write_result(written, expected);
     iov.clear();
     result?;
