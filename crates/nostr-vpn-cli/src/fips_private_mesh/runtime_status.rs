@@ -281,7 +281,27 @@ impl FipsPrivateMeshRuntime {
         let configured = mesh.peer_pubkeys();
         let previous_activity = self.peer_activity.load();
         let peer_activity = peer_activity_map(&configured, Some(&**previous_activity));
-        self.mesh.store(Arc::new(mesh));
+        let mesh = Arc::new(mesh);
+        let next_generation = loop {
+            let generation = self.mesh_generation.load(Ordering::Acquire);
+            if generation & 1 != 0 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let updating_generation = generation.wrapping_add(1);
+            match self.mesh_generation.compare_exchange(
+                generation,
+                updating_generation,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => break updating_generation.wrapping_add(1),
+                Err(_) => std::hint::spin_loop(),
+            }
+        };
+        self.mesh.store(mesh);
+        self.mesh_generation
+            .store(next_generation, Ordering::Release);
         self.peer_activity.store(Arc::new(peer_activity));
         self.peer_identities.store(Arc::new(peer_identities));
         self.presence
@@ -301,6 +321,28 @@ impl FipsPrivateMeshRuntime {
             .map_err(|_| anyhow!("FIPS mesh peer capabilities lock poisoned"))?
             .retain(|participant, _| configured.iter().any(|value| value == participant));
         Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn mesh_generation(&self) -> u64 {
+        self.mesh_generation.load(Ordering::Acquire)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn stable_mesh_snapshot(&self) -> (u64, Arc<FipsMeshRuntime>) {
+        loop {
+            let generation = self.mesh_generation.load(Ordering::Acquire);
+            if generation & 1 != 0 {
+                std::hint::spin_loop();
+                continue;
+            }
+            let mesh = self.mesh.load_full();
+            let observed_generation = self.mesh_generation.load(Ordering::Acquire);
+            if generation == observed_generation {
+                return (generation, mesh);
+            }
+            std::hint::spin_loop();
+        }
     }
 
     pub(crate) fn peer_advertised_routes(&self, participant: &str) -> Vec<String> {

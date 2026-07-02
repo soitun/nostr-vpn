@@ -1,18 +1,3 @@
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[test]
-    fn closed_tun_to_mesh_queue_stops_reader() {
-        let (tx, rx) = TunPipelineQueueTx::channel(1);
-        drop(rx);
-
-        assert_eq!(
-            submit_tun_packet_batch_to_mesh_queue(
-                &tx,
-                vec![test_pipeline_packet(test_ipv6_tcp_packet(0x18, 512))],
-            ),
-            TunQueueSubmit::Closed
-        );
-    }
-
     fn mesh_peer_status(
         pubkey: impl AsRef<str>,
         endpoint_npub: impl AsRef<str>,
@@ -923,6 +908,86 @@
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
+    async fn direct_endpoint_source_run_admission_uses_current_mesh_after_replace() {
+        let keys = Keys::generate();
+        let nsec = keys.secret_key().to_bech32().expect("nsec");
+        let participant_pubkey = keys.public_key().to_hex();
+        let old_source = Ipv4Addr::new(10, 44, 10, 1);
+        let new_source = Ipv4Addr::new(10, 44, 10, 2);
+        let destination = Ipv4Addr::new(10, 44, 22, 44);
+
+        let old_peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &participant_pubkey,
+            vec![format!("{old_source}/32"), format!("{destination}/32")],
+        )
+        .expect("old peer config");
+        let new_peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &participant_pubkey,
+            vec![format!("{new_source}/32"), format!("{destination}/32")],
+        )
+        .expect("new peer config");
+        let runtime = FipsPrivateMeshRuntime::bind(nsec, "test-network", vec![old_peer])
+            .await
+            .expect("runtime should bind");
+        let mut old_packet = ipv4_packet(old_source, destination);
+        let mut new_packet = ipv4_packet(new_source, destination);
+        old_packet[20] = 1;
+        new_packet[20] = 2;
+
+        assert!(
+            runtime
+                .send_tunnel_packet_owned(old_packet.clone())
+                .await
+                .expect("send packet admitted by old config")
+        );
+        runtime
+            .replace_peers(vec![new_peer], Vec::new(), Vec::new())
+            .expect("replace runtime mesh");
+        assert!(
+            runtime
+                .send_tunnel_packet_owned(new_packet.clone())
+                .await
+                .expect("send packet admitted by new config")
+        );
+
+        let old_len = old_packet.len() as u64;
+        let new_len = new_packet.len() as u64;
+        let runtime = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let stop = AtomicBool::new(false);
+            let mut packets = DirectTunWriteBatch::with_capacity(4);
+
+            let emitted = runtime
+                .recv_direct_endpoint_tun_batch_blocking(
+                    0,
+                    8,
+                    &stop,
+                    &mut packets,
+            )?
+            .expect("new-config packet should be admitted");
+            assert_eq!(emitted, 1);
+            assert_eq!(packets.len(), 1);
+            assert_eq!(packets.packet_slices_for_test()[0], new_packet.as_slice());
+            runtime.finalize_direct_endpoint_tun_batch_blocking(&mut packets)?;
+
+            Ok(runtime)
+        })
+        .await
+        .expect("blocking receiver should join")
+        .expect("blocking source-run receive should succeed");
+
+        let status = runtime
+            .peer_statuses()
+            .into_iter()
+            .find(|status| status.pubkey == participant_pubkey)
+            .expect("peer status");
+        assert_eq!(status.tx_bytes, old_len + new_len);
+        assert_eq!(status.rx_bytes, new_len);
+
+        runtime.shutdown().await.expect("shutdown");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[tokio::test]
     async fn endpoint_data_runtime_blocking_recv_batch_for_each_respects_limit() {
         let keys = Keys::generate();
         let nsec = keys.secret_key().to_bech32().expect("nsec");
@@ -953,47 +1018,36 @@
 
         let runtime = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let stop = AtomicBool::new(false);
-            let mut packets = Vec::with_capacity(8);
-            struct PacketSink<'a> {
-                packets: &'a mut Vec<super::FipsEndpointData>,
-            }
-            impl super::FipsMeshBlockingBatchSink for PacketSink<'_> {
-                fn handle_packet(&mut self, packet: super::FipsEndpointData) -> bool {
-                    self.packets.push(packet);
-                    true
-                }
-
-                fn handle_event(&mut self, event: FipsPrivateMeshEvent) -> bool {
-                    panic!("expected packet callback, got event {event:?}")
-                }
-            }
+            let mut packets = DirectTunWriteBatch::with_capacity(8);
 
             let received = runtime
-                .recv_mesh_event_batch_blocking_for_each(
+                .recv_direct_endpoint_tun_batch_blocking(
+                    0,
                     2,
                     &stop,
-                    &mut PacketSink {
-                        packets: &mut packets,
-                    },
+                    &mut packets,
                 )?
                 .expect("batch should contain admitted packets");
             assert_eq!(received, 2);
 
-            assert_eq!(packets, vec![first, second]);
+            assert_eq!(packets.len(), 2);
+            let packet_slices = packets.packet_slices_for_test();
+            assert_eq!(packet_slices[0], first.as_slice());
+            assert_eq!(packet_slices[1], second.as_slice());
             packets.clear();
 
             let received = runtime
-                .recv_mesh_event_batch_blocking_for_each(
+                .recv_direct_endpoint_tun_batch_blocking(
+                    0,
                     8,
                     &stop,
-                    &mut PacketSink {
-                        packets: &mut packets,
-                    },
+                    &mut packets,
                 )?
                 .expect("batch should contain admitted packets");
             assert_eq!(received, 1);
 
-            assert_eq!(packets, vec![third]);
+            assert_eq!(packets.len(), 1);
+            assert_eq!(packets.packet_slices_for_test()[0], third.as_slice());
 
             Ok(runtime)
         })

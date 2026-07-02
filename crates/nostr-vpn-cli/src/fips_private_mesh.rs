@@ -4,9 +4,10 @@ use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
 use fips_endpoint::{
-    Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointError, FipsEndpointMessage,
-    FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
-    PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
+    Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointDirectDeliveryError,
+    FipsEndpointDirectPacketBatch, FipsEndpointDirectPacketRun, FipsEndpointDirectSink,
+    FipsEndpointError, FipsEndpointMessage, FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress,
+    PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
 };
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
@@ -20,7 +21,7 @@ use nostr_vpn_core::fips_control::{
     encode_fips_control_messages,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use nostr_vpn_core::fips_mesh::packet_destination;
+use nostr_vpn_core::fips_mesh::{FipsEndpointSourceAdmitter, packet_destination};
 use nostr_vpn_core::fips_mesh::{
     FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission, RoutedFipsPeer,
 };
@@ -29,6 +30,8 @@ use nostr_vpn_core::join_requests::MeshJoinRequest;
 use nostr_vpn_core::paid_route_store::PaidRouteSellerAdmission;
 use nostr_vpn_core::paid_routes::PaidExitConfig;
 use sha2::{Digest, Sha256};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -39,7 +42,9 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::sync::Condvar;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::sync::{Mutex, RwLock};
 #[cfg(target_os = "windows")]
@@ -111,36 +116,6 @@ const fn macos_default_udp_send_buf_size() -> usize {
     MIN_FIPS_UDP_SEND_BUF_SIZE * MACOS_UDP_SEND_BUF_MIN_MULTIPLIER
 }
 
-#[cfg(any(target_os = "macos", test))]
-const fn div_ceil_usize(value: usize, divisor: usize) -> usize {
-    if value == 0 || divisor == 0 {
-        0
-    } else {
-        ((value - 1) / divisor) + 1
-    }
-}
-
-#[cfg(any(target_os = "macos", test))]
-const fn round_up_to_multiple(value: usize, multiple: usize) -> usize {
-    div_ceil_usize(value, multiple) * multiple
-}
-
-#[cfg(any(target_os = "macos", test))]
-const fn macos_tun_to_mesh_queue_cap(
-    udp_send_buf_size: usize,
-    min_underlay_mtu: usize,
-    tun_read_burst: usize,
-) -> usize {
-    let packet_budget = div_ceil_usize(udp_send_buf_size, min_underlay_mtu);
-    let burst = if tun_read_burst == 0 {
-        1
-    } else {
-        tun_read_burst
-    };
-    let rounded = round_up_to_multiple(packet_budget, burst);
-    if rounded == 0 { 1 } else { rounded }
-}
-
 // Keep WireGuard-style bounded packet turns and let actual queue pressure decide
 // whether the sender should yield between batches. FIPS's raw
 // `FIPS_MACOS_SEND_PACE_MBPS` rate knob remains opt-in for lab A/Bs; the default
@@ -149,22 +124,14 @@ const fn macos_tun_to_mesh_queue_cap(
 const FIPS_MESH_RECV_BURST: usize = 64;
 #[cfg(target_os = "macos")]
 const FIPS_MESH_RECV_BURST: usize = 128;
+#[cfg(all(target_os = "linux", not(test)))]
+const FIPS_DIRECT_ENDPOINT_RX_LANES: usize = 4;
+#[cfg(any(target_os = "macos", test))]
+const FIPS_DIRECT_ENDPOINT_RX_LANES: usize = 1;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_EVENT_DRAIN_LIMIT: usize = 256;
 #[cfg(target_os = "linux")]
-const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 4096;
-#[cfg(target_os = "linux")]
 const DEFAULT_LINUX_TUN_TX_QUEUE_LEN: usize = 4096;
-#[cfg(target_os = "macos")]
-const DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = macos_tun_to_mesh_queue_cap(
-    macos_default_udp_send_buf_size(),
-    MESH_MIN_UNDERLAY_UDP_MTU as usize,
-    FIPS_TUN_READ_BURST,
-);
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const MIN_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 1;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const MAX_FIPS_TUN_TO_MESH_QUEUE_CAP: usize = 65_536;
 #[cfg(target_os = "macos")]
 const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(macos_default_udp_send_buf_size());
 #[cfg(not(target_os = "macos"))]
@@ -173,29 +140,6 @@ const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = None;
 const WINDOWS_FIPS_TUN_READ_BURST: usize = 64;
 #[cfg(target_os = "windows")]
 const WINDOWS_FIPS_TUN_WRITE_BURST: usize = 128;
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn fips_tun_to_mesh_queue_cap() -> usize {
-    static VALUE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *VALUE.get_or_init(|| {
-        parse_fips_tun_to_mesh_queue_cap(
-            std::env::var("NVPN_FIPS_TUN_TO_MESH_QUEUE_CAP")
-                .ok()
-                .as_deref(),
-            DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP,
-        )
-    })
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn parse_fips_tun_to_mesh_queue_cap(raw: Option<&str>, default: usize) -> usize {
-    raw.and_then(|raw| raw.trim().parse::<usize>().ok())
-        .unwrap_or(default)
-        .clamp(
-            MIN_FIPS_TUN_TO_MESH_QUEUE_CAP,
-            MAX_FIPS_TUN_TO_MESH_QUEUE_CAP,
-        )
-}
 
 fn fips_udp_send_buf_size() -> Option<usize> {
     static VALUE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
@@ -291,7 +235,10 @@ use crate::fips_host_tunnel::FipsHostTunnelConfig;
 
 pub(crate) struct FipsPrivateMeshRuntime {
     endpoint: FipsEndpoint,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    direct_endpoint_rx: Option<Vec<FipsDirectEndpointDataRx>>,
     mesh: ArcSwap<FipsMeshRuntime>,
+    mesh_generation: AtomicU64,
     peer_activity: ArcSwap<FipsPeerActivityMap>,
     peer_identities: ArcSwap<FipsPeerIdentityMap>,
     presence: RwLock<HashMap<String, FipsPeerPresence>>,

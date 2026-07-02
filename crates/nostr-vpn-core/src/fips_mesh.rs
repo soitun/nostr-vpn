@@ -105,6 +105,30 @@ pub struct AcceptedFipsPacket<'a, B = Vec<u8>> {
     pub bytes: B,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct AcceptedFipsPacketSourceRun<'a> {
+    pub source_pubkey: &'a str,
+    pub source_pubkey_bytes: Option<&'a [u8; 32]>,
+    pub endpoint_bytes: usize,
+    accepted_packets: usize,
+}
+
+impl AcceptedFipsPacketSourceRun<'_> {
+    pub fn len(&self) -> usize {
+        self.accepted_packets
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.accepted_packets == 0
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct FipsEndpointSourceAdmitter<'a> {
+    runtime: &'a FipsMeshRuntime,
+    peer: &'a FipsMeshPeerRuntime,
+}
+
 #[derive(Debug, Clone)]
 pub struct FipsMeshRuntime {
     peers: Vec<FipsMeshPeerRuntime>,
@@ -377,12 +401,19 @@ impl FipsMeshRuntime {
     where
         B: AsRef<[u8]>,
     {
-        let peer = self.admit_endpoint_data_from_node_addr(source_node_addr, data.as_ref())?;
+        self.endpoint_source_admitter(source_node_addr)?
+            .receive_owned(data)
+    }
 
-        Some(AcceptedFipsPacket {
-            source_pubkey: &peer.participant_pubkey_hex,
-            source_pubkey_bytes: peer.participant_pubkey.as_ref(),
-            bytes: data,
+    pub fn endpoint_source_admitter<'a>(
+        &'a self,
+        source_node_addr: &[u8; 16],
+    ) -> Option<FipsEndpointSourceAdmitter<'a>> {
+        let peer_index = *self.endpoint_node_addr_peer_index.get(source_node_addr)?;
+        let peer = self.peers.get(peer_index)?;
+        Some(FipsEndpointSourceAdmitter {
+            runtime: self,
+            peer,
         })
     }
 
@@ -409,22 +440,7 @@ impl FipsMeshRuntime {
         source_node_addr: &[u8; 16],
         data: &[u8],
     ) -> Option<&FipsMeshPeerRuntime> {
-        let packet_source = packet_source(data)?;
-        let peer = self.select_peer_for_ip(packet_source)?;
-        if peer.endpoint_node_addr.as_ref()? != source_node_addr {
-            return None;
-        }
-        if !self.local_routes.is_empty() {
-            let packet_destination = packet_destination(data)?;
-            if !self
-                .local_routes
-                .iter()
-                .any(|route| route.matches(packet_destination))
-            {
-                return None;
-            }
-        }
-        Some(peer)
+        self.endpoint_source_admitter(source_node_addr)?.admit(data)
     }
 
     pub fn peer_statuses(&self) -> Vec<MeshPeerStatus> {
@@ -606,6 +622,82 @@ impl FipsMeshRuntime {
             .copied()
             .filter(|route| route.matches(destination))
             .max_by_key(|route| route.prefix_len)
+    }
+}
+
+impl<'a> FipsEndpointSourceAdmitter<'a> {
+    pub fn source_pubkey(&self) -> &'a str {
+        &self.peer.participant_pubkey_hex
+    }
+
+    pub fn source_pubkey_bytes(&self) -> Option<&'a [u8; 32]> {
+        self.peer.participant_pubkey.as_ref()
+    }
+
+    pub fn admit_packet(&self, data: &[u8]) -> bool {
+        self.admit(data).is_some()
+    }
+
+    pub fn receive_owned<B>(&self, data: B) -> Option<AcceptedFipsPacket<'a, B>>
+    where
+        B: AsRef<[u8]>,
+    {
+        self.admit(data.as_ref())?;
+        Some(AcceptedFipsPacket {
+            source_pubkey: &self.peer.participant_pubkey_hex,
+            source_pubkey_bytes: self.peer.participant_pubkey.as_ref(),
+            bytes: data,
+        })
+    }
+
+    pub fn receive_owned_source_run_into<I, B, F>(
+        &self,
+        packets: I,
+        mut accept: F,
+    ) -> Option<AcceptedFipsPacketSourceRun<'a>>
+    where
+        I: IntoIterator<Item = B>,
+        B: AsRef<[u8]>,
+        F: FnMut(B),
+    {
+        let mut accepted_packets = 0usize;
+        let mut endpoint_bytes = 0usize;
+        for packet in packets {
+            let bytes = packet.as_ref();
+            if self.admit(bytes).is_some() {
+                endpoint_bytes = endpoint_bytes.saturating_add(bytes.len());
+                accepted_packets = accepted_packets.saturating_add(1);
+                accept(packet);
+            }
+        }
+        if accepted_packets == 0 {
+            return None;
+        }
+        Some(AcceptedFipsPacketSourceRun {
+            source_pubkey: &self.peer.participant_pubkey_hex,
+            source_pubkey_bytes: self.peer.participant_pubkey.as_ref(),
+            endpoint_bytes,
+            accepted_packets,
+        })
+    }
+
+    fn admit(&self, data: &[u8]) -> Option<&'a FipsMeshPeerRuntime> {
+        let packet_source = packet_source(data)?;
+        if !self.peer_allows_inbound_source(packet_source) {
+            return None;
+        }
+        let packet_destination = packet_destination(data)?;
+        if !self
+            .runtime
+            .peer_allows_inbound_destination(self.peer, packet_destination)
+        {
+            return None;
+        }
+        Some(self.peer)
+    }
+
+    fn peer_allows_inbound_source(&self, source: IpAddr) -> bool {
+        self.peer.routes.iter().any(|route| route.matches(source))
     }
 }
 

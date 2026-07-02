@@ -44,22 +44,13 @@ impl FipsPrivateTunnelRuntime {
         let tun_fd = Arc::new(
             AsyncFd::with_interest(
                 BorrowedTunFd::new(tun.as_raw_fd(), tun.vnet_hdr()),
-                Interest::READABLE | Interest::WRITABLE,
+                Interest::WRITABLE,
             )
             .context("failed to register FIPS tunnel fd with reactor")?,
         );
 
-        let (packet_tx, mut packet_rx) = TunPipelineQueueTx::channel(fips_tun_to_mesh_queue_cap());
         let (event_tx, event_rx) = mpsc::channel::<FipsPrivateMeshEvent>(1024);
-        let tun_read_task = spawn_tun_read_task(Arc::clone(&tun), Arc::clone(&tun_fd), packet_tx);
-        let mesh_send_task = {
-            let mesh = Arc::clone(&mesh);
-            tokio::spawn(async move {
-                while let Some(batch) = packet_rx.recv().await {
-                    send_mesh_packet_batch_turns(&mesh, &mut packet_rx, batch).await;
-                }
-            })
-        };
+        let tun_send_worker = spawn_tun_send_worker(Arc::clone(&tun), Arc::clone(&mesh));
         let mesh_recv_worker =
             spawn_mesh_recv_worker(Arc::clone(&mesh), Arc::clone(&tun_fd), event_tx);
 
@@ -70,8 +61,7 @@ impl FipsPrivateTunnelRuntime {
             _tun: tun,
             tun_fd,
             fips_host: None,
-            tun_read_task,
-            mesh_send_task,
+            tun_send_worker,
             mesh_recv_worker,
             event_rx,
             #[cfg(target_os = "linux")]
@@ -259,10 +249,7 @@ impl FipsPrivateTunnelRuntime {
             handle.cleanup().await;
         }
         runtime.stop_fips_host_runtime().await;
-        runtime.tun_read_task.abort();
-        runtime.mesh_send_task.abort();
-        let _ = runtime.tun_read_task.await;
-        let _ = runtime.mesh_send_task.await;
+        stop_tun_send_worker(runtime.tun_send_worker).await;
         stop_mesh_recv_worker(runtime.mesh_recv_worker, &runtime.mesh).await;
         if let Ok(mesh) = Arc::try_unwrap(runtime.mesh) {
             mesh.shutdown()
@@ -485,41 +472,4 @@ impl FipsPrivateTunnelRuntime {
         self.exit_node_runtime = crate::MacosExitNodeRuntime::default();
     }
 
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn send_mesh_packet_batch_turns(
-    mesh: &FipsPrivateMeshRuntime,
-    packet_rx: &mut TunPipelineQueueRx,
-    batch: TunPipelineBatch,
-) {
-    let mut send_runs = Vec::new();
-    crate::pipeline_profile::record_mesh_send_bulk_turn(
-        packet_rx.bulk_backlog_batches(),
-        batch.len(),
-    );
-    send_mesh_packet_batch_or_log(mesh, batch, &mut send_runs).await;
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn send_mesh_packet_batch_or_log(
-    mesh: &FipsPrivateMeshRuntime,
-    packets: TunPipelineBatch,
-    send_runs: &mut Vec<FipsEndpointSendRun>,
-) {
-    let packet_count = packets.len();
-    let packets = packets.into_iter().inspect(|packet| {
-        crate::pipeline_profile::record_since(
-            crate::pipeline_profile::Stage::TunToMeshQueueWait,
-            packet.queued_at,
-        );
-    });
-
-    let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshSend);
-    if let Err(error) = mesh
-        .send_tun_pipeline_packet_turn(packets, packet_count, packet_count, send_runs)
-        .await
-    {
-        eprintln!("fips: failed to send tunnel packet: {error}");
-    }
 }

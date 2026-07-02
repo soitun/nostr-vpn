@@ -24,11 +24,32 @@ impl FipsPrivateMeshRuntime {
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) -> Result<Self> {
         let scope = scope.into();
-        let endpoint = FipsEndpoint::builder()
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let (direct_endpoint_sink, direct_endpoint_rx) = {
+            // This queue carries authenticated packet-runs; live IP policy is applied on drain.
+            let lane_count = FIPS_DIRECT_ENDPOINT_RX_LANES.max(1);
+            let mut lanes = Vec::with_capacity(lane_count);
+            let mut receivers = Vec::with_capacity(lane_count);
+            for _ in 0..lane_count {
+                let lane = Arc::new(FipsDirectEndpointDataLane::new());
+                lanes.push(Arc::clone(&lane));
+                receivers.push(FipsDirectEndpointDataRx::new(lane));
+            }
+            (FipsDirectEndpointDataSink { lanes }, Some(receivers))
+        };
+
+        let endpoint_builder = FipsEndpoint::builder()
             .config(config)
             .identity_nsec(identity_nsec)
             .discovery_scope(scope)
-            .without_system_tun()
+            .without_system_tun();
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let endpoint = endpoint_builder
+            .bind_with_direct_sink(direct_endpoint_sink)
+            .await
+            .context("failed to bind embedded FIPS endpoint")?;
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let endpoint = endpoint_builder
             .bind()
             .await
             .context("failed to bind embedded FIPS endpoint")?;
@@ -42,7 +63,10 @@ impl FipsPrivateMeshRuntime {
 
         Ok(Self {
             endpoint,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            direct_endpoint_rx,
             mesh: ArcSwap::from_pointee(mesh),
+            mesh_generation: AtomicU64::new(0),
             peer_activity: ArcSwap::from_pointee(peer_activity),
             peer_identities: ArcSwap::from_pointee(peer_identities),
             presence: RwLock::new(HashMap::new()),
@@ -162,8 +186,42 @@ impl FipsPrivateMeshRuntime {
     where
         I: IntoIterator<Item = TunPipelinePacket>,
     {
+        self.build_tun_pipeline_send_runs(packets, input_packets, turn_capacity, runs)?;
+        let _t =
+            crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
+        self.send_endpoint_send_runs(runs.drain(..)).await
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn blocking_send_tun_pipeline_packet_turn<I>(
+        &self,
+        packets: I,
+        input_packets: usize,
+        turn_capacity: usize,
+        runs: &mut Vec<FipsEndpointSendRun>,
+    ) -> Result<usize>
+    where
+        I: IntoIterator<Item = TunPipelinePacket>,
+    {
+        self.build_tun_pipeline_send_runs(packets, input_packets, turn_capacity, runs)?;
+        let _t =
+            crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
+        self.blocking_send_endpoint_send_runs(runs.drain(..))
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn build_tun_pipeline_send_runs<I>(
+        &self,
+        packets: I,
+        input_packets: usize,
+        turn_capacity: usize,
+        runs: &mut Vec<FipsEndpointSendRun>,
+    ) -> Result<()>
+    where
+        I: IntoIterator<Item = TunPipelinePacket>,
+    {
         if input_packets == 0 {
-            return Ok(0);
+            return Ok(());
         }
 
         debug_assert!(runs.is_empty());
@@ -224,10 +282,7 @@ impl FipsPrivateMeshRuntime {
             run_count,
             turn_capacity,
         );
-
-        let _t =
-            crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
-        self.send_endpoint_send_runs(runs.drain(..)).await
+        Ok(())
     }
 
     fn push_endpoint_send_run(
@@ -303,6 +358,35 @@ impl FipsPrivateMeshRuntime {
         Ok(sent)
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn blocking_send_endpoint_send_runs<I>(&self, runs: I) -> Result<usize>
+    where
+        I: IntoIterator<Item = FipsEndpointSendRun>,
+    {
+        let mut sent = 0usize;
+        for run in runs {
+            match run {
+                FipsEndpointSendRun::Identity(run) => {
+                    let packet_count = run.payloads.len();
+                    self.endpoint
+                        .blocking_send_batch_to_peer(run.identity, run.payloads)
+                        .with_context(|| {
+                            format!(
+                                "failed to send {packet_count} private packets over FIPS endpoint data"
+                            )
+                        })?;
+                    self.note_tx(
+                        run.participant_fallback.as_deref(),
+                        run.participant_key.as_ref(),
+                        run.bytes_len,
+                    )?;
+                    sent += packet_count;
+                }
+            }
+        }
+
+        Ok(sent)
+    }
 }
 
 struct RoutedTunPipelinePacket<'a> {

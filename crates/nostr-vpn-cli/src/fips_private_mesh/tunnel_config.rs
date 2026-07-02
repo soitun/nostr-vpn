@@ -324,8 +324,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     _tun: Arc<SystemTun>,
     tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
     fips_host: Option<crate::fips_host_tunnel::FipsHostTunnelRuntime>,
-    tun_read_task: JoinHandle<()>,
-    mesh_send_task: JoinHandle<()>,
+    tun_send_worker: FipsTunSendWorker,
     mesh_recv_worker: FipsMeshRecvWorker,
     event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,
     #[cfg(target_os = "linux")]

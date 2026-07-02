@@ -30,9 +30,8 @@
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
-        BorrowedTunFd, TunPipelinePacket, TunPipelineQueueTx, TunQueueSubmit, TunWriteBatch,
-        parse_fips_mesh_recv_burst, parse_fips_tun_to_mesh_queue_cap, push_mesh_packet_for_tun,
-        raw_write_packet_to_tun, submit_tun_packet_batch_to_mesh_queue,
+        BorrowedTunFd, DirectTunWriteBatch, TunPipelinePacket, TunWriteBatch,
+        parse_fips_mesh_recv_burst, push_direct_packet_output_for_tun, raw_write_packet_to_tun,
     };
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
@@ -73,39 +72,11 @@
             assert!(!super::fips_blocking_mesh_recv_enabled_from_env(value));
         }
     }
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn tun_to_mesh_queue_cap_env_keeps_safe_bounds() {
-        assert_eq!(parse_fips_tun_to_mesh_queue_cap(None, 1024), 1024);
-        assert_eq!(parse_fips_tun_to_mesh_queue_cap(Some(""), 1024), 1024);
-        assert_eq!(
-            parse_fips_tun_to_mesh_queue_cap(Some("not-a-number"), 1024),
-            1024
-        );
-        assert_eq!(parse_fips_tun_to_mesh_queue_cap(Some("0"), 1024), 1);
-        assert_eq!(
-            parse_fips_tun_to_mesh_queue_cap(Some("999999"), 1024),
-            65_536
-        );
-        assert_eq!(parse_fips_tun_to_mesh_queue_cap(Some("4096"), 1024), 4096);
-
-    }
-
-    #[test]
-    fn macos_bounded_bulk_queue_derives_release_defaults() {
+    fn macos_udp_send_buffer_derives_release_defaults() {
         assert_eq!(super::macos_default_udp_send_buf_size(), 256 * 1024);
-        assert_eq!(
-            super::macos_tun_to_mesh_queue_cap(
-                super::macos_default_udp_send_buf_size(),
-                super::MESH_MIN_UNDERLAY_UDP_MTU as usize,
-                64,
-            ),
-            256
-        );
-
         #[cfg(target_os = "macos")]
         {
-            assert_eq!(super::DEFAULT_FIPS_TUN_TO_MESH_QUEUE_CAP, 256);
             assert_eq!(super::DEFAULT_FIPS_UDP_SEND_BUF_SIZE, Some(256 * 1024));
         }
     }

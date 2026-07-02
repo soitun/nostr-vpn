@@ -90,72 +90,66 @@ impl FipsPrivateMeshRuntime {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    fn recv_mesh_event_batch_blocking_for_each(
+    fn recv_direct_endpoint_tun_batch_blocking(
         &self,
+        lane: usize,
         limit: usize,
         stop: &AtomicBool,
-        sink: &mut impl FipsMeshBlockingBatchSink,
+        packet_outputs: &mut DirectTunWriteBatch,
     ) -> Result<Option<usize>> {
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
+        let Some(receivers) = &self.direct_endpoint_rx else {
+            return Ok(None);
+        };
+        let Some(rx) = receivers.get(lane) else {
+            return Ok(None);
+        };
+
         loop {
             if stop.load(Ordering::Acquire) {
                 return Ok(None);
             }
 
-            let now = Some(unix_timestamp());
             let mut emitted = 0usize;
-            let mut pending_error: Option<anyhow::Error> = None;
-            let mut data_rx_notes = FipsDataRxBatchNotes::default();
-            let mesh = self.mesh.load();
-            let received = self.endpoint.blocking_recv_batch_for_each(limit, |message| {
-                if stop.load(Ordering::Acquire) {
-                    return false;
-                }
-                let outcome = match self.endpoint_message_to_mesh_event_outcome_inner_with_mesh(
-                    message, now, true, &mesh,
-                ) {
-                    Ok(outcome) => outcome,
-                    Err(error) => {
-                        pending_error = Some(error);
-                        return false;
+            let mut received = 0usize;
+            let (mesh_generation, mesh) = self.stable_mesh_snapshot();
+            packet_outputs.set_mesh_generation(mesh_generation);
+            while received < limit {
+                let runs = if received == 0 {
+                    loop {
+                        if stop.load(Ordering::Acquire) {
+                            return Ok(None);
+                        }
+                        match rx.recv_source_batch_timeout(Duration::from_millis(100), limit) {
+                            Ok(runs) => break runs,
+                            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+                            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                                return Ok(None);
+                            }
+                        }
+                    }
+                } else {
+                    match rx.try_recv() {
+                        Ok(runs) => runs,
+                        Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                        Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(None),
                     }
                 };
-                let FipsEndpointMessageOutcome {
-                    event,
-                    packet,
-                    reply,
-                    data_rx,
-                } = outcome;
-                if let Some(note) = data_rx {
-                    data_rx_notes.push(note);
-                }
-                if let Some(reply) = reply
-                    && let Err(error) = self.endpoint.blocking_send_to_peer(reply.peer, reply.data)
-                {
-                    pending_error = Some(error.into());
-                    return false;
-                }
-                if let Some(packet) = packet {
-                    emitted = emitted.saturating_add(1);
-                    return sink.handle_packet(packet);
-                }
-                if let Some(event) = event {
-                    emitted = emitted.saturating_add(1);
-                    return sink.handle_event(event);
-                }
-                true
-            });
 
-            if let Err(error) = self.note_data_rx_batch(&mut data_rx_notes, now) {
-                pending_error = Some(error);
+                if runs.is_empty() {
+                    continue;
+                }
+
+                let mut admitted =
+                    admit_direct_endpoint_packet_runs_with_mesh(&mesh, runs, packet_outputs);
+                received = received.saturating_add(admitted.received);
+                packet_outputs.append_data_rx_notes(&mut admitted.data_rx_notes);
+                if admitted.accepted > 0 {
+                    emitted = emitted.saturating_add(admitted.accepted);
+                }
             }
-            if let Some(error) = pending_error {
-                return Err(error);
-            }
+
             if stop.load(Ordering::Acquire) {
-                return Ok(None);
-            }
-            if received.is_none() {
                 return Ok(None);
             }
             if emitted > 0 {
@@ -168,6 +162,27 @@ impl FipsPrivateMeshRuntime {
     fn wake_blocking_mesh_recv(&self) {
         let npub = self.endpoint.npub().to_string();
         let _ = self.endpoint.blocking_send(npub, Vec::new());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn finalize_direct_endpoint_tun_batch_blocking(
+        &self,
+        packet_outputs: &mut DirectTunWriteBatch,
+    ) -> Result<()> {
+        if packet_outputs.is_empty() {
+            packet_outputs.clear();
+            return Ok(());
+        }
+        let mesh_generation = self.mesh_generation();
+        if packet_outputs.mesh_generation() != mesh_generation || mesh_generation & 1 != 0 {
+            let (mesh_generation, mesh) = self.stable_mesh_snapshot();
+            revalidate_direct_endpoint_tun_batch_with_mesh(
+                &mesh,
+                mesh_generation,
+                packet_outputs,
+            );
+        }
+        self.note_data_rx_batch(packet_outputs.data_rx_notes_mut(), None)
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -202,9 +217,7 @@ impl FipsPrivateMeshRuntime {
         {
             eprintln!("fips: failed to reply to peer ping: {error}");
         }
-        Ok(outcome
-            .event
-            .or_else(|| outcome.packet.map(FipsPrivateMeshEvent::Packet)))
+        Ok(outcome.event)
     }
 
     fn endpoint_message_to_mesh_event_blocking(
@@ -218,9 +231,7 @@ impl FipsPrivateMeshRuntime {
         {
             eprintln!("fips: failed to reply to peer ping: {error}");
         }
-        Ok(outcome
-            .event
-            .or_else(|| outcome.packet.map(FipsPrivateMeshEvent::Packet)))
+        Ok(outcome.event)
     }
 
     fn endpoint_message_to_mesh_event_outcome(
@@ -228,29 +239,14 @@ impl FipsPrivateMeshRuntime {
         message: FipsEndpointMessage,
         now: Option<u64>,
     ) -> Result<FipsEndpointMessageOutcome> {
-        self.endpoint_message_to_mesh_event_outcome_inner(message, now, false)
-    }
-
-    fn endpoint_message_to_mesh_event_outcome_inner(
-        &self,
-        message: FipsEndpointMessage,
-        now: Option<u64>,
-        defer_data_rx: bool,
-    ) -> Result<FipsEndpointMessageOutcome> {
         let mesh = self.mesh.load();
-        self.endpoint_message_to_mesh_event_outcome_inner_with_mesh(
-            message,
-            now,
-            defer_data_rx,
-            &mesh,
-        )
+        self.endpoint_message_to_mesh_event_outcome_inner_with_mesh(message, now, &mesh)
     }
 
     fn endpoint_message_to_mesh_event_outcome_inner_with_mesh(
         &self,
         message: FipsEndpointMessage,
         now: Option<u64>,
-        defer_data_rx: bool,
         mesh: &FipsMeshRuntime,
     ) -> Result<FipsEndpointMessageOutcome> {
         if let Some(frame) = self.decode_endpoint_control_frame(&message)? {
@@ -341,14 +337,6 @@ impl FipsPrivateMeshRuntime {
             message.data,
         ) {
             let now = now.unwrap_or_else(unix_timestamp);
-            if defer_data_rx {
-                return Ok(FipsEndpointMessageOutcome::packet_with_deferred_data_rx(
-                    packet.bytes,
-                    packet.source_pubkey,
-                    packet.source_pubkey_bytes,
-                    data_len,
-                ));
-            }
             self.note_data_rx(packet.source_pubkey, packet.source_pubkey_bytes, data_len, now)?;
             return Ok(FipsEndpointMessageOutcome::event(
                 FipsPrivateMeshEvent::Packet(packet.bytes),
@@ -453,5 +441,163 @@ impl FipsPrivateMeshRuntime {
             }
         }
     }
+}
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct DirectEndpointPacketRunAdmission {
+    received: usize,
+    accepted: usize,
+    data_rx_notes: FipsDataRxBatchNotes,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn admit_direct_endpoint_packet_runs_with_mesh(
+    mesh: &FipsMeshRuntime,
+    runs: Vec<FipsEndpointDirectPacketRun>,
+    batch_outputs: &mut DirectTunWriteBatch,
+) -> DirectEndpointPacketRunAdmission {
+    if let Some(source_node_addr) = direct_packet_runs_single_source_node_addr(&runs) {
+        return admit_direct_endpoint_single_source_packet_runs_with_mesh(
+            mesh,
+            source_node_addr,
+            runs,
+            batch_outputs,
+        );
+    }
+
+    let mut received = 0usize;
+    let mut accepted = 0usize;
+    let mut data_rx_notes = FipsDataRxBatchNotes::default();
+    for run in runs {
+        let mut admitted = admit_direct_endpoint_packet_run_with_mesh(mesh, run, batch_outputs);
+        received = received.saturating_add(admitted.received);
+        accepted = accepted.saturating_add(admitted.accepted);
+        data_rx_notes.append(&mut admitted.data_rx_notes);
+    }
+    DirectEndpointPacketRunAdmission {
+        received,
+        accepted,
+        data_rx_notes,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn revalidate_direct_endpoint_tun_batch_with_mesh(
+    mesh: &FipsMeshRuntime,
+    mesh_generation: u64,
+    batch_outputs: &mut DirectTunWriteBatch,
+) {
+    let runs = std::mem::take(&mut batch_outputs.runs);
+    batch_outputs.clear();
+    batch_outputs.set_mesh_generation(mesh_generation);
+    let mut admitted = admit_direct_endpoint_packet_runs_with_mesh(mesh, runs, batch_outputs);
+    batch_outputs.append_data_rx_notes(&mut admitted.data_rx_notes);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn admit_direct_endpoint_single_source_packet_runs_with_mesh(
+    mesh: &FipsMeshRuntime,
+    source_node_addr: [u8; 16],
+    runs: Vec<FipsEndpointDirectPacketRun>,
+    batch_outputs: &mut DirectTunWriteBatch,
+) -> DirectEndpointPacketRunAdmission {
+    let received = direct_packet_runs_len(&runs);
+    let Some(admitter) = mesh.endpoint_source_admitter(&source_node_addr) else {
+        return DirectEndpointPacketRunAdmission {
+            received,
+            accepted: 0,
+            data_rx_notes: FipsDataRxBatchNotes::default(),
+        };
+    };
+
+    let mut accepted = 0usize;
+    let mut endpoint_bytes = 0usize;
+    batch_outputs.reserve(received);
+    for run in runs {
+        let (run_accepted, run_bytes) =
+            admit_direct_endpoint_packet_run_with_admitter(&admitter, run, batch_outputs);
+        accepted = accepted.saturating_add(run_accepted);
+        endpoint_bytes = endpoint_bytes.saturating_add(run_bytes);
+    }
+
+    let mut data_rx_notes = FipsDataRxBatchNotes::default();
+    if accepted > 0 {
+        data_rx_notes.push(FipsDataRxNote::new(
+            admitter.source_pubkey(),
+            admitter.source_pubkey_bytes(),
+            endpoint_bytes,
+        ));
+    }
+
+    DirectEndpointPacketRunAdmission {
+        received,
+        accepted,
+        data_rx_notes,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn admit_direct_endpoint_packet_run_with_mesh(
+    mesh: &FipsMeshRuntime,
+    run: FipsEndpointDirectPacketRun,
+    batch_outputs: &mut DirectTunWriteBatch,
+) -> DirectEndpointPacketRunAdmission {
+    let mut data_rx_notes = FipsDataRxBatchNotes::default();
+    let received = run.len();
+    let source_node_addr = *run.source_node_addr().as_bytes();
+    let Some(admitter) = mesh.endpoint_source_admitter(&source_node_addr) else {
+        return DirectEndpointPacketRunAdmission {
+            received,
+            accepted: 0,
+            data_rx_notes,
+        };
+    };
+    batch_outputs.reserve(received);
+    let (accepted_count, endpoint_bytes) =
+        admit_direct_endpoint_packet_run_with_admitter(&admitter, run, batch_outputs);
+    if accepted_count > 0 {
+        data_rx_notes.push(FipsDataRxNote::new(
+            admitter.source_pubkey(),
+            admitter.source_pubkey_bytes(),
+            endpoint_bytes,
+        ));
+    }
+    DirectEndpointPacketRunAdmission {
+        received,
+        accepted: accepted_count,
+        data_rx_notes,
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn admit_direct_endpoint_packet_run_with_admitter(
+    admitter: &FipsEndpointSourceAdmitter<'_>,
+    mut run: FipsEndpointDirectPacketRun,
+    batch_outputs: &mut DirectTunWriteBatch,
+) -> (usize, usize) {
+    let mut accepted_count = 0usize;
+    let mut endpoint_bytes = 0usize;
+    run.retain_packets(|_index, packet| {
+        if !admitter.admit_packet(packet) {
+            return false;
+        }
+        accepted_count = accepted_count.saturating_add(1);
+        endpoint_bytes = endpoint_bytes.saturating_add(packet.len());
+        true
+    });
+    if accepted_count == 0 {
+        return (0, 0);
+    }
+
+    if fips_unix_packet_debug_enabled() {
+        for packet in run.packet_slices() {
+            eprintln!(
+                "fips: mesh -> TUN {} bytes {}",
+                packet.len(),
+                describe_ip_packet(packet)
+            );
+        }
+    }
+    batch_outputs.push_run(run);
+    (accepted_count, endpoint_bytes)
 }

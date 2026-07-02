@@ -3,6 +3,327 @@ type ParticipantPubkeyBytes = [u8; 32];
 type FipsPeerActivityMap = HashMap<ParticipantPubkeyBytes, Arc<FipsPeerActivity>>;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+struct FipsDirectEndpointDataSink {
+    lanes: Vec<Arc<FipsDirectEndpointDataLane>>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct FipsDirectEndpointDataRx {
+    lane: Arc<FipsDirectEndpointDataLane>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct FipsDirectEndpointDataLane {
+    state: Mutex<FipsDirectEndpointDataLaneState>,
+    ready: Condvar,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Default)]
+struct FipsDirectEndpointDataLaneState {
+    batches: VecDeque<FipsDirectEndpointQueuedRuns>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct FipsDirectEndpointQueuedRuns {
+    runs: Vec<FipsEndpointDirectPacketRun>,
+    packets: usize,
+    enqueued_at: Option<Instant>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl FipsDirectEndpointQueuedRuns {
+    fn new(runs: Vec<FipsEndpointDirectPacketRun>) -> Self {
+        let packets = direct_packet_runs_len(&runs);
+        Self {
+            runs,
+            packets,
+            enqueued_at: crate::pipeline_profile::stamp(),
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl FipsEndpointDirectSink for FipsDirectEndpointDataSink {
+    fn deliver_endpoint_packet_batch(
+        &self,
+        batch: FipsEndpointDirectPacketBatch,
+    ) -> Result<(), FipsEndpointDirectDeliveryError> {
+        self.deliver_batch(batch)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl FipsDirectEndpointDataSink {
+    fn deliver_batch(
+        &self,
+        batch: FipsEndpointDirectPacketBatch,
+    ) -> Result<(), FipsEndpointDirectDeliveryError> {
+        if batch
+            .packet_runs()
+            .iter()
+            .all(FipsEndpointDirectPacketRun::is_empty)
+        {
+            return Ok(());
+        }
+        if self.lanes.len() <= 1 {
+            return self.deliver_packet_runs_to_lane(0, batch.into_packet_runs());
+        }
+
+        self.deliver_packet_runs_by_lane(batch.into_packet_runs())
+    }
+
+    fn deliver_packet_runs_by_lane(
+        &self,
+        runs: Vec<FipsEndpointDirectPacketRun>,
+    ) -> Result<(), FipsEndpointDirectDeliveryError> {
+        let mut lane_runs: Vec<Vec<FipsEndpointDirectPacketRun>> =
+            (0..self.lanes.len()).map(|_| Vec::new()).collect();
+        for run in runs {
+            if run.is_empty() {
+                continue;
+            }
+            let source_node_addr = *run.source_node_addr().as_bytes();
+            for (lane, lane_run) in run.partition_by_packet_lane(self.lanes.len(), |packet| {
+                direct_endpoint_lane_key_for_packet(&source_node_addr, packet)
+            }) {
+                lane_runs[lane].push(lane_run);
+            }
+        }
+        for (lane, runs) in lane_runs.into_iter().enumerate() {
+            if !runs.is_empty() {
+                self.deliver_packet_runs_to_lane(lane, runs)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn deliver_packet_runs_to_lane(
+        &self,
+        lane: usize,
+        runs: Vec<FipsEndpointDirectPacketRun>,
+    ) -> Result<(), FipsEndpointDirectDeliveryError> {
+        self.lanes[lane].push(runs)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl FipsDirectEndpointDataRx {
+    fn new(lane: Arc<FipsDirectEndpointDataLane>) -> Self {
+        Self { lane }
+    }
+
+    fn recv_source_batch_timeout(
+        &self,
+        timeout: Duration,
+        limit: usize,
+    ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::RecvTimeoutError> {
+        self.lane.recv_source_batch_timeout(timeout, limit)
+    }
+
+    fn try_recv(&self) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
+        self.lane.try_recv()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl FipsDirectEndpointDataLane {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(FipsDirectEndpointDataLaneState::default()),
+            ready: Condvar::new(),
+        }
+    }
+
+    fn push(
+        &self,
+        runs: Vec<FipsEndpointDirectPacketRun>,
+    ) -> Result<(), FipsEndpointDirectDeliveryError> {
+        let queued = FipsDirectEndpointQueuedRuns::new(runs);
+        if queued.packets == 0 {
+            return Ok(());
+        }
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| FipsEndpointDirectDeliveryError::Unavailable)?;
+        let queue_depth = state.batches.len().saturating_add(1);
+        crate::pipeline_profile::record_direct_endpoint_sink_batch(
+            queued.runs.len(),
+            queued.packets,
+            queue_depth,
+        );
+        state.batches.push_back(queued);
+        self.ready.notify_one();
+        Ok(())
+    }
+
+    fn recv_source_batch_timeout(
+        &self,
+        timeout: Duration,
+        limit: usize,
+    ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::RecvTimeoutError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)?;
+        if state.batches.is_empty() {
+            let (next_state, wait) = self
+                .ready
+                .wait_timeout_while(state, timeout, |state| state.batches.is_empty())
+                .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)?;
+            state = next_state;
+            if wait.timed_out() && state.batches.is_empty() {
+                return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
+            }
+        }
+        let mut queued = state
+            .batches
+            .pop_front()
+            .ok_or(std::sync::mpsc::RecvTimeoutError::Timeout)?;
+        crate::pipeline_profile::record_since(
+            crate::pipeline_profile::Stage::DirectEndpointQueue,
+            queued.enqueued_at,
+        );
+        let Some(source_node_addr) = direct_packet_runs_single_source_node_addr(&queued.runs)
+        else {
+            crate::pipeline_profile::record_direct_endpoint_rx_batch(1, queued.packets, 1);
+            return Ok(queued.runs);
+        };
+
+        let mut packet_count = queued.packets;
+        let mut coalesced_batches = 1usize;
+        while packet_count < limit {
+            let Some(next) = state.batches.front() else {
+                break;
+            };
+            if direct_packet_runs_single_source_node_addr(&next.runs) != Some(source_node_addr) {
+                break;
+            }
+            let mut next = state
+                .batches
+                .pop_front()
+                .expect("front batch must remain present while lane lock is held");
+            crate::pipeline_profile::record_since(
+                crate::pipeline_profile::Stage::DirectEndpointQueue,
+                next.enqueued_at,
+            );
+            packet_count = packet_count.saturating_add(next.packets);
+            coalesced_batches = coalesced_batches.saturating_add(1);
+            queued.runs.append(&mut next.runs);
+        }
+
+        crate::pipeline_profile::record_direct_endpoint_rx_batch(
+            queued.runs.len(),
+            packet_count,
+            coalesced_batches,
+        );
+        Ok(queued.runs)
+    }
+
+    fn try_recv(&self) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| std::sync::mpsc::TryRecvError::Disconnected)?;
+        let queued = state
+            .batches
+            .pop_front()
+            .ok_or(std::sync::mpsc::TryRecvError::Empty)?;
+        crate::pipeline_profile::record_since(
+            crate::pipeline_profile::Stage::DirectEndpointQueue,
+            queued.enqueued_at,
+        );
+        crate::pipeline_profile::record_direct_endpoint_rx_batch(
+            queued.runs.len(),
+            queued.packets,
+            1,
+        );
+        Ok(queued.runs)
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn direct_packet_runs_len(runs: &[FipsEndpointDirectPacketRun]) -> usize {
+    runs.iter().map(FipsEndpointDirectPacketRun::len).sum()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn direct_packet_runs_single_source_node_addr(
+    runs: &[FipsEndpointDirectPacketRun],
+) -> Option<[u8; 16]> {
+    let first = *runs.first()?.source_node_addr().as_bytes();
+    runs.iter()
+        .all(|run| run.source_node_addr().as_bytes() == &first)
+        .then_some(first)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn direct_endpoint_lane_key_for_node_addr(source_node_addr: &[u8; 16]) -> usize {
+    let mut lane = 2_166_136_261usize;
+    for byte in source_node_addr {
+        direct_endpoint_lane_key_mix(&mut lane, *byte);
+    }
+    lane
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn direct_endpoint_lane_key_for_packet(source_node_addr: &[u8; 16], packet: &[u8]) -> usize {
+    let mut key = direct_endpoint_lane_key_for_node_addr(source_node_addr);
+    match packet.first().map(|byte| byte >> 4) {
+        Some(4) => direct_endpoint_lane_key_mix_ipv4(&mut key, packet),
+        Some(6) => direct_endpoint_lane_key_mix_ipv6(&mut key, packet),
+        _ => {}
+    }
+    key
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn direct_endpoint_lane_key_mix_ipv4(key: &mut usize, packet: &[u8]) {
+    if packet.len() < 20 {
+        return;
+    }
+    let header_len = usize::from(packet[0] & 0x0f) * 4;
+    if header_len < 20 || packet.len() < header_len {
+        return;
+    }
+    let protocol = packet[9];
+    direct_endpoint_lane_key_mix(key, protocol);
+    for byte in &packet[12..20] {
+        direct_endpoint_lane_key_mix(key, *byte);
+    }
+    let fragment = u16::from_be_bytes([packet[6], packet[7]]);
+    let fragmented = fragment & 0x3fff != 0;
+    if !fragmented && matches!(protocol, 6 | 17) && packet.len() >= header_len.saturating_add(4) {
+        for byte in &packet[header_len..header_len + 4] {
+            direct_endpoint_lane_key_mix(key, *byte);
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn direct_endpoint_lane_key_mix_ipv6(key: &mut usize, packet: &[u8]) {
+    if packet.len() < 40 {
+        return;
+    }
+    let next_header = packet[6];
+    direct_endpoint_lane_key_mix(key, next_header);
+    for byte in &packet[8..40] {
+        direct_endpoint_lane_key_mix(key, *byte);
+    }
+    if matches!(next_header, 6 | 17) && packet.len() >= 44 {
+        for byte in &packet[40..44] {
+            direct_endpoint_lane_key_mix(key, *byte);
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn direct_endpoint_lane_key_mix(key: &mut usize, byte: u8) {
+    *key = key.wrapping_mul(16_777_619) ^ usize::from(byte);
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Clone, Copy)]
 struct BorrowedTunFd {
     fd: RawFd,
@@ -27,7 +348,6 @@ impl AsRawFd for BorrowedTunFd {
 struct TunPipelinePacket {
     bytes: Vec<u8>,
     destination: Option<IpAddr>,
-    queued_at: Option<std::time::Instant>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -41,20 +361,162 @@ type TunPipelineBatch = Vec<TunPipelinePacket>;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct TunWriteBatch {
     packets: Vec<FipsEndpointData>,
+    bytes: usize,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-struct TunPipelineQueueTx {
-    bulk: mpsc::Sender<TunPipelineBatch>,
-    bulk_queued_packets: Arc<AtomicUsize>,
-    bulk_packet_capacity: usize,
+impl TunWriteBatch {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            packets: Vec::with_capacity(capacity),
+            bytes: 0,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.packets.clear();
+        self.bytes = 0;
+    }
+
+    fn is_empty(&self) -> bool {
+        self.packets.is_empty()
+    }
+
+    fn len(&self) -> usize {
+        self.packets.len()
+    }
+
+    fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        self.packets.reserve(additional);
+    }
+
+    fn push(&mut self, packet: FipsEndpointData) {
+        self.bytes = self.bytes.saturating_add(packet.len());
+        self.packets.push(packet);
+    }
+
+    fn packet_slice(&self, index: usize) -> Option<&[u8]> {
+        self.packets.get(index).map(FipsEndpointData::as_slice)
+    }
+
+    #[cfg(test)]
+    fn packet_slices_for_test(&self) -> Vec<&[u8]> {
+        (0..self.len())
+            .filter_map(|index| self.packet_slice(index))
+            .collect()
+    }
+
+    fn drain_packets(&mut self) -> std::vec::Drain<'_, FipsEndpointData> {
+        self.bytes = 0;
+        self.packets.drain(..)
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-struct TunPipelineQueueRx {
-    bulk: mpsc::Receiver<TunPipelineBatch>,
-    bulk_queued_packets: Arc<AtomicUsize>,
-    bulk_closed: bool,
+struct DirectTunWriteBatch {
+    runs: Vec<FipsEndpointDirectPacketRun>,
+    packet_ends: Vec<usize>,
+    bytes: usize,
+    mesh_generation: u64,
+    data_rx_notes: FipsDataRxBatchNotes,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl DirectTunWriteBatch {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            runs: Vec::with_capacity(capacity),
+            packet_ends: Vec::with_capacity(capacity),
+            bytes: 0,
+            mesh_generation: 0,
+            data_rx_notes: FipsDataRxBatchNotes::default(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.runs.clear();
+        self.packet_ends.clear();
+        self.bytes = 0;
+        self.mesh_generation = 0;
+        self.data_rx_notes.clear();
+    }
+
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    fn len(&self) -> usize {
+        self.packet_ends.last().copied().unwrap_or(0)
+    }
+
+    fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    fn mesh_generation(&self) -> u64 {
+        self.mesh_generation
+    }
+
+    fn set_mesh_generation(&mut self, generation: u64) {
+        self.mesh_generation = generation;
+    }
+
+    fn append_data_rx_notes(&mut self, notes: &mut FipsDataRxBatchNotes) {
+        self.data_rx_notes.append(notes);
+    }
+
+    fn data_rx_notes_mut(&mut self) -> &mut FipsDataRxBatchNotes {
+        &mut self.data_rx_notes
+    }
+
+    fn reserve(&mut self, additional: usize) {
+        self.runs.reserve(additional);
+        self.packet_ends.reserve(additional);
+    }
+
+    fn push_run(&mut self, run: FipsEndpointDirectPacketRun) {
+        if run.is_empty() {
+            return;
+        }
+        self.bytes = self.bytes.saturating_add(run.packet_bytes());
+        self.push_packet_end(run.len());
+        self.runs.push(run);
+    }
+
+    fn push_packet_end(&mut self, packet_count: usize) {
+        let previous = self.len();
+        self.packet_ends
+            .push(previous.saturating_add(packet_count));
+    }
+
+    fn packet_slice(&self, index: usize) -> Option<&[u8]> {
+        if index >= self.len() {
+            return None;
+        }
+        let run_index = self.packet_ends.partition_point(|end| *end <= index);
+        let previous_end = run_index
+            .checked_sub(1)
+            .and_then(|previous| self.packet_ends.get(previous).copied())
+            .unwrap_or(0);
+        self.runs
+            .get(run_index)
+            .and_then(|run| run.packet_slice(index - previous_end))
+    }
+
+    fn run_slices(&self) -> impl Iterator<Item = &[u8]> {
+        self.runs.iter().flat_map(|run| run.packet_slices())
+    }
+
+    #[cfg(test)]
+    fn packet_slices_for_test(&self) -> Vec<&[u8]> {
+        (0..self.len())
+            .filter_map(|index| self.packet_slice(index))
+            .collect()
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -62,8 +524,14 @@ enum FipsMeshRecvWorker {
     Async(JoinHandle<()>),
     Blocking {
         stop: Arc<AtomicBool>,
-        thread: std::thread::JoinHandle<()>,
+        threads: Vec<std::thread::JoinHandle<()>>,
     },
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct FipsTunSendWorker {
+    stop: Arc<AtomicBool>,
+    thread: std::thread::JoinHandle<()>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -78,7 +546,6 @@ impl TunPipelinePacket {
         Self {
             bytes,
             destination,
-            queued_at: crate::pipeline_profile::stamp(),
         }
     }
 }
@@ -103,122 +570,6 @@ fn reserve_fips_endpoint_headroom(bytes: &mut Vec<u8>) {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl TunWriteBatch {
-    fn with_capacity(capacity: usize) -> Self {
-        Self {
-            packets: Vec::with_capacity(capacity),
-        }
-    }
-
-    fn clear(&mut self) {
-        self.packets.clear();
-    }
-
-    fn is_empty(&self) -> bool {
-        self.packets.is_empty()
-    }
-
-    fn push(&mut self, packet: FipsEndpointData) {
-        self.packets.push(packet);
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl TunPipelineQueueTx {
-    fn channel(packet_capacity: usize) -> (Self, TunPipelineQueueRx) {
-        let packet_capacity = packet_capacity.max(1);
-        let (bulk_tx, bulk_rx) = mpsc::channel(packet_capacity);
-        let bulk_queued_packets = Arc::new(AtomicUsize::new(0));
-        (
-            Self {
-                bulk: bulk_tx,
-                bulk_queued_packets: Arc::clone(&bulk_queued_packets),
-                bulk_packet_capacity: packet_capacity,
-            },
-            TunPipelineQueueRx {
-                bulk: bulk_rx,
-                bulk_queued_packets,
-                bulk_closed: false,
-            },
-        )
-    }
-
-    fn try_reserve_bulk_packets(&self, packet_count: usize) -> bool {
-        if packet_count == 0 {
-            return true;
-        }
-        if packet_count > self.bulk_packet_capacity {
-            return false;
-        }
-        self.bulk_queued_packets
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-                let next = current.checked_add(packet_count)?;
-                (next <= self.bulk_packet_capacity).then_some(next)
-            })
-            .is_ok()
-    }
-
-    fn release_bulk_packets(&self, packet_count: usize) {
-        release_tun_pipeline_bulk_packets(&self.bulk_queued_packets, packet_count);
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl TunPipelineQueueRx {
-    fn bulk_backlog_batches(&self) -> usize {
-        self.bulk.len()
-    }
-
-    fn bulk_backlog_packets(&self) -> usize {
-        self.bulk_queued_packets.load(Ordering::Acquire)
-    }
-
-    async fn recv(&mut self) -> Option<TunPipelineBatch> {
-        loop {
-            if self.bulk_closed {
-                return None;
-            }
-
-            match self.bulk.recv().await {
-                Some(batch) => {
-                    self.release_bulk_batch(&batch);
-                    return Some(batch);
-                }
-                None => self.bulk_closed = true,
-            }
-        }
-    }
-
-    fn release_bulk_batch(&self, batch: &TunPipelineBatch) {
-        release_tun_pipeline_bulk_packets(&self.bulk_queued_packets, batch.len());
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl Drop for TunPipelineQueueRx {
-    fn drop(&mut self) {
-        while let Ok(batch) = self.bulk.try_recv() {
-            self.release_bulk_batch(&batch);
-        }
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn release_tun_pipeline_bulk_packets(queued_packets: &AtomicUsize, packet_count: usize) {
-    if packet_count > 0 {
-        queued_packets.fetch_sub(packet_count, Ordering::AcqRel);
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TunQueueSubmit {
-    Enqueued,
-    DroppedBulk,
-    Closed,
-}
-
 struct FipsEndpointControlReply {
     peer: PeerIdentity,
     data: Vec<u8>,
@@ -226,56 +577,28 @@ struct FipsEndpointControlReply {
 
 struct FipsEndpointMessageOutcome {
     event: Option<FipsPrivateMeshEvent>,
-    packet: Option<FipsEndpointData>,
     reply: Option<FipsEndpointControlReply>,
-    data_rx: Option<FipsDataRxNote>,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-trait FipsMeshBlockingBatchSink {
-    fn handle_packet(&mut self, packet: FipsEndpointData) -> bool;
-    fn handle_event(&mut self, event: FipsPrivateMeshEvent) -> bool;
 }
 
 impl FipsEndpointMessageOutcome {
     fn event(event: FipsPrivateMeshEvent) -> Self {
         Self {
             event: Some(event),
-            packet: None,
             reply: None,
-            data_rx: None,
         }
     }
 
     fn event_with_reply(event: FipsPrivateMeshEvent, peer: PeerIdentity, data: Vec<u8>) -> Self {
         Self {
             event: Some(event),
-            packet: None,
             reply: Some(FipsEndpointControlReply { peer, data }),
-            data_rx: None,
         }
     }
 
     fn none() -> Self {
         Self {
             event: None,
-            packet: None,
             reply: None,
-            data_rx: None,
-        }
-    }
-
-    fn packet_with_deferred_data_rx(
-        packet: FipsEndpointData,
-        participant: &str,
-        participant_key: Option<&ParticipantPubkeyBytes>,
-        bytes: usize,
-    ) -> Self {
-        Self {
-            event: None,
-            packet: Some(packet),
-            reply: None,
-            data_rx: Some(FipsDataRxNote::new(participant, participant_key, bytes)),
         }
     }
 }
@@ -321,8 +644,18 @@ impl FipsDataRxBatchNotes {
         self.entries.push(note);
     }
 
+    fn append(&mut self, other: &mut Self) {
+        for note in other.drain() {
+            self.push(note);
+        }
+    }
+
     fn is_empty(&self) -> bool {
         self.entries.is_empty()
+    }
+
+    fn clear(&mut self) {
+        self.entries.clear();
     }
 
     fn drain(&mut self) -> impl Iterator<Item = FipsDataRxNote> + '_ {

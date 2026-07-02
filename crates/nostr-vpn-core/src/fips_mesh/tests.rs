@@ -471,6 +471,33 @@ mod tests {
     }
 
     #[test]
+    fn inbound_endpoint_source_run_admits_with_single_source_identity() {
+        let peer = TestPeer::generate();
+        let admitted = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(10, 44, 10, 1));
+        let rejected = ipv4_packet(Ipv4Addr::new(192, 0, 2, 10), Ipv4Addr::new(10, 44, 10, 1));
+        let runtime = FipsMeshRuntime::new(vec![FipsMeshPeerConfig {
+            participant_pubkey: peer.participant_pubkey.clone(),
+            endpoint_npub: peer.endpoint_npub.clone(),
+            allowed_ips: vec!["10.44.22.44/32".to_string()],
+        }]);
+
+        let mut accepted = Vec::new();
+        let source_run = runtime
+            .endpoint_source_admitter(&peer.endpoint_node_addr)
+            .expect("source endpoint should be configured")
+            .receive_owned_source_run_into(vec![admitted.clone(), rejected], |packet| {
+                accepted.push(packet)
+            })
+            .expect("at least one packet in source-run should be admitted");
+
+        assert_eq!(source_run.source_pubkey, peer.participant_pubkey);
+        assert_eq!(source_run.source_pubkey_bytes, Some(&peer.endpoint_pubkey));
+        assert_eq!(source_run.endpoint_bytes, admitted.len());
+        assert_eq!(source_run.len(), 1);
+        assert_eq!(accepted, vec![admitted]);
+    }
+
+    #[test]
     fn inbound_endpoint_data_drops_unknown_source_npub() {
         let packet = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(10, 44, 10, 1));
 
