@@ -199,8 +199,8 @@
         let stop = std::sync::atomic::AtomicBool::new(false);
         let packet = [0x45, 0, 0, 20, 1, 2, 3, 4];
         let tun_fd = BorrowedTunFd::new(write_fd, false);
-        super::write_packet_to_tun_blocking(tun_fd, &packet, &stop);
-        super::write_packet_to_tun_blocking(tun_fd, &packet, &stop);
+        super::write_packet_to_tun_blocking(tun_fd, &packet, &stop, None);
+        super::write_packet_to_tun_blocking(tun_fd, &packet, &stop, None);
 
         let expected_frame: Vec<u8> = {
             #[cfg(target_os = "macos")]
