@@ -145,6 +145,72 @@ fn apply_admin_signed_shared_roster_replaces_members_from_known_admin() {
 }
 
 #[test]
+fn apply_verified_admin_signed_shared_roster_applies_newer_admin_event_name() {
+    let own = Keys::generate();
+    let current_admin = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let current_admin_hex = current_admin.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex.clone();
+    config.networks[0].name = "Local nickname".to_string();
+    config.networks[0].network_id = "mesh-home".to_string();
+    config.networks[0].admins = vec![current_admin_hex.clone()];
+    config.networks[0].devices = vec![own_hex.clone()];
+    config.networks[0].shared_roster_updated_at = 1_726_000_000;
+    config.networks[0].shared_roster_signed_by = current_admin_hex.clone();
+    config.ensure_defaults();
+
+    let roster = NetworkRoster {
+        network_name: "Home Mesh".to_string(),
+        devices: vec![own_hex],
+        admins: vec![current_admin_hex],
+        aliases: std::collections::HashMap::new(),
+        signed_at: 1_726_000_001,
+    };
+    let signed = SignedRoster::sign("mesh-home", roster, &current_admin).expect("sign roster");
+
+    let changed = config
+        .apply_verified_admin_signed_shared_roster(&signed)
+        .expect("apply same roster metadata");
+
+    assert!(changed);
+    assert_eq!(config.networks[0].name, "Home Mesh");
+    assert_eq!(config.networks[0].shared_roster_updated_at, 1_726_000_001);
+}
+
+#[test]
+fn rename_network_requires_local_admin() {
+    let own = Keys::generate();
+    let current_admin = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let current_admin_hex = current_admin.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex.clone();
+    config.networks[0].name = "Home Mesh".to_string();
+    config.networks[0].network_id = "mesh-home".to_string();
+    config.networks[0].admins = vec![current_admin_hex.clone()];
+    config.networks[0].devices = vec![own_hex];
+    config.networks[0].shared_roster_updated_at = 1_726_000_000;
+    config.networks[0].shared_roster_signed_by = current_admin_hex;
+    config.ensure_defaults();
+    let network_id = config.networks[0].id.clone();
+
+    let error = config
+        .rename_network(&network_id, "Local nickname")
+        .expect_err("joined non-admin rename must be rejected");
+
+    assert!(
+        error.to_string().contains("network admin"),
+        "unexpected error: {error:#}"
+    );
+    assert_eq!(config.networks[0].name, "Home Mesh");
+}
+
+#[test]
 fn apply_admin_signed_shared_roster_clears_join_request_when_own_key_is_added() {
     let own = Keys::generate();
     let current_admin = Keys::generate();

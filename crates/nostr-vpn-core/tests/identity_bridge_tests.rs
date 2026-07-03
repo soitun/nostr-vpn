@@ -5,11 +5,13 @@ use nostr_sdk::prelude::Keys;
 use nostr_sdk::prelude::{Event, JsonUtil};
 use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::{
-    CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND, CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE,
-    NostrIdentityCapabilities, NostrIdentityDeviceApprovalSidecarRequest, NostrIdentityId,
-    NostrIdentityKeyPurpose, NostrIdentityRosterOp, RosterAppKeyRole, RosterIdentityBridgeSource,
+    CANONICAL_NETWORK_NAME_FACT, CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND,
+    CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE, NostrIdentityCapabilities,
+    NostrIdentityDeviceApprovalSidecarRequest, NostrIdentityId, NostrIdentityKeyPurpose,
+    NostrIdentityRosterOp, RosterAppKeyRole, RosterIdentityBridgeSource,
     build_device_approval_for_link_request, build_device_approval_sidecar,
     build_identity_link_request_from_manual_npub, build_roster_app_key_sidecar_event,
+    build_roster_app_key_sidecar_event_with_network_name,
     parse_identity_link_request_event_for_invite_pubkey, parse_identity_roster_bridge_event,
     parse_nostr_identity_device_approval_receipt_event,
     parse_nostr_identity_device_approval_receipt_roster_op, parse_roster_app_key_sidecar_event,
@@ -166,6 +168,7 @@ fn unified_bridge_accepts_legacy_signed_rosters_and_identity_roster_ops() {
         RosterIdentityBridgeSource::LegacySignedNetworkRoster
     );
     assert_eq!(legacy.network_id.as_deref(), Some("mesh-home"));
+    assert_eq!(legacy.network_name.as_deref(), Some("Home"));
     assert_eq!(legacy.signer_pubkey, admin_hex);
     assert_eq!(legacy.signed_at, 1_726_000_010);
     assert_eq!(legacy.identities.len(), 2);
@@ -198,6 +201,7 @@ fn unified_bridge_accepts_legacy_signed_rosters_and_identity_roster_ops() {
         RosterIdentityBridgeSource::NostrIdentityRosterOp
     );
     assert_eq!(canonical.network_id, None);
+    assert_eq!(canonical.network_name, None);
     assert_eq!(canonical.signer_pubkey, admin.public_key().to_hex());
     assert_eq!(canonical.signed_at, 1_726_000_011);
     assert_eq!(canonical.identities.len(), 1);
@@ -213,7 +217,7 @@ fn bridge_builds_and_parses_canonical_roster_sidecar_facts() {
     );
     let created_at = 1_726_000_100;
 
-    let event = build_roster_app_key_sidecar_event(
+    let event = build_roster_app_key_sidecar_event_with_network_name(
         &admin,
         profile_id,
         &member.public_key().to_bech32().expect("member npub"),
@@ -221,6 +225,7 @@ fn bridge_builds_and_parses_canonical_roster_sidecar_facts() {
         Vec::new(),
         None,
         created_at,
+        Some(" Home Mesh ".to_string()),
     )
     .expect("build sidecar");
 
@@ -235,6 +240,11 @@ fn bridge_builds_and_parses_canonical_roster_sidecar_facts() {
         let parts = tag.as_slice();
         parts.first() == Some(&"key_pubkey".to_string())
             && parts.get(1) == Some(&member.public_key().to_hex())
+    }));
+    assert!(event.tags.iter().any(|tag| {
+        let parts = tag.as_slice();
+        parts.first() == Some(&CANONICAL_NETWORK_NAME_FACT.to_string())
+            && parts.get(1) == Some(&"Home Mesh".to_string())
     }));
 
     let parsed = parse_roster_app_key_sidecar_event(&event)
@@ -252,6 +262,11 @@ fn bridge_builds_and_parses_canonical_roster_sidecar_facts() {
         parsed.facet.capabilities,
         NostrIdentityCapabilities::app_writer()
     );
+
+    let bridged = parse_identity_roster_bridge_event(&event, &BTreeMap::new())
+        .expect("parse bridge event")
+        .expect("canonical bridge event");
+    assert_eq!(bridged.network_name.as_deref(), Some("Home Mesh"));
 }
 
 #[test]
@@ -354,6 +369,7 @@ fn approval_sidecar_embeds_canonical_roster_op_and_parses_receipt() {
         &admin,
         NostrIdentityDeviceApprovalSidecarRequest {
             profile_id,
+            network_name: Some("Home Mesh".to_string()),
             request_pubkey: request.public_key().to_bech32().expect("request npub"),
             device_app_key_pubkey: device.public_key().to_bech32().expect("device npub"),
             request_secret: "scan-secret".to_string(),
@@ -394,6 +410,10 @@ fn approval_sidecar_embeds_canonical_roster_op_and_parses_receipt() {
 
     let roster_op = parse_nostr_identity_device_approval_receipt_roster_op(&receipt)
         .expect("receipt roster op");
+    let bridged = parse_identity_roster_bridge_event(&approval.roster_op_event, &BTreeMap::new())
+        .expect("parse bridge event")
+        .expect("approval roster op");
+    assert_eq!(bridged.network_name.as_deref(), Some("Home Mesh"));
     match roster_op.content.op {
         NostrIdentityRosterOp::AddFacet { facet } => {
             assert_eq!(facet.pubkey, device.public_key().to_hex());

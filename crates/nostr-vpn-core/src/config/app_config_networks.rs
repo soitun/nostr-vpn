@@ -12,10 +12,16 @@ impl AppConfig {
         if normalized.is_empty() {
             return Err(anyhow::anyhow!("network name cannot be empty"));
         }
+        let own_pubkey = self.own_nostr_pubkey_hex().ok();
         {
             let network = self
                 .network_by_id_mut(network_id)
                 .ok_or_else(|| anyhow::anyhow!("network not found"))?;
+            if own_pubkey.as_deref().is_none_or(|own_pubkey| {
+                !network.admins.iter().any(|admin| admin == own_pubkey)
+            }) {
+                return Err(anyhow::anyhow!("only a network admin can rename it"));
+            }
             network.name = normalized.to_string();
         }
         self.note_network_roster_local_change(network_id)?;
