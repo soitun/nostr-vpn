@@ -1,4 +1,5 @@
 /target
+.cargo-docker/
 **/target/
 node_modules/
 **/node_modules/

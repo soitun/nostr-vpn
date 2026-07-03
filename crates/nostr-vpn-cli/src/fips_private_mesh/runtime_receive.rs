@@ -172,7 +172,7 @@ impl FipsPrivateMeshRuntime {
                         }
                     }
                 } else {
-                    match rx.try_recv() {
+                    match rx.try_recv_limited(limit.saturating_sub(received)) {
                         Ok(runs) => runs,
                         Err(std::sync::mpsc::TryRecvError::Empty) => break,
                         Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(None),

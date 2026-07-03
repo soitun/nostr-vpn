@@ -96,6 +96,13 @@ impl FipsDirectEndpointDataRx {
     fn try_recv(&self) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
         self.queue.try_recv()
     }
+
+    fn try_recv_limited(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
+        self.queue.try_recv_limited(limit)
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -157,6 +164,7 @@ impl FipsDirectEndpointQueue {
             .pop_front()
             .ok_or(std::sync::mpsc::RecvTimeoutError::Timeout)?;
         record_direct_endpoint_queue_residence(&queued);
+        limit_queued_direct_endpoint_runs_to_remaining(&mut queued, limit.max(1), &mut state);
         let Some(source_node_addr) = queued.source_node_addr else {
             crate::pipeline_profile::record_direct_endpoint_rx_batch(1, queued.packets, 1);
             return Ok(queued.runs);
@@ -190,6 +198,28 @@ impl FipsDirectEndpointQueue {
             queued.runs.len(),
             packet_count,
             coalesced_batches,
+        );
+        Ok(queued.runs)
+    }
+
+    fn try_recv_limited(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| std::sync::mpsc::TryRecvError::Disconnected)?;
+        let mut queued = state
+            .batches
+            .pop_front()
+            .ok_or(std::sync::mpsc::TryRecvError::Empty)?;
+        record_direct_endpoint_queue_residence(&queued);
+        limit_queued_direct_endpoint_runs_to_remaining(&mut queued, limit.max(1), &mut state);
+        crate::pipeline_profile::record_direct_endpoint_rx_batch(
+            queued.runs.len(),
+            queued.packets,
+            1,
         );
         Ok(queued.runs)
     }
@@ -271,7 +301,7 @@ fn split_direct_packet_runs_at_packet_limit(
     let mut head = Vec::new();
     let mut tail = Vec::new();
     let mut remaining = limit;
-    for run in runs {
+    for mut run in runs {
         if remaining == 0 {
             tail.push(run);
             continue;
@@ -284,16 +314,13 @@ fn split_direct_packet_runs_at_packet_limit(
             continue;
         }
 
-        let mut head_run = run.clone();
-        head_run.retain_packets(|index, _| index < remaining);
-        if !head_run.is_empty() {
-            head.push(head_run);
-        }
-
-        let mut tail_run = run;
-        tail_run.retain_packets(|index, _| index >= remaining);
-        if !tail_run.is_empty() {
-            tail.push(tail_run);
+        if let Some(tail_run) = run.split_off_packets(remaining) {
+            if !run.is_empty() {
+                head.push(run);
+            }
+            if !tail_run.is_empty() {
+                tail.push(tail_run);
+            }
         }
         remaining = 0;
     }
