@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Added the public iOS App Store download link alongside the TestFlight beta
+  link in the README now that Nostr VPN is eligible for distribution.
+
 ## 4.0.87 - 2026-06-22
 
 ### Fixed

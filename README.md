@@ -13,7 +13,8 @@
 - [Latest releases on git.iris.to](https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn?tab=releases)
 - [GitHub mirror releases](https://github.com/mmalmi/nostr-vpn/releases/latest)
 - CLI from crates.io: `cargo install nvpn`
-- [iOS TestFlight beta](https://testflight.apple.com/join/58sg4agv) is pending Beta App Review
+- [iOS App Store](https://apps.apple.com/app/nostr-vpn/id6785410348)
+- [iOS TestFlight beta](https://testflight.apple.com/join/58sg4agv)
 
 Release artifacts currently cover native Apple Silicon macOS, Linux x64, Windows x64, Android arm64, and headless CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64. Intel macOS is source-only for now.
 
@@ -87,7 +88,7 @@ Use `just run-macos` or `just run-linux` when you want a specific desktop target
 | Linux x64 | Native GTK/libadwaita app, `.deb`, CLI tarballs, Docker e2e coverage |
 | Windows x64 | Native WPF app, installer, CLI zip, WinTun tunnel path |
 | Android arm64 | Native app-core UI, signed APK/AAB artifacts when signing is configured, VPN runtime still being hardened |
-| iOS | Native SwiftUI app and NetworkExtension target build from source and simulator; public TestFlight access is pending |
+| iOS | Native SwiftUI app and NetworkExtension target available on the App Store; public TestFlight beta remains available |
 | Umbrel / StartOS | Web control panels and service packages |
 | Intel macOS | Source-only |
 
