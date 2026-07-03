@@ -175,12 +175,13 @@
             nostr_traversal_last_observed_skew_ms: Some(200),
         };
 
-        let state = mobile_runtime_state(
+        let state = mobile_runtime_state_with_tun_counters(
             &config,
             &mesh,
             &presence,
             vec![endpoint_peer],
             Vec::new(),
+            MobileTunCounters::default(),
             now,
         );
 

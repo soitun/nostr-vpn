@@ -563,12 +563,13 @@
             nostr_traversal_last_observed_skew_ms: Some(-75),
         };
 
-        let state = mobile_runtime_state(
+        let state = mobile_runtime_state_with_tun_counters(
             &config,
             &mesh,
             &HashMap::new(),
             vec![endpoint_peer],
             Vec::new(),
+            MobileTunCounters::default(),
             1_778_998_000,
         );
 
@@ -635,7 +636,15 @@
             },
         );
 
-        let state = mobile_runtime_state(&config, &mesh, &presence, Vec::new(), Vec::new(), now);
+        let state = mobile_runtime_state_with_tun_counters(
+            &config,
+            &mesh,
+            &presence,
+            Vec::new(),
+            Vec::new(),
+            MobileTunCounters::default(),
+            now,
+        );
 
         assert_eq!(state.expected_peer_count, 1);
         assert_eq!(state.connected_peer_count, 1);
@@ -687,7 +696,15 @@
             },
         );
 
-        let state = mobile_runtime_state(&config, &mesh, &presence, Vec::new(), Vec::new(), now);
+        let state = mobile_runtime_state_with_tun_counters(
+            &config,
+            &mesh,
+            &presence,
+            Vec::new(),
+            Vec::new(),
+            MobileTunCounters::default(),
+            now,
+        );
 
         assert_eq!(state.expected_peer_count, 1);
         assert_eq!(state.connected_peer_count, 0);

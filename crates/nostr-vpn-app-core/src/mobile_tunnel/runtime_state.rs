@@ -125,6 +125,7 @@ async fn persist_mobile_runtime_state(
     mesh: &Arc<RwLock<FipsMeshRuntime>>,
     presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: &Arc<RwLock<MobileTunnelConfig>>,
+    tun_counters: &MobileTunAtomicCounters,
 ) -> Result<()> {
     let endpoint_peers = endpoint
         .peers()
@@ -145,36 +146,17 @@ async fn persist_mobile_runtime_state(
         let presence = presence
             .read()
             .map_err(|_| anyhow!("mobile FIPS presence lock poisoned"))?;
-        mobile_runtime_state(
+        mobile_runtime_state_with_tun_counters(
             &config,
             &mesh,
             &presence,
             endpoint_peers,
             relay_statuses,
+            tun_counters.snapshot(),
             unix_timestamp(),
         )
     };
     write_mobile_runtime_state(path, &state)
-}
-
-#[allow(clippy::too_many_lines)]
-fn mobile_runtime_state(
-    config: &MobileTunnelConfig,
-    mesh: &FipsMeshRuntime,
-    presence: &HashMap<String, MobilePeerPresence>,
-    endpoint_peers: Vec<FipsEndpointPeer>,
-    relay_statuses: Vec<FipsEndpointRelayStatus>,
-    now: u64,
-) -> DaemonRuntimeState {
-    mobile_runtime_state_with_tun_counters(
-        config,
-        mesh,
-        presence,
-        endpoint_peers,
-        relay_statuses,
-        MobileTunCounters::default(),
-        now,
-    )
 }
 
 #[allow(clippy::too_many_lines)]

@@ -40,6 +40,7 @@ impl MobileTunnel {
             config: started.config,
             app_config: started.app_config,
             app_config_dirty: started.app_config_dirty,
+            tun_counters: started.tun_counters,
             #[cfg(any(target_os = "android", target_os = "ios"))]
             outbound_tx: started.outbound_tx,
             inbound_rx: Some(started.inbound_rx),
@@ -89,6 +90,7 @@ impl MobileTunnel {
         let config_state = Arc::new(RwLock::new(config.clone()));
         let app_config = Arc::new(RwLock::new(app_config));
         let app_config_dirty = Arc::new(AtomicBool::new(false));
+        let tun_counters = Arc::new(MobileTunAtomicCounters::default());
         let (outbound_tx, mut outbound_rx) =
             tokio_mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
         let (inbound_tx, inbound_rx) = mpsc::sync_channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
@@ -290,6 +292,7 @@ impl MobileTunnel {
             let mesh = Arc::clone(&mesh);
             let presence = Arc::clone(&presence);
             let status_config = Arc::clone(&config_state);
+            let status_tun_counters = Arc::clone(&tun_counters);
             tasks.push(tokio::spawn(async move {
                 loop {
                     if let Err(error) = persist_mobile_runtime_state(
@@ -298,6 +301,7 @@ impl MobileTunnel {
                         &mesh,
                         &presence,
                         &status_config,
+                        &status_tun_counters,
                     )
                     .await
                     {
@@ -427,6 +431,7 @@ impl MobileTunnel {
             config: config_state,
             app_config,
             app_config_dirty,
+            tun_counters,
             outbound_tx,
             inbound_rx,
             tasks,
@@ -470,6 +475,7 @@ impl MobileTunnel {
             self.outbound_tx.clone(),
             inbound_rx,
             native_tun_packet_capacity(mtu),
+            Arc::clone(&self.tun_counters),
         )?);
         Ok(())
     }
@@ -486,14 +492,7 @@ impl MobileTunnel {
     }
 
     pub(crate) fn runtime_state_json(&self) -> Result<String> {
-        #[cfg(any(target_os = "android", target_os = "ios"))]
-        let tun_counters = self
-            .native_tun
-            .as_ref()
-            .map(NativeTunRuntime::counters)
-            .unwrap_or_default();
-        #[cfg(not(any(target_os = "android", target_os = "ios")))]
-        let tun_counters = MobileTunCounters::default();
+        let tun_counters = self.tun_counters.snapshot();
 
         let endpoint = self
             .endpoint
@@ -569,6 +568,7 @@ struct MobileTunnelStarted {
     config: Arc<RwLock<MobileTunnelConfig>>,
     app_config: Arc<RwLock<AppConfig>>,
     app_config_dirty: Arc<AtomicBool>,
+    tun_counters: Arc<MobileTunAtomicCounters>,
     #[cfg_attr(
         not(any(test, target_os = "android", target_os = "ios")),
         allow(dead_code)

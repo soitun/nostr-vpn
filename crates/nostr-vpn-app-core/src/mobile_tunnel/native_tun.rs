@@ -7,7 +7,6 @@ const IOS_UTUN_HEADER_LEN: usize = 4;
 struct NativeTunRuntime {
     fd: c_int,
     stop: Arc<AtomicBool>,
-    counters: Arc<NativeTunAtomicCounters>,
     read_thread: Option<std::thread::JoinHandle<()>>,
     write_thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -18,11 +17,11 @@ impl NativeTunRuntime {
         outbound_tx: tokio_mpsc::Sender<Vec<u8>>,
         inbound_rx: mpsc::Receiver<Vec<u8>>,
         packet_capacity: usize,
+        counters: Arc<MobileTunAtomicCounters>,
     ) -> Result<Self> {
         let fd = prepare_mobile_tun_fd(fd)?;
 
         let stop = Arc::new(AtomicBool::new(false));
-        let counters = Arc::new(NativeTunAtomicCounters::default());
         let read_stop = Arc::clone(&stop);
         let read_counters = Arc::clone(&counters);
         let read_thread = match std::thread::Builder::new()
@@ -49,7 +48,6 @@ impl NativeTunRuntime {
                 let mut runtime = Self {
                     fd,
                     stop,
-                    counters,
                     read_thread: Some(read_thread),
                     write_thread: None,
                 };
@@ -61,14 +59,9 @@ impl NativeTunRuntime {
         Ok(Self {
             fd,
             stop,
-            counters,
             read_thread: Some(read_thread),
             write_thread: Some(write_thread),
         })
-    }
-
-    fn counters(&self) -> MobileTunCounters {
-        self.counters.snapshot()
     }
 
     fn stop(&mut self) {
@@ -100,47 +93,6 @@ impl Drop for NativeTunRuntime {
     }
 }
 
-#[derive(Default)]
-struct NativeTunAtomicCounters {
-    packets_read: std::sync::atomic::AtomicU64,
-    bytes_read: std::sync::atomic::AtomicU64,
-    packets_written: std::sync::atomic::AtomicU64,
-    bytes_written: std::sync::atomic::AtomicU64,
-    packets_dropped: std::sync::atomic::AtomicU64,
-}
-
-impl NativeTunAtomicCounters {
-    fn snapshot(&self) -> MobileTunCounters {
-        MobileTunCounters {
-            packets_read: self.packets_read.load(Ordering::Relaxed),
-            bytes_read: self.bytes_read.load(Ordering::Relaxed),
-            packets_written: self.packets_written.load(Ordering::Relaxed),
-            bytes_written: self.bytes_written.load(Ordering::Relaxed),
-            packets_dropped: self.packets_dropped.load(Ordering::Relaxed),
-        }
-    }
-
-    fn note_read(&self, len: usize) {
-        self.packets_read.fetch_add(1, Ordering::Relaxed);
-        self.bytes_read.fetch_add(
-            u64::try_from(len).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
-    }
-
-    fn note_write(&self, len: usize) {
-        self.packets_written.fetch_add(1, Ordering::Relaxed);
-        self.bytes_written.fetch_add(
-            u64::try_from(len).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
-    }
-
-    fn note_drop(&self) {
-        self.packets_dropped.fetch_add(1, Ordering::Relaxed);
-    }
-}
-
 fn native_tun_packet_capacity(mtu: u16) -> usize {
     usize::from(mtu)
         .saturating_add(NATIVE_TUN_PACKET_HEADROOM)
@@ -151,7 +103,7 @@ fn native_tun_read_loop(
     fd: c_int,
     outbound_tx: tokio_mpsc::Sender<Vec<u8>>,
     stop: Arc<AtomicBool>,
-    counters: Arc<NativeTunAtomicCounters>,
+    counters: Arc<MobileTunAtomicCounters>,
     packet_capacity: usize,
 ) {
     while wait_mobile_tun_fd(fd, libc::POLLIN, &stop) {
@@ -191,7 +143,7 @@ fn native_tun_write_loop(
     fd: c_int,
     inbound_rx: mpsc::Receiver<Vec<u8>>,
     stop: Arc<AtomicBool>,
-    counters: Arc<NativeTunAtomicCounters>,
+    counters: Arc<MobileTunAtomicCounters>,
 ) {
     while !stop.load(Ordering::Relaxed) {
         let packet = match inbound_rx.recv() {

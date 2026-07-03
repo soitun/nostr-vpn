@@ -52,6 +52,50 @@ struct MobileTunCounters {
     packets_dropped: u64,
 }
 
+#[derive(Default)]
+struct MobileTunAtomicCounters {
+    packets_read: std::sync::atomic::AtomicU64,
+    bytes_read: std::sync::atomic::AtomicU64,
+    packets_written: std::sync::atomic::AtomicU64,
+    bytes_written: std::sync::atomic::AtomicU64,
+    packets_dropped: std::sync::atomic::AtomicU64,
+}
+
+impl MobileTunAtomicCounters {
+    fn snapshot(&self) -> MobileTunCounters {
+        MobileTunCounters {
+            packets_read: self.packets_read.load(Ordering::Relaxed),
+            bytes_read: self.bytes_read.load(Ordering::Relaxed),
+            packets_written: self.packets_written.load(Ordering::Relaxed),
+            bytes_written: self.bytes_written.load(Ordering::Relaxed),
+            packets_dropped: self.packets_dropped.load(Ordering::Relaxed),
+        }
+    }
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    fn note_read(&self, len: usize) {
+        self.packets_read.fetch_add(1, Ordering::Relaxed);
+        self.bytes_read.fetch_add(
+            u64::try_from(len).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+    }
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    fn note_write(&self, len: usize) {
+        self.packets_written.fetch_add(1, Ordering::Relaxed);
+        self.bytes_written.fetch_add(
+            u64::try_from(len).unwrap_or(u64::MAX),
+            Ordering::Relaxed,
+        );
+    }
+
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    fn note_drop(&self) {
+        self.packets_dropped.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)]
@@ -427,6 +471,7 @@ pub(crate) struct MobileTunnel {
     config: Arc<RwLock<MobileTunnelConfig>>,
     app_config: Arc<RwLock<AppConfig>>,
     app_config_dirty: Arc<AtomicBool>,
+    tun_counters: Arc<MobileTunAtomicCounters>,
     #[cfg(any(target_os = "android", target_os = "ios"))]
     outbound_tx: tokio_mpsc::Sender<Vec<u8>>,
     inbound_rx: Option<mpsc::Receiver<Vec<u8>>>,
