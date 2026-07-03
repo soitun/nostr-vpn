@@ -1,6 +1,7 @@
 #[cfg(target_os = "windows")]
 impl FipsPrivateTunnelRuntime {
     pub(crate) async fn start(config: FipsPrivateTunnelConfig) -> Result<Self> {
+        crate::pipeline_profile::maybe_spawn_reporter();
         let scope = fips_lan_discovery_scope(&config.network_id);
         let transport = FipsEndpointTransportConfig {
             listen_port: config.listen_port,
@@ -57,7 +58,18 @@ impl FipsPrivateTunnelRuntime {
                     }
 
                     let packet_count = packets.len();
-                    match mesh.send_tunnel_packet_batch_owned(packets).await {
+                    crate::pipeline_profile::record_mesh_send_bulk_turn(0, packet_count);
+                    let send_result = {
+                        let _t = crate::pipeline_profile::Timer::start(
+                            crate::pipeline_profile::Stage::MeshSend,
+                        );
+                        mesh.send_tunnel_packet_batch_owned_with_capacity(
+                            packets,
+                            WINDOWS_FIPS_TUN_READ_BURST,
+                        )
+                        .await
+                    };
+                    match send_result {
                         Ok(sent) if sent == packet_count => {}
                         Ok(_sent) if debug => {
                             eprintln!("fips: Windows mesh route miss");

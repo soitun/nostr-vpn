@@ -17,7 +17,7 @@ mod macos_service;
 mod network_signaling;
 #[cfg(all(
     feature = "embedded-fips",
-    any(target_os = "linux", target_os = "macos")
+    any(target_os = "linux", target_os = "macos", target_os = "windows")
 ))]
 mod pipeline_profile;
 mod platform_routing;
