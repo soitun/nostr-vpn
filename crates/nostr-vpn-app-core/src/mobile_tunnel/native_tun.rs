@@ -15,7 +15,7 @@ impl NativeTunRuntime {
     fn start(
         fd: c_int,
         outbound_tx: tokio_mpsc::Sender<Vec<u8>>,
-        inbound_rx: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
+        inbound_rx: mpsc::Receiver<Vec<u8>>,
         packet_capacity: usize,
     ) -> Result<Self> {
         let fd = prepare_mobile_tun_fd(fd)?;
@@ -101,14 +101,20 @@ fn native_tun_read_loop(
     packet_capacity: usize,
 ) {
     while wait_mobile_tun_fd(fd, libc::POLLIN, &stop) {
-        match read_mobile_tun_packet(fd, packet_capacity) {
-            NativeTunRead::Packet(packet) => {
-                if !send_native_tun_packet(&outbound_tx, &stop, packet) {
-                    break;
+        for _ in 0..MOBILE_FIPS_SEND_BATCH {
+            match read_mobile_tun_packet(fd, packet_capacity) {
+                NativeTunRead::Packet(packet) => {
+                    if !send_native_tun_packet(&outbound_tx, &stop, packet) {
+                        stop.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                }
+                NativeTunRead::WouldBlock => break,
+                NativeTunRead::Stopped => {
+                    stop.store(true, Ordering::Relaxed);
+                    return;
                 }
             }
-            NativeTunRead::WouldBlock => {}
-            NativeTunRead::Stopped => break,
         }
     }
     stop.store(true, Ordering::Relaxed);
@@ -127,25 +133,33 @@ fn send_native_tun_packet(
 
 fn native_tun_write_loop(
     fd: c_int,
-    inbound_rx: Arc<Mutex<mpsc::Receiver<Vec<u8>>>>,
+    inbound_rx: mpsc::Receiver<Vec<u8>>,
     stop: Arc<AtomicBool>,
 ) {
     while !stop.load(Ordering::Relaxed) {
-        let packet = {
-            let rx = match inbound_rx.lock() {
-                Ok(rx) => rx,
-                Err(_) => break,
-            };
-            match rx.recv_timeout(Duration::from_millis(
-                u64::try_from(NATIVE_TUN_POLL_TIMEOUT_MS).unwrap_or(100),
-            )) {
-                Ok(packet) => packet,
-                Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(mpsc::RecvTimeoutError::Disconnected) => break,
-            }
+        let packet = match inbound_rx.recv() {
+            Ok(packet) => packet,
+            Err(_) => break,
         };
         if !write_mobile_tun_packet(fd, &packet, &stop) {
             break;
+        }
+        for _ in 1..MOBILE_FIPS_RECV_BATCH {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let packet = match inbound_rx.try_recv() {
+                Ok(packet) => packet,
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    stop.store(true, Ordering::Relaxed);
+                    return;
+                }
+            };
+            if !write_mobile_tun_packet(fd, &packet, &stop) {
+                stop.store(true, Ordering::Relaxed);
+                return;
+            }
         }
     }
     stop.store(true, Ordering::Relaxed);

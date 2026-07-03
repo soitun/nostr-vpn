@@ -420,7 +420,7 @@ pub(crate) struct MobileTunnel {
     app_config_dirty: Arc<AtomicBool>,
     #[cfg(any(target_os = "android", target_os = "ios"))]
     outbound_tx: tokio_mpsc::Sender<Vec<u8>>,
-    inbound_rx: Option<Arc<Mutex<mpsc::Receiver<Vec<u8>>>>>,
+    inbound_rx: Option<mpsc::Receiver<Vec<u8>>>,
     tasks: Vec<JoinHandle<()>>,
     wg_upstream: Option<WgUpstreamRuntime>,
     #[cfg(any(target_os = "android", target_os = "ios"))]

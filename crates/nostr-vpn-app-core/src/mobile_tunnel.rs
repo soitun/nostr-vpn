@@ -10,7 +10,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 use std::sync::{
-    Arc, Mutex, RwLock,
+    Arc, RwLock,
     atomic::{AtomicBool, Ordering},
     mpsc,
 };

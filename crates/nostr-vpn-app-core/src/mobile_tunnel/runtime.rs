@@ -42,7 +42,7 @@ impl MobileTunnel {
             app_config_dirty: started.app_config_dirty,
             #[cfg(any(target_os = "android", target_os = "ios"))]
             outbound_tx: started.outbound_tx,
-            inbound_rx: Some(Arc::new(Mutex::new(started.inbound_rx))),
+            inbound_rx: Some(started.inbound_rx),
             tasks: started.tasks,
             wg_upstream: started.wg_upstream,
             #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -453,13 +453,14 @@ impl MobileTunnel {
             reject_unattached_mobile_tun_fd(fd);
             return Err(anyhow!("native tun fd already attached"));
         }
-        let Some(inbound_rx) = self.inbound_rx.as_ref().cloned() else {
+        let Some(inbound_rx) = self.inbound_rx.take() else {
             reject_unattached_mobile_tun_fd(fd);
             return Err(anyhow!("mobile tunnel inbound packet receiver stopped"));
         };
         let mtu = match self.config.read() {
             Ok(config) => config.mtu,
             Err(_) => {
+                self.inbound_rx = Some(inbound_rx);
                 reject_unattached_mobile_tun_fd(fd);
                 return Err(anyhow!("mobile FIPS config lock poisoned"));
             }
