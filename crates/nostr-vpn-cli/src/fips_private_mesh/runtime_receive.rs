@@ -635,23 +635,40 @@ fn admit_direct_endpoint_packet_runs_with_mesh(
     runs: Vec<FipsEndpointDirectPacketRun>,
     batch_outputs: &mut DirectTunWriteBatch,
 ) -> DirectEndpointPacketRunAdmission {
-    if let Some(source_node_addr) = direct_packet_runs_single_source_node_addr(&runs) {
-        return admit_direct_endpoint_single_source_packet_runs_with_mesh(
-            mesh,
-            source_node_addr,
-            runs,
-            batch_outputs,
-        );
-    }
-
+    let mut current_source_node_addr = None;
+    let mut current_admitter = None;
     let mut received = 0usize;
     let mut accepted = 0usize;
     let mut data_rx_notes = FipsDataRxBatchNotes::default();
     for run in runs {
-        let mut admitted = admit_direct_endpoint_packet_run_with_mesh(mesh, run, batch_outputs);
-        received = received.saturating_add(admitted.received);
-        accepted = accepted.saturating_add(admitted.accepted);
-        data_rx_notes.append(&mut admitted.data_rx_notes);
+        let run_packets = run.len();
+        received = received.saturating_add(run_packets);
+        if run_packets == 0 {
+            continue;
+        }
+
+        let source_node_addr = *run.source_node_addr().as_bytes();
+        if current_source_node_addr != Some(source_node_addr) {
+            current_source_node_addr = Some(source_node_addr);
+            current_admitter = mesh.endpoint_source_admitter(&source_node_addr);
+        }
+        let Some(admitter) = current_admitter else {
+            continue;
+        };
+
+        batch_outputs.reserve(run_packets);
+        let (accepted_count, endpoint_bytes) =
+            admit_direct_endpoint_packet_run_with_admitter(&admitter, run, batch_outputs);
+        if accepted_count == 0 {
+            continue;
+        }
+
+        accepted = accepted.saturating_add(accepted_count);
+        data_rx_notes.push(FipsDataRxNote::new(
+            admitter.source_pubkey(),
+            admitter.source_pubkey_bytes(),
+            endpoint_bytes,
+        ));
     }
     DirectEndpointPacketRunAdmission {
         received,
@@ -671,81 +688,6 @@ fn revalidate_direct_endpoint_tun_batch_with_mesh(
     batch_outputs.set_mesh_generation(mesh_generation);
     let mut admitted = admit_direct_endpoint_packet_runs_with_mesh(mesh, runs, batch_outputs);
     batch_outputs.append_data_rx_notes(&mut admitted.data_rx_notes);
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn admit_direct_endpoint_single_source_packet_runs_with_mesh(
-    mesh: &FipsMeshRuntime,
-    source_node_addr: [u8; 16],
-    runs: Vec<FipsEndpointDirectPacketRun>,
-    batch_outputs: &mut DirectTunWriteBatch,
-) -> DirectEndpointPacketRunAdmission {
-    let received = direct_packet_runs_len(&runs);
-    let Some(admitter) = mesh.endpoint_source_admitter(&source_node_addr) else {
-        return DirectEndpointPacketRunAdmission {
-            received,
-            accepted: 0,
-            data_rx_notes: FipsDataRxBatchNotes::default(),
-        };
-    };
-
-    let mut accepted = 0usize;
-    let mut endpoint_bytes = 0usize;
-    batch_outputs.reserve(received);
-    for run in runs {
-        let (run_accepted, run_bytes) =
-            admit_direct_endpoint_packet_run_with_admitter(&admitter, run, batch_outputs);
-        accepted = accepted.saturating_add(run_accepted);
-        endpoint_bytes = endpoint_bytes.saturating_add(run_bytes);
-    }
-
-    let mut data_rx_notes = FipsDataRxBatchNotes::default();
-    if accepted > 0 {
-        data_rx_notes.push(FipsDataRxNote::new(
-            admitter.source_pubkey(),
-            admitter.source_pubkey_bytes(),
-            endpoint_bytes,
-        ));
-    }
-
-    DirectEndpointPacketRunAdmission {
-        received,
-        accepted,
-        data_rx_notes,
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn admit_direct_endpoint_packet_run_with_mesh(
-    mesh: &FipsMeshRuntime,
-    run: FipsEndpointDirectPacketRun,
-    batch_outputs: &mut DirectTunWriteBatch,
-) -> DirectEndpointPacketRunAdmission {
-    let mut data_rx_notes = FipsDataRxBatchNotes::default();
-    let received = run.len();
-    let source_node_addr = *run.source_node_addr().as_bytes();
-    let Some(admitter) = mesh.endpoint_source_admitter(&source_node_addr) else {
-        return DirectEndpointPacketRunAdmission {
-            received,
-            accepted: 0,
-            data_rx_notes,
-        };
-    };
-    batch_outputs.reserve(received);
-    let (accepted_count, endpoint_bytes) =
-        admit_direct_endpoint_packet_run_with_admitter(&admitter, run, batch_outputs);
-    if accepted_count > 0 {
-        data_rx_notes.push(FipsDataRxNote::new(
-            admitter.source_pubkey(),
-            admitter.source_pubkey_bytes(),
-            endpoint_bytes,
-        ));
-    }
-    DirectEndpointPacketRunAdmission {
-        received,
-        accepted: accepted_count,
-        data_rx_notes,
-    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -86,12 +86,7 @@ impl FipsDirectEndpointDataSink {
             if run.is_empty() {
                 continue;
             }
-            let source_node_addr = *run.source_node_addr().as_bytes();
-            for (lane, lane_run) in run.partition_by_packet_lane(self.lanes.len(), |packet| {
-                direct_endpoint_lane_key_for_packet(&source_node_addr, packet)
-            }) {
-                lane_runs[lane].push(lane_run);
-            }
+            push_direct_packet_run_by_lane(run, self.lanes.len(), &mut lane_runs);
         }
         for (lane, runs) in lane_runs.into_iter().enumerate() {
             if !runs.is_empty() {
@@ -253,6 +248,70 @@ impl FipsDirectEndpointDataLane {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn push_direct_packet_run_by_lane(
+    run: FipsEndpointDirectPacketRun,
+    lane_count: usize,
+    lane_runs: &mut [Vec<FipsEndpointDirectPacketRun>],
+) {
+    if lane_count == 0 || run.is_empty() {
+        return;
+    }
+
+    // Keep already-affine FIPS runs whole; allocate split state only after a real
+    // flow-lane change appears inside the run.
+    let packet_count = run.len();
+    let source_node_addr = *run.source_node_addr().as_bytes();
+    let mut packets = run.packet_slices();
+    let Some(first_packet) = packets.next() else {
+        return;
+    };
+    let first_lane = direct_endpoint_lane_for_packet(&source_node_addr, first_packet, lane_count);
+    let mut packet_index = 1usize;
+    let mut packet_lanes: Option<Vec<usize>> = None;
+    let mut active_lanes = Vec::new();
+
+    for packet in packets {
+        let lane = direct_endpoint_lane_for_packet(&source_node_addr, packet, lane_count);
+        if lane != first_lane || packet_lanes.is_some() {
+            let lanes = packet_lanes.get_or_insert_with(|| {
+                active_lanes.push(first_lane);
+                let mut lanes = Vec::with_capacity(packet_count);
+                lanes.resize(packet_index, first_lane);
+                lanes
+            });
+            lanes.push(lane);
+            if !active_lanes.contains(&lane) {
+                active_lanes.push(lane);
+            }
+        }
+        packet_index = packet_index.saturating_add(1);
+    }
+
+    let Some(packet_lanes) = packet_lanes else {
+        lane_runs[first_lane].push(run);
+        return;
+    };
+
+    let Some((&last_lane, split_lanes)) = active_lanes.split_last() else {
+        lane_runs[first_lane].push(run);
+        return;
+    };
+    for &lane in split_lanes {
+        let mut lane_run = run.clone();
+        lane_run.retain_packets(|index, _packet| packet_lanes.get(index).copied() == Some(lane));
+        if !lane_run.is_empty() {
+            lane_runs[lane].push(lane_run);
+        }
+    }
+
+    let mut lane_run = run;
+    lane_run.retain_packets(|index, _packet| packet_lanes.get(index).copied() == Some(last_lane));
+    if !lane_run.is_empty() {
+        lane_runs[last_lane].push(lane_run);
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn direct_packet_runs_len(runs: &[FipsEndpointDirectPacketRun]) -> usize {
     runs.iter().map(FipsEndpointDirectPacketRun::len).sum()
 }
@@ -366,6 +425,15 @@ fn direct_endpoint_lane_key_for_packet(source_node_addr: &[u8; 16], packet: &[u8
         _ => {}
     }
     key
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn direct_endpoint_lane_for_packet(
+    source_node_addr: &[u8; 16],
+    packet: &[u8],
+    lane_count: usize,
+) -> usize {
+    direct_endpoint_lane_key_for_packet(source_node_addr, packet) % lane_count
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
