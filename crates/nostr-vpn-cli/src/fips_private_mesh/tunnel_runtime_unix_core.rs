@@ -121,6 +121,24 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.authenticated_peer_transport_addrs().await
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    async fn endpoint_bypass_ipv4_hosts(
+        &self,
+        config: &FipsPrivateTunnelConfig,
+    ) -> Result<Vec<Ipv4Addr>> {
+        let mut hosts = config.endpoint_hint_ipv4_hosts();
+        hosts.extend(
+            self.mesh
+                .peer_transport_ipv4_hosts()
+                .await?
+                .into_iter()
+                .filter(|host| !route_targets_include_ipv4_host(&config.route_targets, *host)),
+        );
+        hosts.sort_unstable();
+        hosts.dedup();
+        Ok(hosts)
+    }
+
     pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
         self.mesh.peer_endpoint_hints()
     }
@@ -304,7 +322,7 @@ impl FipsPrivateTunnelRuntime {
             crate::route_targets_require_endpoint_bypass(&route_targets);
 
         if original_route_targets_require_bypass {
-            let peer_endpoint_hosts = self.mesh.peer_transport_ipv4_hosts().await?;
+            let peer_endpoint_hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
             if requested_ipv4_exit && peer_endpoint_hosts.is_empty() {
                 eprintln!(
                     "fips: withholding macOS default route until the selected exit peer underlay endpoint is known"
