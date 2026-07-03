@@ -154,6 +154,7 @@ impl FipsPrivateMeshRuntime {
 
             let mut emitted = 0usize;
             let mut received = 0usize;
+            let mut turn_start = None;
             let (mesh_generation, mesh) = self.stable_mesh_snapshot();
             packet_outputs.set_mesh_generation(mesh_generation);
             while received < limit {
@@ -181,6 +182,9 @@ impl FipsPrivateMeshRuntime {
                 if runs.is_empty() {
                     continue;
                 }
+                if turn_start.is_none() {
+                    turn_start = crate::pipeline_profile::stamp();
+                }
 
                 self.forward_direct_endpoint_control_events_blocking(&runs, event_tx)?;
                 let mut admitted =
@@ -196,6 +200,10 @@ impl FipsPrivateMeshRuntime {
                 return Ok(None);
             }
             if emitted > 0 {
+                crate::pipeline_profile::record_since(
+                    crate::pipeline_profile::Stage::DirectEndpointRecv,
+                    turn_start,
+                );
                 return Ok(Some(emitted));
             }
         }
@@ -212,6 +220,9 @@ impl FipsPrivateMeshRuntime {
         &self,
         packet_outputs: &mut DirectTunWriteBatch,
     ) -> Result<()> {
+        let _t = crate::pipeline_profile::Timer::start(
+            crate::pipeline_profile::Stage::DirectEndpointFinalize,
+        );
         if packet_outputs.is_empty() {
             packet_outputs.clear();
             return Ok(());

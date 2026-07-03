@@ -191,8 +191,8 @@ test_summary_row() {
   assert_eq "$header" $'backend\tthreads\tduration_secs\traw_dir' "summary header"
   assert_eq "$row" $'boringtun\t1\t3\t1234.568\t7\t987.654\t1.25\t0.333333\t1.234' "summary row"
   assert_eq "$nvpn_row" $'nvpn\t\t3\t1234.568\t7\t987.654\t1.25\t0.333333\t1.234' "nvpn summary row"
-  assert_eq "$fields" "26" "summary field count"
-  assert_eq "$nvpn_fields" "26" "nvpn summary field count"
+  assert_eq "$fields" "34" "summary field count"
+  assert_eq "$nvpn_fields" "34" "nvpn summary field count"
 
   rm -rf "$dir"
 
@@ -777,7 +777,7 @@ test_extra_env_validation_rejects_stale_fips_helper_names() {
 }
 
 test_pipeline_summary_helpers() {
-  local dir lines all after load peak top worker_open worker_top fmp decrypt_spread linux_bulk udp tun mesh_send mesh_recv tun_write hard
+  local dir lines all after load peak top worker_open worker_top fmp decrypt_spread linux_bulk udp tun mesh_send mesh_recv tun_write direct_endpoint hard
   local placement helper_other handoff_other
   dir="$(mktemp -d)"
   lines="$dir/pipeline.txt"
@@ -801,6 +801,7 @@ EOF
   mesh_send="$(docker_bench_pipeline_nvpn_mesh_send_batch_summary "$load")"
   mesh_recv="$(docker_bench_pipeline_nvpn_mesh_recv_batch_summary "$load")"
   tun_write="$(docker_bench_pipeline_nvpn_tun_write_summary "$load")"
+  direct_endpoint="$(docker_bench_pipeline_nvpn_direct_endpoint_summary '[nvpn-pipe 5s] nvpn_direct_endpoint_queue=6/s avg=700.0us p50<=1.0ms p95<=2.1ms p99<=4.2ms max<=8.4ms allmax=16.8ms nvpn_direct_endpoint_wake=5/s avg=80.0us p50<=65.5us p95<=262.1us p99<=524.3us max<=1.0ms allmax=2.1ms nvpn_direct_endpoint_recv=6/s avg=20.0us p50<=16.4us p95<=65.5us p99<=131.1us max<=262.1us allmax=524.3us nvpn_direct_endpoint_finalize=6/s avg=512ns p50<=512ns p95<=1.0us p99<=2.0us max<=4.1us allmax=8.2us nvpn_tun_write_batch=6/s avg=500.0us p50<=524.3us p95<=1.0ms p99<=2.1ms max<=4.2ms allmax=8.4ms')"
   placement="$(docker_bench_pipeline_fsp_owner_placement_summary "$load")"
   helper_other="$(docker_bench_pipeline_fsp_owner_placement_other_path_max "$load" helper)"
   handoff_other="$(docker_bench_pipeline_fsp_owner_placement_other_path_max "$load" handoff)"
@@ -826,6 +827,7 @@ EOF
   assert_eq "$mesh_send" "avg_input_packets=25.0,avg_routed_packets=23.8,avg_runs=1.2,routed_pct=95.0,full_pct=25.0,flush_per_sec=12,input_packets_per_sec=300,routed_packets_per_sec=285,runs_per_sec=15" "nvpn mesh send batch summary"
   assert_eq "$mesh_recv" "avg_events=50.0,avg_packets=40.0,full_pct=33.3,single_packet_pct=16.7,avg_packet_bytes=1200.0,flush_per_sec=6,events_per_sec=300,packets_per_sec=240,bytes_per_sec=288000" "nvpn mesh receive batch summary"
   assert_eq "$tun_write" "packets_per_sec=240,bytes_per_sec=288000,avg_packet_bytes=1200.0,would_block_per_sec=3" "nvpn TUN write summary"
+  assert_eq "$direct_endpoint" "queue_rate_per_sec=6,queue_avg_ms=0.7,queue_p95_ms=2.1,queue_p99_ms=4.2,queue_max_ms=8.4,queue_allmax_ms=16.8,wake_rate_per_sec=5,wake_avg_ms=0.08,wake_p95_ms=0.2621,wake_p99_ms=0.5243,wake_max_ms=1,wake_allmax_ms=2.1,recv_rate_per_sec=6,recv_avg_ms=0.02,recv_p95_ms=0.0655,recv_p99_ms=0.1311,recv_max_ms=0.2621,recv_allmax_ms=0.5243,finalize_rate_per_sec=6,finalize_avg_ms=0.000512,finalize_p95_ms=0.001,finalize_p99_ms=0.002,finalize_max_ms=0.0041,finalize_allmax_ms=0.0082,tun_batch_rate_per_sec=6,tun_batch_avg_ms=0.5,tun_batch_p95_ms=1,tun_batch_p99_ms=2.1,tun_batch_max_ms=4.2,tun_batch_allmax_ms=8.4" "nvpn direct endpoint turn summary"
   assert_eq "$placement" "owner=mismatch,path=helper,bulk_path=helper,priority_path=handoff,owner_same_per_sec=0,owner_mismatch_per_sec=420,path_local_per_sec=0,path_handoff_per_sec=20,path_helper_per_sec=400,path_worker_open_per_sec=0,path_worker_open_striped_per_sec=0,path_local_priority_per_sec=0,path_local_bulk_per_sec=0,path_handoff_priority_per_sec=20,path_handoff_bulk_per_sec=0,path_helper_bulk_per_sec=400,path_worker_open_bulk_per_sec=0,bulk_packets_per_sec=315,select_bulk_packets_per_sec=0,drain_bulk_packets_per_sec=0" "FSP owner placement summary"
   assert_eq "$helper_other" $'\t0' "helper alternate placement path ignores priority handoff"
   assert_eq "$handoff_other" $'helper\t400' "handoff alternate placement path"
@@ -1157,7 +1159,7 @@ test_docker_benchmark_table_outputs() {
   current_provenance="$(table_values "$out/stress-table.tsv" current git_head fips_head dirty stress)"
   markdown_row="$(grep -F '| current | nvpn |' "$out/stress-table.md")"
 
-  assert_eq "$fields" "38" "Docker benchmark table field count"
+  assert_eq "$fields" "41" "Docker benchmark table field count"
   assert_eq "$current_status" $'true\t7\trx_loop_slow_maintenance_skipped:7\tpass' "Docker benchmark table current status"
   assert_eq "$current_events" $'0\t0\t0\t0\t0\t0' "Docker benchmark table current event split"
   assert_eq "$current_socket" $'16777216/33554432\t8388608/16777216' "Docker benchmark table connected UDP buffer summary"

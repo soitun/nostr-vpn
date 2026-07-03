@@ -8,6 +8,7 @@ fn flush_direct_endpoint_packet_batch_to_tun_blocking(
     if packet_batch.is_empty() {
         return;
     }
+    let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWriteBatch);
 
     #[cfg(target_os = "linux")]
     if tun_fd.vnet_hdr {

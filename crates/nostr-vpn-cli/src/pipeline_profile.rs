@@ -5,7 +5,7 @@ use std::sync::atomic::{
 };
 use std::time::Instant;
 
-const N_STAGES: usize = 6;
+const N_STAGES: usize = 10;
 const N_COUNTERS: usize = 37;
 const HIST_BUCKETS: usize = 48;
 
@@ -17,7 +17,11 @@ pub(crate) enum Stage {
     MeshRoute = 2,
     MeshEndpointSend = 3,
     TunWrite = 4,
-    DirectEndpointQueue = 5,
+    TunWriteBatch = 5,
+    DirectEndpointQueue = 6,
+    DirectEndpointWake = 7,
+    DirectEndpointRecv = 8,
+    DirectEndpointFinalize = 9,
 }
 
 impl Stage {
@@ -28,7 +32,11 @@ impl Stage {
             Stage::MeshRoute => "nvpn_mesh_route",
             Stage::MeshEndpointSend => "nvpn_mesh_endpoint_send",
             Stage::TunWrite => "nvpn_tun_write",
+            Stage::TunWriteBatch => "nvpn_tun_write_batch",
             Stage::DirectEndpointQueue => "nvpn_direct_endpoint_queue",
+            Stage::DirectEndpointWake => "nvpn_direct_endpoint_wake",
+            Stage::DirectEndpointRecv => "nvpn_direct_endpoint_recv",
+            Stage::DirectEndpointFinalize => "nvpn_direct_endpoint_finalize",
         }
     }
 }
@@ -173,7 +181,11 @@ fn stage_from_index(idx: usize) -> Stage {
         2 => Stage::MeshRoute,
         3 => Stage::MeshEndpointSend,
         4 => Stage::TunWrite,
-        5 => Stage::DirectEndpointQueue,
+        5 => Stage::TunWriteBatch,
+        6 => Stage::DirectEndpointQueue,
+        7 => Stage::DirectEndpointWake,
+        8 => Stage::DirectEndpointRecv,
+        9 => Stage::DirectEndpointFinalize,
         _ => unreachable!(),
     }
 }
@@ -560,6 +572,19 @@ mod tests {
         assert_eq!(
             Stage::DirectEndpointQueue.name(),
             "nvpn_direct_endpoint_queue"
+        );
+        assert_eq!(Stage::TunWriteBatch.name(), "nvpn_tun_write_batch");
+        assert_eq!(
+            Stage::DirectEndpointWake.name(),
+            "nvpn_direct_endpoint_wake"
+        );
+        assert_eq!(
+            Stage::DirectEndpointRecv.name(),
+            "nvpn_direct_endpoint_recv"
+        );
+        assert_eq!(
+            Stage::DirectEndpointFinalize.name(),
+            "nvpn_direct_endpoint_finalize"
         );
         assert_eq!(
             Counter::MeshSendBatchInputPackets.name(),

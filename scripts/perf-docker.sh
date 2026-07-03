@@ -444,7 +444,7 @@ write_pipeline_phase_range_header() {
 
 write_pipeline_phase_summary_header() {
   local path="$1"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     phase \
     service \
     pipeline_line_start \
@@ -463,13 +463,14 @@ write_pipeline_phase_summary_header() {
     nvpn_mesh_send_batch \
     nvpn_mesh_recv_batch \
     nvpn_tun_write \
+    nvpn_direct_endpoint \
     hard_events \
     selected_load_pipeline >"$path"
 }
 
 write_pipeline_summary_header() {
   local path="$1"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     service \
     pipeline_line_count \
     benchmark_pipeline_line_count \
@@ -486,6 +487,7 @@ write_pipeline_summary_header() {
     nvpn_mesh_send_batch \
     nvpn_mesh_recv_batch \
     nvpn_tun_write \
+    nvpn_direct_endpoint \
     hard_events \
     selected_load_pipeline >"$path"
 }
@@ -502,7 +504,7 @@ capture_pipeline_for_service() {
   local peak_path="$prefix-pipeline-peak-wait-selected.txt"
   local all_count bench_count load_line peak_line
   local load_top peak_top fmp_batch fmp_spread decrypt_batch decrypt_spread decrypt_turn_mix fsp_worker_open_wait udp_send_batch
-  local nvpn_tun_read_batch nvpn_mesh_send_batch nvpn_mesh_recv_batch nvpn_tun_write hard_events
+  local nvpn_tun_read_batch nvpn_mesh_send_batch nvpn_mesh_recv_batch nvpn_tun_write nvpn_direct_endpoint hard_events
 
   grep -E '^\[(pipe|nvpn-pipe) ' "$log_path" >"$all_lines_path" 2>/dev/null || true
   docker_bench_pipeline_lines_after_start_from_stdin "$start_line" <"$all_lines_path" >"$bench_lines_path"
@@ -526,9 +528,10 @@ capture_pipeline_for_service() {
   nvpn_mesh_send_batch="$(docker_bench_pipeline_nvpn_mesh_send_batch_summary "$load_line")"
   nvpn_mesh_recv_batch="$(docker_bench_pipeline_nvpn_mesh_recv_batch_summary "$load_line")"
   nvpn_tun_write="$(docker_bench_pipeline_nvpn_tun_write_summary_from_stdin <"$bench_lines_path")"
+  nvpn_direct_endpoint="$(docker_bench_pipeline_nvpn_direct_endpoint_summary "$load_line")"
   hard_events="$(docker_bench_pipeline_hard_event_summary_from_stdin "$start_line" <"$all_lines_path")"
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$service" \
     "$all_count" \
     "$bench_count" \
@@ -545,6 +548,7 @@ capture_pipeline_for_service() {
     "$(docker_bench_tsv_field "$nvpn_mesh_send_batch")" \
     "$(docker_bench_tsv_field "$nvpn_mesh_recv_batch")" \
     "$(docker_bench_tsv_field "$nvpn_tun_write")" \
+    "$(docker_bench_tsv_field "$nvpn_direct_endpoint")" \
     "$(docker_bench_tsv_field "$hard_events")" \
     "$(docker_bench_tsv_field "$load_line")" >>"$summary_path"
 }
@@ -573,7 +577,7 @@ capture_pipeline_phase_for_service() {
   local phase_lines_path="$RAW_DIR/nvpn-$service-pipeline-$phase-lines.txt"
   local phase_count load_line peak_line
   local load_top peak_top fmp_batch fmp_spread decrypt_batch decrypt_spread decrypt_turn_mix fsp_worker_open_wait udp_send_batch
-  local nvpn_tun_read_batch nvpn_mesh_send_batch nvpn_mesh_recv_batch nvpn_tun_write hard_events
+  local nvpn_tun_read_batch nvpn_mesh_send_batch nvpn_mesh_recv_batch nvpn_tun_write nvpn_direct_endpoint hard_events
 
   docker_bench_pipeline_lines_in_range_from_stdin "$start_line" "$end_line" \
     <"$all_lines_path" >"$phase_lines_path"
@@ -594,9 +598,10 @@ capture_pipeline_phase_for_service() {
   nvpn_mesh_send_batch="$(docker_bench_pipeline_nvpn_mesh_send_batch_summary "$load_line")"
   nvpn_mesh_recv_batch="$(docker_bench_pipeline_nvpn_mesh_recv_batch_summary "$load_line")"
   nvpn_tun_write="$(docker_bench_pipeline_nvpn_tun_write_summary_from_stdin <"$phase_lines_path")"
+  nvpn_direct_endpoint="$(docker_bench_pipeline_nvpn_direct_endpoint_summary "$load_line")"
   hard_events="$(docker_bench_pipeline_hard_event_summary_from_stdin "$start_line" "$end_line" <"$all_lines_path")"
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$phase" \
     "$service" \
     "$start_line" \
@@ -615,6 +620,7 @@ capture_pipeline_phase_for_service() {
     "$(docker_bench_tsv_field "$nvpn_mesh_send_batch")" \
     "$(docker_bench_tsv_field "$nvpn_mesh_recv_batch")" \
     "$(docker_bench_tsv_field "$nvpn_tun_write")" \
+    "$(docker_bench_tsv_field "$nvpn_direct_endpoint")" \
     "$(docker_bench_tsv_field "$hard_events")" \
     "$(docker_bench_tsv_field "$load_line")" >>"$summary_path"
 }

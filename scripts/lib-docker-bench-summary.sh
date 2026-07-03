@@ -1800,6 +1800,12 @@ docker_bench_peak_wait_pipeline_line_from_stdin() {
       score = -1
       value = metric_avg_us(line, "nvpn_tun_to_mesh_queue_wait")
       if (value > score) score = value
+      value = metric_avg_us(line, "nvpn_direct_endpoint_queue")
+      if (value > score) score = value
+      value = metric_avg_us(line, "nvpn_direct_endpoint_wake")
+      if (value > score) score = value
+      value = metric_avg_us(line, "nvpn_tun_write_batch")
+      if (value > score) score = value
       return score
     }
     /^\[pipe / {
@@ -1963,7 +1969,7 @@ docker_bench_pipeline_queue_wait_top_summary() {
       return 0
     }
     BEGIN {
-      metrics = "endpoint_command_wait endpoint_priority_command_wait endpoint_bulk_command_wait endpoint_event_wait endpoint_priority_event_wait endpoint_bulk_event_wait connected_udp_drain_recv connected_udp_fast_path_dispatch connected_udp_drain_ring_wait connected_udp_drain_priority_ring_wait connected_udp_drain_bulk_ring_wait fmp_worker_queue_wait fmp_worker_priority_queue_wait fmp_worker_bulk_queue_wait fmp_linux_bulk_container_queue_wait fmp_linux_bulk_container_ready_wait fmp_linux_bulk_container_first_slot_wait fmp_linux_bulk_container_all_slots_wait decrypt_worker_queue_wait decrypt_worker_priority_queue_wait decrypt_worker_bulk_queue_wait decrypt_fallback_wait decrypt_fallback_priority_wait decrypt_fallback_bulk_wait fsp_aead_worker_open_queue_wait fsp_aead_worker_open_completion_wait decrypt_authenticated_session_wait decrypt_authenticated_session_priority_wait decrypt_authenticated_session_bulk_wait decrypt_direct_session_commit_wait decrypt_direct_session_data_wait decrypt_fsp_worker_queue_wait decrypt_fsp_worker_priority_queue_wait decrypt_fsp_worker_bulk_queue_wait transport_queue_wait transport_priority_queue_wait transport_bulk_queue_wait transport_channel_wait transport_priority_channel_wait transport_bulk_channel_wait transport_rx_loop_wait transport_priority_rx_loop_wait transport_bulk_rx_loop_wait nvpn_tun_to_mesh_queue_wait"
+      metrics = "endpoint_command_wait endpoint_priority_command_wait endpoint_bulk_command_wait endpoint_event_wait endpoint_priority_event_wait endpoint_bulk_event_wait connected_udp_drain_recv connected_udp_fast_path_dispatch connected_udp_drain_ring_wait connected_udp_drain_priority_ring_wait connected_udp_drain_bulk_ring_wait fmp_worker_queue_wait fmp_worker_priority_queue_wait fmp_worker_bulk_queue_wait fmp_linux_bulk_container_queue_wait fmp_linux_bulk_container_ready_wait fmp_linux_bulk_container_first_slot_wait fmp_linux_bulk_container_all_slots_wait decrypt_worker_queue_wait decrypt_worker_priority_queue_wait decrypt_worker_bulk_queue_wait decrypt_fallback_wait decrypt_fallback_priority_wait decrypt_fallback_bulk_wait fsp_aead_worker_open_queue_wait fsp_aead_worker_open_completion_wait decrypt_authenticated_session_wait decrypt_authenticated_session_priority_wait decrypt_authenticated_session_bulk_wait decrypt_direct_session_commit_wait decrypt_direct_session_data_wait decrypt_fsp_worker_queue_wait decrypt_fsp_worker_priority_queue_wait decrypt_fsp_worker_bulk_queue_wait transport_queue_wait transport_priority_queue_wait transport_bulk_queue_wait transport_channel_wait transport_priority_channel_wait transport_bulk_channel_wait transport_rx_loop_wait transport_priority_rx_loop_wait transport_bulk_rx_loop_wait nvpn_tun_to_mesh_queue_wait nvpn_direct_endpoint_queue nvpn_direct_endpoint_wake"
       metric_count = split(metrics, names, " ")
       best_p99 = -1
       best_p95 = -1
@@ -2834,6 +2840,60 @@ docker_bench_pipeline_nvpn_tun_write_summary_from_stdin() {
       if (best != "") {
         print best
       }
+    }
+  '
+}
+
+docker_bench_pipeline_nvpn_direct_endpoint_summary() {
+  local line="$1"
+  printf '%s\n' "$line" | awk '
+    function duration_ms(value, number) {
+      number = value + 0
+      if (value ~ /ns$/) return number / 1000000
+      if (value ~ /us$/) return number / 1000
+      if (value ~ /ms$/) return number
+      if (value ~ /s$/) return number * 1000
+      return number
+    }
+    function append(name, value) {
+      if (summary != "") summary = summary ","
+      summary = summary name "=" value
+    }
+    function parse_stage(line, metric, prefix, start, rest, parts, rate_raw, avg_raw, p95_raw, p99_raw, max_raw, allmax_raw) {
+      start = index(line, metric "=")
+      if (start == 0) return
+      rest = substr(line, start)
+      split(rest, parts, " ")
+      if (parts[2] !~ /^avg=/ || parts[4] !~ /^p95<=/ || parts[5] !~ /^p99<=/ || parts[6] !~ /^max<=/ || parts[7] !~ /^allmax=/) return
+      rate_raw = parts[1]
+      avg_raw = parts[2]
+      p95_raw = parts[4]
+      p99_raw = parts[5]
+      max_raw = parts[6]
+      allmax_raw = parts[7]
+      sub(/^[^=]+=/, "", rate_raw)
+      sub(/\/s$/, "", rate_raw)
+      sub(/^avg=/, "", avg_raw)
+      sub(/^p95<=/, "", p95_raw)
+      sub(/^p99<=/, "", p99_raw)
+      sub(/^max<=/, "", max_raw)
+      sub(/^allmax=/, "", allmax_raw)
+      append(prefix "_rate_per_sec", rate_raw + 0)
+      append(prefix "_avg_ms", duration_ms(avg_raw))
+      append(prefix "_p95_ms", duration_ms(p95_raw))
+      append(prefix "_p99_ms", duration_ms(p99_raw))
+      append(prefix "_max_ms", duration_ms(max_raw))
+      append(prefix "_allmax_ms", duration_ms(allmax_raw))
+    }
+    {
+      parse_stage($0, "nvpn_direct_endpoint_queue", "queue")
+      parse_stage($0, "nvpn_direct_endpoint_wake", "wake")
+      parse_stage($0, "nvpn_direct_endpoint_recv", "recv")
+      parse_stage($0, "nvpn_direct_endpoint_finalize", "finalize")
+      parse_stage($0, "nvpn_tun_write_batch", "tun_batch")
+    }
+    END {
+      if (summary != "") print summary
     }
   '
 }
