@@ -8,13 +8,10 @@
 # bench tables for an apples-to-apples comparison. Bench uses the
 # default chacha20poly1305 wire crypto (NEON on aarch64, AVX on x86_64).
 #
-# Two passes by default:
-#   - WG_THREADS=1 — boringtun in single-task mode, the architectural
-#     peer to the current single-task nvpn run_rx_loop.
-#   - WG_THREADS=4 — boringtun's CLI default, real-world deployment.
-#
-# Override: WG_THREADS_LIST="1 4 8" bash scripts/perf-docker-boringtun.sh
-# Single pass: WG_THREADS=4 SINGLE_PASS=1 bash scripts/perf-docker-boringtun.sh
+# Default pass leaves WG_THREADS unset so `boringtun-cli` uses its own
+# runtime default. Explicit sweeps are opt-in:
+#   WG_THREADS_LIST="1 4 8" bash scripts/perf-docker-boringtun.sh
+#   WG_THREADS=4 bash scripts/perf-docker-boringtun.sh
 #
 # Optional contention mode matches scripts/perf-docker.sh:
 #   NVPN_DOCKER_CPU_STRESS=1
@@ -69,11 +66,20 @@ if [[ -n "$UDP1000_PARALLEL" && "$UDP1000_PARALLEL" != "1" ]]; then
   UDP1000_PARALLEL_ARGS=(-P "$UDP1000_PARALLEL")
 fi
 
-if [[ -n "${SINGLE_PASS:-}" ]]; then
-  THREADS_LIST=("${WG_THREADS:-4}")
+if [[ -n "${WG_THREADS_LIST:-}" ]]; then
+  IFS=' ' read -ra THREADS_LIST <<<"$WG_THREADS_LIST"
+elif [[ -n "${WG_THREADS:-}" ]]; then
+  THREADS_LIST=("$WG_THREADS")
 else
-  IFS=' ' read -ra THREADS_LIST <<<"${WG_THREADS_LIST:-1 4}"
+  THREADS_LIST=(default)
 fi
+
+for threads in "${THREADS_LIST[@]}"; do
+  if [[ "$threads" != "default" && ! "$threads" =~ ^[1-9][0-9]*$ ]]; then
+    echo "perf-boringtun: invalid WG_THREADS value '$threads' (expected positive integer or default)" >&2
+    exit 2
+  fi
+done
 
 cleanup() {
   docker_bench_stop_cpu_stress
@@ -121,6 +127,8 @@ reset_wg() {
 
 setup_wg() {
   local threads="$1"
+  local thread_env=""
+  [[ "$threads" == "default" ]] || thread_env="WG_THREADS=$threads "
 
   ALICE_PRIV=$("${COMPOSE[@]}" exec -T node-a wg genkey | tr -d '\r\n')
   ALICE_PUB=$(echo -n "$ALICE_PRIV" | "${COMPOSE[@]}" exec -T node-a wg pubkey | tr -d '\r\n')
@@ -129,7 +137,7 @@ setup_wg() {
 
   "${COMPOSE[@]}" exec -T node-a sh -c "
     set -e
-    WG_THREADS=$threads boringtun-cli --disable-drop-privileges wg0 >/dev/null 2>&1
+    ${thread_env}boringtun-cli --disable-drop-privileges wg0 >/dev/null 2>&1
     ip addr add $ALICE_TUN/24 dev wg0
     ip link set wg0 mtu 1420
     ip link set wg0 up
@@ -140,7 +148,7 @@ setup_wg() {
 
   "${COMPOSE[@]}" exec -T node-b sh -c "
     set -e
-    WG_THREADS=$threads boringtun-cli --disable-drop-privileges wg0 >/dev/null 2>&1
+    ${thread_env}boringtun-cli --disable-drop-privileges wg0 >/dev/null 2>&1
     ip addr add $BOB_TUN/24 dev wg0
     ip link set wg0 mtu 1420
     ip link set wg0 up
@@ -314,7 +322,11 @@ run_boringtun_pass() {
   docker_bench_write_cpu_phase_header "$cpu_phases"
 
   printf '\n=========================================\n'
-  printf '  boringtun WG_THREADS=%s\n' "$threads"
+  if [[ "$threads" == "default" ]]; then
+    printf '  boringtun default\n'
+  else
+    printf '  boringtun WG_THREADS=%s\n' "$threads"
+  fi
   printf '=========================================\n'
   printf 'alice tunnel ip: %s\n' "$ALICE_TUN"
   printf 'bob   tunnel ip: %s\n\n' "$BOB_TUN"
