@@ -52,7 +52,10 @@
     use std::collections::{HashMap, HashSet};
     use std::net::{IpAddr, Ipv4Addr, UdpSocket};
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    use std::sync::atomic::AtomicBool;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
     use std::time::Duration;
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -237,6 +237,8 @@ pub(crate) struct FipsPrivateMeshRuntime {
     endpoint: FipsEndpoint,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     direct_endpoint_rx: Option<Vec<FipsDirectEndpointDataRx>>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    direct_endpoint_pending_events: Mutex<VecDeque<FipsPrivateMeshEvent>>,
     mesh: ArcSwap<FipsMeshRuntime>,
     mesh_generation: AtomicU64,
     peer_activity: ArcSwap<FipsPeerActivityMap>,
@@ -248,7 +250,9 @@ pub(crate) struct FipsPrivateMeshRuntime {
     control_fragments: Mutex<ControlFragmentBuffer>,
 }
 
+include!("fips_private_mesh/direct_endpoint_lanes.rs");
 include!("fips_private_mesh/types_and_mtu.rs");
+include!("fips_private_mesh/mtu_and_policy.rs");
 include!("fips_private_mesh/peer_status_and_events.rs");
 include!("fips_private_mesh/tun_pipeline.rs");
 include!("fips_private_mesh/runtime_send.rs");
@@ -273,6 +277,7 @@ mod tests {
     include!("fips_private_mesh/tests_core.rs");
     include!("fips_private_mesh/tests_tun_pipeline.rs");
     include!("fips_private_mesh/tests_status.rs");
+    include!("fips_private_mesh/tests_status_endpoint_data.rs");
     include!("fips_private_mesh/tests_runtime.rs");
     include!("fips_private_mesh/tests_config.rs");
 }

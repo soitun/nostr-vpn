@@ -201,10 +201,6 @@ fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig 
     // sandbox accepts it but we don't need control on mobile either —
     // there's no daemon to talk to.
     config.node.control.enabled = false;
-    // iOS packet extensions can stall while starting FIPS's desktop-oriented
-    // Unix worker thread pools. Mobile traffic is latency-sensitive at tunnel
-    // bring-up, so keep the shared core on its inline crypto/send path.
-    config.node.worker_pools_enabled = false;
     // Keep open/public discovery available but paced. Phones can easily wake
     // several stale peers at once; failed route lookups and ambient adverts
     // must back off instead of leaning on public transit nodes indefinitely.

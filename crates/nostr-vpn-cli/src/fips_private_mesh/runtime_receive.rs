@@ -1,12 +1,35 @@
 impl FipsPrivateMeshRuntime {
     pub(crate) async fn recv_mesh_event(&self) -> Result<Option<FipsPrivateMeshEvent>> {
         loop {
-            let Some(message) = self.endpoint.recv().await else {
-                return Ok(None);
-            };
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                self.drain_direct_endpoint_mesh_events(1).await?;
+                if let Some(event) = self.pop_direct_endpoint_mesh_event()? {
+                    return Ok(Some(event));
+                }
 
-            if let Some(event) = self.endpoint_message_to_mesh_event(message, None).await? {
-                return Ok(Some(event));
+                match tokio::time::timeout(Duration::from_millis(10), self.endpoint.recv()).await {
+                    Ok(Some(message)) => {
+                        if let Some(event) =
+                            self.endpoint_message_to_mesh_event(message, None).await?
+                        {
+                            return Ok(Some(event));
+                        }
+                    }
+                    Ok(None) => return Ok(None),
+                    Err(_) => continue,
+                }
+            }
+
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                let Some(message) = self.endpoint.recv().await else {
+                    return Ok(None);
+                };
+
+                if let Some(event) = self.endpoint_message_to_mesh_event(message, None).await? {
+                    return Ok(Some(event));
+                }
             }
         }
     }
@@ -39,9 +62,33 @@ impl FipsPrivateMeshRuntime {
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
         events.clear();
         loop {
-            let Some(_) = self.endpoint.recv_batch_into(messages, limit).await else {
-                return Ok(None);
-            };
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                self.drain_direct_endpoint_mesh_events(limit).await?;
+                if self.pop_direct_endpoint_mesh_events_into(events, limit)? > 0 {
+                    return Ok(Some(events.len()));
+                }
+
+                let Some(_) =
+                    (match tokio::time::timeout(
+                        Duration::from_millis(10),
+                        self.endpoint.recv_batch_into(messages, limit),
+                    )
+                    .await
+                    {
+                        Ok(result) => result,
+                        Err(_) => continue,
+                    })
+                else {
+                    return Ok(None);
+                };
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            {
+                let Some(_) = self.endpoint.recv_batch_into(messages, limit).await else {
+                    return Ok(None);
+                };
+            }
             let now = Some(unix_timestamp());
             events.reserve(messages.len());
             for message in messages.drain(..) {
@@ -96,6 +143,7 @@ impl FipsPrivateMeshRuntime {
         limit: usize,
         stop: &AtomicBool,
         packet_outputs: &mut DirectTunWriteBatch,
+        event_tx: Option<&mpsc::Sender<FipsPrivateMeshEvent>>,
     ) -> Result<Option<usize>> {
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
         let Some(receivers) = &self.direct_endpoint_rx else {
@@ -140,6 +188,7 @@ impl FipsPrivateMeshRuntime {
                     continue;
                 }
 
+                self.forward_direct_endpoint_control_events_blocking(&runs, event_tx)?;
                 let mut admitted =
                     admit_direct_endpoint_packet_runs_with_mesh(&mesh, runs, packet_outputs);
                 received = received.saturating_add(admitted.received);
@@ -196,6 +245,14 @@ impl FipsPrivateMeshRuntime {
         now: Option<u64>,
     ) -> Result<Option<FipsPrivateMeshEvent>> {
         loop {
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                self.drain_direct_endpoint_mesh_events(1).await?;
+                if let Some(event) = self.pop_direct_endpoint_mesh_event()? {
+                    return Ok(Some(event));
+                }
+            }
+
             let Some(message) = self.endpoint.try_recv() else {
                 return Ok(None);
             };
@@ -429,6 +486,134 @@ impl FipsPrivateMeshRuntime {
             return Ok(None);
         };
         decode_fips_control_frame(&reassembled)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    async fn drain_direct_endpoint_mesh_events(&self, limit: usize) -> Result<usize> {
+        let Some(receivers) = &self.direct_endpoint_rx else {
+            return Ok(0);
+        };
+        let mut events = Vec::new();
+        for rx in receivers {
+            while events.len() < limit {
+                let runs = match rx.try_recv() {
+                    Ok(runs) => runs,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(0),
+                };
+                self.direct_endpoint_packet_runs_to_mesh_events(
+                    runs,
+                    Some(unix_timestamp()),
+                    &mut events,
+                )
+                .await?;
+            }
+        }
+
+        let drained = events.len();
+        if drained > 0 {
+            self.direct_endpoint_pending_events
+                .lock()
+                .map_err(|_| anyhow!("FIPS direct endpoint event queue lock poisoned"))?
+                .extend(events);
+        }
+        Ok(drained)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    async fn direct_endpoint_packet_runs_to_mesh_events(
+        &self,
+        runs: Vec<FipsEndpointDirectPacketRun>,
+        now: Option<u64>,
+        events: &mut Vec<FipsPrivateMeshEvent>,
+    ) -> Result<()> {
+        for run in runs {
+            let source_peer = run.source_peer().clone();
+            let enqueued_at_ms = run.enqueued_at_ms();
+            for packet in run.packet_slices() {
+                let message = FipsEndpointMessage {
+                    source_peer: source_peer.clone(),
+                    data: FipsEndpointData::from(packet.to_vec()),
+                    enqueued_at_ms,
+                };
+                if let Some(event) = self.endpoint_message_to_mesh_event(message, now).await? {
+                    events.push(event);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn pop_direct_endpoint_mesh_event(&self) -> Result<Option<FipsPrivateMeshEvent>> {
+        Ok(self
+            .direct_endpoint_pending_events
+            .lock()
+            .map_err(|_| anyhow!("FIPS direct endpoint event queue lock poisoned"))?
+            .pop_front())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn pop_direct_endpoint_mesh_events_into(
+        &self,
+        events: &mut Vec<FipsPrivateMeshEvent>,
+        limit: usize,
+    ) -> Result<usize> {
+        let mut pending = self
+            .direct_endpoint_pending_events
+            .lock()
+            .map_err(|_| anyhow!("FIPS direct endpoint event queue lock poisoned"))?;
+        while events.len() < limit {
+            let Some(event) = pending.pop_front() else {
+                break;
+            };
+            events.push(event);
+        }
+        Ok(events.len())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn push_direct_endpoint_mesh_event(&self, event: FipsPrivateMeshEvent) -> Result<()> {
+        self.direct_endpoint_pending_events
+            .lock()
+            .map_err(|_| anyhow!("FIPS direct endpoint event queue lock poisoned"))?
+            .push_back(event);
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn forward_direct_endpoint_control_events_blocking(
+        &self,
+        runs: &[FipsEndpointDirectPacketRun],
+        event_tx: Option<&mpsc::Sender<FipsPrivateMeshEvent>>,
+    ) -> Result<()> {
+        let now = Some(unix_timestamp());
+        for run in runs {
+            let source_peer = run.source_peer().clone();
+            let enqueued_at_ms = run.enqueued_at_ms();
+            for packet in run.packet_slices() {
+                if decode_fips_control_frame(packet)?.is_none() {
+                    continue;
+                }
+                let message = FipsEndpointMessage {
+                    source_peer: source_peer.clone(),
+                    data: FipsEndpointData::from(packet.to_vec()),
+                    enqueued_at_ms,
+                };
+                let Some(event) = self.endpoint_message_to_mesh_event_blocking(message, now)?
+                else {
+                    continue;
+                };
+                if let Some(event_tx) = event_tx {
+                    if event_tx.blocking_send(event).is_err() {
+                        return Ok(());
+                    }
+                } else {
+                    self.push_direct_endpoint_mesh_event(event)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     #[cfg(test)]

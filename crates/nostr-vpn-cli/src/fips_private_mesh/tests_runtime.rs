@@ -163,6 +163,26 @@
         config
     }
 
+    fn add_addressless_manual_peer(config: &mut Config, peer_npub: &str) {
+        if config.peers.iter().any(|peer| peer.npub == peer_npub) {
+            return;
+        }
+
+        config.node.discovery.nostr.enabled = true;
+        config.node.discovery.nostr.advertise = false;
+        config.node.discovery.nostr.advert_relays.clear();
+        config.node.discovery.nostr.dm_relays.clear();
+        config.node.discovery.nostr.stun_servers.clear();
+        config.node.discovery.nostr.share_local_candidates = false;
+        config.node.discovery.lan.enabled = false;
+        config.peers.push(FipsPeerConfig {
+            npub: peer_npub.to_string(),
+            connect_policy: ConnectPolicy::Manual,
+            auto_reconnect: false,
+            ..FipsPeerConfig::default()
+        });
+    }
+
     async fn send_with_retry(runtime: &FipsPrivateMeshRuntime, packet: &[u8]) {
         let mut last_error = None;
         for _ in 0..50 {
@@ -303,6 +323,19 @@
         let bob_ip = Ipv4Addr::new(10, 44, 21, 2);
         let carol_ip = Ipv4Addr::new(10, 44, 21, 3);
         let scope = "nostr-vpn:relayed-control-presence";
+        let mut alice_fips_config =
+            direct_udp_endpoint_config_many(alice_port, &[(&bob_npub, bob_port, true)]);
+        add_addressless_manual_peer(&mut alice_fips_config, &carol_npub);
+        let bob_fips_config = direct_udp_endpoint_config_many(
+            bob_port,
+            &[
+                (&alice_npub, alice_port, true),
+                (&carol_npub, carol_port, true),
+            ],
+        );
+        let mut carol_fips_config =
+            direct_udp_endpoint_config_many(carol_port, &[(&bob_npub, bob_port, true)]);
+        add_addressless_manual_peer(&mut carol_fips_config, &alice_npub);
 
         let alice_runtime = FipsPrivateMeshRuntime::bind_with_config(
             alice_nsec,
@@ -319,7 +352,7 @@
                     allowed_ips: vec![format!("{carol_ip}/32")],
                 },
             ],
-            direct_udp_endpoint_config_many(alice_port, &[(&bob_npub, bob_port, true)]),
+            alice_fips_config,
             vec![format!("{alice_ip}/32")],
             Vec::new(),
         )
@@ -340,13 +373,7 @@
                     allowed_ips: vec![format!("{carol_ip}/32")],
                 },
             ],
-            direct_udp_endpoint_config_many(
-                bob_port,
-                &[
-                    (&alice_npub, alice_port, true),
-                    (&carol_npub, carol_port, true),
-                ],
-            ),
+            bob_fips_config,
             vec![format!("{bob_ip}/32")],
             Vec::new(),
         )
@@ -367,7 +394,7 @@
                     allowed_ips: vec![format!("{bob_ip}/32")],
                 },
             ],
-            direct_udp_endpoint_config_many(carol_port, &[(&bob_npub, bob_port, true)]),
+            carol_fips_config,
             vec![format!("{carol_ip}/32")],
             Vec::new(),
         )
@@ -378,6 +405,7 @@
         wait_for_fips_peer(&bob_runtime, &alice_npub).await;
         wait_for_fips_peer(&bob_runtime, &carol_npub).await;
         wait_for_fips_peer(&carol_runtime, &bob_npub).await;
+        tokio::time::sleep(Duration::from_millis(1_200)).await;
 
         let frame = FipsControlFrame::Ping {
             network_id: "network".to_string(),
@@ -389,15 +417,16 @@
                 .send_control_frame(&carol_pubkey, &frame)
                 .await;
 
-            let _ =
-                tokio::time::timeout(Duration::from_millis(50), carol_runtime.recv_mesh_event())
+            let _ = tokio::time::timeout(Duration::from_millis(50), carol_runtime.recv_mesh_event())
+                .await;
+
+            let alice_event =
+                tokio::time::timeout(Duration::from_millis(50), alice_runtime.recv_mesh_event())
                     .await;
 
             if let Ok(Ok(Some(FipsPrivateMeshEvent::Presence {
                 participant_pubkey, ..
-            }))) =
-                tokio::time::timeout(Duration::from_millis(50), alice_runtime.recv_mesh_event())
-                    .await
+            }))) = alice_event
                 && participant_pubkey == carol_pubkey
             {
                 alice_saw_carol = true;

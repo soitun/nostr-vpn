@@ -1,0 +1,409 @@
+fn spawn_tun_send_worker(
+    tun: Arc<SystemTun>,
+    mesh: Arc<FipsPrivateMeshRuntime>,
+) -> FipsTunSendWorker {
+    let stop = Arc::new(AtomicBool::new(false));
+    let thread_stop = Arc::clone(&stop);
+    let thread = std::thread::Builder::new()
+        .name("nvpn-fips-tun-send".to_string())
+        .spawn(move || {
+            let tun_fd = tun.as_raw_fd();
+            let mut buf = vec![0_u8; tun.read_buffer_len()];
+            let mut batch = Vec::with_capacity(FIPS_TUN_READ_BURST);
+            let mut send_runs = Vec::new();
+            let pipeline_profile_enabled = crate::pipeline_profile::enabled();
+            while !thread_stop.load(Ordering::Acquire) {
+                if !wait_fd_readable_blocking(tun_fd, &thread_stop) {
+                    break;
+                }
+                batch.clear();
+                let mut drained = 0;
+                let mut drained_bytes = 0usize;
+                let mut sleep_after_error = false;
+                loop {
+                    let before_len = batch.len();
+                    let read_result = {
+                        let _t = crate::pipeline_profile::Timer::start(
+                            crate::pipeline_profile::Stage::TunRead,
+                        );
+                        tun.read_packets_into(&mut buf, &mut batch)
+                    };
+                    match read_result {
+                        Ok(0) => {
+                            break;
+                        }
+                        Ok(packet_count) => {
+                            debug_assert_eq!(batch.len(), before_len + packet_count);
+                            if pipeline_profile_enabled {
+                                for packet in &batch[before_len..] {
+                                    drained_bytes =
+                                        drained_bytes.saturating_add(packet.bytes.len());
+                                }
+                            }
+                            drained += packet_count;
+                            if drained >= FIPS_TUN_READ_BURST {
+                                break;
+                            }
+                        }
+                        Err(error) if temporary_tun_read_error(&error) => {
+                            break;
+                        }
+                        Err(error) => {
+                            eprintln!("fips: tunnel read failed: {error}");
+                            sleep_after_error = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !batch.is_empty() {
+                    if pipeline_profile_enabled {
+                        crate::pipeline_profile::record_tun_read_batch(
+                            batch.len(),
+                            drained_bytes,
+                            FIPS_TUN_READ_BURST,
+                        );
+                    }
+                    let pending =
+                        std::mem::replace(&mut batch, Vec::with_capacity(FIPS_TUN_READ_BURST));
+                    send_mesh_packet_batch_blocking_or_log(&mesh, pending, &mut send_runs);
+                }
+
+                if sleep_after_error {
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+
+                if drained >= FIPS_TUN_READ_BURST {
+                    std::thread::yield_now();
+                }
+            }
+        })
+        .expect("failed to spawn FIPS TUN send worker");
+    FipsTunSendWorker { stop, thread }
+}
+
+async fn stop_tun_send_worker(worker: FipsTunSendWorker) {
+    worker.stop.store(true, Ordering::Release);
+    let _ = tokio::task::spawn_blocking(move || {
+        let _ = worker.thread.join();
+    })
+    .await;
+}
+fn wait_fd_readable_blocking(fd: RawFd, stop: &AtomicBool) -> bool {
+    while !stop.load(Ordering::Acquire) {
+        let mut poll_fd = libc::pollfd {
+            fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        let result = unsafe { libc::poll(&mut poll_fd, 1, 100) };
+        if result > 0 {
+            return true;
+        }
+        if result == 0 {
+            continue;
+        }
+        let error = io::Error::last_os_error();
+        if error.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+        eprintln!("fips: tunnel read poll failed: {error}");
+        return false;
+    }
+    false
+}
+
+fn send_mesh_packet_batch_blocking_or_log(
+    mesh: &FipsPrivateMeshRuntime,
+    packets: TunPipelineBatch,
+    send_runs: &mut Vec<FipsEndpointSendRun>,
+) {
+    let packet_count = packets.len();
+    crate::pipeline_profile::record_mesh_send_bulk_turn(0, packet_count);
+    let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshSend);
+    if let Err(error) =
+        mesh.blocking_send_tun_pipeline_packet_turn(packets, packet_count, packet_count, send_runs)
+    {
+        eprintln!("fips: failed to send tunnel packet: {error}");
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn fips_blocking_mesh_recv_enabled() -> bool {
+    let value = std::env::var("NVPN_FIPS_BLOCKING_MESH_RECV").ok();
+    fips_blocking_mesh_recv_enabled_from_env(value.as_deref())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn fips_blocking_mesh_recv_enabled_from_env(value: Option<&str>) -> bool {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return true;
+    };
+
+    !(value == "0"
+        || value.eq_ignore_ascii_case("false")
+        || value.eq_ignore_ascii_case("no")
+        || value.eq_ignore_ascii_case("off")
+        || value.eq_ignore_ascii_case("async"))
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn spawn_mesh_recv_worker(
+    mesh: Arc<FipsPrivateMeshRuntime>,
+    tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
+    event_tx: mpsc::Sender<FipsPrivateMeshEvent>,
+) -> FipsMeshRecvWorker {
+    if fips_blocking_mesh_recv_enabled() {
+        spawn_blocking_mesh_recv_worker(mesh, tun_fd, event_tx)
+    } else {
+        FipsMeshRecvWorker::Async(spawn_mesh_recv_task(mesh, tun_fd, event_tx))
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn stop_mesh_recv_worker(worker: FipsMeshRecvWorker, mesh: &FipsPrivateMeshRuntime) {
+    match worker {
+        FipsMeshRecvWorker::Async(handle) => {
+            handle.abort();
+            let _ = handle.await;
+        }
+        FipsMeshRecvWorker::Blocking { stop, threads } => {
+            stop.store(true, Ordering::Release);
+            mesh.wake_blocking_mesh_recv();
+            for thread in threads {
+                let _ = tokio::task::spawn_blocking(move || {
+                    let _ = thread.join();
+                })
+                .await;
+            }
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn spawn_mesh_recv_task(
+    mesh: Arc<FipsPrivateMeshRuntime>,
+    tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
+    event_tx: mpsc::Sender<FipsPrivateMeshEvent>,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let recv_burst = fips_mesh_recv_burst();
+        let mut messages = Vec::with_capacity(recv_burst);
+        let mut events = Vec::with_capacity(recv_burst);
+        let mut packet_batch = TunWriteBatch::with_capacity(recv_burst);
+        #[cfg(target_os = "linux")]
+        let mut vnet_write_preparer = LinuxVnetWritePreparer::new();
+        let pipeline_profile_enabled = crate::pipeline_profile::enabled();
+        loop {
+            match mesh
+                .recv_mesh_event_batch_into(&mut messages, &mut events, recv_burst)
+                .await
+            {
+                Ok(Some(drained)) => {
+                    if pipeline_profile_enabled {
+                        let (packet_count, packet_bytes) = mesh_event_packet_stats(&events);
+                        crate::pipeline_profile::record_mesh_recv_batch(
+                            drained,
+                            packet_count,
+                            packet_bytes,
+                            recv_burst,
+                        );
+                    }
+                    packet_batch.clear();
+                    for event in events.drain(..) {
+                        if !forward_mesh_event_to_tun_batched(
+                            event,
+                            &tun_fd,
+                            &event_tx,
+                            &mut packet_batch,
+                            #[cfg(target_os = "linux")]
+                            &mut vnet_write_preparer,
+                        )
+                        .await
+                        {
+                            return;
+                        }
+                    }
+                    flush_mesh_packet_batch_to_tun(
+                        &tun_fd,
+                        &mut packet_batch,
+                        #[cfg(target_os = "linux")]
+                        &mut vnet_write_preparer,
+                    )
+                    .await;
+
+                    if drained == recv_burst {
+                        tokio::task::yield_now().await;
+                    }
+                }
+                Ok(None) => break,
+                Err(error) => {
+                    eprintln!("fips: failed to receive tunnel packet: {error}");
+                    sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    })
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn spawn_blocking_mesh_recv_worker(
+    mesh: Arc<FipsPrivateMeshRuntime>,
+    tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
+    event_tx: mpsc::Sender<FipsPrivateMeshEvent>,
+) -> FipsMeshRecvWorker {
+    let stop = Arc::new(AtomicBool::new(false));
+    let tun_fd = *tun_fd.get_ref();
+    let direct_tun_write_gate = Arc::new(Mutex::new(()));
+    let lane_count = mesh
+        .direct_endpoint_rx
+        .as_ref()
+        .map_or(1, |receivers| receivers.len())
+        .max(1);
+    let mut threads = Vec::with_capacity(lane_count);
+    for lane in 0..lane_count {
+        let mesh = Arc::clone(&mesh);
+        let thread_stop = Arc::clone(&stop);
+        let direct_tun_write_gate = Arc::clone(&direct_tun_write_gate);
+        let event_tx = event_tx.clone();
+        let thread = std::thread::Builder::new()
+            .name(format!("nvpn-fips-mesh-recv-{lane}"))
+            .spawn(move || {
+            let recv_burst = fips_mesh_recv_burst();
+            let mut packet_batch = DirectTunWriteBatch::with_capacity(recv_burst);
+            #[cfg(target_os = "linux")]
+            let mut vnet_write_preparer = LinuxVnetWritePreparer::new();
+            let pipeline_profile_enabled = crate::pipeline_profile::enabled();
+            while !thread_stop.load(Ordering::Acquire) {
+                packet_batch.clear();
+                let received = mesh.recv_direct_endpoint_tun_batch_blocking(
+                    lane,
+                    recv_burst,
+                    &thread_stop,
+                    &mut packet_batch,
+                    Some(&event_tx),
+                );
+                match received {
+                    Ok(Some(drained)) => {
+                        if let Err(error) =
+                            mesh.finalize_direct_endpoint_tun_batch_blocking(&mut packet_batch)
+                        {
+                            packet_batch.clear();
+                            eprintln!("fips: failed to finalize tunnel packet batch: {error}");
+                            std::thread::sleep(Duration::from_millis(100));
+                            continue;
+                        }
+                        if pipeline_profile_enabled {
+                            let packet_count = packet_batch.len();
+                            let packet_bytes = packet_batch.bytes();
+                            crate::pipeline_profile::record_mesh_recv_batch(
+                                drained,
+                                packet_count,
+                                packet_bytes,
+                                recv_burst,
+                            );
+                        }
+                        if !packet_batch.is_empty() {
+                            flush_direct_endpoint_packet_batch_to_tun_blocking(
+                                tun_fd,
+                                &mut packet_batch,
+                                &thread_stop,
+                                &direct_tun_write_gate,
+                                #[cfg(target_os = "linux")]
+                                &mut vnet_write_preparer,
+                            );
+                        }
+                        if drained == recv_burst {
+                            std::thread::yield_now();
+                        }
+                    }
+                    Ok(None) => {
+                        if let Err(error) =
+                            mesh.finalize_direct_endpoint_tun_batch_blocking(&mut packet_batch)
+                        {
+                            packet_batch.clear();
+                            eprintln!("fips: failed to finalize tunnel packet batch: {error}");
+                        }
+                        flush_direct_endpoint_packet_batch_to_tun_blocking(
+                            tun_fd,
+                            &mut packet_batch,
+                            &thread_stop,
+                            &direct_tun_write_gate,
+                            #[cfg(target_os = "linux")]
+                            &mut vnet_write_preparer,
+                        );
+                        break;
+                    }
+                    Err(error) => {
+                        if let Err(error) =
+                            mesh.finalize_direct_endpoint_tun_batch_blocking(&mut packet_batch)
+                        {
+                            packet_batch.clear();
+                            eprintln!("fips: failed to finalize tunnel packet batch: {error}");
+                        }
+                        flush_direct_endpoint_packet_batch_to_tun_blocking(
+                            tun_fd,
+                            &mut packet_batch,
+                            &thread_stop,
+                            &direct_tun_write_gate,
+                            #[cfg(target_os = "linux")]
+                            &mut vnet_write_preparer,
+                        );
+                        eprintln!("fips: failed to receive tunnel packet: {error}");
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                }
+            }
+            })
+            .expect("failed to spawn FIPS mesh receive worker");
+        threads.push(thread);
+    }
+    FipsMeshRecvWorker::Blocking { stop, threads }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn mesh_event_packet_stats(events: &[FipsPrivateMeshEvent]) -> (usize, usize) {
+    let mut packets = 0usize;
+    let mut bytes = 0usize;
+    for event in events {
+        if let FipsPrivateMeshEvent::Packet(packet) = event {
+            packets += 1;
+            bytes = bytes.saturating_add(packet.len());
+        }
+    }
+    (packets, bytes)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn forward_mesh_event_to_tun_batched(
+    event: FipsPrivateMeshEvent,
+    tun_fd: &AsyncFd<BorrowedTunFd>,
+    event_tx: &mpsc::Sender<FipsPrivateMeshEvent>,
+    packet_batch: &mut TunWriteBatch,
+    #[cfg(target_os = "linux")] vnet_write_preparer: &mut LinuxVnetWritePreparer,
+) -> bool {
+    match event {
+        FipsPrivateMeshEvent::Packet(packet) => {
+            push_direct_packet_output_for_tun(packet, packet_batch);
+            true
+        }
+        event => {
+            flush_mesh_packet_batch_to_tun(
+                tun_fd,
+                packet_batch,
+                #[cfg(target_os = "linux")]
+                vnet_write_preparer,
+            )
+            .await;
+            event_tx.send(event).await.is_ok()
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn cooperate_after_mesh_recv_packet() {
+    // Endpoint recv can stay immediately ready while a peer sends bulk data,
+    // and the utun write itself is synchronous. Count each packet against
+    // Tokio's cooperative budget so timers/control traffic get scheduler time.
+    tokio::task::coop::consume_budget().await;
+}

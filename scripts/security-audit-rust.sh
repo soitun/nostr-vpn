@@ -22,11 +22,16 @@ ensure_cargo_audit
 #   netdev/rtnetlink; remove once rust-netlink ships a replacement.
 # - RUSTSEC-2026-0002: `lru` 0.12 is pulled by hashtree-resolver/updater via
 #   nostr-database 0.35; remove once hashtree can move to lru >= 0.16.3.
+# - RUSTSEC-2026-0194 / RUSTSEC-2026-0195: `quick-xml` 0.39 is pulled by
+#   plist 1.9 via netdev on Apple targets; remove once plist releases a
+#   quick-xml >= 0.41 update or netdev removes that dependency path.
 audit_args=(
   --deny warnings
   --ignore RUSTSEC-2024-0384
   --ignore RUSTSEC-2024-0436
   --ignore RUSTSEC-2026-0002
+  --ignore RUSTSEC-2026-0194
+  --ignore RUSTSEC-2026-0195
 )
 
 cargo audit "${audit_args[@]}"
