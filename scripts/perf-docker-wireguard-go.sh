@@ -192,16 +192,19 @@ setup_wg() {
 }
 
 write_wireguard_go_source_metadata() {
-  local commit=""
+  local commit="" dirty=""
   if [[ -d "$WIREGUARD_GO_REPO_PATH/.git" ]]; then
-    commit="$(git -C "$WIREGUARD_GO_REPO_PATH" rev-parse --short HEAD 2>/dev/null || true)"
+    commit="$(docker_bench_git_head "$WIREGUARD_GO_REPO_PATH")"
+    dirty="$(docker_bench_git_dirty "$WIREGUARD_GO_REPO_PATH")"
   fi
   jq \
     --arg source "wireguard-go" \
     --arg commit "$commit" \
+    --arg dirty "$dirty" \
     '.reference_source = {
       name: $source,
-      git_short: (if $commit == "" then null else $commit end)
+      git_short: (if $commit == "" then null else $commit end),
+      dirty: (if $dirty == "" then null else ($dirty == "true") end)
     }' \
     "$OUTPUT_DIR/metadata.json" >"$OUTPUT_DIR/metadata.json.tmp"
   mv "$OUTPUT_DIR/metadata.json.tmp" "$OUTPUT_DIR/metadata.json"

@@ -570,7 +570,7 @@ write_row() {
   local tcp_single tcp_single_retrans tcp_4 tcp_4_retrans tcp_8 tcp_8_retrans
   local tcp_single_cpu_per_gbyte tcp_4_cpu_per_gbyte tcp_8_cpu_per_gbyte
   local udp_200 udp_200_loss udp_1000 udp_1000_loss ping_loss ping_avg
-  local git_head fips_head nvpn_dirty fips_dirty dirty stress placement dataplane
+  local git_head fips_head nvpn_dirty fips_dirty ref_dirty dirty stress placement dataplane
   local hard_total hard_events blocking_hard_total zero_status candidate
   local iperf_udp200_sockbuf iperf_udp1000_sockbuf udp_receiver_rmem udp_receiver_wmem
   local udp_kernel_dropped udp_namespace_rcvbuf_errors connected_udp_kernel_dropped
@@ -604,10 +604,18 @@ write_row() {
   ping_avg="$(tsv_value "$summary" ping_avg_ms)"
 
   git_head="$(metadata_value "$artifact_dir" '.source.nvpn.git_head')"
+  if [[ -z "$git_head" ]]; then
+    git_head="$(metadata_value "$artifact_dir" '.reference_source.git_short')"
+  fi
   fips_head="$(metadata_value "$artifact_dir" '.source.local_fips_patch.git_head')"
   nvpn_dirty="$(metadata_value "$artifact_dir" '.source.nvpn.dirty')"
   fips_dirty="$(metadata_value "$artifact_dir" '.source.local_fips_patch.dirty')"
-  dirty="nvpn=${nvpn_dirty:-unknown},fips=${fips_dirty:-unknown}"
+  ref_dirty="$(metadata_value "$artifact_dir" '.reference_source.dirty')"
+  if [[ -n "$ref_dirty" ]]; then
+    dirty="reference=$ref_dirty"
+  else
+    dirty="nvpn=${nvpn_dirty:-unknown},fips=${fips_dirty:-unknown}"
+  fi
   stress="$(metadata_value "$artifact_dir" '.cpu_stress | if .enabled == true then (.sides + ":l" + (.local_workers|tostring) + "/r" + (.remote_workers|tostring)) else "false" end')"
   placement="$(metadata_value "$artifact_dir" '.run_env.placement_profile')"
   dataplane="$(metadata_value "$artifact_dir" '.run_env.dataplane_profile')"

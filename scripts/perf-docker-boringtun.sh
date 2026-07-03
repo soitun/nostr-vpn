@@ -37,6 +37,7 @@ IPERF_SOCKET_BUFFER="${NVPN_DOCKER_IPERF_SOCKET_BUFFER:-}"
 UDP1000_PARALLEL="${NVPN_DOCKER_UDP1000_PARALLEL:-}"
 UDP1000_BANDWIDTH="${NVPN_DOCKER_UDP1000_BANDWIDTH:-1G}"
 SKIP_BUILD="${NVPN_DOCKER_SKIP_BUILD:-0}"
+BORINGTUN_REPO_PATH="${NVPN_BORINGTUN_REPO_PATH:-$ROOT_DIR/../boringtun}"
 OUTPUT_DIR="${NVPN_BORINGTUN_DOCKER_OUTPUT_DIR:-$ROOT_DIR/artifacts/boringtun-docker/$(date -u +%Y%m%dT%H%M%SZ)}"
 RAW_DIR="$OUTPUT_DIR/raw"
 SUMMARY_TSV="$OUTPUT_DIR/summary.tsv"
@@ -161,6 +162,25 @@ setup_wg() {
 
 boringtun_cpu_sample() {
   docker_bench_process_cpu_sample "$1" boringtun-cli
+}
+
+write_boringtun_source_metadata() {
+  local commit="" dirty=""
+  if [[ -d "$BORINGTUN_REPO_PATH/.git" ]]; then
+    commit="$(docker_bench_git_head "$BORINGTUN_REPO_PATH")"
+    dirty="$(docker_bench_git_dirty "$BORINGTUN_REPO_PATH")"
+  fi
+  jq \
+    --arg source "boringtun" \
+    --arg commit "$commit" \
+    --arg dirty "$dirty" \
+    '.reference_source = {
+      name: $source,
+      git_short: (if $commit == "" then null else $commit end),
+      dirty: (if $dirty == "" then null else ($dirty == "true") end)
+    }' \
+    "$OUTPUT_DIR/metadata.json" >"$OUTPUT_DIR/metadata.json.tmp"
+  mv "$OUTPUT_DIR/metadata.json.tmp" "$OUTPUT_DIR/metadata.json"
 }
 
 run_test_json() {
@@ -342,6 +362,7 @@ main() {
   docker_bench_start_cpu_stress
 
   local threads
+  write_boringtun_source_metadata
   for threads in "${THREADS_LIST[@]}"; do
     run_boringtun_pass "$threads"
   done

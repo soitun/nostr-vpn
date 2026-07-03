@@ -8,6 +8,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.bench-boringtun
+      additional_contexts:
+        boringtun: ${NVPN_BORINGTUN_REPO_PATH:-../boringtun}
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN
@@ -21,6 +23,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.bench-boringtun
+      additional_contexts:
+        boringtun: ${NVPN_BORINGTUN_REPO_PATH:-../boringtun}
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN

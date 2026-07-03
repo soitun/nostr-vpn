@@ -7,9 +7,12 @@
 # comparison against nvpn.
 
 FROM rust:1.93-bookworm AS builder
+WORKDIR /src/boringtun
+COPY --from=boringtun . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    cargo install --locked --root /tmp/cargo-out boringtun-cli
+    --mount=type=cache,target=/src/boringtun/target \
+    cargo install --locked --path boringtun-cli --root /tmp/cargo-out
 
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
