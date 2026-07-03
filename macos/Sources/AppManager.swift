@@ -1602,6 +1602,7 @@ final class AppManager: ObservableObject {
             inviteInviterNpub: "",
             adminNpubs: [selfNpub],
             outboundJoinRequest: nil,
+            joinRequestQrCodeOrLink: "",
             inboundJoinRequests: [joinRequest],
             onlineCount: 5,
             expectedCount: 5,
