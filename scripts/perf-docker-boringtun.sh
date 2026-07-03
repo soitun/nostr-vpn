@@ -159,10 +159,17 @@ setup_wg() {
   exit 1
 }
 
+boringtun_cpu_sample() {
+  docker_bench_process_cpu_sample "$1" boringtun-cli
+}
+
 run_test_json() {
-  local label="$1"
-  local json_path="$2"
-  shift 2
+  local phase="$1"
+  local label="$2"
+  local json_path="$3"
+  local cpu_phases="$4"
+  shift 4
+  local cpu_start_node_a cpu_start_node_b cpu_end_node_a cpu_end_node_b transfer_bytes
   local is_udp=0
   [[ "${1:-}" == "-u" ]] && is_udp=1
   printf '## %s\n' "$label"
@@ -176,16 +183,29 @@ run_test_json() {
     iperf_cmd+=("${IPERF_SOCKET_BUFFER_ARGS[@]}")
   fi
   iperf_cmd+=("$@")
+  cpu_start_node_a="$(boringtun_cpu_sample node-a)"
+  cpu_start_node_b="$(boringtun_cpu_sample node-b)"
   if ! "${COMPOSE[@]}" exec -T node-a "${iperf_cmd[@]}" >"$json_path" 2>"$err_path"; then
     cat "$err_path" >&2
     cat "$json_path" >&2
     return 1
   fi
+  cpu_end_node_a="$(boringtun_cpu_sample node-a)"
+  cpu_end_node_b="$(boringtun_cpu_sample node-b)"
   if jq -e 'has("error")' "$json_path" >/dev/null; then
     cat "$err_path" >&2
     cat "$json_path" >&2
     return 1
   fi
+  transfer_bytes="$(docker_bench_iperf_transfer_bytes "$json_path")"
+  docker_bench_append_cpu_phase_rows \
+    "$cpu_phases" \
+    "$phase" \
+    "$transfer_bytes" \
+    "$cpu_start_node_a" \
+    "$cpu_start_node_b" \
+    "$cpu_end_node_a" \
+    "$cpu_end_node_b"
   rm -f "$err_path"
   printf '  receiver: %s Mbps' "$(docker_bench_iperf_mbps "$json_path")"
   if (( is_udp )); then
@@ -238,8 +258,22 @@ write_udp_receiver_limits() {
 
 run_ping_summary() {
   local output_path="$1"
+  local cpu_phases="$2"
+  local cpu_start_node_a cpu_start_node_b cpu_end_node_a cpu_end_node_b
   printf '## ping (300 packets, 10ms apart) over wg0\n'
+  cpu_start_node_a="$(boringtun_cpu_sample node-a)"
+  cpu_start_node_b="$(boringtun_cpu_sample node-b)"
   "${COMPOSE[@]}" exec -T node-a ping -c 300 -i 0.01 -q "$BOB_TUN" >"$output_path" 2>&1
+  cpu_end_node_a="$(boringtun_cpu_sample node-a)"
+  cpu_end_node_b="$(boringtun_cpu_sample node-b)"
+  docker_bench_append_cpu_phase_rows \
+    "$cpu_phases" \
+    ping \
+    "" \
+    "$cpu_start_node_a" \
+    "$cpu_start_node_b" \
+    "$cpu_end_node_a" \
+    "$cpu_end_node_b"
   tail -3 "$output_path"
   echo
 }
@@ -253,9 +287,11 @@ run_boringtun_pass() {
   local udp_200_json="$prefix-udp-200m.json"
   local udp_1000_json="$prefix-udp-1000m.json"
   local ping_output="$prefix-ping.txt"
+  local cpu_phases="$prefix-cpu-phases.tsv"
 
   reset_wg
   setup_wg "$threads"
+  docker_bench_write_cpu_phase_header "$cpu_phases"
 
   printf '\n=========================================\n'
   printf '  boringtun WG_THREADS=%s\n' "$threads"
@@ -269,18 +305,18 @@ run_boringtun_pass() {
   "${COMPOSE[@]}" exec -d node-b sh -lc "iperf3 -s -D --logfile /tmp/iperf3-server.log"
   sleep 1
 
-  run_test_json "TCP single stream" "$tcp_single_json"
-  run_test_json "TCP 4 streams" "$tcp_4_json" -P 4
-  run_test_json "TCP 8 streams" "$tcp_8_json" -P 8
-  run_test_json "UDP 200 Mbit target" "$udp_200_json" -u -b 200M
+  run_test_json tcp-single "TCP single stream" "$tcp_single_json" "$cpu_phases"
+  run_test_json tcp-4 "TCP 4 streams" "$tcp_4_json" "$cpu_phases" -P 4
+  run_test_json tcp-8 "TCP 8 streams" "$tcp_8_json" "$cpu_phases" -P 8
+  run_test_json udp-200 "UDP 200 Mbit target" "$udp_200_json" "$cpu_phases" -u -b 200M
   if [[ ${#UDP1000_PARALLEL_ARGS[@]} -gt 0 ]]; then
-    run_test_json "UDP 1000 Mbit target" "$udp_1000_json" -u -b "$UDP1000_PER_STREAM_BANDWIDTH" "${UDP1000_PARALLEL_ARGS[@]}"
+    run_test_json udp-1000 "UDP 1000 Mbit target" "$udp_1000_json" "$cpu_phases" -u -b "$UDP1000_PER_STREAM_BANDWIDTH" "${UDP1000_PARALLEL_ARGS[@]}"
   else
-    run_test_json "UDP 1000 Mbit target" "$udp_1000_json" -u -b "$UDP1000_BANDWIDTH"
+    run_test_json udp-1000 "UDP 1000 Mbit target" "$udp_1000_json" "$cpu_phases" -u -b "$UDP1000_BANDWIDTH"
   fi
   write_iperf_socket_buffer_summary "$threads"
   write_udp_receiver_limits "$threads"
-  run_ping_summary "$ping_output"
+  run_ping_summary "$ping_output" "$cpu_phases"
   docker_bench_append_summary_row \
     boringtun \
     "$threads" \

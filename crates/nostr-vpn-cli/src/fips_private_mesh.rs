@@ -240,7 +240,7 @@ use crate::fips_host_tunnel::FipsHostTunnelConfig;
 pub(crate) struct FipsPrivateMeshRuntime {
     endpoint: FipsEndpoint,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    direct_endpoint_rx: Vec<FipsDirectEndpointDataRx>,
+    direct_endpoint_rx: Vec<Arc<FipsDirectEndpointDataLane>>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     direct_endpoint_pending_events: Mutex<VecDeque<FipsPrivateMeshEvent>>,
     mesh: ArcSwap<FipsMeshRuntime>,

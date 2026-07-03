@@ -483,10 +483,6 @@ impl LinuxVnetWritePreparer {
         &self.vectored_frames[index]
     }
 
-    fn clear_prepared_packet_refs(&mut self) {
-        self.packet_refs.clear();
-    }
-
     fn write_vectored_frame_to_tun(
         &mut self,
         tun_fd: &BorrowedTunFd,

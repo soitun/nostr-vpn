@@ -922,6 +922,103 @@ docker_bench_cpu_seconds_per_gbyte() {
     'BEGIN { printf "%.6f", cpu / (bytes / 1000000000) }'
 }
 
+docker_bench_write_cpu_phase_header() {
+  local output_path="$1"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    phase service pid_start pid_end \
+    cpu_jiffies_start cpu_jiffies_end clk_tck \
+    cpu_seconds transfer_bytes cpu_seconds_per_gbyte \
+    >"$output_path"
+}
+
+docker_bench_process_cpu_sample() {
+  local service="$1"
+  local process_name="$2"
+  "${COMPOSE[@]}" exec -T "$service" sh -lc '
+    process_name="$1"
+    pid="$(pgrep -x "$process_name" 2>/dev/null | head -n 1 || true)"
+    clk="$(getconf CLK_TCK 2>/dev/null || printf 100)"
+    if [ -n "$pid" ] && [ -r "/proc/$pid/stat" ]; then
+      jiffies="$(awk "{ print \$14 + \$15 }" "/proc/$pid/stat" 2>/dev/null || true)"
+      printf "%s\t%s\t%s\n" "${pid:-na}" "${jiffies:-na}" "${clk:-100}"
+    else
+      printf "na\tna\t%s\n" "${clk:-100}"
+    fi
+  ' sh "$process_name" 2>/dev/null | tr -d '\r' || printf 'na\tna\t100\n'
+}
+
+docker_bench_cpu_sample_cpu_seconds() {
+  local start_sample="$1"
+  local end_sample="$2"
+  local start_pid start_jiffies start_clk end_pid end_jiffies end_clk clk_tck
+  IFS=$'\t' read -r start_pid start_jiffies start_clk <<<"$start_sample"
+  IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
+  if [[ "$start_pid" != "$end_pid" || ! "$start_pid" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  clk_tck="$end_clk"
+  [[ "$clk_tck" =~ ^[1-9][0-9]*$ ]] || clk_tck="$start_clk"
+  docker_bench_cpu_seconds_from_jiffies "$start_jiffies" "$end_jiffies" "$clk_tck"
+}
+
+docker_bench_append_cpu_phase_service_row() {
+  local output_path="$1"
+  local phase="$2"
+  local service="$3"
+  local transfer_bytes="$4"
+  local start_sample="$5"
+  local end_sample="$6"
+  local start_pid start_jiffies start_clk end_pid end_jiffies end_clk clk_tck
+  local cpu_seconds cpu_per_gbyte
+  IFS=$'\t' read -r start_pid start_jiffies start_clk <<<"$start_sample"
+  IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
+  clk_tck="$end_clk"
+  [[ "$clk_tck" =~ ^[1-9][0-9]*$ ]] || clk_tck="$start_clk"
+  if [[ "$start_pid" == "$end_pid" && "$start_pid" =~ ^[0-9]+$ ]]; then
+    cpu_seconds="$(docker_bench_cpu_seconds_from_jiffies "$start_jiffies" "$end_jiffies" "$clk_tck")"
+  else
+    cpu_seconds=""
+  fi
+  cpu_per_gbyte="$(docker_bench_cpu_seconds_per_gbyte "$cpu_seconds" "$transfer_bytes")"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$phase" \
+    "$service" \
+    "$(docker_bench_tsv_field "${start_pid:-na}")" \
+    "$(docker_bench_tsv_field "${end_pid:-na}")" \
+    "$(docker_bench_tsv_field "${start_jiffies:-na}")" \
+    "$(docker_bench_tsv_field "${end_jiffies:-na}")" \
+    "$(docker_bench_tsv_field "${clk_tck:-na}")" \
+    "$cpu_seconds" \
+    "$(docker_bench_tsv_field "$transfer_bytes")" \
+    "$cpu_per_gbyte" >>"$output_path"
+}
+
+docker_bench_append_cpu_phase_rows() {
+  local output_path="$1"
+  local phase="$2"
+  local transfer_bytes="$3"
+  local start_a="$4"
+  local start_b="$5"
+  local end_a="$6"
+  local end_b="$7"
+  local cpu_a cpu_b cpu_both cpu_per_gbyte
+  docker_bench_append_cpu_phase_service_row "$output_path" "$phase" node-a "$transfer_bytes" "$start_a" "$end_a"
+  docker_bench_append_cpu_phase_service_row "$output_path" "$phase" node-b "$transfer_bytes" "$start_b" "$end_b"
+  cpu_a="$(docker_bench_cpu_sample_cpu_seconds "$start_a" "$end_a")"
+  cpu_b="$(docker_bench_cpu_sample_cpu_seconds "$start_b" "$end_b")"
+  if docker_bench_is_number "$cpu_a" && docker_bench_is_number "$cpu_b"; then
+    cpu_both="$(awk -v a="$cpu_a" -v b="$cpu_b" 'BEGIN { printf "%.6f", a + b }')"
+  else
+    cpu_both=""
+  fi
+  cpu_per_gbyte="$(docker_bench_cpu_seconds_per_gbyte "$cpu_both" "$transfer_bytes")"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$phase" both na na na na na \
+    "$cpu_both" \
+    "$(docker_bench_tsv_field "$transfer_bytes")" \
+    "$cpu_per_gbyte" >>"$output_path"
+}
+
 docker_bench_guard_record_failure() {
   local failure_path="$1"
   local label="$2"

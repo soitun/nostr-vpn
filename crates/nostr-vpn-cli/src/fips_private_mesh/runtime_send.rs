@@ -33,7 +33,7 @@ impl FipsPrivateMeshRuntime {
             for _ in 0..lane_count {
                 let lane = Arc::new(FipsDirectEndpointDataLane::new());
                 lanes.push(Arc::clone(&lane));
-                receivers.push(FipsDirectEndpointDataRx::new(lane));
+                receivers.push(lane);
             }
             (FipsDirectEndpointDataSink { lanes }, receivers)
         };

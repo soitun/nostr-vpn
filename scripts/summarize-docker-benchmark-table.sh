@@ -13,8 +13,8 @@ usage() {
   cat >&2 <<'EOF'
 usage: scripts/summarize-docker-benchmark-table.sh [--output-dir DIR] label=artifact-dir ...
 
-Each artifact dir must contain summary.tsv. metadata.json and raw/
-pipeline hard-event artifacts are used when present.
+Each artifact dir must contain summary.tsv. metadata.json, raw/ CPU phase
+artifacts, and raw/ pipeline hard-event artifacts are used when present.
 
 Outputs:
   stdout: Markdown table
@@ -84,6 +84,19 @@ tsv_escape() {
   value="${value//$'\t'/ }"
   value="${value//$'\n'/ }"
   printf '%s' "$value"
+}
+
+write_tsv_row() {
+  local first=1 arg
+  for arg in "$@"; do
+    if (( first )); then
+      first=0
+    else
+      printf '\t'
+    fi
+    printf '%s' "$arg"
+  done
+  printf '\n'
 }
 
 loss_zero_status() {
@@ -448,6 +461,76 @@ connected_udp_socket_buffer_summary() {
   printf 'n/a\tn/a\n'
 }
 
+cpu_phase_file() {
+  local artifact_dir="$1"
+  local summary="$2"
+  local backend threads raw_dir candidate
+  local candidates=()
+
+  backend="$(tsv_value "$summary" backend 2>/dev/null || true)"
+  threads="$(tsv_value "$summary" threads 2>/dev/null || true)"
+  raw_dir="$(tsv_value "$summary" raw_dir 2>/dev/null || true)"
+
+  case "$backend" in
+    nvpn)
+      [[ -n "$raw_dir" ]] && candidates+=("$raw_dir/nvpn-daemon-cpu-phases.tsv")
+      candidates+=("$artifact_dir/raw/nvpn-daemon-cpu-phases.tsv")
+      ;;
+    wireguard-go)
+      [[ -n "$raw_dir" ]] && candidates+=("$raw_dir/wireguard-go-cpu-phases.tsv")
+      candidates+=("$artifact_dir/raw/wireguard-go-cpu-phases.tsv")
+      ;;
+    boringtun)
+      if [[ -n "$threads" ]]; then
+        [[ -n "$raw_dir" ]] && candidates+=("$raw_dir/boringtun-threads-$threads-cpu-phases.tsv")
+        candidates+=("$artifact_dir/raw/boringtun-threads-$threads-cpu-phases.tsv")
+      fi
+      [[ -n "$raw_dir" ]] && candidates+=("$raw_dir/boringtun-cpu-phases.tsv")
+      candidates+=("$artifact_dir/raw/boringtun-cpu-phases.tsv")
+      ;;
+  esac
+
+  if [[ -n "$backend" ]]; then
+    [[ -n "$raw_dir" ]] && candidates+=("$raw_dir/$backend-cpu-phases.tsv")
+    candidates+=("$artifact_dir/raw/$backend-cpu-phases.tsv")
+  fi
+
+  for candidate in "${candidates[@]}"; do
+    [[ -n "$candidate" && -f "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return
+  done
+  return 0
+}
+
+cpu_phase_metric() {
+  local artifact_dir="$1"
+  local summary="$2"
+  local phase="$3"
+  local metric="$4"
+  local phase_file
+  phase_file="$(cpu_phase_file "$artifact_dir" "$summary")"
+  if [[ -z "$phase_file" ]]; then
+    printf 'n/a\n'
+    return
+  fi
+  awk -F '\t' -v want_phase="$phase" -v want_metric="$metric" '
+    NR == 1 {
+      for (i = 1; i <= NF; i++) idx[$i] = i
+      next
+    }
+    idx["phase"] && idx["service"] && idx[want_metric] &&
+      $(idx["phase"]) == want_phase && $(idx["service"]) == "both" {
+        value = $(idx[want_metric])
+        print (value == "" ? "n/a" : value)
+        found = 1
+        exit
+      }
+    END {
+      if (!found) print "n/a"
+    }' "$phase_file"
+}
+
 candidate_status() {
   local backend="$1"
   local zero_status="$2"
@@ -467,9 +550,10 @@ candidate_status() {
 }
 
 write_header() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  write_tsv_row \
     label backend git_head fips_head dirty duration_secs stress placement dataplane \
     tcp_single_mbps tcp_single_retrans tcp_4_mbps tcp_4_retrans tcp_8_mbps tcp_8_retrans \
+    tcp_single_cpu_s_per_gbyte tcp_4_cpu_s_per_gbyte tcp_8_cpu_s_per_gbyte \
     udp_200_mbps udp_200_loss_pct udp_1000_mbps udp_1000_loss_pct ping_loss_pct ping_avg_ms \
     iperf_udp200_sockbuf iperf_udp1000_sockbuf udp_receiver_rmem udp_receiver_wmem \
     udp_ping_zero hard_events_total hard_events \
@@ -484,6 +568,7 @@ write_row() {
   local input="$2"
   local summary artifact_dir metadata_backend backend threads duration_secs
   local tcp_single tcp_single_retrans tcp_4 tcp_4_retrans tcp_8 tcp_8_retrans
+  local tcp_single_cpu_per_gbyte tcp_4_cpu_per_gbyte tcp_8_cpu_per_gbyte
   local udp_200 udp_200_loss udp_1000 udp_1000_loss ping_loss ping_avg
   local git_head fips_head nvpn_dirty fips_dirty dirty stress placement dataplane
   local hard_total hard_events blocking_hard_total zero_status candidate
@@ -508,6 +593,9 @@ write_row() {
   tcp_4_retrans="$(tsv_value "$summary" tcp_4_retrans)"
   tcp_8="$(tsv_value "$summary" tcp_8_mbps)"
   tcp_8_retrans="$(tsv_value "$summary" tcp_8_retrans)"
+  tcp_single_cpu_per_gbyte="$(cpu_phase_metric "$artifact_dir" "$summary" tcp-single cpu_seconds_per_gbyte)"
+  tcp_4_cpu_per_gbyte="$(cpu_phase_metric "$artifact_dir" "$summary" tcp-4 cpu_seconds_per_gbyte)"
+  tcp_8_cpu_per_gbyte="$(cpu_phase_metric "$artifact_dir" "$summary" tcp-8 cpu_seconds_per_gbyte)"
   udp_200="$(tsv_value "$summary" udp_200_mbps)"
   udp_200_loss="$(tsv_value "$summary" udp_200_loss_pct)"
   udp_1000="$(tsv_value "$summary" udp_1000_mbps)"
@@ -543,7 +631,7 @@ write_row() {
     backend="$backend/$threads"
   fi
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  write_tsv_row \
     "$(tsv_escape "$label")" \
     "$(tsv_escape "$backend")" \
     "$(tsv_escape "$git_head")" \
@@ -559,6 +647,9 @@ write_row() {
     "$(tsv_escape "$tcp_4_retrans")" \
     "$(tsv_escape "$tcp_8")" \
     "$(tsv_escape "$tcp_8_retrans")" \
+    "$(tsv_escape "$tcp_single_cpu_per_gbyte")" \
+    "$(tsv_escape "$tcp_4_cpu_per_gbyte")" \
+    "$(tsv_escape "$tcp_8_cpu_per_gbyte")" \
     "$(tsv_escape "$udp_200")" \
     "$(tsv_escape "$udp_200_loss")" \
     "$(tsv_escape "$udp_1000")" \

@@ -4,11 +4,6 @@ struct FipsDirectEndpointDataSink {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-struct FipsDirectEndpointDataRx {
-    lane: Arc<FipsDirectEndpointDataLane>,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct FipsDirectEndpointDataLane {
     state: Mutex<FipsDirectEndpointDataLaneState>,
     ready: Condvar,
@@ -24,6 +19,7 @@ struct FipsDirectEndpointDataLaneState {
 struct FipsDirectEndpointQueuedRuns {
     runs: Vec<FipsEndpointDirectPacketRun>,
     packets: usize,
+    source_node_addr: Option<[u8; 16]>,
     enqueued_at: Option<Instant>,
 }
 
@@ -38,9 +34,11 @@ impl FipsDirectEndpointQueuedRuns {
         enqueued_at: Option<Instant>,
     ) -> Self {
         let packets = direct_packet_runs_len(&runs);
+        let source_node_addr = direct_packet_runs_single_source_node_addr(&runs);
         Self {
             runs,
             packets,
+            source_node_addr,
             enqueued_at,
         }
     }
@@ -106,25 +104,6 @@ impl FipsDirectEndpointDataSink {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-impl FipsDirectEndpointDataRx {
-    fn new(lane: Arc<FipsDirectEndpointDataLane>) -> Self {
-        Self { lane }
-    }
-
-    fn recv_source_batch_timeout(
-        &self,
-        timeout: Duration,
-        limit: usize,
-    ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::RecvTimeoutError> {
-        self.lane.recv_source_batch_timeout(timeout, limit)
-    }
-
-    fn try_recv(&self) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
-        self.lane.try_recv()
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl FipsDirectEndpointDataLane {
     fn new() -> Self {
         Self {
@@ -183,8 +162,7 @@ impl FipsDirectEndpointDataLane {
             crate::pipeline_profile::Stage::DirectEndpointQueue,
             queued.enqueued_at,
         );
-        let Some(source_node_addr) = direct_packet_runs_single_source_node_addr(&queued.runs)
-        else {
+        let Some(source_node_addr) = queued.source_node_addr else {
             crate::pipeline_profile::record_direct_endpoint_rx_batch(1, queued.packets, 1);
             return Ok(queued.runs);
         };
@@ -195,7 +173,7 @@ impl FipsDirectEndpointDataLane {
             let Some(next) = state.batches.front() else {
                 break;
             };
-            if direct_packet_runs_single_source_node_addr(&next.runs) != Some(source_node_addr) {
+            if next.source_node_addr != Some(source_node_addr) {
                 break;
             }
             let mut next = state
@@ -256,57 +234,13 @@ fn push_direct_packet_run_by_lane(
         return;
     }
 
-    // Keep already-affine FIPS runs whole; allocate split state only after a real
-    // flow-lane change appears inside the run.
-    let packet_count = run.len();
     let source_node_addr = *run.source_node_addr().as_bytes();
-    let mut packets = run.packet_slices();
-    let Some(first_packet) = packets.next() else {
-        return;
-    };
-    let first_lane = direct_endpoint_lane_for_packet(&source_node_addr, first_packet, lane_count);
-    let mut packet_index = 1usize;
-    let mut packet_lanes: Option<Vec<usize>> = None;
-    let mut active_lanes = Vec::new();
-
-    for packet in packets {
-        let lane = direct_endpoint_lane_for_packet(&source_node_addr, packet, lane_count);
-        if lane != first_lane || packet_lanes.is_some() {
-            let lanes = packet_lanes.get_or_insert_with(|| {
-                active_lanes.push(first_lane);
-                let mut lanes = Vec::with_capacity(packet_count);
-                lanes.resize(packet_index, first_lane);
-                lanes
-            });
-            lanes.push(lane);
-            if !active_lanes.contains(&lane) {
-                active_lanes.push(lane);
-            }
-        }
-        packet_index = packet_index.saturating_add(1);
-    }
-
-    let Some(packet_lanes) = packet_lanes else {
-        lane_runs[first_lane].push(run);
-        return;
-    };
-
-    let Some((&last_lane, split_lanes)) = active_lanes.split_last() else {
-        lane_runs[first_lane].push(run);
-        return;
-    };
-    for &lane in split_lanes {
-        let mut lane_run = run.clone();
-        lane_run.retain_packets(|index, _packet| packet_lanes.get(index).copied() == Some(lane));
+    for (lane, lane_run) in run.partition_by_packet_lane(lane_count, |packet| {
+        direct_endpoint_lane_key_for_packet(&source_node_addr, packet)
+    }) {
         if !lane_run.is_empty() {
             lane_runs[lane].push(lane_run);
         }
-    }
-
-    let mut lane_run = run;
-    lane_run.retain_packets(|index, _packet| packet_lanes.get(index).copied() == Some(last_lane));
-    if !lane_run.is_empty() {
-        lane_runs[last_lane].push(lane_run);
     }
 }
 
@@ -329,6 +263,7 @@ fn limit_queued_direct_endpoint_runs_to_remaining(
     let (head, tail) = split_direct_packet_runs_at_packet_limit(runs, remaining);
     queued.runs = head;
     queued.packets = direct_packet_runs_len(&queued.runs);
+    queued.source_node_addr = direct_packet_runs_single_source_node_addr(&queued.runs);
     if !tail.is_empty() {
         state
             .batches
@@ -412,15 +347,6 @@ fn direct_endpoint_lane_key_for_packet(source_node_addr: &[u8; 16], packet: &[u8
         _ => {}
     }
     key
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn direct_endpoint_lane_for_packet(
-    source_node_addr: &[u8; 16],
-    packet: &[u8],
-    lane_count: usize,
-) -> usize {
-    direct_endpoint_lane_key_for_packet(source_node_addr, packet) % lane_count
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -220,95 +220,15 @@ collect_backend_artifacts() {
 }
 
 write_wireguard_go_cpu_phase_header() {
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    phase service pid_start pid_end \
-    cpu_jiffies_start cpu_jiffies_end clk_tck \
-    cpu_seconds transfer_bytes cpu_seconds_per_gbyte \
-    >"$WIREGUARD_GO_CPU_PHASES"
+  docker_bench_write_cpu_phase_header "$WIREGUARD_GO_CPU_PHASES"
 }
 
 wireguard_go_cpu_sample() {
-  local service="$1"
-  "${COMPOSE[@]}" exec -T "$service" sh -lc '
-    pid="$(pgrep -x wireguard-go 2>/dev/null | head -n 1 || true)"
-    clk="$(getconf CLK_TCK 2>/dev/null || printf 100)"
-    if [ -n "$pid" ] && [ -r "/proc/$pid/stat" ]; then
-      jiffies="$(awk "{ print \$14 + \$15 }" "/proc/$pid/stat" 2>/dev/null || true)"
-      printf "%s\t%s\t%s\n" "${pid:-na}" "${jiffies:-na}" "${clk:-100}"
-    else
-      printf "na\tna\t%s\n" "${clk:-100}"
-    fi
-  ' 2>/dev/null | tr -d '\r' || printf 'na\tna\t100\n'
-}
-
-wireguard_go_cpu_sample_cpu_seconds() {
-  local start_sample="$1"
-  local end_sample="$2"
-  local start_pid start_jiffies start_clk end_pid end_jiffies end_clk clk_tck
-  IFS=$'\t' read -r start_pid start_jiffies start_clk <<<"$start_sample"
-  IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
-  if [[ "$start_pid" != "$end_pid" || ! "$start_pid" =~ ^[0-9]+$ ]]; then
-    return 0
-  fi
-  clk_tck="$end_clk"
-  [[ "$clk_tck" =~ ^[1-9][0-9]*$ ]] || clk_tck="$start_clk"
-  docker_bench_cpu_seconds_from_jiffies "$start_jiffies" "$end_jiffies" "$clk_tck"
-}
-
-append_wireguard_go_cpu_phase_service_row() {
-  local phase="$1"
-  local service="$2"
-  local transfer_bytes="$3"
-  local start_sample="$4"
-  local end_sample="$5"
-  local start_pid start_jiffies start_clk end_pid end_jiffies end_clk clk_tck
-  local cpu_seconds cpu_per_gbyte
-  IFS=$'\t' read -r start_pid start_jiffies start_clk <<<"$start_sample"
-  IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
-  clk_tck="$end_clk"
-  [[ "$clk_tck" =~ ^[1-9][0-9]*$ ]] || clk_tck="$start_clk"
-  if [[ "$start_pid" == "$end_pid" && "$start_pid" =~ ^[0-9]+$ ]]; then
-    cpu_seconds="$(docker_bench_cpu_seconds_from_jiffies "$start_jiffies" "$end_jiffies" "$clk_tck")"
-  else
-    cpu_seconds=""
-  fi
-  cpu_per_gbyte="$(docker_bench_cpu_seconds_per_gbyte "$cpu_seconds" "$transfer_bytes")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$phase" \
-    "$service" \
-    "$(docker_bench_tsv_field "${start_pid:-na}")" \
-    "$(docker_bench_tsv_field "${end_pid:-na}")" \
-    "$(docker_bench_tsv_field "${start_jiffies:-na}")" \
-    "$(docker_bench_tsv_field "${end_jiffies:-na}")" \
-    "$(docker_bench_tsv_field "${clk_tck:-na}")" \
-    "$cpu_seconds" \
-    "$(docker_bench_tsv_field "$transfer_bytes")" \
-    "$cpu_per_gbyte" >>"$WIREGUARD_GO_CPU_PHASES"
+  docker_bench_process_cpu_sample "$1" wireguard-go
 }
 
 append_wireguard_go_cpu_phase_rows() {
-  local phase="$1"
-  local transfer_bytes="$2"
-  local start_a="$3"
-  local start_b="$4"
-  local end_a="$5"
-  local end_b="$6"
-  local cpu_a cpu_b cpu_both cpu_per_gbyte
-  append_wireguard_go_cpu_phase_service_row "$phase" node-a "$transfer_bytes" "$start_a" "$end_a"
-  append_wireguard_go_cpu_phase_service_row "$phase" node-b "$transfer_bytes" "$start_b" "$end_b"
-  cpu_a="$(wireguard_go_cpu_sample_cpu_seconds "$start_a" "$end_a")"
-  cpu_b="$(wireguard_go_cpu_sample_cpu_seconds "$start_b" "$end_b")"
-  if docker_bench_is_number "$cpu_a" && docker_bench_is_number "$cpu_b"; then
-    cpu_both="$(awk -v a="$cpu_a" -v b="$cpu_b" 'BEGIN { printf "%.6f", a + b }')"
-  else
-    cpu_both=""
-  fi
-  cpu_per_gbyte="$(docker_bench_cpu_seconds_per_gbyte "$cpu_both" "$transfer_bytes")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$phase" both na na na na na \
-    "$cpu_both" \
-    "$(docker_bench_tsv_field "$transfer_bytes")" \
-    "$cpu_per_gbyte" >>"$WIREGUARD_GO_CPU_PHASES"
+  docker_bench_append_cpu_phase_rows "$WIREGUARD_GO_CPU_PHASES" "$@"
 }
 
 run_test_json() {
