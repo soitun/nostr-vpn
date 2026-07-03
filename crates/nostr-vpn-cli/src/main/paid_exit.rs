@@ -468,8 +468,10 @@ struct PaidExitReceivePaymentsArgs {
     duration_secs: u64,
     #[arg(long, default_value_t = 100)]
     limit: usize,
-    /// Ignore payment events older than this many seconds.
-    #[arg(long, default_value_t = 3_600)]
+    /// Ignore payment events older than this many seconds. Defaults to no
+    /// since filter because NIP-59 gift wraps intentionally randomize
+    /// created_at into the past.
+    #[arg(long, default_value_t = 0)]
     since_secs: u64,
     /// Do not ask a running daemon to reload after applying payments.
     #[arg(long)]

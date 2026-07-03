@@ -1,6 +1,6 @@
-use clap::{CommandFactory, error::ErrorKind};
+use clap::{CommandFactory, Parser, error::ErrorKind};
 
-use crate::Cli;
+use crate::{Cli, Command, PaidExitCommand};
 
 #[test]
 fn clap_binary_name_is_nvpn() {
@@ -71,6 +71,19 @@ fn clap_includes_paid_exit_command_when_enabled() {
             .any(|subcommand| subcommand.get_name() == "paid-exit"),
         "missing paid-exit subcommand"
     );
+}
+
+#[cfg(feature = "paid-exit")]
+#[test]
+fn clap_paid_exit_receive_payments_defaults_to_no_since_filter() {
+    let cli = Cli::parse_from(["nvpn", "paid-exit", "receive-payments"]);
+    let Command::PaidExit(args) = cli.command else {
+        panic!("expected paid-exit command");
+    };
+    let PaidExitCommand::ReceivePayments(args) = args.command else {
+        panic!("expected receive-payments command");
+    };
+    assert_eq!(args.since_secs, 0);
 }
 
 #[cfg(not(feature = "paid-exit"))]
