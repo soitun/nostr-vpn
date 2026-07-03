@@ -13,9 +13,9 @@ use image::ImageReader;
 #[cfg(target_os = "android")]
 use jni::JNIEnv;
 #[cfg(target_os = "android")]
-use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString};
+use jni::objects::{GlobalRef, JByteArray, JByteBuffer, JClass, JObject, JString};
 #[cfg(target_os = "android")]
-use jni::sys::{jboolean, jbyte, jint, jlong, jstring};
+use jni::sys::{jboolean, jbyte, jint, jlong, jobject, jstring};
 use nostr_vpn_core::updater::{
     ProductUpdateMode, ProductUpdateResult, ProductUpdateSource, check_product_update_blocking,
     download_product_update_blocking,
@@ -600,18 +600,14 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelSendPac
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNextPacket(
-    env: JNIEnv<'_>,
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNextPacketBuffer(
+    mut env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
-    out: JByteArray<'_>,
     timeout_ms: jint,
-) -> jint {
+) -> jobject {
     let Some(tunnel) = tunnel_from_jlong(handle) else {
-        return -1;
-    };
-    let Ok(capacity) = env.get_array_length(&out) else {
-        return -1;
+        return ptr::null_mut();
     };
     let timeout_ms = u64::try_from(timeout_ms).unwrap_or(0);
     let packet = match tunnel
@@ -619,20 +615,33 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNextPac
         .next_packet_vec(Duration::from_millis(timeout_ms))
     {
         Ok(Some(packet)) => packet,
-        Ok(None) => return 0,
-        Err(_) => return -1,
+        Ok(None) | Err(_) => return ptr::null_mut(),
     };
-    let len = packet.len().min(usize::try_from(capacity).unwrap_or(0));
-    if len == 0 {
-        return 0;
+    direct_byte_buffer_from_packet(&mut env, packet)
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelFreePacketBuffer(
+    env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    packet: JByteBuffer<'_>,
+) {
+    if packet.is_null() {
+        return;
     }
-    if env
-        .set_byte_array_region(&out, 0, u8_slice_as_jbyte(&packet[..len]))
-        .is_err()
-    {
-        return -1;
+    let Ok(data) = env.get_direct_buffer_address(&packet) else {
+        return;
+    };
+    let Ok(len) = env.get_direct_buffer_capacity(&packet) else {
+        return;
+    };
+    if data.is_null() || len == 0 {
+        return;
     }
-    jint::try_from(len).unwrap_or(-1)
+    unsafe {
+        free_boxed_packet_buffer(data, len);
+    }
 }
 
 /// Returns the raw fd of the userspace WG upstream UDP socket so the
@@ -717,13 +726,36 @@ fn mobile_packet_stopped() -> NvpnMobilePacket {
 }
 
 #[cfg(target_os = "android")]
-fn u8_slice_as_jbyte(value: &[u8]) -> &[jbyte] {
-    unsafe { std::slice::from_raw_parts(value.as_ptr().cast::<jbyte>(), value.len()) }
+fn u8_slice_as_mut_jbyte(value: &mut [u8]) -> &mut [jbyte] {
+    unsafe { std::slice::from_raw_parts_mut(value.as_mut_ptr().cast::<jbyte>(), value.len()) }
 }
 
 #[cfg(target_os = "android")]
-fn u8_slice_as_mut_jbyte(value: &mut [u8]) -> &mut [jbyte] {
-    unsafe { std::slice::from_raw_parts_mut(value.as_mut_ptr().cast::<jbyte>(), value.len()) }
+fn direct_byte_buffer_from_packet(env: &mut JNIEnv<'_>, packet: Vec<u8>) -> jobject {
+    if packet.is_empty() {
+        return ptr::null_mut();
+    }
+    let mut packet = packet.into_boxed_slice();
+    let data = packet.as_mut_ptr();
+    let len = packet.len();
+    std::mem::forget(packet);
+    match unsafe { env.new_direct_byte_buffer(data, len) } {
+        Ok(buffer) => buffer.into_raw(),
+        Err(_) => {
+            unsafe {
+                free_boxed_packet_buffer(data, len);
+            }
+            ptr::null_mut()
+        }
+    }
+}
+
+#[cfg(target_os = "android")]
+unsafe fn free_boxed_packet_buffer(data: *mut u8, len: usize) {
+    let slice = std::ptr::slice_from_raw_parts_mut(data, len);
+    unsafe {
+        drop(Box::from_raw(slice));
+    }
 }
 
 fn c_string_lossy(value: *const c_char) -> String {

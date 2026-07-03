@@ -451,19 +451,20 @@ class NostrVpnService : VpnService() {
     }
 
     private fun writeTunLoop(descriptor: ParcelFileDescriptor, handle: Long) {
-        val output = FileOutputStream(descriptor.fileDescriptor)
-        val buffer = ByteArray(65_535)
+        val output = FileOutputStream(descriptor.fileDescriptor).channel
         val serviceRunning = running
         while (serviceRunning.get()) {
-            val count = NativeCore.mobileTunnelNextPacket(handle, buffer, 1_000)
-            if (count > 0) {
-                try {
-                    output.write(buffer, 0, count)
-                } catch (_: Exception) {
+            val packet = NativeCore.mobileTunnelNextPacketBuffer(handle, 1_000) ?: continue
+            try {
+                val packetLength = packet.remaining()
+                val written = output.write(packet)
+                if (written != packetLength) {
                     break
                 }
-            } else if (count < 0) {
+            } catch (_: Exception) {
                 break
+            } finally {
+                NativeCore.mobileTunnelFreePacketBuffer(packet)
             }
         }
     }
