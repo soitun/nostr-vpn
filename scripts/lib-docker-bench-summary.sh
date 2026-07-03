@@ -936,11 +936,25 @@ docker_bench_process_cpu_sample() {
   local process_name="$2"
   "${COMPOSE[@]}" exec -T "$service" sh -lc '
     process_name="$1"
-    pid="$(pgrep -x "$process_name" 2>/dev/null | head -n 1 || true)"
+    pids="$(pgrep -x "$process_name" 2>/dev/null | sort -n || true)"
     clk="$(getconf CLK_TCK 2>/dev/null || printf 100)"
-    if [ -n "$pid" ] && [ -r "/proc/$pid/stat" ]; then
+    if [ -z "$pids" ]; then
+      printf "na\tna\t%s\n" "${clk:-100}"
+      exit 0
+    fi
+    pid_list=""
+    total_jiffies=0
+    for pid in $pids; do
+      [ -r "/proc/$pid/stat" ] || continue
       jiffies="$(awk "{ print \$14 + \$15 }" "/proc/$pid/stat" 2>/dev/null || true)"
-      printf "%s\t%s\t%s\n" "${pid:-na}" "${jiffies:-na}" "${clk:-100}"
+      case "$jiffies" in
+        ""|*[!0-9]*) continue ;;
+      esac
+      pid_list="${pid_list:+$pid_list,}$pid"
+      total_jiffies=$((total_jiffies + jiffies))
+    done
+    if [ -n "$pid_list" ]; then
+      printf "%s\t%s\t%s\n" "$pid_list" "$total_jiffies" "${clk:-100}"
     else
       printf "na\tna\t%s\n" "${clk:-100}"
     fi
@@ -953,7 +967,7 @@ docker_bench_cpu_sample_cpu_seconds() {
   local start_pid start_jiffies start_clk end_pid end_jiffies end_clk clk_tck
   IFS=$'\t' read -r start_pid start_jiffies start_clk <<<"$start_sample"
   IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
-  if [[ "$start_pid" != "$end_pid" || ! "$start_pid" =~ ^[0-9]+$ ]]; then
+  if [[ "$start_pid" == "na" || "$start_pid" != "$end_pid" ]]; then
     return 0
   fi
   clk_tck="$end_clk"
@@ -974,7 +988,7 @@ docker_bench_append_cpu_phase_service_row() {
   IFS=$'\t' read -r end_pid end_jiffies end_clk <<<"$end_sample"
   clk_tck="$end_clk"
   [[ "$clk_tck" =~ ^[1-9][0-9]*$ ]] || clk_tck="$start_clk"
-  if [[ "$start_pid" == "$end_pid" && "$start_pid" =~ ^[0-9]+$ ]]; then
+  if [[ "$start_pid" != "na" && "$start_pid" == "$end_pid" ]]; then
     cpu_seconds="$(docker_bench_cpu_seconds_from_jiffies "$start_jiffies" "$end_jiffies" "$clk_tck")"
   else
     cpu_seconds=""
