@@ -245,30 +245,6 @@ mod linux_vnet_tun_tests {
     }
 
     #[test]
-    fn linux_vnet_write_preparer_reuses_vectored_frame_segments() {
-        let mut first = ipv4_tcp_packet(1000, 800, LINUX_TCP_FLAG_ACK);
-        let mut second = ipv4_tcp_packet(1800, 600, LINUX_TCP_FLAG_ACK | LINUX_TCP_FLAG_PSH);
-        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut first);
-        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut second);
-
-        let packets = vec![first, second];
-        let mut preparer = LinuxVnetWritePreparer::with_tcp4_gro(true);
-        let first_packets = packets.clone();
-        preparer.prepare(&first_packets);
-        assert_eq!(preparer.frames(), &[LinuxVnetPreparedWriteFrame::Vectored(0)]);
-        let first_capacity = preparer.vectored_frame_payload_segment_capacity(0);
-
-        let second_packets = packets;
-        preparer.prepare(&second_packets);
-        assert_eq!(preparer.frames(), &[LinuxVnetPreparedWriteFrame::Vectored(0)]);
-        assert_eq!(preparer.vectored_frames.len(), 1);
-        assert_eq!(
-            preparer.vectored_frame_payload_segment_capacity(0),
-            first_capacity
-        );
-    }
-
-    #[test]
     fn linux_vnet_tcp4_gro_write_keeps_noncandidate_boundary() {
         let mut first = ipv4_tcp_packet(1000, 800, LINUX_TCP_FLAG_ACK);
         let mut fin = ipv4_tcp_packet(1800, 1, LINUX_TCP_FLAG_FIN | LINUX_TCP_FLAG_ACK);

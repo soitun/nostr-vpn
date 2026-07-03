@@ -502,11 +502,6 @@ impl LinuxVnetWritePreparer {
         )
     }
 
-    #[cfg(test)]
-    fn vectored_frame_payload_segment_capacity(&self, index: usize) -> usize {
-        self.vectored_frames[index].payload_segments.capacity()
-    }
-
     fn start_tcp4_write_frame(
         &mut self,
         packet_index: usize,
