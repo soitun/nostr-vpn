@@ -255,6 +255,7 @@ target_cli_bin() {
 
 run_macos_gen_swift() {
   local generated_bindings_dir
+  local app_core_lock_snapshot=""
 
   prepare_cargo_config
 
@@ -264,9 +265,14 @@ run_macos_gen_swift() {
     "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --target "$HOST_TARGET"
   fi
 
+  if [[ -n "$LOCK_SNAPSHOT" ]]; then
+    app_core_lock_snapshot="$(mktemp)"
+    cp -p "$ROOT/Cargo.lock" "$app_core_lock_snapshot"
+  fi
+
   mkdir -p "$BUILD_DIR"
   generated_bindings_dir="$(mktemp -d "$BUILD_DIR/bindings.XXXXXX")"
-  trap 'rm -rf "$generated_bindings_dir"' RETURN
+  trap 'rm -rf "$generated_bindings_dir"; [[ -z "$app_core_lock_snapshot" ]] || rm -f "$app_core_lock_snapshot"' RETURN
 
   if [[ "$PROFILE" == "release" ]]; then
     "${cargo_prefix[@]}" run -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --release --target "$HOST_TARGET" -- generate \
@@ -280,6 +286,14 @@ run_macos_gen_swift() {
       --language swift \
       --out-dir "$generated_bindings_dir" \
       --config "$CORE_DIR/uniffi.toml"
+  fi
+
+  # The bindgen-only Cargo graph can prune optional patched deps from Cargo.lock.
+  # Keep the app-core graph prepared for the later bundled nvpn build.
+  if [[ -n "$app_core_lock_snapshot" ]]; then
+    cp -p "$app_core_lock_snapshot" "$ROOT/Cargo.lock"
+    rm -f "$app_core_lock_snapshot"
+    app_core_lock_snapshot=""
   fi
 
   while IFS= read -r -d '' generated_file; do
@@ -447,6 +461,10 @@ run_macos_xcframework() {
 
 run_macos_xcodeproj() {
   if ! command -v xcodegen >/dev/null 2>&1; then
+    if [[ -d "$PROJECT" ]]; then
+      echo "Skipping xcodegen because it is not available and $PROJECT exists." >&2
+      return 0
+    fi
     echo "xcodegen is required for macOS project generation" >&2
     exit 1
   fi
