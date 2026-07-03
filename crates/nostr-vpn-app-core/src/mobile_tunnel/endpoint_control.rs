@@ -100,7 +100,7 @@ async fn handle_mobile_endpoint_message(
     let packet = mesh.read().ok().and_then(|mesh| {
         mesh.receive_endpoint_data_owned_from_node_addr(
             source_node_addr.as_bytes(),
-            message.data,
+            message.data.into(),
         )
     });
     if let Some(packet) = packet {

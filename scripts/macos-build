@@ -18,6 +18,8 @@ PROJECT="$MACOS_DIR/NostrVpnMac.xcodeproj"
 SCHEME="NostrVpnMac"
 APP_NAME="Nostr VPN.app"
 VOLUME_NAME="Nostr VPN"
+cargo_feature_args=()
+cargo_app_core_package_args=()
 
 if [[ -f "$ROOT/scripts/release_common.sh" ]]; then
   # shellcheck disable=SC1091
@@ -109,6 +111,16 @@ validated_fips_repo_path() {
   printf '%s\n' "$fips_path"
 }
 
+validated_cashu_service_repo_path() {
+  local cashu_service_path="${NVPN_CASHU_SERVICE_REPO_PATH:-}"
+  [[ -n "$cashu_service_path" ]] || return 1
+  [[ -d "$cashu_service_path/crates/cashu-service" ]] || {
+    echo "missing $cashu_service_path/crates/cashu-service" >&2
+    exit 1
+  }
+  printf '%s\n' "$cashu_service_path"
+}
+
 prepare_cargo_config() {
   cargo_config_args=()
   if [[ -n "${NVPN_FIPS_REPO_PATH:-}" ]]; then
@@ -122,6 +134,32 @@ prepare_cargo_config() {
     )
     printf 'using local FIPS crates from %s\n' "$fips_path"
   fi
+  if [[ -n "${NVPN_CASHU_SERVICE_REPO_PATH:-}" ]]; then
+    local cashu_service_path
+    cashu_service_path="$(validated_cashu_service_repo_path)"
+    prepare_lock_restore
+    cargo_config_args+=(
+      --config "patch.crates-io.cashu-service.path=\"$cashu_service_path/crates/cashu-service\""
+    )
+    printf 'using local cashu-service crate from %s\n' "$cashu_service_path"
+  fi
+  cargo_feature_args=()
+  if [[ -n "${NVPN_MACOS_CARGO_FEATURES:-}" ]]; then
+    cargo_feature_args+=(--features "$NVPN_MACOS_CARGO_FEATURES")
+  fi
+  if bool_is_true "${NVPN_MACOS_NO_DEFAULT_FEATURES:-false}"; then
+    cargo_feature_args+=(--no-default-features)
+  fi
+  cargo_app_core_package_args=()
+  local app_core_packages=()
+  read -r -a app_core_packages <<< "${NVPN_MACOS_APP_CORE_CARGO_PACKAGES:-nostr-vpn-app-core}"
+  if ((${#app_core_packages[@]} == 0)); then
+    app_core_packages=(nostr-vpn-app-core)
+  fi
+  for package in "${app_core_packages[@]}"; do
+    [[ -n "$package" ]] || continue
+    cargo_app_core_package_args+=(-p "$package")
+  done
   cargo_prefix=(cargo)
   if ((${#cargo_config_args[@]})); then
     cargo_prefix+=("${cargo_config_args[@]}")
@@ -157,6 +195,11 @@ release signing env:
 
 development env:
   NVPN_FIPS_REPO_PATH          patch app-core/nvpn builds against local FIPS crates
+  NVPN_CASHU_SERVICE_REPO_PATH patch app-core/nvpn builds against local cashu-service
+  NVPN_MACOS_CARGO_FEATURES    feature list passed to Rust app-core/nvpn builds
+  NVPN_MACOS_APP_CORE_CARGO_PACKAGES
+                                packages built for app-core artifacts
+  NVPN_MACOS_NO_DEFAULT_FEATURES=1 disables default Rust features
 EOF
 }
 
@@ -199,9 +242,9 @@ run_macos_gen_swift() {
   prepare_cargo_config
 
   if [[ "$PROFILE" == "release" ]]; then
-    "${cargo_prefix[@]}" build -p nostr-vpn-app-core --release --target "$HOST_TARGET"
+    "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]}" "${cargo_feature_args[@]}" --release --target "$HOST_TARGET"
   else
-    "${cargo_prefix[@]}" build -p nostr-vpn-app-core --target "$HOST_TARGET"
+    "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]}" "${cargo_feature_args[@]}" --target "$HOST_TARGET"
   fi
 
   mkdir -p "$BUILD_DIR"
@@ -288,7 +331,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        "${cargo_prefix[@]}" build -p nostr-vpn-app-core --release --target "$target"
+        "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]}" "${cargo_feature_args[@]}" --release --target "$target"
 
       env \
         SDKROOT="$sdkroot" \
@@ -305,7 +348,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        "${cargo_prefix[@]}" build -p nvpn --release --bin nvpn --target "$target"
+        "${cargo_prefix[@]}" build -p nvpn "${cargo_feature_args[@]}" --release --bin nvpn --target "$target"
     else
       env \
         SDKROOT="$sdkroot" \
@@ -322,7 +365,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        "${cargo_prefix[@]}" build -p nostr-vpn-app-core --target "$target"
+        "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]}" "${cargo_feature_args[@]}" --target "$target"
 
       env \
         SDKROOT="$sdkroot" \
@@ -339,7 +382,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        "${cargo_prefix[@]}" build -p nvpn --bin nvpn --target "$target"
+        "${cargo_prefix[@]}" build -p nvpn "${cargo_feature_args[@]}" --bin nvpn --target "$target"
     fi
   done
 }
