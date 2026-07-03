@@ -183,7 +183,6 @@ impl FipsDirectEndpointDataLane {
             crate::pipeline_profile::Stage::DirectEndpointQueue,
             queued.enqueued_at,
         );
-        limit_queued_direct_endpoint_runs(&mut queued, limit, &mut state);
         let Some(source_node_addr) = direct_packet_runs_single_source_node_addr(&queued.runs)
         else {
             crate::pipeline_profile::record_direct_endpoint_rx_batch(1, queued.packets, 1);
@@ -314,18 +313,6 @@ fn push_direct_packet_run_by_lane(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn direct_packet_runs_len(runs: &[FipsEndpointDirectPacketRun]) -> usize {
     runs.iter().map(FipsEndpointDirectPacketRun::len).sum()
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn limit_queued_direct_endpoint_runs(
-    queued: &mut FipsDirectEndpointQueuedRuns,
-    limit: usize,
-    state: &mut FipsDirectEndpointDataLaneState,
-) {
-    if queued.packets <= limit {
-        return;
-    }
-    limit_queued_direct_endpoint_runs_to_remaining(queued, limit, state);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

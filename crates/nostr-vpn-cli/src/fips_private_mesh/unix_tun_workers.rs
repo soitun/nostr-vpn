@@ -212,7 +212,7 @@ fn spawn_blocking_mesh_recv_worker(
                                 &mut vnet_write_preparer,
                             );
                         }
-                        if drained == recv_burst {
+                        if drained >= recv_burst {
                             std::thread::yield_now();
                         }
                     }
