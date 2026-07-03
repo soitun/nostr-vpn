@@ -222,10 +222,7 @@ EOF
 
 target_root() {
   if [[ -z "${CARGO_TARGET_ROOT:-}" ]]; then
-    CARGO_TARGET_ROOT="$(
-      "${cargo_prefix[@]}" metadata --no-deps --format-version 1 \
-        | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["target_directory"])'
-    )"
+    CARGO_TARGET_ROOT="$(macos_rust_target_root)"
   fi
   printf '%s\n' "$CARGO_TARGET_ROOT"
 }
@@ -260,9 +257,11 @@ run_macos_gen_swift() {
   prepare_cargo_config
 
   if [[ "$PROFILE" == "release" ]]; then
-    "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --release --target "$HOST_TARGET"
+    CARGO_TARGET_DIR="$(target_root)" \
+      "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --release --target "$HOST_TARGET"
   else
-    "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --target "$HOST_TARGET"
+    CARGO_TARGET_DIR="$(target_root)" \
+      "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --target "$HOST_TARGET"
   fi
 
   if [[ -n "$LOCK_SNAPSHOT" ]]; then
@@ -275,13 +274,15 @@ run_macos_gen_swift() {
   trap 'rm -rf "$generated_bindings_dir"; [[ -z "$app_core_lock_snapshot" ]] || rm -f "$app_core_lock_snapshot"' RETURN
 
   if [[ "$PROFILE" == "release" ]]; then
-    "${cargo_prefix[@]}" run -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --release --target "$HOST_TARGET" -- generate \
+    CARGO_TARGET_DIR="$(target_root)" \
+      "${cargo_prefix[@]}" run -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --release --target "$HOST_TARGET" -- generate \
       --library "$(host_dynamic_lib)" \
       --language swift \
       --out-dir "$generated_bindings_dir" \
       --config "$CORE_DIR/uniffi.toml"
   else
-    "${cargo_prefix[@]}" run -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --target "$HOST_TARGET" -- generate \
+    CARGO_TARGET_DIR="$(target_root)" \
+      "${cargo_prefix[@]}" run -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" --target "$HOST_TARGET" -- generate \
       --library "$(host_dynamic_lib)" \
       --language swift \
       --out-dir "$generated_bindings_dir" \

@@ -76,7 +76,7 @@ fn paid_exit_create_token_lease_command_updates_buyer_session() {
 
     let store = load_paid_route_store(&store_path).expect("load store");
     let record = &store.sessions[&session.session_id];
-    assert_eq!(record.session.usage.rx_bytes, 100);
+    assert_eq!(record.session.usage.billable_bytes, 100);
     assert_eq!(
         record.session.payment.mode,
         PaidRoutePaymentMode::CashuTokenLease
@@ -134,6 +134,7 @@ fn paid_exit_apply_payment_command_updates_seller_admission() {
             meter: Some("bytes".to_string()),
             price_msat: Some(1_000),
             per_units: Some("100".to_string()),
+            connection_minimum_msat_per_day: None,
             accepted_mints: Some("https://mint.example".to_string()),
             accepted_mint: vec![],
             country_code: Some("fi".to_string()),
@@ -322,6 +323,7 @@ async fn paid_exit_buyer_payment_roundtrips_through_local_relay() {
         meter: Some("bytes".to_string()),
         price_msat: Some(1_000),
         per_units: Some("100".to_string()),
+        connection_minimum_msat_per_day: None,
         accepted_mints: Some("https://mint.example".to_string()),
         accepted_mint: vec![],
         country_code: Some("fi".to_string()),
@@ -456,4 +458,3 @@ async fn paid_exit_buyer_payment_roundtrips_through_local_relay() {
         }
     }
 }
-

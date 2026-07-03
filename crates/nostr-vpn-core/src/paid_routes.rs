@@ -29,6 +29,7 @@ const DEFAULT_MAX_CHANNEL_CAPACITY_SAT: u64 = 1_000;
 const DEFAULT_CHANNEL_EXPIRY_SECS: u64 = 86_400;
 const DEFAULT_FREE_PROBE_BYTES: u64 = 1_048_576;
 const DEFAULT_GRACE_BYTES: u64 = 262_144;
+const MILLIS_PER_DAY: u64 = 86_400_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -229,6 +230,8 @@ pub struct PaidRoutePricing {
     pub price_msat: u64,
     #[serde(default = "default_price_denominator_units")]
     pub per_units: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub connection_minimum_msat_per_day: u64,
 }
 
 impl Default for PaidRoutePricing {
@@ -237,6 +240,7 @@ impl Default for PaidRoutePricing {
             meter: PaidRouteMeter::Bytes,
             price_msat: 0,
             per_units: DEFAULT_PRICE_DENOMINATOR_UNITS,
+            connection_minimum_msat_per_day: 0,
         }
     }
 }
@@ -312,20 +316,30 @@ impl PaidExitConfig {
     }
 
     pub fn amount_due_msat(&self, usage: &PaidRouteUsage) -> u64 {
-        #[cfg(feature = "paid-exit")]
-        {
-            self.streaming_policy()
-                .amount_due_msat(usage.units_for_meter(self.pricing.meter))
-        }
-        #[cfg(not(feature = "paid-exit"))]
-        {
-            paid_route_amount_due_msat(
-                usage.units_for_meter(self.pricing.meter),
-                self.channel.free_probe_units,
-                self.pricing.price_msat,
-                self.pricing.per_units,
-            )
-        }
+        paid_route_amount_due_msat_for_usage(
+            usage,
+            self.pricing.meter,
+            self.channel.free_probe_units,
+            self.pricing.price_msat,
+            self.pricing.per_units,
+            self.pricing.connection_minimum_msat_per_day,
+        )
+    }
+
+    pub fn amount_due_msat_with_connection_minimum_skew(
+        &self,
+        usage: &PaidRouteUsage,
+        active_millis_skew: u64,
+    ) -> u64 {
+        paid_route_amount_due_msat_for_usage_with_connection_minimum_skew(
+            usage,
+            self.pricing.meter,
+            self.channel.free_probe_units,
+            self.pricing.price_msat,
+            self.pricing.per_units,
+            self.pricing.connection_minimum_msat_per_day,
+            active_millis_skew,
+        )
     }
 
     pub fn routing_decision(
@@ -333,61 +347,47 @@ impl PaidExitConfig {
         usage: &PaidRouteUsage,
         paid_msat: u64,
     ) -> PaidRouteRoutingDecision {
-        #[cfg(feature = "paid-exit")]
-        {
-            return self
-                .streaming_policy()
-                .routing_decision(usage.units_for_meter(self.pricing.meter), paid_msat)
-                .into();
-        }
-        #[cfg(not(feature = "paid-exit"))]
-        {
-            let delivered_units = usage.units_for_meter(self.pricing.meter);
-            let amount_due_msat = paid_route_amount_due_msat(
-                delivered_units,
-                self.channel.free_probe_units,
-                self.pricing.price_msat,
-                self.pricing.per_units,
-            );
-            let enforced_amount_due_msat = paid_route_amount_due_msat(
-                delivered_units.saturating_sub(self.channel.grace_units),
-                self.channel.free_probe_units,
-                self.pricing.price_msat,
-                self.pricing.per_units,
-            );
-            let unpaid_msat = amount_due_msat.saturating_sub(paid_msat);
-            let enforced_unpaid_msat = enforced_amount_due_msat.saturating_sub(paid_msat);
-            let state = if amount_due_msat == 0 {
-                PaidRouteAccessState::FreeProbe
-            } else if unpaid_msat == 0 {
-                PaidRouteAccessState::Paid
-            } else if enforced_unpaid_msat == 0 {
-                PaidRouteAccessState::Grace
-            } else {
-                PaidRouteAccessState::Suspended
-            };
+        let delivered_units = usage.billable_units_for_meter(self.pricing.meter);
+        let amount_due_msat = self.amount_due_msat(usage);
+        let mut enforced_usage = usage.clone();
+        set_billable_units_for_meter(
+            &mut enforced_usage,
+            self.pricing.meter,
+            delivered_units.saturating_sub(self.channel.grace_units),
+        );
+        let enforced_amount_due_msat = self.amount_due_msat(&enforced_usage);
+        let unpaid_msat = amount_due_msat.saturating_sub(paid_msat);
+        let enforced_unpaid_msat = enforced_amount_due_msat.saturating_sub(paid_msat);
+        let state = if amount_due_msat == 0 {
+            PaidRouteAccessState::FreeProbe
+        } else if unpaid_msat == 0 {
+            PaidRouteAccessState::Paid
+        } else if enforced_unpaid_msat == 0 {
+            PaidRouteAccessState::Grace
+        } else {
+            PaidRouteAccessState::Suspended
+        };
 
-            PaidRouteRoutingDecision {
-                state,
-                allow_routing: state != PaidRouteAccessState::Suspended,
+        PaidRouteRoutingDecision {
+            state,
+            allow_routing: state != PaidRouteAccessState::Suspended,
+            delivered_units,
+            paid_msat,
+            amount_due_msat,
+            enforced_amount_due_msat,
+            unpaid_msat,
+            free_probe_remaining_units: self
+                .channel
+                .free_probe_units
+                .saturating_sub(delivered_units),
+            grace_remaining_units: paid_route_grace_remaining_units(
                 delivered_units,
+                self.channel.free_probe_units,
+                self.channel.grace_units,
                 paid_msat,
-                amount_due_msat,
-                enforced_amount_due_msat,
-                unpaid_msat,
-                free_probe_remaining_units: self
-                    .channel
-                    .free_probe_units
-                    .saturating_sub(delivered_units),
-                grace_remaining_units: paid_route_grace_remaining_units(
-                    delivered_units,
-                    self.channel.free_probe_units,
-                    self.channel.grace_units,
-                    paid_msat,
-                    self.pricing.price_msat,
-                    self.pricing.per_units,
-                ),
-            }
+                self.pricing.price_msat,
+                self.pricing.per_units,
+            ),
         }
     }
 
@@ -407,7 +407,6 @@ impl PaidExitConfig {
     }
 }
 
-#[cfg(not(feature = "paid-exit"))]
 fn paid_route_amount_due_msat(
     delivered_units: u64,
     free_probe_units: u64,
@@ -418,19 +417,73 @@ fn paid_route_amount_due_msat(
     paid_route_price_for_units(billable_units, price_msat, per_units)
 }
 
-#[cfg(not(feature = "paid-exit"))]
+fn paid_route_amount_due_msat_for_usage(
+    usage: &PaidRouteUsage,
+    meter: PaidRouteMeter,
+    free_probe_units: u64,
+    price_msat: u64,
+    per_units: u64,
+    connection_minimum_msat_per_day: u64,
+) -> u64 {
+    let traffic_due = paid_route_amount_due_msat(
+        usage.billable_units_for_meter(meter),
+        free_probe_units,
+        price_msat,
+        per_units,
+    );
+    let connection_due = paid_route_connection_minimum_due_msat(
+        usage.active_millis,
+        connection_minimum_msat_per_day,
+    );
+    traffic_due.max(connection_due)
+}
+
+fn paid_route_amount_due_msat_for_usage_with_connection_minimum_skew(
+    usage: &PaidRouteUsage,
+    meter: PaidRouteMeter,
+    free_probe_units: u64,
+    price_msat: u64,
+    per_units: u64,
+    connection_minimum_msat_per_day: u64,
+    active_millis_skew: u64,
+) -> u64 {
+    let traffic_due = paid_route_amount_due_msat(
+        usage.billable_units_for_meter(meter),
+        free_probe_units,
+        price_msat,
+        per_units,
+    );
+    let connection_due = paid_route_connection_minimum_due_msat(
+        usage.active_millis.saturating_sub(active_millis_skew),
+        connection_minimum_msat_per_day,
+    );
+    traffic_due.max(connection_due)
+}
+
+fn paid_route_connection_minimum_due_msat(
+    active_millis: u64,
+    connection_minimum_msat_per_day: u64,
+) -> u64 {
+    if active_millis == 0 || connection_minimum_msat_per_day == 0 {
+        return 0;
+    }
+    active_millis
+        .saturating_mul(connection_minimum_msat_per_day)
+        .saturating_div(MILLIS_PER_DAY)
+}
+
 fn paid_route_price_for_units(units: u64, price_msat: u64, per_units: u64) -> u64 {
     if units == 0 || price_msat == 0 {
         return 0;
     }
-    let per_units = per_units.max(1);
-    units
-        .saturating_add(per_units.saturating_sub(1))
-        .saturating_div(per_units)
-        .saturating_mul(price_msat)
+    let numerator = u128::from(units).saturating_mul(u128::from(price_msat));
+    let denominator = u128::from(per_units.max(1));
+    let due = numerator
+        .saturating_add(denominator.saturating_sub(1))
+        .saturating_div(denominator);
+    due.min(u128::from(u64::MAX)) as u64
 }
 
-#[cfg(not(feature = "paid-exit"))]
 fn paid_route_grace_remaining_units(
     delivered_units: u64,
     free_probe_units: u64,
@@ -446,14 +499,27 @@ fn paid_route_grace_remaining_units(
     let paid_units = if price_msat == 0 {
         billable_units
     } else {
-        paid_msat
-            .saturating_div(price_msat)
-            .saturating_mul(per_units.max(1))
+        let units = u128::from(paid_msat)
+            .saturating_mul(u128::from(per_units.max(1)))
+            .saturating_div(u128::from(price_msat));
+        units.min(u128::from(u64::MAX)) as u64
     };
     paid_units
         .saturating_add(grace_units)
         .saturating_sub(billable_units)
         .min(grace_units)
+}
+
+fn set_billable_units_for_meter(
+    usage: &mut PaidRouteUsage,
+    meter: PaidRouteMeter,
+    delivered_units: u64,
+) {
+    match meter {
+        PaidRouteMeter::Milliseconds => usage.active_millis = delivered_units,
+        PaidRouteMeter::Bytes => usage.billable_bytes = delivered_units,
+        PaidRouteMeter::Packets => usage.billable_packets = delivered_units,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -468,6 +534,10 @@ pub struct PaidRouteUsage {
     pub tx_packets: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub rx_packets: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub billable_bytes: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub billable_packets: u64,
 }
 
 impl PaidRouteUsage {
@@ -479,12 +549,32 @@ impl PaidRouteUsage {
         }
     }
 
+    pub fn billable_units_for_meter(&self, meter: PaidRouteMeter) -> u64 {
+        match meter {
+            PaidRouteMeter::Milliseconds => self.active_millis,
+            PaidRouteMeter::Bytes => self.billable_bytes,
+            PaidRouteMeter::Packets => self.billable_packets,
+        }
+    }
+
+    pub fn add_assign(&mut self, delta: &Self) {
+        self.active_millis = self.active_millis.saturating_add(delta.active_millis);
+        self.tx_bytes = self.tx_bytes.saturating_add(delta.tx_bytes);
+        self.rx_bytes = self.rx_bytes.saturating_add(delta.rx_bytes);
+        self.tx_packets = self.tx_packets.saturating_add(delta.tx_packets);
+        self.rx_packets = self.rx_packets.saturating_add(delta.rx_packets);
+        self.billable_bytes = self.billable_bytes.saturating_add(delta.billable_bytes);
+        self.billable_packets = self.billable_packets.saturating_add(delta.billable_packets);
+    }
+
     pub fn is_empty(&self) -> bool {
         self.active_millis == 0
             && self.tx_bytes == 0
             && self.rx_bytes == 0
             && self.tx_packets == 0
             && self.rx_packets == 0
+            && self.billable_bytes == 0
+            && self.billable_packets == 0
     }
 }
 
@@ -765,11 +855,12 @@ pub fn signed_paid_exit_offer_from_config_with_receiver(
     }
     let mut normalized_config = config.clone();
     normalized_config.normalize();
-    if normalized_config.pricing.price_msat > 0
+    if (normalized_config.pricing.price_msat > 0
+        || normalized_config.pricing.connection_minimum_msat_per_day > 0)
         && normalized_config.channel.accepted_mints.is_empty()
     {
         return Err(anyhow!(
-            "paid exit offers with a non-zero price require at least one accepted Cashu mint"
+            "paid exit offers with non-zero pricing require at least one accepted Cashu mint"
         ));
     }
 
@@ -1081,6 +1172,10 @@ fn paid_route_offer_tags(offer: &PaidRouteOffer) -> Result<Vec<Tag>> {
         paid_route_owned_tag(vec![
             "per_units".to_string(),
             offer.pricing.per_units.to_string(),
+        ])?,
+        paid_route_owned_tag(vec![
+            "connection_minimum_msat_per_day".to_string(),
+            offer.pricing.connection_minimum_msat_per_day.to_string(),
         ])?,
         paid_route_owned_tag(vec![
             "max_channel_capacity_sat".to_string(),
@@ -1442,6 +1537,7 @@ mod tests {
                 meter: PaidRouteMeter::Bytes,
                 price_msat: 25,
                 per_units: 0,
+                connection_minimum_msat_per_day: 0,
             },
             channel: PaidRouteChannelTerms {
                 accepted_mints: vec![
@@ -1525,12 +1621,150 @@ mod tests {
         let usage = PaidRouteUsage {
             rx_bytes: 90,
             tx_bytes: 40,
+            billable_bytes: 130,
             ..PaidRouteUsage::default()
         };
 
         assert_eq!(config.amount_due_msat(&usage), 75);
         assert!(config.can_continue_routing(&usage, 25));
         assert!(!config.can_continue_routing(&usage, 24));
+    }
+
+    #[test]
+    fn route_pricing_prorates_fractional_units_before_rounding() {
+        let config = PaidExitConfig {
+            enabled: true,
+            pricing: PaidRoutePricing {
+                price_msat: 25,
+                per_units: 10,
+                ..PaidRoutePricing::default()
+            },
+            channel: PaidRouteChannelTerms {
+                free_probe_units: 0,
+                grace_units: 0,
+                ..PaidRouteChannelTerms::default()
+            },
+            ..PaidExitConfig::default()
+        };
+
+        assert_eq!(config.amount_due_msat(&usage_bytes(1)), 3);
+        assert_eq!(config.amount_due_msat(&usage_bytes(10)), 25);
+        assert_eq!(config.amount_due_msat(&usage_bytes(11)), 28);
+
+        let grace = config.routing_decision(&usage_bytes(11), 25);
+        assert_eq!(grace.amount_due_msat, 28);
+        assert_eq!(grace.unpaid_msat, 3);
+    }
+
+    #[test]
+    fn connection_minimum_is_prorated_and_acts_as_floor() {
+        let config = PaidExitConfig {
+            enabled: true,
+            pricing: PaidRoutePricing {
+                price_msat: 100,
+                per_units: 10,
+                connection_minimum_msat_per_day: 86_400,
+                ..PaidRoutePricing::default()
+            },
+            channel: PaidRouteChannelTerms {
+                free_probe_units: 0,
+                grace_units: 0,
+                ..PaidRouteChannelTerms::default()
+            },
+            ..PaidExitConfig::default()
+        };
+
+        let idle = PaidRouteUsage {
+            active_millis: 1_000,
+            ..PaidRouteUsage::default()
+        };
+        assert_eq!(config.amount_due_msat(&idle), 1);
+
+        let below_floor = PaidRouteUsage {
+            active_millis: 1_000,
+            billable_bytes: 1,
+            ..PaidRouteUsage::default()
+        };
+        assert_eq!(config.amount_due_msat(&below_floor), 10);
+
+        let above_floor = PaidRouteUsage {
+            active_millis: 1_000,
+            billable_bytes: 20,
+            ..PaidRouteUsage::default()
+        };
+        assert_eq!(config.amount_due_msat(&above_floor), 200);
+    }
+
+    #[test]
+    fn connection_minimum_due_can_tolerate_active_time_skew_without_discounting_traffic() {
+        let config = PaidExitConfig {
+            enabled: true,
+            pricing: PaidRoutePricing {
+                price_msat: 100,
+                per_units: 10,
+                connection_minimum_msat_per_day: 86_400,
+                ..PaidRoutePricing::default()
+            },
+            channel: PaidRouteChannelTerms {
+                free_probe_units: 0,
+                grace_units: 0,
+                ..PaidRouteChannelTerms::default()
+            },
+            ..PaidExitConfig::default()
+        };
+        let usage = PaidRouteUsage {
+            active_millis: 2_000,
+            billable_bytes: 2,
+            ..PaidRouteUsage::default()
+        };
+
+        assert_eq!(config.amount_due_msat(&usage), 20);
+        assert_eq!(
+            config.amount_due_msat_with_connection_minimum_skew(&usage, 1_000),
+            20
+        );
+
+        let idle = PaidRouteUsage {
+            active_millis: 2_000,
+            ..PaidRouteUsage::default()
+        };
+        assert_eq!(config.amount_due_msat(&idle), 2);
+        assert_eq!(
+            config.amount_due_msat_with_connection_minimum_skew(&idle, 1_000),
+            1
+        );
+    }
+
+    #[test]
+    fn connection_minimum_participates_in_routing_decision() {
+        let config = PaidExitConfig {
+            enabled: true,
+            pricing: PaidRoutePricing {
+                price_msat: 0,
+                connection_minimum_msat_per_day: 86_400,
+                ..PaidRoutePricing::default()
+            },
+            channel: PaidRouteChannelTerms {
+                free_probe_units: 1_000,
+                grace_units: 1_000,
+                ..PaidRouteChannelTerms::default()
+            },
+            ..PaidExitConfig::default()
+        };
+        let usage = PaidRouteUsage {
+            active_millis: 1_000,
+            ..PaidRouteUsage::default()
+        };
+
+        let paid = config.routing_decision(&usage, 1);
+        assert_eq!(paid.state, PaidRouteAccessState::Paid);
+        assert!(paid.allow_routing);
+        assert_eq!(paid.amount_due_msat, 1);
+
+        let suspended = config.routing_decision(&usage, 0);
+        assert_eq!(suspended.state, PaidRouteAccessState::Suspended);
+        assert!(!suspended.allow_routing);
+        assert_eq!(suspended.unpaid_msat, 1);
     }
 
     #[test]
@@ -1582,6 +1816,7 @@ mod tests {
                 meter: PaidRouteMeter::Packets,
                 price_msat: 100,
                 per_units: 1,
+                connection_minimum_msat_per_day: 0,
             },
             channel: PaidRouteChannelTerms {
                 free_probe_units: 0,
@@ -1599,6 +1834,7 @@ mod tests {
                 tx_bytes: 1_000_000,
                 rx_packets: 2,
                 tx_packets: 3,
+                billable_packets: 5,
                 ..PaidRouteUsage::default()
             },
             payment: PaidRoutePaymentState {
@@ -1703,6 +1939,15 @@ mod tests {
         assert!(tags.contains(&vec!["meter".to_string(), "bytes".to_string()].as_slice()));
         assert!(tags.contains(&vec!["price_msat".to_string(), "2500".to_string()].as_slice()));
         assert!(tags.contains(&vec!["per_units".to_string(), "1000000".to_string()].as_slice()));
+        assert!(
+            tags.contains(
+                &vec![
+                    "connection_minimum_msat_per_day".to_string(),
+                    "86400".to_string()
+                ]
+                .as_slice()
+            )
+        );
         assert!(
             tags.contains(
                 &vec!["max_channel_capacity_sat".to_string(), "100".to_string()].as_slice()
@@ -1839,6 +2084,7 @@ mod tests {
         assert!(error.to_string().contains("mint"));
 
         config.pricing.price_msat = 0;
+        config.pricing.connection_minimum_msat_per_day = 0;
         signed_paid_exit_offer_from_config("paid-exit-fi", &seller, &config, None, 123)
             .expect("free dev offer can omit mints");
     }
@@ -1936,6 +2182,7 @@ mod tests {
                 meter: PaidRouteMeter::Bytes,
                 price_msat: 2500,
                 per_units: 1_000_000,
+                connection_minimum_msat_per_day: 86_400,
             },
             channel: PaidRouteChannelTerms {
                 accepted_mints: vec!["https://mint.minibits.cash/Bitcoin".to_string()],
@@ -1988,6 +2235,7 @@ mod tests {
     fn usage_bytes(bytes: u64) -> PaidRouteUsage {
         PaidRouteUsage {
             rx_bytes: bytes,
+            billable_bytes: bytes,
             ..PaidRouteUsage::default()
         }
     }

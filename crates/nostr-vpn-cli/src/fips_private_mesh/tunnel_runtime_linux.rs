@@ -82,7 +82,7 @@ impl FipsPrivateTunnelRuntime {
         }
         self.reconcile_linux_exit_node_forwarding(
             &config.local_address,
-            &config.local_advertised_routes,
+            &config.local_exit_forwarding_routes,
             &config.wireguard_exit,
             config.exit_node_leak_protection,
             config.mesh_mtu.tunnel,
@@ -334,6 +334,10 @@ impl FipsPrivateTunnelRuntime {
             ipv4_outbound_iface.as_deref(),
             ipv4_tunnel_source_cidr.as_deref(),
         ) {
+            eprintln!(
+                "fips: enabling IPv4 exit forwarding on {} via {} source {}",
+                self.iface, outbound_iface, tunnel_source_cidr
+            );
             self.cleanup_linux_legacy_exit_node_forwarding_rules();
             let forward_in = crate::linux_exit_node_forward_in_rule(
                 &self.iface,

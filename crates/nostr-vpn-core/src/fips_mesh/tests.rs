@@ -78,10 +78,23 @@ mod tests {
         allowed_ips: Vec<&str>,
         allow_routing: bool,
     ) -> FipsPaidRouteAdmission {
+        paid_route_admission_with_destinations(peer, allowed_ips, Vec::new(), allow_routing)
+    }
+
+    fn paid_route_admission_with_destinations(
+        peer: &TestPeer,
+        allowed_ips: Vec<&str>,
+        destination_allowed_ips: Vec<&str>,
+        allow_routing: bool,
+    ) -> FipsPaidRouteAdmission {
         FipsPaidRouteAdmission {
             participant_pubkey: peer.participant_pubkey.clone(),
             session_id: "session-1".to_string(),
             allowed_ips: allowed_ips.into_iter().map(ToString::to_string).collect(),
+            destination_allowed_ips: destination_allowed_ips
+                .into_iter()
+                .map(ToString::to_string)
+                .collect(),
             allow_routing,
             state: if allow_routing {
                 PaidRouteAccessState::Paid
@@ -277,6 +290,39 @@ mod tests {
             .route_outbound_packet_with_peer(&reply)
             .expect("seller reply should route to the paid buyer tunnel address");
         assert_eq!(routed.participant_pubkey, buyer.participant_pubkey);
+    }
+
+    #[test]
+    fn paid_route_destination_routes_allow_exit_without_free_local_default() {
+        let buyer = TestPeer::generate();
+        let seller_ip = Ipv4Addr::new(10, 44, 10, 1);
+        let buyer_ip = Ipv4Addr::new(10, 44, 22, 44);
+        let internet_ip = Ipv4Addr::new(8, 8, 8, 8);
+        let packet = ipv4_packet(buyer_ip, internet_ip);
+        let spoofed = ipv4_packet(Ipv4Addr::new(203, 0, 113, 9), internet_ip);
+        let runtime = FipsMeshRuntime::with_local_routes_and_paid_route_admissions(
+            Vec::new(),
+            vec![format!("{seller_ip}/32")],
+            vec![paid_route_admission_with_destinations(
+                &buyer,
+                vec!["10.44.22.44/32"],
+                vec!["0.0.0.0/0"],
+                true,
+            )],
+        );
+
+        assert!(
+            runtime
+                .receive_endpoint_data_from_node_addr(&buyer.endpoint_node_addr, &packet)
+                .is_some(),
+            "paid destination routes should admit exit traffic without advertising a free default route",
+        );
+        assert!(
+            runtime
+                .receive_endpoint_data_from_node_addr(&buyer.endpoint_node_addr, &spoofed)
+                .is_none(),
+            "paid destination routes must not loosen the buyer source-IP gate",
+        );
     }
 
     #[test]

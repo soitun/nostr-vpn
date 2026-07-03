@@ -88,6 +88,9 @@ struct PaidExitRunArgs {
     /// Price unit. Byte meters accept values like "1 MB" or "1 GB".
     #[arg(long, value_name = "UNITS")]
     per_units: Option<String>,
+    /// Minimum charge while a buyer is connected, prorated by active time.
+    #[arg(long)]
+    connection_minimum_msat_per_day: Option<u64>,
     /// Replace accepted Cashu mints with a comma-separated list. Empty clears them.
     #[arg(long)]
     accepted_mints: Option<String>,
@@ -618,6 +621,10 @@ fn paid_exit_status_json(app: &AppConfig) -> serde_json::Value {
         ),
         "per_units": config.pricing.per_units,
         "per_units_text": paid_exit_meter_unit_text(config.pricing.per_units, config.pricing.meter),
+        "connection_minimum_msat_per_day": config.pricing.connection_minimum_msat_per_day,
+        "connection_minimum_text": paid_exit_connection_minimum_text(
+            config.pricing.connection_minimum_msat_per_day,
+        ),
         "accepted_mints": &config.channel.accepted_mints,
         "max_channel_capacity_sat": config.channel.max_channel_capacity_sat,
         "channel_expiry_secs": config.channel.channel_expiry_secs,
@@ -650,7 +657,10 @@ fn print_paid_exit_status(app: &AppConfig) {
         }
     );
 
-    if !config.enabled && config.channel.accepted_mints.is_empty() && config.pricing.price_msat == 0
+    if !config.enabled
+        && config.channel.accepted_mints.is_empty()
+        && config.pricing.price_msat == 0
+        && config.pricing.connection_minimum_msat_per_day == 0
     {
         return;
     }
@@ -662,6 +672,10 @@ fn print_paid_exit_status(app: &AppConfig) {
             config.pricing.per_units,
             config.pricing.meter,
         )
+    );
+    println!(
+        "paid_exit_connection_minimum: {}",
+        paid_exit_connection_minimum_text(config.pricing.connection_minimum_msat_per_day)
     );
     println!(
         "paid_exit_access: upstream={} private_vpn_access={}",
@@ -708,6 +722,14 @@ fn paid_exit_price_text(price_msat: u64, per_units: u64, meter: PaidRouteMeter) 
         paid_exit_msat_text(price_msat),
         paid_exit_meter_unit_text(per_units, meter)
     )
+}
+
+fn paid_exit_connection_minimum_text(msat_per_day: u64) -> String {
+    if msat_per_day == 0 {
+        "none".to_string()
+    } else {
+        format!("{} / day", paid_exit_msat_text(msat_per_day))
+    }
 }
 
 fn paid_exit_meter_unit_text(per_units: u64, meter: PaidRouteMeter) -> String {
@@ -1373,6 +1395,7 @@ fn paid_route_lifecycle_status_text(status: PaidRouteLifecycleStatus) -> &'stati
         PaidRouteLifecycleStatus::Probing => "probing",
         PaidRouteLifecycleStatus::Active => "active",
         PaidRouteLifecycleStatus::Paused => "paused",
+        PaidRouteLifecycleStatus::Closing => "closing",
         PaidRouteLifecycleStatus::Closed => "closed",
         PaidRouteLifecycleStatus::Expired => "expired",
         PaidRouteLifecycleStatus::Failed => "failed",
@@ -1755,6 +1778,9 @@ fn apply_paid_exit_run_settings(app: &mut AppConfig, args: &PaidExitRunArgs) -> 
         app.paid_exit.pricing.per_units =
             paid_exit_parse_pricing_units_arg(value, app.paid_exit.pricing.meter, "--per-units")?;
     }
+    if let Some(value) = args.connection_minimum_msat_per_day {
+        app.paid_exit.pricing.connection_minimum_msat_per_day = value;
+    }
     if let Some(mints) = paid_exit_run_accepted_mints(args)? {
         app.paid_exit.channel.accepted_mints = mints;
     }
@@ -1884,13 +1910,34 @@ fn apply_paid_route_seller_payment(
     store: &mut PaidRouteStore,
     request: ApplyPaidRouteSellerPaymentRequest,
     receiver: Option<&FileSpilmanPaymentReceiver>,
+    receiver_error: Option<&str>,
 ) -> Result<nostr_vpn_core::paid_route_store::ApplyPaidRouteSellerPaymentResult> {
     match receiver {
         Some(receiver) => {
+            if let cashu_service::StreamingRoutePaymentPayload::ChannelOpen(open) =
+                &request.envelope.payload
+            {
+                let requested_receiver = open.receiver_pubkey_hex.trim();
+                let local_receiver = receiver.receiver_pubkey_hex();
+                if !requested_receiver.eq_ignore_ascii_case(local_receiver) {
+                    return Err(anyhow!(
+                        "paid route channel receiver pubkey {} does not match local receiver {}",
+                        requested_receiver,
+                        local_receiver
+                    ));
+                }
+            }
             let context = "{}".to_string();
             store.apply_seller_payment_with_spilman_receiver(request, receiver, &context)
         }
-        None => store.apply_seller_payment(request),
+        None => {
+            let detail = receiver_error
+                .filter(|error| !error.trim().is_empty())
+                .unwrap_or("receiver unavailable");
+            Err(anyhow!(
+                "paid exit Spilman receiver is unavailable ({detail}); refusing to apply unvalidated paid route payment"
+            ))
+        }
     }
 }
 
@@ -2200,7 +2247,10 @@ fn paid_exit_buy_once(args: PaidExitBuyArgs) -> Result<PaidExitBuyResult> {
         write_paid_route_store(&store_path, &store)?;
     }
 
-    let (selected_exit_node, daemon_reload_attempted) = if args.no_select_exit_node {
+    let session_allows_routing =
+        store.buyer_session_allows_routing(&result.session_id, unix_timestamp())?;
+    let (selected_exit_node, daemon_reload_attempted) =
+        if args.no_select_exit_node || !session_allows_routing {
         (None, false)
     } else {
         let selected = app.select_public_paid_exit_node(&result.seller_npub)?;
@@ -2246,6 +2296,11 @@ fn paid_exit_use_once(args: PaidExitUseArgs) -> Result<PaidExitUseResult> {
         return Err(anyhow!("paid route session id is empty"));
     }
     let seller_npub = store.buyer_session_seller_npub(&session_id)?;
+    if !store.buyer_session_allows_routing(&session_id, unix_timestamp())? {
+        return Err(anyhow!(
+            "paid route session is not ready to route yet; fund it or wait for seller admission"
+        ));
+    }
     let selected_exit_node = app.select_public_paid_exit_node(&seller_npub)?;
     app.save(&config_path)?;
     let daemon_reload_attempted = !args.no_reload_daemon;
@@ -3106,6 +3161,16 @@ impl PaidExitStreamPaymentUpdatesResult {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct PaidExitDaemonStreamPaymentsResult {
+    pub(crate) total_due_count: usize,
+    pub(crate) processed_due_count: usize,
+    pub(crate) signed_count: usize,
+    pub(crate) persisted_count: usize,
+    pub(crate) error_count: usize,
+    pub(crate) changed: bool,
+}
+
 async fn paid_exit_stream_payment_updates_with_signer<S: CashuSpilmanPaymentSigner>(
     app: &AppConfig,
     keys: &Keys,
@@ -3197,6 +3262,75 @@ async fn paid_exit_stream_payment_updates_with_signer<S: CashuSpilmanPaymentSign
     }
 
     result
+}
+
+pub(crate) async fn paid_exit_stream_due_payments_for_daemon(
+    app: &AppConfig,
+    config_path: &Path,
+    min_increment_msat: u64,
+    limit: usize,
+) -> Result<PaidExitDaemonStreamPaymentsResult> {
+    if app.public_paid_exit_node_pubkey_hex().is_none() {
+        return Ok(PaidExitDaemonStreamPaymentsResult::default());
+    }
+
+    let keys = app.nostr_keys()?;
+    let buyer_npub = keys
+        .public_key()
+        .to_bech32()
+        .context("failed to encode buyer npub")?;
+    let relays = paid_exit_relay_urls(app, &[]);
+    let store_path = paid_route_store_file_path(config_path);
+    let mut store = load_paid_route_store(&store_path)?;
+    let now_unix = unix_timestamp();
+    let mut due = store.buyer_payment_updates_due(PaidRouteBuyerPaymentUpdatesDueRequest {
+        now_unix,
+        min_increment_msat,
+    });
+    let total_due_count = due.len();
+    if limit > 0 && due.len() > limit {
+        due.truncate(limit);
+    }
+    let processed_due_count = due.len();
+    if due.is_empty() {
+        return Ok(PaidExitDaemonStreamPaymentsResult {
+            total_due_count,
+            processed_due_count,
+            ..Default::default()
+        });
+    }
+    if relays.is_empty() {
+        return Err(anyhow!(
+            "no Nostr relays configured for paid exit payment publishing"
+        ));
+    }
+
+    let signer = FileSpilmanPaymentSigner::load(&paid_exit_wallet_data_dir(config_path))
+        .map_err(|error| anyhow!("{error}"))?;
+    let result = paid_exit_stream_payment_updates_with_signer(
+        app,
+        &keys,
+        &mut store,
+        &signer,
+        &buyer_npub,
+        due,
+        &relays,
+        true,
+        now_unix,
+    )
+    .await;
+    if result.changed {
+        write_paid_route_store(&store_path, &store)?;
+    }
+
+    Ok(PaidExitDaemonStreamPaymentsResult {
+        total_due_count,
+        processed_due_count,
+        signed_count: result.signed.len(),
+        persisted_count: result.persisted_count(),
+        error_count: result.errors.len(),
+        changed: result.changed,
+    })
 }
 
 async fn paid_exit_stream_payments_command(args: PaidExitStreamPaymentsArgs) -> Result<()> {
@@ -3541,6 +3675,7 @@ async fn paid_exit_apply_payment_command(args: PaidExitApplyPaymentArgs) -> Resu
             now_unix: unix_timestamp(),
         },
         spilman_receiver.as_ref(),
+        spilman_receiver_error.as_deref(),
     )?;
     if result.changed {
         write_paid_route_store(&store_path, &store)?;
@@ -3644,9 +3779,46 @@ async fn paid_exit_send_payment_command(args: PaidExitSendPaymentArgs) -> Result
     Ok(())
 }
 
-async fn paid_exit_receive_payments_command(args: PaidExitReceivePaymentsArgs) -> Result<()> {
-    let config_path = args.config.unwrap_or_else(default_config_path);
-    let app = load_or_default_config(&config_path)?;
+#[derive(Debug)]
+struct PaidExitReceivePaymentsResult {
+    seller_npub: String,
+    relays: Vec<String>,
+    received_count: usize,
+    applied: Vec<serde_json::Value>,
+    errors: Vec<serde_json::Value>,
+    changed: bool,
+    spilman_receiver_processing: bool,
+    spilman_receiver_error: Option<String>,
+    status: serde_json::Value,
+}
+
+impl PaidExitReceivePaymentsResult {
+    fn applied_count(&self) -> usize {
+        self.applied.len()
+    }
+
+    fn error_count(&self) -> usize {
+        self.errors.len()
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct PaidExitDaemonReceivePaymentsResult {
+    pub(crate) received_count: usize,
+    pub(crate) applied_count: usize,
+    pub(crate) error_count: usize,
+    pub(crate) changed: bool,
+    pub(crate) spilman_receiver_processing: bool,
+}
+
+async fn paid_exit_receive_payments(
+    app: &AppConfig,
+    config_path: &Path,
+    relays: Vec<String>,
+    duration_secs: u64,
+    limit: usize,
+    since_secs: u64,
+) -> Result<PaidExitReceivePaymentsResult> {
     if !app.paid_exit.enabled {
         return Err(anyhow!("paid exit selling is disabled"));
     }
@@ -3655,19 +3827,18 @@ async fn paid_exit_receive_payments_command(args: PaidExitReceivePaymentsArgs) -
         .public_key()
         .to_bech32()
         .context("failed to encode seller npub")?;
-    let relays = paid_exit_relay_urls(&app, &args.relays);
-    let since_unix = if args.since_secs == 0 {
+    let since_unix = if since_secs == 0 {
         None
     } else {
-        Some(unix_timestamp().saturating_sub(args.since_secs))
+        Some(unix_timestamp().saturating_sub(since_secs))
     };
-    let store_path = paid_route_store_file_path(&config_path);
+    let store_path = paid_route_store_file_path(config_path);
     let mut store = load_paid_route_store(&store_path)?;
     let mut seen_events = HashSet::new();
     let mut applied = Vec::new();
     let mut errors = Vec::new();
     let (spilman_receiver, spilman_receiver_error) =
-        try_load_paid_exit_spilman_receiver(&config_path, &app.paid_exit).await;
+        try_load_paid_exit_spilman_receiver(config_path, &app.paid_exit).await;
     let spilman_receiver_processing = spilman_receiver.is_some();
 
     if relays.is_empty() {
@@ -3688,13 +3859,13 @@ async fn paid_exit_receive_payments_command(args: PaidExitReceivePaymentsArgs) -
     client
         .subscribe_to(
             relays.clone(),
-            paid_route_payment_filter(keys.public_key(), args.limit, since_unix),
+            paid_route_payment_filter(keys.public_key(), limit, since_unix),
             None,
         )
         .await
         .map_err(|error| anyhow!("failed to subscribe paid exit payments: {error}"))?;
 
-    let timeout = tokio::time::sleep(Duration::from_secs(args.duration_secs));
+    let timeout = tokio::time::sleep(Duration::from_secs(duration_secs));
     tokio::pin!(timeout);
     loop {
         tokio::select! {
@@ -3718,6 +3889,7 @@ async fn paid_exit_receive_payments_command(args: PaidExitReceivePaymentsArgs) -
                                         now_unix: unix_timestamp(),
                                     },
                                     spilman_receiver.as_ref(),
+                                    spilman_receiver_error.as_deref(),
                                 ) {
                                     Ok(result) => applied.push(json!({
                                         "event_id": event_id,
@@ -3734,7 +3906,7 @@ async fn paid_exit_receive_payments_command(args: PaidExitReceivePaymentsArgs) -
                                 "error": error.to_string(),
                             })),
                         }
-                        if args.limit > 0 && seen_events.len() >= args.limit {
+                        if limit > 0 && seen_events.len() >= limit {
                             break;
                         }
                     }
@@ -3758,7 +3930,61 @@ async fn paid_exit_receive_payments_command(args: PaidExitReceivePaymentsArgs) -
     if changed {
         write_paid_route_store(&store_path, &store)?;
     }
-    let daemon_reload_attempted = changed && !args.no_reload_daemon;
+
+    Ok(PaidExitReceivePaymentsResult {
+        seller_npub,
+        relays,
+        received_count: seen_events.len(),
+        applied,
+        errors,
+        changed,
+        spilman_receiver_processing,
+        spilman_receiver_error,
+        status: paid_exit_status_snapshot_json(app, &store_path, &store),
+    })
+}
+
+pub(crate) async fn paid_exit_receive_payments_for_daemon(
+    app: &AppConfig,
+    config_path: &Path,
+    duration_secs: u64,
+    limit: usize,
+) -> Result<PaidExitDaemonReceivePaymentsResult> {
+    if !app.paid_exit.enabled {
+        return Ok(PaidExitDaemonReceivePaymentsResult::default());
+    }
+    let result = paid_exit_receive_payments(
+        app,
+        config_path,
+        paid_exit_relay_urls(app, &[]),
+        duration_secs,
+        limit,
+        0,
+    )
+    .await?;
+    Ok(PaidExitDaemonReceivePaymentsResult {
+        received_count: result.received_count,
+        applied_count: result.applied_count(),
+        error_count: result.error_count(),
+        changed: result.changed,
+        spilman_receiver_processing: result.spilman_receiver_processing,
+    })
+}
+
+async fn paid_exit_receive_payments_command(args: PaidExitReceivePaymentsArgs) -> Result<()> {
+    let config_path = args.config.unwrap_or_else(default_config_path);
+    let app = load_or_default_config(&config_path)?;
+    let store_path = paid_route_store_file_path(&config_path);
+    let result = paid_exit_receive_payments(
+        &app,
+        &config_path,
+        paid_exit_relay_urls(&app, &args.relays),
+        args.duration_secs,
+        args.limit,
+        args.since_secs,
+    )
+    .await?;
+    let daemon_reload_attempted = result.changed && !args.no_reload_daemon;
     if daemon_reload_attempted {
         maybe_reload_running_daemon(&config_path);
     }
@@ -3768,33 +3994,33 @@ async fn paid_exit_receive_payments_command(args: PaidExitReceivePaymentsArgs) -
             "{}",
             serde_json::to_string_pretty(&json!({
                 "store_path": store_path.display().to_string(),
-                "seller": seller_npub,
-                "relays": relays,
-                "received_count": seen_events.len(),
-                "applied_count": applied.len(),
-                "error_count": errors.len(),
-                "changed": changed,
-                "spilman_receiver_processing": spilman_receiver_processing,
-                "spilman_receiver_mode": paid_exit_spilman_receiver_mode(spilman_receiver_processing),
-                "spilman_receiver_validation": spilman_receiver_processing,
-                "spilman_receiver_error": spilman_receiver_error,
+                "seller": result.seller_npub,
+                "relays": result.relays,
+                "received_count": result.received_count,
+                "applied_count": result.applied_count(),
+                "error_count": result.error_count(),
+                "changed": result.changed,
+                "spilman_receiver_processing": result.spilman_receiver_processing,
+                "spilman_receiver_mode": paid_exit_spilman_receiver_mode(result.spilman_receiver_processing),
+                "spilman_receiver_validation": result.spilman_receiver_processing,
+                "spilman_receiver_error": result.spilman_receiver_error,
                 "daemon_reload_attempted": daemon_reload_attempted,
-                "applied": applied,
-                "errors": errors,
-                "status": paid_exit_status_snapshot_json(&app, &store_path, &store),
+                "applied": result.applied,
+                "errors": result.errors,
+                "status": result.status,
             }))?
         );
     } else {
-        println!("paid_exit_payments_received: {}", seen_events.len());
-        println!("seller: {}", seller_npub);
-        println!("store: {} changed={changed}", store_path.display());
-        println!("applied: {}", applied.len());
-        println!("errors: {}", errors.len());
+        println!("paid_exit_payments_received: {}", result.received_count);
+        println!("seller: {}", result.seller_npub);
+        println!("store: {} changed={}", store_path.display(), result.changed);
+        println!("applied: {}", result.applied_count());
+        println!("errors: {}", result.error_count());
         println!(
             "spilman_receiver_processing: {}",
-            paid_exit_spilman_receiver_mode(spilman_receiver_processing)
+            paid_exit_spilman_receiver_mode(result.spilman_receiver_processing)
         );
-        if let Some(error) = spilman_receiver_error {
+        if let Some(error) = result.spilman_receiver_error {
             println!("spilman_receiver_error: {error}");
         }
         println!(

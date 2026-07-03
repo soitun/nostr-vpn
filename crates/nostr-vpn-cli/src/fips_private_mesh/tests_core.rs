@@ -17,8 +17,9 @@
         control_frame_source_pubkey, drain_event_batch, endpoint_identity_for_send,
         filter_stamped_tunnel_endpoints, filter_static_tunnel_endpoints_with_policy,
         filter_static_tunnel_endpoints_with_policy_and_route_check, fips_endpoint_config,
-        fips_endpoint_peers_from_mesh, fips_lan_discovery_scope, fips_peer_address_from_hint,
-        fips_tunnel_requires_endpoint_restart, linux_cap_eff_has_net_admin,
+        fips_endpoint_peers_from_mesh, fips_endpoint_peers_with_paid_route_admissions,
+        fips_lan_discovery_scope, fips_peer_address_from_hint, fips_tunnel_requires_endpoint_restart,
+        linux_cap_eff_has_net_admin,
         linux_private_ipv4_route_subnets_from_ip_route,
         linux_route_get_has_direct_private_endpoint_route, linux_tun_setup_error,
         macos_private_ipv4_route_subnets_from_netstat,
@@ -28,6 +29,7 @@
         static_endpoint_allowed_on_current_underlay_with_route_check, strip_cidr,
         tag_authenticated_transport_addr, unix_timestamp,
     };
+    use nostr_vpn_core::fips_mesh::FipsPaidRouteAdmission;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
         BorrowedTunFd, DirectTunWriteBatch, TunPipelinePacket, parse_fips_mesh_recv_burst,
@@ -477,6 +479,44 @@
         assert!(!next.contains_key(&removed_key));
     }
 
+    #[cfg(feature = "paid-exit")]
+    #[test]
+    fn paid_route_accounting_uses_pubkey_bytes_and_ignores_invalid_identity() {
+        use super::{
+            FipsPaidRouteAccounting, FipsPaidRouteAccountingPeer, FipsPaidRouteAccountingRole,
+        };
+
+        let participant = Keys::generate().public_key().to_hex();
+        let participant_key = participant_pubkey_bytes(&participant).expect("participant key");
+        let packet = paid_route_test_ipv4_udp_packet(64);
+        let mut accounting = FipsPaidRouteAccounting::default();
+        accounting.replace_peers([FipsPaidRouteAccountingPeer::parse(
+            &participant,
+            FipsPaidRouteAccountingRole::LocalBuyer,
+        )
+        .expect("accounting peer")]);
+
+        accounting.record_outbound(None, Some(&participant_key), &packet);
+        let usage = accounting.drain(&participant);
+
+        assert_eq!(usage.tx_bytes, 64);
+        assert_eq!(usage.tx_packets, 1);
+        assert_eq!(usage.billable_bytes, 64);
+        assert_eq!(usage.billable_packets, 1);
+        assert!(
+            FipsPaidRouteAccountingPeer::parse(
+                "not-a-pubkey",
+                FipsPaidRouteAccountingRole::LocalBuyer,
+            )
+            .is_none()
+        );
+
+        accounting.record_outbound(Some("not-a-pubkey"), None, &packet);
+        let invalid_usage = accounting.drain("not-a-pubkey");
+        assert_eq!(invalid_usage.tx_bytes, 0);
+        assert_eq!(invalid_usage.billable_bytes, 0);
+    }
+
     #[test]
     fn peer_identity_map_resolves_endpoint_identities_and_skips_invalid_npubs() {
         let participant = Keys::generate().public_key().to_hex();
@@ -581,4 +621,21 @@
             .map(|payload| payload.as_slice().to_vec())
             .collect::<Vec<_>>();
         assert_eq!(payloads, vec![vec![1], vec![2]]);
+    }
+
+    #[cfg(feature = "paid-exit")]
+    fn paid_route_test_ipv4_udp_packet(total_len: usize) -> Vec<u8> {
+        assert!(total_len >= 28);
+        assert!(total_len <= u16::MAX as usize);
+        let udp_len = total_len - 20;
+        let mut packet = vec![0u8; total_len];
+        packet[0] = 0x45;
+        packet[2..4].copy_from_slice(&(total_len as u16).to_be_bytes());
+        packet[9] = 17;
+        packet[12..16].copy_from_slice(&[10, 8, 0, 2]);
+        packet[16..20].copy_from_slice(&[198, 51, 100, 1]);
+        packet[20..22].copy_from_slice(&12345u16.to_be_bytes());
+        packet[22..24].copy_from_slice(&53u16.to_be_bytes());
+        packet[24..26].copy_from_slice(&(udp_len as u16).to_be_bytes());
+        packet
     }

@@ -243,10 +243,6 @@ impl NativeAppRuntime {
             write_paid_route_store(&path, &store)?;
         }
 
-        self.config
-            .select_public_paid_exit_node(&result.seller_npub)?;
-        self.save_reload_and_refresh()?;
-
         if open_channel_from_wallet {
             self.open_paid_route_channel_from_wallet(
                 &result.session_id,
@@ -275,6 +271,11 @@ impl NativeAppRuntime {
         }
         let store = load_paid_route_store(&self.paid_route_store_path())?;
         let seller_npub = store.buyer_session_seller_npub(session_id)?;
+        if connect && !store.buyer_session_allows_routing(session_id, unix_timestamp())? {
+            return Err(anyhow!(
+                "paid route session is not ready to route yet; fund it or wait for seller admission"
+            ));
+        }
         self.config.select_public_paid_exit_node(&seller_npub)?;
         self.save_reload_and_refresh()?;
         if connect && !self.vpn_enabled {

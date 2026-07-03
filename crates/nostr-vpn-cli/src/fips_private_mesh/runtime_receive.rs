@@ -228,6 +228,8 @@ impl FipsPrivateMeshRuntime {
                 packet_outputs,
             );
         }
+        #[cfg(feature = "paid-exit")]
+        self.note_paid_route_inbound_batch(packet_outputs)?;
         self.note_data_rx_batch(packet_outputs.data_rx_notes_mut(), None)
     }
 
@@ -391,6 +393,12 @@ impl FipsPrivateMeshRuntime {
             message.data,
         ) {
             let now = now.unwrap_or_else(unix_timestamp);
+            #[cfg(feature = "paid-exit")]
+            self.note_paid_route_inbound_packet(
+                Some(packet.source_pubkey),
+                packet.source_pubkey_bytes,
+                packet.bytes.as_ref(),
+            )?;
             self.note_data_rx(packet.source_pubkey, packet.source_pubkey_bytes, data_len, now)?;
             return Ok(FipsEndpointMessageOutcome::event(
                 FipsPrivateMeshEvent::Packet(packet.bytes),
@@ -720,6 +728,9 @@ fn admit_direct_endpoint_packet_run_with_admitter(
             );
         }
     }
-    batch_outputs.push_run(run);
+    batch_outputs.push_run(
+        run,
+        FipsPacketSource::new(admitter.source_pubkey_bytes()),
+    );
     (accepted_count, endpoint_bytes)
 }

@@ -2201,7 +2201,7 @@ struct RootView: View {
                     Button {
                         manager.buyPaidRouteOffer(offer)
                     } label: {
-                        Label("Connect", systemImage: "arrow.right.circle.fill")
+                        Label("Buy", systemImage: "cart.fill")
                     }
                     .controlSize(.small)
                     .disabled(manager.actionInFlight)
@@ -2237,6 +2237,9 @@ struct RootView: View {
                 && channel.counterpartyNpub == offer.sellerNpub
                 && channel.role == "buyer"
                 && ["opening", "probing", "active", "paused"].contains(channel.status)
+                && state.paidRouteMarket.sessions.contains { session in
+                    session.channelId == channel.channelId && session.allowRouting
+                }
         }
     }
 

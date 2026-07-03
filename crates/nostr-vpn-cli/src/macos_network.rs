@@ -152,6 +152,17 @@ pub(super) fn macos_underlay_default_route_from_routes(
 }
 
 #[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_endpoint_bypass_targets_for_hosts(hosts: &[Ipv4Addr]) -> Vec<String> {
+    let mut targets = hosts
+        .iter()
+        .map(|host| format!("{host}/32"))
+        .collect::<Vec<_>>();
+    targets.sort();
+    targets.dedup();
+    targets
+}
+
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn macos_interface_names_from_ifconfig_list(output: &str) -> Vec<String> {
     output
         .split_whitespace()

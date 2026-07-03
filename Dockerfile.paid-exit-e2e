@@ -8,12 +8,13 @@ ARG NVPN_E2E_BUILDER_APT_INSTALL=1
 RUN case "$NVPN_E2E_BUILDER_APT_INSTALL" in \
         0|false|FALSE|False|no|NO|No|off|OFF|Off) ;; \
         *) apt-get update \
-          && apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config \
+          && apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config protobuf-compiler \
           && rm -rf /var/lib/apt/lists/* ;; \
       esac
 
 COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
+COPY --from=cashu-service . /app/cashu-service
 COPY --from=cashu-spilman-channels . /app/cashu_spilman_channels
 COPY --from=fips . /app/fips
 
@@ -43,7 +44,7 @@ ARG NVPN_E2E_RUNTIME_APT_INSTALL=1
 RUN case "$NVPN_E2E_RUNTIME_APT_INSTALL" in \
         0|false|FALSE|False|no|NO|No|off|OFF|Off) ;; \
         *) apt-get update \
-          && apt-get install -y --no-install-recommends ca-certificates dnsutils iperf3 iproute2 iptables iputils-ping libdbus-1-3 netcat-openbsd nftables procps tcpdump wireguard-tools \
+          && apt-get install -y --no-install-recommends ca-certificates dnsutils iperf3 iproute2 iptables iputils-ping libdbus-1-3 netcat-openbsd nftables procps python3 tcpdump wireguard-tools \
           && rm -rf /var/lib/apt/lists/* ;; \
       esac
 

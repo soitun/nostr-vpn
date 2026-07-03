@@ -348,6 +348,44 @@ fn fips_endpoint_peers_from_mesh(
     peers
 }
 
+pub(crate) fn fips_endpoint_peers_with_paid_route_admissions(
+    endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
+    admissions: &[FipsPaidRouteAdmission],
+) -> Vec<FipsEndpointPeerTransportConfig> {
+    let mut peers = endpoint_peers
+        .into_iter()
+        .map(|mut peer| {
+            peer.npub = normalize_fips_endpoint_npub(&peer.npub);
+            (peer.npub.clone(), peer)
+        })
+        .collect::<HashMap<_, _>>();
+
+    for admission in admissions {
+        let npub = normalize_fips_endpoint_npub(&admission.participant_pubkey);
+        if npub.trim().is_empty() {
+            continue;
+        }
+        let peer = peers
+            .entry(npub.clone())
+            .or_insert_with(|| FipsEndpointPeerTransportConfig {
+                npub,
+                addresses: Vec::new(),
+                auto_reconnect: true,
+                discovery_fallback_transit: false,
+            });
+        peer.auto_reconnect = true;
+        peer.discovery_fallback_transit = false;
+    }
+
+    let mut peers = peers.into_values().collect::<Vec<_>>();
+    for peer in &mut peers {
+        peer.addresses.sort_by(|a, b| a.addr.cmp(&b.addr));
+        peer.addresses.dedup_by(|a, b| a.addr == b.addr);
+    }
+    peers.sort_by(|left, right| left.npub.cmp(&right.npub));
+    peers
+}
+
 fn normalize_fips_endpoint_npub(value: &str) -> String {
     let trimmed = value.trim();
     normalize_nostr_pubkey(trimmed)
@@ -404,7 +442,11 @@ pub(crate) struct FipsPrivateTunnelConfig {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fips_host: Option<FipsHostTunnelConfig>,
     pub(crate) local_advertised_routes: Vec<String>,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    pub(crate) local_exit_forwarding_routes: Vec<String>,
     pub(crate) paid_route_admissions: Vec<FipsPaidRouteAdmission>,
+    #[cfg(feature = "paid-exit")]
+    pub(crate) paid_route_accounting_peers: Vec<FipsPaidRouteAccountingPeer>,
     pub(crate) paid_exit: PaidExitConfig,
     pub(crate) paid_route_store_path: PathBuf,
     pub(crate) paid_route_wallet_data_dir: PathBuf,

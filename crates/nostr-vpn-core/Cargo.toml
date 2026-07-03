@@ -20,7 +20,7 @@ updater = [
 anyhow.workspace = true
 async-trait.workspace = true
 base64.workspace = true
-cashu-service = { workspace = true, optional = true }
+cashu-service = { workspace = true, optional = true, features = ["spilman"] }
 # `device` feature pulls in `boringtun::device::tun::TunSocket` (POSIX
 # only — uses kqueue/epoll), so leave it off in the default dep set
 # and let target-specific overrides below opt back in.

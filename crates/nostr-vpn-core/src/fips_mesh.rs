@@ -54,6 +54,8 @@ pub struct FipsPaidRouteAdmission {
     pub session_id: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_ips: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub destination_allowed_ips: Vec<String>,
     pub allow_routing: bool,
     pub state: PaidRouteAccessState,
     pub amount_due_msat: u64,
@@ -70,6 +72,7 @@ impl From<PaidRouteSellerAdmission> for FipsPaidRouteAdmission {
             participant_pubkey: value.buyer_pubkey,
             session_id: value.session_id,
             allowed_ips: Vec::new(),
+            destination_allowed_ips: Vec::new(),
             allow_routing: value.allow_routing,
             state: value.state,
             amount_due_msat: value.amount_due_msat,
@@ -140,6 +143,7 @@ pub struct FipsMeshRuntime {
     peers: Vec<FipsMeshPeerRuntime>,
     local_routes: Vec<IpRoute>,
     paid_route_admissions: HashMap<[u8; 32], FipsPaidRouteAdmission>,
+    paid_route_destination_routes: HashMap<[u8; 32], Vec<IpRoute>>,
     paid_route_peers: Vec<FipsMeshPeerRuntime>,
     paid_route_routing_peers: Vec<FipsMeshPeerRuntime>,
     participant_peer_index: HashMap<[u8; 32], usize>,
@@ -241,6 +245,8 @@ impl FipsMeshRuntime {
             .collect();
 
         let paid_route_admissions = normalize_paid_route_admissions(paid_route_admissions);
+        let paid_route_destination_routes =
+            paid_route_destination_routes_from_admissions(&paid_route_admissions);
         let paid_route_peers = paid_route_peers_from_admissions(&paid_route_admissions, false);
         let paid_route_routing_peers =
             paid_route_peers_from_admissions(&paid_route_admissions, true);
@@ -249,6 +255,7 @@ impl FipsMeshRuntime {
             peers,
             local_routes,
             paid_route_admissions,
+            paid_route_destination_routes,
             paid_route_peers,
             paid_route_routing_peers,
             participant_peer_index,
@@ -265,6 +272,8 @@ impl FipsMeshRuntime {
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) {
         self.paid_route_admissions = normalize_paid_route_admissions(paid_route_admissions);
+        self.paid_route_destination_routes =
+            paid_route_destination_routes_from_admissions(&self.paid_route_admissions);
         self.paid_route_peers =
             paid_route_peers_from_admissions(&self.paid_route_admissions, false);
         self.paid_route_routing_peers =
@@ -649,12 +658,21 @@ impl FipsMeshRuntime {
         peer: &FipsMeshPeerRuntime,
         destination: IpAddr,
     ) -> bool {
-        let paid_admission = peer
-            .participant_pubkey
-            .as_ref()
-            .and_then(|participant| self.paid_route_admissions.get(participant));
-        if paid_admission.is_some_and(|admission| !admission.allow_routing) {
-            return false;
+        let paid_participant = peer.participant_pubkey.as_ref();
+        let paid_admission =
+            paid_participant.and_then(|participant| self.paid_route_admissions.get(participant));
+        if let Some(admission) = paid_admission {
+            if !admission.allow_routing {
+                return false;
+            }
+            if let Some(destination_routes) = paid_participant
+                .and_then(|participant| self.paid_route_destination_routes.get(participant))
+                && !destination_routes.is_empty()
+            {
+                return destination_routes
+                    .iter()
+                    .any(|route| route.matches(destination));
+            }
         }
         if self.local_routes.is_empty() {
             return true;

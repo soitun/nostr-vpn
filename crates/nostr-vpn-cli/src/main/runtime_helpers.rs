@@ -142,12 +142,12 @@ fn parse_exit_node_arg(value: &str) -> Result<Option<String>> {
     normalize_nostr_pubkey(value).map(Some)
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn is_exit_node_route(route: &str) -> bool {
     route == "0.0.0.0/0" || route == "::/0"
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn route_is_host_route(route: &str) -> bool {
     let Some((host, bits)) = route.split_once('/') else {
         return true;
@@ -163,7 +163,7 @@ fn route_is_host_route(route: &str) -> bool {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn route_targets_require_endpoint_bypass(route_targets: &[String]) -> bool {
     route_targets
         .iter()
@@ -497,10 +497,28 @@ fn fips_tunnel_config_from_app(
     #[cfg(feature = "paid-exit")]
     {
         config.paid_exit = app.paid_exit.clone();
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            config.local_exit_forwarding_routes = runtime_local_exit_forwarding_routes(app);
+        }
         config.paid_route_store_path = paid_route_store_file_path(config_path);
         config.paid_route_wallet_data_dir = paid_exit_wallet_data_dir(config_path);
         config.paid_route_payment_relays = paid_exit_relay_urls(app, &[]);
         config.paid_route_admissions = fips_paid_route_admissions_from_store(app, config_path)?;
+        config.endpoint_peers =
+            crate::fips_private_mesh::fips_endpoint_peers_with_paid_route_admissions(
+                config.endpoint_peers,
+                &config.paid_route_admissions,
+            );
+        config.paid_route_accounting_peers =
+            fips_paid_route_accounting_peers(app, &config.paid_route_admissions);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if app.paid_exit.enabled {
+            eprintln!(
+                "paid-exit: fips routes advertised={:?} local_forwarding={:?}",
+                config.local_advertised_routes, config.local_exit_forwarding_routes
+            );
+        }
     }
     #[cfg(not(feature = "paid-exit"))]
     let _ = config_path;
@@ -516,6 +534,48 @@ fn fips_tunnel_config_from_app(
         configured
     };
     Ok(config)
+}
+
+#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+fn fips_paid_route_accounting_peers(
+    app: &AppConfig,
+    admissions: &[FipsPaidRouteAdmission],
+) -> Vec<crate::fips_private_mesh::FipsPaidRouteAccountingPeer> {
+    let mut peers: Vec<crate::fips_private_mesh::FipsPaidRouteAccountingPeer> = app
+        .public_paid_exit_node_pubkey_hex()
+        .into_iter()
+        .filter_map(|participant_pubkey| {
+            crate::fips_private_mesh::FipsPaidRouteAccountingPeer::parse(
+                &participant_pubkey,
+                crate::fips_private_mesh::FipsPaidRouteAccountingRole::LocalBuyer,
+            )
+        })
+        .collect();
+    peers.extend(
+        admissions
+            .iter()
+            .filter_map(|admission| {
+                crate::fips_private_mesh::FipsPaidRouteAccountingPeer::parse(
+                    &admission.participant_pubkey,
+                    crate::fips_private_mesh::FipsPaidRouteAccountingRole::LocalSeller,
+                )
+            }),
+    );
+    peers.sort_by(|left, right| {
+        left.participant_pubkey
+            .cmp(&right.participant_pubkey)
+            .then_with(|| role_sort_key(left.role).cmp(&role_sort_key(right.role)))
+    });
+    peers.dedup_by(|left, right| left.participant_pubkey == right.participant_pubkey);
+    peers
+}
+
+#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+fn role_sort_key(role: crate::fips_private_mesh::FipsPaidRouteAccountingRole) -> u8 {
+    match role {
+        crate::fips_private_mesh::FipsPaidRouteAccountingRole::LocalBuyer => 0,
+        crate::fips_private_mesh::FipsPaidRouteAccountingRole::LocalSeller => 1,
+    }
 }
 
 #[cfg(feature = "embedded-fips")]
@@ -562,6 +622,7 @@ fn fips_paid_route_admissions_from_store(
     let network_id = app.effective_network_id();
     let store_path = paid_route_store_file_path(config_path);
     let store = load_paid_route_store(&store_path)?;
+    let destination_allowed_ips = runtime_local_exit_forwarding_routes(app);
     Ok(store
         .seller_admissions(&app.paid_exit, unix_timestamp())
         .into_iter()
@@ -569,6 +630,7 @@ fn fips_paid_route_admissions_from_store(
             crate::fips_private_mesh::fips_paid_route_admission_from_seller_admission(
                 &network_id,
                 admission,
+                &destination_allowed_ips,
             )
         })
         .collect())
