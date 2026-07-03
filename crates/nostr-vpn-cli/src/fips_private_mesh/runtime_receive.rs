@@ -696,10 +696,11 @@ fn admit_direct_endpoint_packet_run_with_admitter(
     mut run: FipsEndpointDirectPacketRun,
     batch_outputs: &mut DirectTunWriteBatch,
 ) -> (usize, usize) {
+    let mut admission_cache = FipsEndpointAdmissionCache::default();
     let mut accepted_count = 0usize;
     let mut endpoint_bytes = 0usize;
     run.retain_packets(|_index, packet| {
-        if !admitter.admit_packet(packet) {
+        if !admitter.admit_packet_cached(packet, &mut admission_cache) {
             return false;
         }
         accepted_count = accepted_count.saturating_add(1);

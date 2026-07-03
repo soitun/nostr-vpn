@@ -129,6 +129,12 @@ pub struct FipsEndpointSourceAdmitter<'a> {
     peer: &'a FipsMeshPeerRuntime,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct FipsEndpointAdmissionCache {
+    source: Option<(IpAddr, bool)>,
+    destination: Option<(IpAddr, bool)>,
+}
+
 #[derive(Debug, Clone)]
 pub struct FipsMeshRuntime {
     peers: Vec<FipsMeshPeerRuntime>,
@@ -684,6 +690,10 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
         self.admit(data).is_some()
     }
 
+    pub fn admit_packet_cached(&self, data: &[u8], cache: &mut FipsEndpointAdmissionCache) -> bool {
+        self.admit_with_cache(data, Some(cache)).is_some()
+    }
+
     pub fn receive_owned<B>(&self, data: B) -> Option<AcceptedFipsPacket<'a, B>>
     where
         B: AsRef<[u8]>,
@@ -706,11 +716,12 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
         B: AsRef<[u8]>,
         F: FnMut(B),
     {
+        let mut cache = FipsEndpointAdmissionCache::default();
         let mut accepted_packets = 0usize;
         let mut endpoint_bytes = 0usize;
         for packet in packets {
             let bytes = packet.as_ref();
-            if self.admit(bytes).is_some() {
+            if self.admit_with_cache(bytes, Some(&mut cache)).is_some() {
                 endpoint_bytes = endpoint_bytes.saturating_add(bytes.len());
                 accepted_packets = accepted_packets.saturating_add(1);
                 accept(packet);
@@ -728,15 +739,47 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
     }
 
     fn admit(&self, data: &[u8]) -> Option<&'a FipsMeshPeerRuntime> {
+        self.admit_with_cache(data, None)
+    }
+
+    fn admit_with_cache(
+        &self,
+        data: &[u8],
+        mut cache: Option<&mut FipsEndpointAdmissionCache>,
+    ) -> Option<&'a FipsMeshPeerRuntime> {
         let packet_source = packet_source(data)?;
-        if !self.peer_allows_inbound_source(packet_source) {
+        let source_allowed = match cache.as_deref_mut() {
+            Some(cache) => match cache.source {
+                Some((source, allowed)) if source == packet_source => allowed,
+                _ => {
+                    let allowed = self.peer_allows_inbound_source(packet_source);
+                    cache.source = Some((packet_source, allowed));
+                    allowed
+                }
+            },
+            None => self.peer_allows_inbound_source(packet_source),
+        };
+        if !source_allowed {
             return None;
         }
+
         let packet_destination = packet_destination(data)?;
-        if !self
-            .runtime
-            .peer_allows_inbound_destination(self.peer, packet_destination)
-        {
+        let destination_allowed = match cache.as_deref_mut() {
+            Some(cache) => match cache.destination {
+                Some((destination, allowed)) if destination == packet_destination => allowed,
+                _ => {
+                    let allowed = self
+                        .runtime
+                        .peer_allows_inbound_destination(self.peer, packet_destination);
+                    cache.destination = Some((packet_destination, allowed));
+                    allowed
+                }
+            },
+            None => self
+                .runtime
+                .peer_allows_inbound_destination(self.peer, packet_destination),
+        };
+        if !destination_allowed {
             return None;
         }
         Some(self.peer)

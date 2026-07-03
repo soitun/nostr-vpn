@@ -21,7 +21,9 @@ use nostr_vpn_core::fips_control::{
     encode_fips_control_messages,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use nostr_vpn_core::fips_mesh::{FipsEndpointSourceAdmitter, packet_destination};
+use nostr_vpn_core::fips_mesh::{
+    FipsEndpointAdmissionCache, FipsEndpointSourceAdmitter, packet_destination,
+};
 use nostr_vpn_core::fips_mesh::{
     FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission, RoutedFipsPeer,
 };
