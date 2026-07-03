@@ -86,19 +86,18 @@ fn write_linux_vnet_packet_batch_to_tun_blocking<P: LinuxVnetPacketBatch + ?Size
         let frame = preparer.frames()[frame_index];
         write_linux_vnet_prepared_frame_to_tun_blocking(
             tun_fd,
-            packets,
             preparer,
             frame,
             stop,
             write_gate,
         );
     }
+    preparer.clear_prepared_packet_refs();
 }
 
 #[cfg(target_os = "linux")]
-fn write_linux_vnet_prepared_frame_to_tun_blocking<P: LinuxVnetPacketBatch + ?Sized>(
+fn write_linux_vnet_prepared_frame_to_tun_blocking(
     tun_fd: BorrowedTunFd,
-    packets: &P,
     preparer: &mut LinuxVnetWritePreparer,
     frame: LinuxVnetPreparedWriteFrame,
     stop: &AtomicBool,
@@ -106,17 +105,13 @@ fn write_linux_vnet_prepared_frame_to_tun_blocking<P: LinuxVnetPacketBatch + ?Si
 ) {
     match frame {
         LinuxVnetPreparedWriteFrame::RawPacket(packet_index) => {
-            write_linux_vnet_raw_packet_to_tun_blocking(
-                tun_fd,
-                packets.packet_slice(packet_index),
-                stop,
-                write_gate,
-            )
+            preparer.packet_ref(packet_index).with_slice(|packet| {
+                write_linux_vnet_raw_packet_to_tun_blocking(tun_fd, packet, stop, write_gate)
+            })
         }
         LinuxVnetPreparedWriteFrame::Vectored(frame_index) => {
             write_linux_vnet_vectored_frame_to_tun_blocking(
                 tun_fd,
-                packets,
                 preparer,
                 frame_index,
                 stop,
@@ -161,9 +156,8 @@ fn write_linux_vnet_raw_packet_to_tun_blocking(
 }
 
 #[cfg(target_os = "linux")]
-fn write_linux_vnet_vectored_frame_to_tun_blocking<P: LinuxVnetPacketBatch + ?Sized>(
+fn write_linux_vnet_vectored_frame_to_tun_blocking(
     tun_fd: BorrowedTunFd,
-    packets: &P,
     preparer: &mut LinuxVnetWritePreparer,
     frame_index: usize,
     stop: &AtomicBool,
@@ -174,7 +168,7 @@ fn write_linux_vnet_vectored_frame_to_tun_blocking<P: LinuxVnetPacketBatch + ?Si
         if stop.load(Ordering::Acquire) {
             return;
         }
-        match preparer.write_vectored_frame_to_tun(&tun_fd, packets, frame_index, write_gate) {
+        match preparer.write_vectored_frame_to_tun(&tun_fd, frame_index, write_gate) {
             Ok(written) => {
                 crate::pipeline_profile::record_tun_write_frame(written);
                 return;
@@ -321,16 +315,16 @@ fn raw_write_packet_to_tun(
 }
 
 #[cfg(target_os = "linux")]
-fn raw_write_linux_vnet_vectored_frame_to_tun<P: LinuxVnetPacketBatch + ?Sized>(
+fn raw_write_linux_vnet_vectored_frame_to_tun(
     tun_fd: &BorrowedTunFd,
-    packets: &P,
+    packet_refs: &[LinuxVnetPacketRef],
     frame: &LinuxVnetWriteFrame,
     iov: &mut Vec<libc::iovec>,
     write_gate: Option<&Mutex<()>>,
 ) -> io::Result<usize> {
-    let first_packet = packets.packet_slice(frame.first_packet_index);
-    let first_payload = &first_packet[frame.first_payload_offset..];
+    let first_ref = packet_refs[frame.first_packet_index];
     let first_header = frame.first_header.as_slice();
+    let first_payload_len = first_ref.len_from_offset(frame.first_payload_offset);
     let iov_count = frame
         .payload_segments
         .len()
@@ -345,7 +339,7 @@ fn raw_write_linux_vnet_vectored_frame_to_tun<P: LinuxVnetPacketBatch + ?Sized>(
 
     let mut expected = LINUX_VIRTIO_NET_HDR_LEN
         .saturating_add(first_header.len())
-        .saturating_add(first_payload.len());
+        .saturating_add(first_payload_len);
     iov.clear();
     if iov.capacity() < iov_count {
         iov.reserve(iov_count - iov.capacity());
@@ -360,21 +354,14 @@ fn raw_write_linux_vnet_vectored_frame_to_tun<P: LinuxVnetPacketBatch + ?Sized>(
             iov_len: first_header.len(),
         });
     }
-    iov.push(libc::iovec {
-        iov_base: first_payload.as_ptr() as *mut libc::c_void,
-        iov_len: first_payload.len(),
-    });
-    let mut borrowed_segment_bytes = first_header
-        .len()
-        .saturating_add(first_payload.len());
+    iov.push(first_ref.iovec_from_offset(frame.first_payload_offset));
+    let mut borrowed_segment_bytes = first_header.len().saturating_add(first_payload_len);
     for segment in &frame.payload_segments {
-        let payload = &packets.packet_slice(segment.packet_index)[segment.payload_offset..];
-        expected = expected.saturating_add(payload.len());
-        borrowed_segment_bytes = borrowed_segment_bytes.saturating_add(payload.len());
-        iov.push(libc::iovec {
-            iov_base: payload.as_ptr() as *mut libc::c_void,
-            iov_len: payload.len(),
-        });
+        let packet_ref = packet_refs[segment.packet_index];
+        let payload_len = packet_ref.len_from_offset(segment.payload_offset);
+        expected = expected.saturating_add(payload_len);
+        borrowed_segment_bytes = borrowed_segment_bytes.saturating_add(payload_len);
+        iov.push(packet_ref.iovec_from_offset(segment.payload_offset));
     }
     let written = with_tun_write_gate(write_gate, || unsafe {
         libc::writev(

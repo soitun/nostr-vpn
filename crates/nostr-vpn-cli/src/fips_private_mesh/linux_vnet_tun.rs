@@ -184,6 +184,42 @@ struct LinuxVnetPayloadSegment {
     payload_offset: usize,
 }
 
+#[derive(Clone, Copy)]
+struct LinuxVnetPacketRef {
+    ptr: *const u8,
+    len: usize,
+}
+
+impl LinuxVnetPacketRef {
+    fn new(packet: &[u8]) -> Self {
+        Self {
+            ptr: packet.as_ptr(),
+            len: packet.len(),
+        }
+    }
+
+    fn with_slice<T>(self, f: impl FnOnce(&[u8]) -> T) -> T {
+        // The preparer only stores these refs for the synchronous prepare/write
+        // pass that borrowed the packet batch.
+        let packet = unsafe { std::slice::from_raw_parts(self.ptr, self.len) };
+        f(packet)
+    }
+
+    fn len_from_offset(self, offset: usize) -> usize {
+        self.len
+            .checked_sub(offset)
+            .expect("prepared Linux vnet packet offset must be in bounds")
+    }
+
+    fn iovec_from_offset(self, offset: usize) -> libc::iovec {
+        let len = self.len_from_offset(offset);
+        libc::iovec {
+            iov_base: unsafe { self.ptr.add(offset) } as *mut libc::c_void,
+            iov_len: len,
+        }
+    }
+}
+
 struct LinuxVnetWriteFrame {
     virtio_header: [u8; LINUX_VIRTIO_NET_HDR_LEN],
     first_header: Vec<u8>,
@@ -264,6 +300,7 @@ struct LinuxVnetWritePreparer {
     frames: Vec<LinuxVnetPreparedWriteFrame>,
     vectored_frames: Vec<LinuxVnetWriteFrame>,
     vectored_frame_count: usize,
+    packet_refs: Vec<LinuxVnetPacketRef>,
     write_iov: Vec<libc::iovec>,
     open_tcp4_flows: Vec<(LinuxVnetTcp4GroFlow, usize)>,
     open_udp4_flows: Vec<(LinuxVnetUdp4GroFlow, usize)>,
@@ -271,13 +308,20 @@ struct LinuxVnetWritePreparer {
     udp4_gro_enabled: bool,
 }
 
-// The scratch iovec vector is owned by one TUN writer task/thread and is cleared
-// after each writev call, so it never carries live packet pointers between writes.
+// The scratch iovec and packet-ref vectors are owned by one TUN writer task/thread
+// and are only populated for a synchronous prepare/write pass.
 unsafe impl Send for LinuxVnetWritePreparer {}
 
 trait LinuxVnetPacketBatch {
     fn packet_count(&self) -> usize;
     fn packet_slice(&self, index: usize) -> &[u8];
+
+    fn append_packet_refs(&self, refs: &mut Vec<LinuxVnetPacketRef>) {
+        refs.reserve(self.packet_count());
+        for index in 0..self.packet_count() {
+            refs.push(LinuxVnetPacketRef::new(self.packet_slice(index)));
+        }
+    }
 }
 
 impl<P: AsRef<[u8]>> LinuxVnetPacketBatch for [P] {
@@ -309,6 +353,13 @@ impl LinuxVnetPacketBatch for DirectTunWriteBatch {
         self.packet_slice(index)
             .expect("prepared Linux vnet direct packet index must exist")
     }
+
+    fn append_packet_refs(&self, refs: &mut Vec<LinuxVnetPacketRef>) {
+        refs.reserve(self.len());
+        for packet in self.run_slices() {
+            refs.push(LinuxVnetPacketRef::new(packet));
+        }
+    }
 }
 
 impl LinuxVnetWritePreparer {
@@ -328,6 +379,7 @@ impl LinuxVnetWritePreparer {
             frames: Vec::new(),
             vectored_frames: Vec::new(),
             vectored_frame_count: 0,
+            packet_refs: Vec::new(),
             write_iov: Vec::new(),
             open_tcp4_flows: Vec::new(),
             open_udp4_flows: Vec::new(),
@@ -341,20 +393,24 @@ impl LinuxVnetWritePreparer {
         self.open_tcp4_flows.clear();
         self.open_udp4_flows.clear();
         self.vectored_frame_count = 0;
+        self.packet_refs.clear();
+        packets.append_packet_refs(&mut self.packet_refs);
+        debug_assert_eq!(self.packet_refs.len(), packets.packet_count());
+        let packet_count = self.packet_refs.len();
 
         if !self.tcp4_gro_enabled && !self.udp4_gro_enabled {
             self.frames
-                .extend((0..packets.packet_count()).map(LinuxVnetPreparedWriteFrame::RawPacket));
+                .extend((0..packet_count).map(LinuxVnetPreparedWriteFrame::RawPacket));
             return;
         }
 
-        self.frames.reserve(packets.packet_count());
-        self.open_tcp4_flows.reserve(packets.packet_count());
-        self.open_udp4_flows.reserve(packets.packet_count());
-        for packet_index in 0..packets.packet_count() {
+        self.frames.reserve(packet_count);
+        self.open_tcp4_flows.reserve(packet_count);
+        self.open_udp4_flows.reserve(packet_count);
+        for packet_index in 0..packet_count {
             if self.tcp4_gro_enabled
-                && let Some(candidate) =
-                    linux_vnet_tcp4_gro_candidate(packets.packet_slice(packet_index))
+                && let Some(candidate) = self.packet_refs[packet_index]
+                    .with_slice(linux_vnet_tcp4_gro_candidate)
             {
                 self.open_udp4_flows.clear();
                 if let Some((_, owned_index)) = self
@@ -379,8 +435,8 @@ impl LinuxVnetWritePreparer {
             }
 
             if self.udp4_gro_enabled
-                && let Some(candidate) =
-                    linux_vnet_udp4_gro_candidate(packets.packet_slice(packet_index))
+                && let Some(candidate) = self.packet_refs[packet_index]
+                    .with_slice(linux_vnet_udp4_gro_candidate)
             {
                 self.open_tcp4_flows.clear();
                 if let Some((_, owned_index)) = self
@@ -411,7 +467,7 @@ impl LinuxVnetWritePreparer {
         }
 
         for frame in &mut self.vectored_frames[..self.vectored_frame_count] {
-            linux_vnet_finish_write_frame(frame, packets);
+            linux_vnet_finish_write_frame(frame, &self.packet_refs);
         }
     }
 
@@ -419,25 +475,33 @@ impl LinuxVnetWritePreparer {
         &self.frames
     }
 
+    fn packet_ref(&self, index: usize) -> LinuxVnetPacketRef {
+        self.packet_refs[index]
+    }
+
     fn vectored_frame(&self, index: usize) -> &LinuxVnetWriteFrame {
         &self.vectored_frames[index]
     }
 
-    fn write_vectored_frame_to_tun<P: LinuxVnetPacketBatch + ?Sized>(
+    fn clear_prepared_packet_refs(&mut self) {
+        self.packet_refs.clear();
+    }
+
+    fn write_vectored_frame_to_tun(
         &mut self,
         tun_fd: &BorrowedTunFd,
-        packets: &P,
         frame_index: usize,
         write_gate: Option<&Mutex<()>>,
     ) -> io::Result<usize> {
         let Self {
             vectored_frames,
+            packet_refs,
             write_iov,
             ..
         } = self;
         raw_write_linux_vnet_vectored_frame_to_tun(
             tun_fd,
-            packets,
+            packet_refs,
             &vectored_frames[frame_index],
             write_iov,
             write_gate,
@@ -684,19 +748,19 @@ fn linux_vnet_try_udp4_gro_append_with_candidate(
 
 fn linux_vnet_finish_write_frame(
     frame: &mut LinuxVnetWriteFrame,
-    packets: &(impl LinuxVnetPacketBatch + ?Sized),
+    packet_refs: &[LinuxVnetPacketRef],
 ) {
     if let Some(state) = frame.tcp4_gro.take() {
-        linux_vnet_finish_tcp4_write_frame(frame, packets, state);
+        linux_vnet_finish_tcp4_write_frame(frame, packet_refs, state);
     }
     if let Some(state) = frame.udp4_gro.take() {
-        linux_vnet_finish_udp4_write_frame(frame, packets, state);
+        linux_vnet_finish_udp4_write_frame(frame, packet_refs, state);
     }
 }
 
 fn linux_vnet_finish_tcp4_write_frame(
     frame: &mut LinuxVnetWriteFrame,
-    packets: &(impl LinuxVnetPacketBatch + ?Sized),
+    packet_refs: &[LinuxVnetPacketRef],
     state: LinuxVnetTcp4GroState,
 ) {
     if state.payload_len <= state.gso_size {
@@ -710,10 +774,13 @@ fn linux_vnet_finish_tcp4_write_frame(
     let ip_header_len = state.ip_header_len;
     let tcp_header_len = state.tcp_header_len;
     let transport_len = packet_len - ip_header_len;
-    let first_packet = packets.packet_slice(frame.first_packet_index);
     let header_len = ip_header_len + tcp_header_len;
     frame.first_header.clear();
-    frame.first_header.extend_from_slice(&first_packet[..header_len]);
+    packet_refs[frame.first_packet_index].with_slice(|first_packet| {
+        frame
+            .first_header
+            .extend_from_slice(&first_packet[..header_len]);
+    });
     frame.first_payload_offset = header_len;
     let packet = &mut frame.first_header;
 
@@ -746,7 +813,7 @@ fn linux_vnet_finish_tcp4_write_frame(
 
 fn linux_vnet_finish_udp4_write_frame(
     frame: &mut LinuxVnetWriteFrame,
-    packets: &(impl LinuxVnetPacketBatch + ?Sized),
+    packet_refs: &[LinuxVnetPacketRef],
     state: LinuxVnetUdp4GroState,
 ) {
     if state.payload_len <= state.gso_size {
@@ -759,10 +826,13 @@ fn linux_vnet_finish_udp4_write_frame(
         .saturating_add(state.payload_len);
     let ip_header_len = state.ip_header_len;
     let transport_len = packet_len - ip_header_len;
-    let first_packet = packets.packet_slice(frame.first_packet_index);
     let header_len = ip_header_len + LINUX_UDP_HEADER_LEN;
     frame.first_header.clear();
-    frame.first_header.extend_from_slice(&first_packet[..header_len]);
+    packet_refs[frame.first_packet_index].with_slice(|first_packet| {
+        frame
+            .first_header
+            .extend_from_slice(&first_packet[..header_len]);
+    });
     frame.first_payload_offset = header_len;
     let packet = &mut frame.first_header;
 
