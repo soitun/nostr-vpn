@@ -141,7 +141,7 @@ cleanup() {
   if declare -F capture_nvpn_diagnostics >/dev/null; then
     capture_nvpn_diagnostics "$status" || true
   fi
-  if [[ "$COMPOSE_TOUCHED" == "1" && -z "${KEEP:-}" ]]; then
+  if [[ "$COMPOSE_TOUCHED" == "1" ]] && ! is_true "${KEEP:-0}"; then
     docker_bench_stop_cpu_stress
     "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
     docker network rm "${PROJECT_NAME}_e2e" >/dev/null 2>&1 || true

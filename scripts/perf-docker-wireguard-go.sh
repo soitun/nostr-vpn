@@ -62,7 +62,7 @@ fi
 
 cleanup() {
   docker_bench_stop_cpu_stress
-  if [[ -z "${KEEP:-}" ]]; then
+  if ! is_true "${KEEP:-0}"; then
     "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
     docker network rm "${PROJECT_NAME}_e2e" >/dev/null 2>&1 || true
   fi
