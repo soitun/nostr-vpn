@@ -36,7 +36,9 @@ just android-smoke
 Use `NVPN_ANDROID_SERIAL=<adb-serial>` or `ANDROID_SERIAL=<adb-serial>` when more
 than one device or emulator is online. `just android-smoke-vpn` also cycles the
 debug VPN action and expects the VPN permission/config path to be usable on that
-device.
+device. On a fresh install, seed private test state with `NVPN_ANDROID_DEBUG_INVITE`
+or `NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE`; the command verifies that both
+`NostrVpnService` and an Android VPN network become active after debug connect.
 
 The native shell includes state, invite, roster, routing, diagnostics,
 deep-link, VPN permission surfaces, and Android `VpnService` packet handling

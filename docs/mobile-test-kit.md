@@ -55,6 +55,9 @@ NVPN_IOS_DEVICE=<device-id> just ios-smoke-device
 
 The iOS device command assumes a development build is already installed and uses
 debug launch arguments to cycle the VPN state. Android installs the debug APK and
-uses the debug action extra. Device identifiers, signing teams, local hostnames,
-IP addresses, and personal names must stay in environment variables, local shell
-history, or ignored files.
+uses the debug action extra, then checks that both `NostrVpnService` and an
+Android VPN network become active. Fresh Android installs need private seeded
+state first, for example `NVPN_ANDROID_DEBUG_INVITE=<invite>` or
+`NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE=<ignored-local-file>`. Device
+identifiers, signing teams, local hostnames, IP addresses, and personal names
+must stay in environment variables, local shell history, or ignored files.
