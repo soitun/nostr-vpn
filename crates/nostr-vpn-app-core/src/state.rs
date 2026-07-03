@@ -42,6 +42,16 @@ pub struct DaemonRuntimeState {
     pub port_mapping: PortMappingStatus,
     #[serde(default)]
     pub relays: Vec<RelayView>,
+    #[serde(default, alias = "tun_packets_read")]
+    pub tun_packets_read: u64,
+    #[serde(default, alias = "tun_bytes_read")]
+    pub tun_bytes_read: u64,
+    #[serde(default, alias = "tun_packets_written")]
+    pub tun_packets_written: u64,
+    #[serde(default, alias = "tun_bytes_written")]
+    pub tun_bytes_written: u64,
+    #[serde(default, alias = "tun_packets_dropped")]
+    pub tun_packets_dropped: u64,
     pub peers: Vec<DaemonPeerState>,
 }
 

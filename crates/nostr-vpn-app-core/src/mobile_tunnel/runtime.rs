@@ -486,6 +486,15 @@ impl MobileTunnel {
     }
 
     pub(crate) fn runtime_state_json(&self) -> Result<String> {
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let tun_counters = self
+            .native_tun
+            .as_ref()
+            .map(NativeTunRuntime::counters)
+            .unwrap_or_default();
+        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+        let tun_counters = MobileTunCounters::default();
+
         let endpoint = self
             .endpoint
             .clone()
@@ -513,12 +522,13 @@ impl MobileTunnel {
                 let presence = presence
                     .read()
                     .map_err(|_| anyhow!("mobile FIPS presence lock poisoned"))?;
-                mobile_runtime_state(
+                mobile_runtime_state_with_tun_counters(
                     &config,
                     &mesh,
                     &presence,
                     endpoint_peers,
                     relay_statuses,
+                    tun_counters,
                     unix_timestamp(),
                 )
             };

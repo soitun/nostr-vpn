@@ -196,6 +196,27 @@ if result.get("packetTunnelStatusRawValue") != 3:
     errors.append(f"packetTunnelStatusRawValue={result.get('packetTunnelStatusRawValue')!r}")
 if result.get("vpnEnabled") is not True:
     errors.append(f"vpnEnabled={result.get('vpnEnabled')!r}")
+runtime_json = result.get("packetTunnelRuntimeStateJson") or ""
+if result.get("packetTunnelStatusRawValue") == 3:
+    if not runtime_json:
+        errors.append("packetTunnelRuntimeStateJson missing")
+    else:
+        try:
+            runtime = json.loads(runtime_json)
+        except json.JSONDecodeError as error:
+            errors.append(f"packetTunnelRuntimeStateJson invalid JSON: {error}")
+        else:
+            if runtime.get("vpnActive") is not True:
+                errors.append(f"runtime.vpnActive={runtime.get('vpnActive')!r}")
+            for key in (
+                "tunPacketsRead",
+                "tunBytesRead",
+                "tunPacketsWritten",
+                "tunBytesWritten",
+                "tunPacketsDropped",
+            ):
+                if key not in runtime:
+                    errors.append(f"runtime.{key} missing")
 
 if errors:
     print("iOS VPN probe failed: " + ", ".join(errors), file=sys.stderr)

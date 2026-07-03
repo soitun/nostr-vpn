@@ -166,6 +166,27 @@ fn mobile_runtime_state(
     relay_statuses: Vec<FipsEndpointRelayStatus>,
     now: u64,
 ) -> DaemonRuntimeState {
+    mobile_runtime_state_with_tun_counters(
+        config,
+        mesh,
+        presence,
+        endpoint_peers,
+        relay_statuses,
+        MobileTunCounters::default(),
+        now,
+    )
+}
+
+#[allow(clippy::too_many_lines)]
+fn mobile_runtime_state_with_tun_counters(
+    config: &MobileTunnelConfig,
+    mesh: &FipsMeshRuntime,
+    presence: &HashMap<String, MobilePeerPresence>,
+    endpoint_peers: Vec<FipsEndpointPeer>,
+    relay_statuses: Vec<FipsEndpointRelayStatus>,
+    tun_counters: MobileTunCounters,
+    now: u64,
+) -> DaemonRuntimeState {
     let link_by_participant = endpoint_peers
         .into_iter()
         .filter_map(|peer| {
@@ -291,6 +312,11 @@ fn mobile_runtime_state(
                 enabled: true,
             })
             .collect(),
+        tun_packets_read: tun_counters.packets_read,
+        tun_bytes_read: tun_counters.bytes_read,
+        tun_packets_written: tun_counters.packets_written,
+        tun_bytes_written: tun_counters.bytes_written,
+        tun_packets_dropped: tun_counters.packets_dropped,
         peers,
         ..DaemonRuntimeState::default()
     }

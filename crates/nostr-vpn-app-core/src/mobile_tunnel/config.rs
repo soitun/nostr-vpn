@@ -43,6 +43,15 @@ const MOBILE_EXIT_NODE_DNS_SERVERS: &[&str] = &["1.1.1.1", "9.9.9.9"];
 const MOBILE_MAGIC_DNS_FORWARDERS: &[&str] = &["1.1.1.1:53", "9.9.9.9:53"];
 const MOBILE_MAGIC_DNS_FORWARD_TIMEOUT: Duration = Duration::from_millis(1500);
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct MobileTunCounters {
+    packets_read: u64,
+    bytes_read: u64,
+    packets_written: u64,
+    bytes_written: u64,
+    packets_dropped: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)]
