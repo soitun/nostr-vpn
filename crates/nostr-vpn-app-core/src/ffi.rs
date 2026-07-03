@@ -25,6 +25,9 @@ use crate::invite::{
     apply_network_invite_to_active_network, parse_network_invite, preferred_join_request_recipient,
     to_npub,
 };
+use crate::join_request_link::{
+    active_join_request_qr_code_or_link, parse_join_request_qr_code_or_link,
+};
 use crate::lan_pairing::{
     LAN_PAIRING_DURATION, LAN_PAIRING_STALE_AFTER, LanPairingAnnouncement, LanPairingSignal,
 };

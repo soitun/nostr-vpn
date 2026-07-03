@@ -630,6 +630,29 @@ private struct JoinNetworkCard: View {
             if let network = requestNetwork {
                 if !joinRequestStatus.isEmpty || network.outboundJoinRequest != nil {
                     Pill("Approval requested", tint: .orange)
+                    if !network.joinRequestQrCodeOrLink.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            QrCodeView(matrix: model.qrMatrix(for: network.joinRequestQrCodeOrLink))
+                                .frame(maxWidth: 190)
+                                .aspectRatio(1, contentMode: .fit)
+                            HStack(spacing: 10) {
+                                Button {
+                                    model.copy(network.joinRequestQrCodeOrLink)
+                                } label: {
+                                    Label("Copy Request", systemImage: model.copiedValue == network.joinRequestQrCodeOrLink ? "checkmark" : "doc.on.doc")
+                                        .frame(maxWidth: .infinity)
+                                }
+                                .buttonStyle(.bordered)
+                                if let requestUrl = URL(string: network.joinRequestQrCodeOrLink) {
+                                    ShareLink(item: requestUrl) {
+                                        Label("Share", systemImage: "square.and.arrow.up")
+                                            .frame(maxWidth: .infinity)
+                                    }
+                                    .buttonStyle(.bordered)
+                                }
+                            }
+                        }
+                    }
                 } else if !network.inviteInviterNpub.isEmpty {
                     Button {
                         model.dispatch(
@@ -659,6 +682,9 @@ private struct JoinNetworkCard: View {
 private struct AddDeviceSheet: View {
     @ObservedObject var model: AppModel
     let network: NetworkState
+    @State private var qrScannerPresented = false
+    @State private var scanError = ""
+    @State private var joinRequestInput = ""
 
     var body: some View {
         ScrollView {
@@ -685,6 +711,20 @@ private struct AddDeviceSheet: View {
                         )
                     }
                 }
+                ScanJoinerDeviceCard(
+                    requestInput: $joinRequestInput,
+                    scanError: scanError,
+                    scan: { qrScannerPresented = true },
+                    paste: {
+                        if let text = UIPasteboard.general.string {
+                            importJoinRequest(text)
+                        }
+                    },
+                    submit: {
+                        importJoinRequest(joinRequestInput)
+                        joinRequestInput = ""
+                    }
+                )
                 ManualPairingInfoCard(model: model, network: network)
                 AddDeviceCard(network: network) { npub, alias in
                     model.dispatch(
@@ -697,6 +737,87 @@ private struct AddDeviceSheet: View {
         }
         .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
+        .sheet(isPresented: $qrScannerPresented) {
+            QRCodeScannerSheet { code in
+                handleScannedJoinerCode(code)
+                qrScannerPresented = false
+            }
+        }
+    }
+
+    private func importJoinRequest(_ value: String) {
+        let request = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !request.isEmpty else { return }
+        scanError = ""
+        model.dispatch(
+            NativeActions.importJoinRequest(request),
+            status: "Importing approval request"
+        )
+    }
+
+    private func handleScannedJoinerCode(_ value: String) {
+        if looksLikeJoinRequestQrOrLink(value) {
+            importJoinRequest(value)
+            return
+        }
+        guard let scanned = parseScannedDeviceLinkQr(value) else {
+            scanError = "Not a Nostr VPN joiner QR."
+            return
+        }
+        scanError = ""
+        model.dispatch(
+            NativeActions.addParticipant(
+                networkId: network.id,
+                npub: scanned.deviceId,
+                alias: scanned.alias ?? ""
+            ),
+            status: "Adding device"
+        )
+    }
+}
+
+private struct ScanJoinerDeviceCard: View {
+    @Binding var requestInput: String
+    let scanError: String
+    let scan: () -> Void
+    let paste: () -> Void
+    let submit: () -> Void
+
+    var body: some View {
+        AppCard {
+            Text("Add approval request")
+                .font(.headline)
+            Text("Scan or paste the other device's approval request. Device ID QR scanning still works for manual pairing.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("nvpn://join-request/…", text: $requestInput)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+            HStack(spacing: 10) {
+                Button(action: paste) {
+                    Label("Paste", systemImage: "doc.on.clipboard")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                Button(action: submit) {
+                    Label("Import", systemImage: "arrow.down.doc")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .disabled(requestInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            Button(action: scan) {
+                Label("Scan QR", systemImage: "camera.viewfinder")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            if !scanError.isEmpty {
+                Text(scanError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
     }
 }
 
@@ -2557,6 +2678,121 @@ private func isHexString(_ value: String) -> Bool {
             || (65...70).contains(Int(scalar.value))
             || (97...102).contains(Int(scalar.value))
     }
+}
+
+private struct ScannedDeviceLink {
+    let deviceId: String
+    let alias: String?
+}
+
+private func looksLikeJoinRequestQrOrLink(_ value: String) -> Bool {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.lowercased().hasPrefix("nvpn://join-request/") {
+        return true
+    }
+    guard trimmed.hasPrefix("{"),
+          let data = trimmed.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data),
+          let json = object as? [String: Any]
+    else {
+        return false
+    }
+    return jsonString(json["networkId"]) != nil && jsonString(json["requesterNpub"]) != nil
+}
+
+private func parseScannedDeviceLinkQr(_ value: String) -> ScannedDeviceLink? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    if let deviceId = normalizedDeviceIdCandidate(trimmed) {
+        return ScannedDeviceLink(deviceId: deviceId, alias: nil)
+    }
+    if let parsed = parseScannedDeviceJson(trimmed) {
+        return parsed
+    }
+    return parseScannedDeviceUrl(trimmed)
+}
+
+private func parseScannedDeviceJson(_ value: String) -> ScannedDeviceLink? {
+    guard value.hasPrefix("{"),
+          let data = value.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data),
+          let json = object as? [String: Any]
+    else {
+        return nil
+    }
+    guard let deviceId = firstValidDeviceId(
+        jsonString(json["deviceId"]),
+        jsonString(json["device"]),
+        jsonString(json["npub"]),
+        jsonString(json["requesterNpub"])
+    ) else {
+        return nil
+    }
+    return ScannedDeviceLink(
+        deviceId: deviceId,
+        alias: firstNonBlank(
+            jsonString(json["name"]),
+            jsonString(json["nodeName"]),
+            jsonString(json["label"])
+        )
+    )
+}
+
+private func parseScannedDeviceUrl(_ value: String) -> ScannedDeviceLink? {
+    guard let components = URLComponents(string: value),
+          components.scheme?.lowercased() == "nvpn"
+    else {
+        return nil
+    }
+    var query: [String: String] = [:]
+    for item in components.queryItems ?? [] where query[item.name] == nil {
+        query[item.name] = item.value ?? ""
+    }
+    let pathCandidate = components.path
+        .split(separator: "/")
+        .last
+        .map(String.init)
+    guard let deviceId = firstValidDeviceId(
+        query["deviceId"],
+        query["device"],
+        query["npub"],
+        query["requesterNpub"],
+        components.host,
+        pathCandidate
+    ) else {
+        return nil
+    }
+    return ScannedDeviceLink(
+        deviceId: deviceId,
+        alias: firstNonBlank(query["name"], query["nodeName"], query["label"])
+    )
+}
+
+private func jsonString(_ value: Any?) -> String? {
+    value as? String
+}
+
+private func firstValidDeviceId(_ values: String?...) -> String? {
+    values.compactMap { normalizedDeviceIdCandidate($0 ?? "") }.first
+}
+
+private func normalizedDeviceIdCandidate(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+    let withoutNostrPrefix: String
+    if trimmed.lowercased().hasPrefix("nostr:") {
+        withoutNostrPrefix = String(trimmed.dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+    } else {
+        withoutNostrPrefix = trimmed
+    }
+    return isValidDeviceId(withoutNostrPrefix) ? withoutNostrPrefix : nil
+}
+
+private func firstNonBlank(_ values: String?...) -> String? {
+    values
+        .map { ($0 ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        .first { !$0.isEmpty }
 }
 
 private struct Metric: View {

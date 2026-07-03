@@ -37,6 +37,7 @@ object NativeActions {
     fun connectVpn() = action("connect_vpn")
     fun disconnectVpn() = action("disconnect_vpn")
     fun importInvite(invite: String) = action("import_network_invite", "invite" to invite)
+    fun importJoinRequest(request: String) = action("import_join_request", "request" to request)
     fun startInviteBroadcast() = action("start_invite_broadcast")
     fun stopInviteBroadcast() = action("stop_invite_broadcast")
     fun resetNetworkInvite(networkId: String) = action("reset_network_invite", "networkId" to networkId)
@@ -60,6 +61,9 @@ object NativeActions {
 
     fun rejectJoinRequest(networkId: String, requesterNpub: String) =
         action("reject_join_request", "networkId" to networkId, "requesterNpub" to requesterNpub)
+
+    fun addParticipant(networkId: String, npub: String, alias: String? = null) =
+        action("add_participant", "networkId" to networkId, "npub" to npub, "alias" to alias)
 
     fun removeNetwork(networkId: String) = action("remove_network", "networkId" to networkId)
 

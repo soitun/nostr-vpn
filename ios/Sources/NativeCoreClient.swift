@@ -123,6 +123,10 @@ enum NativeActions {
         ["type": "import_network_invite", "invite": invite]
     }
 
+    static func importJoinRequest(_ request: String) -> [String: Any] {
+        ["type": "import_join_request", "request": request]
+    }
+
     static func linkNetwork(_ link: String) -> [String: Any] {
         importInvite(link)
     }

@@ -297,6 +297,88 @@
     }
 
     #[test]
+    fn join_request_qr_or_link_can_be_imported_and_approved_by_admin() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let admin_dir =
+            std::env::temp_dir().join(format!("nvpn-app-core-admin-join-request-{nonce}"));
+        let joiner_dir =
+            std::env::temp_dir().join(format!("nvpn-app-core-joiner-request-link-{nonce}"));
+        fs::create_dir_all(&admin_dir).expect("create admin test dir");
+        fs::create_dir_all(&joiner_dir).expect("create joiner test dir");
+
+        let error = anyhow!("boom");
+        let mut admin = NativeAppRuntime::from_startup_error(&error);
+        admin.startup_error = None;
+        admin.mobile_runtime = true;
+        admin.config_path = admin_dir.join("config.toml");
+        admin.config.node_name = "Admin Mac".to_string();
+        let admin_pubkey = admin
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("admin pubkey");
+        let admin_network_id = create_test_network(&mut admin, "Home");
+        admin.config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
+        admin.config.networks[0].admins = vec![admin_pubkey];
+        let invite = admin.state().active_network_invite;
+        assert!(invite.starts_with("nvpn://invite/"));
+
+        let mut joiner = NativeAppRuntime::from_startup_error(&error);
+        joiner.startup_error = None;
+        joiner.mobile_runtime = true;
+        joiner.config_path = joiner_dir.join("config.toml");
+        joiner.config.node_name = "Pixel Phone".to_string();
+        let joiner_pubkey = joiner
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("joiner pubkey");
+        let joiner_npub = to_npub(&joiner_pubkey);
+        joiner
+            .import_network_invite(&invite)
+            .expect("joiner imports admin invite");
+
+        let joiner_state = joiner.state();
+        let join_request = &joiner_state.networks[0].join_request_qr_code_or_link;
+        assert!(join_request.starts_with("nvpn://join-request/"));
+
+        admin.dispatch(NativeAppAction::ImportJoinRequest {
+            request: join_request.clone(),
+        });
+
+        assert!(admin.last_error.is_empty(), "{}", admin.last_error);
+        let imported = admin
+            .state()
+            .networks
+            .into_iter()
+            .find(|network| network.id == admin_network_id)
+            .expect("admin network");
+        let request = imported
+            .inbound_join_requests
+            .first()
+            .expect("join request should be visible for admin approval");
+        assert_eq!(request.requester_npub, joiner_npub);
+        assert_eq!(request.requester_node_name, "Pixel Phone");
+
+        admin.dispatch(NativeAppAction::AcceptJoinRequest {
+            network_id: admin_network_id,
+            requester_npub: joiner_npub,
+        });
+
+        assert!(admin.last_error.is_empty(), "{}", admin.last_error);
+        assert!(admin.config.networks[0].devices.contains(&joiner_pubkey));
+        assert!(admin.config.networks[0].inbound_join_requests.is_empty());
+        assert_eq!(
+            admin.config.peer_alias(&joiner_pubkey).as_deref(),
+            Some("pixel-phone")
+        );
+
+        let _ = fs::remove_dir_all(&admin_dir);
+        let _ = fs::remove_dir_all(&joiner_dir);
+    }
+
+    #[test]
     fn invite_import_reuses_inactive_default_network_placeholder() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

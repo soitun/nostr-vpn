@@ -254,6 +254,7 @@ final class AppModel: ObservableObject {
     private func actionRequiresPacketTunnelConfigSync(_ type: String) -> Bool {
         switch type {
         case "import_network_invite",
+             "import_join_request",
              "request_network_join",
              "manual_add_network",
              "set_network_enabled",

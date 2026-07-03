@@ -154,6 +154,7 @@ internal fun NostrVpnApp(
     state: AppState,
     qrJson: (String) -> JSONObject,
     scanQr: () -> Unit,
+    scanDeviceQr: (String) -> Unit,
     dispatch: (JSONObject) -> Unit,
     selfUpdateState: AndroidSelfUpdateState,
     selfUpdateActions: SelfUpdateActions,
@@ -228,7 +229,7 @@ internal fun NostrVpnApp(
                 item { Notice(state.error) }
             }
             if (network == null) {
-                addNetworkBody(state, scanQr, dispatch)
+                addNetworkBody(state, qrJson, scanQr, dispatch)
             } else {
                 when (effectivePage) {
                     Page.Devices -> devicesPage(
@@ -252,6 +253,7 @@ internal fun NostrVpnApp(
             state = state,
             network = network,
             qrJson = qrJson,
+            scanDeviceQr = scanDeviceQr,
             dispatch = dispatch,
             onDismiss = { showAddDevice = false },
         )
@@ -259,6 +261,7 @@ internal fun NostrVpnApp(
     if (showAddNetwork) {
         AddNetworkDialog(
             state = state,
+            qrJson = qrJson,
             scanQr = scanQr,
             dispatch = dispatch,
             onDismiss = { showAddNetwork = false },
@@ -573,6 +576,7 @@ private fun deviceCountText(network: NetworkState): String {
 @Composable
 private fun NetworkSetupCard(
     state: AppState,
+    qrJson: (String) -> JSONObject,
     scanQr: () -> Unit,
     dispatch: (JSONObject) -> Unit,
     onCreated: (() -> Unit)? = null,
@@ -656,6 +660,20 @@ private fun NetworkSetupCard(
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF9A3412),
                     )
+                    if (requestNetwork.joinRequestQrCodeOrLink.isNotBlank()) {
+                        BoxWithConstraints(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            val qrSide = maxWidth.coerceAtMost(220.dp)
+                            QrCode(
+                                invite = requestNetwork.joinRequestQrCodeOrLink,
+                                qrJson = qrJson,
+                                side = qrSide,
+                            )
+                        }
+                        CopyButton(requestNetwork.joinRequestQrCodeOrLink, "Copy request")
+                    }
                 } else if (requestNetwork.inviteInviterNpub.isNotBlank()) {
                     OutlinedButton(
                         onClick = {
@@ -748,16 +766,18 @@ private fun SetupChoiceCard(
 // switcher with an existing network already in place.
 private fun androidx.compose.foundation.lazy.LazyListScope.addNetworkBody(
     state: AppState,
+    qrJson: (String) -> JSONObject,
     scanQr: () -> Unit,
     dispatch: (JSONObject) -> Unit,
 ) {
-    item { NetworkSetupCard(state, scanQr, dispatch) }
+    item { NetworkSetupCard(state, qrJson, scanQr, dispatch) }
     item { NearbyCard(state, dispatch) }
 }
 
 @Composable
 private fun AddNetworkDialog(
     state: AppState,
+    qrJson: (String) -> JSONObject,
     scanQr: () -> Unit,
     dispatch: (JSONObject) -> Unit,
     onDismiss: () -> Unit,
@@ -774,7 +794,7 @@ private fun AddNetworkDialog(
                 if (state.error.isNotBlank()) {
                     Notice(state.error)
                 }
-                NetworkSetupCard(state, scanQr, dispatch, onCreated = onCreated)
+                NetworkSetupCard(state, qrJson, scanQr, dispatch, onCreated = onCreated)
                 NearbyCard(state, dispatch)
             }
         },
@@ -793,9 +813,11 @@ private fun AddDevicesDialog(
     state: AppState,
     network: NetworkState,
     qrJson: (String) -> JSONObject,
+    scanDeviceQr: (String) -> Unit,
     dispatch: (JSONObject) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var joinRequestInput by remember(network.id) { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Device") },
@@ -871,6 +893,37 @@ private fun AddDevicesDialog(
                     network.inboundJoinRequests.forEach { request ->
                         JoinRequestCard(network, request, dispatch)
                     }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Add approval request", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "Scan or paste the other device's approval request. Device ID QR scanning still works for manual pairing.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Muted,
+                )
+                OutlinedTextField(
+                    value = joinRequestInput,
+                    onValueChange = { joinRequestInput = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("nvpn://join-request/…") },
+                )
+                Button(
+                    enabled = joinRequestInput.trim().isNotEmpty(),
+                    onClick = {
+                        dispatch(NativeActions.importJoinRequest(joinRequestInput.trim()))
+                        joinRequestInput = ""
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Import request")
+                }
+                Button(
+                    onClick = { scanDeviceQr(network.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Scan QR")
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
