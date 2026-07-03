@@ -564,6 +564,11 @@ fn paid_route_lifecycle_allows_routing_for_state(status: PaidRouteLifecycleStatu
     )
 }
 
+fn paid_route_offer_requires_payment_before_routing_for_state(offer: &PaidRouteOffer) -> bool {
+    (offer.pricing.price_msat > 0 || offer.pricing.connection_minimum_msat_per_day > 0)
+        && offer.channel.free_probe_units == 0
+}
+
 fn paid_route_lifecycle_is_current(status: PaidRouteLifecycleStatus) -> bool {
     !matches!(
         status,

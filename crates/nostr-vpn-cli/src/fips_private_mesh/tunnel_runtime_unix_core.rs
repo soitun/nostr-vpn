@@ -68,6 +68,8 @@ impl FipsPrivateTunnelRuntime {
             event_rx,
             #[cfg(target_os = "linux")]
             endpoint_bypass_routes: Vec::new(),
+            #[cfg(target_os = "macos")]
+            endpoint_bypass_routes: Vec::new(),
             #[cfg(target_os = "linux")]
             original_default_route: None,
             #[cfg(target_os = "linux")]
@@ -185,7 +187,12 @@ impl FipsPrivateTunnelRuntime {
 
         #[cfg(target_os = "macos")]
         {
-            Ok(())
+            if !crate::route_targets_require_endpoint_bypass(&self.config.route_targets) {
+                return Ok(());
+            }
+
+            let config = self.config.clone();
+            return self.apply_interface_config(&config).await;
         }
     }
 
@@ -253,6 +260,8 @@ impl FipsPrivateTunnelRuntime {
         #[cfg(target_os = "linux")]
         runtime.cleanup_linux_network_state();
         #[cfg(target_os = "macos")]
+        runtime.cleanup_macos_network_state();
+        #[cfg(target_os = "macos")]
         runtime.cleanup_macos_exit_node_forwarding();
         #[cfg(target_os = "macos")]
         if let Some(handle) = runtime.wg_upstream.take() {
@@ -276,25 +285,143 @@ impl FipsPrivateTunnelRuntime {
         }
         #[cfg(target_os = "macos")]
         {
-            // FIPS mesh peer routes go in first. They're /32s for
-            // each peer's tunnel IP, so even when we swap the default
-            // route to the WG tun below, mesh traffic still wins on
-            // longest-prefix-match and stays inside the FIPS tunnel.
-            crate::apply_local_interface_network_with_mtu_and_addresses(
-                &self.iface,
-                &config.interface_addresses(),
-                &config.interface_route_targets(),
-                config.mesh_mtu.tunnel,
-            )
-            .with_context(|| format!("failed to configure FIPS tunnel interface {}", self.iface))?;
+            self.apply_macos_network_state(config).await?;
             self.reconcile_macos_wg_upstream(&config.wireguard_exit)
                 .await;
             self.reconcile_macos_exit_node_forwarding(
                 &config.local_address,
-                &config.local_advertised_routes,
+                &config.local_exit_forwarding_routes,
             );
         }
         Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn apply_macos_network_state(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
+        let mut route_targets = config.route_targets.clone();
+        let requested_ipv4_exit = route_targets.iter().any(|route| route == "0.0.0.0/0");
+        let original_route_targets_require_bypass =
+            crate::route_targets_require_endpoint_bypass(&route_targets);
+
+        if original_route_targets_require_bypass {
+            let peer_endpoint_hosts = self.mesh.peer_transport_ipv4_hosts().await?;
+            if requested_ipv4_exit && peer_endpoint_hosts.is_empty() {
+                eprintln!(
+                    "fips: withholding macOS default route until the selected exit peer underlay endpoint is known"
+                );
+                route_targets.retain(|route| !crate::is_exit_node_route(route));
+                self.reconcile_macos_endpoint_bypass_routes(&[], None);
+            } else {
+                match crate::macos_underlay_default_route_from_system() {
+                    Ok(Some(underlay)) => {
+                        let endpoint_bypass_routes =
+                            crate::macos_network::macos_endpoint_bypass_targets_for_hosts(
+                                &peer_endpoint_hosts,
+                            );
+                        self.reconcile_macos_endpoint_bypass_routes(
+                            &endpoint_bypass_routes,
+                            Some(&underlay),
+                        );
+                    }
+                    Ok(None) => {
+                        eprintln!(
+                            "fips: withholding macOS default route because no underlay default route is available"
+                        );
+                        route_targets.retain(|route| !crate::is_exit_node_route(route));
+                        self.reconcile_macos_endpoint_bypass_routes(&[], None);
+                    }
+                    Err(error) => {
+                        eprintln!(
+                            "fips: withholding macOS default route because underlay route lookup failed: {error}"
+                        );
+                        route_targets.retain(|route| !crate::is_exit_node_route(route));
+                        self.reconcile_macos_endpoint_bypass_routes(&[], None);
+                    }
+                }
+            }
+        } else {
+            self.reconcile_macos_endpoint_bypass_routes(&[], None);
+        }
+
+        let active_ipv4_exit = route_targets.iter().any(|route| route == "0.0.0.0/0");
+        if !active_ipv4_exit
+            && let Err(error) = crate::delete_macos_default_route_for_interface(&self.iface)
+            && !crate::daemon_runtime::macos_route_delete_error_is_absent(&error.to_string())
+        {
+            eprintln!(
+                "fips: failed to remove stale macOS default routes on {}: {}",
+                self.iface, error
+            );
+        }
+
+        route_targets.sort();
+        route_targets.dedup();
+        // FIPS mesh peer routes go in first. They're /32s for each peer's
+        // tunnel IP, so even when we install split defaults below, mesh traffic
+        // still wins on longest-prefix-match and stays inside the FIPS tunnel.
+        crate::apply_local_interface_network_with_mtu_and_addresses(
+            &self.iface,
+            &config.interface_addresses(),
+            &route_targets,
+            config.mesh_mtu.tunnel,
+        )
+        .with_context(|| format!("failed to configure FIPS tunnel interface {}", self.iface))?;
+        Ok(())
+    }
+
+    #[cfg(target_os = "macos")]
+    fn reconcile_macos_endpoint_bypass_routes(
+        &mut self,
+        routes: &[String],
+        underlay: Option<&crate::MacosRouteSpec>,
+    ) {
+        let desired = routes
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+
+        let stale = self
+            .endpoint_bypass_routes
+            .iter()
+            .filter(|route| !desired.contains(*route))
+            .cloned()
+            .collect::<Vec<_>>();
+        for route in stale {
+            if let Err(error) = crate::delete_macos_managed_route(&route, None, None)
+                && !crate::daemon_runtime::macos_route_delete_error_is_absent(&error.to_string())
+            {
+                eprintln!("fips: failed to remove macOS endpoint bypass route {route}: {error}");
+            }
+        }
+
+        if let Some(underlay) = underlay {
+            for route in routes {
+                if let Err(error) =
+                    crate::apply_macos_route_spec(route, underlay.gateway.as_deref(), None)
+                {
+                    eprintln!(
+                        "fips: failed to install macOS endpoint bypass route {}: {}",
+                        route, error
+                    );
+                }
+            }
+        }
+
+        self.endpoint_bypass_routes = desired.into_iter().collect();
+        self.endpoint_bypass_routes.sort();
+    }
+
+    #[cfg(target_os = "macos")]
+    fn cleanup_macos_network_state(&mut self) {
+        self.reconcile_macos_endpoint_bypass_routes(&[], None);
+        if let Err(error) = crate::delete_macos_default_route_for_interface(&self.iface)
+            && !crate::daemon_runtime::macos_route_delete_error_is_absent(&error.to_string())
+        {
+            eprintln!(
+                "fips: failed to remove macOS default routes on {}: {}",
+                self.iface, error
+            );
+        }
     }
 
     async fn reconcile_fips_host_runtime(

@@ -899,6 +899,57 @@ impl PaidRouteStore {
             .and_then(|seller| normalize_paid_route_npub(&seller, "seller"))
     }
 
+    pub fn buyer_session_allows_routing(&self, session_id: &str, now_unix: u64) -> Result<bool> {
+        let session_id = trimmed_required(session_id, "paid route session id")?;
+        let record = self
+            .sessions
+            .get(&session_id)
+            .ok_or_else(|| anyhow!("paid route buyer session {session_id} does not exist"))?;
+        let lease_record = self.leases.get(&record.session.lease_id).ok_or_else(|| {
+            anyhow!(
+                "paid route lease {} does not exist",
+                record.session.lease_id
+            )
+        })?;
+        let channel = self
+            .channels
+            .get(&record.session.payment.channel_id)
+            .ok_or_else(|| {
+                anyhow!(
+                    "paid route channel {} does not exist",
+                    record.session.payment.channel_id
+                )
+            })?;
+        if channel.role != PaidRouteChannelRole::Buyer {
+            return Err(anyhow!(
+                "paid route channel {} is not a buyer channel",
+                channel.channel_id
+            ));
+        }
+        let expires_at_unix = lease_record
+            .lease
+            .expires_at_unix
+            .min(channel.expires_at_unix);
+        if expires_at_unix <= now_unix {
+            return Ok(false);
+        }
+        let offer = self.buyer_offer_for_session(lease_record, channel)?;
+        let config = PaidExitConfig::from_paid_route_offer(&offer);
+        let decision = record.session.routing_decision(&config);
+        if !paid_route_lifecycle_allows_routing(lease_record.status)
+            || !paid_route_lifecycle_allows_routing(channel.status)
+            || !decision.allow_routing
+        {
+            return Ok(false);
+        }
+        if paid_route_offer_requires_payment_before_routing(&offer)
+            && !paid_route_session_has_payment_material(&record.session, channel)
+        {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
     pub fn build_buyer_payment_envelope(
         &mut self,
         request: BuildPaidRouteBuyerPaymentEnvelopeRequest,
@@ -2131,31 +2182,8 @@ impl PaidRouteStore {
     ) -> Result<()> {
         let session_id = seller_session_id_for_lease(lease_id);
         self.ensure_existing_seller_session(service_id, lease_id, channel_id, buyer_npub)?;
-        let session_usage = self
-            .sessions
-            .get(&session_id)
-            .map(|record| record.session.usage.clone())
-            .ok_or_else(|| anyhow!("paid route session {session_id} does not exist"))?;
-        let computed_due = paid_route_amount_due_for_delivered_units(
-            config,
-            &session_usage,
-            update.delivered_units,
-        );
-        if update.amount_due_msat < computed_due {
-            let tolerated_due =
-                paid_route_amount_due_for_delivered_units_with_connection_minimum_skew(
-                    config,
-                    &session_usage,
-                    update.delivered_units,
-                    SELLER_CONNECTION_MINIMUM_PAYMENT_SKEW_MILLIS,
-                );
-            if update.amount_due_msat < tolerated_due {
-                return Err(anyhow!(
-                    "paid route balance update underreports amount due: {} msat < {} msat",
-                    update.amount_due_msat,
-                    computed_due
-                ));
-            }
+        if !self.sessions.contains_key(&session_id) {
+            return Err(anyhow!("paid route session {session_id} does not exist"));
         }
         let (cashu_unit, capacity_sat) = {
             let channel = self.channels.get(channel_id).expect("validated channel");
@@ -2177,8 +2205,12 @@ impl PaidRouteStore {
             .session
             .usage
             .billable_units_for_meter(config.pricing.meter);
-        // Buyer and seller usage flushes are independent; keep seller-observed usage authoritative.
-        let effective_delivered_units = current_units.max(update.delivered_units);
+        // Buyer and seller usage flushes are independent; keep seller-observed
+        // usage authoritative. The buyer's delivered_units/amount_due_msat can
+        // explain the signed balance update, but they must not inflate or gate
+        // seller billing. A lagging update is still useful partial credit; the
+        // admission decision below is based on seller-computed unpaid balance.
+        let effective_delivered_units = current_units;
         let current_paid = self.sessions[&session_id].session.payment.paid_msat;
         validate_paid_route_payment_progress(
             "paid route balance update",
@@ -2935,6 +2967,10 @@ fn paid_route_offer_requires_payment(offer: &PaidRouteOffer) -> bool {
     offer.pricing.price_msat > 0 || offer.pricing.connection_minimum_msat_per_day > 0
 }
 
+fn paid_route_offer_requires_payment_before_routing(offer: &PaidRouteOffer) -> bool {
+    paid_route_offer_requires_payment(offer) && offer.channel.free_probe_units == 0
+}
+
 fn paid_exit_config_requires_payment(config: &PaidExitConfig) -> bool {
     config.pricing.price_msat > 0 || config.pricing.connection_minimum_msat_per_day > 0
 }
@@ -2972,6 +3008,22 @@ fn paid_route_lifecycle_allows_routing(status: PaidRouteLifecycleStatus) -> bool
             | PaidRouteLifecycleStatus::Probing
             | PaidRouteLifecycleStatus::Active
     )
+}
+
+fn paid_route_session_has_payment_material(
+    session: &PaidRouteSession,
+    channel: &PaidRouteChannelRecord,
+) -> bool {
+    match session.payment.mode {
+        PaidRoutePaymentMode::CashuSpilman => {
+            session.payment.cashu_spilman_payment.is_some()
+                || channel.payment.cashu_spilman_payment.is_some()
+        }
+        PaidRoutePaymentMode::CashuTokenLease => {
+            session.payment.cashu_token_lease.is_some()
+                || channel.payment.cashu_token_lease.is_some()
+        }
+    }
 }
 
 fn preserve_terminal_status(
@@ -3332,17 +3384,6 @@ fn paid_route_amount_due_for_delivered_units(
     config.amount_due_msat(&usage)
 }
 
-fn paid_route_amount_due_for_delivered_units_with_connection_minimum_skew(
-    config: &PaidExitConfig,
-    usage: &PaidRouteUsage,
-    delivered_units: u64,
-    active_millis_skew: u64,
-) -> u64 {
-    let mut usage = usage.clone();
-    apply_delivered_units_for_meter(&mut usage, config.pricing.meter, delivered_units);
-    config.amount_due_msat_with_connection_minimum_skew(&usage, active_millis_skew)
-}
-
 fn apply_usage_delta(usage: &mut PaidRouteUsage, delta: &PaidRouteUsage) {
     usage.add_assign(delta);
 }
@@ -3448,6 +3489,63 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn paid_buyer_session_without_payment_does_not_allow_routing() {
+        let seller = Keys::generate();
+        let buyer = Keys::generate();
+        let mut config = sample_config();
+        config.pricing.price_msat = 1_000;
+        config.pricing.connection_minimum_msat_per_day = 1;
+        config.channel.free_probe_units = 0;
+        config.channel.grace_units = 0;
+
+        let (store, session_id, _) = buyer_store_with_session(&seller, &buyer, &config);
+
+        assert!(paid_route_lifecycle_allows_routing(
+            PaidRouteLifecycleStatus::Opening
+        ));
+        assert!(
+            !store
+                .buyer_session_allows_routing(&session_id, 121)
+                .expect("route readiness")
+        );
+    }
+
+    #[test]
+    fn paid_buyer_session_with_opening_payment_allows_routing() {
+        let seller = Keys::generate();
+        let buyer = Keys::generate();
+        let mut config = sample_config();
+        config.pricing.price_msat = 1_000;
+        config.pricing.connection_minimum_msat_per_day = 1;
+        config.channel.free_probe_units = 0;
+        config.channel.grace_units = 0;
+
+        let (mut store, session_id, _) = buyer_store_with_session(&seller, &buyer, &config);
+        let channel_id = "spilman-real-channel-1";
+        store
+            .attach_buyer_spilman_channel(AttachPaidRouteBuyerSpilmanChannelRequest {
+                session_id: session_id.clone(),
+                channel_id: channel_id.to_string(),
+                cashu_unit: "sat".to_string(),
+                capacity_sat: 10,
+                paid_msat: Some(0),
+                payment: sample_spilman_payment(channel_id, 0),
+                now_unix: 130,
+            })
+            .expect("attach funded channel open");
+
+        assert_eq!(
+            store.channels[channel_id].status,
+            PaidRouteLifecycleStatus::Opening
+        );
+        assert!(
+            store
+                .buyer_session_allows_routing(&session_id, 131)
+                .expect("route readiness")
+        );
     }
 
     #[test]
@@ -4373,7 +4471,7 @@ mod tests {
     }
 
     #[test]
-    fn seller_payment_with_spilman_receiver_rejects_bad_accounting_before_processing() {
+    fn seller_payment_with_spilman_receiver_accepts_lagging_due_as_partial_credit() {
         let seller = Keys::generate();
         let buyer = Keys::generate();
         let seller_npub = seller.public_key().to_bech32().expect("seller npub");
@@ -4407,10 +4505,21 @@ mod tests {
                 now_unix: 100,
             })
             .expect("seed seller channel");
-        let before = store.clone();
+        store
+            .record_seller_usage(RecordPaidRouteSellerUsageRequest {
+                buyer_pubkey: buyer.public_key().to_hex(),
+                config: config.clone(),
+                usage_delta: PaidRouteUsage {
+                    billable_bytes: 200,
+                    ..PaidRouteUsage::default()
+                },
+                now_unix: 100,
+            })
+            .expect("record seller-observed usage")
+            .expect("matched seller session");
         let receiver = FakeSpilmanReceiver::new("channel-1", 2);
 
-        let error = store
+        let result = store
             .apply_seller_payment_with_spilman_receiver(
                 ApplyPaidRouteSellerPaymentRequest {
                     envelope: seller_payment_envelope(
@@ -4433,12 +4542,21 @@ mod tests {
                 &receiver,
                 &(),
             )
-            .expect_err("underreported amount due should fail before receiver processing");
+            .expect("lagging reported due is accepted as partial credit");
 
-        assert!(error.to_string().contains("underreports amount due"));
-        assert_eq!(store, before);
+        assert_eq!(result.amount_due_msat, 2_000);
+        assert_eq!(result.paid_msat, 2_000);
+        assert_eq!(result.unpaid_msat, 0);
+        assert!(result.allow_routing);
+        assert_eq!(
+            store.sessions["seller-session-lease-1"]
+                .session
+                .usage
+                .billable_bytes,
+            200
+        );
         assert_eq!(receiver.validate_calls.get(), 0);
-        assert_eq!(receiver.process_calls.get(), 0);
+        assert_eq!(receiver.process_calls.get(), 1);
     }
 
     #[test]
@@ -4990,6 +5108,18 @@ mod tests {
         config.channel.grace_units = 0;
 
         let mut store = seller_store_with_open_channel(&seller, &buyer, &config);
+        store
+            .record_seller_usage(RecordPaidRouteSellerUsageRequest {
+                buyer_pubkey: buyer.public_key().to_hex(),
+                config: config.clone(),
+                usage_delta: PaidRouteUsage {
+                    billable_bytes: 100,
+                    ..PaidRouteUsage::default()
+                },
+                now_unix: 110,
+            })
+            .expect("record seller-observed usage")
+            .expect("matched seller session");
         let result = store
             .apply_seller_payment(ApplyPaidRouteSellerPaymentRequest {
                 envelope: seller_payment_envelope(
@@ -5030,6 +5160,66 @@ mod tests {
         assert_eq!(
             store.seller_admissions(&config, 121)[0].state,
             PaidRouteAccessState::Paid
+        );
+    }
+
+    #[test]
+    fn seller_payment_balance_update_does_not_import_buyer_overreported_units() {
+        let seller = Keys::generate();
+        let buyer = Keys::generate();
+        let seller_npub = seller.public_key().to_bech32().expect("seller npub");
+        let buyer_npub = buyer.public_key().to_bech32().expect("buyer npub");
+        let mut config = sample_config();
+        config.pricing.price_msat = 1_000;
+        config.pricing.per_units = 100;
+        config.channel.free_probe_units = 0;
+        config.channel.grace_units = 0;
+
+        let mut store = seller_store_with_open_channel(&seller, &buyer, &config);
+        store
+            .record_seller_usage(RecordPaidRouteSellerUsageRequest {
+                buyer_pubkey: buyer.public_key().to_hex(),
+                config: config.clone(),
+                usage_delta: PaidRouteUsage {
+                    billable_bytes: 100,
+                    ..PaidRouteUsage::default()
+                },
+                now_unix: 110,
+            })
+            .expect("record seller-observed usage")
+            .expect("matched seller session");
+
+        let result = store
+            .apply_seller_payment(ApplyPaidRouteSellerPaymentRequest {
+                envelope: seller_payment_envelope(
+                    "internet-exit",
+                    "lease-1",
+                    &buyer_npub,
+                    &seller_npub,
+                    120,
+                    StreamingRoutePaymentPayload::BalanceUpdate(StreamingRouteBalanceUpdate {
+                        delivered_units: 200,
+                        amount_due_msat: 2_000,
+                        paid_msat: 2_000,
+                        payment: sample_spilman_payment("channel-1", 2),
+                    }),
+                ),
+                seller_npub,
+                config: config.clone(),
+                now_unix: 120,
+            })
+            .expect("apply overreported balance update");
+
+        assert_eq!(result.delivered_units, 100);
+        assert_eq!(result.amount_due_msat, 1_000);
+        assert_eq!(result.paid_msat, 2_000);
+        assert_eq!(result.unpaid_msat, 0);
+        assert_eq!(
+            store.sessions["seller-session-lease-1"]
+                .session
+                .usage
+                .billable_bytes,
+            100
         );
     }
 
@@ -5149,7 +5339,7 @@ mod tests {
     }
 
     #[test]
-    fn seller_payment_balance_update_does_not_tolerate_underreported_traffic_due() {
+    fn seller_payment_balance_update_accepts_underreported_due_without_importing_usage() {
         let seller = Keys::generate();
         let buyer = Keys::generate();
         let seller_npub = seller.public_key().to_bech32().expect("seller npub");
@@ -5175,9 +5365,8 @@ mod tests {
             })
             .expect("record seller-observed usage")
             .expect("matched seller session");
-        let before = store.clone();
 
-        let error = store
+        let result = store
             .apply_seller_payment(ApplyPaidRouteSellerPaymentRequest {
                 envelope: seller_payment_envelope(
                     "internet-exit",
@@ -5196,10 +5385,20 @@ mod tests {
                 config,
                 now_unix: 120,
             })
-            .expect_err("traffic underreport should fail");
+            .expect("lagging traffic report is accepted as partial credit");
 
-        assert!(error.to_string().contains("underreports amount due"));
-        assert_eq!(store, before);
+        assert_eq!(result.amount_due_msat, 1_500);
+        assert_eq!(result.paid_msat, 1_000);
+        assert_eq!(result.unpaid_msat, 500);
+        assert_eq!(result.state, PaidRouteAccessState::Suspended);
+        assert!(!result.allow_routing);
+        assert_eq!(
+            store.sessions["seller-session-lease-1"]
+                .session
+                .usage
+                .billable_bytes,
+            150
+        );
     }
 
     #[test]

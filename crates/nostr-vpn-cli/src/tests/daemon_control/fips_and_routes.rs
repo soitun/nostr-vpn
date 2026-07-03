@@ -341,6 +341,34 @@ fn macos_tunnel_default_route_targets_use_split_defaults() {
 }
 
 #[test]
+fn macos_paid_exit_endpoint_bypass_targets_are_deterministic_host_routes() {
+    let hosts = vec![
+        "65.109.48.91".parse().unwrap(),
+        "203.0.113.7".parse().unwrap(),
+        "65.109.48.91".parse().unwrap(),
+    ];
+
+    assert_eq!(
+        crate::macos_network::macos_endpoint_bypass_targets_for_hosts(&hosts),
+        vec!["203.0.113.7/32", "65.109.48.91/32"]
+    );
+}
+
+#[test]
+fn broad_fips_routes_require_endpoint_bypass() {
+    assert!(!crate::route_targets_require_endpoint_bypass(&[
+        "10.44.1.2/32".to_string(),
+        "fd00::1/128".to_string(),
+    ]));
+    assert!(crate::route_targets_require_endpoint_bypass(&[
+        "10.44.1.0/24".to_string(),
+    ]));
+    assert!(crate::route_targets_require_endpoint_bypass(&[
+        "0.0.0.0/0".to_string(),
+    ]));
+}
+
+#[test]
 fn macos_gateway_route_args_install_global_host_routes() {
     assert_eq!(
         crate::macos_network::macos_gateway_route_args_for_test(

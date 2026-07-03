@@ -2,11 +2,13 @@
 pub(crate) fn fips_paid_route_admission_from_seller_admission(
     network_id: &str,
     admission: PaidRouteSellerAdmission,
+    destination_allowed_ips: &[String],
 ) -> FipsPaidRouteAdmission {
     let mut admission = FipsPaidRouteAdmission::from(admission);
     admission.allowed_ips = derive_mesh_tunnel_ip(network_id, &admission.participant_pubkey)
         .map(|tunnel_ip| vec![format!("{}/32", strip_cidr(&tunnel_ip))])
         .unwrap_or_default();
+    admission.destination_allowed_ips = destination_allowed_ips.to_vec();
     admission
 }
 
@@ -202,6 +204,8 @@ impl FipsPrivateTunnelConfig {
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             fips_host,
             local_advertised_routes: crate::runtime_effective_advertised_routes(app),
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            local_exit_forwarding_routes: crate::runtime_local_exit_forwarding_routes(app),
             paid_route_admissions: Vec::new(),
             #[cfg(feature = "paid-exit")]
             paid_route_accounting_peers: app
@@ -314,7 +318,7 @@ fn fips_tunnel_requires_endpoint_restart(
         || current.mesh_mtu.underlay_udp != next.mesh_mtu.underlay_udp
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn endpoint_transport_ipv4_host(addr: &str) -> Option<Ipv4Addr> {
     if let Ok(socket_addr) = addr.parse::<SocketAddr>() {
         return match socket_addr.ip() {
@@ -339,6 +343,8 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     mesh_recv_worker: FipsMeshRecvWorker,
     event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,
     #[cfg(target_os = "linux")]
+    endpoint_bypass_routes: Vec<String>,
+    #[cfg(target_os = "macos")]
     endpoint_bypass_routes: Vec<String>,
     #[cfg(target_os = "linux")]
     original_default_route: Option<String>,

@@ -681,7 +681,14 @@ fn paid_route_session_state(
             )
         },
     );
-    paid_route_session_state_with_decision(record, store, decision.as_ref(), country_claim, None)
+    paid_route_session_state_with_decision(
+        record,
+        store,
+        offer,
+        decision.as_ref(),
+        country_claim,
+        None,
+    )
 }
 
 fn paid_route_seller_session_state(
@@ -700,6 +707,7 @@ fn paid_route_seller_session_state(
     let mut state = paid_route_session_state_with_decision(
         record,
         store,
+        None,
         decision.as_ref(),
         country_claim,
         collection.as_ref(),
@@ -712,6 +720,7 @@ fn paid_route_seller_session_state(
 fn paid_route_session_state_with_decision(
     record: &nostr_vpn_core::paid_route_store::PaidRouteSessionRecord,
     store: &PaidRouteStore,
+    offer: Option<&PaidRouteOffer>,
     decision: Option<&PaidRouteRoutingDecision>,
     country_claim: PaidRouteCountryClaim,
     collection: Option<&PaidRouteSellerCollectionState>,
@@ -743,7 +752,15 @@ fn paid_route_session_state_with_decision(
         (None, None) => 0,
     };
     let time_allows_routing = expires_at_unix == 0 || expires_at_unix > now_unix;
-    let allow_routing = decision_allows_routing && lifecycle_allows_routing && time_allows_routing;
+    let payment_allows_routing = channel_role != Some(PaidRouteChannelRole::Buyer)
+        || offer.is_none_or(|offer| {
+            !paid_route_offer_requires_payment_before_routing_for_state(offer)
+                || payment_channel_ready
+        });
+    let allow_routing = decision_allows_routing
+        && lifecycle_allows_routing
+        && time_allows_routing
+        && payment_allows_routing;
     let delivered_units = decision.map_or(0, |decision| decision.delivered_units);
     let amount_due_msat = decision.map_or(0, |decision| decision.amount_due_msat);
     let unpaid_msat = decision.map_or(0, |decision| decision.unpaid_msat);

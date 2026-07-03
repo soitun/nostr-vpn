@@ -1,3 +1,14 @@
+#[cfg(feature = "paid-exit")]
+const PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT: u64 = 1;
+#[cfg(feature = "paid-exit")]
+const PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT: usize = 4;
+#[cfg(feature = "paid-exit")]
+const PAID_EXIT_DAEMON_RECEIVE_PAYMENT_INTERVAL_SECS: u64 = 5;
+#[cfg(feature = "paid-exit")]
+const PAID_EXIT_DAEMON_RECEIVE_PAYMENT_DURATION_SECS: u64 = 2;
+#[cfg(feature = "paid-exit")]
+const PAID_EXIT_DAEMON_RECEIVE_PAYMENT_LIMIT: usize = 100;
+
 pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     if args.iface.trim().is_empty() {
         return Err(anyhow!("--iface must not be empty"));
@@ -193,6 +204,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     #[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
     let mut last_paid_exit_usage_flush_at = Instant::now();
+    #[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+    let mut last_paid_exit_payment_receive_at = Instant::now()
+        .checked_sub(Duration::from_secs(
+            PAID_EXIT_DAEMON_RECEIVE_PAYMENT_INTERVAL_SECS,
+        ))
+        .unwrap_or_else(Instant::now);
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
     tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut network_interval =
@@ -833,6 +850,85 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             Ok(false) => {}
                             Err(error) => {
                                 eprintln!("paid-exit: failed to record FIPS usage: {error}");
+                            }
+                        }
+                        if app.public_paid_exit_node_pubkey_hex().is_some() {
+                            match paid_exit_stream_due_payments_for_daemon(
+                                &app,
+                                &config_path,
+                                PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT,
+                                PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT,
+                            )
+                            .await
+                            {
+                                Ok(result)
+                                    if result.signed_count > 0 || result.error_count > 0 =>
+                                {
+                                    eprintln!(
+                                        "paid-exit: streamed buyer payments signed={} persisted={} errors={} due={} processed={} changed={}",
+                                        result.signed_count,
+                                        result.persisted_count,
+                                        result.error_count,
+                                        result.total_due_count,
+                                        result.processed_due_count,
+                                        result.changed
+                                    );
+                                }
+                                Ok(_) => {}
+                                Err(error) => {
+                                    eprintln!(
+                                        "paid-exit: failed to stream buyer payment update: {error}"
+                                    );
+                                }
+                            }
+                        }
+                        if app.paid_exit.enabled
+                            && last_paid_exit_payment_receive_at.elapsed()
+                                >= Duration::from_secs(
+                                    PAID_EXIT_DAEMON_RECEIVE_PAYMENT_INTERVAL_SECS,
+                                )
+                        {
+                            last_paid_exit_payment_receive_at = Instant::now();
+                            match paid_exit_receive_payments_for_daemon(
+                                &app,
+                                &config_path,
+                                PAID_EXIT_DAEMON_RECEIVE_PAYMENT_DURATION_SECS,
+                                PAID_EXIT_DAEMON_RECEIVE_PAYMENT_LIMIT,
+                            )
+                            .await
+                            {
+                                Ok(result)
+                                    if result.applied_count > 0 || result.error_count > 0 =>
+                                {
+                                    eprintln!(
+                                        "paid-exit: received seller payments received={} applied={} errors={} changed={} receiver={}",
+                                        result.received_count,
+                                        result.applied_count,
+                                        result.error_count,
+                                        result.changed,
+                                        result.spilman_receiver_processing
+                                    );
+                                    if result.changed
+                                        && let Err(error) = refresh_fips_tunnel_config(
+                                            runtime,
+                                            &app,
+                                            &config_path,
+                                            &network_id,
+                                            own_pubkey.as_deref(),
+                                        )
+                                        .await
+                                    {
+                                        vpn_status = format!(
+                                            "paid-exit payment refresh failed ({error})"
+                                        );
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(error) => {
+                                    eprintln!(
+                                        "paid-exit: failed to receive seller payments: {error}"
+                                    );
+                                }
                             }
                         }
                     }

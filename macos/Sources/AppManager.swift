@@ -701,7 +701,7 @@ final class AppManager: ObservableObject {
                 mintUrl: nil,
                 channelCapacitySat: nil
             ),
-            status: "Connecting"
+            status: "Buying"
         )
     }
 

@@ -873,6 +873,33 @@ destination: 192.168.178.57
         assert_eq!(addrs, vec!["203.0.113.23:51820", "203.0.113.24:51820"]);
     }
 
+    #[test]
+    fn paid_route_admissions_seed_configured_endpoint_peers() {
+        let buyer_keys = Keys::generate();
+        let buyer_pubkey = buyer_keys.public_key().to_hex();
+        let buyer_npub = buyer_keys.public_key().to_bech32().expect("buyer npub");
+        let endpoint_peers =
+            fips_endpoint_peers_with_paid_route_admissions(Vec::new(), &[FipsPaidRouteAdmission {
+                participant_pubkey: buyer_pubkey,
+                session_id: "seller-session-1".to_string(),
+                allowed_ips: vec!["10.44.1.2/32".to_string()],
+                destination_allowed_ips: vec!["0.0.0.0/0".to_string()],
+                allow_routing: true,
+                state: nostr_vpn_core::paid_routes::PaidRouteAccessState::Paid,
+                amount_due_msat: 1_000,
+                paid_msat: 1_000,
+                unpaid_msat: 0,
+                expires_at_unix: 200,
+                updated_at_unix: 100,
+            }]);
+
+        assert_eq!(endpoint_peers.len(), 1);
+        assert_eq!(endpoint_peers[0].npub, buyer_npub);
+        assert!(endpoint_peers[0].addresses.is_empty());
+        assert!(endpoint_peers[0].auto_reconnect);
+        assert!(!endpoint_peers[0].discovery_fallback_transit);
+    }
+
     /// Pin the open-discovery / closed-data-plane invariant.
     ///
     /// FIPS handshake is `Open` so any nvpn node we see on relays may

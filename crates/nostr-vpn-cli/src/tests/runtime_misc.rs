@@ -786,6 +786,29 @@ fn runtime_exit_node_routes_do_not_advertise_ipv6_default() {
     assert_eq!(runtime_effective_advertised_routes(&app), vec!["0.0.0.0/0"]);
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn paid_exit_host_forwarding_does_not_advertise_free_exit_route() {
+    let mut app = AppConfig::generated();
+    app.paid_exit.enabled = true;
+
+    assert!(runtime_effective_advertised_routes(&app).is_empty());
+    assert_eq!(
+        runtime_local_exit_forwarding_routes(&app),
+        vec!["0.0.0.0/0"]
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn paid_exit_forwarding_respects_ipv4_support() {
+    let mut app = AppConfig::generated();
+    app.paid_exit.enabled = true;
+    app.paid_exit.ip_support.ipv4 = false;
+
+    assert!(runtime_local_exit_forwarding_routes(&app).is_empty());
+}
+
 #[test]
 fn legacy_macos_exit_cleanup_leaves_global_ipv4_forwarding_alone() {
     let mut app = AppConfig::generated();

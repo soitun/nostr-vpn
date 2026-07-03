@@ -328,7 +328,7 @@ pub(crate) fn control_plane_bypass_ipv4_hosts(app: &AppConfig) -> Vec<Ipv4Addr> 
     control_plane_bypass_ipv4_hosts_from_interfaces(app, &get_interfaces())
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 pub(crate) fn split_host_port(authority: &str, default_port: u16) -> Option<(String, u16)> {
     let authority = authority.trim();
     if authority.is_empty() {

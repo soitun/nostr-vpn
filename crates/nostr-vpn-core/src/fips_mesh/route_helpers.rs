@@ -88,6 +88,22 @@ fn paid_route_peers_from_admissions(
     peers
 }
 
+fn paid_route_destination_routes_from_admissions(
+    admissions: &HashMap<[u8; 32], FipsPaidRouteAdmission>,
+) -> HashMap<[u8; 32], Vec<IpRoute>> {
+    admissions
+        .iter()
+        .map(|(participant, admission)| {
+            let routes = admission
+                .destination_allowed_ips
+                .iter()
+                .filter_map(|route| IpRoute::parse(route))
+                .collect::<Vec<_>>();
+            (*participant, routes)
+        })
+        .collect()
+}
+
 fn select_paid_route_peer_for_ip(
     peers: &[FipsMeshPeerRuntime],
     destination: IpAddr,

@@ -250,7 +250,7 @@ impl FipsPrivateMeshRuntime {
             .collect())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) async fn peer_transport_ipv4_hosts(&self) -> Result<Vec<Ipv4Addr>> {
         let mut hosts = self
             .endpoint

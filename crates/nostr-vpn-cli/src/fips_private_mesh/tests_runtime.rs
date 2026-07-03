@@ -124,6 +124,37 @@
         assert!(!config.route_targets.contains(&"::/0".to_string()));
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn tunnel_config_for_paid_exit_seller_enables_local_forwarding_without_free_advertising() {
+        let keys = Keys::generate();
+        let nsec = keys.secret_key().to_bech32().expect("nsec");
+        let pubkey = keys.public_key().to_hex();
+        let network_id = "fips-paid-exit-forwarding-test";
+
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = nsec;
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = network_id.to_string();
+        app.networks[0].devices = vec![pubkey.clone()];
+        app.paid_exit.enabled = true;
+        app.node.advertise_exit_node = false;
+        app.node.advertised_routes.clear();
+
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&pubkey),
+            None,
+            &[],
+        )
+        .expect("fips tunnel config");
+
+        assert!(config.local_advertised_routes.is_empty());
+        assert_eq!(config.local_exit_forwarding_routes, vec!["0.0.0.0/0"]);
+    }
+
     fn direct_udp_endpoint_config(
         local_port: u16,
         peer_npub: &str,
