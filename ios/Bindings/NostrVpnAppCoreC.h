@@ -2,16 +2,9 @@
 #define NOSTR_VPN_APP_CORE_C_H
 
 #include <stdbool.h>
-#include <stdint.h>
 
 typedef struct NvpnAppHandle NvpnAppHandle;
 typedef struct NvpnMobileTunnelHandle NvpnMobileTunnelHandle;
-typedef struct NvpnMobilePacket {
-    uint8_t *data;
-    uintptr_t len;
-    uintptr_t capacity;
-    int32_t status;
-} NvpnMobilePacket;
 
 NvpnAppHandle *nostr_vpn_app_new(const char *data_dir, const char *app_version);
 void nostr_vpn_app_free(NvpnAppHandle *handle);
@@ -30,18 +23,7 @@ char *nostr_vpn_mobile_tunnel_runtime_state_json(const NvpnMobileTunnelHandle *h
 char *nostr_vpn_mobile_tunnel_take_app_config_toml(const NvpnMobileTunnelHandle *handle);
 char *nostr_vpn_mobile_tunnel_wg_excluded_route(const NvpnMobileTunnelHandle *handle);
 void nostr_vpn_mobile_tunnel_free(NvpnMobileTunnelHandle *handle);
-bool nostr_vpn_mobile_tunnel_send_packet(
-    const NvpnMobileTunnelHandle *handle,
-    const uint8_t *packet,
-    uintptr_t len
-);
-intptr_t nostr_vpn_mobile_tunnel_next_packets_owned(
-    const NvpnMobileTunnelHandle *handle,
-    NvpnMobilePacket *out_packets,
-    uintptr_t max_packets,
-    uint32_t timeout_ms
-);
-void nostr_vpn_mobile_packet_free(NvpnMobilePacket packet);
+bool nostr_vpn_mobile_tunnel_attach_current_tun_fd(NvpnMobileTunnelHandle *handle);
 void nostr_vpn_string_free(char *value);
 
 #endif

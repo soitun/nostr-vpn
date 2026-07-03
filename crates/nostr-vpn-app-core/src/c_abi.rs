@@ -6,7 +6,6 @@ use std::ptr;
 use std::sync::Arc;
 #[cfg(target_os = "android")]
 use std::sync::OnceLock;
-use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use image::ImageReader;
@@ -34,14 +33,6 @@ pub struct NvpnAppHandle {
 
 pub struct NvpnMobileTunnelHandle {
     tunnel: MobileTunnel,
-}
-
-#[repr(C)]
-pub struct NvpnMobilePacket {
-    data: *mut u8,
-    len: usize,
-    capacity: usize,
-    status: i32,
 }
 
 #[derive(Debug, Serialize)]
@@ -279,22 +270,29 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_free(handle: *mut NvpnMobileTun
     }
 }
 
+/// Attach the packet tunnel provider's current utun fd to the mobile tunnel.
+/// Rust locates and duplicates the fd before starting native packet I/O.
+///
 /// # Safety
 ///
-/// `handle` must be a live mobile tunnel handle. `packet` must point to `len`
-/// readable bytes for the duration of this call.
+/// `handle` must be a live mobile tunnel handle.
+#[cfg(target_os = "ios")]
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_send_packet(
-    handle: *const NvpnMobileTunnelHandle,
-    packet: *const u8,
-    len: usize,
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_attach_current_tun_fd(
+    handle: *mut NvpnMobileTunnelHandle,
 ) -> bool {
-    if handle.is_null() || packet.is_null() || len == 0 {
+    if handle.is_null() {
         return false;
     }
-    let tunnel = unsafe { &*handle };
-    let packet = unsafe { std::slice::from_raw_parts(packet, len) };
-    tunnel.tunnel.send_packet(packet)
+    let tunnel = unsafe { &mut *handle };
+    tunnel.tunnel.attach_current_tun_fd().is_ok()
+}
+
+#[cfg(target_os = "android")]
+fn reject_unattached_mobile_tun_fd(fd: std::os::raw::c_int) {
+    unsafe {
+        libc::close(fd);
+    }
 }
 
 /// Raw fd of the userspace WG upstream UDP socket, or -1 when WG
@@ -340,57 +338,6 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_wg_excluded_route(
             .wg_upstream_excluded_route()
             .unwrap_or_default(),
     )
-}
-
-/// # Safety
-///
-/// `handle` must be a live mobile tunnel handle. `out_packets` must point to
-/// writable storage for `max_packets` packet descriptors. Returns the number
-/// of ready packets written, 0 on timeout, and -1 when the tunnel stopped.
-/// Every returned packet must be released with `nostr_vpn_mobile_packet_free`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_next_packets_owned(
-    handle: *const NvpnMobileTunnelHandle,
-    out_packets: *mut NvpnMobilePacket,
-    max_packets: usize,
-    timeout_ms: u32,
-) -> isize {
-    if handle.is_null() || out_packets.is_null() || max_packets == 0 {
-        return -1;
-    }
-    let tunnel = unsafe { &*handle };
-    let packets = match tunnel
-        .tunnel
-        .next_packet_batch(max_packets, Duration::from_millis(u64::from(timeout_ms)))
-    {
-        Ok(packets) => packets,
-        Err(_) => return -1,
-    };
-    if packets.is_empty() {
-        return 0;
-    }
-    let slots = unsafe { std::slice::from_raw_parts_mut(out_packets, max_packets) };
-    let mut count = 0;
-    for (slot, packet) in slots.iter_mut().zip(packets) {
-        *slot = mobile_packet_ready(packet);
-        count += 1;
-    }
-    count
-}
-
-/// # Safety
-///
-/// `packet` must have been returned by
-/// `nostr_vpn_mobile_tunnel_next_packets_owned` and not already freed.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn nostr_vpn_mobile_packet_free(packet: NvpnMobilePacket) {
-    if packet.data.is_null() || packet.capacity == 0 {
-        return;
-    }
-    let len = packet.len.min(packet.capacity);
-    unsafe {
-        drop(Vec::from_raw_parts(packet.data, len, packet.capacity));
-    }
 }
 
 /// # Safety
@@ -595,9 +542,7 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelAttachT
         return 0;
     }
     let Some(tunnel) = tunnel_from_jlong_mut(handle) else {
-        unsafe {
-            libc::close(fd);
-        }
+        reject_unattached_mobile_tun_fd(fd);
         return 0;
     };
     u8::from(tunnel.tunnel.attach_tun_fd(fd).is_ok())
@@ -648,31 +593,6 @@ fn tunnel_from_jlong_mut<'a>(handle: jlong) -> Option<&'a mut NvpnMobileTunnelHa
         return None;
     }
     Some(unsafe { &mut *(handle as *mut NvpnMobileTunnelHandle) })
-}
-
-fn mobile_packet_ready(mut packet: Vec<u8>) -> NvpnMobilePacket {
-    if packet.is_empty() {
-        return mobile_packet_empty(0);
-    }
-    let data = packet.as_mut_ptr();
-    let len = packet.len();
-    let capacity = packet.capacity();
-    std::mem::forget(packet);
-    NvpnMobilePacket {
-        data,
-        len,
-        capacity,
-        status: 1,
-    }
-}
-
-fn mobile_packet_empty(status: i32) -> NvpnMobilePacket {
-    NvpnMobilePacket {
-        data: ptr::null_mut(),
-        len: 0,
-        capacity: 0,
-        status,
-    }
 }
 
 fn c_string_lossy(value: *const c_char) -> String {

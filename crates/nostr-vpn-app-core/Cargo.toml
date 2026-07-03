@@ -35,9 +35,11 @@ toml.workspace = true
 tracing.workspace = true
 uniffi.workspace = true
 
+[target.'cfg(any(target_os = "android", target_os = "ios"))'.dependencies]
+libc.workspace = true
+
 [target.'cfg(target_os = "android")'.dependencies]
 jni = "0.21"
-libc.workspace = true
 ndk-context = "0.1"
 
 [lints.clippy]

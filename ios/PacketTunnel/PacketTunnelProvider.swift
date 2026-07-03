@@ -1,29 +1,16 @@
 import Foundation
 import NetworkExtension
-import Darwin
 
 private let appGroupIdentifier = Bundle.main.object(
     forInfoDictionaryKey: "NVPNAppGroupIdentifier"
 ) as? String ?? "group.fi.siriusbusiness.nvpn"
 private let defaultMobileMtu = 1150
-private let ipv4PacketProtocol = NSNumber(value: AF_INET)
-private let ipv6PacketProtocol = NSNumber(value: AF_INET6)
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
-    private static let nextPacketPollTimeoutMs: UInt32 = 100
-    private static let maxWritePacketBatch = 32
-
-    private enum PacketBatchRead {
-        case packets
-        case timeout
-        case stopped
-    }
-
     private var tunnelHandle: OpaquePointer?
     private var tunnelRunning = false
     private var activeTunnelCalls = 0
     private let tunnelCondition = NSCondition()
-    private let packetQueue = DispatchQueue(label: "fi.siriusbusiness.nvpn.packet-tunnel", qos: .userInitiated)
 
     override func startTunnel(
         options: [String: NSObject]?,
@@ -138,9 +125,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler(error)
                 return
             }
-            NSLog("nvpn-pkt: setTunnelNetworkSettings succeeded — starting packet loops")
+            guard let self else {
+                completionHandler(PacketTunnelError.startFailed)
+                return
+            }
+            guard nostr_vpn_mobile_tunnel_attach_current_tun_fd(handle) else {
+                NSLog("nvpn-pkt: failed to attach utun fd to Rust")
+                packetDebugLog("failed to attach utun fd")
+                self.stopRustTunnel()
+                completionHandler(PacketTunnelError.startFailed)
+                return
+            }
+            NSLog("nvpn-pkt: setTunnelNetworkSettings succeeded — native utun fd attached")
             packetDebugLog("setTunnelNetworkSettings succeeded")
-            self?.startPacketLoops()
             NSLog("nvpn-pkt: completionHandler(nil) — VPN should transition to connected")
             packetDebugLog("completionHandler nil")
             completionHandler(nil)
@@ -197,146 +194,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return (normalized, [""], false)
     }
 
-    private func startPacketLoops() {
-        readPackets()
-        packetQueue.async { [weak self] in
-            self?.writePackets()
-        }
-    }
-
-    private func readPackets() {
-        guard isTunnelRunning() else {
-            return
-        }
-        packetFlow.readPackets { [weak self] packets, _ in
-            guard let self else {
-                return
-            }
-            guard self.isTunnelRunning() else {
-                return
-            }
-            let sent: Void? = self.withTunnelHandle { handle in
-                for packet in packets {
-                    packet.withUnsafeBytes { raw in
-                        guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
-                            return
-                        }
-                        _ = nostr_vpn_mobile_tunnel_send_packet(handle, base, UInt(packet.count))
-                    }
-                }
-            }
-            guard sent != nil else {
-                return
-            }
-            self.readPackets()
-        }
-    }
-
-    private func writePackets() {
-        var packets: [Data] = []
-        var protocols: [NSNumber] = []
-        packets.reserveCapacity(Self.maxWritePacketBatch)
-        protocols.reserveCapacity(Self.maxWritePacketBatch)
-        var packetBuffer = Array(
-            repeating: NvpnMobilePacket(data: nil, len: 0, capacity: 0, status: 0),
-            count: Self.maxWritePacketBatch
-        )
-
-        while true {
-            packets.removeAll(keepingCapacity: true)
-            protocols.removeAll(keepingCapacity: true)
-
-            let batch = withTunnelHandle { handle in
-                readPacketBatch(
-                    handle: handle,
-                    packetBuffer: &packetBuffer,
-                    packets: &packets,
-                    protocols: &protocols
-                )
-            } ?? .stopped
-
-            switch batch {
-            case .packets:
-                packetFlow.writePackets(packets, withProtocols: protocols)
-            case .timeout:
-                continue
-            case .stopped:
-                return
-            }
-        }
-    }
-
-    private func readPacketBatch(
-        handle: OpaquePointer,
-        packetBuffer: inout [NvpnMobilePacket],
-        packets: inout [Data],
-        protocols: inout [NSNumber]
-    ) -> PacketBatchRead {
-        let count = packetBuffer.withUnsafeMutableBufferPointer { buffer -> Int in
-            guard let base = buffer.baseAddress else {
-                return -1
-            }
-            return nostr_vpn_mobile_tunnel_next_packets_owned(
-                handle,
-                base,
-                UInt(buffer.count),
-                Self.nextPacketPollTimeoutMs
-            )
-        }
-        if count == 0 {
-            return .timeout
-        }
-        if count < 0 {
-            return .stopped
-        }
-
-        for index in 0..<count {
-            guard appendOwnedPacket(packetBuffer[index], to: &packets, protocols: &protocols) else {
-                if index + 1 < count {
-                    for remaining in (index + 1)..<count {
-                        nostr_vpn_mobile_packet_free(packetBuffer[remaining])
-                    }
-                }
-                return .stopped
-            }
-        }
-        return .packets
-    }
-
-    private func appendOwnedPacket(
-        _ packet: NvpnMobilePacket,
-        to packets: inout [Data],
-        protocols: inout [NSNumber]
-    ) -> Bool {
-        guard packet.status == 1 else {
-            nostr_vpn_mobile_packet_free(packet)
-            return false
-        }
-        guard let dataPointer = packet.data, packet.len <= UInt(Int.max) else {
-            nostr_vpn_mobile_packet_free(packet)
-            return false
-        }
-        let packetToFree = packet
-        let data = Data(
-            bytesNoCopy: UnsafeMutableRawPointer(dataPointer),
-            count: Int(packet.len),
-            deallocator: .custom { _, _ in
-                nostr_vpn_mobile_packet_free(packetToFree)
-            }
-        )
-        appendPacket(data, to: &packets, protocols: &protocols)
-        return true
-    }
-
-    private func appendPacket(
-        _ packet: Data,
-        to packets: inout [Data],
-        protocols: inout [NSNumber]
-    ) {
-        packets.append(packet)
-        protocols.append(packetFamily(packet))
-    }
-
     private func stopRustTunnel() {
         tunnelCondition.lock()
         tunnelRunning = false
@@ -350,12 +207,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         if let handle {
             nostr_vpn_mobile_tunnel_free(handle)
         }
-    }
-
-    private func isTunnelRunning() -> Bool {
-        tunnelCondition.lock()
-        defer { tunnelCondition.unlock() }
-        return tunnelRunning
     }
 
     private func withTunnelHandle<T>(_ body: (OpaquePointer) -> T) -> T? {
@@ -499,13 +350,6 @@ private func ipv4Route(_ value: String) -> NEIPv4Route? {
         return NEIPv4Route.default()
     }
     return NEIPv4Route(destinationAddress: parsed.address, subnetMask: parsed.mask)
-}
-
-private func packetFamily(_ packet: Data) -> NSNumber {
-    guard let first = packet.first else {
-        return ipv4PacketProtocol
-    }
-    return (first >> 4) == 6 ? ipv6PacketProtocol : ipv4PacketProtocol
 }
 
 private func consumeCString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {

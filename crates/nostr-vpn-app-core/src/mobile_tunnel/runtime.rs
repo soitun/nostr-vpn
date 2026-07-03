@@ -40,12 +40,13 @@ impl MobileTunnel {
             config: started.config,
             app_config: started.app_config,
             app_config_dirty: started.app_config_dirty,
+            #[cfg(any(target_os = "android", target_os = "ios"))]
             outbound_tx: started.outbound_tx,
             inbound_rx: Some(Arc::new(Mutex::new(started.inbound_rx))),
             tasks: started.tasks,
             wg_upstream: started.wg_upstream,
-            #[cfg(target_os = "android")]
-            android_tun: None,
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            native_tun: None,
             wg_upstream_socket_fd: started.wg_upstream_socket_fd,
         })
     }
@@ -443,33 +444,38 @@ impl MobileTunnel {
         self.wg_upstream_socket_fd
     }
 
-    #[cfg(target_os = "android")]
+    #[cfg(any(target_os = "android", target_os = "ios"))]
     pub(crate) fn attach_tun_fd(&mut self, fd: c_int) -> Result<()> {
         if fd < 0 {
-            return Err(anyhow!("invalid Android tun fd"));
+            return Err(anyhow!("invalid native tun fd"));
         }
-        if self.android_tun.is_some() {
-            close_android_tun_fd(fd);
-            return Err(anyhow!("Android tun fd already attached"));
+        if self.native_tun.is_some() {
+            reject_unattached_mobile_tun_fd(fd);
+            return Err(anyhow!("native tun fd already attached"));
         }
         let Some(inbound_rx) = self.inbound_rx.as_ref().cloned() else {
-            close_android_tun_fd(fd);
+            reject_unattached_mobile_tun_fd(fd);
             return Err(anyhow!("mobile tunnel inbound packet receiver stopped"));
         };
         let mtu = match self.config.read() {
             Ok(config) => config.mtu,
             Err(_) => {
-                close_android_tun_fd(fd);
+                reject_unattached_mobile_tun_fd(fd);
                 return Err(anyhow!("mobile FIPS config lock poisoned"));
             }
         };
-        self.android_tun = Some(AndroidTunRuntime::start(
+        self.native_tun = Some(NativeTunRuntime::start(
             fd,
             self.outbound_tx.clone(),
             inbound_rx,
-            android_tun_packet_capacity(mtu),
+            native_tun_packet_capacity(mtu),
         )?);
         Ok(())
+    }
+
+    #[cfg(target_os = "ios")]
+    pub(crate) fn attach_current_tun_fd(&mut self) -> Result<()> {
+        self.attach_tun_fd(current_ios_utun_fd()?)
     }
 
     pub(crate) fn wg_upstream_excluded_route(&self) -> Option<String> {
@@ -543,53 +549,6 @@ impl MobileTunnel {
         }
     }
 
-    pub(crate) fn send_packet(&self, packet: &[u8]) -> bool {
-        if packet.is_empty() {
-            return false;
-        }
-        self.send_packet_owned(packet.to_vec())
-    }
-
-    pub(crate) fn send_packet_owned(&self, packet: Vec<u8>) -> bool {
-        if packet.is_empty() {
-            return false;
-        }
-        self.outbound_tx.try_send(packet).is_ok()
-    }
-
-    pub(crate) fn next_packet_batch(
-        &self,
-        max_packets: usize,
-        timeout: Duration,
-    ) -> Result<Vec<Vec<u8>>> {
-        if max_packets == 0 {
-            return Ok(Vec::new());
-        }
-        let inbound_rx = self
-            .inbound_rx
-            .as_ref()
-            .ok_or_else(|| anyhow!("mobile tunnel stopped"))?;
-        let rx = inbound_rx
-            .lock()
-            .map_err(|_| anyhow!("mobile tunnel inbound packet lock poisoned"))?;
-        let first = match rx.recv_timeout(timeout) {
-            Ok(packet) => packet,
-            Err(mpsc::RecvTimeoutError::Timeout) => return Ok(Vec::new()),
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                return Err(anyhow!("mobile tunnel stopped"));
-            }
-        };
-        let mut packets = Vec::with_capacity(max_packets);
-        packets.push(first);
-        while packets.len() < max_packets {
-            match rx.try_recv() {
-                Ok(packet) => packets.push(packet),
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => break,
-            }
-        }
-        Ok(packets)
-    }
 }
 
 struct MobileTunnelStarted {
@@ -599,6 +558,10 @@ struct MobileTunnelStarted {
     config: Arc<RwLock<MobileTunnelConfig>>,
     app_config: Arc<RwLock<AppConfig>>,
     app_config_dirty: Arc<AtomicBool>,
+    #[cfg_attr(
+        not(any(test, target_os = "android", target_os = "ios")),
+        allow(dead_code)
+    )]
     outbound_tx: tokio_mpsc::Sender<Vec<u8>>,
     inbound_rx: mpsc::Receiver<Vec<u8>>,
     tasks: Vec<JoinHandle<()>>,
@@ -608,10 +571,10 @@ struct MobileTunnelStarted {
 
 impl Drop for MobileTunnel {
     fn drop(&mut self) {
-        #[cfg(target_os = "android")]
-        let mut android_tun = self.android_tun.take();
-        #[cfg(target_os = "android")]
-        if let Some(tun) = android_tun.as_mut() {
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let mut native_tun = self.native_tun.take();
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        if let Some(tun) = native_tun.as_mut() {
             tun.stop();
         }
         let _ = self.inbound_rx.take();
@@ -634,8 +597,8 @@ impl Drop for MobileTunnel {
                 let _ = endpoint.shutdown().await;
             }
         });
-        #[cfg(target_os = "android")]
-        if let Some(mut tun) = android_tun {
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        if let Some(mut tun) = native_tun {
             tun.join();
         }
     }
