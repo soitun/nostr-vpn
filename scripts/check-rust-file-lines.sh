@@ -61,7 +61,7 @@ while IFS= read -r -d '' file; do
   fi
 done < <(
   cd "$ROOT_DIR"
-  find . \( -type d \( -name .git -o -name target \) -prune \) -o -type f -name '*.rs' -print0
+  git ls-files -z --cached --others --exclude-standard -- '*.rs'
 )
 
 if ((status != 0)); then
