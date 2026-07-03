@@ -535,7 +535,6 @@ private struct JoinNetworkCard: View {
     @State private var manualExpanded = false
     @State private var manualAdminId = ""
     @State private var manualNetworkId = ""
-    @State private var joinRequestStatus = ""
 
     private var manualAdminInvalid: Bool {
         let trimmed = manualAdminId.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -550,7 +549,7 @@ private struct JoinNetworkCard: View {
 
     private var requestNetwork: NetworkState? {
         model.activeNetwork ?? model.state.networks.first { network in
-            network.outboundJoinRequest != nil || !network.inviteInviterNpub.isEmpty
+            !network.joinRequestQrCodeOrLink.isEmpty
         }
     }
 
@@ -628,42 +627,29 @@ private struct JoinNetworkCard: View {
             .font(.subheadline)
 
             if let network = requestNetwork {
-                if !joinRequestStatus.isEmpty || network.outboundJoinRequest != nil {
-                    Pill("Approval requested", tint: .orange)
-                    if !network.joinRequestQrCodeOrLink.isEmpty {
-                        VStack(alignment: .leading, spacing: 8) {
-                            QrCodeView(matrix: model.qrMatrix(for: network.joinRequestQrCodeOrLink))
-                                .frame(maxWidth: 190)
-                                .aspectRatio(1, contentMode: .fit)
-                            HStack(spacing: 10) {
-                                Button {
-                                    model.copy(network.joinRequestQrCodeOrLink)
-                                } label: {
-                                    Label("Copy Request", systemImage: model.copiedValue == network.joinRequestQrCodeOrLink ? "checkmark" : "doc.on.doc")
+                if !network.joinRequestQrCodeOrLink.isEmpty {
+                    Pill("Approval request", tint: .orange)
+                    VStack(alignment: .leading, spacing: 8) {
+                        QrCodeView(matrix: model.qrMatrix(for: network.joinRequestQrCodeOrLink))
+                            .frame(maxWidth: 190)
+                            .aspectRatio(1, contentMode: .fit)
+                        HStack(spacing: 10) {
+                            Button {
+                                model.copy(network.joinRequestQrCodeOrLink)
+                            } label: {
+                                Label("Copy Request", systemImage: model.copiedValue == network.joinRequestQrCodeOrLink ? "checkmark" : "doc.on.doc")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                            if let requestUrl = URL(string: network.joinRequestQrCodeOrLink) {
+                                ShareLink(item: requestUrl) {
+                                    Label("Share", systemImage: "square.and.arrow.up")
                                         .frame(maxWidth: .infinity)
                                 }
                                 .buttonStyle(.bordered)
-                                if let requestUrl = URL(string: network.joinRequestQrCodeOrLink) {
-                                    ShareLink(item: requestUrl) {
-                                        Label("Share", systemImage: "square.and.arrow.up")
-                                            .frame(maxWidth: .infinity)
-                                    }
-                                    .buttonStyle(.bordered)
-                                }
                             }
                         }
                     }
-                } else if !network.inviteInviterNpub.isEmpty {
-                    Button {
-                        model.dispatch(
-                            NativeActions.requestDeviceApproval(networkId: network.id),
-                            status: "Requesting approval"
-                        )
-                        joinRequestStatus = "Approval requested"
-                    } label: {
-                        Label("Request Approval", systemImage: "person.badge.plus")
-                    }
-                    .buttonStyle(.bordered)
                 }
             }
         }
@@ -790,7 +776,7 @@ private struct ScanJoinerDeviceCard: View {
             Text("Scan or paste the other device's approval request. Device ID QR scanning still works for manual pairing.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            TextField("nvpn://join-request/…", text: $requestInput)
+            TextField("nvpn://join-request?app_key=…", text: $requestInput)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder)
@@ -2687,17 +2673,8 @@ private struct ScannedDeviceLink {
 
 private func looksLikeJoinRequestQrOrLink(_ value: String) -> Bool {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmed.lowercased().hasPrefix("nvpn://join-request/") {
-        return true
-    }
-    guard trimmed.hasPrefix("{"),
-          let data = trimmed.data(using: .utf8),
-          let object = try? JSONSerialization.jsonObject(with: data),
-          let json = object as? [String: Any]
-    else {
-        return false
-    }
-    return jsonString(json["networkId"]) != nil && jsonString(json["requesterNpub"]) != nil
+    return trimmed.lowercased().hasPrefix("nvpn://join-request?")
+        || trimmed.lowercased().hasPrefix("nostr-identity://device-approval")
 }
 
 private func parseScannedDeviceLinkQr(_ value: String) -> ScannedDeviceLink? {

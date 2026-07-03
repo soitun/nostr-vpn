@@ -246,7 +246,7 @@
     }
 
     #[test]
-    fn invite_import_queues_join_request_to_invite_admin() {
+    fn invite_import_adopts_network_without_queueing_join_request() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -258,7 +258,6 @@
             .public_key()
             .to_bech32()
             .expect("admin npub");
-        let admin_hex = normalize_nostr_pubkey(&admin_npub).expect("normalize admin");
         let invite = serde_json::json!({
             "v": 3,
             "networkId": "8d4f34f5425bc50e",
@@ -279,11 +278,7 @@
             .expect("import invite");
 
         let network = runtime.config.active_network();
-        let pending = network
-            .outbound_join_request
-            .as_ref()
-            .expect("join request should be queued");
-        assert_eq!(pending.recipient, admin_hex);
+        assert!(network.outbound_join_request.is_none());
         assert!(network.devices.is_empty());
         assert_eq!(
             runtime.config.fips_peer_endpoints.get(&admin_npub),
@@ -297,7 +292,7 @@
     }
 
     #[test]
-    fn join_request_qr_or_link_can_be_imported_and_approved_by_admin() {
+    fn compact_join_request_qr_or_link_can_be_imported_and_approved_by_admin() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -322,8 +317,6 @@
         let admin_network_id = create_test_network(&mut admin, "Home");
         admin.config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
         admin.config.networks[0].admins = vec![admin_pubkey];
-        let invite = admin.state().active_network_invite;
-        assert!(invite.starts_with("nvpn://invite/"));
 
         let mut joiner = NativeAppRuntime::from_startup_error(&error);
         joiner.startup_error = None;
@@ -335,16 +328,14 @@
             .own_nostr_pubkey_hex()
             .expect("joiner pubkey");
         let joiner_npub = to_npub(&joiner_pubkey);
-        joiner
-            .import_network_invite(&invite)
-            .expect("joiner imports admin invite");
-
-        let joiner_state = joiner.state();
-        let join_request = &joiner_state.networks[0].join_request_qr_code_or_link;
-        assert!(join_request.starts_with("nvpn://join-request/"));
+        let join_request = crate::join_request_link::own_join_request_qr_code_or_link(
+            &joiner.config,
+        )
+        .expect("joiner request link");
+        assert!(join_request.starts_with("nvpn://join-request?app_key="));
 
         admin.dispatch(NativeAppAction::ImportJoinRequest {
-            request: join_request.clone(),
+            request: join_request,
         });
 
         assert!(admin.last_error.is_empty(), "{}", admin.last_error);
@@ -359,7 +350,7 @@
             .first()
             .expect("join request should be visible for admin approval");
         assert_eq!(request.requester_npub, joiner_npub);
-        assert_eq!(request.requester_node_name, "Pixel Phone");
+        assert!(request.requester_node_name.is_empty());
 
         admin.dispatch(NativeAppAction::AcceptJoinRequest {
             network_id: admin_network_id,
@@ -369,10 +360,7 @@
         assert!(admin.last_error.is_empty(), "{}", admin.last_error);
         assert!(admin.config.networks[0].devices.contains(&joiner_pubkey));
         assert!(admin.config.networks[0].inbound_join_requests.is_empty());
-        assert_eq!(
-            admin.config.peer_alias(&joiner_pubkey).as_deref(),
-            Some("pixel-phone")
-        );
+        assert!(admin.config.peer_alias(&joiner_pubkey).is_none());
 
         let _ = fs::remove_dir_all(&admin_dir);
         let _ = fs::remove_dir_all(&joiner_dir);
@@ -415,7 +403,7 @@
         assert_eq!(network.id, "network-1");
         assert_eq!(network.name, "Network 1");
         assert_eq!(network.network_id, "8d4f34f5425bc50e");
-        assert!(network.outbound_join_request.is_some());
+        assert!(network.outbound_join_request.is_none());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -459,7 +447,7 @@
         assert_eq!(network.network_id, "7a6014835d404cb0");
         assert_eq!(network.admins, vec![admin_hex.clone()]);
         assert_eq!(network.invite_inviter, admin_hex);
-        assert!(network.outbound_join_request.is_some());
+        assert!(network.outbound_join_request.is_none());
 
         let _ = fs::remove_dir_all(&dir);
     }

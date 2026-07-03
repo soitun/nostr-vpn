@@ -178,9 +178,6 @@ impl NativeAppRuntime {
             }
             NativeAppAction::ImportNetworkInvite { invite } => {
                 self.import_network_invite(&invite)?;
-                if !self.vpn_enabled {
-                    self.connect_vpn()?;
-                }
                 Ok(())
             }
             NativeAppAction::ImportJoinRequest { request } => self.import_join_request(&request),
@@ -388,37 +385,29 @@ impl NativeAppRuntime {
     fn import_network_invite(&mut self, invite: &str) -> Result<()> {
         let parsed = parse_network_invite(invite)?;
         apply_network_invite_to_active_network(&mut self.config, &parsed)?;
-        let network_id = self
-            .config
-            .active_network_opt()
-            .ok_or_else(|| anyhow!("network not found"))?
-            .id
-            .clone();
-        self.queue_network_join_request(&network_id)?;
         self.save_reload_and_refresh()
     }
 
     fn import_join_request(&mut self, request: &str) -> Result<()> {
         let parsed = parse_join_request_qr_code_or_link(request)?;
-        let requester = normalize_nostr_pubkey(&parsed.requester_npub)?;
         let own_pubkey = self.config.own_nostr_pubkey_hex().ok();
-        let network = self
+        let network_id = self
             .config
             .networks
-            .iter_mut()
+            .iter()
             .find(|network| {
                 own_pubkey.as_deref().is_some_and(|own_pubkey| {
                     network.admins.iter().any(|admin| admin == own_pubkey)
-                }) && normalize_runtime_network_id(&network.network_id) == parsed.network_id
-                    && (network.invite_secret.trim().is_empty()
-                        || network.invite_secret.trim() == parsed.invite_secret)
+                }) && network.enabled
             })
-            .ok_or_else(|| anyhow!("join request does not match an admin network"))?;
-        let requested_at = if parsed.requested_at == 0 {
-            unix_timestamp()
-        } else {
-            parsed.requested_at
-        };
+            .map(|network| network.id.clone())
+            .ok_or_else(|| anyhow!("active network is not administered by this device"))?;
+        let requester = parsed.requester_pubkey_hex;
+        let requested_at = unix_timestamp();
+        let network = self
+            .config
+            .network_by_id_mut(&network_id)
+            .ok_or_else(|| anyhow!("network not found"))?;
 
         if !network
             .devices
@@ -426,18 +415,17 @@ impl NativeAppRuntime {
             .chain(network.admins.iter())
             .any(|member| member == &requester)
         {
-            let requester_node_name = parsed.node_name.trim().to_string();
             if let Some(existing) = network
                 .inbound_join_requests
                 .iter_mut()
                 .find(|pending| pending.requester == requester)
             {
                 existing.requested_at = existing.requested_at.max(requested_at);
-                existing.requester_node_name = requester_node_name;
+                existing.requester_node_name.clear();
             } else {
                 network.inbound_join_requests.push(PendingInboundJoinRequest {
                     requester,
-                    requester_node_name,
+                    requester_node_name: String::new(),
                     requested_at,
                 });
                 network

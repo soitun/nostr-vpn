@@ -360,7 +360,8 @@ val AppState.activeNetwork: NetworkState?
 val AppState.joinRequestNetwork: NetworkState?
     get() =
         networks.firstOrNull { it.outboundJoinRequest }
-            ?: activeNetwork?.takeIf { it.inviteInviterNpub.isNotBlank() }
+            ?: activeNetwork
+            ?: networks.firstOrNull { it.joinRequestQrCodeOrLink.isNotBlank() }
             ?: networks.firstOrNull { it.inviteInviterNpub.isNotBlank() }
 
 fun parseAppState(jsonText: String): AppState {

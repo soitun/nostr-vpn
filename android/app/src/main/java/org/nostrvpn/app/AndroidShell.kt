@@ -654,35 +654,24 @@ private fun NetworkSetupCard(
                 }
             }
             if (requestNetwork != null) {
-                if (requestNetwork.outboundJoinRequest) {
+                if (requestNetwork.joinRequestQrCodeOrLink.isNotBlank()) {
                     Text(
-                        JOIN_REQUEST_SENT_TEXT,
+                        "Share this approval request from the device you want to add.",
                         style = MaterialTheme.typography.bodySmall,
                         color = Color(0xFF9A3412),
                     )
-                    if (requestNetwork.joinRequestQrCodeOrLink.isNotBlank()) {
-                        BoxWithConstraints(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            val qrSide = maxWidth.coerceAtMost(220.dp)
-                            QrCode(
-                                invite = requestNetwork.joinRequestQrCodeOrLink,
-                                qrJson = qrJson,
-                                side = qrSide,
-                            )
-                        }
-                        CopyButton(requestNetwork.joinRequestQrCodeOrLink, "Copy request")
-                    }
-                } else if (requestNetwork.inviteInviterNpub.isNotBlank()) {
-                    OutlinedButton(
-                        onClick = {
-                            dispatch(NativeActions.requestNetworkJoin(requestNetwork.id))
-                        },
+                    BoxWithConstraints(
                         modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
                     ) {
-                        Text("Request Access")
+                        val qrSide = maxWidth.coerceAtMost(220.dp)
+                        QrCode(
+                            invite = requestNetwork.joinRequestQrCodeOrLink,
+                            qrJson = qrJson,
+                            side = qrSide,
+                        )
                     }
+                    CopyButton(requestNetwork.joinRequestQrCodeOrLink, "Copy request")
                 }
             }
 
@@ -907,7 +896,7 @@ private fun AddDevicesDialog(
                     onValueChange = { joinRequestInput = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("nvpn://join-request/…") },
+                    label = { Text("nvpn://join-request?app_key=…") },
                 )
                 Button(
                     enabled = joinRequestInput.trim().isNotEmpty(),

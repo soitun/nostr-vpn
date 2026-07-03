@@ -3,10 +3,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use anyhow::{Context, Result, anyhow};
 pub use nostr_identity::{
     IDENTITY_GRAPH_ROSTER_TYPE, KIND_NOSTR_IDENTITY_ROSTER_OP,
+    NOSTR_IDENTITY_COMPACT_DEVICE_APPROVAL_REQUEST_PREFIX,
     NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA, NostrIdentityCapabilities,
-    NostrIdentityDeviceApprovalReceipt, NostrIdentityError, NostrIdentityFacet, NostrIdentityId,
-    NostrIdentityKeyPurpose, NostrIdentityRosterOp, SignedIdentityLinkRequest,
-    SignedNostrIdentityRosterOp, build_nostr_identity_device_approval_receipt_event,
+    NostrIdentityCompactDeviceApprovalRequest, NostrIdentityDeviceApprovalReceipt,
+    NostrIdentityError, NostrIdentityFacet, NostrIdentityId, NostrIdentityKeyPurpose,
+    NostrIdentityRosterOp, SignedIdentityLinkRequest, SignedNostrIdentityRosterOp,
+    build_nostr_identity_device_approval_receipt_event,
+    compact_nostr_identity_device_approval_request_has_prefix,
+    encode_compact_nostr_identity_device_approval_request,
+    parse_compact_nostr_identity_device_approval_request,
     parse_identity_link_request_event_for_invite_pubkey,
     parse_nostr_identity_device_approval_receipt_event,
     parse_nostr_identity_device_approval_receipt_roster_op,

@@ -293,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn approval_action_aliases_keep_legacy_join_request_payloads_compatible() {
+    fn approval_action_aliases_accept_device_link_names() {
         let request = serde_json::from_str::<NativeAppAction>(
             r#"{"type":"request_device_approval","networkId":"net-1"}"#,
         )
@@ -306,13 +306,13 @@ mod tests {
         );
 
         let import = serde_json::from_str::<NativeAppAction>(
-            r#"{"type":"import_join_request_qr_or_link","request":"nvpn://join-request/example"}"#,
+            r#"{"type":"import_join_request_qr_or_link","request":"nvpn://join-request?app_key=abc"}"#,
         )
         .expect("parse import join request alias");
         assert_eq!(
             import,
             NativeAppAction::ImportJoinRequest {
-                request: "nvpn://join-request/example".to_string(),
+                request: "nvpn://join-request?app_key=abc".to_string(),
             }
         );
 

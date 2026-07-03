@@ -303,6 +303,16 @@
 
         let active_id = create_test_network(&mut runtime, "Home");
         let saved_id = create_test_network(&mut runtime, "Work");
+        let own_pubkey = runtime
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("generated config should have own pubkey");
+        runtime
+            .config
+            .network_by_id_mut(&saved_id)
+            .expect("saved network")
+            .admins
+            .push(own_pubkey);
         assert!(
             runtime
                 .config
