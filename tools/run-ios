@@ -160,7 +160,9 @@ build_app() {
     -configuration Debug \
     -derivedDataPath "$BUILD_DIR/DerivedData" \
     -destination "$(ios_destination)" \
-    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_ALLOWED=YES \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGN_IDENTITY=- \
     build
 }
 
