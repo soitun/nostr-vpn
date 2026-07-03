@@ -191,6 +191,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     recent_peer_refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut state_interval = tokio::time::interval(Duration::from_secs(1));
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    #[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+    let mut last_paid_exit_usage_flush_at = Instant::now();
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
     tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut network_interval =
@@ -797,6 +799,43 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if let Err(error) = runtime.refresh_peer_dependent_routes().await {
                         vpn_status = format!("FIPS route refresh failed ({error})");
                     }
+                    #[cfg(feature = "paid-exit")]
+                    {
+                        let observed_at = Instant::now();
+                        let active_millis_delta = u64::try_from(
+                            observed_at
+                                .saturating_duration_since(last_paid_exit_usage_flush_at)
+                                .as_millis(),
+                        )
+                        .unwrap_or(u64::MAX);
+                        last_paid_exit_usage_flush_at = observed_at;
+                        match flush_fips_paid_route_usage(
+                            runtime,
+                            &app,
+                            &config_path,
+                            unix_timestamp(),
+                            active_millis_delta,
+                        ) {
+                            Ok(true) => {
+                                if let Err(error) = refresh_fips_tunnel_config(
+                                    runtime,
+                                    &app,
+                                    &config_path,
+                                    &network_id,
+                                    own_pubkey.as_deref(),
+                                )
+                                .await
+                                {
+                                    vpn_status =
+                                        format!("paid-exit admission refresh failed ({error})");
+                                }
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                eprintln!("paid-exit: failed to record FIPS usage: {error}");
+                            }
+                        }
+                    }
                 }
 
                 if let Some(request) = take_daemon_control_request(&config_path) {
@@ -1069,4 +1108,92 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let _ = write_daemon_state(&state_file, &final_state);
     remove_current_daemon_pid_record(&pid_file);
     Ok(())
+}
+
+#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+fn flush_fips_paid_route_usage(
+    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+    app: &AppConfig,
+    config_path: &Path,
+    now_unix: u64,
+    active_millis_delta: u64,
+) -> Result<bool> {
+    let store_path = paid_route_store_file_path(config_path);
+    let mut store = load_paid_route_store(&store_path)?;
+    let mut changed = false;
+    let seller_admission_routing_before = if app.paid_exit.enabled {
+        paid_route_seller_admission_routing_signature(&store.seller_admissions(
+            &app.paid_exit,
+            now_unix,
+        ))
+    } else {
+        Vec::new()
+    };
+
+    if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() {
+        let mut usage_delta = runtime.drain_paid_route_usage(&seller_pubkey)?;
+        usage_delta.active_millis = usage_delta
+            .active_millis
+            .saturating_add(active_millis_delta);
+        if !usage_delta.is_empty() {
+            changed |= store
+                .record_buyer_usage(RecordPaidRouteBuyerUsageRequest {
+                    seller_pubkey,
+                    usage_delta,
+                    now_unix,
+                })?
+                .is_some_and(|result| result.changed);
+        }
+    }
+
+    if app.paid_exit.enabled {
+        for admission in store.seller_admissions(&app.paid_exit, now_unix) {
+            let mut usage_delta = runtime.drain_paid_route_usage(&admission.buyer_pubkey)?;
+            if admission.allow_routing {
+                usage_delta.active_millis = usage_delta
+                    .active_millis
+                    .saturating_add(active_millis_delta);
+            }
+            if usage_delta.is_empty() {
+                continue;
+            }
+            changed |= store
+                .record_seller_usage(RecordPaidRouteSellerUsageRequest {
+                    buyer_pubkey: admission.buyer_pubkey,
+                    config: app.paid_exit.clone(),
+                    usage_delta,
+                    now_unix,
+                })?
+                .is_some_and(|result| result.changed);
+        }
+    }
+
+    if changed {
+        write_paid_route_store(&store_path, &store)?;
+    }
+    let seller_admission_routing_after = if changed && app.paid_exit.enabled {
+        paid_route_seller_admission_routing_signature(&store.seller_admissions(
+            &app.paid_exit,
+            now_unix,
+        ))
+    } else {
+        seller_admission_routing_before.clone()
+    };
+    Ok(seller_admission_routing_after != seller_admission_routing_before)
+}
+
+#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+fn paid_route_seller_admission_routing_signature(
+    admissions: &[nostr_vpn_core::paid_route_store::PaidRouteSellerAdmission],
+) -> Vec<(String, String, bool)> {
+    admissions
+        .iter()
+        .map(|admission| {
+            (
+                admission.buyer_pubkey.clone(),
+                admission.session_id.clone(),
+                admission.allow_routing,
+            )
+        })
+        .collect()
 }

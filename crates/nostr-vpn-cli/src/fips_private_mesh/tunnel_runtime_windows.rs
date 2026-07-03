@@ -29,6 +29,8 @@ impl FipsPrivateTunnelRuntime {
             )
             .await?,
         );
+        #[cfg(feature = "paid-exit")]
+        mesh.set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
         let (session, iface, interface_index) = start_windows_fips_wintun(&config)?;
         let route_targets =
             crate::windows_tunnel::apply_windows_routes(interface_index, &config.route_targets)?;
@@ -102,6 +104,11 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.peer_statuses()
     }
 
+    #[cfg(feature = "paid-exit")]
+    pub(crate) fn drain_paid_route_usage(&self, participant: &str) -> Result<PaidRouteUsage> {
+        self.mesh.drain_paid_route_usage(participant)
+    }
+
     pub(crate) fn stale_participants_needing_path_refresh(&self, now: u64) -> Vec<String> {
         self.mesh.stale_participants_needing_path_refresh(now)
     }
@@ -161,6 +168,9 @@ impl FipsPrivateTunnelRuntime {
                 config.local_allowed_ips(),
                 config.paid_route_admissions.clone(),
             )?;
+        #[cfg(feature = "paid-exit")]
+        self.mesh
+            .set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
         if let Err(error) = self.mesh.update_peers(&config.endpoint_peers).await {
             eprintln!("fips: update_peers during apply_config failed: {error}");
         }

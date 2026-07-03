@@ -482,6 +482,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dee39a0ee5b4095224a0cfc6bf4cc1baf0f9624b96b367e53b66d974e51d953"
 
 [[package]]
+name = "bitcoin-payment-instructions"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c300c948b2ff78c965ea3a613372352125448a22f1acf49e95e3878149824091"
+dependencies = [
+ "bitcoin",
+ "lightning",
+ "lightning-invoice",
+]
+
+[[package]]
 name = "bitcoin-units"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -720,9 +731,8 @@ dependencies = [
 
 [[package]]
 name = "cashu"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d612261d61069314bb0e39adbd63d0fd3bd22084f332e85c98e615c15f24e5a"
+version = "0.16.0-rc.1"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0-rc.1#19ccf153dc5033ab32d9578744ab14b52b7315ca"
 dependencies = [
  "bitcoin",
  "cbor-diag",
@@ -737,6 +747,7 @@ dependencies = [
  "strum_macros 0.27.2",
  "thiserror 2.0.18",
  "tracing",
+ "unicode-normalization",
  "url",
  "uuid",
  "web-time",
@@ -746,15 +757,16 @@ dependencies = [
 [[package]]
 name = "cashu-service"
 version = "0.2.56"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "161f37e4834b2b0e2361c39e1446294e2a18fdae8e60ee6804cd189511e32e71"
 dependencies = [
  "anyhow",
  "async-trait",
+ "cashu",
  "cdk",
+ "cdk-spilman",
  "cdk-sqlite",
  "hex",
  "rand 0.8.6",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",
@@ -804,14 +816,14 @@ dependencies = [
 
 [[package]]
 name = "cdk"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8955437beea95ee6849c6eab59012760a7589e6eeff4d6e36ebf324c641388d"
+version = "0.16.0-rc.1"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0-rc.1#19ccf153dc5033ab32d9578744ab14b52b7315ca"
 dependencies = [
  "anyhow",
  "arc-swap",
  "async-trait",
  "bitcoin",
+ "bitcoin-payment-instructions",
  "cbor-diag",
  "cdk-common",
  "cdk-signatory",
@@ -830,7 +842,6 @@ dependencies = [
  "serde_with",
  "thiserror 2.0.18",
  "tokio",
- "tokio-tungstenite 0.26.2",
  "tokio-util",
  "tracing",
  "url",
@@ -841,9 +852,8 @@ dependencies = [
 
 [[package]]
 name = "cdk-common"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f5bf771d3780d2321211eb575e1f8341cec50f8a16c4f50b2787807b5090a38"
+version = "0.16.0-rc.1"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0-rc.1#19ccf153dc5033ab32d9578744ab14b52b7315ca"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -874,23 +884,29 @@ dependencies = [
 
 [[package]]
 name = "cdk-http-client"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b58f47c4af4a4c862d145863211f5454c3ccfbacaaef9e4913276519a1ac498e"
+version = "0.16.0-rc.1"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0-rc.1#19ccf153dc5033ab32d9578744ab14b52b7315ca"
 dependencies = [
+ "futures",
+ "futures-channel",
+ "js-sys",
  "regex",
  "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "tokio-tungstenite 0.26.2",
+ "tracing",
  "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
 name = "cdk-signatory"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc1dca3b84999ac0e6fd15330d566aff6df6082a349134fd884deef8c9eeb570"
+version = "0.16.0-rc.1"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0-rc.1#19ccf153dc5033ab32d9578744ab14b52b7315ca"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -909,10 +925,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "cdk-sql-common"
+name = "cdk-spilman"
 version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6625a8248a43fbebb92cc57f1b09c453d5de94d62a512b62e9a62b25d0dd5506"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "bitcoin",
+ "cashu",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.18",
+ "tracing",
+]
+
+[[package]]
+name = "cdk-sql-common"
+version = "0.16.0-rc.1"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0-rc.1#19ccf153dc5033ab32d9578744ab14b52b7315ca"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -929,9 +962,8 @@ dependencies = [
 
 [[package]]
 name = "cdk-sqlite"
-version = "0.15.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9334877fe3f9fb25f6819c0876af1b0690f47aa2b1e548a20ac904740cbd574c"
+version = "0.16.0-rc.1"
+source = "git+https://github.com/cashubtc/cdk.git?tag=v0.16.0-rc.1#19ccf153dc5033ab32d9578744ab14b52b7315ca"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -1527,6 +1559,9 @@ name = "dnssec-prover"
 version = "0.6.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec4f825369fc7134da70ca4040fddc8e03b80a46d249ae38d9c1c39b7b4476bf"
+dependencies = [
+ "bitcoin_hashes",
+]
 
 [[package]]
 name = "dyn-clone"
@@ -1628,9 +1663,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.77"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bee034c8474ef605b40ca501efc823b83d9d5593ab2b82b3fa84db62ea074239"
+version = "0.3.78"
 dependencies = [
  "bluer",
  "crossbeam-channel",
@@ -1666,9 +1699,7 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.3.52"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b744e938d7a6aae6b1391b8d6002ec030f0839656dc04769303dc335c6544453"
+version = "0.3.53"
 dependencies = [
  "fips-core",
 ]
@@ -1676,8 +1707,6 @@ dependencies = [
 [[package]]
 name = "fips-identity"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e143619aebf9db3129c1d2de67ba223bcf611216efa09a932c98a617e3e4a42b"
 dependencies = [
  "bech32",
  "hex",
@@ -5839,7 +5868,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

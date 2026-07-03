@@ -272,6 +272,99 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
+    #[cfg(feature = "paid-exit")]
+    pub(crate) fn set_paid_route_accounting_peers(
+        &self,
+        participants: Vec<FipsPaidRouteAccountingPeer>,
+    ) -> Result<()> {
+        let mut accounting = self
+            .paid_route_accounting
+            .lock()
+            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        accounting.replace_peers(participants);
+        Ok(())
+    }
+
+    #[cfg(feature = "paid-exit")]
+    pub(crate) fn drain_paid_route_usage(&self, participant: &str) -> Result<PaidRouteUsage> {
+        let mut accounting = self
+            .paid_route_accounting
+            .lock()
+            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        Ok(accounting.drain(participant))
+    }
+
+    #[cfg(feature = "paid-exit")]
+    fn note_paid_route_outbound_payloads(
+        &self,
+        participant: Option<&str>,
+        participant_key: Option<&ParticipantPubkeyBytes>,
+        payloads: &[Vec<u8>],
+    ) -> Result<()> {
+        if payloads.is_empty() {
+            return Ok(());
+        }
+        let mut accounting = self
+            .paid_route_accounting
+            .lock()
+            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        for payload in payloads {
+            accounting.record_outbound(participant, participant_key, payload);
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "paid-exit")]
+    fn note_paid_route_outbound_packet(
+        &self,
+        participant: Option<&str>,
+        participant_key: Option<&ParticipantPubkeyBytes>,
+        packet: &[u8],
+    ) -> Result<()> {
+        let mut accounting = self
+            .paid_route_accounting
+            .lock()
+            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        accounting.record_outbound(participant, participant_key, packet);
+        Ok(())
+    }
+
+    #[cfg(feature = "paid-exit")]
+    fn note_paid_route_inbound_packet(
+        &self,
+        participant: Option<&str>,
+        participant_key: Option<&ParticipantPubkeyBytes>,
+        packet: &[u8],
+    ) -> Result<()> {
+        let mut accounting = self
+            .paid_route_accounting
+            .lock()
+            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        accounting.record_inbound(participant, participant_key, packet);
+        Ok(())
+    }
+
+    #[cfg(all(feature = "paid-exit", any(target_os = "linux", target_os = "macos")))]
+    fn note_paid_route_inbound_batch(&self, packets: &DirectTunWriteBatch) -> Result<()> {
+        if packets.is_empty() {
+            return Ok(());
+        }
+        let mut accounting = self
+            .paid_route_accounting
+            .lock()
+            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
+        for index in 0..packets.len() {
+            let Some(packet) = packets.packet_slice(index) else {
+                continue;
+            };
+            let Some(source) = packets.packet_source(index) else {
+                continue;
+            };
+            accounting.record_inbound(None, source.participant_key.as_ref(), packet);
+        }
+        Ok(())
+    }
+
     pub(crate) async fn shutdown(self) -> Result<(), FipsEndpointError> {
         self.endpoint.shutdown().await
     }

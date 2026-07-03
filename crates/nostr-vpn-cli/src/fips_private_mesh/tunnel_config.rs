@@ -203,6 +203,17 @@ impl FipsPrivateTunnelConfig {
             fips_host,
             local_advertised_routes: crate::runtime_effective_advertised_routes(app),
             paid_route_admissions: Vec::new(),
+            #[cfg(feature = "paid-exit")]
+            paid_route_accounting_peers: app
+                .public_paid_exit_node_pubkey_hex()
+                .and_then(|participant_pubkey| {
+                    FipsPaidRouteAccountingPeer::parse(
+                        &participant_pubkey,
+                        FipsPaidRouteAccountingRole::LocalBuyer,
+                    )
+                })
+                .into_iter()
+                .collect(),
             paid_exit: app.paid_exit.clone(),
             paid_route_store_path: PathBuf::new(),
             paid_route_wallet_data_dir: PathBuf::new(),

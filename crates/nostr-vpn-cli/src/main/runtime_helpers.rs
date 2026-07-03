@@ -501,6 +501,8 @@ fn fips_tunnel_config_from_app(
         config.paid_route_wallet_data_dir = paid_exit_wallet_data_dir(config_path);
         config.paid_route_payment_relays = paid_exit_relay_urls(app, &[]);
         config.paid_route_admissions = fips_paid_route_admissions_from_store(app, config_path)?;
+        config.paid_route_accounting_peers =
+            fips_paid_route_accounting_peers(app, &config.paid_route_admissions);
     }
     #[cfg(not(feature = "paid-exit"))]
     let _ = config_path;
@@ -516,6 +518,48 @@ fn fips_tunnel_config_from_app(
         configured
     };
     Ok(config)
+}
+
+#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+fn fips_paid_route_accounting_peers(
+    app: &AppConfig,
+    admissions: &[FipsPaidRouteAdmission],
+) -> Vec<crate::fips_private_mesh::FipsPaidRouteAccountingPeer> {
+    let mut peers: Vec<crate::fips_private_mesh::FipsPaidRouteAccountingPeer> = app
+        .public_paid_exit_node_pubkey_hex()
+        .into_iter()
+        .filter_map(|participant_pubkey| {
+            crate::fips_private_mesh::FipsPaidRouteAccountingPeer::parse(
+                &participant_pubkey,
+                crate::fips_private_mesh::FipsPaidRouteAccountingRole::LocalBuyer,
+            )
+        })
+        .collect();
+    peers.extend(
+        admissions
+            .iter()
+            .filter_map(|admission| {
+                crate::fips_private_mesh::FipsPaidRouteAccountingPeer::parse(
+                    &admission.participant_pubkey,
+                    crate::fips_private_mesh::FipsPaidRouteAccountingRole::LocalSeller,
+                )
+            }),
+    );
+    peers.sort_by(|left, right| {
+        left.participant_pubkey
+            .cmp(&right.participant_pubkey)
+            .then_with(|| role_sort_key(left.role).cmp(&role_sort_key(right.role)))
+    });
+    peers.dedup_by(|left, right| left.participant_pubkey == right.participant_pubkey);
+    peers
+}
+
+#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+fn role_sort_key(role: crate::fips_private_mesh::FipsPaidRouteAccountingRole) -> u8 {
+    match role {
+        crate::fips_private_mesh::FipsPaidRouteAccountingRole::LocalBuyer => 0,
+        crate::fips_private_mesh::FipsPaidRouteAccountingRole::LocalSeller => 1,
+    }
 }
 
 #[cfg(feature = "embedded-fips")]

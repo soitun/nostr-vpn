@@ -1,5 +1,5 @@
 type ControlFragmentBuffer = FipsControlFragmentBuffer;
-type ParticipantPubkeyBytes = [u8; 32];
+pub(crate) type ParticipantPubkeyBytes = [u8; 32];
 type FipsPeerActivityMap = HashMap<ParticipantPubkeyBytes, Arc<FipsPeerActivity>>;
 
 
@@ -42,6 +42,7 @@ type TunPipelineBatch = Vec<TunPipelinePacket>;
 struct DirectTunWriteBatch {
     runs: Vec<FipsEndpointDirectPacketRun>,
     packet_ends: Vec<usize>,
+    packet_sources: Vec<FipsPacketSource>,
     bytes: usize,
     mesh_generation: u64,
     data_rx_notes: FipsDataRxBatchNotes,
@@ -53,6 +54,7 @@ impl DirectTunWriteBatch {
         Self {
             runs: Vec::with_capacity(capacity),
             packet_ends: Vec::with_capacity(capacity),
+            packet_sources: Vec::with_capacity(capacity),
             bytes: 0,
             mesh_generation: 0,
             data_rx_notes: FipsDataRxBatchNotes::default(),
@@ -62,6 +64,7 @@ impl DirectTunWriteBatch {
     fn clear(&mut self) {
         self.runs.clear();
         self.packet_ends.clear();
+        self.packet_sources.clear();
         self.bytes = 0;
         self.mesh_generation = 0;
         self.data_rx_notes.clear();
@@ -98,14 +101,18 @@ impl DirectTunWriteBatch {
     fn reserve(&mut self, additional: usize) {
         self.runs.reserve(additional);
         self.packet_ends.reserve(additional);
+        self.packet_sources.reserve(additional);
     }
 
-    fn push_run(&mut self, run: FipsEndpointDirectPacketRun) {
+    fn push_run(&mut self, run: FipsEndpointDirectPacketRun, source: FipsPacketSource) {
         if run.is_empty() {
             return;
         }
+        let packet_count = run.len();
         self.bytes = self.bytes.saturating_add(run.packet_bytes());
-        self.push_packet_end(run.len());
+        self.push_packet_end(packet_count);
+        self.packet_sources
+            .extend(std::iter::repeat(source).take(packet_count));
         self.runs.push(run);
     }
 
@@ -129,6 +136,10 @@ impl DirectTunWriteBatch {
             .and_then(|run| run.packet_slice(index - previous_end))
     }
 
+    fn packet_source(&self, index: usize) -> Option<FipsPacketSource> {
+        self.packet_sources.get(index).copied()
+    }
+
     fn run_slices(&self) -> impl Iterator<Item = &[u8]> {
         self.runs.iter().flat_map(|run| run.packet_slices())
     }
@@ -138,6 +149,146 @@ impl DirectTunWriteBatch {
         (0..self.len())
             .filter_map(|index| self.packet_slice(index))
             .collect()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Copy, Debug)]
+struct FipsPacketSource {
+    participant_key: Option<ParticipantPubkeyBytes>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl FipsPacketSource {
+    fn new(participant_key: Option<&ParticipantPubkeyBytes>) -> Self {
+        Self {
+            participant_key: participant_key.copied(),
+        }
+    }
+}
+
+#[cfg(feature = "paid-exit")]
+#[derive(Default)]
+struct FipsPaidRouteAccounting {
+    peers: HashMap<ParticipantPubkeyBytes, FipsPaidRoutePeerAccounting>,
+}
+
+#[cfg(feature = "paid-exit")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FipsPaidRouteAccountingPeer {
+    pub(crate) participant_pubkey: ParticipantPubkeyBytes,
+    pub(crate) role: FipsPaidRouteAccountingRole,
+}
+
+#[cfg(feature = "paid-exit")]
+impl FipsPaidRouteAccountingPeer {
+    pub(crate) fn parse(
+        participant_pubkey: &str,
+        role: FipsPaidRouteAccountingRole,
+    ) -> Option<Self> {
+        participant_pubkey_bytes(participant_pubkey).map(|participant_pubkey| Self {
+            participant_pubkey,
+            role,
+        })
+    }
+}
+
+#[cfg(feature = "paid-exit")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FipsPaidRouteAccountingRole {
+    LocalBuyer,
+    LocalSeller,
+}
+
+#[cfg(feature = "paid-exit")]
+#[derive(Default)]
+struct FipsPaidRoutePeerAccounting {
+    role: Option<FipsPaidRouteAccountingRole>,
+    accountant: PaidRouteTrafficAccountant,
+    pending: PaidRouteUsage,
+}
+
+#[cfg(feature = "paid-exit")]
+impl FipsPaidRouteAccounting {
+    fn replace_peers<I>(&mut self, participants: I)
+    where
+        I: IntoIterator<Item = FipsPaidRouteAccountingPeer>,
+    {
+        let mut next_peers = HashMap::new();
+        for peer in participants {
+            if next_peers.contains_key(&peer.participant_pubkey) {
+                continue;
+            }
+            let mut state = self
+                .peers
+                .remove(&peer.participant_pubkey)
+                .unwrap_or_default();
+            state.role = Some(peer.role);
+            next_peers.insert(peer.participant_pubkey, state);
+        }
+        self.peers = next_peers;
+    }
+
+    fn record_outbound(
+        &mut self,
+        participant: Option<&str>,
+        participant_key: Option<&ParticipantPubkeyBytes>,
+        packet: &[u8],
+    ) {
+        let Some(peer) = self.peer_mut(participant, participant_key) else {
+            return;
+        };
+        let delta = match peer.role {
+            Some(FipsPaidRouteAccountingRole::LocalBuyer) => {
+                peer.accountant.record_outbound_packet(packet)
+            }
+            Some(FipsPaidRouteAccountingRole::LocalSeller) => {
+                peer.accountant.record_inbound_packet(packet)
+            }
+            None => return,
+        };
+        peer.pending.add_assign(&delta);
+    }
+
+    fn record_inbound(
+        &mut self,
+        participant: Option<&str>,
+        participant_key: Option<&ParticipantPubkeyBytes>,
+        packet: &[u8],
+    ) {
+        let Some(peer) = self.peer_mut(participant, participant_key) else {
+            return;
+        };
+        let delta = match peer.role {
+            Some(FipsPaidRouteAccountingRole::LocalBuyer) => {
+                peer.accountant.record_inbound_packet(packet)
+            }
+            Some(FipsPaidRouteAccountingRole::LocalSeller) => {
+                peer.accountant.record_outbound_packet(packet)
+            }
+            None => return,
+        };
+        peer.pending.add_assign(&delta);
+    }
+
+    fn drain(&mut self, participant: &str) -> PaidRouteUsage {
+        if let Some(key) = participant_pubkey_bytes(participant)
+            && let Some(peer) = self.peers.get_mut(&key)
+        {
+            return std::mem::take(&mut peer.pending);
+        }
+        PaidRouteUsage::default()
+    }
+
+    fn peer_mut(
+        &mut self,
+        participant: Option<&str>,
+        participant_key: Option<&ParticipantPubkeyBytes>,
+    ) -> Option<&mut FipsPaidRoutePeerAccounting> {
+        let key = participant_key
+            .copied()
+            .or_else(|| participant.and_then(participant_pubkey_bytes))?;
+        self.peers.get_mut(&key)
     }
 }
 

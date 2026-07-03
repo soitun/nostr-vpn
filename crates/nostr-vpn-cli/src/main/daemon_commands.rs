@@ -466,20 +466,24 @@ fn strip_cidr(value: &str) -> &str {
 fn expected_peer_count(config: &AppConfig) -> usize {
     let participants = config.participant_pubkeys_hex();
     let own_pubkey = config.own_nostr_pubkey_hex().ok();
-    let mut expected = participants
+    let expected = participants
         .iter()
         .filter(|participant| own_pubkey.as_deref() != Some(participant.as_str()))
         .count();
 
     #[cfg(feature = "paid-exit")]
-    if let Some(public_paid_exit) = config.public_paid_exit_node_pubkey_hex()
-        && own_pubkey.as_deref() != Some(public_paid_exit.as_str())
-        && !participants
-            .iter()
-            .any(|participant| participant == &public_paid_exit)
-    {
-        expected = expected.saturating_add(1);
-    }
+    let expected = {
+        let mut expected = expected;
+        if let Some(public_paid_exit) = config.public_paid_exit_node_pubkey_hex()
+            && own_pubkey.as_deref() != Some(public_paid_exit.as_str())
+            && !participants
+                .iter()
+                .any(|participant| participant == &public_paid_exit)
+        {
+            expected = expected.saturating_add(1);
+        }
+        expected
+    };
 
     expected
 }

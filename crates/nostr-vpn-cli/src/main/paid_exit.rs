@@ -88,6 +88,9 @@ struct PaidExitRunArgs {
     /// Price unit. Byte meters accept values like "1 MB" or "1 GB".
     #[arg(long, value_name = "UNITS")]
     per_units: Option<String>,
+    /// Minimum charge while a buyer is connected, prorated by active time.
+    #[arg(long)]
+    connection_minimum_msat_per_day: Option<u64>,
     /// Replace accepted Cashu mints with a comma-separated list. Empty clears them.
     #[arg(long)]
     accepted_mints: Option<String>,
@@ -618,6 +621,10 @@ fn paid_exit_status_json(app: &AppConfig) -> serde_json::Value {
         ),
         "per_units": config.pricing.per_units,
         "per_units_text": paid_exit_meter_unit_text(config.pricing.per_units, config.pricing.meter),
+        "connection_minimum_msat_per_day": config.pricing.connection_minimum_msat_per_day,
+        "connection_minimum_text": paid_exit_connection_minimum_text(
+            config.pricing.connection_minimum_msat_per_day,
+        ),
         "accepted_mints": &config.channel.accepted_mints,
         "max_channel_capacity_sat": config.channel.max_channel_capacity_sat,
         "channel_expiry_secs": config.channel.channel_expiry_secs,
@@ -650,7 +657,10 @@ fn print_paid_exit_status(app: &AppConfig) {
         }
     );
 
-    if !config.enabled && config.channel.accepted_mints.is_empty() && config.pricing.price_msat == 0
+    if !config.enabled
+        && config.channel.accepted_mints.is_empty()
+        && config.pricing.price_msat == 0
+        && config.pricing.connection_minimum_msat_per_day == 0
     {
         return;
     }
@@ -662,6 +672,10 @@ fn print_paid_exit_status(app: &AppConfig) {
             config.pricing.per_units,
             config.pricing.meter,
         )
+    );
+    println!(
+        "paid_exit_connection_minimum: {}",
+        paid_exit_connection_minimum_text(config.pricing.connection_minimum_msat_per_day)
     );
     println!(
         "paid_exit_access: upstream={} private_vpn_access={}",
@@ -708,6 +722,14 @@ fn paid_exit_price_text(price_msat: u64, per_units: u64, meter: PaidRouteMeter) 
         paid_exit_msat_text(price_msat),
         paid_exit_meter_unit_text(per_units, meter)
     )
+}
+
+fn paid_exit_connection_minimum_text(msat_per_day: u64) -> String {
+    if msat_per_day == 0 {
+        "none".to_string()
+    } else {
+        format!("{} / day", paid_exit_msat_text(msat_per_day))
+    }
 }
 
 fn paid_exit_meter_unit_text(per_units: u64, meter: PaidRouteMeter) -> String {
@@ -1373,6 +1395,7 @@ fn paid_route_lifecycle_status_text(status: PaidRouteLifecycleStatus) -> &'stati
         PaidRouteLifecycleStatus::Probing => "probing",
         PaidRouteLifecycleStatus::Active => "active",
         PaidRouteLifecycleStatus::Paused => "paused",
+        PaidRouteLifecycleStatus::Closing => "closing",
         PaidRouteLifecycleStatus::Closed => "closed",
         PaidRouteLifecycleStatus::Expired => "expired",
         PaidRouteLifecycleStatus::Failed => "failed",
@@ -1755,6 +1778,9 @@ fn apply_paid_exit_run_settings(app: &mut AppConfig, args: &PaidExitRunArgs) -> 
         app.paid_exit.pricing.per_units =
             paid_exit_parse_pricing_units_arg(value, app.paid_exit.pricing.meter, "--per-units")?;
     }
+    if let Some(value) = args.connection_minimum_msat_per_day {
+        app.paid_exit.pricing.connection_minimum_msat_per_day = value;
+    }
     if let Some(mints) = paid_exit_run_accepted_mints(args)? {
         app.paid_exit.channel.accepted_mints = mints;
     }
@@ -1884,13 +1910,34 @@ fn apply_paid_route_seller_payment(
     store: &mut PaidRouteStore,
     request: ApplyPaidRouteSellerPaymentRequest,
     receiver: Option<&FileSpilmanPaymentReceiver>,
+    receiver_error: Option<&str>,
 ) -> Result<nostr_vpn_core::paid_route_store::ApplyPaidRouteSellerPaymentResult> {
     match receiver {
         Some(receiver) => {
+            if let cashu_service::StreamingRoutePaymentPayload::ChannelOpen(open) =
+                &request.envelope.payload
+            {
+                let requested_receiver = open.receiver_pubkey_hex.trim();
+                let local_receiver = receiver.receiver_pubkey_hex();
+                if !requested_receiver.eq_ignore_ascii_case(local_receiver) {
+                    return Err(anyhow!(
+                        "paid route channel receiver pubkey {} does not match local receiver {}",
+                        requested_receiver,
+                        local_receiver
+                    ));
+                }
+            }
             let context = "{}".to_string();
             store.apply_seller_payment_with_spilman_receiver(request, receiver, &context)
         }
-        None => store.apply_seller_payment(request),
+        None => {
+            let detail = receiver_error
+                .filter(|error| !error.trim().is_empty())
+                .unwrap_or("receiver unavailable");
+            Err(anyhow!(
+                "paid exit Spilman receiver is unavailable ({detail}); refusing to apply unvalidated paid route payment"
+            ))
+        }
     }
 }
 
@@ -3541,6 +3588,7 @@ async fn paid_exit_apply_payment_command(args: PaidExitApplyPaymentArgs) -> Resu
             now_unix: unix_timestamp(),
         },
         spilman_receiver.as_ref(),
+        spilman_receiver_error.as_deref(),
     )?;
     if result.changed {
         write_paid_route_store(&store_path, &store)?;
@@ -3718,6 +3766,7 @@ async fn paid_exit_receive_payments_command(args: PaidExitReceivePaymentsArgs) -
                                         now_unix: unix_timestamp(),
                                     },
                                     spilman_receiver.as_ref(),
+                                    spilman_receiver_error.as_deref(),
                                 ) {
                                     Ok(result) => applied.push(json!({
                                         "event_id": event_id,

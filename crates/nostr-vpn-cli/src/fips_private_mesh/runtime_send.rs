@@ -76,6 +76,8 @@ impl FipsPrivateMeshRuntime {
             other_link_status: RwLock::new(HashMap::new()),
             peer_capabilities: RwLock::new(HashMap::new()),
             control_fragments: Mutex::new(ControlFragmentBuffer::default()),
+            #[cfg(feature = "paid-exit")]
+            paid_route_accounting: Mutex::new(FipsPaidRouteAccounting::default()),
         })
     }
 
@@ -89,6 +91,12 @@ impl FipsPrivateMeshRuntime {
             return Ok(false);
         };
         let bytes_len = outgoing.bytes.len();
+        #[cfg(feature = "paid-exit")]
+        self.note_paid_route_outbound_packet(
+            Some(outgoing.participant_pubkey),
+            outgoing.participant_pubkey_bytes,
+            &outgoing.bytes,
+        )?;
 
         self.send_endpoint_data(
             outgoing.participant_pubkey,
@@ -112,6 +120,12 @@ impl FipsPrivateMeshRuntime {
             return Ok(false);
         };
         let bytes_len = outgoing.bytes.len();
+        #[cfg(feature = "paid-exit")]
+        self.note_paid_route_outbound_packet(
+            Some(outgoing.participant_pubkey),
+            outgoing.participant_pubkey_bytes,
+            &outgoing.bytes,
+        )?;
 
         self.send_endpoint_data(
             outgoing.participant_pubkey,
@@ -339,6 +353,12 @@ impl FipsPrivateMeshRuntime {
             match run {
                 FipsEndpointSendRun::Identity(run) => {
                     let packet_count = run.payloads.len();
+                    #[cfg(feature = "paid-exit")]
+                    self.note_paid_route_outbound_payloads(
+                        run.participant_fallback.as_deref(),
+                        run.participant_key.as_ref(),
+                        &run.payloads,
+                    )?;
                     self.endpoint
                         .send_batch_to_peer(run.identity, run.payloads)
                         .await
@@ -370,6 +390,12 @@ impl FipsPrivateMeshRuntime {
             match run {
                 FipsEndpointSendRun::Identity(run) => {
                     let packet_count = run.payloads.len();
+                    #[cfg(feature = "paid-exit")]
+                    self.note_paid_route_outbound_payloads(
+                        run.participant_fallback.as_deref(),
+                        run.participant_key.as_ref(),
+                        &run.payloads,
+                    )?;
                     self.endpoint
                         .blocking_send_batch_to_peer(run.identity, run.payloads)
                         .with_context(|| {

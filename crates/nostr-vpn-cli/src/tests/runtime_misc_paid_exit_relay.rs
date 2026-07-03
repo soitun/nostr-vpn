@@ -329,7 +329,7 @@ async fn paid_exit_create_payment_command_updates_buyer_session() {
 
     let store = load_paid_route_store(&store_path).expect("load store");
     let record = &store.sessions[&session.session_id];
-    assert_eq!(record.session.usage.rx_bytes, 100);
+    assert_eq!(record.session.usage.billable_bytes, 100);
     assert_eq!(record.session.payment.paid_msat, 1_000);
     assert_eq!(
         record
@@ -404,6 +404,7 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
             usage_delta: PaidRouteUsage {
                 rx_bytes: 60,
                 tx_bytes: 50,
+                billable_bytes: 110,
                 ..PaidRouteUsage::default()
             },
             now_unix: 126,
@@ -546,6 +547,7 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
             usage_delta: PaidRouteUsage {
                 rx_bytes: 60,
                 tx_bytes: 50,
+                billable_bytes: 110,
                 ..PaidRouteUsage::default()
             },
             now_unix: 126,
@@ -646,4 +648,3 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
         }
     }
 }
-

@@ -122,12 +122,10 @@ use nostr_vpn_core::paid_route_store::{
     OpenPaidRouteBuyerSessionResult, PaidRouteBuyerPaymentUpdateDue,
     PaidRouteBuyerPaymentUpdatesDueRequest, PaidRouteChannelRecord, PaidRouteChannelRole,
     PaidRouteLifecycleStatus, PaidRouteSellerCollectionState, PaidRouteSessionRecord,
-    PaidRouteStore, UpdatePaidRouteSessionProbeRequest, UpdatePaidRouteSessionProbeResult,
-    load_paid_route_store, paid_route_store_file_path, upsert_paid_route_offer,
-    write_paid_route_store,
+    PaidRouteStore, RecordPaidRouteBuyerUsageRequest, RecordPaidRouteSellerUsageRequest,
+    UpdatePaidRouteSessionProbeRequest, UpdatePaidRouteSessionProbeResult, load_paid_route_store,
+    paid_route_store_file_path, upsert_paid_route_offer, write_paid_route_store,
 };
-#[cfg(all(test, feature = "paid-exit"))]
-use nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config;
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_routes::{
     ExitNetworkClass, PaidExitConfig, PaidExitUpstream, PaidRouteMeter, PaidRouteOffer,

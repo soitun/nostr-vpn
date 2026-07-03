@@ -1,8 +1,6 @@
 use crate::*;
 #[cfg(feature = "embedded-fips")]
 use fips_core::discovery::nostr::{OverlayEndpointAdvert, OverlayTransportKind};
-#[cfg(feature = "paid-exit")]
-use futures_util::{SinkExt, StreamExt};
 #[cfg(feature = "embedded-fips")]
 use nostr_sdk::prelude::{Keys, ToBech32};
 #[cfg(feature = "embedded-fips")]
@@ -10,15 +8,7 @@ use std::collections::HashSet;
 #[cfg(feature = "embedded-fips")]
 use std::net::Ipv4Addr;
 use std::path::Path;
-#[cfg(feature = "paid-exit")]
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-#[cfg(feature = "paid-exit")]
-use tokio::net::TcpListener;
-#[cfg(feature = "paid-exit")]
-use tokio::sync::oneshot;
-#[cfg(feature = "paid-exit")]
-use tokio_tungstenite::tungstenite::Message;
 
 #[test]
 fn daemon_vpn_requires_remote_participants_to_be_active() {
@@ -96,6 +86,7 @@ fn paid_exit_run_settings_prepare_public_fips_discovery() {
             meter: None,
             price_msat: None,
             per_units: None,
+            connection_minimum_msat_per_day: None,
             accepted_mints: None,
             accepted_mint: Vec::new(),
             country_code: None,

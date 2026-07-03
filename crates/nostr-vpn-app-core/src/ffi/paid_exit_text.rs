@@ -548,6 +548,7 @@ fn paid_route_lifecycle_status_text(status: PaidRouteLifecycleStatus) -> &'stati
         PaidRouteLifecycleStatus::Probing => "probing",
         PaidRouteLifecycleStatus::Active => "active",
         PaidRouteLifecycleStatus::Paused => "paused",
+        PaidRouteLifecycleStatus::Closing => "closing",
         PaidRouteLifecycleStatus::Closed => "closed",
         PaidRouteLifecycleStatus::Expired => "expired",
         PaidRouteLifecycleStatus::Failed => "failed",

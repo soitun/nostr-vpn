@@ -49,6 +49,7 @@ fn paid_exit_status_snapshot_reports_store_sessions_and_routing() {
         .expect("stored session")
         .session;
     session.usage.rx_bytes = 100;
+    session.usage.billable_bytes = 100;
     session.realized_exit_ip = Some("198.51.100.42".to_string());
     session.observed_country_code = Some("FI".to_string());
     session.quality = Some(PaidRouteQualityMetrics {
@@ -505,6 +506,7 @@ fn paid_exit_run_once_enables_seller_and_stores_offer() {
         meter: Some("bytes".to_string()),
         price_msat: Some(250),
         per_units: Some("1 MB".to_string()),
+        connection_minimum_msat_per_day: Some(86_400),
         accepted_mints: Some("https://mint.example".to_string()),
         accepted_mint: vec!["https://other-mint.example".to_string()],
         country_code: Some("fi".to_string()),
@@ -534,6 +536,7 @@ fn paid_exit_run_once_enables_seller_and_stores_offer() {
     assert!(app.paid_exit.enabled);
     assert_eq!(app.paid_exit.pricing.price_msat, 250);
     assert_eq!(app.paid_exit.pricing.per_units, 1_000_000);
+    assert_eq!(app.paid_exit.pricing.connection_minimum_msat_per_day, 86_400);
     assert_eq!(app.paid_exit.location.country_code, "FI");
     assert_eq!(
         app.paid_exit.location.network_class,
@@ -548,12 +551,20 @@ fn paid_exit_run_once_enables_seller_and_stores_offer() {
     );
     assert_eq!(result.offer.offer_id, "starlink-fi");
     assert_eq!(result.offer.pricing.price_msat, 250);
+    assert_eq!(
+        result.offer.pricing.connection_minimum_msat_per_day,
+        86_400
+    );
     assert_eq!(result.offer.access.private_vpn_access.as_str(), "denied");
     assert!(result.publish.is_none());
     assert!(!result.daemon_reload_attempted);
     assert_eq!(store.offers.len(), 1);
     assert_eq!(store.wallet.mints.len(), 2);
     assert_eq!(result.status["counts"]["offers"].as_u64(), Some(1));
+    assert_eq!(
+        result.status["config"]["connection_minimum_msat_per_day"].as_u64(),
+        Some(86_400)
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -583,6 +594,7 @@ fn paid_exit_run_once_rejects_incomplete_wireguard_upstream() {
         meter: Some("bytes".to_string()),
         price_msat: Some(500),
         per_units: Some("1 MB".to_string()),
+        connection_minimum_msat_per_day: None,
         accepted_mints: Some("https://mint.example".to_string()),
         accepted_mint: vec![],
         country_code: Some("fi".to_string()),
@@ -642,6 +654,7 @@ fn paid_exit_run_once_enables_configured_wireguard_upstream() {
             meter: Some("bytes".to_string()),
             price_msat: Some(500),
             per_units: Some("1 MB".to_string()),
+            connection_minimum_msat_per_day: None,
             accepted_mints: Some("https://mint.example".to_string()),
             accepted_mint: vec![],
             country_code: Some("fi".to_string()),
@@ -697,4 +710,3 @@ fn paid_exit_advertisable_rejects_disabled_wireguard_upstream() {
 
     assert!(error.to_string().contains("wireguard_exit is disabled"));
 }
-

@@ -405,6 +405,8 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) fips_host: Option<FipsHostTunnelConfig>,
     pub(crate) local_advertised_routes: Vec<String>,
     pub(crate) paid_route_admissions: Vec<FipsPaidRouteAdmission>,
+    #[cfg(feature = "paid-exit")]
+    pub(crate) paid_route_accounting_peers: Vec<FipsPaidRouteAccountingPeer>,
     pub(crate) paid_exit: PaidExitConfig,
     pub(crate) paid_route_store_path: PathBuf,
     pub(crate) paid_route_wallet_data_dir: PathBuf,

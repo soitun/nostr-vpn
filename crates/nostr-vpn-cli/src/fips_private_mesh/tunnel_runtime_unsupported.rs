@@ -17,6 +17,11 @@ impl FipsPrivateTunnelRuntime {
         Vec::new()
     }
 
+    #[cfg(feature = "paid-exit")]
+    pub(crate) fn drain_paid_route_usage(&self, _participant: &str) -> Result<PaidRouteUsage> {
+        Ok(PaidRouteUsage::default())
+    }
+
     pub(crate) fn stale_participants_needing_path_refresh(&self, _now: u64) -> Vec<String> {
         Vec::new()
     }

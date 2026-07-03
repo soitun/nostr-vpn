@@ -29,8 +29,12 @@ use nostr_vpn_core::fips_mesh::{
 };
 use nostr_vpn_core::join_requests::MeshJoinRequest;
 #[cfg(feature = "paid-exit")]
+use nostr_vpn_core::paid_route_accounting::PaidRouteTrafficAccountant;
+#[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_route_store::PaidRouteSellerAdmission;
 use nostr_vpn_core::paid_routes::PaidExitConfig;
+#[cfg(feature = "paid-exit")]
+use nostr_vpn_core::paid_routes::PaidRouteUsage;
 use sha2::{Digest, Sha256};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::collections::VecDeque;
@@ -248,6 +252,8 @@ pub(crate) struct FipsPrivateMeshRuntime {
     other_link_status: RwLock<HashMap<String, FipsEndpointPeer>>,
     peer_capabilities: RwLock<HashMap<String, PeerCapabilitiesEntry>>,
     control_fragments: Mutex<ControlFragmentBuffer>,
+    #[cfg(feature = "paid-exit")]
+    paid_route_accounting: Mutex<FipsPaidRouteAccounting>,
 }
 
 include!("fips_private_mesh/direct_endpoint_lanes.rs");
