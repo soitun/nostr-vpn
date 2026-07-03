@@ -295,26 +295,6 @@ impl FipsPrivateMeshRuntime {
     }
 
     #[cfg(feature = "paid-exit")]
-    fn note_paid_route_outbound_payloads(
-        &self,
-        participant: Option<&str>,
-        participant_key: Option<&ParticipantPubkeyBytes>,
-        payloads: &[Vec<u8>],
-    ) -> Result<()> {
-        if payloads.is_empty() {
-            return Ok(());
-        }
-        let mut accounting = self
-            .paid_route_accounting
-            .lock()
-            .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
-        for payload in payloads {
-            accounting.record_outbound(participant, participant_key, payload);
-        }
-        Ok(())
-    }
-
-    #[cfg(feature = "paid-exit")]
     fn note_paid_route_outbound_packet(
         &self,
         participant: Option<&str>,

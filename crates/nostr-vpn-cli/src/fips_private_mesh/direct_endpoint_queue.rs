@@ -1,17 +1,22 @@
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct FipsDirectEndpointDataSink {
-    lanes: Vec<Arc<FipsDirectEndpointDataLane>>,
+    queue: Arc<FipsDirectEndpointQueue>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-struct FipsDirectEndpointDataLane {
-    state: Mutex<FipsDirectEndpointDataLaneState>,
+struct FipsDirectEndpointDataRx {
+    queue: Arc<FipsDirectEndpointQueue>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct FipsDirectEndpointQueue {
+    state: Mutex<FipsDirectEndpointQueueState>,
     ready: Condvar,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Default)]
-struct FipsDirectEndpointDataLaneState {
+struct FipsDirectEndpointQueueState {
     batches: VecDeque<FipsDirectEndpointQueuedRuns>,
 }
 
@@ -21,6 +26,17 @@ struct FipsDirectEndpointQueuedRuns {
     packets: usize,
     source_node_addr: Option<[u8; 16]>,
     enqueued_at: Option<Instant>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn fips_direct_endpoint_queue_pair() -> (FipsDirectEndpointDataSink, FipsDirectEndpointDataRx) {
+    let queue = Arc::new(FipsDirectEndpointQueue::new());
+    (
+        FipsDirectEndpointDataSink {
+            queue: Arc::clone(&queue),
+        },
+        FipsDirectEndpointDataRx { queue },
+    )
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -60,54 +76,30 @@ impl FipsDirectEndpointDataSink {
         &self,
         batch: FipsEndpointDirectPacketBatch,
     ) -> Result<(), FipsEndpointDirectDeliveryError> {
-        if batch
-            .packet_runs()
-            .iter()
-            .all(FipsEndpointDirectPacketRun::is_empty)
-        {
-            return Ok(());
-        }
-        if self.lanes.len() <= 1 {
-            return self.deliver_packet_runs_to_lane(0, batch.into_packet_runs());
-        }
-
-        self.deliver_packet_runs_by_lane(batch.into_packet_runs())
-    }
-
-    fn deliver_packet_runs_by_lane(
-        &self,
-        runs: Vec<FipsEndpointDirectPacketRun>,
-    ) -> Result<(), FipsEndpointDirectDeliveryError> {
-        let mut lane_runs: Vec<Vec<FipsEndpointDirectPacketRun>> =
-            (0..self.lanes.len()).map(|_| Vec::new()).collect();
-        for run in runs {
-            if run.is_empty() {
-                continue;
-            }
-            push_direct_packet_run_by_lane(run, self.lanes.len(), &mut lane_runs);
-        }
-        for (lane, runs) in lane_runs.into_iter().enumerate() {
-            if !runs.is_empty() {
-                self.deliver_packet_runs_to_lane(lane, runs)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn deliver_packet_runs_to_lane(
-        &self,
-        lane: usize,
-        runs: Vec<FipsEndpointDirectPacketRun>,
-    ) -> Result<(), FipsEndpointDirectDeliveryError> {
-        self.lanes[lane].push(runs)
+        self.queue.push(batch.into_packet_runs())
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-impl FipsDirectEndpointDataLane {
+impl FipsDirectEndpointDataRx {
+    fn recv_source_batch_timeout(
+        &self,
+        timeout: Duration,
+        limit: usize,
+    ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::RecvTimeoutError> {
+        self.queue.recv_source_batch_timeout(timeout, limit)
+    }
+
+    fn try_recv(&self) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
+        self.queue.try_recv()
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl FipsDirectEndpointQueue {
     fn new() -> Self {
         Self {
-            state: Mutex::new(FipsDirectEndpointDataLaneState::default()),
+            state: Mutex::new(FipsDirectEndpointQueueState::default()),
             ready: Condvar::new(),
         }
     }
@@ -180,7 +172,7 @@ impl FipsDirectEndpointDataLane {
             let mut next = state
                 .batches
                 .pop_front()
-                .expect("front batch must remain present while lane lock is held");
+                .expect("front batch must remain present while queue lock is held");
             crate::pipeline_profile::record_since(
                 crate::pipeline_profile::Stage::DirectEndpointQueue,
                 next.enqueued_at,
@@ -226,26 +218,6 @@ impl FipsDirectEndpointDataLane {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn push_direct_packet_run_by_lane(
-    run: FipsEndpointDirectPacketRun,
-    lane_count: usize,
-    lane_runs: &mut [Vec<FipsEndpointDirectPacketRun>],
-) {
-    if lane_count == 0 || run.is_empty() {
-        return;
-    }
-
-    let source_node_addr = *run.source_node_addr().as_bytes();
-    for (lane, lane_run) in run.partition_by_packet_lane(lane_count, |packet| {
-        direct_endpoint_lane_key_for_packet(&source_node_addr, packet)
-    }) {
-        if !lane_run.is_empty() {
-            lane_runs[lane].push(lane_run);
-        }
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn direct_packet_runs_len(runs: &[FipsEndpointDirectPacketRun]) -> usize {
     runs.iter().map(FipsEndpointDirectPacketRun::len).sum()
 }
@@ -254,7 +226,7 @@ fn direct_packet_runs_len(runs: &[FipsEndpointDirectPacketRun]) -> usize {
 fn limit_queued_direct_endpoint_runs_to_remaining(
     queued: &mut FipsDirectEndpointQueuedRuns,
     remaining: usize,
-    state: &mut FipsDirectEndpointDataLaneState,
+    state: &mut FipsDirectEndpointQueueState,
 ) {
     if queued.packets <= remaining {
         return;
@@ -328,69 +300,4 @@ fn direct_packet_runs_single_source_node_addr(
     runs.iter()
         .all(|run| run.source_node_addr().as_bytes() == &first)
         .then_some(first)
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn direct_endpoint_lane_key_for_node_addr(source_node_addr: &[u8; 16]) -> usize {
-    let mut lane = 2_166_136_261usize;
-    for byte in source_node_addr {
-        direct_endpoint_lane_key_mix(&mut lane, *byte);
-    }
-    lane
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn direct_endpoint_lane_key_for_packet(source_node_addr: &[u8; 16], packet: &[u8]) -> usize {
-    let mut key = direct_endpoint_lane_key_for_node_addr(source_node_addr);
-    match packet.first().map(|byte| byte >> 4) {
-        Some(4) => direct_endpoint_lane_key_mix_ipv4(&mut key, packet),
-        Some(6) => direct_endpoint_lane_key_mix_ipv6(&mut key, packet),
-        _ => {}
-    }
-    key
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn direct_endpoint_lane_key_mix_ipv4(key: &mut usize, packet: &[u8]) {
-    if packet.len() < 20 {
-        return;
-    }
-    let header_len = usize::from(packet[0] & 0x0f) * 4;
-    if header_len < 20 || packet.len() < header_len {
-        return;
-    }
-    let protocol = packet[9];
-    direct_endpoint_lane_key_mix(key, protocol);
-    for byte in &packet[12..20] {
-        direct_endpoint_lane_key_mix(key, *byte);
-    }
-    let fragment = u16::from_be_bytes([packet[6], packet[7]]);
-    let fragmented = fragment & 0x3fff != 0;
-    if !fragmented && matches!(protocol, 6 | 17) && packet.len() >= header_len.saturating_add(4) {
-        for byte in &packet[header_len..header_len + 4] {
-            direct_endpoint_lane_key_mix(key, *byte);
-        }
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn direct_endpoint_lane_key_mix_ipv6(key: &mut usize, packet: &[u8]) {
-    if packet.len() < 40 {
-        return;
-    }
-    let next_header = packet[6];
-    direct_endpoint_lane_key_mix(key, next_header);
-    for byte in &packet[8..40] {
-        direct_endpoint_lane_key_mix(key, *byte);
-    }
-    if matches!(next_header, 6 | 17) && packet.len() >= 44 {
-        for byte in &packet[40..44] {
-            direct_endpoint_lane_key_mix(key, *byte);
-        }
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn direct_endpoint_lane_key_mix(key: &mut usize, byte: u8) {
-    *key = key.wrapping_mul(16_777_619) ^ usize::from(byte);
 }

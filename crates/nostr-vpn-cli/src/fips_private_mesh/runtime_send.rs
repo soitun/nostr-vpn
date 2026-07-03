@@ -25,18 +25,7 @@ impl FipsPrivateMeshRuntime {
     ) -> Result<Self> {
         let scope = scope.into();
         #[cfg(any(target_os = "linux", target_os = "macos"))]
-        let (direct_endpoint_sink, direct_endpoint_rx) = {
-            // This queue carries authenticated packet-runs; live IP policy is applied on drain.
-            let lane_count = FIPS_DIRECT_ENDPOINT_RX_LANES.max(1);
-            let mut lanes = Vec::with_capacity(lane_count);
-            let mut receivers = Vec::with_capacity(lane_count);
-            for _ in 0..lane_count {
-                let lane = Arc::new(FipsDirectEndpointDataLane::new());
-                lanes.push(Arc::clone(&lane));
-                receivers.push(lane);
-            }
-            (FipsDirectEndpointDataSink { lanes }, receivers)
-        };
+        let (direct_endpoint_sink, direct_endpoint_rx) = fips_direct_endpoint_queue_pair();
 
         let endpoint_builder = FipsEndpoint::builder()
             .config(config)
@@ -160,6 +149,12 @@ impl FipsPrivateMeshRuntime {
                 continue;
             };
             let participant_key = outgoing.participant_pubkey_bytes.copied();
+            #[cfg(feature = "paid-exit")]
+            self.note_paid_route_outbound_packet(
+                Some(outgoing.participant_pubkey),
+                outgoing.participant_pubkey_bytes,
+                &outgoing.bytes,
+            )?;
             Self::push_endpoint_send_run(
                 &mut runs,
                 &peer_identities,
@@ -278,6 +273,12 @@ impl FipsPrivateMeshRuntime {
                     );
                 }
                 let participant_key = routed.participant_pubkey_bytes;
+                #[cfg(feature = "paid-exit")]
+                self.note_paid_route_outbound_packet(
+                    Some(routed.participant_pubkey),
+                    routed.participant_pubkey_bytes.as_ref(),
+                    &routed.bytes,
+                )?;
                 Self::push_endpoint_send_run(
                     runs,
                     &peer_identities,
@@ -309,13 +310,10 @@ impl FipsPrivateMeshRuntime {
         endpoint_node_addr: &[u8; 16],
         payload: Vec<u8>,
     ) {
-        let bytes_len = payload.len();
-
         if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
             && run.matches_endpoint(endpoint_node_addr, participant_key, participant_pubkey)
         {
-            run.bytes_len += bytes_len;
-            run.payloads.push(payload);
+            run.push_payload(payload);
             return;
         }
 
@@ -327,20 +325,20 @@ impl FipsPrivateMeshRuntime {
             if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
                 && run.matches(identity, participant_key, participant_pubkey)
             {
-                run.bytes_len += bytes_len;
-                run.payloads.push(payload);
+                run.push_payload(payload);
                 return;
             }
 
-            runs.push(FipsEndpointSendRun::Identity(FipsEndpointIdentitySendRun {
-                participant_fallback: participant_key
+            if let Some(run) = FipsEndpointIdentitySendRun::new(
+                participant_key
                     .is_none()
                     .then(|| participant_pubkey.to_string()),
                 participant_key,
                 identity,
-                payloads: vec![payload],
-                bytes_len,
-            }));
+                payload,
+            ) {
+                runs.push(FipsEndpointSendRun::Identity(run));
+            }
         }
     }
 
@@ -352,25 +350,26 @@ impl FipsPrivateMeshRuntime {
         for run in runs {
             match run {
                 FipsEndpointSendRun::Identity(run) => {
-                    let packet_count = run.payloads.len();
-                    #[cfg(feature = "paid-exit")]
-                    self.note_paid_route_outbound_payloads(
-                        run.participant_fallback.as_deref(),
-                        run.participant_key.as_ref(),
-                        &run.payloads,
-                    )?;
+                    let (
+                        participant_fallback,
+                        participant_key,
+                        identity,
+                        bulk_bodies,
+                        packet_count,
+                        bytes_len,
+                    ) = run.into_send_parts();
                     self.endpoint
-                        .send_batch_to_peer(run.identity, run.payloads)
+                        .send_endpoint_bulk_data_batch_to_peer(identity, bulk_bodies)
                         .await
                         .with_context(|| {
                             format!(
                                 "failed to send {packet_count} private packets over FIPS endpoint data"
                             )
-                    })?;
+                        })?;
                     self.note_tx(
-                        run.participant_fallback.as_deref(),
-                        run.participant_key.as_ref(),
-                        run.bytes_len,
+                        participant_fallback.as_deref(),
+                        participant_key.as_ref(),
+                        bytes_len,
                     )?;
                     sent += packet_count;
                 }
@@ -389,24 +388,25 @@ impl FipsPrivateMeshRuntime {
         for run in runs {
             match run {
                 FipsEndpointSendRun::Identity(run) => {
-                    let packet_count = run.payloads.len();
-                    #[cfg(feature = "paid-exit")]
-                    self.note_paid_route_outbound_payloads(
-                        run.participant_fallback.as_deref(),
-                        run.participant_key.as_ref(),
-                        &run.payloads,
-                    )?;
+                    let (
+                        participant_fallback,
+                        participant_key,
+                        identity,
+                        bulk_bodies,
+                        packet_count,
+                        bytes_len,
+                    ) = run.into_send_parts();
                     self.endpoint
-                        .blocking_send_batch_to_peer(run.identity, run.payloads)
+                        .blocking_send_endpoint_bulk_data_batch_to_peer(identity, bulk_bodies)
                         .with_context(|| {
                             format!(
                                 "failed to send {packet_count} private packets over FIPS endpoint data"
                             )
                         })?;
                     self.note_tx(
-                        run.participant_fallback.as_deref(),
-                        run.participant_key.as_ref(),
-                        run.bytes_len,
+                        participant_fallback.as_deref(),
+                        participant_key.as_ref(),
+                        bytes_len,
                     )?;
                     sent += packet_count;
                 }

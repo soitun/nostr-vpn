@@ -139,16 +139,13 @@ impl FipsPrivateMeshRuntime {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn recv_direct_endpoint_tun_batch_blocking(
         &self,
-        lane: usize,
         limit: usize,
         stop: &AtomicBool,
         packet_outputs: &mut DirectTunWriteBatch,
         event_tx: Option<&mpsc::Sender<FipsPrivateMeshEvent>>,
     ) -> Result<Option<usize>> {
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
-        let Some(rx) = self.direct_endpoint_rx.get(lane) else {
-            return Ok(None);
-        };
+        let rx = &self.direct_endpoint_rx;
 
         loop {
             if stop.load(Ordering::Acquire) {
@@ -496,20 +493,18 @@ impl FipsPrivateMeshRuntime {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     async fn drain_direct_endpoint_mesh_events(&self, limit: usize) -> Result<usize> {
         let mut events = Vec::new();
-        for rx in &self.direct_endpoint_rx {
-            while events.len() < limit {
-                let runs = match rx.try_recv() {
-                    Ok(runs) => runs,
-                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(0),
-                };
-                self.direct_endpoint_packet_runs_to_mesh_events(
-                    runs,
-                    Some(unix_timestamp()),
-                    &mut events,
-                )
-                .await?;
-            }
+        while events.len() < limit {
+            let runs = match self.direct_endpoint_rx.try_recv() {
+                Ok(runs) => runs,
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(0),
+            };
+            self.direct_endpoint_packet_runs_to_mesh_events(
+                runs,
+                Some(unix_timestamp()),
+                &mut events,
+            )
+            .await?;
         }
 
         let drained = events.len();

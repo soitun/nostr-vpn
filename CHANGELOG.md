@@ -9,6 +9,11 @@ All notable changes to this project are documented in this file.
 - Added the public iOS App Store download link alongside the TestFlight beta
   link in the README now that Nostr VPN is eligible for distribution.
 
+### Changed
+
+- Bumped to FIPS 0.3.78/0.3.53 for the direct endpoint dataplane APIs used by
+  the Linux direct TUN fast path.
+
 ## 4.0.87 - 2026-06-22
 
 ### Fixed

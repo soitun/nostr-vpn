@@ -295,7 +295,7 @@ impl FipsPaidRouteAccounting {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 struct FipsMeshRecvWorker {
     stop: Arc<AtomicBool>,
-    threads: Vec<std::thread::JoinHandle<()>>,
+    thread: std::thread::JoinHandle<()>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -438,11 +438,71 @@ struct FipsEndpointIdentitySendRun {
     participant_fallback: Option<String>,
     participant_key: Option<ParticipantPubkeyBytes>,
     identity: PeerIdentity,
-    payloads: Vec<Vec<u8>>,
+    bulk_bodies: Vec<FipsEndpointBulkData>,
+    current_bulk: FipsEndpointBulkDataBuilder,
+    packet_count: usize,
     bytes_len: usize,
 }
 
 impl FipsEndpointIdentitySendRun {
+    fn new(
+        participant_fallback: Option<String>,
+        participant_key: Option<ParticipantPubkeyBytes>,
+        identity: PeerIdentity,
+        payload: Vec<u8>,
+    ) -> Option<Self> {
+        let mut run = Self {
+            participant_fallback,
+            participant_key,
+            identity,
+            bulk_bodies: Vec::new(),
+            current_bulk: FipsEndpointBulkDataBuilder::new(),
+            packet_count: 0,
+            bytes_len: 0,
+        };
+        run.push_payload(payload).then_some(run)
+    }
+
+    fn push_payload(&mut self, payload: Vec<u8>) -> bool {
+        let bytes_len = payload.len();
+        if !self.current_bulk.can_push_packet(&payload) {
+            self.finish_current_bulk();
+        }
+        if !self.current_bulk.push_packet(&payload) {
+            return false;
+        }
+        self.packet_count = self.packet_count.saturating_add(1);
+        self.bytes_len = self.bytes_len.saturating_add(bytes_len);
+        true
+    }
+
+    fn finish_current_bulk(&mut self) {
+        if let Some(body) = std::mem::take(&mut self.current_bulk).finish() {
+            self.bulk_bodies.push(body);
+        }
+    }
+
+    fn into_send_parts(
+        mut self,
+    ) -> (
+        Option<String>,
+        Option<ParticipantPubkeyBytes>,
+        PeerIdentity,
+        Vec<FipsEndpointBulkData>,
+        usize,
+        usize,
+    ) {
+        self.finish_current_bulk();
+        (
+            self.participant_fallback,
+            self.participant_key,
+            self.identity,
+            self.bulk_bodies,
+            self.packet_count,
+            self.bytes_len,
+        )
+    }
+
     fn matches(
         &self,
         identity: PeerIdentity,
