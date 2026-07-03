@@ -90,18 +90,23 @@ impl FipsPrivateTunnelConfig {
         // Persisted private static hints come from old invites and only make
         // sense while we are still on that LAN, so drop them before fips gives
         // configured addresses first shot over discovery/NAT candidates.
-        let mut desired_endpoint_hint_npubs = app
+        let desired_endpoint_hint_npubs = app
             .active_network_signal_pubkeys_hex()
             .into_iter()
             .filter(|participant| Some(participant.as_str()) != own_pubkey)
             .map(|participant| normalize_fips_endpoint_npub(&participant))
             .collect::<std::collections::HashSet<_>>();
         #[cfg(feature = "paid-exit")]
-        if let Some(public_paid_exit) = app.public_paid_exit_node_pubkey_hex()
-            && Some(public_paid_exit.as_str()) != own_pubkey
-        {
-            desired_endpoint_hint_npubs.insert(normalize_fips_endpoint_npub(&public_paid_exit));
-        }
+        let desired_endpoint_hint_npubs = {
+            let mut desired_endpoint_hint_npubs = desired_endpoint_hint_npubs;
+            if let Some(public_paid_exit) = app.public_paid_exit_node_pubkey_hex()
+                && Some(public_paid_exit.as_str()) != own_pubkey
+            {
+                desired_endpoint_hint_npubs
+                    .insert(normalize_fips_endpoint_npub(&public_paid_exit));
+            }
+            desired_endpoint_hint_npubs
+        };
         let nostr_discovery_policy = fips_nostr_discovery_policy_from_app(app);
         let allow_non_roster_transit = nostr_discovery_policy == NostrDiscoveryPolicy::Open;
         let tunnel_endpoint_hosts = fips_tunnel_endpoint_hosts(app, network_id);
