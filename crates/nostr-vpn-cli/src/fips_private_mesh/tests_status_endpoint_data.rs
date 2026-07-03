@@ -79,6 +79,30 @@
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn local_tun_pipeline_packets_are_partitioned_before_mesh_send() {
+        let source = Ipv4Addr::new(10, 44, 10, 1);
+        let local_destination = Ipv4Addr::new(10, 44, 10, 2);
+        let mesh_destination = Ipv4Addr::new(10, 44, 22, 44);
+        let local_packet = ipv4_packet(source, local_destination);
+        let mesh_packet = ipv4_packet(source, mesh_destination);
+        let mut local_tunnel_ips = HashSet::new();
+        local_tunnel_ips.insert(IpAddr::V4(local_destination));
+
+        let packets = vec![
+            TunPipelinePacket::new(local_packet.clone()),
+            TunPipelinePacket::new(mesh_packet.clone()),
+        ];
+        let (local_packets, mesh_packets) =
+            super::partition_local_tun_pipeline_packets(&local_tunnel_ips, packets);
+
+        assert_eq!(local_packets.len(), 1);
+        assert_eq!(mesh_packets.len(), 1);
+        assert_eq!(local_packets[0].bytes, local_packet);
+        assert_eq!(mesh_packets[0].bytes, mesh_packet);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
     async fn endpoint_data_runtime_sends_tun_pipeline_batch_without_repacking() {
         let keys = Keys::generate();
@@ -325,6 +349,7 @@
             direct_udp_endpoint_config(alice_port, &bob_npub, bob_port, true),
             vec![format!("{old_source}/32"), format!("{new_source}/32")],
             Vec::new(),
+            Vec::new(),
         )
         .await
         .expect("alice endpoint should bind");
@@ -338,6 +363,7 @@
             }],
             direct_udp_endpoint_config(bob_port, &alice_npub, alice_port, false),
             vec![format!("{destination}/32")],
+            Vec::new(),
             Vec::new(),
         )
         .await
@@ -359,7 +385,7 @@
             let mut packets = DirectTunWriteBatch::with_capacity(1);
 
             let emitted = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(0, 1, &stop, &mut packets, None)?
+                .recv_direct_endpoint_tun_batch_blocking(1, &stop, &mut packets, None)?
                 .expect("warmup packet should be admitted");
             assert_eq!(emitted, 1);
             assert_eq!(packets.len(), 1);
@@ -396,14 +422,8 @@
             let mut packets = DirectTunWriteBatch::with_capacity(4);
 
             let emitted = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(
-                    0,
-                    8,
-                    &thread_stop,
-                    &mut packets,
-                    None,
-                )?
-            .expect("new-config packet should be admitted");
+                .recv_direct_endpoint_tun_batch_blocking(8, &thread_stop, &mut packets, None)?
+                .expect("new-config packet should be admitted");
             assert!(emitted >= 1);
             assert_eq!(packets.len(), emitted);
             for packet in packets.packet_slices_for_test() {
@@ -484,6 +504,7 @@
             direct_udp_endpoint_config(alice_port, &bob_npub, bob_port, true),
             vec![format!("{source}/32")],
             Vec::new(),
+            Vec::new(),
         )
         .await
         .expect("alice endpoint should bind");
@@ -497,6 +518,7 @@
             }],
             direct_udp_endpoint_config(bob_port, &alice_npub, alice_port, false),
             vec![format!("{destination}/32")],
+            Vec::new(),
             Vec::new(),
         )
         .await
@@ -520,7 +542,7 @@
             let mut packets = DirectTunWriteBatch::with_capacity(1);
 
             let received = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(0, 1, &stop, &mut packets, None)?
+                .recv_direct_endpoint_tun_batch_blocking(1, &stop, &mut packets, None)?
                 .expect("warmup packet should be admitted");
             assert_eq!(received, 1);
             assert_eq!(packets.len(), 1);
@@ -543,13 +565,7 @@
             let mut packets = DirectTunWriteBatch::with_capacity(8);
 
             let received = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(
-                    0,
-                    2,
-                    &stop,
-                    &mut packets,
-                    None,
-                )?
+                .recv_direct_endpoint_tun_batch_blocking(2, &stop, &mut packets, None)?
                 .expect("batch should contain admitted packets");
             assert_eq!(received, 2);
 
@@ -560,13 +576,7 @@
             packets.clear();
 
             let received = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(
-                    0,
-                    8,
-                    &stop,
-                    &mut packets,
-                    None,
-                )?
+                .recv_direct_endpoint_tun_batch_blocking(8, &stop, &mut packets, None)?
                 .expect("batch should contain admitted packets");
             assert_eq!(received, 1);
 

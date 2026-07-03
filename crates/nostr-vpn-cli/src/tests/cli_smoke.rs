@@ -1,6 +1,10 @@
-use clap::{CommandFactory, Parser, error::ErrorKind};
+#[cfg(feature = "paid-exit")]
+use clap::Parser;
+use clap::{CommandFactory, error::ErrorKind};
 
-use crate::{Cli, Command, PaidExitCommand};
+use crate::Cli;
+#[cfg(feature = "paid-exit")]
+use crate::{Command, PaidExitCommand};
 
 #[test]
 fn clap_binary_name_is_nvpn() {

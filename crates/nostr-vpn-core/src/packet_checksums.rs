@@ -8,6 +8,15 @@
 
 #![allow(clippy::cast_possible_truncation)]
 
+/// Recompute TCP/UDP checksums for supported IP packets in-place.
+pub fn finalize_transport_checksum(packet: &mut [u8]) {
+    match packet.first().map(|byte| byte >> 4) {
+        Some(4) => finalize_ipv4_transport_checksum(packet),
+        Some(6) => finalize_ipv6_transport_checksum(packet),
+        _ => {}
+    }
+}
+
 /// Recompute IPv4 TCP/UDP checksums in-place.
 ///
 /// This is intentionally conservative: it only touches complete, unfragmented
@@ -59,6 +68,39 @@ pub fn finalize_ipv4_transport_checksum(packet: &mut [u8]) {
     }
 }
 
+/// Recompute IPv6 TCP/UDP checksums in-place.
+///
+/// This handles the simple packets our tunnel pipeline carries today: a fixed
+/// 40-byte IPv6 header followed directly by TCP or UDP. Extension-header
+/// packets are left untouched.
+pub fn finalize_ipv6_transport_checksum(packet: &mut [u8]) {
+    if packet.len() < 40 || packet[0] >> 4 != 6 {
+        return;
+    }
+
+    let payload_len = usize::from(u16::from_be_bytes([packet[4], packet[5]]));
+    if payload_len == 0 || 40 + payload_len > packet.len() {
+        return;
+    }
+
+    let protocol = packet[6];
+    let checksum_offset = match protocol {
+        6 if payload_len >= 20 => 40 + 16,
+        17 if payload_len >= 8 => 40 + 6,
+        _ => return,
+    };
+
+    packet[checksum_offset] = 0;
+    packet[checksum_offset + 1] = 0;
+    let checksum = ipv6_transport_checksum(packet, payload_len, protocol);
+    let checksum = if protocol == 17 && checksum == 0 {
+        0xffff
+    } else {
+        checksum
+    };
+    packet[checksum_offset..checksum_offset + 2].copy_from_slice(&checksum.to_be_bytes());
+}
+
 fn ipv4_transport_checksum(packet: &[u8], ihl: usize, transport_len: usize, protocol: u8) -> u16 {
     let mut sum = 0_u32;
     sum = add_words(sum, &packet[12..16]);
@@ -66,6 +108,15 @@ fn ipv4_transport_checksum(packet: &[u8], ihl: usize, transport_len: usize, prot
     sum += u32::from(protocol);
     sum += transport_len as u32;
     sum = add_words(sum, &packet[ihl..ihl + transport_len]);
+    finalize_sum(sum)
+}
+
+fn ipv6_transport_checksum(packet: &[u8], payload_len: usize, protocol: u8) -> u16 {
+    let mut sum = 0_u32;
+    sum = add_words(sum, &packet[8..40]);
+    sum += payload_len as u32;
+    sum += u32::from(protocol);
+    sum = add_words(sum, &packet[40..40 + payload_len]);
     finalize_sum(sum)
 }
 
@@ -90,7 +141,7 @@ fn finalize_sum(mut sum: u32) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::Ipv4Addr;
+    use std::net::{Ipv4Addr, Ipv6Addr};
 
     fn tcp_packet(src: Ipv4Addr, dst: Ipv4Addr) -> Vec<u8> {
         let total_len = 20 + 20;
@@ -125,6 +176,44 @@ mod tests {
         packet[24..26].copy_from_slice(&(8_u16 + payload.len() as u16).to_be_bytes());
         packet[26..28].copy_from_slice(&0xbeef_u16.to_be_bytes());
         packet[28..].copy_from_slice(payload);
+        packet
+    }
+
+    fn ipv6_tcp_ack_packet(src: Ipv6Addr, dst: Ipv6Addr) -> Vec<u8> {
+        let payload_len = 20;
+        let mut packet = vec![0_u8; 40 + payload_len];
+        packet[0] = 0x60;
+        packet[4..6].copy_from_slice(&(payload_len as u16).to_be_bytes());
+        packet[6] = 6;
+        packet[7] = 64;
+        packet[8..24].copy_from_slice(&src.octets());
+        packet[24..40].copy_from_slice(&dst.octets());
+        packet[40..42].copy_from_slice(&52097_u16.to_be_bytes());
+        packet[42..44].copy_from_slice(&9999_u16.to_be_bytes());
+        packet[44..48].copy_from_slice(&1000_u32.to_be_bytes());
+        packet[48..52].copy_from_slice(&2000_u32.to_be_bytes());
+        packet[52] = 0x50;
+        packet[53] = 0x10;
+        packet[54..56].copy_from_slice(&2049_u16.to_be_bytes());
+        packet[56..58].copy_from_slice(&0x8ece_u16.to_be_bytes());
+        packet
+    }
+
+    fn ipv6_udp_packet(src: Ipv6Addr, dst: Ipv6Addr) -> Vec<u8> {
+        let payload = b"hello";
+        let payload_len = 8 + payload.len();
+        let mut packet = vec![0_u8; 40 + payload_len];
+        packet[0] = 0x60;
+        packet[4..6].copy_from_slice(&(payload_len as u16).to_be_bytes());
+        packet[6] = 17;
+        packet[7] = 64;
+        packet[8..24].copy_from_slice(&src.octets());
+        packet[24..40].copy_from_slice(&dst.octets());
+        packet[40..42].copy_from_slice(&40000_u16.to_be_bytes());
+        packet[42..44].copy_from_slice(&5354_u16.to_be_bytes());
+        packet[44..46].copy_from_slice(&(payload_len as u16).to_be_bytes());
+        packet[46..48].copy_from_slice(&0x8ece_u16.to_be_bytes());
+        packet[48..].copy_from_slice(payload);
         packet
     }
 
@@ -166,5 +255,23 @@ mod tests {
         finalize_ipv4_transport_checksum(&mut packet);
 
         assert_eq!(&packet[26..28], &[0, 0]);
+    }
+
+    #[test]
+    fn finalizes_ipv6_tcp_checksum() {
+        let mut packet =
+            ipv6_tcp_ack_packet("fd00::55".parse().unwrap(), "fd00::55".parse().unwrap());
+        finalize_ipv6_transport_checksum(&mut packet);
+
+        assert_eq!(ipv6_transport_checksum(&packet, packet.len() - 40, 6), 0);
+    }
+
+    #[test]
+    fn finalizes_ipv6_udp_checksum() {
+        let mut packet = ipv6_udp_packet("fd00::55".parse().unwrap(), "fd00::55".parse().unwrap());
+        finalize_transport_checksum(&mut packet);
+
+        assert_eq!(ipv6_transport_checksum(&packet, packet.len() - 40, 17), 0);
+        assert_ne!(&packet[46..48], &[0, 0]);
     }
 }

@@ -171,7 +171,7 @@ fn push_tun_pipeline_packet(batch: &mut TunPipelineBatch, packet: &[u8]) {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn push_tun_pipeline_packet_owned(batch: &mut TunPipelineBatch, mut bytes: Vec<u8>) {
-    nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut bytes);
+    nostr_vpn_core::packet_checksums::finalize_transport_checksum(&mut bytes);
     push_tun_pipeline_packet_owned_finalized(batch, bytes);
 }
 

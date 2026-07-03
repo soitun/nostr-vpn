@@ -12,7 +12,16 @@ impl FipsPrivateMeshRuntime {
             private_mesh_mtu_from_app(None),
             fips_nostr_discovery_policy_from_env(),
         );
-        Self::bind_with_config(identity_nsec, scope, peers, config, Vec::new(), Vec::new()).await
+        Self::bind_with_config(
+            identity_nsec,
+            scope,
+            peers,
+            config,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
     }
 
     async fn bind_with_config(
@@ -21,6 +30,7 @@ impl FipsPrivateMeshRuntime {
         peers: Vec<FipsMeshPeerConfig>,
         config: Config,
         local_allowed_ips: Vec<String>,
+        local_tunnel_ips: Vec<IpAddr>,
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) -> Result<Self> {
         let scope = scope.into();
@@ -48,6 +58,7 @@ impl FipsPrivateMeshRuntime {
             local_allowed_ips,
             paid_route_admissions,
         );
+        let local_tunnel_ips = local_tunnel_ips.into_iter().collect();
         let peer_activity = peer_activity_map(&mesh.peer_pubkeys(), None);
 
         Ok(Self {
@@ -56,6 +67,7 @@ impl FipsPrivateMeshRuntime {
             direct_endpoint_rx,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             direct_endpoint_pending_events: Mutex::new(VecDeque::new()),
+            local_tunnel_ips,
             mesh: ArcSwap::from_pointee(mesh),
             mesh_generation: AtomicU64::new(0),
             peer_activity: ArcSwap::from_pointee(peer_activity),

@@ -7,13 +7,13 @@ fn spawn_tun_send_worker(
     let thread = std::thread::Builder::new()
         .name("nvpn-fips-tun-send".to_string())
         .spawn(move || {
-            let tun_fd = tun.as_raw_fd();
+            let tun_fd = BorrowedTunFd::new(tun.as_raw_fd(), tun.vnet_hdr());
             let mut buf = vec![0_u8; tun.read_buffer_len()];
             let mut batch = Vec::with_capacity(FIPS_TUN_READ_BURST);
             let mut send_runs = Vec::new();
             let pipeline_profile_enabled = crate::pipeline_profile::enabled();
             while !thread_stop.load(Ordering::Acquire) {
-                if !wait_fd_readable_blocking(tun_fd, &thread_stop) {
+                if !wait_fd_readable_blocking(tun_fd.as_raw_fd(), &thread_stop) {
                     break;
                 }
                 batch.clear();
@@ -66,7 +66,13 @@ fn spawn_tun_send_worker(
                     }
                     let pending =
                         std::mem::replace(&mut batch, Vec::with_capacity(FIPS_TUN_READ_BURST));
-                    send_mesh_packet_batch_blocking_or_log(&mesh, pending, &mut send_runs);
+                    send_mesh_packet_batch_blocking_or_log(
+                        &mesh,
+                        tun_fd,
+                        pending,
+                        &mut send_runs,
+                        &thread_stop,
+                    );
                 }
 
                 if sleep_after_error {
@@ -115,17 +121,54 @@ fn wait_fd_readable_blocking(fd: RawFd, stop: &AtomicBool) -> bool {
 
 fn send_mesh_packet_batch_blocking_or_log(
     mesh: &FipsPrivateMeshRuntime,
+    tun_fd: BorrowedTunFd,
     packets: TunPipelineBatch,
     send_runs: &mut Vec<FipsEndpointSendRun>,
+    stop: &AtomicBool,
 ) {
     let packet_count = packets.len();
     crate::pipeline_profile::record_mesh_send_bulk_turn(0, packet_count);
     let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshSend);
+    let (local_packets, mesh_packets) =
+        partition_local_tun_pipeline_packets(&mesh.local_tunnel_ips, packets);
+    for packet in local_packets {
+        write_packet_to_tun_blocking(tun_fd, &packet.bytes, stop);
+    }
+    let mesh_packet_count = mesh_packets.len();
     if let Err(error) =
-        mesh.blocking_send_tun_pipeline_packet_turn(packets, packet_count, packet_count, send_runs)
+        mesh.blocking_send_tun_pipeline_packet_turn(
+            mesh_packets,
+            mesh_packet_count,
+            mesh_packet_count,
+            send_runs,
+        )
     {
         eprintln!("fips: failed to send tunnel packet: {error}");
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn partition_local_tun_pipeline_packets(
+    local_tunnel_ips: &HashSet<IpAddr>,
+    packets: TunPipelineBatch,
+) -> (TunPipelineBatch, TunPipelineBatch) {
+    if local_tunnel_ips.is_empty() {
+        return (Vec::new(), packets);
+    }
+
+    let mut local_packets = Vec::new();
+    let mut mesh_packets = Vec::with_capacity(packets.len());
+    for packet in packets {
+        if packet
+            .destination
+            .is_some_and(|destination| local_tunnel_ips.contains(&destination))
+        {
+            local_packets.push(packet);
+        } else {
+            mesh_packets.push(packet);
+        }
+    }
+    (local_packets, mesh_packets)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

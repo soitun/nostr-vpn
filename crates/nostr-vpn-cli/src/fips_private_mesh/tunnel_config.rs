@@ -259,6 +259,17 @@ impl FipsPrivateTunnelConfig {
         addresses
     }
 
+    fn local_tunnel_ips(&self) -> Vec<IpAddr> {
+        let mut ips = self
+            .interface_addresses()
+            .into_iter()
+            .filter_map(|address| strip_cidr(&address).parse::<IpAddr>().ok())
+            .collect::<Vec<_>>();
+        ips.sort();
+        ips.dedup();
+        ips
+    }
+
     fn interface_route_targets(&self) -> Vec<String> {
         let mut targets = self.route_targets.clone();
         targets.sort();

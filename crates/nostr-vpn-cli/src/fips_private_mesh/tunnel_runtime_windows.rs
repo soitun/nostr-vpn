@@ -25,6 +25,7 @@ impl FipsPrivateTunnelRuntime {
                 config.peers.clone(),
                 endpoint_config,
                 config.local_allowed_ips(),
+                config.local_tunnel_ips(),
                 config.paid_route_admissions.clone(),
             )
             .await?,

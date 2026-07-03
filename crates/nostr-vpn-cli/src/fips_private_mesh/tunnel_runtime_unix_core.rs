@@ -23,6 +23,7 @@ impl FipsPrivateTunnelRuntime {
             config.open_discovery_max_pending,
         );
         let local_allowed_ips = config.local_allowed_ips();
+        let local_tunnel_ips = config.local_tunnel_ips();
         let mesh = Arc::new(
             FipsPrivateMeshRuntime::bind_with_config(
                 config.identity_nsec.clone(),
@@ -30,6 +31,7 @@ impl FipsPrivateTunnelRuntime {
                 config.peers.clone(),
                 endpoint_config,
                 local_allowed_ips,
+                local_tunnel_ips,
                 config.paid_route_admissions.clone(),
             )
             .await?,

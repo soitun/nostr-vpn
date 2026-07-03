@@ -240,6 +240,7 @@ pub(crate) struct FipsPrivateMeshRuntime {
     direct_endpoint_rx: FipsDirectEndpointDataRx,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     direct_endpoint_pending_events: Mutex<VecDeque<FipsPrivateMeshEvent>>,
+    local_tunnel_ips: HashSet<IpAddr>,
     mesh: ArcSwap<FipsMeshRuntime>,
     mesh_generation: AtomicU64,
     peer_activity: ArcSwap<FipsPeerActivityMap>,
