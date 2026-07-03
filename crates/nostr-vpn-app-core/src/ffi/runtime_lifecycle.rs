@@ -191,6 +191,8 @@ impl NativeAppRuntime {
             } else {
                 self.service_binary_version.clone()
             };
+        let config_for_paid = (!config_unavailable).then_some(&self.config);
+        let raw_port_mapping = daemon_state.map(|state| &state.port_mapping);
 
         NativeAppState {
             rev: self.rev,
@@ -363,20 +365,12 @@ impl NativeAppRuntime {
             } else {
                 wireguard_exit_config_text(&self.config.wireguard_exit)
             },
-            paid_exit_seller: NativePaidExitSellerState {
-                supported: false,
-                ..NativePaidExitSellerState::default()
-            },
-            paid_route_market: NativePaidRouteMarketState {
-                supported: false,
-                wallet: NativePaidRouteWalletState {
-                    last_action: self.paid_route_wallet_last_action.clone(),
-                    ..NativePaidRouteWalletState::default()
-                },
-                last_payment_action: self.paid_route_payment_last_action.clone(),
-                filter: self.paid_route_market_filter.clone(),
-                ..NativePaidRouteMarketState::default()
-            },
+            paid_exit_seller: self.paid_exit_seller_state(
+                config_for_paid,
+                raw_port_mapping,
+                capabilities.mobile,
+            ),
+            paid_route_market: self.paid_route_market_state(config_for_paid),
             fips_host_tunnel_enabled: !config_unavailable && self.config.fips_host_tunnel_enabled,
             connect_to_non_roster_fips_peers: !config_unavailable
                 && self.config.connect_to_non_roster_fips_peers,

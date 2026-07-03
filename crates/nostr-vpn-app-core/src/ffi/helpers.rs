@@ -420,6 +420,20 @@ fn parse_csv_values(input: &str) -> Vec<String> {
     values
 }
 
+fn parse_optional_asn(input: &str) -> Result<Option<u32>> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+
+    let trimmed = trimmed.strip_prefix("AS").unwrap_or(trimmed);
+    let trimmed = trimmed.strip_prefix("as").unwrap_or(trimmed);
+    trimmed
+        .parse::<u32>()
+        .map(Some)
+        .with_context(|| format!("invalid paid exit ASN '{input}'"))
+}
+
 fn parse_tcp_ports(input: &str) -> Vec<u16> {
     let mut ports = input
         .split([',', '\n', ' ', '\t'])

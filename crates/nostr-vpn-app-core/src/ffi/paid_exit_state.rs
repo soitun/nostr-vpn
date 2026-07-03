@@ -1,0 +1,858 @@
+fn selected_paid_exit_upstream(config: &AppConfig) -> PaidExitUpstream {
+    if config.wireguard_exit.enabled {
+        PaidExitUpstream::WireGuardExit
+    } else {
+        PaidExitUpstream::HostDefault
+    }
+}
+
+fn paid_exit_seller_state(
+    app: Option<&AppConfig>,
+    port_mapping: Option<&PortMappingStatus>,
+    supported: bool,
+    store_path: &Path,
+) -> NativePaidExitSellerState {
+    let Some(app) = app else {
+        return NativePaidExitSellerState {
+            supported,
+            status_text: if supported {
+                "Config unavailable".to_string()
+            } else {
+                "Selling internet is not supported on this platform".to_string()
+            },
+            ..NativePaidExitSellerState::default()
+        };
+    };
+    let mut config = app.paid_exit.clone();
+    config.access.upstream = selected_paid_exit_upstream(app);
+    let (store_status, channels, sessions) =
+        paid_exit_seller_store_state(&config, supported, store_path);
+    let channel_credit_msat = paid_exit_seller_channel_credit_msat(&sessions);
+    let status_text = append_paid_exit_seller_store_status(
+        paid_exit_seller_status_text(app, &config, app.wireguard_exit.configured(), supported),
+        store_status,
+    );
+
+    NativePaidExitSellerState {
+        supported,
+        enabled: supported && config.enabled,
+        status_text,
+        upstream: config.access.upstream.as_str().to_string(),
+        private_vpn_access: config.access.private_vpn_access.as_str().to_string(),
+        internet_text: paid_route_upstream_text(config.access.upstream.as_str()),
+        public_ip_text: paid_exit_public_ip_text(port_mapping),
+        meter: config.pricing.meter.as_str().to_string(),
+        price_text: paid_route_price_text(
+            config.pricing.price_msat,
+            config.pricing.per_units,
+            config.pricing.meter.as_str(),
+        ),
+        price_msat: config.pricing.price_msat,
+        per_units: config.pricing.per_units,
+        per_units_text: paid_route_meter_unit_text(
+            config.pricing.per_units,
+            config.pricing.meter.as_str(),
+        ),
+        accepted_mints: config.channel.accepted_mints.clone(),
+        max_channel_capacity_sat: config.channel.max_channel_capacity_sat,
+        channel_expiry_secs: config.channel.channel_expiry_secs,
+        channel_expiry_text: paid_route_duration_text(config.channel.channel_expiry_secs),
+        settlement_text: paid_exit_seller_settlement_text(config.channel.channel_expiry_secs),
+        free_probe_units: config.channel.free_probe_units,
+        free_probe_text: paid_route_traffic_unit_text(
+            config.channel.free_probe_units,
+            config.pricing.meter.as_str(),
+        ),
+        grace_units: config.channel.grace_units,
+        grace_text: paid_route_traffic_unit_text(
+            config.channel.grace_units,
+            config.pricing.meter.as_str(),
+        ),
+        country_code: config.location.country_code.clone(),
+        region: config.location.region.clone(),
+        asn: config.location.asn.unwrap_or_default(),
+        network_class: config.location.network_class.as_str().to_string(),
+        ipv4: config.ip_support.ipv4,
+        ipv6: config.ip_support.ipv6,
+        channel_credit_msat,
+        channel_credit_text: paid_exit_seller_channel_credit_text(channel_credit_msat),
+        channel_credit_title_text: paid_exit_seller_channel_credit_title_text().to_string(),
+        channel_credit_help_text: paid_exit_seller_channel_credit_help_text(channel_credit_msat)
+            .to_string(),
+        channels,
+        sessions,
+    }
+}
+
+fn paid_exit_seller_supported_for_current_target(mobile: bool) -> bool {
+    paid_exit_seller_supported_for_target(std::env::consts::OS, mobile)
+}
+
+fn paid_exit_seller_supported_for_target(target_os: &str, mobile: bool) -> bool {
+    !mobile && matches!(target_os, "macos" | "linux")
+}
+
+fn paid_exit_public_ip_text(port_mapping: Option<&PortMappingStatus>) -> String {
+    let Some(endpoint) = port_mapping.and_then(|status| status.external_endpoint.as_deref()) else {
+        return String::new();
+    };
+    public_ip_from_endpoint(endpoint)
+}
+
+fn public_ip_from_endpoint(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Some(rest) = trimmed.strip_prefix('[')
+        && let Some((ip, _)) = rest.split_once(']')
+    {
+        return ip.to_string();
+    }
+    match (trimmed.matches(':').count(), trimmed.split_once(':')) {
+        (1, Some((ip, _))) => ip.to_string(),
+        _ => trimmed.to_string(),
+    }
+}
+
+fn paid_exit_seller_store_state(
+    config: &PaidExitConfig,
+    supported: bool,
+    store_path: &Path,
+) -> (
+    String,
+    Vec<NativePaidRouteChannelState>,
+    Vec<NativePaidRouteSessionState>,
+) {
+    if !supported || !config.enabled {
+        return (String::new(), Vec::new(), Vec::new());
+    }
+    let store = match load_paid_route_store(store_path) {
+        Ok(store) => store,
+        Err(error) => {
+            return (
+                format!("Paid route store unavailable: {error}"),
+                Vec::new(),
+                Vec::new(),
+            );
+        }
+    };
+    let mut channels = store
+        .channels
+        .values()
+        .filter(|channel| {
+            channel.role == PaidRouteChannelRole::Seller
+                && paid_route_lifecycle_is_current(channel.status)
+        })
+        .map(paid_route_channel_state)
+        .collect::<Vec<_>>();
+    channels.sort_by(|left, right| {
+        right
+            .updated_at_unix
+            .cmp(&left.updated_at_unix)
+            .then_with(|| left.channel_id.cmp(&right.channel_id))
+    });
+
+    let seller_channel_ids = channels
+        .iter()
+        .map(|channel| channel.channel_id.clone())
+        .collect::<HashSet<_>>();
+    let mut sessions = store
+        .sessions
+        .values()
+        .filter(|record| seller_channel_ids.contains(&record.session.payment.channel_id))
+        .map(|record| paid_route_seller_session_state(record, &store, config))
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| {
+        right
+            .updated_at_unix
+            .cmp(&left.updated_at_unix)
+            .then_with(|| left.session_id.cmp(&right.session_id))
+    });
+
+    let status = match sessions.len() {
+        0 => String::new(),
+        1 => "1 active paid client".to_string(),
+        count => format!("{count} active paid clients"),
+    };
+    (status, channels, sessions)
+}
+
+fn paid_exit_seller_channel_credit_msat(sessions: &[NativePaidRouteSessionState]) -> u64 {
+    sessions
+        .iter()
+        .map(|session| session.paid_msat)
+        .fold(0_u64, u64::saturating_add)
+}
+
+fn paid_exit_seller_channel_credit_text(channel_credit_msat: u64) -> String {
+    paid_route_msat_text(channel_credit_msat)
+}
+
+fn paid_exit_seller_channel_credit_title_text() -> &'static str {
+    "Pending buyer credit"
+}
+
+fn paid_exit_seller_channel_credit_help_text(channel_credit_msat: u64) -> &'static str {
+    if channel_credit_msat > 0 {
+        "Collect to move it into wallet"
+    } else {
+        ""
+    }
+}
+
+fn append_paid_exit_seller_store_status(config_status: String, store_status: String) -> String {
+    if store_status.is_empty() {
+        config_status
+    } else if config_status.is_empty() {
+        store_status
+    } else {
+        format!("{config_status}; {store_status}")
+    }
+}
+
+fn paid_exit_seller_status_text(
+    app: &AppConfig,
+    config: &PaidExitConfig,
+    wireguard_exit_configured: bool,
+    supported: bool,
+) -> String {
+    if !supported {
+        "Selling internet is not supported on this platform".to_string()
+    } else if !config.enabled {
+        "Selling internet is off".to_string()
+    } else if config.access.upstream == PaidExitUpstream::WireGuardExit
+        && !wireguard_exit_configured
+    {
+        "Configure WireGuard upstream before advertising".to_string()
+    } else if app.nostr_keys().is_err() {
+        "Set up Nostr identity before advertising".to_string()
+    } else if effective_config_relays(app).is_empty() {
+        "Add Nostr relays before advertising".to_string()
+    } else if config.channel.accepted_mints.is_empty() {
+        "Selling internet is on; add accepted mints before advertising".to_string()
+    } else if config.pricing.price_msat == 0 {
+        "Selling internet is on with a free/dev price".to_string()
+    } else {
+        "Selling internet is ready".to_string()
+    }
+}
+
+fn paid_route_market_state(
+    app: Option<&AppConfig>,
+    store_path: &Path,
+    filter: &NativePaidRouteMarketFilterState,
+    wallet_last_action: &NativePaidRouteWalletActionState,
+    payment_last_action: &NativePaidRoutePaymentActionState,
+) -> NativePaidRouteMarketState {
+    let Some(_app) = app else {
+        return NativePaidRouteMarketState {
+            supported: false,
+            status_text: "Config unavailable".to_string(),
+            store_path: store_path.display().to_string(),
+            ..NativePaidRouteMarketState::default()
+        };
+    };
+
+    let store = match load_paid_route_store(store_path) {
+        Ok(store) => store,
+        Err(error) => {
+            return NativePaidRouteMarketState {
+                supported: true,
+                status_text: format!("Paid route store unavailable: {error}"),
+                store_path: store_path.display().to_string(),
+                ..NativePaidRouteMarketState::default()
+            };
+        }
+    };
+
+    let mut offers = store
+        .offers
+        .iter()
+        .map(|(key, record)| paid_route_offer_state(key, record))
+        .collect::<Vec<_>>();
+    offers.sort_by(|left, right| {
+        right
+            .last_seen_unix
+            .cmp(&left.last_seen_unix)
+            .then_with(|| left.price_msat.cmp(&right.price_msat))
+            .then_with(|| left.seller_npub.cmp(&right.seller_npub))
+    });
+    let filter = normalize_paid_route_market_filter(filter);
+    let country_options = paid_route_offer_country_options(&offers);
+    let network_class_options = paid_route_offer_network_class_options(&offers);
+    let visible_offers = paid_route_visible_offers(&offers, &filter);
+    let hidden_offer_count = offers.len().saturating_sub(visible_offers.len()) as u64;
+
+    let mut channels = store
+        .channels
+        .values()
+        .filter(|channel| channel.role == PaidRouteChannelRole::Buyer)
+        .map(paid_route_channel_state)
+        .collect::<Vec<_>>();
+    channels.sort_by(|left, right| {
+        right
+            .updated_at_unix
+            .cmp(&left.updated_at_unix)
+            .then_with(|| left.channel_id.cmp(&right.channel_id))
+    });
+
+    let mut sessions = store
+        .sessions
+        .values()
+        .filter(|record| {
+            store
+                .channels
+                .get(&record.session.payment.channel_id)
+                .is_none_or(|channel| channel.role == PaidRouteChannelRole::Buyer)
+        })
+        .map(|record| paid_route_session_state(record, &store))
+        .collect::<Vec<_>>();
+    sessions.sort_by(|left, right| {
+        right
+            .updated_at_unix
+            .cmp(&left.updated_at_unix)
+            .then_with(|| left.session_id.cmp(&right.session_id))
+    });
+
+    let status_text = if offers.is_empty() {
+        "No internet sellers found".to_string()
+    } else if offers.len() == 1 {
+        "1 internet seller found".to_string()
+    } else {
+        format!("{} internet sellers found", offers.len())
+    };
+
+    NativePaidRouteMarketState {
+        supported: true,
+        status_text,
+        store_path: store_path.display().to_string(),
+        wallet: paid_route_wallet_state(&store.wallet, wallet_last_action),
+        last_payment_action: payment_last_action.clone(),
+        filter,
+        offers,
+        visible_offers,
+        hidden_offer_count,
+        country_options,
+        network_class_options,
+        channels,
+        sessions,
+    }
+}
+
+fn normalize_paid_route_market_filter(
+    filter: &NativePaidRouteMarketFilterState,
+) -> NativePaidRouteMarketFilterState {
+    let country_code = normalize_paid_route_filter_value(&filter.country_code).to_uppercase();
+    let network_class = normalize_paid_route_filter_value(&filter.network_class).to_lowercase();
+    let sort = match normalize_paid_route_filter_value(&filter.sort)
+        .to_lowercase()
+        .as_str()
+    {
+        "price" => "price",
+        "newest" => "newest",
+        _ => "quality",
+    };
+
+    NativePaidRouteMarketFilterState {
+        query: filter.query.trim().to_string(),
+        country_code,
+        network_class,
+        mint_url: normalize_paid_route_filter_value(&filter.mint_url),
+        require_ipv4: filter.require_ipv4,
+        require_ipv6: filter.require_ipv6,
+        sort: sort.to_string(),
+    }
+}
+
+fn normalize_paid_route_filter_value(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.eq_ignore_ascii_case("all") || trimmed.eq_ignore_ascii_case("any") || trimmed == "*"
+    {
+        String::new()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn paid_route_visible_offers(
+    offers: &[NativePaidRouteOfferState],
+    filter: &NativePaidRouteMarketFilterState,
+) -> Vec<NativePaidRouteOfferState> {
+    let query = filter.query.trim().to_lowercase();
+    let country_code = filter.country_code.trim().to_uppercase();
+    let network_class = filter.network_class.trim().to_lowercase();
+    let mint_url = filter.mint_url.trim();
+    let mut visible = offers
+        .iter()
+        .filter(|offer| {
+            query.is_empty()
+                || paid_route_offer_search_text(offer)
+                    .to_lowercase()
+                    .contains(query.as_str())
+        })
+        .filter(|offer| {
+            country_code.is_empty() || offer.country_code.trim().to_uppercase() == country_code
+        })
+        .filter(|offer| {
+            network_class.is_empty()
+                || offer
+                    .network_class
+                    .trim()
+                    .eq_ignore_ascii_case(&network_class)
+        })
+        .filter(|offer| {
+            mint_url.is_empty() || offer.accepted_mints.iter().any(|mint| mint == mint_url)
+        })
+        .filter(|offer| !filter.require_ipv4 || offer.ipv4)
+        .filter(|offer| !filter.require_ipv6 || offer.ipv6)
+        .cloned()
+        .collect::<Vec<_>>();
+
+    visible.sort_by(|left, right| paid_route_offer_order(left, right, &filter.sort));
+    visible
+}
+
+fn paid_route_offer_search_text(offer: &NativePaidRouteOfferState) -> String {
+    format!(
+        "{} {} {} {} {} {} {}",
+        offer.offer_id,
+        offer.seller_npub,
+        offer.status_text,
+        offer.country_code,
+        offer.region,
+        offer.network_class,
+        offer.accepted_mints.join(" ")
+    )
+}
+
+fn paid_route_offer_order(
+    left: &NativePaidRouteOfferState,
+    right: &NativePaidRouteOfferState,
+    sort: &str,
+) -> std::cmp::Ordering {
+    match sort {
+        "price" => paid_route_offer_price_order(left, right)
+            .then_with(|| paid_route_offer_quality_order(left, right))
+            .then_with(|| paid_route_offer_newest_order(left, right))
+            .then_with(|| left.key.cmp(&right.key)),
+        "newest" => paid_route_offer_newest_order(left, right)
+            .then_with(|| paid_route_offer_quality_order(left, right))
+            .then_with(|| paid_route_offer_price_order(left, right))
+            .then_with(|| left.key.cmp(&right.key)),
+        _ => paid_route_offer_quality_order(left, right)
+            .then_with(|| paid_route_offer_price_order(left, right))
+            .then_with(|| paid_route_offer_newest_order(left, right))
+            .then_with(|| left.key.cmp(&right.key)),
+    }
+}
+
+fn paid_route_offer_price_order(
+    left: &NativePaidRouteOfferState,
+    right: &NativePaidRouteOfferState,
+) -> std::cmp::Ordering {
+    let left_units = u128::from(left.per_units.max(1));
+    let right_units = u128::from(right.per_units.max(1));
+    (u128::from(left.price_msat) * right_units).cmp(&(u128::from(right.price_msat) * left_units))
+}
+
+fn paid_route_offer_newest_order(
+    left: &NativePaidRouteOfferState,
+    right: &NativePaidRouteOfferState,
+) -> std::cmp::Ordering {
+    right.last_seen_unix.cmp(&left.last_seen_unix)
+}
+
+fn paid_route_offer_quality_order(
+    left: &NativePaidRouteOfferState,
+    right: &NativePaidRouteOfferState,
+) -> std::cmp::Ordering {
+    right
+        .has_quality
+        .cmp(&left.has_quality)
+        .then_with(|| left.packet_loss_ppm.cmp(&right.packet_loss_ppm))
+        .then_with(|| left.latency_ms.cmp(&right.latency_ms))
+        .then_with(|| left.jitter_ms.cmp(&right.jitter_ms))
+        .then_with(|| right.down_bps.cmp(&left.down_bps))
+        .then_with(|| right.up_bps.cmp(&left.up_bps))
+}
+
+fn paid_route_offer_country_options(offers: &[NativePaidRouteOfferState]) -> Vec<String> {
+    let mut options = offers
+        .iter()
+        .map(|offer| offer.country_code.trim().to_uppercase())
+        .filter(|country_code| !country_code.is_empty())
+        .collect::<Vec<_>>();
+    options.sort();
+    options.dedup();
+    options
+}
+
+fn paid_route_offer_network_class_options(offers: &[NativePaidRouteOfferState]) -> Vec<String> {
+    let mut options = offers
+        .iter()
+        .map(|offer| offer.network_class.trim().to_lowercase())
+        .filter(|network_class| !network_class.is_empty() && network_class != "unknown")
+        .collect::<Vec<_>>();
+    options.sort();
+    options.dedup();
+    options
+}
+
+fn paid_route_wallet_state(
+    wallet: &PaidRouteWalletState,
+    last_action: &NativePaidRouteWalletActionState,
+) -> NativePaidRouteWalletState {
+    let total_balance_msat = wallet
+        .mints
+        .iter()
+        .filter_map(|mint| mint.balance_msat)
+        .sum();
+    let balance_known =
+        !wallet.mints.is_empty() && wallet.mints.iter().all(|mint| mint.balance_msat.is_some());
+    let mints = wallet
+        .mints
+        .iter()
+        .map(|mint| NativePaidRouteWalletMintState {
+            url: mint.url.clone(),
+            label: mint.label.clone(),
+            is_default: mint.url == wallet.default_mint,
+            balance_known: mint.balance_msat.is_some(),
+            balance_msat: mint.balance_msat.unwrap_or_default(),
+            balance_text: mint
+                .balance_msat
+                .map_or_else(|| "unknown".to_string(), paid_route_msat_text),
+            last_checked_unix: mint.last_checked_unix,
+        })
+        .collect();
+
+    NativePaidRouteWalletState {
+        default_mint: wallet.default_mint.clone(),
+        balance_known,
+        total_balance_msat,
+        total_balance_text: if balance_known {
+            paid_route_msat_text(total_balance_msat)
+        } else {
+            "unknown".to_string()
+        },
+        mints,
+        last_action: last_action.clone(),
+    }
+}
+
+fn paid_route_offer_state(
+    key: &str,
+    record: &nostr_vpn_core::paid_route_store::PaidRouteOfferRecord,
+) -> NativePaidRouteOfferState {
+    let offer = &record.offer;
+    let quality = offer.quality.as_ref();
+    NativePaidRouteOfferState {
+        key: key.to_string(),
+        offer_id: offer.offer_id.clone(),
+        seller_npub: offer.seller_npub.clone(),
+        status_text: paid_route_offer_status_text(offer, record.last_seen_unix),
+        price_text: paid_route_price_text(
+            offer.pricing.price_msat,
+            offer.pricing.per_units,
+            offer.pricing.meter.as_str(),
+        ),
+        meter: offer.pricing.meter.as_str().to_string(),
+        price_msat: offer.pricing.price_msat,
+        per_units: offer.pricing.per_units,
+        per_units_text: paid_route_meter_unit_text(
+            offer.pricing.per_units,
+            offer.pricing.meter.as_str(),
+        ),
+        accepted_mints: offer.channel.accepted_mints.clone(),
+        max_channel_capacity_sat: offer.channel.max_channel_capacity_sat,
+        channel_expiry_secs: offer.channel.channel_expiry_secs,
+        free_probe_units: offer.channel.free_probe_units,
+        free_probe_text: paid_route_traffic_unit_text(
+            offer.channel.free_probe_units,
+            offer.pricing.meter.as_str(),
+        ),
+        grace_units: offer.channel.grace_units,
+        grace_text: paid_route_traffic_unit_text(
+            offer.channel.grace_units,
+            offer.pricing.meter.as_str(),
+        ),
+        country_code: offer.location.country_code.clone(),
+        region: offer.location.region.clone(),
+        asn: offer.location.asn.unwrap_or_default(),
+        network_class: offer.location.network_class.as_str().to_string(),
+        ipv4: offer.ip_support.ipv4,
+        ipv6: offer.ip_support.ipv6,
+        has_quality: quality.is_some(),
+        quality_text: paid_route_quality_text(quality),
+        bandwidth_text: paid_route_bandwidth_text(quality),
+        latency_ms: quality
+            .and_then(|quality| quality.latency_ms)
+            .unwrap_or_default(),
+        jitter_ms: quality
+            .and_then(|quality| quality.jitter_ms)
+            .unwrap_or_default(),
+        packet_loss_ppm: quality
+            .and_then(|quality| quality.packet_loss_ppm)
+            .unwrap_or_default(),
+        down_bps: quality
+            .and_then(|quality| quality.down_bps)
+            .unwrap_or_default(),
+        up_bps: quality.and_then(|quality| quality.up_bps).unwrap_or_default(),
+        uptime_secs: quality
+            .and_then(|quality| quality.uptime_secs)
+            .unwrap_or_default(),
+        first_seen_unix: record.first_seen_unix,
+        last_seen_unix: record.last_seen_unix,
+        relay_urls: record.relay_urls.clone(),
+    }
+}
+
+fn paid_route_offer_status_text(offer: &PaidRouteOffer, last_seen_unix: u64) -> String {
+    let mut parts = Vec::new();
+    if !offer.location.country_code.trim().is_empty() {
+        parts.push(offer.location.country_code.clone());
+    }
+    if offer.location.network_class != ExitNetworkClass::Unknown {
+        parts.push(offer.location.network_class.as_str().to_string());
+    }
+    if let Some(latency_ms) = offer
+        .quality
+        .as_ref()
+        .and_then(|quality| quality.latency_ms)
+    {
+        parts.push(format!("{latency_ms} ms"));
+    }
+    if last_seen_unix > 0 {
+        parts.push(format!(
+            "seen {}",
+            compact_age_text(age_secs_since(last_seen_unix))
+        ));
+    }
+    if parts.is_empty() {
+        "Internet seller".to_string()
+    } else {
+        parts.join(" - ")
+    }
+}
+
+fn paid_route_channel_state(channel: &PaidRouteChannelRecord) -> NativePaidRouteChannelState {
+    NativePaidRouteChannelState {
+        channel_id: channel.channel_id.clone(),
+        offer_id: channel.offer_id.clone(),
+        role: paid_route_channel_role_text(channel.role).to_string(),
+        status: paid_route_lifecycle_status_text(channel.status).to_string(),
+        mint_url: channel.mint_url.clone(),
+        counterparty_npub: channel.counterparty_npub.clone(),
+        capacity_sat: channel.payment.capacity_sat,
+        capacity_text: format!("{} sat", channel.payment.capacity_sat),
+        paid_msat: channel.payment.paid_msat,
+        paid_text: paid_route_paid_text(channel.payment.paid_msat),
+        updated_at_unix: channel.updated_at_unix,
+        expires_at_unix: channel.expires_at_unix,
+        error: channel.error.clone(),
+    }
+}
+
+fn paid_route_session_state(
+    record: &nostr_vpn_core::paid_route_store::PaidRouteSessionRecord,
+    store: &PaidRouteStore,
+) -> NativePaidRouteSessionState {
+    let session = &record.session;
+    let offer = store
+        .leases
+        .get(&session.lease_id)
+        .and_then(|lease| {
+            store
+                .offers
+                .values()
+                .find(|offer| offer.offer.offer_id == lease.lease.offer_id)
+        })
+        .map(|record| &record.offer);
+    let decision = offer.map(|offer| {
+        let config = paid_exit_config_from_offer(offer);
+        session.routing_decision(&config)
+    });
+    let country_claim = offer.map_or_else(
+        || paid_route_country_claim("", session.observed_country_code.as_deref()),
+        |offer| {
+            paid_route_country_claim(
+                &offer.location.country_code,
+                session.observed_country_code.as_deref(),
+            )
+        },
+    );
+    paid_route_session_state_with_decision(record, store, decision.as_ref(), country_claim, None)
+}
+
+fn paid_route_seller_session_state(
+    record: &nostr_vpn_core::paid_route_store::PaidRouteSessionRecord,
+    store: &PaidRouteStore,
+    config: &PaidExitConfig,
+) -> NativePaidRouteSessionState {
+    let now_unix = unix_timestamp();
+    let decision = Some(record.session.routing_decision(config));
+    let country_claim = paid_route_country_claim(
+        &config.location.country_code,
+        record.session.observed_country_code.as_deref(),
+    );
+    let collection =
+        store.seller_collection_state_for_session(config, now_unix, &record.session.session_id);
+    let mut state = paid_route_session_state_with_decision(
+        record,
+        store,
+        decision.as_ref(),
+        country_claim,
+        collection.as_ref(),
+    );
+    state.title_text = paid_route_seller_session_title_text(&state);
+    state
+}
+
+#[allow(clippy::too_many_lines)]
+fn paid_route_session_state_with_decision(
+    record: &nostr_vpn_core::paid_route_store::PaidRouteSessionRecord,
+    store: &PaidRouteStore,
+    decision: Option<&PaidRouteRoutingDecision>,
+    country_claim: PaidRouteCountryClaim,
+    collection: Option<&PaidRouteSellerCollectionState>,
+) -> NativePaidRouteSessionState {
+    let session = &record.session;
+    let now_unix = unix_timestamp();
+    let channel = store.channels.get(&session.payment.channel_id);
+    let lease = store.leases.get(&session.lease_id);
+    let lifecycle_status = channel
+        .map(|channel| paid_route_lifecycle_status_text(channel.status))
+        .or_else(|| lease.map(|lease| paid_route_lifecycle_status_text(lease.status)))
+        .unwrap_or_default();
+    let access_state = decision
+        .map(|decision| decision.state.as_str())
+        .unwrap_or_default();
+    let quality = session.quality.as_ref();
+    let status_text = paid_route_session_status_text(decision.map(|d| d.state), channel);
+    let payment_channel_ready = session.payment.cashu_spilman_payment.is_some()
+        || session.payment.cashu_token_lease.is_some();
+    let decision_allows_routing = decision.is_some_and(|decision| decision.allow_routing);
+    let lifecycle_allows_routing = channel
+        .is_none_or(|channel| paid_route_lifecycle_allows_routing_for_state(channel.status))
+        && lease.is_none_or(|lease| paid_route_lifecycle_allows_routing_for_state(lease.status));
+    let channel_role = channel.map(|channel| channel.role);
+    let expires_at_unix = match (channel, lease) {
+        (Some(channel), Some(lease)) => channel.expires_at_unix.min(lease.lease.expires_at_unix),
+        (Some(channel), None) => channel.expires_at_unix,
+        (None, Some(lease)) => lease.lease.expires_at_unix,
+        (None, None) => 0,
+    };
+    let time_allows_routing = expires_at_unix == 0 || expires_at_unix > now_unix;
+    let allow_routing = decision_allows_routing && lifecycle_allows_routing && time_allows_routing;
+    let delivered_units = decision.map_or(0, |decision| decision.delivered_units);
+    let amount_due_msat = decision.map_or(0, |decision| decision.amount_due_msat);
+    let unpaid_msat = decision.map_or(0, |decision| decision.unpaid_msat);
+    let bytes = session.usage.units_for_meter(PaidRouteMeter::Bytes);
+    let packets = session.usage.units_for_meter(PaidRouteMeter::Packets);
+    let usage_text = paid_route_usage_text(bytes, packets, delivered_units);
+    let detail_text = paid_route_session_detail_text(
+        lifecycle_status,
+        access_state,
+        &usage_text,
+        amount_due_msat,
+    );
+    let realized_exit_ip = session.realized_exit_ip.clone().unwrap_or_default();
+    let location_text = paid_route_location_text(&realized_exit_ip, &country_claim);
+    let collection_available = collection.is_some_and(|state| state.manual_collect);
+    let auto_collect_due = collection.is_some_and(|state| state.auto_collect_due);
+
+    NativePaidRouteSessionState {
+        session_id: session.session_id.clone(),
+        lease_id: session.lease_id.clone(),
+        channel_id: session.payment.channel_id.clone(),
+        status_text: status_text.clone(),
+        lifecycle_status: lifecycle_status.to_string(),
+        access_state: access_state.to_string(),
+        title_text: paid_route_session_title_text(
+            &status_text,
+            lifecycle_status,
+            payment_channel_ready,
+            allow_routing,
+            unpaid_msat,
+        ),
+        detail_text,
+        settlement_text: paid_route_session_settlement_text(
+            channel_role,
+            lifecycle_status,
+            expires_at_unix,
+            allow_routing,
+            payment_channel_ready,
+            session.payment.paid_msat,
+            &session.payment.channel_id,
+            collection_available,
+            auto_collect_due,
+            now_unix,
+        ),
+        collect_action_text: paid_route_session_collect_action_text(
+            channel_role,
+            payment_channel_ready,
+            allow_routing,
+            session.payment.paid_msat,
+            &session.payment.channel_id,
+            collection_available,
+            auto_collect_due,
+        ),
+        collect_action_help_text: paid_route_session_collect_action_help_text(
+            channel_role,
+            payment_channel_ready,
+            allow_routing,
+            session.payment.paid_msat,
+            &session.payment.channel_id,
+            collection_available,
+            auto_collect_due,
+        ),
+        payment_channel_ready,
+        allow_routing,
+        delivered_units,
+        usage_text,
+        amount_due_msat,
+        amount_due_text: paid_route_due_text(amount_due_msat),
+        paid_msat: session.payment.paid_msat,
+        paid_text: paid_route_paid_text(session.payment.paid_msat),
+        unpaid_msat,
+        unpaid_text: paid_route_unpaid_text(unpaid_msat),
+        active_millis: session.usage.active_millis,
+        bytes,
+        packets,
+        realized_exit_ip,
+        claimed_country_code: country_claim.claimed_country_code,
+        observed_country_code: session.observed_country_code.clone().unwrap_or_default(),
+        country_claim_status: country_claim.status.as_str().to_string(),
+        location_text,
+        observed_asn: session.observed_asn.unwrap_or_default(),
+        has_quality: quality.is_some(),
+        quality_text: paid_route_quality_text(quality),
+        bandwidth_text: paid_route_bandwidth_text(quality),
+        latency_ms: quality
+            .and_then(|quality| quality.latency_ms)
+            .unwrap_or_default(),
+        jitter_ms: quality
+            .and_then(|quality| quality.jitter_ms)
+            .unwrap_or_default(),
+        packet_loss_ppm: quality
+            .and_then(|quality| quality.packet_loss_ppm)
+            .unwrap_or_default(),
+        down_bps: quality
+            .and_then(|quality| quality.down_bps)
+            .unwrap_or_default(),
+        up_bps: quality.and_then(|quality| quality.up_bps).unwrap_or_default(),
+        updated_at_unix: record.updated_at_unix,
+        expires_at_unix,
+    }
+}
+
+fn paid_exit_config_from_offer(offer: &PaidRouteOffer) -> PaidExitConfig {
+    PaidExitConfig {
+        enabled: true,
+        access: offer.access.clone(),
+        pricing: offer.pricing.clone(),
+        channel: offer.channel.clone(),
+        location: offer.location.clone(),
+        ip_support: offer.ip_support.clone(),
+    }
+}

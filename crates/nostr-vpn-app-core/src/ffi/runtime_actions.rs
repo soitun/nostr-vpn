@@ -250,31 +250,132 @@ impl NativeAppRuntime {
                 };
                 Ok(())
             }
-            NativeAppAction::AddPaidRouteWalletMint { .. }
-            | NativeAppAction::RemovePaidRouteWalletMint { .. }
-            | NativeAppAction::SetPaidRouteDefaultMint { .. }
-            | NativeAppAction::RefreshPaidRouteWallet { .. }
-            | NativeAppAction::TopUpPaidRouteWallet { .. }
-            | NativeAppAction::ReceivePaidRouteWalletToken { .. }
-            | NativeAppAction::SendPaidRouteWalletToken { .. }
-            | NativeAppAction::WithdrawPaidRouteWalletLightning { .. }
-            | NativeAppAction::BuyPaidRouteOffer { .. }
-            | NativeAppAction::SelectPaidRouteSession { .. }
-            | NativeAppAction::ProbePaidRouteSession { .. }
-            | NativeAppAction::RecordPaidRouteProbe { .. }
-            | NativeAppAction::CreatePaidRoutePaymentEnvelope { .. }
-            | NativeAppAction::OpenPaidRouteChannelFromWallet { .. }
-            | NativeAppAction::SignPaidRoutePaymentEnvelopeFromWallet { .. }
-            | NativeAppAction::ClosePaidRouteChannelFromWallet { .. }
-            | NativeAppAction::ApplyPaidRoutePaymentEnvelope { .. }
-            | NativeAppAction::SendPaidRoutePaymentEnvelope { .. }
-            | NativeAppAction::StreamPaidRoutePayments { .. }
-            | NativeAppAction::ReceivePaidRoutePayments { .. }
-            | NativeAppAction::CollectPaidExitChannel { .. }
-            | NativeAppAction::CollectDuePaidExitChannels
-            | NativeAppAction::PublishPaidExitOffer
-            | NativeAppAction::DiscoverPaidRouteOffers { .. } => {
-                Err(anyhow!("paid route native actions need the CLI handler port"))
+            NativeAppAction::AddPaidRouteWalletMint { url, label } => {
+                self.add_paid_route_wallet_mint(&url, label.as_deref())
+            }
+            NativeAppAction::RemovePaidRouteWalletMint { url } => {
+                self.remove_paid_route_wallet_mint(&url)
+            }
+            NativeAppAction::SetPaidRouteDefaultMint { url } => {
+                self.set_paid_route_default_mint(&url)
+            }
+            NativeAppAction::RefreshPaidRouteWallet { refresh } => {
+                self.refresh_paid_route_wallet(refresh)
+            }
+            NativeAppAction::TopUpPaidRouteWallet {
+                mint_url,
+                amount_sat,
+            } => self.top_up_paid_route_wallet(mint_url.as_deref(), amount_sat),
+            NativeAppAction::ReceivePaidRouteWalletToken { token } => {
+                self.receive_paid_route_wallet_token(&token)
+            }
+            NativeAppAction::SendPaidRouteWalletToken {
+                mint_url,
+                amount_sat,
+            } => self.send_paid_route_wallet_token(mint_url.as_deref(), amount_sat),
+            NativeAppAction::WithdrawPaidRouteWalletLightning { mint_url, invoice } => {
+                self.withdraw_paid_route_wallet_lightning(mint_url.as_deref(), &invoice)
+            }
+            NativeAppAction::BuyPaidRouteOffer {
+                offer_key,
+                mint_url,
+                channel_capacity_sat,
+            } => self.buy_paid_route_offer(&offer_key, mint_url.as_deref(), channel_capacity_sat),
+            NativeAppAction::SelectPaidRouteSession {
+                session_id,
+                connect,
+            } => self.select_paid_route_session(&session_id, connect),
+            NativeAppAction::ProbePaidRouteSession {
+                session_id,
+                timeout_secs,
+            } => self.probe_paid_route_session(&session_id, timeout_secs),
+            NativeAppAction::RecordPaidRouteProbe {
+                session_id,
+                realized_exit_ip,
+                observed_country_code,
+                observed_asn,
+                latency_ms,
+                jitter_ms,
+                packet_loss_ppm,
+                down_bps,
+                up_bps,
+                uptime_secs,
+                last_seen_unix,
+            } => self.record_paid_route_probe(
+                &session_id,
+                realized_exit_ip.as_deref(),
+                observed_country_code.as_deref(),
+                observed_asn,
+                latency_ms,
+                jitter_ms,
+                packet_loss_ppm,
+                down_bps,
+                up_bps,
+                uptime_secs,
+                last_seen_unix,
+            ),
+            NativeAppAction::CreatePaidRoutePaymentEnvelope {
+                session_id,
+                kind,
+                payment_json,
+                delivered_units,
+                paid_msat,
+            } => self.create_paid_route_payment_envelope(
+                &session_id,
+                &kind,
+                &payment_json,
+                delivered_units,
+                paid_msat,
+            ),
+            NativeAppAction::OpenPaidRouteChannelFromWallet {
+                session_id,
+                mint_url,
+                paid_msat,
+                max_amount_per_output,
+                keyset_id,
+            } => self.open_paid_route_channel_from_wallet(
+                &session_id,
+                mint_url.as_deref(),
+                paid_msat,
+                max_amount_per_output,
+                keyset_id.as_deref(),
+            ),
+            NativeAppAction::SignPaidRoutePaymentEnvelopeFromWallet {
+                session_id,
+                kind,
+                delivered_units,
+                paid_msat,
+            } => self.sign_paid_route_payment_envelope_from_wallet(
+                &session_id,
+                &kind,
+                delivered_units,
+                paid_msat,
+            ),
+            NativeAppAction::ClosePaidRouteChannelFromWallet {
+                session_id,
+                publish,
+            } => self.close_paid_route_channel_from_wallet(&session_id, publish),
+            NativeAppAction::ApplyPaidRoutePaymentEnvelope { envelope_json } => {
+                self.apply_paid_route_payment_envelope(&envelope_json)
+            }
+            NativeAppAction::SendPaidRoutePaymentEnvelope { envelope_json } => {
+                self.send_paid_route_payment_envelope(&envelope_json)
+            }
+            NativeAppAction::StreamPaidRoutePayments {
+                publish,
+                min_increment_msat,
+                limit,
+            } => self.stream_paid_route_payments(publish, min_increment_msat, limit),
+            NativeAppAction::ReceivePaidRoutePayments { duration_secs } => {
+                self.receive_paid_route_payments(duration_secs)
+            }
+            NativeAppAction::CollectPaidExitChannel { channel_id } => {
+                self.collect_paid_exit_channel(&channel_id)
+            }
+            NativeAppAction::CollectDuePaidExitChannels => self.collect_due_paid_exit_channels(),
+            NativeAppAction::PublishPaidExitOffer => self.publish_paid_exit_offer(),
+            NativeAppAction::DiscoverPaidRouteOffers { duration_secs } => {
+                self.discover_paid_route_offers(duration_secs)
             }
             NativeAppAction::UpdateSettings { patch } => {
                 self.apply_settings_patch(patch)?;

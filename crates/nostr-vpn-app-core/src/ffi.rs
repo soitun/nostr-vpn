@@ -15,6 +15,7 @@ use nostr_vpn_core::config::{
     normalize_runtime_network_id, parse_wireguard_exit_config, wireguard_exit_config_text,
 };
 use nostr_vpn_core::diagnostics::ProbeStatus;
+use nostr_vpn_core::paid_routes::{ExitNetworkClass, PaidExitUpstream, PaidRouteMeter};
 use nostr_vpn_core::process_ext::CommandWindowExt;
 use serde::Deserialize;
 
@@ -319,6 +320,7 @@ struct ExitNodeUiStatus {
 }
 
 include!("ffi/runtime_lifecycle.rs");
+include!("ffi/runtime_paid_exit.rs");
 include!("ffi/runtime_actions.rs");
 include!("ffi/runtime_config.rs");
 include!("ffi/runtime_network.rs");

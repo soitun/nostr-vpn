@@ -101,6 +101,59 @@ impl NativeAppRuntime {
             parsed.enabled = enabled;
             self.config.wireguard_exit = parsed;
         }
+        if let Some(value) = patch.paid_exit_enabled {
+            self.config.paid_exit.enabled = value;
+        }
+        if let Some(value) = patch.paid_exit_upstream {
+            self.config.paid_exit.access.upstream = value
+                .parse::<PaidExitUpstream>()
+                .map_err(|error| anyhow!(error))?;
+        }
+        if let Some(value) = patch.paid_exit_meter {
+            self.config.paid_exit.pricing.meter =
+                value.parse::<PaidRouteMeter>().map_err(|error| anyhow!(error))?;
+        }
+        if let Some(value) = patch.paid_exit_price_msat {
+            self.config.paid_exit.pricing.price_msat = value;
+        }
+        if let Some(value) = patch.paid_exit_per_units {
+            self.config.paid_exit.pricing.per_units = value;
+        }
+        if let Some(value) = patch.paid_exit_accepted_mints {
+            self.config.paid_exit.channel.accepted_mints = parse_csv_values(&value);
+        }
+        if let Some(value) = patch.paid_exit_max_channel_capacity_sat {
+            self.config.paid_exit.channel.max_channel_capacity_sat = value;
+        }
+        if let Some(value) = patch.paid_exit_channel_expiry_secs {
+            self.config.paid_exit.channel.channel_expiry_secs = value;
+        }
+        if let Some(value) = patch.paid_exit_free_probe_units {
+            self.config.paid_exit.channel.free_probe_units = value;
+        }
+        if let Some(value) = patch.paid_exit_grace_units {
+            self.config.paid_exit.channel.grace_units = value;
+        }
+        if let Some(value) = patch.paid_exit_country_code {
+            self.config.paid_exit.location.country_code = value;
+        }
+        if let Some(value) = patch.paid_exit_region {
+            self.config.paid_exit.location.region = value;
+        }
+        if let Some(value) = patch.paid_exit_asn {
+            self.config.paid_exit.location.asn = parse_optional_asn(&value)?;
+        }
+        if let Some(value) = patch.paid_exit_network_class {
+            self.config.paid_exit.location.network_class = value
+                .parse::<ExitNetworkClass>()
+                .map_err(|error| anyhow!(error))?;
+        }
+        if let Some(value) = patch.paid_exit_ipv4 {
+            self.config.paid_exit.ip_support.ipv4 = value;
+        }
+        if let Some(value) = patch.paid_exit_ipv6 {
+            self.config.paid_exit.ip_support.ipv6 = value;
+        }
         if let Some(value) = patch.fips_host_tunnel_enabled {
             self.config.fips_host_tunnel_enabled = value;
         }

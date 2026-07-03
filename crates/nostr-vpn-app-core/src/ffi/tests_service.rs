@@ -439,6 +439,70 @@ exit 0
     }
 
     #[test]
+    fn settings_patch_persists_paid_exit_seller_config() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-paid-exit-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+
+        runtime.dispatch(NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                paid_exit_enabled: Some(true),
+                paid_exit_upstream: Some("wg".to_string()),
+                paid_exit_meter: Some("bytes".to_string()),
+                paid_exit_price_msat: Some(2_500),
+                paid_exit_per_units: Some(1_048_576),
+                paid_exit_accepted_mints: Some(
+                    "https://mint-b.example, https://mint-a.example".to_string(),
+                ),
+                paid_exit_max_channel_capacity_sat: Some(100),
+                paid_exit_channel_expiry_secs: Some(3_600),
+                paid_exit_free_probe_units: Some(65_536),
+                paid_exit_grace_units: Some(131_072),
+                paid_exit_country_code: Some("fi".to_string()),
+                paid_exit_region: Some("Uusimaa".to_string()),
+                paid_exit_asn: Some("AS12345".to_string()),
+                paid_exit_network_class: Some("dc".to_string()),
+                paid_exit_ipv4: Some(true),
+                paid_exit_ipv6: Some(false),
+                ..SettingsPatch::default()
+            },
+        });
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
+        assert!(saved.paid_exit.enabled);
+        assert_eq!(saved.paid_exit.access.upstream.as_str(), "wireguard_exit");
+        assert_eq!(saved.paid_exit.pricing.meter.as_str(), "bytes");
+        assert_eq!(saved.paid_exit.pricing.price_msat, 2_500);
+        assert_eq!(saved.paid_exit.pricing.per_units, 1_048_576);
+        assert_eq!(
+            saved.paid_exit.channel.accepted_mints,
+            vec!["https://mint-a.example", "https://mint-b.example"]
+        );
+        assert_eq!(saved.paid_exit.channel.max_channel_capacity_sat, 100);
+        assert_eq!(saved.paid_exit.channel.channel_expiry_secs, 3_600);
+        assert_eq!(saved.paid_exit.channel.free_probe_units, 65_536);
+        assert_eq!(saved.paid_exit.channel.grace_units, 131_072);
+        assert_eq!(saved.paid_exit.location.country_code, "FI");
+        assert_eq!(saved.paid_exit.location.region, "Uusimaa");
+        assert_eq!(saved.paid_exit.location.asn, Some(12_345));
+        assert_eq!(saved.paid_exit.location.network_class.as_str(), "datacenter");
+        assert!(saved.paid_exit.ip_support.ipv4);
+        assert!(!saved.paid_exit.ip_support.ipv6);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn settings_patch_enforces_exit_node_mutual_exclusion() {
         use nostr_sdk::prelude::{Keys, ToBech32};
 
