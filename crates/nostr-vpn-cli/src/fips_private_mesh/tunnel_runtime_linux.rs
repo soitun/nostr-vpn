@@ -10,7 +10,7 @@ impl FipsPrivateTunnelRuntime {
             crate::route_targets_require_endpoint_bypass(&route_targets);
         let mut peer_endpoint_hosts = Vec::new();
         if original_route_targets_require_bypass {
-            peer_endpoint_hosts = self.mesh.peer_transport_ipv4_hosts().await?;
+            peer_endpoint_hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
             if route_targets.iter().any(|route| route == "0.0.0.0/0")
                 && peer_endpoint_hosts.is_empty()
             {

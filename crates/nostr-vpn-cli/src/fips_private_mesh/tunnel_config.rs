@@ -90,12 +90,18 @@ impl FipsPrivateTunnelConfig {
         // Persisted private static hints come from old invites and only make
         // sense while we are still on that LAN, so drop them before fips gives
         // configured addresses first shot over discovery/NAT candidates.
-        let desired_endpoint_hint_npubs = app
+        let mut desired_endpoint_hint_npubs = app
             .active_network_signal_pubkeys_hex()
             .into_iter()
             .filter(|participant| Some(participant.as_str()) != own_pubkey)
             .map(|participant| normalize_fips_endpoint_npub(&participant))
             .collect::<std::collections::HashSet<_>>();
+        #[cfg(feature = "paid-exit")]
+        if let Some(public_paid_exit) = app.public_paid_exit_node_pubkey_hex()
+            && Some(public_paid_exit.as_str()) != own_pubkey
+        {
+            desired_endpoint_hint_npubs.insert(normalize_fips_endpoint_npub(&public_paid_exit));
+        }
         let nostr_discovery_policy = fips_nostr_discovery_policy_from_app(app);
         let allow_non_roster_transit = nostr_discovery_policy == NostrDiscoveryPolicy::Open;
         let tunnel_endpoint_hosts = fips_tunnel_endpoint_hosts(app, network_id);
@@ -254,6 +260,30 @@ impl FipsPrivateTunnelConfig {
         targets.dedup();
         targets
     }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
+    fn endpoint_hint_ipv4_hosts(&self) -> Vec<Ipv4Addr> {
+        let mut hosts = self
+            .endpoint_peers
+            .iter()
+            .flat_map(|peer| peer.addresses.iter())
+            .filter_map(|hint| endpoint_transport_ipv4_host(&hint.addr))
+            .filter(|host| !route_targets_include_ipv4_host(&self.route_targets, *host))
+            .collect::<Vec<_>>();
+        hosts.sort_unstable();
+        hosts.dedup();
+        hosts
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+fn route_targets_include_ipv4_host(route_targets: &[String], host: Ipv4Addr) -> bool {
+    route_targets.iter().any(|route| {
+        let Some((target, bits)) = route.split_once('/') else {
+            return route.parse::<Ipv4Addr>() == Ok(host);
+        };
+        bits == "32" && target.parse::<Ipv4Addr>() == Ok(host)
+    })
 }
 
 fn local_interface_address_for_tunnel(tunnel_ip: &str) -> String {

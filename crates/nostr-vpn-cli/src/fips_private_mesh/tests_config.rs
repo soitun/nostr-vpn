@@ -57,6 +57,64 @@
     }
 
     #[test]
+    fn tunnel_config_applies_live_endpoint_hints_for_selected_paid_exit() {
+        let alice_keys = Keys::generate();
+        let seller_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let seller_pubkey = seller_keys.public_key().to_hex();
+        let seller_npub = seller_keys.public_key().to_bech32().expect("seller npub");
+        let network_id = "fips-paid-exit-live-hints-test";
+
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = alice_nsec;
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = network_id.to_string();
+        app.networks[0].devices = vec![alice_pubkey.clone()];
+        app.select_public_paid_exit_node(&seller_npub)
+            .expect("select paid exit");
+
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            None,
+            &[(
+                seller_pubkey.clone(),
+                vec![("203.0.113.44:51821".to_string(), 123_000)],
+            )],
+        )
+        .expect("fips tunnel config");
+
+        let seller = config
+            .endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == seller_npub)
+            .expect("seller endpoint peer");
+        assert_eq!(seller.addresses.len(), 1);
+        assert_eq!(seller.addresses[0].addr, "203.0.113.44:51821");
+        assert_eq!(seller.addresses[0].seen_at_ms, Some(123_000));
+        assert!(config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
+        assert_eq!(
+            config.endpoint_hint_ipv4_hosts(),
+            vec!["203.0.113.44".parse::<std::net::Ipv4Addr>().unwrap()]
+        );
+    }
+
+    #[test]
+    fn endpoint_bypass_hosts_skip_overlay_tunnel_route_targets() {
+        assert!(super::route_targets_include_ipv4_host(
+            &["10.44.1.2/32".to_string()],
+            "10.44.1.2".parse().unwrap(),
+        ));
+        assert!(!super::route_targets_include_ipv4_host(
+            &["0.0.0.0/0".to_string(), "10.44.1.2/32".to_string()],
+            "203.0.113.44".parse().unwrap(),
+        ));
+    }
+
+    #[test]
     fn link_event_path_hint_refresh_does_not_require_endpoint_restart() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();

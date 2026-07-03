@@ -179,6 +179,7 @@ impl FipsDirectEndpointDataLane {
             .batches
             .pop_front()
             .ok_or(std::sync::mpsc::RecvTimeoutError::Timeout)?;
+        limit_queued_direct_endpoint_runs_to_remaining(&mut queued, limit, &mut state);
         crate::pipeline_profile::record_since(
             crate::pipeline_profile::Stage::DirectEndpointQueue,
             queued.enqueued_at,
