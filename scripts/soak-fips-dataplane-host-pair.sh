@@ -669,12 +669,10 @@ assert_peer_path() {
   srtt="$(peer_field "$status" "$peer" fips_srtt_ms)"
   srtt_age_ms="$(peer_field "$status" "$peer" fips_srtt_age_ms)"
   if [[ "$reachable" != "true" ]]; then
-    printf '%s\n' "$status" >&2
     die "$label peer is not reachable"
   fi
   if [[ "$ALLOW_NON_DIRECT" == "0" && -n "$expected_ip" && "$transport_addr" != "$expected_ip:"* ]]; then
-    printf '%s\n' "$status" >&2
-    die "$label route changed away from expected direct UDP path (addr=$transport_addr expected_ip=$expected_ip)"
+    die "$label route changed away from expected direct UDP path"
   fi
   if [[ "$srtt" != "null" && -n "$srtt" ]]; then
     assert_float_at_most "$srtt" "$MAX_SRTT_MS" "$label FIPS SRTT ms"
@@ -700,7 +698,6 @@ wait_for_peer_status() {
     fi
     sleep 2
   done
-  printf '%s\n' "$status" >&2
   die "$label did not become reachable via daemon status"
 }
 
