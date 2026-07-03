@@ -15,7 +15,10 @@ Modes:
 
 Device identifiers are intentionally not stored in the repo. Use environment
 variables such as NVPN_ANDROID_SERIAL and NVPN_IOS_DEVICE when needed, or copy
-.env.mobile.example to .env.mobile.local for local ignored values.
+.env.mobile.example to .env.mobile.local for local ignored values. Set
+NVPN_IOS_INSTALL=1 when physical iOS should build/install the exact current
+development-signed app before launching; set NVPN_IOS_DEBUG_CREATE_NETWORK=1
+for local iOS Packet Tunnel coverage without a private invite fixture.
 
 Set NVPN_FIPS_REPO_PATH=/path/to/fips when testing mobile Rust code against
 unreleased local FIPS crates. Cargo.lock is restored after local-FIPS cargo

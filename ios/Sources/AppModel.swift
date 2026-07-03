@@ -318,6 +318,7 @@ final class AppModel: ObservableObject {
         let arguments = Set(rawArguments)
         debugLog("launch automation args=\(Self.redactedDebugArguments(rawArguments))")
         let importedInvite = importDebugInviteIfPresent(arguments: rawArguments)
+        let addedNetwork = addDebugNetworkIfPresent(arguments: rawArguments)
         if arguments.contains("--nvpn-debug-exit-probe") {
             Task {
                 await runDebugExitProbe(arguments: rawArguments)
@@ -332,7 +333,7 @@ final class AppModel: ObservableObject {
             setVpnEnabled(false, force: true)
             return true
         }
-        return importedInvite
+        return importedInvite || addedNetwork
     }
 
     private func importDebugInviteIfPresent(arguments: [String]) -> Bool {
@@ -343,6 +344,20 @@ final class AppModel: ObservableObject {
             return false
         }
         importInvite(invite)
+        refresh()
+        return true
+        #else
+        return false
+        #endif
+    }
+
+    private func addDebugNetworkIfPresent(arguments: [String]) -> Bool {
+        #if DEBUG
+        guard let name = Self.argumentValue(after: "--nvpn-debug-add-network", in: arguments) else {
+            return false
+        }
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        dispatch(NativeActions.addNetwork(normalized.isEmpty ? "iOS smoke" : normalized))
         refresh()
         return true
         #else
@@ -365,6 +380,7 @@ final class AppModel: ObservableObject {
         let skipFetch = arguments.contains("--nvpn-debug-skip-fetch")
         var result: [String: Any] = [
             "url": urlString,
+            "phase": "starting",
             "startedAt": ISO8601DateFormatter().string(from: Date()),
         ]
 
@@ -391,6 +407,7 @@ final class AppModel: ObservableObject {
         }
         refresh()
 
+        writeDebugProbeResult(result, name: resultName)
         if let error = await startVpnForDebugProbe() {
             result["startError"] = error
         }
@@ -399,6 +416,13 @@ final class AppModel: ObservableObject {
             try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
         }
         refresh()
+        result["phase"] = "finished"
+        if let status = await vpnController.statusRawValue() {
+            result["packetTunnelStatusRawValue"] = status
+        }
+        if let runtimeJson = await vpnController.runtimeStateJson() {
+            result["packetTunnelRuntimeStateJson"] = String(runtimeJson.prefix(4096))
+        }
         result["exitNode"] = state.exitNode
         result["vpnEnabled"] = state.vpnEnabled
         result["vpnActive"] = state.vpnActive

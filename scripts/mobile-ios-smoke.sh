@@ -3,17 +3,42 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
+source "$ROOT/scripts/release_common.sh"
+# shellcheck disable=SC1091
 source "$ROOT/scripts/mobile_env.sh"
+load_release_env "$ROOT"
 load_mobile_env "$ROOT"
-BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}"
+resolve_shared_build_metadata "$ROOT"
+export NVPN_IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-${NVPN_DEFAULT_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}}"
+export NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID="${NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID:-$NVPN_IOS_BUNDLE_ID.PacketTunnel}"
+export NVPN_IOS_APP_GROUP_IDENTIFIER="${NVPN_IOS_APP_GROUP_IDENTIFIER:-group.$NVPN_IOS_BUNDLE_ID}"
+BUNDLE_ID="$NVPN_IOS_BUNDLE_ID"
+PROJECT="$ROOT/ios/NostrVpnIos.xcodeproj"
+SCHEME="${NVPN_IOS_SCHEME:-NostrVpnIos}"
+DEVICE_CONFIGURATION="${NVPN_IOS_DEVICE_CONFIGURATION:-Debug}"
+DEVICE_DERIVED_DATA="${NVPN_IOS_DEVICE_DERIVED_DATA:-$ROOT/ios/.build/DeviceDerivedData}"
+DEVICE_DESTINATION="${NVPN_IOS_DEVICE_DESTINATION:-generic/platform=iOS}"
+DEVICE_CODE_SIGN_IDENTITY="${NVPN_IOS_CODE_SIGN_IDENTITY:-Apple Development}"
+INSTALL_DEVICE_APP="${NVPN_IOS_INSTALL:-0}"
+CREATE_NETWORK="${NVPN_IOS_DEBUG_CREATE_NETWORK:-0}"
+DEBUG_NETWORK_NAME="${NVPN_IOS_DEBUG_NETWORK_NAME:-iOS smoke}"
+VPN_START_WAIT_SECS="${NVPN_IOS_VPN_START_WAIT_SECS:-12}"
+VPN_RESULT_WAIT_SECS="${NVPN_IOS_VPN_RESULT_WAIT_SECS:-4}"
+VPN_RESULT_NAME="${NVPN_IOS_VPN_RESULT_NAME:-mobile-ios-smoke-vpn-$$.json}"
+VPN_RESULT_DIR="${NVPN_IOS_RESULT_DIR:-$ROOT/artifacts/mobile-ios}"
 SCREENSHOT="$ROOT/artifacts/nostr-vpn-ios.png"
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/mobile-ios-smoke.sh [simulator|device] [--vpn-cycle]
+usage: scripts/mobile-ios-smoke.sh [simulator|device] [--install] [--create-network] [--vpn-cycle]
 
 simulator  Builds, installs, launches, and screenshots the simulator app.
 device     Launches an already installed development build on a physical device.
+--install  Builds and installs the current development-signed iphoneos app
+           before launching device mode.
+--create-network
+           Creates a local debug network before the device VPN cycle, for OS
+           Packet Tunnel coverage without peer dataplane coverage.
 
 Physical-device mode requires NVPN_IOS_DEVICE or NVPN_IOS_DEVICE_ID. Values may
 live in .env.mobile.local or shell env. Keep device identifiers and signing
@@ -22,6 +47,11 @@ details out of committed files.
 Simulator mode is a launch smoke only; iOS Packet Tunnel dataplane checks need
 a physical device, and first-run VPN/profile permission prompts may need a
 manual approval before --vpn-cycle can run unattended.
+
+Device install mode requires Xcode signing access for NVPN_IOS_BUNDLE_ID and
+NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID. Set NVPN_IOS_TEAM_ID in the shell or local
+env file; set NVPN_IOS_ALLOW_PROVISIONING_UPDATES=0 to avoid automatic profile
+updates.
 EOF
 }
 
@@ -33,6 +63,12 @@ vpn_cycle=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --install)
+      INSTALL_DEVICE_APP=1
+      ;;
+    --create-network)
+      CREATE_NETWORK=1
+      ;;
     --vpn-cycle)
       vpn_cycle=1
       ;;
@@ -72,6 +108,120 @@ launch_device() {
     "$@"
 }
 
+device_app_path() {
+  find "$DEVICE_DERIVED_DATA/Build/Products/$DEVICE_CONFIGURATION-iphoneos" \
+    -maxdepth 1 -name '*.app' -type d | sort | head -n 1
+}
+
+build_device_app() {
+  local team="${NVPN_IOS_TEAM_ID:-}"
+  if [[ -z "$team" ]]; then
+    echo "Set NVPN_IOS_TEAM_ID to build/install a physical iOS device app." >&2
+    exit 1
+  fi
+
+  "$ROOT/tools/run-ios" xcframework
+  "$ROOT/tools/run-ios" project
+
+  local cmd=(xcodebuild)
+  if bool_is_true "${NVPN_IOS_XCODEBUILD_QUIET:-1}"; then
+    cmd+=(-quiet)
+  fi
+  if bool_is_true "${NVPN_IOS_ALLOW_PROVISIONING_UPDATES:-1}"; then
+    cmd+=(-allowProvisioningUpdates)
+  fi
+  cmd+=(
+    -project "$PROJECT"
+    -scheme "$SCHEME"
+    -configuration "$DEVICE_CONFIGURATION"
+    -derivedDataPath "$DEVICE_DERIVED_DATA"
+    -destination "$DEVICE_DESTINATION"
+    DEVELOPMENT_TEAM="$team"
+    CODE_SIGN_IDENTITY="$DEVICE_CODE_SIGN_IDENTITY"
+    build
+  )
+  "${cmd[@]}"
+}
+
+install_device_app() {
+  local device="$1"
+  local app_path
+  build_device_app
+  app_path="$(device_app_path)"
+  if [[ -z "$app_path" ]]; then
+    echo "Built iOS device app not found under $DEVICE_DERIVED_DATA" >&2
+    exit 1
+  fi
+  xcrun devicectl device install app --device "$device" "$app_path"
+}
+
+copy_vpn_probe_result() {
+  local device="$1"
+  local result_path="$VPN_RESULT_DIR/$VPN_RESULT_NAME"
+  mkdir -p "$VPN_RESULT_DIR"
+  rm -f "$result_path"
+  if ! xcrun devicectl device copy from \
+    --device "$device" \
+    --domain-type appDataContainer \
+    --domain-identifier "$BUNDLE_ID" \
+    --source "Library/Application Support/Nostr VPN/$VPN_RESULT_NAME" \
+    --destination "$result_path" \
+    --quiet
+  then
+    echo "Failed to copy iOS VPN probe result from app data container for $BUNDLE_ID" >&2
+    echo "If this is a first run, approve the iOS VPN configuration prompt on the device and retry." >&2
+    return 1
+  fi
+  if [[ ! -s "$result_path" ]]; then
+    echo "iOS VPN probe result not found at $result_path" >&2
+    return 1
+  fi
+  printf '%s\n' "$result_path"
+}
+
+validate_vpn_probe_result() {
+  local result_path="$1"
+  python3 - "$result_path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, encoding="utf-8") as fh:
+    result = json.load(fh)
+
+errors = []
+if result.get("startError"):
+    errors.append(f"startError={result['startError']}")
+if result.get("packetTunnelStatusRawValue") != 3:
+    errors.append(f"packetTunnelStatusRawValue={result.get('packetTunnelStatusRawValue')!r}")
+if result.get("vpnEnabled") is not True:
+    errors.append(f"vpnEnabled={result.get('vpnEnabled')!r}")
+
+if errors:
+    print("iOS VPN probe failed: " + ", ".join(errors), file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+run_vpn_cycle() {
+  local device="$1"
+  local args=(
+    --nvpn-debug-exit-probe
+    --nvpn-debug-skip-fetch
+    --nvpn-debug-wait-seconds "$VPN_START_WAIT_SECS"
+    --nvpn-debug-result "$VPN_RESULT_NAME"
+  )
+  if bool_is_true "$CREATE_NETWORK"; then
+    args+=(--nvpn-debug-add-network "$DEBUG_NETWORK_NAME")
+  fi
+  launch_device "$device" "${args[@]}"
+  sleep "$((VPN_START_WAIT_SECS + VPN_RESULT_WAIT_SECS))"
+  local result_path
+  result_path="$(copy_vpn_probe_result "$device")"
+  validate_vpn_probe_result "$result_path"
+  echo "iOS device VPN probe passed: $result_path"
+}
+
 run_device() {
   local device="${NVPN_IOS_DEVICE:-${NVPN_IOS_DEVICE_ID:-}}"
   if [[ -z "$device" ]]; then
@@ -80,10 +230,11 @@ run_device() {
   fi
 
   xcrun devicectl device info details --device "$device" >/dev/null
+  if bool_is_true "$INSTALL_DEVICE_APP"; then
+    install_device_app "$device"
+  fi
   if [[ "$vpn_cycle" -eq 1 ]]; then
-    launch_device "$device" --nvpn-disconnect
-    sleep 3
-    launch_device "$device" --nvpn-connect
+    run_vpn_cycle "$device"
   else
     launch_device "$device"
   fi
