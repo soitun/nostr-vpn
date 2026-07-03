@@ -1014,9 +1014,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.77"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bee034c8474ef605b40ca501efc823b83d9d5593ab2b82b3fa84db62ea074239"
+version = "0.3.78"
 dependencies = [
  "bluer",
  "crossbeam-channel",
@@ -1052,9 +1050,7 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.3.52"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b744e938d7a6aae6b1391b8d6002ec030f0839656dc04769303dc335c6544453"
+version = "0.3.53"
 dependencies = [
  "fips-core",
 ]
@@ -1062,8 +1058,6 @@ dependencies = [
 [[package]]
 name = "fips-identity"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e143619aebf9db3129c1d2de67ba223bcf611216efa09a932c98a617e3e4a42b"
 dependencies = [
  "bech32",
  "hex",
@@ -2569,9 +2563,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13737b7b87f32a95096b7a1a59a48f3b7139948a1be9cf74831eb9c8b2deec15"
+checksum = "3bbab8a01749b3974cdce452b2fd6a435da55fca62fb6ee24bb6e817a95ed849"
 dependencies = [
  "anyhow",
  "nostr-sdk",

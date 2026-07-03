@@ -564,8 +564,26 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         ? "No accepted mints configured"
         : $"Accepted mints: {string.Join(", ", State.PaidExitSeller.AcceptedMints)}";
 
-    public string PaidExitSellerSessionsText =>
-        $"{State.PaidExitSeller.Sessions.Count} active customer{(State.PaidExitSeller.Sessions.Count == 1 ? "" : "s")}";
+    public string PaidExitSellerSessionsText
+    {
+        get
+        {
+            var seller = State.PaidExitSeller;
+            var pieces = new List<string>
+            {
+                $"{seller.CurrentConnectionCount} connected",
+                $"{seller.PastConnectionCount} past",
+                TextOr(seller.TotalTrafficText, $"{NativeDisplayText.FormatBytes(seller.TotalBillableBytes)} routed"),
+                $"{TextOr(seller.TotalPaidText, FormatPaidRouteMsat(seller.TotalPaidMsat))} paid",
+                $"{TextOr(seller.TotalDueText, FormatPaidRouteMsat(seller.TotalDueMsat))} due",
+            };
+            if (seller.TotalUnpaidMsat > 0)
+            {
+                pieces.Add($"{TextOr(seller.TotalUnpaidText, FormatPaidRouteMsat(seller.TotalUnpaidMsat))} behind");
+            }
+            return string.Join(" · ", pieces);
+        }
+    }
 
     public IEnumerable<string> PaidRouteWalletMintRows => State.PaidRouteMarket.Wallet.Mints.Select(mint =>
     {

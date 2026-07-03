@@ -1782,6 +1782,9 @@ struct RootView: View {
                 paidExitSellerPaymentsButton
             }
             paidRoutePaymentActionResult(state.paidRouteMarket.lastPaymentAction)
+            if !state.paidExitSeller.sessions.isEmpty || !state.paidExitSeller.channels.isEmpty {
+                paidExitSellerCustomerSummary
+            }
             if state.paidExitSeller.sessions.isEmpty {
                 emptyRow("No customers connected", systemImage: "person.2")
             } else {
@@ -1791,6 +1794,38 @@ struct RootView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var paidExitSellerCustomerSummary: some View {
+        let sessions = state.paidExitSeller.sessions
+        let connected = Int(state.paidExitSeller.currentConnectionCount)
+        let behind = sessions.filter { $0.unpaidMsat > 0 }.count
+        let collectable = sessions.filter(paidExitSellerSessionCanCollect).count
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                badge("\(connected) connected", style: connected > 0 ? .ok : .muted)
+                badge("\(state.paidExitSeller.pastConnectionCount) past", style: .muted)
+                badge("\(state.paidExitSeller.channels.count) open channels", style: .muted)
+                if behind > 0 || state.paidExitSeller.totalUnpaidMsat > 0 {
+                    badge("\(max(behind, 1)) behind", style: .warn)
+                }
+                if collectable > 0 {
+                    badge("\(collectable) collectable", style: .muted)
+                }
+            }
+            HStack(spacing: 12) {
+                Text(fallbackText(state.paidExitSeller.totalTrafficText, "\(formatBytes(state.paidExitSeller.totalBillableBytes)) routed"))
+                Text(fallbackText(state.paidExitSeller.totalPaidText, "\(formatPaidRouteMsat(state.paidExitSeller.totalPaidMsat)) paid"))
+                Text(fallbackText(state.paidExitSeller.totalDueText, "\(formatPaidRouteMsat(state.paidExitSeller.totalDueMsat)) due"))
+                if state.paidExitSeller.totalUnpaidMsat > 0 {
+                    Text(fallbackText(state.paidExitSeller.totalUnpaidText, "\(formatPaidRouteMsat(state.paidExitSeller.totalUnpaidMsat)) behind"))
+                        .foregroundStyle(Color.orange)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
         }
     }
 
@@ -2254,8 +2289,44 @@ struct RootView: View {
         }?.counterpartyNpub ?? ""
     }
 
+    private func paidRouteMarketChannel(for session: NativePaidRouteSessionState) -> NativePaidRouteChannelState? {
+        state.paidRouteMarket.channels.first { $0.channelId == session.channelId }
+    }
+
+    private func paidRouteSessionLiveMetaText(
+        _ session: NativePaidRouteSessionState,
+        channel: NativePaidRouteChannelState?,
+        counterpartyLabel: String
+    ) -> String {
+        var parts: [String] = []
+        if let channel {
+            if !channel.counterpartyNpub.isEmpty {
+                parts.append("\(counterpartyLabel) \(paidRouteShortIdentifier(channel.counterpartyNpub))")
+            }
+            if !channel.status.isEmpty {
+                parts.append("channel \(paidRoutePlainStatus(channel.status, fallback: channel.status).lowercased())")
+            }
+            if !channel.capacityText.isEmpty {
+                parts.append("\(channel.capacityText) capacity")
+            }
+        } else if !session.channelId.isEmpty {
+            parts.append("channel \(paidRouteShortIdentifier(session.channelId))")
+        }
+        if !session.accessState.isEmpty {
+            parts.append(paidRouteAccessTitle(session.accessState, fallback: session.lifecycleStatus))
+        }
+        if session.updatedAtUnix > 0 {
+            parts.append("updated \(paidRouteRelativePastText(session.updatedAtUnix))")
+        }
+        if session.expiresAtUnix > 0 {
+            parts.append(paidRouteExpiryText(session.expiresAtUnix))
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func paidRouteSessionRow(_ session: NativePaidRouteSessionState) -> some View {
         let selected = paidRouteSessionIsSelected(session)
+        let channel = paidRouteMarketChannel(for: session)
         let metricText = paidRouteMetricText(
             fallbackText(
                 session.qualityText,
@@ -2370,6 +2441,10 @@ struct RootView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
+            Text(paidRouteSessionLiveMetaText(session, channel: channel, counterpartyLabel: "seller"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             if !metricText.isEmpty {
                 Text(metricText)
                     .font(.caption)
@@ -2456,6 +2531,7 @@ struct RootView: View {
     }
 
     private func paidExitSellerSessionRow(_ session: NativePaidRouteSessionState) -> some View {
+        let channel = paidExitSellerChannel(for: session)
         let metricText = paidRouteMetricText(
             fallbackText(
                 session.qualityText,
@@ -2501,6 +2577,10 @@ struct RootView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
+            Text(paidRouteSessionLiveMetaText(session, channel: channel, counterpartyLabel: "buyer"))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
             if !metricText.isEmpty {
                 Text(metricText)
                     .font(.caption)
@@ -2514,6 +2594,34 @@ struct RootView: View {
                     .lineLimit(1)
             }
         }
+    }
+
+    private func paidExitSellerChannel(for session: NativePaidRouteSessionState) -> NativePaidRouteChannelState? {
+        state.paidExitSeller.channels.first { $0.channelId == session.channelId }
+    }
+
+    private func paidRouteShortIdentifier(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 18 else {
+            return trimmed
+        }
+        return "\(trimmed.prefix(10))…\(trimmed.suffix(6))"
+    }
+
+    private func paidRouteRelativePastText(_ unix: UInt64) -> String {
+        let now = UInt64(Date().timeIntervalSince1970)
+        guard unix < now else {
+            return "just now"
+        }
+        return "\(formatCompactDurationSeconds(now - unix)) ago"
+    }
+
+    private func paidRouteExpiryText(_ unix: UInt64) -> String {
+        let now = UInt64(Date().timeIntervalSince1970)
+        if unix >= now {
+            return "ends in \(formatCompactDurationSeconds(unix - now))"
+        }
+        return "ended \(formatCompactDurationSeconds(now - unix)) ago"
     }
 
     private func paidExitSellerSessionCanCollect(_ session: NativePaidRouteSessionState) -> Bool {
@@ -2787,6 +2895,22 @@ struct RootView: View {
             return minutes == 1 ? "1 min" : "\(minutes) min"
         }
         return "\(seconds) sec"
+    }
+
+    private func formatCompactDurationSeconds(_ seconds: UInt64) -> String {
+        if seconds < 60 {
+            return "\(seconds)s"
+        }
+        let minutes = seconds / 60
+        if minutes < 60 {
+            return "\(minutes)m"
+        }
+        let hours = minutes / 60
+        if hours < 48 {
+            return "\(hours)h"
+        }
+        let days = hours / 24
+        return "\(days)d"
     }
 
     private func formatDecimalBytes(_ bytes: UInt64) -> String {

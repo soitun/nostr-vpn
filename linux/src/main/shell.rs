@@ -79,6 +79,8 @@ fn render(app: &AppRef) {
         Page::Devices => build_devices_page(app, &page_box, &state),
         Page::Share => build_share_page(app, &page_box, &state),
         Page::ExitNodes => build_exit_nodes_page(app, &page_box, &state),
+        Page::PaidRoutes => build_paid_routes_page(app, &page_box, &state),
+        Page::Wallet => build_paid_route_wallet_page(app, &page_box, &state),
         Page::Settings => build_settings_page(app, &page_box, &state),
     }
 
@@ -155,11 +157,16 @@ fn update_stripe_text(version: &str, current: &str) -> String {
 
 fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page: Page) {
     let has_incoming_join_requests = incoming_join_request_count(state) > 0;
-    for (target, title, icon) in [
+    let mut pages = vec![
         (Page::Devices, "Devices", ""),
         (Page::ExitNodes, "Exit Nodes", ""),
-        (Page::Settings, "Settings", ""),
-    ] {
+    ];
+    if paid_internet_available(state) {
+        pages.push((Page::PaidRoutes, "Buy Internet", ""));
+        pages.push((Page::Wallet, "Wallet", ""));
+    }
+    pages.push((Page::Settings, "Settings", ""));
+    for (target, title, icon) in pages {
         let button = nav_button(
             title,
             icon,

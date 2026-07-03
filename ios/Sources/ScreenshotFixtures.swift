@@ -309,6 +309,17 @@ enum ScreenshotFixtures {
         seller.channelCreditText = "35 sat"
         seller.channelCreditTitleText = "Pending buyer credit"
         seller.channelCreditHelpText = "Collect to move it into wallet"
+        seller.currentConnectionCount = 1
+        seller.pastConnectionCount = 3
+        seller.totalBillableBytes = 48_000_000
+        seller.totalBillablePackets = 18_400
+        seller.totalTrafficText = "45.8 MB used"
+        seller.totalPaidMsat = 92_000
+        seller.totalPaidText = "92 sat paid"
+        seller.totalDueMsat = 88_000
+        seller.totalDueText = "88 sat due"
+        seller.totalUnpaidMsat = 0
+        seller.totalUnpaidText = ""
         return seller
     }
 

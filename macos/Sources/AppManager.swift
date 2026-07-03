@@ -156,7 +156,8 @@ final class AppManager: ObservableObject {
         refreshTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 await self?.performRefresh()
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                let interval = self?.refreshIntervalNanoseconds ?? Self.idleRefreshIntervalNanoseconds
+                try? await Task.sleep(nanoseconds: interval)
             }
         }
     }
@@ -200,6 +201,30 @@ final class AppManager: ObservableObject {
             state = nextState
             maybePromptServiceUpdate(nextState)
         } while refreshPending && !Task.isCancelled
+    }
+
+    private static let busyRefreshIntervalNanoseconds: UInt64 = 2_000_000_000
+    private static let idleRefreshIntervalNanoseconds: UInt64 = 6_000_000_000
+
+    private var refreshIntervalNanoseconds: UInt64 {
+        if actionInFlight || serviceSettling || updateChecking || updateInstalling {
+            return 1_000_000_000
+        }
+        if state.vpnEnabled || paidRouteLiveRefreshWanted {
+            return Self.busyRefreshIntervalNanoseconds
+        }
+        return Self.idleRefreshIntervalNanoseconds
+    }
+
+    private var paidRouteLiveRefreshWanted: Bool {
+        if state.paidExitSeller.enabled, !state.paidExitSeller.sessions.isEmpty {
+            return true
+        }
+        return state.paidRouteMarket.sessions.contains { session in
+            session.allowRouting
+                || ["opening", "probing", "active", "paused"].contains(session.lifecycleStatus)
+                || ["paid", "free_probe", "grace", "suspended"].contains(session.accessState)
+        }
     }
 
     func dispatch(
@@ -1704,6 +1729,17 @@ final class AppManager: ObservableObject {
                 channelCreditText: "35 sat",
                 channelCreditTitleText: "Pending buyer credit",
                 channelCreditHelpText: "Collect to move it into wallet",
+                currentConnectionCount: 1,
+                pastConnectionCount: 3,
+                totalBillableBytes: 48_000_000,
+                totalBillablePackets: 18_400,
+                totalTrafficText: "45.8 MB used",
+                totalPaidMsat: 92_000,
+                totalPaidText: "92 sat paid",
+                totalDueMsat: 88_000,
+                totalDueText: "88 sat due",
+                totalUnpaidMsat: 0,
+                totalUnpaidText: "",
                 channels: [
                     NativePaidRouteChannelState(
                         channelId: "seller-channel-demo",

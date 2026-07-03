@@ -145,6 +145,10 @@ fn build_network_setup(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
 fn build_share_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     page_title(page, "Share", "emblem-shared-symbolic");
 
+    if state.paid_exit_seller.supported {
+        build_paid_exit_seller_card(app, page, state);
+    }
+
     let Some(network) = active_network(state).cloned() else {
         return;
     };

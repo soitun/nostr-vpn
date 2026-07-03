@@ -25,7 +25,7 @@ fn paid_exit_seller_state(
     };
     let mut config = app.paid_exit.clone();
     config.access.upstream = selected_paid_exit_upstream(app);
-    let (store_status, channels, sessions) =
+    let (store_status, channels, sessions, traffic_summary) =
         paid_exit_seller_store_state(&config, supported, store_path);
     let channel_credit_msat = paid_exit_seller_channel_credit_msat(&sessions);
     let status_text = append_paid_exit_seller_store_status(
@@ -79,6 +79,21 @@ fn paid_exit_seller_state(
         channel_credit_title_text: paid_exit_seller_channel_credit_title_text().to_string(),
         channel_credit_help_text: paid_exit_seller_channel_credit_help_text(channel_credit_msat)
             .to_string(),
+        current_connection_count: traffic_summary.current_connection_count,
+        past_connection_count: traffic_summary.past_connection_count,
+        total_billable_bytes: traffic_summary.total_billable_bytes,
+        total_billable_packets: traffic_summary.total_billable_packets,
+        total_traffic_text: paid_route_usage_text(
+            traffic_summary.total_billable_bytes,
+            traffic_summary.total_billable_packets,
+            traffic_summary.total_billable_bytes,
+        ),
+        total_paid_msat: traffic_summary.total_paid_msat,
+        total_paid_text: paid_route_paid_text(traffic_summary.total_paid_msat),
+        total_due_msat: traffic_summary.total_due_msat,
+        total_due_text: paid_route_due_text(traffic_summary.total_due_msat),
+        total_unpaid_msat: traffic_summary.total_unpaid_msat,
+        total_unpaid_text: paid_route_unpaid_text(traffic_summary.total_unpaid_msat),
         channels,
         sessions,
     }
@@ -123,9 +138,15 @@ fn paid_exit_seller_store_state(
     String,
     Vec<NativePaidRouteChannelState>,
     Vec<NativePaidRouteSessionState>,
+    PaidExitSellerTrafficSummary,
 ) {
     if !supported || !config.enabled {
-        return (String::new(), Vec::new(), Vec::new());
+        return (
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            PaidExitSellerTrafficSummary::default(),
+        );
     }
     let store = match load_paid_route_store(store_path) {
         Ok(store) => store,
@@ -134,9 +155,18 @@ fn paid_exit_seller_store_state(
                 format!("Paid route store unavailable: {error}"),
                 Vec::new(),
                 Vec::new(),
+                PaidExitSellerTrafficSummary::default(),
             );
         }
     };
+    let all_seller_channel_ids = store
+        .channels
+        .values()
+        .filter(|channel| channel.role == PaidRouteChannelRole::Seller)
+        .map(|channel| channel.channel_id.clone())
+        .collect::<HashSet<_>>();
+    let traffic_summary =
+        paid_exit_seller_traffic_summary(&store, config, &all_seller_channel_ids);
     let mut channels = store
         .channels
         .values()
@@ -175,7 +205,57 @@ fn paid_exit_seller_store_state(
         1 => "1 active paid client".to_string(),
         count => format!("{count} active paid clients"),
     };
-    (status, channels, sessions)
+    (status, channels, sessions, traffic_summary)
+}
+
+#[derive(Default)]
+struct PaidExitSellerTrafficSummary {
+    current_connection_count: u64,
+    past_connection_count: u64,
+    total_billable_bytes: u64,
+    total_billable_packets: u64,
+    total_paid_msat: u64,
+    total_due_msat: u64,
+    total_unpaid_msat: u64,
+}
+
+fn paid_exit_seller_traffic_summary(
+    store: &PaidRouteStore,
+    config: &PaidExitConfig,
+    seller_channel_ids: &HashSet<String>,
+) -> PaidExitSellerTrafficSummary {
+    let mut summary = PaidExitSellerTrafficSummary::default();
+    for record in store.sessions.values() {
+        if !seller_channel_ids.contains(&record.session.payment.channel_id) {
+            continue;
+        }
+        let decision = record.session.routing_decision(config);
+        let channel_is_current = store
+            .channels
+            .get(&record.session.payment.channel_id)
+            .is_some_and(|channel| paid_route_lifecycle_is_current(channel.status));
+        if decision.allow_routing && channel_is_current {
+            summary.current_connection_count = summary.current_connection_count.saturating_add(1);
+        } else {
+            summary.past_connection_count = summary.past_connection_count.saturating_add(1);
+        }
+        summary.total_billable_bytes = summary
+            .total_billable_bytes
+            .saturating_add(record.session.usage.units_for_meter(PaidRouteMeter::Bytes));
+        summary.total_billable_packets = summary
+            .total_billable_packets
+            .saturating_add(record.session.usage.units_for_meter(PaidRouteMeter::Packets));
+        summary.total_paid_msat = summary
+            .total_paid_msat
+            .saturating_add(record.session.payment.paid_msat);
+        summary.total_due_msat = summary
+            .total_due_msat
+            .saturating_add(decision.amount_due_msat);
+        summary.total_unpaid_msat = summary
+            .total_unpaid_msat
+            .saturating_add(decision.unpaid_msat);
+    }
+    summary
 }
 
 fn paid_exit_seller_channel_credit_msat(sessions: &[NativePaidRouteSessionState]) -> u64 {
