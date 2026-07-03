@@ -300,17 +300,6 @@ impl<P: AsRef<[u8]>> LinuxVnetPacketBatch for Vec<P> {
     }
 }
 
-impl LinuxVnetPacketBatch for TunWriteBatch {
-    fn packet_count(&self) -> usize {
-        self.len()
-    }
-
-    fn packet_slice(&self, index: usize) -> &[u8] {
-        self.packet_slice(index)
-            .expect("prepared Linux vnet packet index must exist")
-    }
-}
-
 impl LinuxVnetPacketBatch for DirectTunWriteBatch {
     fn packet_count(&self) -> usize {
         self.len()

@@ -129,121 +129,24 @@ fn send_mesh_packet_batch_blocking_or_log(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn fips_blocking_mesh_recv_enabled() -> bool {
-    let value = std::env::var("NVPN_FIPS_BLOCKING_MESH_RECV").ok();
-    fips_blocking_mesh_recv_enabled_from_env(value.as_deref())
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn fips_blocking_mesh_recv_enabled_from_env(value: Option<&str>) -> bool {
-    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
-        return true;
-    };
-
-    !(value == "0"
-        || value.eq_ignore_ascii_case("false")
-        || value.eq_ignore_ascii_case("no")
-        || value.eq_ignore_ascii_case("off")
-        || value.eq_ignore_ascii_case("async"))
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn spawn_mesh_recv_worker(
     mesh: Arc<FipsPrivateMeshRuntime>,
     tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
     event_tx: mpsc::Sender<FipsPrivateMeshEvent>,
 ) -> FipsMeshRecvWorker {
-    if fips_blocking_mesh_recv_enabled() {
-        spawn_blocking_mesh_recv_worker(mesh, tun_fd, event_tx)
-    } else {
-        FipsMeshRecvWorker::Async(spawn_mesh_recv_task(mesh, tun_fd, event_tx))
-    }
+    spawn_blocking_mesh_recv_worker(mesh, tun_fd, event_tx)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn stop_mesh_recv_worker(worker: FipsMeshRecvWorker, mesh: &FipsPrivateMeshRuntime) {
-    match worker {
-        FipsMeshRecvWorker::Async(handle) => {
-            handle.abort();
-            let _ = handle.await;
-        }
-        FipsMeshRecvWorker::Blocking { stop, threads } => {
-            stop.store(true, Ordering::Release);
-            mesh.wake_blocking_mesh_recv();
-            for thread in threads {
-                let _ = tokio::task::spawn_blocking(move || {
-                    let _ = thread.join();
-                })
-                .await;
-            }
-        }
+    worker.stop.store(true, Ordering::Release);
+    mesh.wake_blocking_mesh_recv();
+    for thread in worker.threads {
+        let _ = tokio::task::spawn_blocking(move || {
+            let _ = thread.join();
+        })
+        .await;
     }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn spawn_mesh_recv_task(
-    mesh: Arc<FipsPrivateMeshRuntime>,
-    tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
-    event_tx: mpsc::Sender<FipsPrivateMeshEvent>,
-) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let recv_burst = fips_mesh_recv_burst();
-        let mut messages = Vec::with_capacity(recv_burst);
-        let mut events = Vec::with_capacity(recv_burst);
-        let mut packet_batch = TunWriteBatch::with_capacity(recv_burst);
-        #[cfg(target_os = "linux")]
-        let mut vnet_write_preparer = LinuxVnetWritePreparer::new();
-        let pipeline_profile_enabled = crate::pipeline_profile::enabled();
-        loop {
-            match mesh
-                .recv_mesh_event_batch_into(&mut messages, &mut events, recv_burst)
-                .await
-            {
-                Ok(Some(drained)) => {
-                    if pipeline_profile_enabled {
-                        let (packet_count, packet_bytes) = mesh_event_packet_stats(&events);
-                        crate::pipeline_profile::record_mesh_recv_batch(
-                            drained,
-                            packet_count,
-                            packet_bytes,
-                            recv_burst,
-                        );
-                    }
-                    packet_batch.clear();
-                    for event in events.drain(..) {
-                        if !forward_mesh_event_to_tun_batched(
-                            event,
-                            &tun_fd,
-                            &event_tx,
-                            &mut packet_batch,
-                            #[cfg(target_os = "linux")]
-                            &mut vnet_write_preparer,
-                        )
-                        .await
-                        {
-                            return;
-                        }
-                    }
-                    flush_mesh_packet_batch_to_tun(
-                        &tun_fd,
-                        &mut packet_batch,
-                        #[cfg(target_os = "linux")]
-                        &mut vnet_write_preparer,
-                    )
-                    .await;
-
-                    if drained == recv_burst {
-                        tokio::task::yield_now().await;
-                    }
-                }
-                Ok(None) => break,
-                Err(error) => {
-                    eprintln!("fips: failed to receive tunnel packet: {error}");
-                    sleep(Duration::from_millis(100)).await;
-                }
-            }
-        }
-    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -255,11 +158,7 @@ fn spawn_blocking_mesh_recv_worker(
     let stop = Arc::new(AtomicBool::new(false));
     let tun_fd = *tun_fd.get_ref();
     let direct_tun_write_gate = Arc::new(Mutex::new(()));
-    let lane_count = mesh
-        .direct_endpoint_rx
-        .as_ref()
-        .map_or(1, |receivers| receivers.len())
-        .max(1);
+    let lane_count = mesh.direct_endpoint_rx.len().max(1);
     let mut threads = Vec::with_capacity(lane_count);
     for lane in 0..lane_count {
         let mesh = Arc::clone(&mesh);
@@ -358,52 +257,5 @@ fn spawn_blocking_mesh_recv_worker(
             .expect("failed to spawn FIPS mesh receive worker");
         threads.push(thread);
     }
-    FipsMeshRecvWorker::Blocking { stop, threads }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn mesh_event_packet_stats(events: &[FipsPrivateMeshEvent]) -> (usize, usize) {
-    let mut packets = 0usize;
-    let mut bytes = 0usize;
-    for event in events {
-        if let FipsPrivateMeshEvent::Packet(packet) = event {
-            packets += 1;
-            bytes = bytes.saturating_add(packet.len());
-        }
-    }
-    (packets, bytes)
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn forward_mesh_event_to_tun_batched(
-    event: FipsPrivateMeshEvent,
-    tun_fd: &AsyncFd<BorrowedTunFd>,
-    event_tx: &mpsc::Sender<FipsPrivateMeshEvent>,
-    packet_batch: &mut TunWriteBatch,
-    #[cfg(target_os = "linux")] vnet_write_preparer: &mut LinuxVnetWritePreparer,
-) -> bool {
-    match event {
-        FipsPrivateMeshEvent::Packet(packet) => {
-            push_direct_packet_output_for_tun(packet, packet_batch);
-            true
-        }
-        event => {
-            flush_mesh_packet_batch_to_tun(
-                tun_fd,
-                packet_batch,
-                #[cfg(target_os = "linux")]
-                vnet_write_preparer,
-            )
-            .await;
-            event_tx.send(event).await.is_ok()
-        }
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-async fn cooperate_after_mesh_recv_packet() {
-    // Endpoint recv can stay immediately ready while a peer sends bulk data,
-    // and the utun write itself is synchronous. Count each packet against
-    // Tokio's cooperative budget so timers/control traffic get scheduler time.
-    tokio::task::coop::consume_budget().await;
+    FipsMeshRecvWorker { stop, threads }
 }

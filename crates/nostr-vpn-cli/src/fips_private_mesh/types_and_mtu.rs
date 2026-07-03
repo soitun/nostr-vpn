@@ -39,64 +39,6 @@ const FIPS_ENDPOINT_PACKET_HEADROOM: usize = 128;
 type TunPipelineBatch = Vec<TunPipelinePacket>;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-struct TunWriteBatch {
-    packets: Vec<FipsEndpointData>,
-    bytes: usize,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-impl TunWriteBatch {
-    fn with_capacity(capacity: usize) -> Self {
-        Self {
-            packets: Vec::with_capacity(capacity),
-            bytes: 0,
-        }
-    }
-
-    fn clear(&mut self) {
-        self.packets.clear();
-        self.bytes = 0;
-    }
-
-    fn is_empty(&self) -> bool {
-        self.packets.is_empty()
-    }
-
-    fn len(&self) -> usize {
-        self.packets.len()
-    }
-
-    fn bytes(&self) -> usize {
-        self.bytes
-    }
-
-    fn reserve(&mut self, additional: usize) {
-        self.packets.reserve(additional);
-    }
-
-    fn push(&mut self, packet: FipsEndpointData) {
-        self.bytes = self.bytes.saturating_add(packet.len());
-        self.packets.push(packet);
-    }
-
-    fn packet_slice(&self, index: usize) -> Option<&[u8]> {
-        self.packets.get(index).map(FipsEndpointData::as_slice)
-    }
-
-    #[cfg(test)]
-    fn packet_slices_for_test(&self) -> Vec<&[u8]> {
-        (0..self.len())
-            .filter_map(|index| self.packet_slice(index))
-            .collect()
-    }
-
-    fn drain_packets(&mut self) -> std::vec::Drain<'_, FipsEndpointData> {
-        self.bytes = 0;
-        self.packets.drain(..)
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct DirectTunWriteBatch {
     runs: Vec<FipsEndpointDirectPacketRun>,
     packet_ends: Vec<usize>,
@@ -200,12 +142,9 @@ impl DirectTunWriteBatch {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-enum FipsMeshRecvWorker {
-    Async(JoinHandle<()>),
-    Blocking {
-        stop: Arc<AtomicBool>,
-        threads: Vec<std::thread::JoinHandle<()>>,
-    },
+struct FipsMeshRecvWorker {
+    stop: Arc<AtomicBool>,
+    threads: Vec<std::thread::JoinHandle<()>>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -561,4 +500,3 @@ fn fips_elapsed_at_least(now: u64, timestamp: u64, interval_secs: u64) -> bool {
     }
     now - timestamp >= interval_secs
 }
-

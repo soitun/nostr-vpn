@@ -947,29 +947,3 @@ destination: 192.168.178.57
             "non-roster peer must not inject packets onto the tun (spoofed source)",
         );
     }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[tokio::test(flavor = "current_thread")]
-    async fn mesh_recv_packet_forwarding_cooperates_under_hot_stream() {
-        use std::sync::Arc;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-
-        let sibling_polls = Arc::new(AtomicUsize::new(0));
-        let sibling_polls_task = Arc::clone(&sibling_polls);
-        let sibling = tokio::spawn(async move {
-            loop {
-                sibling_polls_task.fetch_add(1, Ordering::Relaxed);
-                tokio::task::yield_now().await;
-            }
-        });
-
-        for _ in 0..512 {
-            super::cooperate_after_mesh_recv_packet().await;
-        }
-
-        sibling.abort();
-        assert!(
-            sibling_polls.load(Ordering::Relaxed) > 0,
-            "hot mesh packet forwarding must yield scheduler time to sibling tasks"
-        );
-    }

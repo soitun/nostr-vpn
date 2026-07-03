@@ -255,7 +255,7 @@ run_core() {
 }
 
 run_nvpn_hotpath() {
-  run cargo_test -p nvpn blocking_mesh_recv_defaults_on_and_accepts_explicit_disable
+  run cargo_test -p nvpn mesh_recv_burst_env_keeps_endpoint_batch_bounds
   run cargo_test -p nvpn raw_tun_write_keeps_fd_open_and_writes_platform_frame
   run cargo_test -p nvpn blocking_tun_write_keeps_fd_open_and_writes_platform_frame
   run cargo_test -p nvpn tun_to_mesh_classifier_reserves_liveness_and_tcp_control_packets

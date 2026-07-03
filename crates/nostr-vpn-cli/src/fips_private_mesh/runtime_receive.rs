@@ -146,10 +146,7 @@ impl FipsPrivateMeshRuntime {
         event_tx: Option<&mpsc::Sender<FipsPrivateMeshEvent>>,
     ) -> Result<Option<usize>> {
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
-        let Some(receivers) = &self.direct_endpoint_rx else {
-            return Ok(None);
-        };
-        let Some(rx) = receivers.get(lane) else {
+        let Some(rx) = self.direct_endpoint_rx.get(lane) else {
             return Ok(None);
         };
 
@@ -490,11 +487,8 @@ impl FipsPrivateMeshRuntime {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     async fn drain_direct_endpoint_mesh_events(&self, limit: usize) -> Result<usize> {
-        let Some(receivers) = &self.direct_endpoint_rx else {
-            return Ok(0);
-        };
         let mut events = Vec::new();
-        for rx in receivers {
+        for rx in &self.direct_endpoint_rx {
             while events.len() < limit {
                 let runs = match rx.try_recv() {
                     Ok(runs) => runs,

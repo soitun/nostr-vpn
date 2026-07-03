@@ -30,8 +30,8 @@
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
-        BorrowedTunFd, DirectTunWriteBatch, TunPipelinePacket, TunWriteBatch,
-        parse_fips_mesh_recv_burst, push_direct_packet_output_for_tun, raw_write_packet_to_tun,
+        BorrowedTunFd, DirectTunWriteBatch, TunPipelinePacket, parse_fips_mesh_recv_burst,
+        raw_write_packet_to_tun,
     };
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
@@ -58,23 +58,6 @@
     };
     use std::time::Duration;
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[test]
-    fn blocking_mesh_recv_defaults_on_and_accepts_explicit_disable() {
-        for value in [None, Some(""), Some("1"), Some("true"), Some("blocking")] {
-            assert!(super::fips_blocking_mesh_recv_enabled_from_env(value));
-        }
-
-        for value in [
-            Some("0"),
-            Some("false"),
-            Some("no"),
-            Some("off"),
-            Some("async"),
-        ] {
-            assert!(!super::fips_blocking_mesh_recv_enabled_from_env(value));
-        }
-    }
     #[test]
     fn macos_udp_send_buffer_derives_release_defaults() {
         assert_eq!(super::macos_default_udp_send_buf_size(), 256 * 1024);

@@ -104,8 +104,6 @@ const MESH_MAX_MTU: u16 = 9000;
 const FIPS_TUN_READ_BURST: usize = 128;
 #[cfg(target_os = "macos")]
 const FIPS_TUN_READ_BURST: usize = 64;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const FIPS_TUN_WRITE_BURST: usize = 64;
 #[cfg(any(target_os = "macos", test))]
 const MACOS_UDP_SEND_BUF_MIN_MULTIPLIER: usize = 4;
 const MIN_FIPS_UDP_SEND_BUF_SIZE: usize = 64 * 1024;
@@ -223,9 +221,9 @@ fn fips_lan_discovery_scope(network_id: &str) -> String {
 use boringtun::device::tun::TunSocket;
 #[cfg(target_os = "windows")]
 use nostr_vpn_wintun::load_wintun;
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "windows")]
 use tokio::task::JoinHandle;
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[cfg(target_os = "windows")]
 use tokio::time::sleep;
 #[cfg(target_os = "windows")]
 use wintun::{Adapter, MAX_RING_CAPACITY, Session};
@@ -236,7 +234,7 @@ use crate::fips_host_tunnel::FipsHostTunnelConfig;
 pub(crate) struct FipsPrivateMeshRuntime {
     endpoint: FipsEndpoint,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    direct_endpoint_rx: Option<Vec<FipsDirectEndpointDataRx>>,
+    direct_endpoint_rx: Vec<FipsDirectEndpointDataRx>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     direct_endpoint_pending_events: Mutex<VecDeque<FipsPrivateMeshEvent>>,
     mesh: ArcSwap<FipsMeshRuntime>,
