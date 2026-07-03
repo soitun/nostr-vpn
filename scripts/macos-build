@@ -219,7 +219,7 @@ target_root() {
   if [[ -z "${CARGO_TARGET_ROOT:-}" ]]; then
     CARGO_TARGET_ROOT="$(
       cargo metadata --no-deps --format-version 1 \
-        | node -e 'let input = ""; process.stdin.on("data", chunk => input += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(input).target_directory));'
+        | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["target_directory"])'
     )"
   fi
   printf '%s\n' "$CARGO_TARGET_ROOT"
@@ -445,7 +445,11 @@ run_macos_xcodeproj() {
     echo "xcodegen is required for macOS project generation" >&2
     exit 1
   fi
-  node "$ROOT/scripts/sync-versions.mjs"
+  if command -v node >/dev/null 2>&1; then
+    node "$ROOT/scripts/sync-versions.mjs"
+  else
+    echo "Skipping sync-versions.mjs because node is not available." >&2
+  fi
   # Resolve NVPN_APP_VERSION_NAME / NVPN_APP_VERSION_CODE from the workspace
   # version so xcodegen can substitute them into project.yml (MARKETING_VERSION
   # and CURRENT_PROJECT_VERSION). Without this each release would carry
