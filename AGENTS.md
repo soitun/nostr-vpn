@@ -4,7 +4,7 @@
 - References: `wireguard-go`, then BoringTun.
 - Delete concepts, LOC, unused code, stale tests, test-only APIs, and diagnostic scaffolding.
 - Avoid knobs, wrappers, fallbacks, and duplicate paths.
-- Keep the nvpn/FIPS adapter thin and canonical; leave packet-mover policy, batching, queueing, priority, and liveness logic on the FIPS side when possible.
+- Keep the nvpn/FIPS adapter thin and canonical; leave dataplane policy, batching, queueing, priority, and liveness logic on the FIPS side when possible.
 - Measure bottlenecks: throughput, latency, loss, hard counters, CPU-sec/GB or cycles/Gbit.
 - If architecture is sound, debug first bad perf rows before reverting. Large rewrites allowed.
 - Build/test sparingly; use a separate test worktree for long runs.

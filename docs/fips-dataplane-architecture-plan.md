@@ -2,7 +2,7 @@
 
 This is the current post-safety-net architecture strategy for the FIPS/nvpn
 dataplane. The goal is broader than one implementation shape: make the
-packet mover simple, elegant, performant, and reliable while preserving the
+dataplane simple, elegant, performant, and reliable while preserving the
 failure-mode evidence that now protects us from repeating old regressions.
 
 This document is permission for ambitious guarded architecture work. It is not
@@ -65,7 +65,7 @@ wireguard-go `f333402`, BoringTun `cdf3b24`, and Tailscale `7a43e41a2`.
   otherwise.
 - Tailscale splits concerns cleanly: wireguard-go owns packet crypto while
   magicsock owns endpoint/path selection, discovery, rebind, and status work.
-  Non-packet work is throttled or queued outside the packet mover instead of
+  Non-dataplane work is throttled or queued outside the dataplane owner instead of
   being rediscovered per packet.
 - Tailscale's batching API is narrow and optional: Linux gets sendmmsg/GSO/GRO
   where the socket supports it, and fallback paths stay ordinary packet sends.
@@ -90,7 +90,7 @@ for every pressure point.
 ## Current Status
 
 Architecture checkpoint after FIPS `29ab97f`: the safety net is strong enough
-for a larger guarded architecture slice, but the current packet mover is not yet
+for a larger guarded architecture slice, but the dataplane is not yet
 simple in the wireguard-go/BoringTun sense. It is reliable and increasingly
 observable, yet it still has too many owner-shaped handoffs around one packet
 and too much legacy work returning to the central rx loop.
@@ -403,7 +403,7 @@ The active gate is summarized here and detailed in
   tight backpressure knobs, latency drift, route changes, queue growth,
   no-progress counters, and daemon CPU
 - userspace WireGuard host-pair reference harness for BoringTun or
-  wireguard-go, so nvpn can be compared against a known packet-mover baseline on
+  wireguard-go, so nvpn can be compared against a known dataplane baseline on
   the same local-to-Linux/VM path
 
 Use tiered validation so large work stays fast:

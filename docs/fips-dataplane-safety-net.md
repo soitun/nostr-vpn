@@ -4335,7 +4335,7 @@ plan is `docs/fips-dataplane-architecture-plan.md`; the short version is:
 - Prefer a per-peer or per-shard owner for UDP drain, decrypt/open,
   session/replay, encrypt/seal, and send batching.
 - Use wireguard-go, Tailscale, and BoringTun as references for a boring,
-  isolated packet mover, not as code to port wholesale. Latest local reference
+  isolated dataplane, not as code to port wholesale. Latest local reference
   recheck for the architecture plan used wireguard-go `f333402`, BoringTun
   `cdf3b24`, and Tailscale `7a43e41a2`.
 - Keep the rx loop as a coordinator, not a crypto+send bottleneck.

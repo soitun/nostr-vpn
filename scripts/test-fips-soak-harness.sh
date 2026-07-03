@@ -469,7 +469,7 @@ test_pipeline_raw_selectors() {
   assert_eq \
     "$got" \
     "[pipe 10s] fmp_worker_batch_packets=48000/s udp_send_connected=48000/s fmp_worker_queue_wait=48000/s avg=40.0us p50<=65.5us p95<=131.1us p99<=262.1us max<=1.0ms allmax=1.0ms" \
-    "pipeline load raw selects highest packet mover rate"
+    "pipeline load raw selects highest dataplane rate"
 
   got="$(jq -r '.placement_raw' <<<"$sample")"
   assert_eq \
