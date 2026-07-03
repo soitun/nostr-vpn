@@ -51,6 +51,8 @@ use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio::task::JoinHandle;
 
+#[cfg(target_os = "android")]
+include!("mobile_tunnel/android_tun.rs");
 include!("mobile_tunnel/config.rs");
 include!("mobile_tunnel/runtime.rs");
 include!("mobile_tunnel/endpoint_control.rs");

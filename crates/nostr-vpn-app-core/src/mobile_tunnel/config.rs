@@ -419,9 +419,11 @@ pub(crate) struct MobileTunnel {
     app_config: Arc<RwLock<AppConfig>>,
     app_config_dirty: Arc<AtomicBool>,
     outbound_tx: tokio_mpsc::Sender<Vec<u8>>,
-    inbound_rx: Mutex<mpsc::Receiver<Vec<u8>>>,
+    inbound_rx: Option<Arc<Mutex<mpsc::Receiver<Vec<u8>>>>>,
     tasks: Vec<JoinHandle<()>>,
     wg_upstream: Option<WgUpstreamRuntime>,
+    #[cfg(target_os = "android")]
+    android_tun: Option<AndroidTunRuntime>,
     /// Raw fd of the boringtun UDP socket. On Android the host
     /// reads this and calls `VpnService.protect(fd)` so the encrypted
     /// UDP escapes the VPN tun. -1 when WG upstream isn't running.

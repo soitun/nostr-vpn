@@ -24,17 +24,12 @@ import org.nostrvpn.app.R
 import org.nostrvpn.app.appCoreDataDir
 import org.nostrvpn.app.core.NativeCore
 import org.nostrvpn.app.seedMobileConfig
-import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.net.Inet4Address
 import java.util.concurrent.atomic.AtomicBoolean
 
 class NostrVpnService : VpnService() {
     private val running = AtomicBoolean(false)
     private var tunnelHandle: Long = 0
-    private var tunnelInterface: ParcelFileDescriptor? = null
-    private var readThread: Thread? = null
-    private var writeThread: Thread? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var multicastLock: WifiManager.MulticastLock? = null
 
@@ -157,10 +152,6 @@ class NostrVpnService : VpnService() {
             return false
         }
 
-        tunnelInterface = descriptor
-        tunnelHandle = handle
-        running.set(true)
-
         // If the user has WG upstream enabled, the boringtun runtime
         // owns a UDP socket that talks to the Mullvad/Proton server.
         // That socket has to escape the VPN tun (otherwise the
@@ -187,13 +178,18 @@ class NostrVpnService : VpnService() {
             }
         }
 
+        val tunFd = descriptor.detachFd()
+        if (!NativeCore.mobileTunnelAttachTunFd(handle, tunFd)) {
+            NativeCore.mobileTunnelFree(handle)
+            releaseMulticastLock()
+            stopServiceForeground()
+            stopSelf()
+            return false
+        }
+
+        tunnelHandle = handle
+        running.set(true)
         registerUnderlyingNetworkUpdates()
-        val reader = Thread({ readTunLoop(descriptor, handle) }, "nvpn-tun-read")
-        val writer = Thread({ writeTunLoop(descriptor, handle) }, "nvpn-tun-write")
-        readThread = reader
-        writeThread = writer
-        reader.start()
-        writer.start()
         return true
     }
 
@@ -433,70 +429,10 @@ class NostrVpnService : VpnService() {
         setUnderlyingNetworks(networks.takeIf { it.isNotEmpty() })
     }
 
-    private fun readTunLoop(descriptor: ParcelFileDescriptor, handle: Long) {
-        val input = FileInputStream(descriptor.fileDescriptor)
-        val buffer = ByteArray(65_535)
-        val serviceRunning = running
-        while (serviceRunning.get()) {
-            val count = try {
-                input.read(buffer)
-            } catch (_: Exception) {
-                break
-            }
-            if (count <= 0) {
-                break
-            }
-            NativeCore.mobileTunnelSendPacket(handle, buffer, count)
-        }
-    }
-
-    private fun writeTunLoop(descriptor: ParcelFileDescriptor, handle: Long) {
-        val output = FileOutputStream(descriptor.fileDescriptor).channel
-        val serviceRunning = running
-        while (serviceRunning.get()) {
-            val packet = NativeCore.mobileTunnelNextPacketBuffer(handle, 1_000) ?: continue
-            try {
-                val packetLength = packet.remaining()
-                val written = output.write(packet)
-                if (written != packetLength) {
-                    break
-                }
-            } catch (_: Exception) {
-                break
-            } finally {
-                NativeCore.mobileTunnelFreePacketBuffer(packet)
-            }
-        }
-    }
-
     private fun stopTunnel() {
         unregisterUnderlyingNetworkUpdates()
         running.set(false)
         releaseMulticastLock()
-        val descriptor = tunnelInterface
-        tunnelInterface = null
-        descriptor?.close()
-        val currentThread = Thread.currentThread()
-        val reader = readThread
-        val writer = writeThread
-        readThread = null
-        writeThread = null
-        reader?.interrupt()
-        writer?.interrupt()
-        if (reader != null && reader != currentThread) {
-            try {
-                reader.join(1_500)
-            } catch (_: InterruptedException) {
-                currentThread.interrupt()
-            }
-        }
-        if (writer != null && writer != currentThread) {
-            try {
-                writer.join(1_500)
-            } catch (_: InterruptedException) {
-                currentThread.interrupt()
-            }
-        }
         val handle = tunnelHandle
         tunnelHandle = 0
         if (handle != 0L) {

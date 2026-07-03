@@ -3253,6 +3253,7 @@ dependencies = [
  "fips-endpoint",
  "image",
  "jni 0.21.1",
+ "libc",
  "ndk-context",
  "netdev",
  "nostr-sdk",

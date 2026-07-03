@@ -13,9 +13,9 @@ use image::ImageReader;
 #[cfg(target_os = "android")]
 use jni::JNIEnv;
 #[cfg(target_os = "android")]
-use jni::objects::{GlobalRef, JByteArray, JByteBuffer, JClass, JObject, JString};
+use jni::objects::{GlobalRef, JClass, JObject, JString};
 #[cfg(target_os = "android")]
-use jni::sys::{jboolean, jbyte, jint, jlong, jobject, jstring};
+use jni::sys::{jboolean, jint, jlong, jstring};
 use nostr_vpn_core::updater::{
     ProductUpdateMode, ProductUpdateResult, ProductUpdateSource, check_product_update_blocking,
     download_product_update_blocking,
@@ -572,76 +572,22 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelFree(
 
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelSendPacket(
-    env: JNIEnv<'_>,
+pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelAttachTunFd(
+    _env: JNIEnv<'_>,
     _class: JClass<'_>,
     handle: jlong,
-    packet: JByteArray<'_>,
-    len: jint,
+    fd: jint,
 ) -> jboolean {
-    let Some(tunnel) = tunnel_from_jlong(handle) else {
-        return 0;
-    };
-    let Ok(capacity) = env.get_array_length(&packet) else {
-        return 0;
-    };
-    let Some(len) = bounded_packet_copy_len(len, capacity) else {
-        return 0;
-    };
-    let mut bytes = vec![0_u8; len];
-    if env
-        .get_byte_array_region(&packet, 0, u8_slice_as_mut_jbyte(&mut bytes))
-        .is_err()
-    {
+    if fd < 0 {
         return 0;
     }
-    u8::from(tunnel.tunnel.send_packet_owned(bytes))
-}
-
-#[cfg(target_os = "android")]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNextPacketBuffer(
-    mut env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    handle: jlong,
-    timeout_ms: jint,
-) -> jobject {
-    let Some(tunnel) = tunnel_from_jlong(handle) else {
-        return ptr::null_mut();
+    let Some(tunnel) = tunnel_from_jlong_mut(handle) else {
+        unsafe {
+            libc::close(fd);
+        }
+        return 0;
     };
-    let timeout_ms = u64::try_from(timeout_ms).unwrap_or(0);
-    let packet = match tunnel
-        .tunnel
-        .next_packet_vec(Duration::from_millis(timeout_ms))
-    {
-        Ok(Some(packet)) => packet,
-        Ok(None) | Err(_) => return ptr::null_mut(),
-    };
-    direct_byte_buffer_from_packet(&mut env, packet)
-}
-
-#[cfg(target_os = "android")]
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelFreePacketBuffer(
-    env: JNIEnv<'_>,
-    _class: JClass<'_>,
-    packet: JByteBuffer<'_>,
-) {
-    if packet.is_null() {
-        return;
-    }
-    let Ok(data) = env.get_direct_buffer_address(&packet) else {
-        return;
-    };
-    let Ok(len) = env.get_direct_buffer_capacity(&packet) else {
-        return;
-    };
-    if data.is_null() || len == 0 {
-        return;
-    }
-    unsafe {
-        free_boxed_packet_buffer(data, len);
-    }
+    u8::from(tunnel.tunnel.attach_tun_fd(fd).is_ok())
 }
 
 /// Returns the raw fd of the userspace WG upstream UDP socket so the
@@ -683,14 +629,12 @@ fn tunnel_from_jlong<'a>(handle: jlong) -> Option<&'a NvpnMobileTunnelHandle> {
     Some(unsafe { &*(handle as *const NvpnMobileTunnelHandle) })
 }
 
-#[cfg(any(target_os = "android", test))]
-fn bounded_packet_copy_len(requested: i32, capacity: i32) -> Option<usize> {
-    if requested <= 0 || capacity <= 0 {
+#[cfg(target_os = "android")]
+fn tunnel_from_jlong_mut<'a>(handle: jlong) -> Option<&'a mut NvpnMobileTunnelHandle> {
+    if handle == 0 {
         return None;
     }
-    let requested = usize::try_from(requested).ok()?;
-    let capacity = usize::try_from(capacity).ok()?;
-    Some(requested.min(capacity))
+    Some(unsafe { &mut *(handle as *mut NvpnMobileTunnelHandle) })
 }
 
 fn mobile_packet_ready(mut packet: Vec<u8>) -> NvpnMobilePacket {
@@ -722,39 +666,6 @@ fn mobile_packet_stopped() -> NvpnMobilePacket {
     NvpnMobilePacket {
         status: -1,
         ..mobile_packet_timeout()
-    }
-}
-
-#[cfg(target_os = "android")]
-fn u8_slice_as_mut_jbyte(value: &mut [u8]) -> &mut [jbyte] {
-    unsafe { std::slice::from_raw_parts_mut(value.as_mut_ptr().cast::<jbyte>(), value.len()) }
-}
-
-#[cfg(target_os = "android")]
-fn direct_byte_buffer_from_packet(env: &mut JNIEnv<'_>, packet: Vec<u8>) -> jobject {
-    if packet.is_empty() {
-        return ptr::null_mut();
-    }
-    let mut packet = packet.into_boxed_slice();
-    let data = packet.as_mut_ptr();
-    let len = packet.len();
-    std::mem::forget(packet);
-    match unsafe { env.new_direct_byte_buffer(data, len) } {
-        Ok(buffer) => buffer.into_raw(),
-        Err(_) => {
-            unsafe {
-                free_boxed_packet_buffer(data, len);
-            }
-            ptr::null_mut()
-        }
-    }
-}
-
-#[cfg(target_os = "android")]
-unsafe fn free_boxed_packet_buffer(data: *mut u8, len: usize) {
-    let slice = std::ptr::slice_from_raw_parts_mut(data, len);
-    unsafe {
-        drop(Box::from_raw(slice));
     }
 }
 
@@ -911,20 +822,6 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
-
-    #[test]
-    fn bounded_packet_copy_len_rejects_empty_or_invalid_lengths() {
-        assert_eq!(bounded_packet_copy_len(0, 65_535), None);
-        assert_eq!(bounded_packet_copy_len(-1, 65_535), None);
-        assert_eq!(bounded_packet_copy_len(64, 0), None);
-        assert_eq!(bounded_packet_copy_len(64, -1), None);
-    }
-
-    #[test]
-    fn bounded_packet_copy_len_uses_actual_packet_length() {
-        assert_eq!(bounded_packet_copy_len(84, 65_535), Some(84));
-        assert_eq!(bounded_packet_copy_len(65_536, 65_535), Some(65_535));
-    }
 
     #[test]
     fn c_abi_returns_json_state_and_action_errors() {

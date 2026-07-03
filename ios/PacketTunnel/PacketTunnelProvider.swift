@@ -6,6 +6,8 @@ private let appGroupIdentifier = Bundle.main.object(
     forInfoDictionaryKey: "NVPNAppGroupIdentifier"
 ) as? String ?? "group.fi.siriusbusiness.nvpn"
 private let defaultMobileMtu = 1150
+private let ipv4PacketProtocol = NSNumber(value: AF_INET)
+private let ipv6PacketProtocol = NSNumber(value: AF_INET6)
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let nextPacketPollTimeoutMs: UInt32 = 100
@@ -13,6 +15,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private enum PacketRead {
         case packet(Data)
+        case timeout
+        case stopped
+    }
+
+    private enum PacketBatchRead {
+        case packets(shouldStop: Bool)
         case timeout
         case stopped
     }
@@ -213,15 +221,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             guard self.isTunnelRunning() else {
                 return
             }
-            for packet in packets {
-                packet.withUnsafeBytes { raw in
-                    guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
-                        return
-                    }
-                    _ = self.withTunnelHandle { handle in
-                        nostr_vpn_mobile_tunnel_send_packet(handle, base, UInt(packet.count))
+            let sent: Void? = self.withTunnelHandle { handle in
+                for packet in packets {
+                    packet.withUnsafeBytes { raw in
+                        guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
+                            return
+                        }
+                        _ = nostr_vpn_mobile_tunnel_send_packet(handle, base, UInt(packet.count))
                     }
                 }
+            }
+            guard sent != nil else {
+                return
             }
             self.readPackets()
         }
@@ -237,41 +248,55 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             packets.removeAll(keepingCapacity: true)
             protocols.removeAll(keepingCapacity: true)
 
-            switch nextPacket(timeoutMs: Self.nextPacketPollTimeoutMs) {
-            case .packet(let packet):
-                appendPacket(packet, to: &packets, protocols: &protocols)
+            let batch = withTunnelHandle { handle in
+                readPacketBatch(handle: handle, packets: &packets, protocols: &protocols)
+            } ?? .stopped
+
+            switch batch {
+            case .packets(let shouldStop):
+                packetFlow.writePackets(packets, withProtocols: protocols)
+                if shouldStop {
+                    return
+                }
             case .timeout:
                 continue
             case .stopped:
                 return
             }
-
-            var shouldStop = false
-            drainReadyPackets: while packets.count < Self.maxWritePacketBatch {
-                switch nextPacket(timeoutMs: 0) {
-                case .packet(let packet):
-                    appendPacket(packet, to: &packets, protocols: &protocols)
-                case .timeout:
-                    break drainReadyPackets
-                case .stopped:
-                    shouldStop = true
-                    break drainReadyPackets
-                }
-            }
-
-            packetFlow.writePackets(packets, withProtocols: protocols)
-            if shouldStop {
-                break
-            }
         }
     }
 
-    private func nextPacket(timeoutMs: UInt32) -> PacketRead {
-        guard let packet = withTunnelHandle({ handle in
-            nostr_vpn_mobile_tunnel_next_packet_owned(handle, timeoutMs)
-        }) else {
+    private func readPacketBatch(
+        handle: OpaquePointer,
+        packets: inout [Data],
+        protocols: inout [NSNumber]
+    ) -> PacketBatchRead {
+        switch nextPacket(handle: handle, timeoutMs: Self.nextPacketPollTimeoutMs) {
+        case .packet(let packet):
+            appendPacket(packet, to: &packets, protocols: &protocols)
+        case .timeout:
+            return .timeout
+        case .stopped:
             return .stopped
         }
+
+        var shouldStop = false
+        drainReadyPackets: while packets.count < Self.maxWritePacketBatch {
+            switch nextPacket(handle: handle, timeoutMs: 0) {
+            case .packet(let packet):
+                appendPacket(packet, to: &packets, protocols: &protocols)
+            case .timeout:
+                break drainReadyPackets
+            case .stopped:
+                shouldStop = true
+                break drainReadyPackets
+            }
+        }
+        return .packets(shouldStop: shouldStop)
+    }
+
+    private func nextPacket(handle: OpaquePointer, timeoutMs: UInt32) -> PacketRead {
+        let packet = nostr_vpn_mobile_tunnel_next_packet_owned(handle, timeoutMs)
         guard packet.status == 1 else {
             return packet.status == 0 ? .timeout : .stopped
         }
@@ -465,9 +490,9 @@ private func ipv4Route(_ value: String) -> NEIPv4Route? {
 
 private func packetFamily(_ packet: Data) -> NSNumber {
     guard let first = packet.first else {
-        return NSNumber(value: AF_INET)
+        return ipv4PacketProtocol
     }
-    return NSNumber(value: (first >> 4) == 6 ? AF_INET6 : AF_INET)
+    return (first >> 4) == 6 ? ipv6PacketProtocol : ipv4PacketProtocol
 }
 
 private func consumeCString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {

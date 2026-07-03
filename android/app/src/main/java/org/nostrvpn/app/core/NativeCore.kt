@@ -1,7 +1,6 @@
 package org.nostrvpn.app.core
 
 import android.content.Context
-import java.nio.ByteBuffer
 
 internal object NativeCore {
     init {
@@ -19,9 +18,7 @@ internal object NativeCore {
     external fun mobileTunnelConfigJson(dataDir: String): String
     external fun mobileTunnelNew(configJson: String): Long
     external fun mobileTunnelFree(handle: Long)
-    external fun mobileTunnelSendPacket(handle: Long, packet: ByteArray, len: Int): Boolean
-    external fun mobileTunnelNextPacketBuffer(handle: Long, timeoutMs: Int): ByteBuffer?
-    external fun mobileTunnelFreePacketBuffer(packet: ByteBuffer)
+    external fun mobileTunnelAttachTunFd(handle: Long, fd: Int): Boolean
     /// Raw fd of the userspace WG upstream UDP socket, or -1 if WG
     /// upstream isn't running. The VpnService must call `protect(fd)`
     /// on this so the encrypted UDP escapes the VPN tun.

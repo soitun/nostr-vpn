@@ -41,9 +41,11 @@ impl MobileTunnel {
             app_config: started.app_config,
             app_config_dirty: started.app_config_dirty,
             outbound_tx: started.outbound_tx,
-            inbound_rx: Mutex::new(started.inbound_rx),
+            inbound_rx: Some(Arc::new(Mutex::new(started.inbound_rx))),
             tasks: started.tasks,
             wg_upstream: started.wg_upstream,
+            #[cfg(target_os = "android")]
+            android_tun: None,
             wg_upstream_socket_fd: started.wg_upstream_socket_fd,
         })
     }
@@ -441,6 +443,35 @@ impl MobileTunnel {
         self.wg_upstream_socket_fd
     }
 
+    #[cfg(target_os = "android")]
+    pub(crate) fn attach_tun_fd(&mut self, fd: c_int) -> Result<()> {
+        if fd < 0 {
+            return Err(anyhow!("invalid Android tun fd"));
+        }
+        if self.android_tun.is_some() {
+            close_android_tun_fd(fd);
+            return Err(anyhow!("Android tun fd already attached"));
+        }
+        let Some(inbound_rx) = self.inbound_rx.as_ref().cloned() else {
+            close_android_tun_fd(fd);
+            return Err(anyhow!("mobile tunnel inbound packet receiver stopped"));
+        };
+        let mtu = match self.config.read() {
+            Ok(config) => config.mtu,
+            Err(_) => {
+                close_android_tun_fd(fd);
+                return Err(anyhow!("mobile FIPS config lock poisoned"));
+            }
+        };
+        self.android_tun = Some(AndroidTunRuntime::start(
+            fd,
+            self.outbound_tx.clone(),
+            inbound_rx,
+            android_tun_packet_capacity(mtu),
+        )?);
+        Ok(())
+    }
+
     pub(crate) fn wg_upstream_excluded_route(&self) -> Option<String> {
         self.wg_upstream
             .as_ref()
@@ -527,8 +558,11 @@ impl MobileTunnel {
     }
 
     pub(crate) fn next_packet_vec(&self, timeout: Duration) -> Result<Option<Vec<u8>>> {
-        let rx = self
+        let inbound_rx = self
             .inbound_rx
+            .as_ref()
+            .ok_or_else(|| anyhow!("mobile tunnel stopped"))?;
+        let rx = inbound_rx
             .lock()
             .map_err(|_| anyhow!("mobile tunnel inbound packet lock poisoned"))?;
         match rx.recv_timeout(timeout) {
@@ -555,6 +589,11 @@ struct MobileTunnelStarted {
 
 impl Drop for MobileTunnel {
     fn drop(&mut self) {
+        #[cfg(target_os = "android")]
+        if let Some(mut tun) = self.android_tun.take() {
+            tun.shutdown();
+        }
+        let _ = self.inbound_rx.take();
         for task in &self.tasks {
             task.abort();
         }
