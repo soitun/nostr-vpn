@@ -15,7 +15,7 @@ use jni::JNIEnv;
 #[cfg(target_os = "android")]
 use jni::objects::{GlobalRef, JByteArray, JClass, JObject, JString};
 #[cfg(target_os = "android")]
-use jni::sys::{jboolean, jint, jlong, jstring};
+use jni::sys::{jboolean, jbyte, jint, jlong, jstring};
 use nostr_vpn_core::updater::{
     ProductUpdateMode, ProductUpdateResult, ProductUpdateSource, check_product_update_blocking,
     download_product_update_blocking,
@@ -567,15 +567,14 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelSendPac
     let Some(len) = bounded_packet_copy_len(len, capacity) else {
         return 0;
     };
-    let mut signed = vec![0_i8; len];
-    if env.get_byte_array_region(&packet, 0, &mut signed).is_err() {
+    let mut bytes = vec![0_u8; len];
+    if env
+        .get_byte_array_region(&packet, 0, u8_slice_as_mut_jbyte(&mut bytes))
+        .is_err()
+    {
         return 0;
     }
-    let bytes = signed
-        .into_iter()
-        .map(|byte| byte as u8)
-        .collect::<Vec<_>>();
-    u8::from(tunnel.tunnel.send_packet(&bytes))
+    u8::from(tunnel.tunnel.send_packet_owned(bytes))
 }
 
 #[cfg(target_os = "android")]
@@ -593,23 +592,23 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNextPac
     let Ok(capacity) = env.get_array_length(&out) else {
         return -1;
     };
-    let mut buffer = vec![0_u8; usize::try_from(capacity).unwrap_or(0)];
     let timeout_ms = u64::try_from(timeout_ms).unwrap_or(0);
-    let len = match tunnel
+    let packet = match tunnel
         .tunnel
-        .next_packet(&mut buffer, Duration::from_millis(timeout_ms))
+        .next_packet_vec(Duration::from_millis(timeout_ms))
     {
-        Ok(len) => len,
+        Ok(Some(packet)) => packet,
+        Ok(None) => return 0,
         Err(_) => return -1,
     };
+    let len = packet.len().min(usize::try_from(capacity).unwrap_or(0));
     if len == 0 {
         return 0;
     }
-    let signed = buffer[..len]
-        .iter()
-        .map(|byte| i8::from_ne_bytes([*byte]))
-        .collect::<Vec<_>>();
-    if env.set_byte_array_region(&out, 0, &signed).is_err() {
+    if env
+        .set_byte_array_region(&out, 0, u8_slice_as_jbyte(&packet[..len]))
+        .is_err()
+    {
         return -1;
     }
     jint::try_from(len).unwrap_or(-1)
@@ -662,6 +661,16 @@ fn bounded_packet_copy_len(requested: i32, capacity: i32) -> Option<usize> {
     let requested = usize::try_from(requested).ok()?;
     let capacity = usize::try_from(capacity).ok()?;
     Some(requested.min(capacity))
+}
+
+#[cfg(target_os = "android")]
+fn u8_slice_as_jbyte(value: &[u8]) -> &[jbyte] {
+    unsafe { std::slice::from_raw_parts(value.as_ptr().cast::<jbyte>(), value.len()) }
+}
+
+#[cfg(target_os = "android")]
+fn u8_slice_as_mut_jbyte(value: &mut [u8]) -> &mut [jbyte] {
+    unsafe { std::slice::from_raw_parts_mut(value.as_mut_ptr().cast::<jbyte>(), value.len()) }
 }
 
 fn c_string_lossy(value: *const c_char) -> String {

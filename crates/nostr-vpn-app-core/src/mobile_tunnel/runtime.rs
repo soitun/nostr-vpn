@@ -516,24 +516,36 @@ impl MobileTunnel {
         if packet.is_empty() {
             return false;
         }
-        self.outbound_tx.try_send(packet.to_vec()).is_ok()
+        self.send_packet_owned(packet.to_vec())
+    }
+
+    pub(crate) fn send_packet_owned(&self, packet: Vec<u8>) -> bool {
+        if packet.is_empty() {
+            return false;
+        }
+        self.outbound_tx.try_send(packet).is_ok()
     }
 
     pub(crate) fn next_packet(&self, out: &mut [u8], timeout: Duration) -> Result<usize> {
         if out.is_empty() {
             return Ok(0);
         }
+        let Some(packet) = self.next_packet_vec(timeout)? else {
+            return Ok(0);
+        };
+        let len = packet.len().min(out.len());
+        out[..len].copy_from_slice(&packet[..len]);
+        Ok(len)
+    }
+
+    pub(crate) fn next_packet_vec(&self, timeout: Duration) -> Result<Option<Vec<u8>>> {
         let rx = self
             .inbound_rx
             .lock()
             .map_err(|_| anyhow!("mobile tunnel inbound packet lock poisoned"))?;
         match rx.recv_timeout(timeout) {
-            Ok(packet) => {
-                let len = packet.len().min(out.len());
-                out[..len].copy_from_slice(&packet[..len]);
-                Ok(len)
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => Ok(0),
+            Ok(packet) => Ok(Some(packet)),
+            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
             Err(mpsc::RecvTimeoutError::Disconnected) => Err(anyhow!("mobile tunnel stopped")),
         }
     }

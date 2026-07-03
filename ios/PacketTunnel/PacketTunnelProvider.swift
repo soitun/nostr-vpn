@@ -9,6 +9,7 @@ private let defaultMobileMtu = 1150
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let nextPacketPollTimeoutMs: UInt32 = 100
+    private static let maxWritePacketBatch = 32
 
     private var tunnelHandle: OpaquePointer?
     private var tunnelRunning = false
@@ -222,32 +223,79 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
     private func writePackets() {
         var buffer = [UInt8](repeating: 0, count: 65_535)
+        var packets: [Data] = []
+        var protocols: [NSNumber] = []
+        packets.reserveCapacity(Self.maxWritePacketBatch)
+        protocols.reserveCapacity(Self.maxWritePacketBatch)
+
         while true {
-            let capacity = buffer.count
-            let count = withTunnelHandle { handle -> Int in
-                buffer.withUnsafeMutableBytes { raw -> Int in
-                    guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
-                        return -1
-                    }
-                    return nostr_vpn_mobile_tunnel_next_packet(
-                        handle,
-                        base,
-                        UInt(capacity),
-                        Self.nextPacketPollTimeoutMs
-                    )
-                }
-            }
-            guard let count else {
+            packets.removeAll(keepingCapacity: true)
+            protocols.removeAll(keepingCapacity: true)
+
+            guard let firstCount = nextPacket(
+                into: &buffer,
+                timeoutMs: Self.nextPacketPollTimeoutMs
+            ) else {
                 break
             }
-            if count > 0 {
-                let packet = Data(buffer.prefix(count))
-                let family = packetFamily(packet)
-                packetFlow.writePackets([packet], withProtocols: [family])
-            } else if count < 0 {
+            if firstCount < 0 {
+                break
+            }
+            if firstCount == 0 {
+                continue
+            }
+
+            appendPacket(from: buffer, count: firstCount, to: &packets, protocols: &protocols)
+
+            var shouldStop = false
+            while packets.count < Self.maxWritePacketBatch {
+                guard let count = nextPacket(into: &buffer, timeoutMs: 0) else {
+                    shouldStop = true
+                    break
+                }
+                if count < 0 {
+                    shouldStop = true
+                    break
+                }
+                if count == 0 {
+                    break
+                }
+                appendPacket(from: buffer, count: count, to: &packets, protocols: &protocols)
+            }
+
+            packetFlow.writePackets(packets, withProtocols: protocols)
+            if shouldStop {
                 break
             }
         }
+    }
+
+    private func nextPacket(into buffer: inout [UInt8], timeoutMs: UInt32) -> Int? {
+        let capacity = buffer.count
+        return withTunnelHandle { handle -> Int in
+            buffer.withUnsafeMutableBytes { raw -> Int in
+                guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
+                    return -1
+                }
+                return nostr_vpn_mobile_tunnel_next_packet(
+                    handle,
+                    base,
+                    UInt(capacity),
+                    timeoutMs
+                )
+            }
+        }
+    }
+
+    private func appendPacket(
+        from buffer: [UInt8],
+        count: Int,
+        to packets: inout [Data],
+        protocols: inout [NSNumber]
+    ) {
+        let packet = Data(buffer.prefix(count))
+        packets.append(packet)
+        protocols.append(packetFamily(packet))
     }
 
     private func stopRustTunnel() {

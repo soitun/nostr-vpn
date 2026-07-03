@@ -188,8 +188,12 @@ class NostrVpnService : VpnService() {
         }
 
         registerUnderlyingNetworkUpdates()
-        readThread = Thread({ readTunLoop(descriptor, handle) }, "nvpn-tun-read").also { it.start() }
-        writeThread = Thread({ writeTunLoop(descriptor, handle) }, "nvpn-tun-write").also { it.start() }
+        val reader = Thread({ readTunLoop(descriptor, handle) }, "nvpn-tun-read")
+        val writer = Thread({ writeTunLoop(descriptor, handle) }, "nvpn-tun-write")
+        readThread = reader
+        writeThread = writer
+        reader.start()
+        writer.start()
         return true
     }
 
@@ -432,7 +436,8 @@ class NostrVpnService : VpnService() {
     private fun readTunLoop(descriptor: ParcelFileDescriptor, handle: Long) {
         val input = FileInputStream(descriptor.fileDescriptor)
         val buffer = ByteArray(65_535)
-        while (running.get()) {
+        val serviceRunning = running
+        while (serviceRunning.get()) {
             val count = try {
                 input.read(buffer)
             } catch (_: Exception) {
@@ -448,7 +453,8 @@ class NostrVpnService : VpnService() {
     private fun writeTunLoop(descriptor: ParcelFileDescriptor, handle: Long) {
         val output = FileOutputStream(descriptor.fileDescriptor)
         val buffer = ByteArray(65_535)
-        while (running.get()) {
+        val serviceRunning = running
+        while (serviceRunning.get()) {
             val count = NativeCore.mobileTunnelNextPacket(handle, buffer, 1_000)
             if (count > 0) {
                 try {
@@ -470,17 +476,24 @@ class NostrVpnService : VpnService() {
         tunnelInterface = null
         descriptor?.close()
         val currentThread = Thread.currentThread()
-        val threads = listOf(readThread, writeThread)
+        val reader = readThread
+        val writer = writeThread
         readThread = null
         writeThread = null
-        threads.forEach { it?.interrupt() }
-        threads.forEach { thread ->
-            if (thread != null && thread != currentThread) {
-                try {
-                    thread.join(1_500)
-                } catch (_: InterruptedException) {
-                    currentThread.interrupt()
-                }
+        reader?.interrupt()
+        writer?.interrupt()
+        if (reader != null && reader != currentThread) {
+            try {
+                reader.join(1_500)
+            } catch (_: InterruptedException) {
+                currentThread.interrupt()
+            }
+        }
+        if (writer != null && writer != currentThread) {
+            try {
+                writer.join(1_500)
+            } catch (_: InterruptedException) {
+                currentThread.interrupt()
             }
         }
         val handle = tunnelHandle
