@@ -67,7 +67,7 @@ private struct QRCodeScannerView: UIViewRepresentable {
     final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         private let onCode: (String) -> Void
         private let onError: (String) -> Void
-        private let sessionQueue = DispatchQueue(label: "to.iris.nvpn.qrscanner")
+        private let sessionQueue = DispatchQueue(label: "fi.siriusbusiness.nvpn.qrscanner")
         private var session: AVCaptureSession?
         private var didConfigure = false
         private var didFinish = false

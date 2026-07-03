@@ -1095,7 +1095,7 @@ function publishZapstore({ env, tag, dryRun }) {
   //
   // zsp's `release_source` glob is set to a stable filename, so copy this
   // release's APK there. Without a stable name, the glob would pick a
-  // random (often legacy 0.3.x with the old `to.iris.nvpn` package id)
+  // random (often legacy 0.3.x with an old package id)
   // APK out of `dist/`.
   const stableApkPath = join(distDir, 'zapstore-current-android-arm64.apk')
   copyFileSync(apkPath, stableApkPath)

@@ -7,7 +7,7 @@ import UIKit
 final class AppModel: ObservableObject {
     nonisolated static let appGroupIdentifier = Bundle.main.object(
         forInfoDictionaryKey: "NVPNAppGroupIdentifier"
-    ) as? String ?? "group.to.iris.nvpn"
+    ) as? String ?? "group.fi.siriusbusiness.nvpn"
     private static let configFileName = "config.toml"
     private static let mobileRuntimeStateFileName = "mobile-runtime-state.json"
     static let vpnDisclosureAcceptedKey = "vpnDisclosureAccepted"

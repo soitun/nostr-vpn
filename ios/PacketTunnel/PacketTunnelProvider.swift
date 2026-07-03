@@ -4,7 +4,7 @@ import Darwin
 
 private let appGroupIdentifier = Bundle.main.object(
     forInfoDictionaryKey: "NVPNAppGroupIdentifier"
-) as? String ?? "group.to.iris.nvpn"
+) as? String ?? "group.fi.siriusbusiness.nvpn"
 private let defaultMobileMtu = 1150
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
@@ -14,7 +14,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var tunnelRunning = false
     private var activeTunnelCalls = 0
     private let tunnelCondition = NSCondition()
-    private let packetQueue = DispatchQueue(label: "to.iris.nvpn.packet-tunnel", qos: .userInitiated)
+    private let packetQueue = DispatchQueue(label: "fi.siriusbusiness.nvpn.packet-tunnel", qos: .userInitiated)
 
     override func startTunnel(
         options: [String: NSObject]?,

@@ -18,7 +18,7 @@ enum PacketTunnelControllerError: LocalizedError {
 final class PacketTunnelController {
     private let providerBundleIdentifier = Bundle.main.object(
         forInfoDictionaryKey: "NVPNPacketTunnelBundleIdentifier"
-    ) as? String ?? "to.iris.nvpn.PacketTunnel"
+    ) as? String ?? "fi.siriusbusiness.nvpn.PacketTunnel"
     private var activeManager: NETunnelProviderManager?
 
     func start(

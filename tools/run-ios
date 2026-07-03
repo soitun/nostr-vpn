@@ -15,7 +15,7 @@ if [[ -f "$ROOT/scripts/release_common.sh" ]]; then
   source "$ROOT/scripts/release_common.sh"
   resolve_shared_build_metadata "$ROOT"
 fi
-export NVPN_IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-to.iris.nvpn}"
+export NVPN_IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-${NVPN_DEFAULT_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}}"
 export NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID="${NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID:-$NVPN_IOS_BUNDLE_ID.PacketTunnel}"
 export NVPN_IOS_APP_GROUP_IDENTIFIER="${NVPN_IOS_APP_GROUP_IDENTIFIER:-group.$NVPN_IOS_BUNDLE_ID}"
 IOS_DIR="$ROOT/ios"

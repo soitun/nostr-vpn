@@ -5,7 +5,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/mobile_env.sh"
 load_mobile_env "$ROOT"
-BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-to.iris.nvpn}"
+BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}"
 SCREENSHOT="$ROOT/artifacts/nostr-vpn-ios.png"
 
 usage() {

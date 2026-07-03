@@ -3,7 +3,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-to.iris.nvpn}"
+BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}"
 OUTPUT_ROOT="${NVPN_IOS_SCREENSHOT_DIR:-$ROOT/artifacts/appstore-screenshots}"
 LOCALE="${NVPN_APPSTORE_LOCALE:-en-US}"
 BUILD_DIR="$ROOT/ios/.build"
@@ -18,7 +18,7 @@ captures App Store screenshots with non-real UI data.
 Environment:
   NVPN_IOS_SCREENSHOT_DIR   output directory (default artifacts/appstore-screenshots)
   NVPN_APPSTORE_LOCALE      locale directory (default en-US)
-  NVPN_IOS_BUNDLE_ID        app bundle id (default to.iris.nvpn)
+  NVPN_IOS_BUNDLE_ID        app bundle id (default fi.siriusbusiness.nvpn)
   NVPN_IOS_SCREENSHOT_ERASE erase simulators before capture (default 0)
   NVPN_IOS_SCREENSHOT_SETTLE_SECONDS
                             wait after boot before launch (default 30)

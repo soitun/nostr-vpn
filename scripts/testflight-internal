@@ -10,7 +10,7 @@ load_release_env "$ROOT"
 load_appstoreconnect_defaults
 resolve_shared_build_metadata "$ROOT"
 
-IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-to.iris.nvpn}"
+IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-$NVPN_DEFAULT_IOS_BUNDLE_ID}"
 APP_NAME="${NVPN_ASC_APP_NAME:-Nostr VPN}"
 APP_SKU="${NVPN_ASC_APP_SKU:-$IOS_BUNDLE_ID}"
 APP_PRIMARY_LOCALE="${NVPN_ASC_APP_PRIMARY_LOCALE:-en-US}"

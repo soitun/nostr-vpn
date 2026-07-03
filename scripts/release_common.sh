@@ -4,15 +4,69 @@ release_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 }
 
+NVPN_BUILTIN_IOS_BUNDLE_ID="fi.siriusbusiness.nvpn"
+
+expand_env_file_value() {
+  local value="$1"
+  local home="${HOME:-}"
+
+  if [[ -n "$home" ]]; then
+    value="${value/#\~\//$home/}"
+    value="${value/#\$HOME\//$home/}"
+    value="${value/#\$\{HOME\}\//$home/}"
+  fi
+
+  printf '%s' "$value"
+}
+
+load_env_file_defaults() {
+  local env_file="$1"
+  local line
+  local key
+  local value
+
+  [[ -f "$env_file" ]] || return 0
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" || "$line" == \#* || "$line" != *=* ]] && continue
+
+    if [[ "$line" == export[[:space:]]* ]]; then
+      line="${line#export}"
+      line="${line#"${line%%[![:space:]]*}"}"
+    fi
+
+    key="${line%%=*}"
+    key="${key%"${key##*[![:space:]]}"}"
+    key="${key#"${key%%[![:space:]]*}"}"
+    [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || continue
+    [[ -n "${!key:-}" ]] && continue
+
+    value="${line#*=}"
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+      value="${value:1:${#value}-2}"
+    elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+      value="${value:1:${#value}-2}"
+    fi
+    value="$(expand_env_file_value "$value")"
+    export "$key=$value"
+  done < "$env_file"
+}
+
 load_release_env() {
   local root="$1"
   local env_file="${NVPN_RELEASE_ENV_FILE:-$root/release.env}"
-  if [[ -f "$env_file" ]]; then
-    set -a
-    # shellcheck disable=SC1090
-    source "$env_file"
-    set +a
+  local local_env_file="$root/.env.release.local"
+
+  load_env_file_defaults "$env_file"
+  if [[ "$local_env_file" != "$env_file" ]]; then
+    load_env_file_defaults "$local_env_file"
   fi
+
+  export NVPN_DEFAULT_IOS_BUNDLE_ID="${NVPN_DEFAULT_IOS_BUNDLE_ID:-$NVPN_BUILTIN_IOS_BUNDLE_ID}"
 }
 
 bool_is_true() {

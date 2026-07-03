@@ -10,7 +10,7 @@ load_release_env "$ROOT"
 load_appstoreconnect_defaults
 resolve_shared_build_metadata "$ROOT"
 
-IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-to.iris.nvpn}"
+IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-$NVPN_DEFAULT_IOS_BUNDLE_ID}"
 APP_PRIMARY_LOCALE="${NVPN_ASC_APP_PRIMARY_LOCALE:-en-US}"
 SCREENSHOT_ROOT="${NVPN_IOS_SCREENSHOT_DIR:-$ROOT/artifacts/appstore-screenshots}"
 ACTION="${1:-put}"
@@ -26,7 +26,7 @@ and uploads screenshots from artifacts/appstore-screenshots.
 Environment:
   NVPN_ASC_AUTH_KEY_PATH, NVPN_ASC_AUTH_KEY_ID, NVPN_ASC_AUTH_KEY_ISSUER_ID
                               App Store Connect API key settings
-  NVPN_IOS_BUNDLE_ID          app bundle id (default to.iris.nvpn)
+  NVPN_IOS_BUNDLE_ID          app bundle id (default fi.siriusbusiness.nvpn)
   NVPN_ASC_APP_PRIMARY_LOCALE locale (default en-US)
   NVPN_IOS_SCREENSHOT_DIR     screenshot root (default artifacts/appstore-screenshots)
   NVPN_APPSTORE_DESCRIPTION   optional App Store description override
