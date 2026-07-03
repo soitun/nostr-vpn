@@ -60,18 +60,26 @@ impl AndroidTunRuntime {
         })
     }
 
-    fn shutdown(&mut self) {
+    fn stop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
         if self.fd >= 0 {
             close_android_tun_fd(self.fd);
             self.fd = -1;
         }
+    }
+
+    fn join(&mut self) {
         if let Some(thread) = self.read_thread.take() {
             let _ = thread.join();
         }
         if let Some(thread) = self.write_thread.take() {
             let _ = thread.join();
         }
+    }
+
+    fn shutdown(&mut self) {
+        self.stop();
+        self.join();
     }
 }
 
@@ -110,19 +118,12 @@ fn android_tun_read_loop(
 fn send_android_tun_packet(
     outbound_tx: &tokio_mpsc::Sender<Vec<u8>>,
     stop: &AtomicBool,
-    mut packet: Vec<u8>,
+    packet: Vec<u8>,
 ) -> bool {
-    while !stop.load(Ordering::Relaxed) {
-        match outbound_tx.try_send(packet) {
-            Ok(()) => return true,
-            Err(tokio_mpsc::error::TrySendError::Full(returned)) => {
-                packet = returned;
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            Err(tokio_mpsc::error::TrySendError::Closed(_)) => return false,
-        }
+    if stop.load(Ordering::Relaxed) {
+        return false;
     }
-    false
+    outbound_tx.blocking_send(packet).is_ok()
 }
 
 fn android_tun_write_loop(

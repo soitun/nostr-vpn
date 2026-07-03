@@ -609,8 +609,10 @@ struct MobileTunnelStarted {
 impl Drop for MobileTunnel {
     fn drop(&mut self) {
         #[cfg(target_os = "android")]
-        if let Some(mut tun) = self.android_tun.take() {
-            tun.shutdown();
+        let mut android_tun = self.android_tun.take();
+        #[cfg(target_os = "android")]
+        if let Some(tun) = android_tun.as_mut() {
+            tun.stop();
         }
         let _ = self.inbound_rx.take();
         for task in &self.tasks {
@@ -632,5 +634,9 @@ impl Drop for MobileTunnel {
                 let _ = endpoint.shutdown().await;
             }
         });
+        #[cfg(target_os = "android")]
+        if let Some(mut tun) = android_tun {
+            tun.join();
+        }
     }
 }
