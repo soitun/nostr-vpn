@@ -10,6 +10,7 @@ MAIN_ACTIVITY="${NVPN_ANDROID_ACTIVITY:-org.nostrvpn.app/.MainActivity}"
 DEBUG_ACTION_EXTRA="${NVPN_ANDROID_DEBUG_ACTION_EXTRA:-org.nostrvpn.app.DEBUG_ACTION}"
 DEBUG_INVITE_EXTRA="${NVPN_ANDROID_DEBUG_INVITE_EXTRA:-org.nostrvpn.app.DEBUG_INVITE}"
 DEBUG_EXIT_NODE_EXTRA="${NVPN_ANDROID_DEBUG_EXIT_NODE_EXTRA:-org.nostrvpn.app.DEBUG_EXIT_NODE}"
+DEBUG_NETWORK_NAME_EXTRA="${NVPN_ANDROID_DEBUG_NETWORK_NAME_EXTRA:-org.nostrvpn.app.DEBUG_NETWORK_NAME}"
 DEBUG_WIREGUARD_CONFIG_BASE64_EXTRA="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_BASE64_EXTRA:-org.nostrvpn.app.DEBUG_WIREGUARD_CONFIG_BASE64}"
 APK_PATH="${NVPN_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/debug/app-debug.apk}"
 VPN_START_WAIT_SECS="${NVPN_ANDROID_VPN_START_WAIT_SECS:-15}"
@@ -19,15 +20,18 @@ DEBUG_INVITE="${NVPN_ANDROID_DEBUG_INVITE:-}"
 DEBUG_EXIT_NODE="${NVPN_ANDROID_DEBUG_EXIT_NODE:-}"
 DEBUG_WIREGUARD_CONFIG="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG:-}"
 DEBUG_WIREGUARD_CONFIG_FILE="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE:-}"
+DEBUG_NETWORK_NAME="${NVPN_ANDROID_DEBUG_NETWORK_NAME:-Android smoke}"
 
 build=1
 clear_state=0
+create_network="${NVPN_ANDROID_DEBUG_CREATE_NETWORK:-0}"
+accept_vpn_dialog="${NVPN_ANDROID_ACCEPT_VPN_DIALOG:-0}"
 vpn_cycle=0
 serial="${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/mobile-android-smoke.sh [--no-build] [--clear] [--vpn-cycle] [--serial SERIAL]
+usage: scripts/mobile-android-smoke.sh [--no-build] [--clear] [--vpn-cycle] [--create-network] [--accept-vpn-dialog] [--serial SERIAL]
 
 Builds and installs the debug APK, launches the app through adb, and optionally
 cycles the debug VPN action. Values may live in .env.mobile.local, shell env,
@@ -40,6 +44,13 @@ For fresh installs, --vpn-cycle needs an active nvpn network. Seed one privately
 with NVPN_ANDROID_DEBUG_INVITE. A WireGuard exit config can be layered on with
 NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG / NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE,
 but it does not create an nvpn network by itself.
+
+Use --create-network for a local OS VPN/TUN smoke when peer dataplane coverage is
+not required. It creates a debug-only local network named by
+NVPN_ANDROID_DEBUG_NETWORK_NAME, then cycles the VPN.
+
+Use --accept-vpn-dialog only on trusted local test devices; it taps Android's
+system VPN consent OK button if the prompt appears.
 EOF
 }
 
@@ -50,6 +61,12 @@ while [[ $# -gt 0 ]]; do
       ;;
     --clear)
       clear_state=1
+      ;;
+    --create-network)
+      create_network=1
+      ;;
+    --accept-vpn-dialog)
+      accept_vpn_dialog=1
       ;;
     --vpn-cycle)
       vpn_cycle=1
@@ -111,15 +128,15 @@ select_serial() {
 }
 
 vpn_service_running() {
-  "$ADB" -s "$serial" shell dumpsys activity services "$PACKAGE_NAME" 2>/dev/null \
-    | tr -d '\r' \
-    | grep -q 'NostrVpnService'
+  local services
+  services="$("$ADB" -s "$serial" shell dumpsys activity services "$PACKAGE_NAME" 2>/dev/null | tr -d '\r')" || return 1
+  grep -q 'NostrVpnService' <<<"$services"
 }
 
 vpn_network_active() {
-  "$ADB" -s "$serial" shell dumpsys connectivity 2>/dev/null \
-    | tr -d '\r' \
-    | grep -Eq 'NetworkAgentInfo\{.*Transports: VPN'
+  local connectivity
+  connectivity="$("$ADB" -s "$serial" shell dumpsys connectivity 2>/dev/null | tr -d '\r')" || return 1
+  grep -Eq 'NetworkAgentInfo\{.*ni\{VPN CONNECTED' <<<"$connectivity"
 }
 
 vpn_active() {
@@ -151,6 +168,93 @@ vpn_inactive() {
   ! vpn_state_present
 }
 
+android_sdk() {
+  "$ADB" -s "$serial" shell getprop ro.build.version.sdk | tr -d '\r'
+}
+
+grant_permission_if_declared() {
+  local permission="$1"
+  "$ADB" -s "$serial" shell pm grant "$PACKAGE_NAME" "$permission" >/dev/null 2>&1 || true
+}
+
+grant_debug_runtime_permissions() {
+  local sdk
+  sdk="$(android_sdk)"
+  if [[ "$sdk" =~ ^[0-9]+$ && "$sdk" -ge 36 ]]; then
+    grant_permission_if_declared android.permission.NEARBY_WIFI_DEVICES
+  fi
+  if [[ "$sdk" =~ ^[0-9]+$ && "$sdk" -ge 37 ]]; then
+    grant_permission_if_declared android.permission.ACCESS_LOCAL_NETWORK
+  fi
+}
+
+tap_ui_resource() {
+  local resource="$1"
+  local package="${2:-}"
+  local remote="/sdcard/nvpn-window.xml"
+  local xml
+  local point
+  xml="$(mktemp)"
+  if ! "$ADB" -s "$serial" shell uiautomator dump "$remote" >/dev/null 2>&1; then
+    rm -f "$xml"
+    return 1
+  fi
+  if ! "$ADB" -s "$serial" pull "$remote" "$xml" >/dev/null 2>&1; then
+    rm -f "$xml"
+    return 1
+  fi
+  point="$(python3 - "$xml" "$resource" "$package" <<'PY'
+import re
+import sys
+
+xml_path, resource, package = sys.argv[1], sys.argv[2], sys.argv[3]
+xml = open(xml_path, encoding="utf-8").read()
+for node in re.findall(r"<node [^>]+>", xml):
+    rid = re.search(r'resource-id="([^"]*)"', node)
+    pkg = re.search(r'package="([^"]*)"', node)
+    bounds = re.search(r'bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"', node)
+    enabled = re.search(r'enabled="([^"]*)"', node)
+    if package and (not pkg or pkg.group(1) != package):
+        continue
+    if rid and rid.group(1) == resource and bounds and (not enabled or enabled.group(1) == "true"):
+        left, top, right, bottom = map(int, bounds.groups())
+        print((left + right) // 2, (top + bottom) // 2)
+        sys.exit(0)
+sys.exit(1)
+PY
+  )" || {
+    rm -f "$xml"
+    return 1
+  }
+  rm -f "$xml"
+  "$ADB" -s "$serial" shell input tap $point
+}
+
+maybe_accept_vpn_dialog() {
+  [[ "$accept_vpn_dialog" == "1" || "$accept_vpn_dialog" == "true" ]] || return 0
+  local start now tapped
+  start="$(date +%s)"
+  tapped=0
+  while true; do
+    if vpn_active; then
+      return 0
+    fi
+    if tap_ui_resource "android:id/button1" "com.android.vpndialogs"; then
+      tapped=1
+      sleep 1
+      continue
+    fi
+    if [[ "$tapped" -eq 1 ]]; then
+      return 0
+    fi
+    now="$(date +%s)"
+    if (( now - start >= 8 )); then
+      return 0
+    fi
+    sleep 1
+  done
+}
+
 base64_no_wrap() {
   base64 | tr -d '\n'
 }
@@ -168,6 +272,13 @@ start_main_activity() {
 }
 
 seed_debug_config() {
+  if [[ "$create_network" == "1" || "$create_network" == "true" ]]; then
+    start_main_activity \
+      --es "$DEBUG_ACTION_EXTRA" add_network \
+      --es "$DEBUG_NETWORK_NAME_EXTRA" "$DEBUG_NETWORK_NAME"
+    sleep "$DEBUG_SEED_WAIT_SECS"
+  fi
+
   if [[ -n "$DEBUG_INVITE" ]]; then
     start_main_activity --es "$DEBUG_INVITE_EXTRA" "$DEBUG_INVITE"
     sleep "$DEBUG_SEED_WAIT_SECS"
@@ -202,7 +313,7 @@ dump_vpn_diagnostics() {
   echo "---- dumpsys connectivity VPN agents ----" >&2
   "$ADB" -s "$serial" shell dumpsys connectivity 2>/dev/null \
     | tr -d '\r' \
-    | grep -E 'Active default network|NetworkAgentInfo\{|Transports: VPN|VpnNetworkProvider' >&2 || true
+    | grep -E 'NetworkAgentInfo\{.*ni\{VPN|VpnNetworkProvider' >&2 || true
   echo >&2
   echo "---- recent NostrVpnService logcat ----" >&2
   "$ADB" -s "$serial" logcat -d -t 200 2>/dev/null \
@@ -234,6 +345,10 @@ if [[ "$clear_state" -eq 1 ]]; then
   "$ADB" -s "$serial" shell pm clear "$PACKAGE_NAME" >/dev/null
 fi
 
+if [[ "$vpn_cycle" -eq 1 ]]; then
+  grant_debug_runtime_permissions
+fi
+
 start_main_activity
 "$ADB" -s "$serial" shell pm path "$PACKAGE_NAME" >/dev/null
 
@@ -246,6 +361,7 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
     exit 1
   fi
   start_main_activity --es "$DEBUG_ACTION_EXTRA" connect
+  maybe_accept_vpn_dialog
   if ! wait_until "$VPN_START_WAIT_SECS" vpn_active; then
     dump_vpn_diagnostics
     echo "Android smoke failed: VPN service and network did not become active after debug connect." >&2

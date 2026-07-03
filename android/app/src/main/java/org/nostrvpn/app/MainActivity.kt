@@ -36,6 +36,7 @@ class MainActivity : ComponentActivity() {
     private var debugAction by mutableStateOf<String?>(null)
     private var debugInvite by mutableStateOf<String?>(null)
     private var debugExitNode by mutableStateOf<String?>(null)
+    private var debugNetworkName by mutableStateOf<String?>(null)
     private var debugWireGuardConfig by mutableStateOf<String?>(null)
     private lateinit var selfUpdateManager: AndroidSelfUpdateManager
 
@@ -45,6 +46,7 @@ class MainActivity : ComponentActivity() {
         debugAction = intent?.getStringExtra(EXTRA_DEBUG_ACTION)
         debugInvite = intent?.getStringExtra(EXTRA_DEBUG_INVITE)
         debugExitNode = intent?.getStringExtra(EXTRA_DEBUG_EXIT_NODE)
+        debugNetworkName = intent?.getStringExtra(EXTRA_DEBUG_NETWORK_NAME)
         debugWireGuardConfig = debugWireGuardConfigFromIntent(intent)
         NativeCore.initializeAndroidContext(applicationContext)
         val dataDir = appCoreDataDir(this)
@@ -281,7 +283,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            LaunchedEffect(deepLink, debugAction, debugInvite, debugExitNode, debugWireGuardConfig) {
+            LaunchedEffect(deepLink, debugAction, debugInvite, debugExitNode, debugNetworkName, debugWireGuardConfig) {
                 val invite = deepLink
                 if (!invite.isNullOrBlank() && invite.startsWith("nvpn://", ignoreCase = true)) {
                     dispatch(NativeActions.importInvite(invite))
@@ -320,6 +322,17 @@ class MainActivity : ComponentActivity() {
                         }
                         debugAction = null
                         debugExitNode = null
+                    }
+                    DEBUG_ACTION_ADD_NETWORK -> {
+                        if (BuildConfig.DEBUG) {
+                            dispatch(
+                                NativeActions.addNetwork(
+                                    debugNetworkName.orEmpty().trim().ifBlank { "Android smoke" },
+                                ),
+                            )
+                        }
+                        debugAction = null
+                        debugNetworkName = null
                     }
                     DEBUG_ACTION_CLEAR_EXIT -> {
                         if (BuildConfig.DEBUG) {
@@ -430,6 +443,7 @@ class MainActivity : ComponentActivity() {
         debugAction = intent.getStringExtra(EXTRA_DEBUG_ACTION)
         debugInvite = intent.getStringExtra(EXTRA_DEBUG_INVITE)
         debugExitNode = intent.getStringExtra(EXTRA_DEBUG_EXIT_NODE)
+        debugNetworkName = intent.getStringExtra(EXTRA_DEBUG_NETWORK_NAME)
         debugWireGuardConfig = debugWireGuardConfigFromIntent(intent)
     }
 
@@ -474,11 +488,13 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_DEBUG_ACTION = "org.nostrvpn.app.DEBUG_ACTION"
         const val EXTRA_DEBUG_INVITE = "org.nostrvpn.app.DEBUG_INVITE"
         const val EXTRA_DEBUG_EXIT_NODE = "org.nostrvpn.app.DEBUG_EXIT_NODE"
+        const val EXTRA_DEBUG_NETWORK_NAME = "org.nostrvpn.app.DEBUG_NETWORK_NAME"
         const val EXTRA_DEBUG_WIREGUARD_CONFIG = "org.nostrvpn.app.DEBUG_WIREGUARD_CONFIG"
         const val EXTRA_DEBUG_WIREGUARD_CONFIG_BASE64 = "org.nostrvpn.app.DEBUG_WIREGUARD_CONFIG_BASE64"
         const val DEBUG_ACTION_CONNECT = "connect"
         const val DEBUG_ACTION_DISCONNECT = "disconnect"
         const val DEBUG_ACTION_SET_FIPS_EXIT = "set_fips_exit"
+        const val DEBUG_ACTION_ADD_NETWORK = "add_network"
         const val DEBUG_ACTION_CLEAR_EXIT = "clear_exit"
         const val DEBUG_ACTION_SET_WIREGUARD_EXIT = "set_wireguard_exit"
         private const val ANDROID_LOCAL_NETWORK_OPT_IN_API = 36
