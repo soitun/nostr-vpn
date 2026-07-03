@@ -566,19 +566,26 @@ write_header() {
 write_row() {
   local label="$1"
   local input="$2"
+  local summary_override="${3:-}"
+  local artifact_dir_override="${4:-}"
   local summary artifact_dir metadata_backend backend threads duration_secs
   local tcp_single tcp_single_retrans tcp_4 tcp_4_retrans tcp_8 tcp_8_retrans
   local tcp_single_cpu_per_gbyte tcp_4_cpu_per_gbyte tcp_8_cpu_per_gbyte
   local udp_200 udp_200_loss udp_1000 udp_1000_loss ping_loss ping_avg
-  local git_head fips_head nvpn_dirty fips_dirty ref_dirty dirty stress placement dataplane
+  local git_head ref_git_head fips_head nvpn_dirty fips_dirty ref_dirty dirty stress placement dataplane
   local hard_total hard_events blocking_hard_total zero_status candidate
   local iperf_udp200_sockbuf iperf_udp1000_sockbuf udp_receiver_rmem udp_receiver_wmem
   local udp_kernel_dropped udp_namespace_rcvbuf_errors connected_udp_kernel_dropped
   local connected_udp_peer_kernel_dropped connected_udp_drain_bulk_dropped connected_udp_direct_decrypt_bulk_shed
   local connected_udp_recv_buf connected_udp_send_buf
 
-  summary="$(summary_file "$input")"
-  artifact_dir="$(artifact_dir_for "$input")"
+  if [[ -n "$summary_override" ]]; then
+    summary="$summary_override"
+    artifact_dir="$artifact_dir_override"
+  else
+    summary="$(summary_file "$input")"
+    artifact_dir="$(artifact_dir_for "$input")"
+  fi
   backend="$(tsv_value "$summary" backend)"
   threads="$(tsv_value "$summary" threads 2>/dev/null || true)"
   metadata_backend="$(metadata_value "$artifact_dir" '.backend')"
@@ -604,14 +611,15 @@ write_row() {
   ping_avg="$(tsv_value "$summary" ping_avg_ms)"
 
   git_head="$(metadata_value "$artifact_dir" '.source.nvpn.git_head')"
-  if [[ -z "$git_head" ]]; then
-    git_head="$(metadata_value "$artifact_dir" '.reference_source.git_short')"
+  ref_git_head="$(metadata_value "$artifact_dir" '.reference_source.git_short')"
+  if [[ -n "$ref_git_head" && "$backend" != "nvpn" ]]; then
+    git_head="$ref_git_head"
   fi
   fips_head="$(metadata_value "$artifact_dir" '.source.local_fips_patch.git_head')"
   nvpn_dirty="$(metadata_value "$artifact_dir" '.source.nvpn.dirty')"
   fips_dirty="$(metadata_value "$artifact_dir" '.source.local_fips_patch.dirty')"
   ref_dirty="$(metadata_value "$artifact_dir" '.reference_source.dirty')"
-  if [[ -n "$ref_dirty" ]]; then
+  if [[ -n "$ref_dirty" && "$backend" != "nvpn" ]]; then
     dirty="reference=$ref_dirty"
   else
     dirty="nvpn=${nvpn_dirty:-unknown},fips=${fips_dirty:-unknown}"
@@ -705,6 +713,24 @@ write_markdown() {
     }' "$tsv"
 }
 
+write_input_rows() {
+  local label="$1"
+  local input="$2"
+  local summary artifact_dir header row row_index row_summary
+
+  summary="$(summary_file "$input")"
+  artifact_dir="$(artifact_dir_for "$input")"
+  header="$(sed -n '1p' "$summary")"
+  row_index=0
+  while IFS= read -r row; do
+    [[ -n "$row" ]] || continue
+    row_index=$((row_index + 1))
+    row_summary="$tmp_dir/summary-${#rows[@]}-$row_index.tsv"
+    printf '%s\n%s\n' "$header" "$row" >"$row_summary"
+    write_row "$label" "$input" "$row_summary" "$artifact_dir"
+  done < <(tail -n +2 "$summary")
+}
+
 need_cmd jq
 
 rows=()
@@ -735,14 +761,15 @@ done
   die "at least one label=artifact-dir row is required"
 }
 
-tmp_tsv="$(mktemp)"
-trap 'rm -f "$tmp_tsv"' EXIT
+tmp_dir="$(mktemp -d)"
+tmp_tsv="$tmp_dir/table.tsv"
+trap 'rm -rf "$tmp_dir"' EXIT
 write_header >"$tmp_tsv"
 for row in "${rows[@]}"; do
   label="${row%%=*}"
   input="${row#*=}"
   [[ -n "$label" && -n "$input" ]] || die "empty label or artifact in '$row'"
-  write_row "$label" "$input" >>"$tmp_tsv"
+  write_input_rows "$label" "$input" >>"$tmp_tsv"
 done
 
 if [[ -n "$OUTPUT_DIR" ]]; then
