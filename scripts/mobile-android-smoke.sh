@@ -15,6 +15,10 @@ DEBUG_WIREGUARD_CONFIG_BASE64_EXTRA="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_BASE6
 APK_PATH="${NVPN_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/debug/app-debug.apk}"
 VPN_START_WAIT_SECS="${NVPN_ANDROID_VPN_START_WAIT_SECS:-15}"
 VPN_STOP_WAIT_SECS="${NVPN_ANDROID_VPN_STOP_WAIT_SECS:-10}"
+RUNTIME_STATE_WAIT_SECS="${NVPN_ANDROID_RUNTIME_STATE_WAIT_SECS:-12}"
+RUNTIME_STATE_MAX_AGE_SECS="${NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS:-60}"
+RUNTIME_STATE_RESULT_DIR="${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-android}"
+RUNTIME_STATE_RESULT_NAME="${NVPN_ANDROID_RUNTIME_STATE_RESULT_NAME:-mobile-android-runtime-state-$$.json}"
 DEBUG_SEED_WAIT_SECS="${NVPN_ANDROID_DEBUG_SEED_WAIT_SECS:-2}"
 DEBUG_INVITE="${NVPN_ANDROID_DEBUG_INVITE:-}"
 DEBUG_EXIT_NODE="${NVPN_ANDROID_DEBUG_EXIT_NODE:-}"
@@ -51,6 +55,10 @@ NVPN_ANDROID_DEBUG_NETWORK_NAME, then cycles the VPN.
 
 Use --accept-vpn-dialog only on trusted local test devices; it taps Android's
 system VPN consent OK button if the prompt appears.
+
+When --vpn-cycle reaches Android's active VPN service/network state, this script
+also copies files/app-core/mobile-runtime-state.json from the debug app sandbox
+and requires fresh Rust runtime state with native TUN counter fields.
 EOF
 }
 
@@ -166,6 +174,93 @@ wait_until() {
 
 vpn_inactive() {
   ! vpn_state_present
+}
+
+android_runtime_state_path() {
+  printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$RUNTIME_STATE_RESULT_NAME"
+}
+
+copy_android_runtime_state() {
+  local result_path
+  result_path="$(android_runtime_state_path)"
+  mkdir -p "$RUNTIME_STATE_RESULT_DIR"
+  rm -f "$result_path.tmp"
+  if "$ADB" -s "$serial" exec-out \
+    run-as "$PACKAGE_NAME" cat files/app-core/mobile-runtime-state.json \
+    >"$result_path.tmp" 2>/dev/null && [[ -s "$result_path.tmp" ]]
+  then
+    mv "$result_path.tmp" "$result_path"
+    return 0
+  fi
+  rm -f "$result_path.tmp"
+  return 1
+}
+
+validate_android_runtime_state() {
+  local result_path
+  result_path="$(android_runtime_state_path)"
+  python3 - "$result_path" "$RUNTIME_STATE_MAX_AGE_SECS" <<'PY'
+import json
+import sys
+import time
+
+path = sys.argv[1]
+max_age = int(sys.argv[2])
+with open(path, encoding="utf-8") as fh:
+    state = json.load(fh)
+
+errors = []
+if state.get("vpnEnabled") is not True:
+    errors.append(f"vpnEnabled={state.get('vpnEnabled')!r}")
+if state.get("vpnActive") is not True:
+    errors.append(f"vpnActive={state.get('vpnActive')!r}")
+
+updated_at = state.get("updatedAt")
+now = int(time.time())
+if not isinstance(updated_at, int) or updated_at <= 0:
+    errors.append(f"updatedAt={updated_at!r}")
+elif updated_at - now > 120:
+    errors.append(f"updatedAt future skew={updated_at - now}s")
+elif now - updated_at > max_age:
+    errors.append(f"updatedAt age={now - updated_at}s")
+
+for key in (
+    "tunPacketsRead",
+    "tunBytesRead",
+    "tunPacketsWritten",
+    "tunBytesWritten",
+    "tunPacketsDropped",
+):
+    value = state.get(key)
+    if not isinstance(value, int) or value < 0:
+        errors.append(f"{key}={value!r}")
+
+if errors:
+    print("Android runtime state invalid: " + ", ".join(errors), file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+wait_for_android_runtime_state() {
+  local start now last_error
+  start="$(date +%s)"
+  last_error=""
+  while true; do
+    if copy_android_runtime_state; then
+      if last_error="$(validate_android_runtime_state 2>&1)"; then
+        echo "Android runtime state passed: $(android_runtime_state_path)"
+        return 0
+      fi
+    else
+      last_error="failed to copy files/app-core/mobile-runtime-state.json from debug app sandbox"
+    fi
+    now="$(date +%s)"
+    if (( now - start >= RUNTIME_STATE_WAIT_SECS )); then
+      echo "$last_error" >&2
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 android_sdk() {
@@ -365,6 +460,11 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
   if ! wait_until "$VPN_START_WAIT_SECS" vpn_active; then
     dump_vpn_diagnostics
     echo "Android smoke failed: VPN service and network did not become active after debug connect." >&2
+    exit 1
+  fi
+  if ! wait_for_android_runtime_state; then
+    dump_vpn_diagnostics
+    echo "Android smoke failed: Rust mobile runtime state did not become fresh after debug connect." >&2
     exit 1
   fi
 fi

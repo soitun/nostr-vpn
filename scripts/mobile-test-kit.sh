@@ -19,6 +19,9 @@ variables such as NVPN_ANDROID_SERIAL and NVPN_IOS_DEVICE when needed, or copy
 NVPN_IOS_INSTALL=1 when physical iOS should build/install the exact current
 development-signed app before launching; set NVPN_IOS_DEBUG_CREATE_NETWORK=1
 for local iOS Packet Tunnel coverage without a private invite fixture.
+Android --vpn-cycle validates the app-private Rust runtime-state file after the
+OS VPN network becomes active; tune with NVPN_ANDROID_RUNTIME_STATE_WAIT_SECS
+or NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS if a slow device needs it.
 
 Set NVPN_FIPS_REPO_PATH=/path/to/fips when testing mobile Rust code against
 unreleased local FIPS crates. Cargo.lock is restored after local-FIPS cargo
