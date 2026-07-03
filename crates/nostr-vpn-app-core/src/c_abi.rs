@@ -36,6 +36,14 @@ pub struct NvpnMobileTunnelHandle {
     tunnel: MobileTunnel,
 }
 
+#[repr(C)]
+pub struct NvpnMobilePacket {
+    data: *mut u8,
+    len: usize,
+    capacity: usize,
+    status: i32,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct QrMatrixResult {
@@ -336,26 +344,39 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_wg_excluded_route(
 
 /// # Safety
 ///
-/// `handle` must be a live mobile tunnel handle. `out` must point to
-/// `capacity` writable bytes for the duration of this call.
+/// `handle` must be a live mobile tunnel handle. A returned packet with
+/// `status == 1` must be released with `nostr_vpn_mobile_packet_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_next_packet(
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_next_packet_owned(
     handle: *const NvpnMobileTunnelHandle,
-    out: *mut u8,
-    capacity: usize,
     timeout_ms: u32,
-) -> isize {
-    if handle.is_null() || out.is_null() || capacity == 0 {
-        return -1;
+) -> NvpnMobilePacket {
+    if handle.is_null() {
+        return mobile_packet_stopped();
     }
     let tunnel = unsafe { &*handle };
-    let out = unsafe { std::slice::from_raw_parts_mut(out, capacity) };
     match tunnel
         .tunnel
-        .next_packet(out, Duration::from_millis(u64::from(timeout_ms)))
+        .next_packet_vec(Duration::from_millis(u64::from(timeout_ms)))
     {
-        Ok(len) => isize::try_from(len).unwrap_or(-1),
-        Err(_) => -1,
+        Ok(Some(packet)) => mobile_packet_ready(packet),
+        Ok(None) => mobile_packet_timeout(),
+        Err(_) => mobile_packet_stopped(),
+    }
+}
+
+/// # Safety
+///
+/// `packet` must have been returned by `nostr_vpn_mobile_tunnel_next_packet_owned`
+/// and not already freed.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nostr_vpn_mobile_packet_free(packet: NvpnMobilePacket) {
+    if packet.data.is_null() || packet.capacity == 0 {
+        return;
+    }
+    let len = packet.len.min(packet.capacity);
+    unsafe {
+        drop(Vec::from_raw_parts(packet.data, len, packet.capacity));
     }
 }
 
@@ -661,6 +682,38 @@ fn bounded_packet_copy_len(requested: i32, capacity: i32) -> Option<usize> {
     let requested = usize::try_from(requested).ok()?;
     let capacity = usize::try_from(capacity).ok()?;
     Some(requested.min(capacity))
+}
+
+fn mobile_packet_ready(mut packet: Vec<u8>) -> NvpnMobilePacket {
+    if packet.is_empty() {
+        return mobile_packet_timeout();
+    }
+    let data = packet.as_mut_ptr();
+    let len = packet.len();
+    let capacity = packet.capacity();
+    std::mem::forget(packet);
+    NvpnMobilePacket {
+        data,
+        len,
+        capacity,
+        status: 1,
+    }
+}
+
+fn mobile_packet_timeout() -> NvpnMobilePacket {
+    NvpnMobilePacket {
+        data: ptr::null_mut(),
+        len: 0,
+        capacity: 0,
+        status: 0,
+    }
+}
+
+fn mobile_packet_stopped() -> NvpnMobilePacket {
+    NvpnMobilePacket {
+        status: -1,
+        ..mobile_packet_timeout()
+    }
 }
 
 #[cfg(target_os = "android")]

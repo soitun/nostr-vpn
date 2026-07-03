@@ -526,18 +526,6 @@ impl MobileTunnel {
         self.outbound_tx.try_send(packet).is_ok()
     }
 
-    pub(crate) fn next_packet(&self, out: &mut [u8], timeout: Duration) -> Result<usize> {
-        if out.is_empty() {
-            return Ok(0);
-        }
-        let Some(packet) = self.next_packet_vec(timeout)? else {
-            return Ok(0);
-        };
-        let len = packet.len().min(out.len());
-        out[..len].copy_from_slice(&packet[..len]);
-        Ok(len)
-    }
-
     pub(crate) fn next_packet_vec(&self, timeout: Duration) -> Result<Option<Vec<u8>>> {
         let rx = self
             .inbound_rx

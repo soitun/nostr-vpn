@@ -11,6 +11,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let nextPacketPollTimeoutMs: UInt32 = 100
     private static let maxWritePacketBatch = 32
 
+    private enum PacketRead {
+        case packet(Data)
+        case timeout
+        case stopped
+    }
+
     private var tunnelHandle: OpaquePointer?
     private var tunnelRunning = false
     private var activeTunnelCalls = 0
@@ -222,7 +228,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     }
 
     private func writePackets() {
-        var buffer = [UInt8](repeating: 0, count: 65_535)
         var packets: [Data] = []
         var protocols: [NSNumber] = []
         packets.reserveCapacity(Self.maxWritePacketBatch)
@@ -232,35 +237,26 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             packets.removeAll(keepingCapacity: true)
             protocols.removeAll(keepingCapacity: true)
 
-            guard let firstCount = nextPacket(
-                into: &buffer,
-                timeoutMs: Self.nextPacketPollTimeoutMs
-            ) else {
-                break
-            }
-            if firstCount < 0 {
-                break
-            }
-            if firstCount == 0 {
+            switch nextPacket(timeoutMs: Self.nextPacketPollTimeoutMs) {
+            case .packet(let packet):
+                appendPacket(packet, to: &packets, protocols: &protocols)
+            case .timeout:
                 continue
+            case .stopped:
+                return
             }
-
-            appendPacket(from: buffer, count: firstCount, to: &packets, protocols: &protocols)
 
             var shouldStop = false
-            while packets.count < Self.maxWritePacketBatch {
-                guard let count = nextPacket(into: &buffer, timeoutMs: 0) else {
+            drainReadyPackets: while packets.count < Self.maxWritePacketBatch {
+                switch nextPacket(timeoutMs: 0) {
+                case .packet(let packet):
+                    appendPacket(packet, to: &packets, protocols: &protocols)
+                case .timeout:
+                    break drainReadyPackets
+                case .stopped:
                     shouldStop = true
-                    break
+                    break drainReadyPackets
                 }
-                if count < 0 {
-                    shouldStop = true
-                    break
-                }
-                if count == 0 {
-                    break
-                }
-                appendPacket(from: buffer, count: count, to: &packets, protocols: &protocols)
             }
 
             packetFlow.writePackets(packets, withProtocols: protocols)
@@ -270,30 +266,35 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    private func nextPacket(into buffer: inout [UInt8], timeoutMs: UInt32) -> Int? {
-        let capacity = buffer.count
-        return withTunnelHandle { handle -> Int in
-            buffer.withUnsafeMutableBytes { raw -> Int in
-                guard let base = raw.bindMemory(to: UInt8.self).baseAddress else {
-                    return -1
-                }
-                return nostr_vpn_mobile_tunnel_next_packet(
-                    handle,
-                    base,
-                    UInt(capacity),
-                    timeoutMs
-                )
-            }
+    private func nextPacket(timeoutMs: UInt32) -> PacketRead {
+        guard let packet = withTunnelHandle({ handle in
+            nostr_vpn_mobile_tunnel_next_packet_owned(handle, timeoutMs)
+        }) else {
+            return .stopped
         }
+        guard packet.status == 1 else {
+            return packet.status == 0 ? .timeout : .stopped
+        }
+        guard let dataPointer = packet.data, packet.len <= UInt(Int.max) else {
+            nostr_vpn_mobile_packet_free(packet)
+            return .stopped
+        }
+        let packetToFree = packet
+        let data = Data(
+            bytesNoCopy: UnsafeMutableRawPointer(dataPointer),
+            count: Int(packet.len),
+            deallocator: .custom { _, _ in
+                nostr_vpn_mobile_packet_free(packetToFree)
+            }
+        )
+        return .packet(data)
     }
 
     private func appendPacket(
-        from buffer: [UInt8],
-        count: Int,
+        _ packet: Data,
         to packets: inout [Data],
         protocols: inout [NSNumber]
     ) {
-        let packet = Data(buffer.prefix(count))
         packets.append(packet)
         protocols.append(packetFamily(packet))
     }

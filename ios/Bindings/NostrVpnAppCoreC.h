@@ -6,6 +6,12 @@
 
 typedef struct NvpnAppHandle NvpnAppHandle;
 typedef struct NvpnMobileTunnelHandle NvpnMobileTunnelHandle;
+typedef struct NvpnMobilePacket {
+    uint8_t *data;
+    uintptr_t len;
+    uintptr_t capacity;
+    int32_t status;
+} NvpnMobilePacket;
 
 NvpnAppHandle *nostr_vpn_app_new(const char *data_dir, const char *app_version);
 void nostr_vpn_app_free(NvpnAppHandle *handle);
@@ -29,12 +35,11 @@ bool nostr_vpn_mobile_tunnel_send_packet(
     const uint8_t *packet,
     uintptr_t len
 );
-intptr_t nostr_vpn_mobile_tunnel_next_packet(
+NvpnMobilePacket nostr_vpn_mobile_tunnel_next_packet_owned(
     const NvpnMobileTunnelHandle *handle,
-    uint8_t *out,
-    uintptr_t capacity,
     uint32_t timeout_ms
 );
+void nostr_vpn_mobile_packet_free(NvpnMobilePacket packet);
 void nostr_vpn_string_free(char *value);
 
 #endif
