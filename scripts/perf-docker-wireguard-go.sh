@@ -328,7 +328,7 @@ run_ping_summary() {
   printf '## ping (300 packets, 10ms apart) over wg0\n'
   cpu_start_node_a="$(wireguard_go_cpu_sample node-a)"
   cpu_start_node_b="$(wireguard_go_cpu_sample node-b)"
-  "${COMPOSE[@]}" exec -T node-a ping -c 300 -i 0.01 -q "$BOB_TUN" >"$output_path" 2>&1
+  "${COMPOSE[@]}" exec -T node-a ping -c 300 -i 0.01 "$BOB_TUN" >"$output_path" 2>&1
   cpu_end_node_a="$(wireguard_go_cpu_sample node-a)"
   cpu_end_node_b="$(wireguard_go_cpu_sample node-b)"
   append_wireguard_go_cpu_phase_rows \

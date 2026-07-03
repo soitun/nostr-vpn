@@ -1122,7 +1122,7 @@ ping_start_node_a="$(pipeline_line_count node-a)"
 ping_start_node_b="$(pipeline_line_count node-b)"
 ping_cpu_start_node_a="$(daemon_cpu_sample node-a)"
 ping_cpu_start_node_b="$(daemon_cpu_sample node-b)"
-"${COMPOSE[@]}" exec -T node-a ping -c 300 -i 0.01 -q "$BOB_TUNNEL_IP" >"$ping_output" 2>&1
+"${COMPOSE[@]}" exec -T node-a ping -c 300 -i 0.01 "$BOB_TUNNEL_IP" >"$ping_output" 2>&1
 ping_cpu_end_node_a="$(daemon_cpu_sample node-a)"
 ping_cpu_end_node_b="$(daemon_cpu_sample node-b)"
 ping_end_node_a="$(pipeline_line_count node-a)"

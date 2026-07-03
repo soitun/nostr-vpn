@@ -3,7 +3,7 @@
 
 docker_bench_init_summary() {
   mkdir -p "$RAW_DIR"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     backend threads duration_secs \
     tcp_single_mbps tcp_single_retrans \
     tcp_4_mbps tcp_4_retrans \
@@ -15,7 +15,9 @@ docker_bench_init_summary() {
     cpu_stress_local_workers cpu_stress_remote_workers \
     iperf_socket_buffer udp1000_parallel \
     udp1000_bandwidth udp1000_per_stream_bandwidth \
-    dataplane_profile placement_profile >"$SUMMARY_TSV"
+    dataplane_profile placement_profile \
+    ping_mdev_ms ping_p95_ms ping_p99_ms ping_max_ms \
+    ping_samples ping_gt1ms ping_gt2ms ping_gt10ms >"$SUMMARY_TSV"
 }
 
 docker_bench_tsv_field() {
@@ -823,6 +825,29 @@ docker_bench_parse_ping_loss_avg() {
   ' "$1"
 }
 
+docker_bench_parse_ping_tail_stats() {
+  local file="$1"
+  local mdev max count p95 p99 gt1 gt2 gt10
+  mdev="$(awk -F'= ' '/round-trip|rtt min/ {split($2,a,"/"); split(a[4], b, " "); print b[1]}' "$file" | tail -n1)"
+  max="$(awk -F'= ' '/round-trip|rtt min/ {split($2,a,"/"); print a[3]}' "$file" | tail -n1)"
+  count="$(sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" | wc -l | tr -d '[:space:]')"
+  p95="$(
+    sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" \
+      | sort -n \
+      | awk 'NF{v[++n]=$1} END{if(!n){print "null"} else {i=int((n*95+99)/100); if(i<1)i=1; if(i>n)i=n; printf "%.3f", v[i]}}'
+  )"
+  p99="$(
+    sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" \
+      | sort -n \
+      | awk 'NF{v[++n]=$1} END{if(!n){print "null"} else {i=int((n*99+99)/100); if(i<1)i=1; if(i>n)i=n; printf "%.3f", v[i]}}'
+  )"
+  gt1="$(sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" | awk '$1 > 1 {c++} END{print c+0}')"
+  gt2="$(sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" | awk '$1 > 2 {c++} END{print c+0}')"
+  gt10="$(sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" | awk '$1 > 10 {c++} END{print c+0}')"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "${mdev:-null}" "$p95" "$p99" "${max:-null}" "${count:-0}" "$gt1" "$gt2" "$gt10"
+}
+
 docker_bench_append_summary_row() {
   local backend="$1"
   local threads="$2"
@@ -837,8 +862,11 @@ docker_bench_append_summary_row() {
   local ping_loss ping_avg
   local stress_enabled=false local_workers=0 remote_workers=0
   local udp1000_parallel udp1000_per_stream_bandwidth
+  local ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10
 
   read -r ping_loss ping_avg <<<"$(docker_bench_parse_ping_loss_avg "$ping_output")"
+  IFS=$'\t' read -r ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10 \
+    <<<"$(docker_bench_parse_ping_tail_stats "$ping_output")"
   if docker_bench_cpu_stress_enabled; then
     stress_enabled=true
     if docker_bench_cpu_stress_side_enabled local; then
@@ -851,7 +879,7 @@ docker_bench_append_summary_row() {
   udp1000_parallel="$(docker_bench_udp1000_parallel_streams)"
   udp1000_per_stream_bandwidth="$(docker_bench_udp1000_per_stream_bandwidth)"
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$backend" \
     "$threads" \
     "$duration" \
@@ -877,7 +905,15 @@ docker_bench_append_summary_row() {
     "$(docker_bench_tsv_field "${NVPN_DOCKER_UDP1000_BANDWIDTH:-1G}")" \
     "$udp1000_per_stream_bandwidth" \
     "$(docker_bench_tsv_field "${NVPN_DOCKER_DATAPLANE_PROFILE:-}")" \
-    "$(docker_bench_tsv_field "${NVPN_DOCKER_PLACEMENT_PROFILE:-}")" >>"$SUMMARY_TSV"
+    "$(docker_bench_tsv_field "${NVPN_DOCKER_PLACEMENT_PROFILE:-}")" \
+    "$ping_mdev" \
+    "$ping_p95" \
+    "$ping_p99" \
+    "$ping_max" \
+    "$ping_samples" \
+    "$ping_gt1" \
+    "$ping_gt2" \
+    "$ping_gt10" >>"$SUMMARY_TSV"
 }
 
 docker_bench_guard_threshold() {
