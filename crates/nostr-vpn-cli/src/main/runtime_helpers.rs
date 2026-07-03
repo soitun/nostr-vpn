@@ -193,12 +193,25 @@ fn fips_host_runtime_active(app: &AppConfig, vpn_enabled: bool) -> bool {
 fn fips_private_runtime_active(app: &AppConfig, vpn_enabled: bool, expected_peers: usize) -> bool {
     daemon_vpn_active(vpn_enabled, expected_peers)
         || fips_host_runtime_active(app, vpn_enabled)
+        || paid_exit_fips_runtime_active(app)
         || app.join_requests_enabled()
         || app
             .active_network_opt()
             .and_then(|network| network.outbound_join_request.as_ref())
             .is_some()
         || app.has_fips_static_peer_endpoints()
+}
+
+pub(crate) fn paid_exit_fips_runtime_active(app: &AppConfig) -> bool {
+    #[cfg(feature = "paid-exit")]
+    {
+        app.paid_exit.enabled || app.public_paid_exit_node_pubkey_hex().is_some()
+    }
+    #[cfg(not(feature = "paid-exit"))]
+    {
+        let _ = app;
+        false
+    }
 }
 
 fn daemon_vpn_idle_status(

@@ -51,10 +51,14 @@ fn paid_route_admission_preferred(
 
 fn paid_route_peers_from_admissions(
     admissions: &HashMap<[u8; 32], FipsPaidRouteAdmission>,
+    require_routing: bool,
 ) -> Vec<FipsMeshPeerRuntime> {
     let mut peers = admissions
         .values()
         .filter_map(|admission| {
+            if require_routing && !admission.allow_routing {
+                return None;
+            }
             let routes = admission
                 .allowed_ips
                 .iter()

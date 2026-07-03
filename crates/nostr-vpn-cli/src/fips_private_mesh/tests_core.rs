@@ -313,6 +313,31 @@
         assert_eq!(config.nostr_discovery_policy, NostrDiscoveryPolicy::Open);
     }
 
+    #[cfg(feature = "paid-exit")]
+    #[test]
+    fn fips_private_tunnel_config_opens_discovery_for_paid_exit_sellers() {
+        if std::env::var("NVPN_FIPS_NOSTR_DISCOVERY_POLICY").is_ok() {
+            return;
+        }
+
+        let mut app = AppConfig::generated();
+        app.fips_host_tunnel_enabled = false;
+        app.connect_to_non_roster_fips_peers = false;
+        app.paid_exit.enabled = true;
+        let network_id = app.effective_network_id();
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            &network_id,
+            "utun100",
+            app.own_nostr_pubkey_hex().ok().as_deref(),
+            None,
+            &[],
+        )
+        .expect("paid exit seller tunnel config");
+
+        assert_eq!(config.nostr_discovery_policy, NostrDiscoveryPolicy::Open);
+    }
+
     #[test]
     fn fips_restart_predicate_includes_nostr_discovery_enabled() {
         let app = AppConfig::generated();

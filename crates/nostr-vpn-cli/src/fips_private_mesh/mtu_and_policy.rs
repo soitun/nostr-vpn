@@ -89,7 +89,9 @@ fn fips_nostr_discovery_policy_from_app(app: &AppConfig) -> NostrDiscoveryPolicy
         .ok()
         .as_deref()
         .and_then(parse_fips_nostr_discovery_policy)
-        .unwrap_or(if app.connect_to_non_roster_fips_peers {
+        .unwrap_or(if app.connect_to_non_roster_fips_peers
+            || crate::paid_exit_fips_runtime_active(app)
+        {
             NostrDiscoveryPolicy::Open
         } else {
             NostrDiscoveryPolicy::ConfiguredOnly

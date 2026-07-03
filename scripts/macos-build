@@ -81,6 +81,7 @@ cargo_prefix=(cargo)
 LOCK_SNAPSHOT=""
 
 restore_lock() {
+  ((BASH_SUBSHELL == 0)) || return 0
   [[ -n "$LOCK_SNAPSHOT" ]] || return 0
   cp -p "$LOCK_SNAPSHOT" "$ROOT/Cargo.lock"
   rm -f "$LOCK_SNAPSHOT"
@@ -171,6 +172,9 @@ prepare_cargo_config() {
   cargo_prefix=(cargo)
   if ((${#cargo_config_args[@]})); then
     cargo_prefix+=("${cargo_config_args[@]}")
+    if bool_is_true "${NVPN_MACOS_CARGO_LOCKED:-false}"; then
+      cargo_prefix+=(--locked)
+    fi
   else
     cargo_prefix+=(--locked)
   fi
@@ -211,6 +215,7 @@ development env:
                                 feature list passed to bundled nvpn builds
   NVPN_MACOS_APP_CORE_CARGO_PACKAGES
                                 packages built for app-core artifacts
+  NVPN_MACOS_CARGO_LOCKED=1 passes --locked with local crate patches
   NVPN_MACOS_NO_DEFAULT_FEATURES=1 disables default Rust features
 EOF
 }
@@ -218,7 +223,7 @@ EOF
 target_root() {
   if [[ -z "${CARGO_TARGET_ROOT:-}" ]]; then
     CARGO_TARGET_ROOT="$(
-      cargo metadata --no-deps --format-version 1 \
+      "${cargo_prefix[@]}" metadata --no-deps --format-version 1 \
         | python3 -c 'import json, sys; sys.stdout.write(json.load(sys.stdin)["target_directory"])'
     )"
   fi
@@ -254,9 +259,9 @@ run_macos_gen_swift() {
   prepare_cargo_config
 
   if [[ "$PROFILE" == "release" ]]; then
-    "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]}" "${cargo_app_core_feature_args[@]}" --release --target "$HOST_TARGET"
+    "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --release --target "$HOST_TARGET"
   else
-    "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]}" "${cargo_app_core_feature_args[@]}" --target "$HOST_TARGET"
+    "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --target "$HOST_TARGET"
   fi
 
   mkdir -p "$BUILD_DIR"
@@ -343,7 +348,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]}" "${cargo_app_core_feature_args[@]}" --release --target "$target"
+        "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --release --target "$target"
 
       env \
         SDKROOT="$sdkroot" \
@@ -360,7 +365,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        "${cargo_prefix[@]}" build -p nvpn "${cargo_nvpn_feature_args[@]}" --release --bin nvpn --target "$target"
+        "${cargo_prefix[@]}" build -p nvpn "${cargo_nvpn_feature_args[@]+"${cargo_nvpn_feature_args[@]}"}" --release --bin nvpn --target "$target"
     else
       env \
         SDKROOT="$sdkroot" \
@@ -377,7 +382,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]}" "${cargo_app_core_feature_args[@]}" --target "$target"
+        "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --target "$target"
 
       env \
         SDKROOT="$sdkroot" \
@@ -394,7 +399,7 @@ run_macos_rust() {
         CARGO_TARGET_AARCH64_APPLE_DARWIN_LINKER="$cc_bin" \
         CARGO_TARGET_X86_64_APPLE_DARWIN_LINKER="$cc_bin" \
         "$rustflags_env_var=$target_rustflags" \
-        "${cargo_prefix[@]}" build -p nvpn "${cargo_nvpn_feature_args[@]}" --bin nvpn --target "$target"
+        "${cargo_prefix[@]}" build -p nvpn "${cargo_nvpn_feature_args[@]+"${cargo_nvpn_feature_args[@]}"}" --bin nvpn --target "$target"
     fi
   done
 }

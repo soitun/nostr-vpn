@@ -135,6 +135,7 @@ pub struct FipsMeshRuntime {
     local_routes: Vec<IpRoute>,
     paid_route_admissions: HashMap<[u8; 32], FipsPaidRouteAdmission>,
     paid_route_peers: Vec<FipsMeshPeerRuntime>,
+    paid_route_routing_peers: Vec<FipsMeshPeerRuntime>,
     participant_peer_index: HashMap<[u8; 32], usize>,
     endpoint_pubkey_peer_index: HashMap<[u8; 32], usize>,
     endpoint_node_addr_peer_index: HashMap<[u8; 16], usize>,
@@ -234,13 +235,16 @@ impl FipsMeshRuntime {
             .collect();
 
         let paid_route_admissions = normalize_paid_route_admissions(paid_route_admissions);
-        let paid_route_peers = paid_route_peers_from_admissions(&paid_route_admissions);
+        let paid_route_peers = paid_route_peers_from_admissions(&paid_route_admissions, false);
+        let paid_route_routing_peers =
+            paid_route_peers_from_admissions(&paid_route_admissions, true);
 
         Self {
             peers,
             local_routes,
             paid_route_admissions,
             paid_route_peers,
+            paid_route_routing_peers,
             participant_peer_index,
             endpoint_pubkey_peer_index,
             endpoint_node_addr_peer_index,
@@ -255,7 +259,10 @@ impl FipsMeshRuntime {
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) {
         self.paid_route_admissions = normalize_paid_route_admissions(paid_route_admissions);
-        self.paid_route_peers = paid_route_peers_from_admissions(&self.paid_route_admissions);
+        self.paid_route_peers =
+            paid_route_peers_from_admissions(&self.paid_route_admissions, false);
+        self.paid_route_routing_peers =
+            paid_route_peers_from_admissions(&self.paid_route_admissions, true);
     }
 
     pub fn route_outbound_packet(&self, packet: &[u8]) -> Option<OutgoingFipsPacket> {
@@ -409,8 +416,7 @@ impl FipsMeshRuntime {
         &'a self,
         source_node_addr: &[u8; 16],
     ) -> Option<FipsEndpointSourceAdmitter<'a>> {
-        let peer_index = *self.endpoint_node_addr_peer_index.get(source_node_addr)?;
-        let peer = self.peers.get(peer_index)?;
+        let peer = self.peer_for_endpoint_node_addr(source_node_addr)?;
         Some(FipsEndpointSourceAdmitter {
             runtime: self,
             peer,
@@ -483,9 +489,7 @@ impl FipsMeshRuntime {
 
     pub fn participant_for_endpoint_npub(&self, endpoint_npub: &str) -> Option<String> {
         let source_pubkey = parse_nostr_pubkey_bytes(endpoint_npub)?;
-        let peer_index = *self.endpoint_pubkey_peer_index.get(&source_pubkey)?;
-        self.peers
-            .get(peer_index)
+        self.peer_for_endpoint_pubkey(&source_pubkey)
             .map(|peer| peer.participant_pubkey_hex.clone())
     }
 
@@ -493,9 +497,7 @@ impl FipsMeshRuntime {
         &self,
         endpoint_node_addr: &[u8; 16],
     ) -> Option<String> {
-        let peer_index = *self.endpoint_node_addr_peer_index.get(endpoint_node_addr)?;
-        self.peers
-            .get(peer_index)
+        self.peer_for_endpoint_node_addr(endpoint_node_addr)
             .map(|peer| peer.participant_pubkey_hex.clone())
     }
 
@@ -503,9 +505,7 @@ impl FipsMeshRuntime {
         &self,
         endpoint_node_addr: &[u8; 16],
     ) -> Option<[u8; 32]> {
-        let peer_index = *self.endpoint_node_addr_peer_index.get(endpoint_node_addr)?;
-        self.peers
-            .get(peer_index)
+        self.peer_for_endpoint_node_addr(endpoint_node_addr)
             .and_then(|peer| peer.participant_pubkey)
     }
 
@@ -526,16 +526,60 @@ impl FipsMeshRuntime {
         &self,
         participant_pubkey: &[u8; 32],
     ) -> Option<[u8; 16]> {
-        self.peers
-            .get(*self.participant_peer_index.get(participant_pubkey)?)
+        self.peer_for_participant_pubkey_bytes(participant_pubkey)
             .and_then(|peer| peer.endpoint_node_addr)
     }
 
     pub fn peer_pubkeys(&self) -> Vec<String> {
-        self.peers
-            .iter()
-            .map(|peer| peer.participant_pubkey_hex.clone())
-            .collect()
+        let mut pubkeys = Vec::new();
+        for peer in self.peers.iter().chain(self.paid_route_peers.iter()) {
+            if !pubkeys
+                .iter()
+                .any(|pubkey| pubkey == &peer.participant_pubkey_hex)
+            {
+                pubkeys.push(peer.participant_pubkey_hex.clone());
+            }
+        }
+        pubkeys
+    }
+
+    fn peer_for_endpoint_pubkey(&self, endpoint_pubkey: &[u8; 32]) -> Option<&FipsMeshPeerRuntime> {
+        self.endpoint_pubkey_peer_index
+            .get(endpoint_pubkey)
+            .and_then(|peer_index| self.peers.get(*peer_index))
+            .or_else(|| {
+                self.paid_route_peers
+                    .iter()
+                    .find(|peer| peer.endpoint_pubkey.as_ref() == Some(endpoint_pubkey))
+            })
+    }
+
+    fn peer_for_endpoint_node_addr(
+        &self,
+        endpoint_node_addr: &[u8; 16],
+    ) -> Option<&FipsMeshPeerRuntime> {
+        self.endpoint_node_addr_peer_index
+            .get(endpoint_node_addr)
+            .and_then(|peer_index| self.peers.get(*peer_index))
+            .or_else(|| {
+                self.paid_route_peers
+                    .iter()
+                    .find(|peer| peer.endpoint_node_addr.as_ref() == Some(endpoint_node_addr))
+            })
+    }
+
+    fn peer_for_participant_pubkey_bytes(
+        &self,
+        participant_pubkey: &[u8; 32],
+    ) -> Option<&FipsMeshPeerRuntime> {
+        self.participant_peer_index
+            .get(participant_pubkey)
+            .and_then(|peer_index| self.peers.get(*peer_index))
+            .or_else(|| {
+                self.paid_route_peers
+                    .iter()
+                    .find(|peer| peer.participant_pubkey.as_ref() == Some(participant_pubkey))
+            })
     }
 
     fn select_peer_for_ip(&self, destination: IpAddr) -> Option<&FipsMeshPeerRuntime> {
@@ -588,7 +632,9 @@ impl FipsMeshRuntime {
             None
         } else {
             let peer = best_peer_index.and_then(|peer_index| self.peers.get(peer_index));
-            peer.or_else(|| select_paid_route_peer_for_ip(&self.paid_route_peers, destination))
+            peer.or_else(|| {
+                select_paid_route_peer_for_ip(&self.paid_route_routing_peers, destination)
+            })
         }
     }
 

@@ -60,6 +60,109 @@ fn fips_private_runtime_active_tolerates_no_active_network() {
     assert!(fips_private_runtime_active(&app, false, 0));
 }
 
+#[cfg(feature = "paid-exit")]
+#[test]
+fn paid_exit_seller_keeps_private_fips_runtime_active_without_roster() {
+    let mut app = AppConfig::generated();
+    app.fips_host_tunnel_enabled = false;
+    app.paid_exit.enabled = true;
+    for network in &mut app.networks {
+        network.listen_for_join_requests = false;
+    }
+
+    assert!(app.active_network_opt().is_none());
+    assert_eq!(expected_peer_count(&app), 0);
+    assert!(paid_exit_fips_runtime_active(&app));
+    assert!(fips_private_runtime_active(&app, false, 0));
+}
+
+#[cfg(feature = "paid-exit")]
+#[test]
+fn paid_exit_run_settings_prepare_public_fips_discovery() {
+    let mut app = AppConfig::generated();
+    app.connect_to_non_roster_fips_peers = false;
+    app.fips_nostr_discovery_enabled = false;
+    app.fips_advertise_public_endpoint = false;
+
+    apply_paid_exit_run_settings(
+        &mut app,
+        &PaidExitRunArgs {
+            config: None,
+            offer_id: None,
+            relays: Vec::new(),
+            publish: false,
+            no_reload_daemon: true,
+            upstream: None,
+            meter: None,
+            price_msat: None,
+            per_units: None,
+            accepted_mints: None,
+            accepted_mint: Vec::new(),
+            country_code: None,
+            region: None,
+            asn: None,
+            network_class: None,
+            ipv4: None,
+            ipv6: None,
+            max_channel_capacity_sat: None,
+            channel_expiry_secs: None,
+            free_probe_units: None,
+            grace_units: None,
+            json: false,
+        },
+    )
+    .expect("paid exit run settings");
+
+    assert!(app.paid_exit.enabled);
+    assert!(app.connect_to_non_roster_fips_peers);
+    assert!(app.fips_nostr_discovery_enabled);
+    assert!(app.fips_advertise_public_endpoint);
+}
+
+#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+#[test]
+fn selected_public_paid_exit_counts_as_private_fips_peer_without_active_network() {
+    let seller = Keys::generate();
+    let seller_pubkey = seller.public_key().to_hex();
+    let seller_npub = seller.public_key().to_bech32().expect("seller npub");
+    let mut app = AppConfig::generated();
+    app.fips_host_tunnel_enabled = false;
+    for network in &mut app.networks {
+        network.listen_for_join_requests = false;
+    }
+    app.select_public_paid_exit_node(&seller_npub)
+        .expect("select public paid exit");
+
+    assert!(app.active_network_opt().is_none());
+    assert_eq!(expected_peer_count(&app), 1);
+    assert!(paid_exit_fips_runtime_active(&app));
+    assert!(fips_private_runtime_active(
+        &app,
+        true,
+        expected_peer_count(&app)
+    ));
+
+    let own_pubkey = app.own_nostr_pubkey_hex().expect("own pubkey");
+    let config = crate::fips_private_mesh::FipsPrivateTunnelConfig::from_app(
+        &app,
+        &app.effective_network_id(),
+        "utun-test",
+        Some(&own_pubkey),
+        None,
+        &[],
+    )
+    .expect("fips paid exit tunnel config");
+
+    assert_eq!(config.peers.len(), 1);
+    assert_eq!(config.peers[0].participant_pubkey, seller_pubkey);
+    assert!(
+        config
+            .route_targets
+            .iter()
+            .any(|route| route == "0.0.0.0/0")
+    );
+}
+
 #[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_roster_publish_attempts_disconnected_recipients() {

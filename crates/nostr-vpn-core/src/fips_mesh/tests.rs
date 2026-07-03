@@ -1,5 +1,9 @@
 mod tests {
-    use super::{FipsMeshPeerConfig, FipsMeshRuntime, endpoint_node_addr_from_pubkey_bytes};
+    use super::{
+        FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission,
+        endpoint_node_addr_from_pubkey_bytes,
+    };
+    use crate::paid_routes::PaidRouteAccessState;
     use nostr_sdk::prelude::{Keys, ToBech32};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -67,6 +71,29 @@ mod tests {
         packet[24..40].copy_from_slice(&destination.octets());
         packet[40..].copy_from_slice(&payload);
         packet
+    }
+
+    fn paid_route_admission(
+        peer: &TestPeer,
+        allowed_ips: Vec<&str>,
+        allow_routing: bool,
+    ) -> FipsPaidRouteAdmission {
+        FipsPaidRouteAdmission {
+            participant_pubkey: peer.participant_pubkey.clone(),
+            session_id: "session-1".to_string(),
+            allowed_ips: allowed_ips.into_iter().map(ToString::to_string).collect(),
+            allow_routing,
+            state: if allow_routing {
+                PaidRouteAccessState::Paid
+            } else {
+                PaidRouteAccessState::Suspended
+            },
+            amount_due_msat: 0,
+            paid_msat: 0,
+            unpaid_msat: 0,
+            expires_at_unix: 999_999,
+            updated_at_unix: 10,
+        }
     }
 
     #[test]
@@ -205,6 +232,81 @@ mod tests {
         assert_eq!(
             runtime.participant_for_endpoint_node_addr(&first.endpoint_node_addr),
             Some(first.participant_pubkey)
+        );
+    }
+
+    #[test]
+    fn paid_route_admission_indexes_endpoint_identity_and_allows_paid_raw_route() {
+        let buyer = TestPeer::generate();
+        let packet = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(8, 8, 8, 8));
+        let reply = ipv4_packet(Ipv4Addr::new(8, 8, 8, 8), Ipv4Addr::new(10, 44, 22, 44));
+        let runtime = FipsMeshRuntime::with_local_routes_and_paid_route_admissions(
+            Vec::new(),
+            vec!["0.0.0.0/0".to_string()],
+            vec![paid_route_admission(
+                &buyer,
+                vec!["10.44.22.44/32"],
+                true,
+            )],
+        );
+
+        assert_eq!(runtime.peer_pubkeys(), vec![buyer.participant_pubkey.clone()]);
+        assert_eq!(
+            runtime.participant_for_endpoint_npub(&buyer.endpoint_npub),
+            Some(buyer.participant_pubkey.clone())
+        );
+        assert_eq!(
+            runtime.participant_for_endpoint_node_addr(&buyer.endpoint_node_addr),
+            Some(buyer.participant_pubkey.clone())
+        );
+        assert_eq!(
+            runtime.participant_pubkey_bytes_for_endpoint_node_addr(&buyer.endpoint_node_addr),
+            Some(buyer.endpoint_pubkey)
+        );
+        assert_eq!(
+            runtime.peer_endpoint_node_addr_for_participant_pubkey_bytes(&buyer.endpoint_pubkey),
+            Some(buyer.endpoint_node_addr)
+        );
+
+        let received = runtime
+            .receive_endpoint_data_from_node_addr(&buyer.endpoint_node_addr, &packet)
+            .expect("paid buyer source should be admitted to the seller exit route");
+        assert_eq!(received.source_pubkey, buyer.participant_pubkey);
+
+        let routed = runtime
+            .route_outbound_packet_with_peer(&reply)
+            .expect("seller reply should route to the paid buyer tunnel address");
+        assert_eq!(routed.participant_pubkey, buyer.participant_pubkey);
+    }
+
+    #[test]
+    fn paid_route_admission_without_routing_keeps_identity_but_blocks_raw_packets() {
+        let buyer = TestPeer::generate();
+        let packet = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(8, 8, 8, 8));
+        let reply = ipv4_packet(Ipv4Addr::new(8, 8, 8, 8), Ipv4Addr::new(10, 44, 22, 44));
+        let runtime = FipsMeshRuntime::with_local_routes_and_paid_route_admissions(
+            Vec::new(),
+            vec!["0.0.0.0/0".to_string()],
+            vec![paid_route_admission(
+                &buyer,
+                vec!["10.44.22.44/32"],
+                false,
+            )],
+        );
+
+        let admitter = runtime
+            .endpoint_source_admitter(&buyer.endpoint_node_addr)
+            .expect("unpaid buyer still has a FIPS source identity");
+        assert_eq!(admitter.source_pubkey(), buyer.participant_pubkey);
+        assert!(!admitter.admit_packet(&packet));
+        assert!(
+            runtime
+                .receive_endpoint_data_from_node_addr(&buyer.endpoint_node_addr, &packet)
+                .is_none()
+        );
+        assert!(
+            runtime.route_outbound_packet_with_peer(&reply).is_none(),
+            "allow_routing=false must not install a raw route to the paid buyer"
         );
     }
 

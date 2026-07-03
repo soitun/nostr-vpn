@@ -1735,6 +1735,9 @@ async fn paid_exit_run_once(args: PaidExitRunArgs) -> Result<PaidExitRunResult> 
 
 fn apply_paid_exit_run_settings(app: &mut AppConfig, args: &PaidExitRunArgs) -> Result<()> {
     app.paid_exit.enabled = true;
+    app.connect_to_non_roster_fips_peers = true;
+    app.fips_nostr_discovery_enabled = true;
+    app.fips_advertise_public_endpoint = true;
     if let Some(value) = args.upstream.as_deref() {
         app.paid_exit.access.upstream = value
             .parse::<PaidExitUpstream>()
