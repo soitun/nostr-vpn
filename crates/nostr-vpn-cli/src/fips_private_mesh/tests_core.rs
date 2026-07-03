@@ -185,8 +185,8 @@
         let stop = std::sync::atomic::AtomicBool::new(false);
         let packet = [0x45, 0, 0, 20, 1, 2, 3, 4];
         let tun_fd = BorrowedTunFd::new(write_fd, false);
-        super::write_packet_to_tun_blocking(tun_fd, &packet, &stop, None);
-        super::write_packet_to_tun_blocking(tun_fd, &packet, &stop, None);
+        super::write_packet_to_tun_blocking(tun_fd, &packet, &stop);
+        super::write_packet_to_tun_blocking(tun_fd, &packet, &stop);
 
         let expected_frame: Vec<u8> = {
             #[cfg(target_os = "macos")]
@@ -575,10 +575,8 @@
         assert!(run.participant_fallback.is_none());
         assert_eq!(run.participant_key, Some(participant_key));
         assert_eq!(run.identity, identity);
-        let payloads = run
-            .payloads
-            .iter()
-            .map(|payload| payload.as_slice().to_vec())
-            .collect::<Vec<_>>();
-        assert_eq!(payloads, vec![vec![1], vec![2]]);
+        assert!(run.bulk_bodies.is_empty());
+        assert_eq!(run.current_bulk.packet_count(), 2);
+        assert_eq!(run.packet_count, 2);
+        assert_eq!(run.bytes_len, 2);
     }

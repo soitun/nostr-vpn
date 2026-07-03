@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Bumped to FIPS 0.3.78/0.3.53 for the direct endpoint dataplane APIs used by
+  the Linux direct TUN fast path.
+
 ## 4.0.87 - 2026-06-22
 
 ### Fixed

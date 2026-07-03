@@ -4,10 +4,11 @@ use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
 use fips_endpoint::{
-    Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointDirectDeliveryError,
-    FipsEndpointDirectPacketBatch, FipsEndpointDirectPacketRun, FipsEndpointDirectSink,
-    FipsEndpointError, FipsEndpointMessage, FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress,
-    PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
+    Config, ConnectPolicy, FipsEndpoint, FipsEndpointBulkData, FipsEndpointBulkDataBuilder,
+    FipsEndpointData, FipsEndpointDirectDeliveryError, FipsEndpointDirectPacketBatch,
+    FipsEndpointDirectPacketRun, FipsEndpointDirectSink, FipsEndpointError, FipsEndpointMessage,
+    FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
+    PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
 };
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
@@ -124,10 +125,6 @@ const fn macos_default_udp_send_buf_size() -> usize {
 const FIPS_MESH_RECV_BURST: usize = 64;
 #[cfg(target_os = "macos")]
 const FIPS_MESH_RECV_BURST: usize = 128;
-#[cfg(all(target_os = "linux", not(test)))]
-const FIPS_DIRECT_ENDPOINT_RX_LANES: usize = 4;
-#[cfg(any(target_os = "macos", test))]
-const FIPS_DIRECT_ENDPOINT_RX_LANES: usize = 1;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_EVENT_DRAIN_LIMIT: usize = 256;
 #[cfg(target_os = "linux")]
@@ -236,7 +233,7 @@ use crate::fips_host_tunnel::FipsHostTunnelConfig;
 pub(crate) struct FipsPrivateMeshRuntime {
     endpoint: FipsEndpoint,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    direct_endpoint_rx: Vec<FipsDirectEndpointDataRx>,
+    direct_endpoint_rx: FipsDirectEndpointDataRx,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     direct_endpoint_pending_events: Mutex<VecDeque<FipsPrivateMeshEvent>>,
     mesh: ArcSwap<FipsMeshRuntime>,
@@ -250,7 +247,7 @@ pub(crate) struct FipsPrivateMeshRuntime {
     control_fragments: Mutex<ControlFragmentBuffer>,
 }
 
-include!("fips_private_mesh/direct_endpoint_lanes.rs");
+include!("fips_private_mesh/direct_endpoint_queue.rs");
 include!("fips_private_mesh/types_and_mtu.rs");
 include!("fips_private_mesh/mtu_and_policy.rs");
 include!("fips_private_mesh/peer_status_and_events.rs");

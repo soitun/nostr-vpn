@@ -141,12 +141,10 @@ fn spawn_mesh_recv_worker(
 async fn stop_mesh_recv_worker(worker: FipsMeshRecvWorker, mesh: &FipsPrivateMeshRuntime) {
     worker.stop.store(true, Ordering::Release);
     mesh.wake_blocking_mesh_recv();
-    for thread in worker.threads {
-        let _ = tokio::task::spawn_blocking(move || {
-            let _ = thread.join();
-        })
-        .await;
-    }
+    let _ = tokio::task::spawn_blocking(move || {
+        let _ = worker.thread.join();
+    })
+    .await;
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -157,17 +155,10 @@ fn spawn_blocking_mesh_recv_worker(
 ) -> FipsMeshRecvWorker {
     let stop = Arc::new(AtomicBool::new(false));
     let tun_fd = *tun_fd.get_ref();
-    let direct_tun_write_gate = Arc::new(Mutex::new(()));
-    let lane_count = mesh.direct_endpoint_rx.len().max(1);
-    let mut threads = Vec::with_capacity(lane_count);
-    for lane in 0..lane_count {
-        let mesh = Arc::clone(&mesh);
-        let thread_stop = Arc::clone(&stop);
-        let direct_tun_write_gate = Arc::clone(&direct_tun_write_gate);
-        let event_tx = event_tx.clone();
-        let thread = std::thread::Builder::new()
-            .name(format!("nvpn-fips-mesh-recv-{lane}"))
-            .spawn(move || {
+    let thread_stop = Arc::clone(&stop);
+    let thread = std::thread::Builder::new()
+        .name("nvpn-fips-mesh-recv".to_string())
+        .spawn(move || {
             let recv_burst = fips_mesh_recv_burst();
             let mut packet_batch = DirectTunWriteBatch::with_capacity(recv_burst);
             #[cfg(target_os = "linux")]
@@ -176,7 +167,6 @@ fn spawn_blocking_mesh_recv_worker(
             while !thread_stop.load(Ordering::Acquire) {
                 packet_batch.clear();
                 let received = mesh.recv_direct_endpoint_tun_batch_blocking(
-                    lane,
                     recv_burst,
                     &thread_stop,
                     &mut packet_batch,
@@ -207,7 +197,6 @@ fn spawn_blocking_mesh_recv_worker(
                                 tun_fd,
                                 &mut packet_batch,
                                 &thread_stop,
-                                &direct_tun_write_gate,
                                 #[cfg(target_os = "linux")]
                                 &mut vnet_write_preparer,
                             );
@@ -227,7 +216,6 @@ fn spawn_blocking_mesh_recv_worker(
                             tun_fd,
                             &mut packet_batch,
                             &thread_stop,
-                            &direct_tun_write_gate,
                             #[cfg(target_os = "linux")]
                             &mut vnet_write_preparer,
                         );
@@ -244,7 +232,6 @@ fn spawn_blocking_mesh_recv_worker(
                             tun_fd,
                             &mut packet_batch,
                             &thread_stop,
-                            &direct_tun_write_gate,
                             #[cfg(target_os = "linux")]
                             &mut vnet_write_preparer,
                         );
@@ -254,8 +241,6 @@ fn spawn_blocking_mesh_recv_worker(
                 }
             }
             })
-            .expect("failed to spawn FIPS mesh receive worker");
-        threads.push(thread);
-    }
-    FipsMeshRecvWorker { stop, threads }
+        .expect("failed to spawn FIPS mesh receive worker");
+    FipsMeshRecvWorker { stop, thread }
 }
