@@ -2928,7 +2928,7 @@ Result:
 
 Logged decision:
 - Move toward the Tailscale/BoringTun-shaped model by using them as references
-  for a boring packet mover: narrow owner, bounded work per wake, visible
+  for a boring dataplane: narrow owner, bounded work per wake, visible
   backpressure, and non-packet jobs kept off the hot path.
 - Count progress by removing a named red target or strengthening a harness that
   would catch a known failure; when there is no current red row, count progress
@@ -6049,7 +6049,7 @@ Result:
   future peer/session runtime tied to `Node` internals.
 - Perf cadence decision: run lightweight perf/harness sanity every few
   ownership-boundary commits, and run full Docker or live host-pair comparison
-  when touching packet mover behavior: queue policy, batching, crypto, sender
+  when touching dataplane behavior: queue policy, batching, crypto, sender
   concurrency, connected UDP, route selection, runtime dispatch, delivery, or
   anything expected to change throughput/latency. This slice took the
   lightweight comparison dry-run and nvpn hotpath checks, but no full
@@ -6194,7 +6194,7 @@ Result:
   boundary.
 - Perf cadence stays explicit: run lightweight perf/harness sanity every few
   ownership-boundary commits, and run full Docker or live host-pair comparison
-  when touching packet mover behavior such as queue policy, batching, crypto,
+  when touching dataplane behavior such as queue policy, batching, crypto,
   sender concurrency, connected UDP, route selection, runtime dispatch,
   delivery, or expected throughput/latency.
 - No Docker perf rerun was taken for this slice because it changes ownership of

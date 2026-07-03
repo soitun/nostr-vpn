@@ -269,7 +269,7 @@ All notable changes to this project are documented in this file.
 ### Fixed
 
 - The embedded FIPS dataplane now includes the latest upstream control-plane
-  progress and packet-mover reliability fixes while preserving peer/session
+  progress and dataplane reliability fixes while preserving peer/session
   continuity under queue pressure.
 - Windows builds now pick up the FIPS patch that keeps shared dataplane worker
   state available on non-Unix targets while leaving Unix raw-socket batching

@@ -137,7 +137,7 @@ impl FipsPrivateMeshRuntime {
         participant_key: Option<&ParticipantPubkeyBytes>,
         len: usize,
     ) -> Result<()> {
-        // Hot path. Packet movers pass the already-parsed participant key
+        // Hot path. Dataplane callers pass the already-parsed participant key
         // from FipsMeshRuntime, avoiding per-packet pubkey parsing or
         // string-key hashing for configured peers.
         let parsed_participant_key = participant_key
