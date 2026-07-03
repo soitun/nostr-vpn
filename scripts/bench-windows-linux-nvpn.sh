@@ -17,9 +17,11 @@ WINDOWS_FIPS_REPO="${NVPN_WINLIN_WINDOWS_FIPS_REPO:-}"
 WINDOWS_INSTALLED_NVPN="${NVPN_WINLIN_INSTALLED_NVPN:-}"
 WINDOWS_CONFIG="${NVPN_WINLIN_WINDOWS_CONFIG:-}"
 LINUX_INSTALLED_NVPN="${NVPN_WINLIN_INSTALLED_LINUX_NVPN:-}"
+LINUX_INSTALLED_EXPECTED_HASH="${NVPN_WINLIN_INSTALLED_LINUX_SHA256:-}"
 LINUX_CONFIG="${NVPN_WINLIN_LINUX_CONFIG:-}"
 LINUX_NVPN="${NVPN_WINLIN_LINUX_NVPN:-nvpn}"
 CURRENT_LINUX_NVPN="${NVPN_WINLIN_CURRENT_LINUX_NVPN:-}"
+ALLOW_CURRENT_LINUX_AS_INSTALLED="${NVPN_WINLIN_ALLOW_CURRENT_LINUX_AS_INSTALLED:-0}"
 ROWS="${NVPN_WINLIN_ROWS:-installed,current}"
 OUTPUT_DIR="${NVPN_WINLIN_OUTPUT_DIR:-$ROOT_DIR/artifacts/windows-linux-nvpn/$(date -u +%Y%m%dT%H%M%SZ)}"
 DURATION_SECS="${NVPN_WINLIN_DURATION_SECS:-10}"
@@ -49,6 +51,7 @@ NEXT_PORT="$PROBE_PORT_BASE"
 WINDOWS_FIREWALL_RULE_NAME="nvpn-winlin-perf-$RANDOM-$$"
 WINDOWS_NVPN_FIREWALL_RULE_PREFIX="nvpn-winlin-nvpn-$RANDOM-$$"
 LINUX_INSTALLED_BACKUP=""
+LINUX_INSTALLED_BACKUP_HASH=""
 
 die() {
   printf 'windows-linux nvpn bench failed: %s\n' "$*" >&2
@@ -115,8 +118,11 @@ Rows:
 
 Important options:
   NVPN_WINLIN_INSTALLED_NVPN              installed nvpn.exe path; defaults to current service binary
+  NVPN_WINLIN_INSTALLED_LINUX_SHA256      optional expected installed Linux nvpn hash; checked before switching
   NVPN_WINLIN_CURRENT_WINDOWS_NVPN        prebuilt current nvpn.exe path; skips path discovery
   NVPN_WINLIN_CURRENT_LINUX_NVPN          prebuilt current Linux nvpn; switches Linux for current row
+  NVPN_WINLIN_ALLOW_CURRENT_LINUX_AS_INSTALLED=1
+                                           allow current Linux hash to equal the installed Linux baseline
   NVPN_WINLIN_WINDOWS_SSH_JUMP            optional ProxyJump for Windows SSH
   NVPN_WINLIN_LINUX_SSH_JUMP              optional ProxyJump for Linux SSH
   NVPN_WINLIN_WINDOWS_SSH_PROXY_COMMAND   optional ProxyCommand for Windows SSH; takes
@@ -413,10 +419,20 @@ New-NetFirewallRule -DisplayName $(ps_sq "$WINDOWS_FIREWALL_RULE_NAME") -Directi
 
 cleanup() {
   if is_true "$RESTORE_INSTALLED" && [[ -n "${WINDOWS_INSTALLED_NVPN:-}" ]]; then
-    switch_windows_service "$WINDOWS_INSTALLED_NVPN" "restore-installed" >/dev/null 2>&1 || true
+    if switch_windows_service "$WINDOWS_INSTALLED_NVPN" "restore-installed" >/dev/null 2>&1; then
+      local windows_installed_hash
+      windows_installed_hash="$(windows_hash "$WINDOWS_INSTALLED_NVPN" 2>/dev/null | tr -d '\r\n' || true)"
+      if [[ -n "$windows_installed_hash" ]]; then
+        wait_for_windows_hash "$windows_installed_hash" "restore-installed" >/dev/null 2>&1 || true
+      fi
+    fi
   fi
   if is_true "$RESTORE_LINUX_INSTALLED" && [[ -n "${LINUX_INSTALLED_BACKUP:-}" ]]; then
-    switch_linux_service "$LINUX_INSTALLED_BACKUP" "restore-installed" >/dev/null 2>&1 || true
+    if switch_linux_service "$LINUX_INSTALLED_BACKUP" "restore-installed" >/dev/null 2>&1; then
+      if [[ -n "${LINUX_INSTALLED_BACKUP_HASH:-}" ]]; then
+        wait_for_linux_hash "$LINUX_INSTALLED_BACKUP_HASH" "restore-installed" >/dev/null 2>&1 || true
+      fi
+    fi
   fi
   if is_true "$WINDOWS_NVPN_FIREWALL_RULE" && ! is_true "$KEEP_NVPN_FIREWALL_RULE"; then
     run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
@@ -689,9 +705,19 @@ backup_linux_installed_binary() {
   if [[ -z "$CURRENT_LINUX_NVPN" || -n "$LINUX_INSTALLED_BACKUP" ]]; then
     return 0
   fi
-  local installed_hash
+  local installed_hash current_hash
   installed_hash="$(linux_hash "$LINUX_INSTALLED_NVPN" | tr -d '\r\n')"
+  [[ -n "$installed_hash" ]] || die "could not hash installed Linux nvpn $LINUX_INSTALLED_NVPN"
+  if [[ -n "$LINUX_INSTALLED_EXPECTED_HASH" && "$installed_hash" != "$LINUX_INSTALLED_EXPECTED_HASH" ]]; then
+    die "installed Linux nvpn hash mismatch for $LINUX_INSTALLED_NVPN expected=$LINUX_INSTALLED_EXPECTED_HASH actual=$installed_hash"
+  fi
+  current_hash="$(linux_hash "$CURRENT_LINUX_NVPN" | tr -d '\r\n')"
+  [[ -n "$current_hash" ]] || die "could not hash current Linux nvpn $CURRENT_LINUX_NVPN"
+  if [[ "$installed_hash" == "$current_hash" ]] && ! is_true "$ALLOW_CURRENT_LINUX_AS_INSTALLED"; then
+    die "installed Linux nvpn hash already matches current Linux row hash ($installed_hash); restore would not protect the installed baseline. Restore the installed binary first, set NVPN_WINLIN_INSTALLED_LINUX_SHA256, or set NVPN_WINLIN_ALLOW_CURRENT_LINUX_AS_INSTALLED=1 if this is intentional."
+  fi
   LINUX_INSTALLED_BACKUP="/tmp/nvpn-winlin-installed-${installed_hash}-$$"
+  LINUX_INSTALLED_BACKUP_HASH="$installed_hash"
   printf 'backing up Linux installed nvpn %s to %s\n' "$LINUX_INSTALLED_NVPN" "$LINUX_INSTALLED_BACKUP" >&2
   run_linux_sh "set -euo pipefail
 src=$(sh_q "$LINUX_INSTALLED_NVPN")
@@ -892,6 +918,103 @@ row_contains_installed() {
   esac
 }
 
+write_selected_pair_json() {
+  local win_status="$1"
+  local lin_status="$2"
+  local win_underlay="$3"
+  local linux_underlay="$4"
+  local out="$5"
+
+  jq -n \
+    --slurpfile win "$win_status" \
+    --slurpfile lin "$lin_status" \
+    --arg windows_underlay "$win_underlay" \
+    --arg linux_underlay "$linux_underlay" \
+    '
+    def tunnel_addr($peer): (($peer.tunnel_ip // "") | split("/")[0]);
+    def direct_peer($peer; $underlay):
+      ($peer != null)
+      and (($peer.endpoint // "") == "fips")
+      and (($peer.reachable // false) == true)
+      and (($peer.error // null) == null)
+      and (($peer.fips_transport_type // "") == "udp")
+      and (($peer.fips_transport_addr // "") | startswith($underlay + ":"))
+      and (($peer.runtime_endpoint // "") == ($peer.fips_transport_addr // ""))
+      and ((($peer.fips_last_outbound_route // "") == "") or (($peer.fips_last_outbound_route // "") == "direct"));
+    def peer_summary($peer):
+      if $peer == null then null else
+        {
+          participant_pubkey: ($peer.participant_pubkey // ""),
+          node_id: ($peer.node_id // ""),
+          tunnel_ip: ($peer.tunnel_ip // ""),
+          endpoint: ($peer.endpoint // ""),
+          fips_endpoint_npub: ($peer.fips_endpoint_npub // ""),
+          fips_transport_addr: ($peer.fips_transport_addr // ""),
+          fips_transport_type: ($peer.fips_transport_type // ""),
+          runtime_endpoint: ($peer.runtime_endpoint // ""),
+          reachable: ($peer.reachable // false),
+          error: ($peer.error // null),
+          last_mesh_seen_at: ($peer.last_mesh_seen_at // null),
+          last_fips_seen_at: ($peer.last_fips_seen_at // null),
+          last_fips_data_seen_at: ($peer.last_fips_data_seen_at // null),
+          last_fips_control_seen_at: ($peer.last_fips_control_seen_at // null),
+          last_handshake_at: ($peer.last_handshake_at // null),
+          fips_srtt_ms: ($peer.fips_srtt_ms // null),
+          fips_last_outbound_route: ($peer.fips_last_outbound_route // null),
+          direct_probe_pending: ($peer.direct_probe_pending // null),
+          direct_probe_auto_reconnect: ($peer.direct_probe_auto_reconnect // null),
+          advertised_routes: ($peer.advertised_routes // [])
+        }
+      end;
+    def reason($ok; $message): if $ok then empty else $message end;
+    ($win[0]) as $w |
+    ($lin[0]) as $l |
+    ([$w.daemon.state.peers[]? | select((.fips_transport_addr // "") | startswith($linux_underlay + ":"))]) as $win_matches |
+    ([$l.daemon.state.peers[]? | select((.fips_transport_addr // "") | startswith($windows_underlay + ":"))]) as $lin_matches |
+    ($win_matches[0] // null) as $windows_view_peer |
+    ($lin_matches[0] // null) as $linux_view_peer |
+    (tunnel_addr($windows_view_peer)) as $linux_tunnel |
+    (tunnel_addr($linux_view_peer)) as $windows_tunnel |
+    ([
+      reason(($windows_underlay != "" and $linux_underlay != "" and $windows_underlay != $linux_underlay); "Windows/Linux underlay IPs must be present and distinct"),
+      reason((($w.daemon.state.local_endpoint // "") | startswith($windows_underlay + ":")); "Windows local FIPS endpoint is not on the selected Windows underlay"),
+      reason((($l.daemon.state.local_endpoint // "") | startswith($linux_underlay + ":")); "Linux local FIPS endpoint is not on the selected Linux underlay"),
+      reason(($win_matches | length) == 1; "Windows status must have exactly one peer whose FIPS transport is the Linux underlay"),
+      reason(($lin_matches | length) == 1; "Linux status must have exactly one peer whose FIPS transport is the Windows underlay"),
+      reason(direct_peer($windows_view_peer; $linux_underlay); "Windows-selected Linux peer is not reachable direct UDP to the Linux underlay"),
+      reason(direct_peer($linux_view_peer; $windows_underlay); "Linux-selected Windows peer is not reachable direct UDP to the Windows underlay"),
+      reason(($linux_tunnel != "" and $windows_tunnel != "" and $linux_tunnel != $windows_tunnel); "selected peer tunnel IPs must be present and distinct")
+    ]) as $reasons |
+    {
+      windows_underlay: $windows_underlay,
+      linux_underlay: $linux_underlay,
+      windows_tunnel: $windows_tunnel,
+      linux_tunnel: $linux_tunnel,
+      windows_view_transport: ($windows_view_peer.fips_transport_addr // ""),
+      linux_view_transport: ($linux_view_peer.fips_transport_addr // ""),
+      windows_view_peer: peer_summary($windows_view_peer),
+      linux_view_peer: peer_summary($linux_view_peer),
+      direct_pair: {
+        ok: (($reasons | length) == 0),
+        reasons: $reasons,
+        windows_local_endpoint: ($w.daemon.state.local_endpoint // ""),
+        linux_local_endpoint: ($l.daemon.state.local_endpoint // ""),
+        windows_status_peer_match_count: ($win_matches | length),
+        linux_status_peer_match_count: ($lin_matches | length)
+      }
+    }' >"$out"
+}
+
+assert_selected_pair_direct() {
+  local selected_pair="$1"
+  if [[ "$(jq -r '.direct_pair.ok // false' "$selected_pair")" != "true" ]]; then
+    jq '.direct_pair' "$selected_pair" >&2
+    if ! is_true "$ALLOW_NON_DIRECT"; then
+      die "selected Windows/Linux peer is not a reciprocal direct FIPS UDP pair"
+    fi
+  fi
+}
+
 select_pair() {
   local row_dir="$1"
   local win_status="$row_dir/windows-status.json"
@@ -908,40 +1031,13 @@ select_pair() {
   [[ -n "$win_underlay" ]] || die "Windows status missing primary underlay IP"
   [[ -n "$linux_underlay" ]] || die "Linux status missing primary underlay IP"
 
-  local linux_tunnel windows_tunnel win_transport lin_transport
-  linux_tunnel="$(jq -r --arg ip "$linux_underlay" \
-    '[.daemon.state.peers[]? | select(((.fips_transport_addr // "") | startswith($ip + ":")))] | first | .tunnel_ip // empty | split("/")[0]' \
-    "$win_status")"
-  windows_tunnel="$(jq -r --arg ip "$win_underlay" \
-    '[.daemon.state.peers[]? | select(((.fips_transport_addr // "") | startswith($ip + ":")))] | first | .tunnel_ip // empty | split("/")[0]' \
-    "$lin_status")"
-  win_transport="$(jq -r --arg ip "$linux_underlay" \
-    '[.daemon.state.peers[]? | select(((.fips_transport_addr // "") | startswith($ip + ":")))] | first | .fips_transport_addr // empty' \
-    "$win_status")"
-  lin_transport="$(jq -r --arg ip "$win_underlay" \
-    '[.daemon.state.peers[]? | select(((.fips_transport_addr // "") | startswith($ip + ":")))] | first | .fips_transport_addr // empty' \
-    "$lin_status")"
-
-  if [[ -z "$linux_tunnel" || -z "$windows_tunnel" ]]; then
-    if ! is_true "$ALLOW_NON_DIRECT"; then
-    die "could not select direct Windows/Linux peers (windows_transport=$win_transport linux_transport=$lin_transport)"
-    fi
-    linux_tunnel="$(jq -r '[.daemon.state.peers[]? | select(.reachable == true and (.tunnel_ip // "") != "")] | first | .tunnel_ip // empty | split("/")[0]' "$win_status")"
-    windows_tunnel="$(jq -r '[.daemon.state.peers[]? | select(.reachable == true and (.tunnel_ip // "") != "")] | first | .tunnel_ip // empty | split("/")[0]' "$lin_status")"
-  fi
-
+  write_selected_pair_json "$win_status" "$lin_status" "$win_underlay" "$linux_underlay" "$row_dir/selected-pair.json"
+  assert_selected_pair_direct "$row_dir/selected-pair.json"
+  local linux_tunnel windows_tunnel
+  linux_tunnel="$(jq -r '.linux_tunnel // empty' "$row_dir/selected-pair.json")"
+  windows_tunnel="$(jq -r '.windows_tunnel // empty' "$row_dir/selected-pair.json")"
   [[ -n "$linux_tunnel" ]] || die "could not resolve Linux tunnel IP from Windows status"
   [[ -n "$windows_tunnel" ]] || die "could not resolve Windows tunnel IP from Linux status"
-
-  jq -n \
-    --arg windows_underlay "$win_underlay" \
-    --arg linux_underlay "$linux_underlay" \
-    --arg windows_tunnel "$windows_tunnel" \
-    --arg linux_tunnel "$linux_tunnel" \
-    --arg windows_view_transport "$win_transport" \
-    --arg linux_view_transport "$lin_transport" \
-    '{windows_underlay:$windows_underlay,linux_underlay:$linux_underlay,windows_tunnel:$windows_tunnel,linux_tunnel:$linux_tunnel,windows_view_transport:$windows_view_transport,linux_view_transport:$linux_view_transport}' \
-    >"$row_dir/selected-pair.json"
 }
 
 wait_for_direct_pair() {
@@ -964,6 +1060,12 @@ wait_for_direct_pair() {
           '[.daemon.state.peers[]? | select(((.fips_transport_addr // "") | startswith($ip + ":")))] | first | .tunnel_ip // empty | split("/")[0]' \
           "$tmpdir/linux-status.json")"
         if [[ -n "$linux_tunnel" && -n "$windows_tunnel" ]]; then
+          write_selected_pair_json "$tmpdir/windows-status.json" "$tmpdir/linux-status.json" "$win_underlay" "$linux_underlay" "$tmpdir/selected-pair.json"
+          if [[ "$(jq -r '.direct_pair.ok // false' "$tmpdir/selected-pair.json")" != "true" ]]; then
+            printf 'waiting for %s reciprocal direct FIPS peer pair: %s\n' "$row" "$(jq -r '.direct_pair.reasons | join("; ")' "$tmpdir/selected-pair.json")" >&2
+            sleep 2
+            continue
+          fi
           rm -rf "$tmpdir"
           return 0
         fi
@@ -1092,10 +1194,18 @@ for line in capture_path.read_text(errors="replace").splitlines():
 
 client_bytes = int(direction_summary.get("client_bytes") or 0)
 min_direct_bytes = int(client_bytes * 0.5)
+expected_src = windows if direction == "windows_to_linux" else linux
+expected_dst = linux if direction == "windows_to_linux" else windows
+primary_flow_key = f"{expected_src}>{expected_dst}"
+primary_flow_payload_bytes = int(
+    direct_flow_stats.get(primary_flow_key, {}).get("payload_bytes", 0)
+)
+min_primary_direct_bytes = int(client_bytes * 0.5)
 max_non_direct_bytes = max(1_000_000, int(max(direct_payload_bytes, 1) * 0.05))
 ok = (
     packets > 0
     and direct_payload_bytes >= min_direct_bytes
+    and primary_flow_payload_bytes >= min_primary_direct_bytes
     and non_direct_payload_bytes <= max_non_direct_bytes
 )
 out = {
@@ -1112,11 +1222,17 @@ out = {
     "direct_payload_gt_1400": direct_payload_gt_1400,
     "direct_payload_gt_9000": direct_payload_gt_9000,
     "direct_flow_stats": direct_flow_stats,
+    "primary_direct_flow": primary_flow_key,
+    "primary_direct_payload_bytes": primary_flow_payload_bytes,
     "non_direct_packets": non_direct_packets,
     "non_direct_payload_bytes": non_direct_payload_bytes,
     "non_direct_peers": peers,
     "min_direct_payload_bytes": min_direct_bytes,
+    "min_primary_direct_payload_bytes": min_primary_direct_bytes,
     "max_non_direct_payload_bytes": max_non_direct_bytes,
+    "direct_payload_ratio": (direct_payload_bytes / client_bytes) if client_bytes else None,
+    "primary_direct_payload_ratio": (primary_flow_payload_bytes / client_bytes) if client_bytes else None,
+    "non_direct_payload_ratio": (non_direct_payload_bytes / client_bytes) if client_bytes else None,
     "ok": ok,
 }
 Path(out_path).write_text(json.dumps(out, indent=2, sort_keys=True) + "\n")
@@ -1572,12 +1688,14 @@ write_run_metadata() {
     --arg tunnel_max_loss_percent "$TUNNEL_MAX_LOSS_PERCENT" \
     --arg direct_fips_capture "$DIRECT_FIPS_CAPTURE" \
     --arg linux_capture_iface "$LINUX_CAPTURE_IFACE" \
+    --arg linux_installed_expected_hash "$LINUX_INSTALLED_EXPECTED_HASH" \
+    --arg allow_current_linux_as_installed "$(is_true "$ALLOW_CURRENT_LINUX_AS_INSTALLED" && printf true || printf false)" \
     --arg windows_ssh_proxy_command "$([[ -n "$WINDOWS_SSH_PROXY_COMMAND" ]] && printf true || printf false)" \
     --arg linux_ssh_proxy_command "$([[ -n "$LINUX_SSH_PROXY_COMMAND" ]] && printf true || printf false)" \
     --arg windows_ssh_jump "$([[ -n "$WINDOWS_SSH_JUMP" ]] && printf true || printf false)" \
     --arg linux_ssh_jump "$([[ -n "$LINUX_SSH_JUMP" ]] && printf true || printf false)" \
     --arg output_dir "$OUTPUT_DIR" \
-    '{created_at:$created_at,repo:$root,git_head:$git_head,rows:$rows,current_linux_nvpn:$current_linux_nvpn,duration_secs:($duration_secs|tonumber),min_underlay_mbps:($min_underlay_mbps|tonumber),max_underlay_ratio:($max_underlay_ratio|tonumber),tunnel_health_attempts:($tunnel_health_attempts|tonumber),tunnel_health_interval_secs:($tunnel_health_interval_secs|tonumber),tunnel_ping_count:($tunnel_ping_count|tonumber),tunnel_max_loss_percent:($tunnel_max_loss_percent|tonumber),direct_fips_capture:$direct_fips_capture,linux_capture_iface:$linux_capture_iface,windows_ssh_proxy_command:($windows_ssh_proxy_command == "true"),linux_ssh_proxy_command:($linux_ssh_proxy_command == "true"),windows_ssh_jump:($windows_ssh_jump == "true"),linux_ssh_jump:($linux_ssh_jump == "true"),output_dir:$output_dir}' \
+    '{created_at:$created_at,repo:$root,git_head:$git_head,rows:$rows,current_linux_nvpn:$current_linux_nvpn,duration_secs:($duration_secs|tonumber),min_underlay_mbps:($min_underlay_mbps|tonumber),max_underlay_ratio:($max_underlay_ratio|tonumber),tunnel_health_attempts:($tunnel_health_attempts|tonumber),tunnel_health_interval_secs:($tunnel_health_interval_secs|tonumber),tunnel_ping_count:($tunnel_ping_count|tonumber),tunnel_max_loss_percent:($tunnel_max_loss_percent|tonumber),direct_fips_capture:$direct_fips_capture,linux_capture_iface:$linux_capture_iface,linux_installed_expected_hash:$linux_installed_expected_hash,allow_current_linux_as_installed:($allow_current_linux_as_installed == "true"),windows_ssh_proxy_command:($windows_ssh_proxy_command == "true"),linux_ssh_proxy_command:($linux_ssh_proxy_command == "true"),windows_ssh_jump:($windows_ssh_jump == "true"),linux_ssh_jump:($linux_ssh_jump == "true"),output_dir:$output_dir}' \
     >"$RUN_JSON"
 }
 
