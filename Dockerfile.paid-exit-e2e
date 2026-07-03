@@ -8,7 +8,7 @@ ARG NVPN_E2E_BUILDER_APT_INSTALL=1
 RUN case "$NVPN_E2E_BUILDER_APT_INSTALL" in \
         0|false|FALSE|False|no|NO|No|off|OFF|Off) ;; \
         *) apt-get update \
-          && apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config \
+          && apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config protobuf-compiler \
           && rm -rf /var/lib/apt/lists/* ;; \
       esac
 
