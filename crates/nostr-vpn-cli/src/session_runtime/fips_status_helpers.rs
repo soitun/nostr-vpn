@@ -157,12 +157,8 @@ pub(crate) fn fips_link_event_refresh(
     underlay_repaired: bool,
     resumed_after_sleep: bool,
 ) -> FipsLinkEventRefresh {
-    if platform_network_event
-        || network_changed
-        || endpoint_changed
-        || underlay_repaired
-        || resumed_after_sleep
-    {
+    let _ = (platform_network_event, underlay_repaired);
+    if network_changed || endpoint_changed || resumed_after_sleep {
         FipsLinkEventRefresh::RefreshPaths
     } else {
         FipsLinkEventRefresh::None
@@ -603,6 +599,14 @@ fn prefer_nonself_tunnel_snapshot(
     latest: crate::diagnostics::NetworkSnapshot,
 ) -> crate::diagnostics::NetworkSnapshot {
     let latest = crate::diagnostics::prefer_nonempty_network_snapshot(previous, latest);
+    if latest.default_interface.is_some()
+        && latest.default_interface == previous.default_interface
+        && previous.primary_ipv4.is_some()
+        && latest.primary_ipv4.is_none()
+        && latest.gateway_ipv4.is_none()
+    {
+        return previous.clone();
+    }
     match latest.default_interface.as_deref() {
         Some(iface) if tunnel_runtime.owns_interface(iface) => previous.clone(),
         _ => latest,

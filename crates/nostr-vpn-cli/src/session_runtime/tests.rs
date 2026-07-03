@@ -27,6 +27,31 @@ mod tests {
         assert_eq!(preferred.primary_ipv4, Some(Ipv4Addr::new(192, 168, 64, 2)));
     }
 
+    #[test]
+    fn prefer_nonself_tunnel_snapshot_keeps_same_iface_ipv4_underlay() {
+        let tunnel_runtime = CliTunnelRuntime::new("utun100");
+        let previous = crate::diagnostics::NetworkSnapshot {
+            default_interface: Some("en0".to_string()),
+            primary_ipv4: Some(Ipv4Addr::new(192, 168, 64, 5)),
+            primary_ipv6: None,
+            gateway_ipv4: Some(Ipv4Addr::new(192, 168, 64, 1)),
+            gateway_ipv6: None,
+        };
+        let latest = crate::diagnostics::NetworkSnapshot {
+            default_interface: Some("en0".to_string()),
+            primary_ipv4: None,
+            primary_ipv6: "fd18:89b8:ca8c:d693::1".parse().ok(),
+            gateway_ipv4: None,
+            gateway_ipv6: "fe80::1".parse().ok(),
+        };
+
+        let preferred = prefer_nonself_tunnel_snapshot(&tunnel_runtime, &previous, latest);
+
+        assert_eq!(preferred.primary_ipv4, Some(Ipv4Addr::new(192, 168, 64, 5)));
+        assert_eq!(preferred.gateway_ipv4, Some(Ipv4Addr::new(192, 168, 64, 1)));
+        assert!(preferred.primary_ipv6.is_none());
+    }
+
     #[cfg(feature = "embedded-fips")]
     #[test]
     fn endpoint_peer_signature_tracks_address_hint_metadata() {
@@ -69,13 +94,19 @@ mod tests {
         assert!(fips_link_event_should_seed_recent_peers(idle));
 
         for refresh in [
-            fips_link_event_refresh(true, false, false, false, false),
             fips_link_event_refresh(false, true, false, false, false),
             fips_link_event_refresh(false, false, true, false, false),
-            fips_link_event_refresh(false, false, false, true, false),
             fips_link_event_refresh(false, false, false, false, true),
         ] {
             assert_eq!(refresh, FipsLinkEventRefresh::RefreshPaths);
+            assert!(fips_link_event_should_seed_recent_peers(refresh));
+        }
+
+        for refresh in [
+            fips_link_event_refresh(true, false, false, false, false),
+            fips_link_event_refresh(false, false, false, true, false),
+        ] {
+            assert_eq!(refresh, FipsLinkEventRefresh::None);
             assert!(fips_link_event_should_seed_recent_peers(refresh));
         }
     }

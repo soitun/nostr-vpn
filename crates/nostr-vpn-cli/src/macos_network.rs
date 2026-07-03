@@ -255,7 +255,7 @@ pub(crate) fn macos_underlay_default_route_from_system() -> Result<Option<MacosR
 }
 
 #[cfg(target_os = "macos")]
-fn macos_unscoped_default_route_works() -> bool {
+fn macos_unscoped_default_route_uses_underlay() -> bool {
     let Ok(output) = ProcessCommand::new("route")
         .arg("-n")
         .arg("get")
@@ -268,9 +268,23 @@ fn macos_unscoped_default_route_works() -> bool {
         return false;
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    !stderr.to_ascii_lowercase().contains("not in table")
-        && (stdout.contains("gateway:") || stdout.contains("interface:"))
+    macos_route_get_uses_underlay_interface(&stdout)
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_route_get_uses_underlay_interface(output: &str) -> bool {
+    let interface = output.lines().map(str::trim).find_map(|line| {
+        line.strip_prefix("interface:")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    });
+    interface.is_some_and(|iface| {
+        !iface.starts_with("utun")
+            && !iface.starts_with("bridge")
+            && iface != "lo0"
+            && iface != "gif0"
+            && iface != "stf0"
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -307,7 +321,7 @@ pub(crate) fn ensure_macos_underlay_default_route() -> Result<bool> {
             .arg("inet"),
     )?;
     if macos_has_tunnel_split_default_routes(&output)
-        || (macos_has_underlay_default_route(&output) && macos_unscoped_default_route_works())
+        || macos_unscoped_default_route_uses_underlay()
     {
         return Ok(false);
     }

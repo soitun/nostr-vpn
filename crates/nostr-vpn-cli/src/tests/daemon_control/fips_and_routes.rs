@@ -312,6 +312,30 @@ Destination        Gateway            Flags               Netif Expire\n\
 }
 
 #[test]
+fn macos_route_get_underlay_detection_accepts_scoped_underlay_route() {
+    assert!(crate::macos_network::macos_route_get_uses_underlay_interface(
+        "   route to: 1.1.1.1\n\
+destination: 1.1.1.1\n\
+    gateway: 192.168.64.1\n\
+  interface: en0\n\
+      flags: <UP,GATEWAY,HOST,DONE,WASCLONED,IFSCOPE,IFREF,GLOBAL>\n",
+    ));
+    assert!(!crate::macos_network::macos_route_get_uses_underlay_interface(
+        "   route to: 1.1.1.1\n\
+destination: 1.1.1.1\n\
+  interface: utun5\n",
+    ));
+    assert!(!crate::macos_network::macos_route_get_uses_underlay_interface(
+        "   route to: 1.1.1.1\n\
+destination: 1.1.1.1\n\
+  interface: bridge100\n",
+    ));
+    assert!(!crate::macos_network::macos_route_get_uses_underlay_interface(
+        "route: writing to routing socket: not in table\n",
+    ));
+}
+
+#[test]
 fn macos_route_monitor_ignores_self_host_route_churn() {
     let mut route_add = [0_u8; 4];
     route_add[3] = 0x01;
