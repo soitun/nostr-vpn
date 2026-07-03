@@ -4,9 +4,9 @@ mod linux_vnet_tun_tests {
     use std::net::Ipv4Addr;
 
     #[test]
-    fn linux_vnet_tun_env_parser_is_opt_in() {
-        assert!(!linux_vnet_tun_enabled_from_env(None));
-        assert!(!linux_vnet_tun_enabled_from_env(Some("")));
+    fn linux_vnet_tun_env_parser_defaults_on() {
+        assert!(linux_vnet_tun_enabled_from_env(None));
+        assert!(linux_vnet_tun_enabled_from_env(Some("")));
         assert!(!linux_vnet_tun_enabled_from_env(Some("off")));
         assert!(!linux_vnet_tun_enabled_from_env(Some("0")));
         assert!(linux_vnet_tun_enabled_from_env(Some("1")));

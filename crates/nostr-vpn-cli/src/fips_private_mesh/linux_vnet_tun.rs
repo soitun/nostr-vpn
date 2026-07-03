@@ -995,7 +995,7 @@ fn linux_vnet_tun_enabled() -> bool {
 
 fn linux_vnet_tun_enabled_from_env(value: Option<&str>) -> bool {
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
-        return false;
+        return true;
     };
     !(value == "0"
         || value.eq_ignore_ascii_case("false")
