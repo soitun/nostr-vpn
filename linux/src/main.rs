@@ -17,6 +17,10 @@ use nostr_vpn_app_core::{
     FfiApp, NativeAppAction, NativeAppState, NativeNetworkState, NativeParticipantState,
     SettingsPatch, UpdateAutoCheckPolicy,
 };
+use nostr_vpn_app_core::native_state::{
+    NativePaidExitSellerState, NativePaidRouteOfferState, NativePaidRouteSessionState,
+    NativePaidRouteWalletMintState,
+};
 
 const APP_ID: &str = "to.iris.nvpn";
 const DEFAULT_UPDATE_POLL_INTERVAL_SECS: u32 = 6 * 60 * 60;
@@ -39,6 +43,8 @@ enum Page {
     Devices,
     Share,
     ExitNodes,
+    PaidRoutes,
+    Wallet,
     Settings,
 }
 
@@ -47,6 +53,8 @@ struct PageScrollOffsets {
     devices: f64,
     share: f64,
     exit_nodes: f64,
+    paid_routes: f64,
+    wallet: f64,
     settings: f64,
 }
 
@@ -56,6 +64,8 @@ impl PageScrollOffsets {
             Page::Devices => self.devices,
             Page::Share => self.share,
             Page::ExitNodes => self.exit_nodes,
+            Page::PaidRoutes => self.paid_routes,
+            Page::Wallet => self.wallet,
             Page::Settings => self.settings,
         }
     }
@@ -65,6 +75,8 @@ impl PageScrollOffsets {
             Page::Devices => self.devices = offset,
             Page::Share => self.share = offset,
             Page::ExitNodes => self.exit_nodes = offset,
+            Page::PaidRoutes => self.paid_routes = offset,
+            Page::Wallet => self.wallet = offset,
             Page::Settings => self.settings = offset,
         }
     }
@@ -89,6 +101,13 @@ struct Drafts {
     advertised_routes: String,
     exit_search: String,
     wireguard_exit_config: String,
+    paid_route_country: String,
+    paid_route_network_class: String,
+    paid_route_mint_url: String,
+    paid_route_top_up_amount: String,
+    paid_route_send_amount: String,
+    paid_route_token: String,
+    paid_route_withdraw_invoice: String,
 }
 
 impl Drafts {
@@ -204,6 +223,7 @@ include!("main/shell.rs");
 include!("main/devices_page.rs");
 include!("main/share_page.rs");
 include!("main/exit_nodes_page.rs");
+include!("main/paid_routes_page.rs");
 include!("main/settings_page.rs");
 include!("main/saved_networks.rs");
 include!("main/widgets.rs");

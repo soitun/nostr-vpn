@@ -359,6 +359,17 @@ struct PaidExitSellerState: Decodable, Equatable {
     var channelCreditText = ""
     var channelCreditTitleText = ""
     var channelCreditHelpText = ""
+    var currentConnectionCount: UInt64 = 0
+    var pastConnectionCount: UInt64 = 0
+    var totalBillableBytes: UInt64 = 0
+    var totalBillablePackets: UInt64 = 0
+    var totalTrafficText = ""
+    var totalPaidMsat: UInt64 = 0
+    var totalPaidText = ""
+    var totalDueMsat: UInt64 = 0
+    var totalDueText = ""
+    var totalUnpaidMsat: UInt64 = 0
+    var totalUnpaidText = ""
     var channels: [PaidRouteChannelState] = []
     var sessions: [PaidRouteSessionState] = []
 

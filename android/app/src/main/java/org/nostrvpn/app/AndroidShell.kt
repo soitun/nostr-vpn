@@ -1734,6 +1734,25 @@ private fun PaidExitSellerStatusCard(state: AppState) {
                     style = MaterialTheme.typography.bodySmall,
                 )
             }
+            val sellerSummary = listOf(
+                "${seller.currentConnectionCount} connected",
+                "${seller.pastConnectionCount} past",
+                seller.totalTrafficText.ifBlank { "${formatBytes(seller.totalBillableBytes)} routed" },
+                "${seller.totalPaidText.ifBlank { formatPaidRouteMsat(seller.totalPaidMsat) }} paid",
+                "${seller.totalDueText.ifBlank { formatPaidRouteMsat(seller.totalDueMsat) }} due",
+            ).joinToString(" · ")
+            Text(
+                sellerSummary,
+                color = Muted,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (seller.totalUnpaidMsat > 0) {
+                Text(
+                    "${seller.totalUnpaidText.ifBlank { formatPaidRouteMsat(seller.totalUnpaidMsat) }} behind",
+                    color = Color(0xFF9A3412),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
             if (seller.sessions.isNotEmpty()) {
                 Text("${seller.sessions.size} active customer${if (seller.sessions.size == 1) "" else "s"}", color = Muted)
             }

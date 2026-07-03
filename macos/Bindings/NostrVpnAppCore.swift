@@ -2317,12 +2317,23 @@ public struct NativePaidExitSellerState {
     public var channelCreditText: String
     public var channelCreditTitleText: String
     public var channelCreditHelpText: String
+    public var currentConnectionCount: UInt64
+    public var pastConnectionCount: UInt64
+    public var totalBillableBytes: UInt64
+    public var totalBillablePackets: UInt64
+    public var totalTrafficText: String
+    public var totalPaidMsat: UInt64
+    public var totalPaidText: String
+    public var totalDueMsat: UInt64
+    public var totalDueText: String
+    public var totalUnpaidMsat: UInt64
+    public var totalUnpaidText: String
     public var channels: [NativePaidRouteChannelState]
     public var sessions: [NativePaidRouteSessionState]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(supported: Bool, enabled: Bool, statusText: String, upstream: String, privateVpnAccess: String, internetText: String, publicIpText: String, meter: String, priceText: String, priceMsat: UInt64, perUnits: UInt64, perUnitsText: String, acceptedMints: [String], maxChannelCapacitySat: UInt64, channelExpirySecs: UInt64, channelExpiryText: String, settlementText: String, freeProbeUnits: UInt64, freeProbeText: String, graceUnits: UInt64, graceText: String, countryCode: String, region: String, asn: UInt32, networkClass: String, ipv4: Bool, ipv6: Bool, channelCreditMsat: UInt64, channelCreditText: String, channelCreditTitleText: String, channelCreditHelpText: String, channels: [NativePaidRouteChannelState], sessions: [NativePaidRouteSessionState]) {
+    public init(supported: Bool, enabled: Bool, statusText: String, upstream: String, privateVpnAccess: String, internetText: String, publicIpText: String, meter: String, priceText: String, priceMsat: UInt64, perUnits: UInt64, perUnitsText: String, acceptedMints: [String], maxChannelCapacitySat: UInt64, channelExpirySecs: UInt64, channelExpiryText: String, settlementText: String, freeProbeUnits: UInt64, freeProbeText: String, graceUnits: UInt64, graceText: String, countryCode: String, region: String, asn: UInt32, networkClass: String, ipv4: Bool, ipv6: Bool, channelCreditMsat: UInt64, channelCreditText: String, channelCreditTitleText: String, channelCreditHelpText: String, currentConnectionCount: UInt64, pastConnectionCount: UInt64, totalBillableBytes: UInt64, totalBillablePackets: UInt64, totalTrafficText: String, totalPaidMsat: UInt64, totalPaidText: String, totalDueMsat: UInt64, totalDueText: String, totalUnpaidMsat: UInt64, totalUnpaidText: String, channels: [NativePaidRouteChannelState], sessions: [NativePaidRouteSessionState]) {
         self.supported = supported
         self.enabled = enabled
         self.statusText = statusText
@@ -2354,6 +2365,17 @@ public struct NativePaidExitSellerState {
         self.channelCreditText = channelCreditText
         self.channelCreditTitleText = channelCreditTitleText
         self.channelCreditHelpText = channelCreditHelpText
+        self.currentConnectionCount = currentConnectionCount
+        self.pastConnectionCount = pastConnectionCount
+        self.totalBillableBytes = totalBillableBytes
+        self.totalBillablePackets = totalBillablePackets
+        self.totalTrafficText = totalTrafficText
+        self.totalPaidMsat = totalPaidMsat
+        self.totalPaidText = totalPaidText
+        self.totalDueMsat = totalDueMsat
+        self.totalDueText = totalDueText
+        self.totalUnpaidMsat = totalUnpaidMsat
+        self.totalUnpaidText = totalUnpaidText
         self.channels = channels
         self.sessions = sessions
     }
@@ -2459,6 +2481,39 @@ extension NativePaidExitSellerState: Equatable, Hashable {
         if lhs.channelCreditHelpText != rhs.channelCreditHelpText {
             return false
         }
+        if lhs.currentConnectionCount != rhs.currentConnectionCount {
+            return false
+        }
+        if lhs.pastConnectionCount != rhs.pastConnectionCount {
+            return false
+        }
+        if lhs.totalBillableBytes != rhs.totalBillableBytes {
+            return false
+        }
+        if lhs.totalBillablePackets != rhs.totalBillablePackets {
+            return false
+        }
+        if lhs.totalTrafficText != rhs.totalTrafficText {
+            return false
+        }
+        if lhs.totalPaidMsat != rhs.totalPaidMsat {
+            return false
+        }
+        if lhs.totalPaidText != rhs.totalPaidText {
+            return false
+        }
+        if lhs.totalDueMsat != rhs.totalDueMsat {
+            return false
+        }
+        if lhs.totalDueText != rhs.totalDueText {
+            return false
+        }
+        if lhs.totalUnpaidMsat != rhs.totalUnpaidMsat {
+            return false
+        }
+        if lhs.totalUnpaidText != rhs.totalUnpaidText {
+            return false
+        }
         if lhs.channels != rhs.channels {
             return false
         }
@@ -2500,6 +2555,17 @@ extension NativePaidExitSellerState: Equatable, Hashable {
         hasher.combine(channelCreditText)
         hasher.combine(channelCreditTitleText)
         hasher.combine(channelCreditHelpText)
+        hasher.combine(currentConnectionCount)
+        hasher.combine(pastConnectionCount)
+        hasher.combine(totalBillableBytes)
+        hasher.combine(totalBillablePackets)
+        hasher.combine(totalTrafficText)
+        hasher.combine(totalPaidMsat)
+        hasher.combine(totalPaidText)
+        hasher.combine(totalDueMsat)
+        hasher.combine(totalDueText)
+        hasher.combine(totalUnpaidMsat)
+        hasher.combine(totalUnpaidText)
         hasher.combine(channels)
         hasher.combine(sessions)
     }
@@ -2545,6 +2611,17 @@ public struct FfiConverterTypeNativePaidExitSellerState: FfiConverterRustBuffer 
                 channelCreditText: FfiConverterString.read(from: &buf),
                 channelCreditTitleText: FfiConverterString.read(from: &buf),
                 channelCreditHelpText: FfiConverterString.read(from: &buf),
+                currentConnectionCount: FfiConverterUInt64.read(from: &buf),
+                pastConnectionCount: FfiConverterUInt64.read(from: &buf),
+                totalBillableBytes: FfiConverterUInt64.read(from: &buf),
+                totalBillablePackets: FfiConverterUInt64.read(from: &buf),
+                totalTrafficText: FfiConverterString.read(from: &buf),
+                totalPaidMsat: FfiConverterUInt64.read(from: &buf),
+                totalPaidText: FfiConverterString.read(from: &buf),
+                totalDueMsat: FfiConverterUInt64.read(from: &buf),
+                totalDueText: FfiConverterString.read(from: &buf),
+                totalUnpaidMsat: FfiConverterUInt64.read(from: &buf),
+                totalUnpaidText: FfiConverterString.read(from: &buf),
                 channels: FfiConverterSequenceTypeNativePaidRouteChannelState.read(from: &buf),
                 sessions: FfiConverterSequenceTypeNativePaidRouteSessionState.read(from: &buf)
         )
@@ -2582,6 +2659,17 @@ public struct FfiConverterTypeNativePaidExitSellerState: FfiConverterRustBuffer 
         FfiConverterString.write(value.channelCreditText, into: &buf)
         FfiConverterString.write(value.channelCreditTitleText, into: &buf)
         FfiConverterString.write(value.channelCreditHelpText, into: &buf)
+        FfiConverterUInt64.write(value.currentConnectionCount, into: &buf)
+        FfiConverterUInt64.write(value.pastConnectionCount, into: &buf)
+        FfiConverterUInt64.write(value.totalBillableBytes, into: &buf)
+        FfiConverterUInt64.write(value.totalBillablePackets, into: &buf)
+        FfiConverterString.write(value.totalTrafficText, into: &buf)
+        FfiConverterUInt64.write(value.totalPaidMsat, into: &buf)
+        FfiConverterString.write(value.totalPaidText, into: &buf)
+        FfiConverterUInt64.write(value.totalDueMsat, into: &buf)
+        FfiConverterString.write(value.totalDueText, into: &buf)
+        FfiConverterUInt64.write(value.totalUnpaidMsat, into: &buf)
+        FfiConverterString.write(value.totalUnpaidText, into: &buf)
         FfiConverterSequenceTypeNativePaidRouteChannelState.write(value.channels, into: &buf)
         FfiConverterSequenceTypeNativePaidRouteSessionState.write(value.sessions, into: &buf)
     }

@@ -976,6 +976,7 @@ fn paid_exit_status_snapshot_json(
         .collect::<Vec<_>>();
     let seller_admissions = store.seller_admissions(&app.paid_exit, now_unix);
     let seller_collection = store.seller_collection_states(&app.paid_exit, now_unix);
+    let seller_summary = paid_exit_seller_cli_summary(&app.paid_exit, store);
     let pending_buyer_credit_msat =
         paid_exit_seller_pending_buyer_credit_msat(&app.paid_exit, store);
     let auto_collect_due_msat = seller_collection
@@ -996,6 +997,21 @@ fn paid_exit_status_snapshot_json(
             "auto_collect_due_count": seller_collection.iter().filter(|state| state.auto_collect_due).count(),
             "auto_collect_due_msat": auto_collect_due_msat,
             "auto_collect_due_text": paid_exit_msat_text(auto_collect_due_msat),
+            "current_connection_count": seller_summary.current_connection_count,
+            "past_connection_count": seller_summary.past_connection_count,
+            "total_billable_bytes": seller_summary.total_billable_bytes,
+            "total_billable_packets": seller_summary.total_billable_packets,
+            "total_traffic_text": paid_exit_usage_text(
+                seller_summary.total_billable_bytes,
+                seller_summary.total_billable_packets,
+                seller_summary.total_billable_bytes,
+            ),
+            "total_paid_msat": seller_summary.total_paid_msat,
+            "total_paid_text": paid_exit_msat_text(seller_summary.total_paid_msat),
+            "total_due_msat": seller_summary.total_due_msat,
+            "total_due_text": paid_exit_msat_text(seller_summary.total_due_msat),
+            "total_unpaid_msat": seller_summary.total_unpaid_msat,
+            "total_unpaid_text": paid_exit_msat_text(seller_summary.total_unpaid_msat),
         },
         "counts": {
             "offers": store.offers.len(),
@@ -1179,6 +1195,61 @@ fn paid_exit_seller_collection_status_json(
     })
 }
 
+#[derive(Default)]
+struct PaidExitSellerCliSummary {
+    current_connection_count: u64,
+    past_connection_count: u64,
+    total_billable_bytes: u64,
+    total_billable_packets: u64,
+    total_paid_msat: u64,
+    total_due_msat: u64,
+    total_unpaid_msat: u64,
+}
+
+fn paid_exit_seller_cli_summary(
+    config: &PaidExitConfig,
+    store: &PaidRouteStore,
+) -> PaidExitSellerCliSummary {
+    let seller_channel_ids = store
+        .channels
+        .values()
+        .filter(|channel| channel.role == PaidRouteChannelRole::Seller)
+        .map(|channel| channel.channel_id.clone())
+        .collect::<HashSet<_>>();
+    let mut summary = PaidExitSellerCliSummary::default();
+    for record in store.sessions.values() {
+        if !seller_channel_ids.contains(&record.session.payment.channel_id) {
+            continue;
+        }
+        let decision = record.session.routing_decision(config);
+        let channel_is_current = store
+            .channels
+            .get(&record.session.payment.channel_id)
+            .is_some_and(|channel| paid_route_lifecycle_is_current(channel.status));
+        if decision.allow_routing && channel_is_current {
+            summary.current_connection_count = summary.current_connection_count.saturating_add(1);
+        } else {
+            summary.past_connection_count = summary.past_connection_count.saturating_add(1);
+        }
+        summary.total_billable_bytes = summary
+            .total_billable_bytes
+            .saturating_add(record.session.usage.units_for_meter(PaidRouteMeter::Bytes));
+        summary.total_billable_packets = summary
+            .total_billable_packets
+            .saturating_add(record.session.usage.units_for_meter(PaidRouteMeter::Packets));
+        summary.total_paid_msat = summary
+            .total_paid_msat
+            .saturating_add(record.session.payment.paid_msat);
+        summary.total_due_msat = summary
+            .total_due_msat
+            .saturating_add(decision.amount_due_msat);
+        summary.total_unpaid_msat = summary
+            .total_unpaid_msat
+            .saturating_add(decision.unpaid_msat);
+    }
+    summary
+}
+
 fn print_paid_exit_status_snapshot(app: &AppConfig, store_path: &Path, store: &PaidRouteStore) {
     let now_unix = unix_timestamp();
     print_paid_exit_status(app);
@@ -1195,6 +1266,7 @@ fn print_paid_exit_status_snapshot(app: &AppConfig, store_path: &Path, store: &P
     let pending_buyer_credit_msat =
         paid_exit_seller_pending_buyer_credit_msat(&app.paid_exit, store);
     let seller_collection = store.seller_collection_states(&app.paid_exit, now_unix);
+    let seller_summary = paid_exit_seller_cli_summary(&app.paid_exit, store);
     let auto_collect_due_msat = seller_collection
         .iter()
         .filter(|state| state.auto_collect_due)
@@ -1223,6 +1295,19 @@ fn print_paid_exit_status_snapshot(app: &AppConfig, store_path: &Path, store: &P
                     .count()
             );
         }
+        println!(
+            "paid_exit_seller_summary: connected={} past={} traffic={} paid={} due={} unpaid={}",
+            seller_summary.current_connection_count,
+            seller_summary.past_connection_count,
+            paid_exit_usage_text(
+                seller_summary.total_billable_bytes,
+                seller_summary.total_billable_packets,
+                seller_summary.total_billable_bytes,
+            ),
+            paid_exit_msat_text(seller_summary.total_paid_msat),
+            paid_exit_msat_text(seller_summary.total_due_msat),
+            paid_exit_msat_text(seller_summary.total_unpaid_msat),
+        );
     }
 
     if !store.offers.is_empty() {

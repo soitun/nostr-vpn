@@ -142,6 +142,17 @@ public sealed class NativePaidExitSellerState
     public string ChannelCreditText { get; set; } = "";
     public string ChannelCreditTitleText { get; set; } = "";
     public string ChannelCreditHelpText { get; set; } = "";
+    public ulong CurrentConnectionCount { get; set; }
+    public ulong PastConnectionCount { get; set; }
+    public ulong TotalBillableBytes { get; set; }
+    public ulong TotalBillablePackets { get; set; }
+    public string TotalTrafficText { get; set; } = "";
+    public ulong TotalPaidMsat { get; set; }
+    public string TotalPaidText { get; set; } = "";
+    public ulong TotalDueMsat { get; set; }
+    public string TotalDueText { get; set; } = "";
+    public ulong TotalUnpaidMsat { get; set; }
+    public string TotalUnpaidText { get; set; } = "";
     public List<NativePaidRouteChannelState> Channels { get; set; } = [];
     public List<NativePaidRouteSessionState> Sessions { get; set; } = [];
 }
