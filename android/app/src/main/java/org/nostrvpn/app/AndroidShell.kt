@@ -829,7 +829,7 @@ private fun AddDevicesDialog(
                 if (network.enabled) {
                     Text("Invite to my network", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        "Share this code with another device to give it access to your network.",
+                        "Share this invite so the other device can request access to your network.",
                         style = MaterialTheme.typography.bodySmall,
                         color = Muted,
                     )
