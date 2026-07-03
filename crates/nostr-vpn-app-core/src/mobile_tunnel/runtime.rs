@@ -557,7 +557,14 @@ impl MobileTunnel {
         self.outbound_tx.try_send(packet).is_ok()
     }
 
-    pub(crate) fn next_packet_vec(&self, timeout: Duration) -> Result<Option<Vec<u8>>> {
+    pub(crate) fn next_packet_batch(
+        &self,
+        max_packets: usize,
+        timeout: Duration,
+    ) -> Result<Vec<Vec<u8>>> {
+        if max_packets == 0 {
+            return Ok(Vec::new());
+        }
         let inbound_rx = self
             .inbound_rx
             .as_ref()
@@ -565,11 +572,23 @@ impl MobileTunnel {
         let rx = inbound_rx
             .lock()
             .map_err(|_| anyhow!("mobile tunnel inbound packet lock poisoned"))?;
-        match rx.recv_timeout(timeout) {
-            Ok(packet) => Ok(Some(packet)),
-            Err(mpsc::RecvTimeoutError::Timeout) => Ok(None),
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(anyhow!("mobile tunnel stopped")),
+        let first = match rx.recv_timeout(timeout) {
+            Ok(packet) => packet,
+            Err(mpsc::RecvTimeoutError::Timeout) => return Ok(Vec::new()),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(anyhow!("mobile tunnel stopped"));
+            }
+        };
+        let mut packets = Vec::with_capacity(max_packets);
+        packets.push(first);
+        while packets.len() < max_packets {
+            match rx.try_recv() {
+                Ok(packet) => packets.push(packet),
+                Err(mpsc::TryRecvError::Empty) => break,
+                Err(mpsc::TryRecvError::Disconnected) => break,
+            }
         }
+        Ok(packets)
     }
 }
 

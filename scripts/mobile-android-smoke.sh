@@ -36,9 +36,10 @@ or --serial. Keep device identifiers and signing details out of committed files.
 First-run Android VPN permission prompts may need manual approval before
 --vpn-cycle can run unattended.
 
-For fresh installs, --vpn-cycle needs a usable app config. Seed one privately with
-NVPN_ANDROID_DEBUG_INVITE, or set a WireGuard exit with
-NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG / NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE.
+For fresh installs, --vpn-cycle needs an active nvpn network. Seed one privately
+with NVPN_ANDROID_DEBUG_INVITE. A WireGuard exit config can be layered on with
+NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG / NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE,
+but it does not create an nvpn network by itself.
 EOF
 }
 
@@ -192,7 +193,8 @@ seed_debug_config() {
 dump_vpn_diagnostics() {
   echo "Android VPN cycle did not reach the expected service/network state." >&2
   echo "If this is a first run, approve the Android VPN permission prompt and retry." >&2
-  echo "If this device has no usable config, set NVPN_ANDROID_DEBUG_INVITE or NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE." >&2
+  echo "If this device has no active nvpn network, set NVPN_ANDROID_DEBUG_INVITE and approve any app/VPN prompts." >&2
+  echo "NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE only configures a WG exit; it does not create the required nvpn network." >&2
   echo >&2
   echo "---- dumpsys activity services $PACKAGE_NAME ----" >&2
   "$ADB" -s "$serial" shell dumpsys activity services "$PACKAGE_NAME" >&2 || true

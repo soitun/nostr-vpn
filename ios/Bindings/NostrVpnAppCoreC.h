@@ -35,8 +35,10 @@ bool nostr_vpn_mobile_tunnel_send_packet(
     const uint8_t *packet,
     uintptr_t len
 );
-NvpnMobilePacket nostr_vpn_mobile_tunnel_next_packet_owned(
+intptr_t nostr_vpn_mobile_tunnel_next_packets_owned(
     const NvpnMobileTunnelHandle *handle,
+    NvpnMobilePacket *out_packets,
+    uintptr_t max_packets,
     uint32_t timeout_ms
 );
 void nostr_vpn_mobile_packet_free(NvpnMobilePacket packet);

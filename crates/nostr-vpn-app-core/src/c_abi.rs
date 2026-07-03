@@ -344,31 +344,44 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_wg_excluded_route(
 
 /// # Safety
 ///
-/// `handle` must be a live mobile tunnel handle. A returned packet with
-/// `status == 1` must be released with `nostr_vpn_mobile_packet_free`.
+/// `handle` must be a live mobile tunnel handle. `out_packets` must point to
+/// writable storage for `max_packets` packet descriptors. Returns the number
+/// of ready packets written, 0 on timeout, and -1 when the tunnel stopped.
+/// Every returned packet must be released with `nostr_vpn_mobile_packet_free`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_next_packet_owned(
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_next_packets_owned(
     handle: *const NvpnMobileTunnelHandle,
+    out_packets: *mut NvpnMobilePacket,
+    max_packets: usize,
     timeout_ms: u32,
-) -> NvpnMobilePacket {
-    if handle.is_null() {
-        return mobile_packet_stopped();
+) -> isize {
+    if handle.is_null() || out_packets.is_null() || max_packets == 0 {
+        return -1;
     }
     let tunnel = unsafe { &*handle };
-    match tunnel
+    let packets = match tunnel
         .tunnel
-        .next_packet_vec(Duration::from_millis(u64::from(timeout_ms)))
+        .next_packet_batch(max_packets, Duration::from_millis(u64::from(timeout_ms)))
     {
-        Ok(Some(packet)) => mobile_packet_ready(packet),
-        Ok(None) => mobile_packet_timeout(),
-        Err(_) => mobile_packet_stopped(),
+        Ok(packets) => packets,
+        Err(_) => return -1,
+    };
+    if packets.is_empty() {
+        return 0;
     }
+    let slots = unsafe { std::slice::from_raw_parts_mut(out_packets, max_packets) };
+    let mut count = 0;
+    for (slot, packet) in slots.iter_mut().zip(packets) {
+        *slot = mobile_packet_ready(packet);
+        count += 1;
+    }
+    count
 }
 
 /// # Safety
 ///
-/// `packet` must have been returned by `nostr_vpn_mobile_tunnel_next_packet_owned`
-/// and not already freed.
+/// `packet` must have been returned by
+/// `nostr_vpn_mobile_tunnel_next_packets_owned` and not already freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn nostr_vpn_mobile_packet_free(packet: NvpnMobilePacket) {
     if packet.data.is_null() || packet.capacity == 0 {
@@ -639,7 +652,7 @@ fn tunnel_from_jlong_mut<'a>(handle: jlong) -> Option<&'a mut NvpnMobileTunnelHa
 
 fn mobile_packet_ready(mut packet: Vec<u8>) -> NvpnMobilePacket {
     if packet.is_empty() {
-        return mobile_packet_timeout();
+        return mobile_packet_empty(0);
     }
     let data = packet.as_mut_ptr();
     let len = packet.len();
@@ -653,19 +666,12 @@ fn mobile_packet_ready(mut packet: Vec<u8>) -> NvpnMobilePacket {
     }
 }
 
-fn mobile_packet_timeout() -> NvpnMobilePacket {
+fn mobile_packet_empty(status: i32) -> NvpnMobilePacket {
     NvpnMobilePacket {
         data: ptr::null_mut(),
         len: 0,
         capacity: 0,
-        status: 0,
-    }
-}
-
-fn mobile_packet_stopped() -> NvpnMobilePacket {
-    NvpnMobilePacket {
-        status: -1,
-        ..mobile_packet_timeout()
+        status,
     }
 }
 
