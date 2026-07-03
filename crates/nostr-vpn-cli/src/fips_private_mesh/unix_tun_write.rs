@@ -80,19 +80,49 @@ fn write_linux_vnet_packet_batch_to_tun_blocking<P: LinuxVnetPacketBatch + ?Size
     preparer: &mut LinuxVnetWritePreparer,
     write_gate: Option<&Mutex<()>>,
 ) {
-    preparer.prepare(packets);
+    let mut prepared = LinuxVnetWritePass::prepare(preparer, packets);
     crate::pipeline_profile::record_tun_write_packets(packet_count, packet_bytes);
-    for frame_index in 0..preparer.frames().len() {
-        let frame = preparer.frames()[frame_index];
+    let frame_count = prepared.frames().len();
+    for frame_index in 0..frame_count {
+        let frame = prepared.frames()[frame_index];
         write_linux_vnet_prepared_frame_to_tun_blocking(
             tun_fd,
-            preparer,
+            prepared.preparer(),
             frame,
             stop,
             write_gate,
         );
     }
-    preparer.clear_prepared_packet_refs();
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxVnetWritePass<'a>(&'a mut LinuxVnetWritePreparer);
+
+#[cfg(target_os = "linux")]
+impl<'a> LinuxVnetWritePass<'a> {
+    fn prepare<P: LinuxVnetPacketBatch + ?Sized>(
+        preparer: &'a mut LinuxVnetWritePreparer,
+        packets: &P,
+    ) -> Self {
+        let pass = Self(preparer);
+        pass.0.prepare(packets);
+        pass
+    }
+
+    fn frames(&self) -> &[LinuxVnetPreparedWriteFrame] {
+        self.0.frames()
+    }
+
+    fn preparer(&mut self) -> &mut LinuxVnetWritePreparer {
+        self.0
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for LinuxVnetWritePass<'_> {
+    fn drop(&mut self) {
+        self.0.clear_prepared_packet_refs();
+    }
 }
 
 #[cfg(target_os = "linux")]
