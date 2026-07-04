@@ -1,3 +1,12 @@
+use crate::*;
+use nostr_sdk::async_utility::futures_util::{SinkExt, StreamExt};
+use nostr_sdk::prelude::{Keys, ToBech32};
+use nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config;
+use std::sync::{Arc, Mutex};
+use tokio::net::TcpListener;
+use tokio::sync::oneshot;
+use tokio_tungstenite::tungstenite::Message;
+
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
 async fn paid_exit_offer_publish_and_discover_roundtrips_through_local_relay() {
@@ -47,6 +56,70 @@ async fn paid_exit_offer_publish_and_discover_roundtrips_through_local_relay() {
 }
 
 #[cfg(feature = "paid-exit")]
+#[tokio::test]
+async fn paid_exit_rating_discovery_replays_historical_facts_from_local_relay() {
+    let rater = Keys::generate();
+    let rater_npub = rater.public_key().to_bech32().expect("rater npub");
+    let seller = Keys::generate();
+    let seller_npub = seller.public_key().to_bech32().expect("seller npub");
+    let other_seller = Keys::generate();
+    let other_seller_npub = other_seller
+        .public_key()
+        .to_bech32()
+        .expect("other seller npub");
+    let other_scope = build_paid_exit_rating_fact_event(
+        &rater,
+        &rater_npub,
+        &other_seller_npub,
+        "nvpn.exit",
+        "history-other-scope",
+        100,
+        499,
+    )
+    .expect("other scope rating event");
+    let wanted = build_paid_exit_rating_fact_event(
+        &rater,
+        &rater_npub,
+        &seller_npub,
+        "fips.peer",
+        "history-fips-peer",
+        95,
+        500,
+    )
+    .expect("wanted rating event");
+    let relay = LocalNostrRelay::spawn_with_events(vec![
+        serde_json::to_value(other_scope).expect("encode other event"),
+        serde_json::to_value(wanted).expect("encode wanted event"),
+    ])
+    .await;
+    let app = AppConfig::generated();
+
+    let events = discover_paid_exit_rating_events_from_relays(
+        &app,
+        std::slice::from_ref(&relay.url),
+        1,
+        1,
+        None,
+        "fips.peer",
+    )
+    .await
+    .expect("discover rating facts");
+
+    assert_eq!(events["events"].as_array().expect("events").len(), 1);
+    let scores = paid_exit_rating_scores_from_value(&events, "fips.peer").expect("rating scores");
+    assert_eq!(
+        scores.get(&seller_npub),
+        Some(&PaidExitRatingScore {
+            score: 90,
+            created_at: 500,
+        })
+    );
+    assert!(!scores.contains_key(&other_seller_npub));
+
+    relay.stop().await;
+}
+
+#[cfg(feature = "paid-exit")]
 struct LocalNostrRelay {
     url: String,
     shutdown: Option<oneshot::Sender<()>>,
@@ -56,11 +129,15 @@ struct LocalNostrRelay {
 #[cfg(feature = "paid-exit")]
 impl LocalNostrRelay {
     async fn spawn() -> Self {
+        Self::spawn_with_events(Vec::new()).await
+    }
+
+    async fn spawn_with_events(initial_events: Vec<serde_json::Value>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind local relay");
         let url = format!("ws://{}", listener.local_addr().expect("relay addr"));
-        let events = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let events = Arc::new(Mutex::new(initial_events));
         let (shutdown, shutdown_rx) = oneshot::channel();
         let handle = tokio::spawn(run_local_nostr_relay(listener, events, shutdown_rx));
         Self {
@@ -200,7 +277,8 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
 
     let buy = paid_exit_buy_once(PaidExitBuyArgs {
         config: Some(config_path.clone()),
-        offer: "internet-exit".to_string(),
+        offer: Some("internet-exit".to_string()),
+        best_rated: false,
         mint: None,
         channel_capacity_sat: Some(10),
         initial_paid_msat: 0,

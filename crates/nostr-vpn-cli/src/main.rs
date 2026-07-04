@@ -273,6 +273,9 @@ mod tests {
     mod daemon_control;
     #[path = "../tests/runtime_misc.rs"]
     mod runtime_misc;
+    #[cfg(feature = "paid-exit")]
+    #[path = "../tests/runtime_misc_paid_exit_relay.rs"]
+    mod runtime_misc_paid_exit_relay;
     #[path = "../tests/service_cli.rs"]
     mod service_cli;
     #[path = "../tests/support.rs"]
