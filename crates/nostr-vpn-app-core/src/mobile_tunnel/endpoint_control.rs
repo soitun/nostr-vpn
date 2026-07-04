@@ -439,24 +439,6 @@ fn mobile_endpoint_send_run_matches(
     }
 }
 
-fn drain_mobile_outbound_ready(
-    outbound_rx: &mut tokio_mpsc::Receiver<Vec<u8>>,
-    packets: &mut Vec<Vec<u8>>,
-    first: Vec<u8>,
-) {
-    packets.clear();
-    packets.push(first);
-    while packets.len() < MOBILE_FIPS_SEND_BATCH {
-        match outbound_rx.try_recv() {
-            Ok(packet) => packets.push(packet),
-            Err(
-                tokio_mpsc::error::TryRecvError::Empty
-                | tokio_mpsc::error::TryRecvError::Disconnected,
-            ) => break,
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_mobile_outbound_packets(
     endpoint: &FipsEndpoint,

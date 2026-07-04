@@ -91,7 +91,7 @@ impl MobileTunnel {
         let app_config_dirty = Arc::new(AtomicBool::new(false));
         let tun_counters = Arc::new(MobileTunAtomicCounters::default());
         let (outbound_tx, mut outbound_rx) =
-            tokio_mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
+            tokio_mpsc::channel::<Vec<Vec<u8>>>(MOBILE_TUN_OUTBOUND_BATCH_CHANNEL_CAPACITY);
         let (inbound_tx, inbound_rx) = mpsc::sync_channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
 
         // If the user has WG upstream enabled, stand up the boringtun
@@ -181,9 +181,7 @@ impl MobileTunnel {
             let app_config_for_dns = Arc::clone(&app_config);
             let dns_forwarders = mobile_magic_dns_forwarders_for_config(&config);
             tokio::spawn(async move {
-                let mut packets = Vec::with_capacity(MOBILE_FIPS_SEND_BATCH);
-                while let Some(packet) = outbound_rx.recv().await {
-                    drain_mobile_outbound_ready(&mut outbound_rx, &mut packets, packet);
+                while let Some(mut packets) = outbound_rx.recv().await {
                     if !dispatch_mobile_outbound_packets(
                         &endpoint,
                         &mesh,
@@ -542,7 +540,7 @@ struct MobileTunnelStarted {
         not(any(test, target_os = "android", target_os = "ios")),
         allow(dead_code)
     )]
-    outbound_tx: tokio_mpsc::Sender<Vec<u8>>,
+    outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
     inbound_rx: mpsc::Receiver<Vec<u8>>,
     tasks: Vec<JoinHandle<()>>,
     wg_upstream: Option<WgUpstreamRuntime>,

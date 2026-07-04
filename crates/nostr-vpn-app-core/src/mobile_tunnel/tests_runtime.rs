@@ -325,13 +325,11 @@
         }
         let mut messages = Vec::with_capacity(packets.len());
         for _ in 0..50 {
-            for packet in packets {
-                started
-                    .outbound_tx
-                    .send(packet.clone())
-                    .await
-                    .expect("send packet into mobile tunnel");
-            }
+            started
+                .outbound_tx
+                .send(packets.to_vec())
+                .await
+                .expect("send packet batch into mobile tunnel");
             for _ in 0..packets.len().saturating_mul(2).max(1) {
                 match tokio::time::timeout(Duration::from_millis(100), recipient.recv()).await {
                     Ok(Some(message)) => {

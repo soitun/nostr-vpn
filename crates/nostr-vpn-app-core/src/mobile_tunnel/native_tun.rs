@@ -14,7 +14,7 @@ struct NativeTunRuntime {
 impl NativeTunRuntime {
     fn start(
         fd: c_int,
-        outbound_tx: tokio_mpsc::Sender<Vec<u8>>,
+        outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
         inbound_rx: mpsc::Receiver<Vec<u8>>,
         packet_capacity: usize,
         counters: Arc<MobileTunAtomicCounters>,
@@ -101,24 +101,22 @@ fn native_tun_packet_capacity(mtu: u16) -> usize {
 
 fn native_tun_read_loop(
     fd: c_int,
-    outbound_tx: tokio_mpsc::Sender<Vec<u8>>,
+    outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
     stop: Arc<AtomicBool>,
     counters: Arc<MobileTunAtomicCounters>,
     packet_capacity: usize,
 ) {
+    let mut packets = Vec::with_capacity(MOBILE_FIPS_SEND_BATCH);
     'read: loop {
+        packets.clear();
         for _ in 0..MOBILE_FIPS_SEND_BATCH {
             match read_mobile_tun_packet(fd, packet_capacity) {
                 NativeTunRead::Packet(packet) => {
                     counters.note_read(packet.len());
-                    if !send_native_tun_packet(&outbound_tx, &stop, packet) {
-                        counters.note_drop();
-                        stop.store(true, Ordering::Relaxed);
-                        return;
-                    }
+                    packets.push(packet);
                 }
                 NativeTunRead::WouldBlock => {
-                    if !wait_mobile_tun_fd(fd, libc::POLLIN, &stop) {
+                    if packets.is_empty() && !wait_mobile_tun_fd(fd, libc::POLLIN, &stop) {
                         break 'read;
                     }
                     break;
@@ -129,19 +127,30 @@ fn native_tun_read_loop(
                 }
             }
         }
+        if !packets.is_empty() {
+            let batch = std::mem::replace(&mut packets, Vec::with_capacity(MOBILE_FIPS_SEND_BATCH));
+            let batch_len = batch.len();
+            if !send_native_tun_packet_batch(&outbound_tx, &stop, batch) {
+                for _ in 0..batch_len {
+                    counters.note_drop();
+                }
+                stop.store(true, Ordering::Relaxed);
+                return;
+            }
+        }
     }
     stop.store(true, Ordering::Relaxed);
 }
 
-fn send_native_tun_packet(
-    outbound_tx: &tokio_mpsc::Sender<Vec<u8>>,
+fn send_native_tun_packet_batch(
+    outbound_tx: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
     stop: &AtomicBool,
-    packet: Vec<u8>,
+    packets: Vec<Vec<u8>>,
 ) -> bool {
-    if stop.load(Ordering::Relaxed) {
+    if packets.is_empty() || stop.load(Ordering::Relaxed) {
         return false;
     }
-    outbound_tx.blocking_send(packet).is_ok()
+    outbound_tx.blocking_send(packets).is_ok()
 }
 
 fn native_tun_write_loop(

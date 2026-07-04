@@ -36,11 +36,12 @@
             .is_none()
         );
 
-        let Some(MobileEndpointSendRun::Identity {
+        let Some(MobileEndpointSendRun {
             participant_fallback: run_participant_fallback,
             participant_key: run_participant_key,
             identity: run_identity,
             payloads,
+            ..
         }) = run.as_ref()
         else {
             panic!("resolved peer should own an identity send run");
@@ -59,7 +60,7 @@
             vec![3],
         )
         .expect("peer change should flush previous run");
-        let MobileEndpointSendRun::Identity { payloads, .. } = previous;
+        let MobileEndpointSendRun { payloads, .. } = previous;
         assert_eq!(payloads, vec![vec![1], vec![2]]);
         assert!(run.is_none());
     }
