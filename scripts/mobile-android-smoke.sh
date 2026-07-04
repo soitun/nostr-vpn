@@ -621,7 +621,8 @@ write_android_tun_packet_probe_summary() {
     "$polls" \
     "$poll_interval_ms" \
     "$(android_runtime_state_path)" \
-    "$(android_ping_probe_summary_path)" <<'PY'
+    "$(android_ping_probe_summary_path)" \
+    "$(android_build_metadata_path)" <<'PY'
 import json
 import sys
 
@@ -644,6 +645,7 @@ import sys
     poll_interval_ms,
     runtime_state_path,
     ping_summary_path,
+    build_metadata_path,
 ) = sys.argv[1:]
 
 def number(value):
@@ -719,7 +721,22 @@ summary = {
     "rawPingOutput": ping_path,
     "pingSummaryOutput": ping_summary_path,
     "runtimeStateOutput": runtime_state_path,
+    "buildMetadataOutput": build_metadata_path,
 }
+try:
+    with open(build_metadata_path, encoding="utf-8") as fh:
+        build_metadata = json.load(fh)
+except (OSError, json.JSONDecodeError):
+    build_metadata = {}
+for key in (
+    "appPackageName",
+    "appVersionName",
+    "appVersionCode",
+    "appBuildGitSha",
+    "appBuildTimestampUtc",
+):
+    if key in build_metadata:
+        summary[key] = build_metadata[key]
 with open(summary_path, "w", encoding="utf-8") as fh:
     json.dump(summary, fh, sort_keys=True, indent=2)
     fh.write("\n")
