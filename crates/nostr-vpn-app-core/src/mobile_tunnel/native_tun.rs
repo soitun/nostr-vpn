@@ -107,10 +107,11 @@ fn native_tun_read_loop(
     packet_capacity: usize,
 ) {
     let mut packets = Vec::with_capacity(MOBILE_FIPS_SEND_BATCH);
+    let mut read_packet = Vec::<u8>::with_capacity(packet_capacity);
     'read: loop {
         packets.clear();
         for _ in 0..MOBILE_FIPS_SEND_BATCH {
-            match read_mobile_tun_packet(fd, packet_capacity) {
+            match read_mobile_tun_packet(fd, &mut read_packet) {
                 NativeTunRead::Packet(packet) => {
                     counters.note_read(packet.len());
                     packets.push(packet);
@@ -207,10 +208,10 @@ enum NativeTunWrite {
     Stopped,
 }
 
-fn read_mobile_tun_packet(fd: c_int, packet_capacity: usize) -> NativeTunRead {
-    let mut packet = Vec::<u8>::with_capacity(packet_capacity);
+fn read_mobile_tun_packet(fd: c_int, packet: &mut Vec<u8>) -> NativeTunRead {
+    packet.clear();
     loop {
-        let read = read_mobile_tun_payload(fd, &mut packet);
+        let read = read_mobile_tun_payload(fd, packet);
         if read > 0 {
             let len = usize::try_from(read).unwrap_or(0);
             let Some(packet_len) = mobile_tun_payload_len(len) else {
@@ -219,7 +220,9 @@ fn read_mobile_tun_packet(fd: c_int, packet_capacity: usize) -> NativeTunRead {
             unsafe {
                 packet.set_len(packet_len);
             }
-            return NativeTunRead::Packet(packet);
+            let mut next_packet = Vec::with_capacity(packet.capacity());
+            std::mem::swap(packet, &mut next_packet);
+            return NativeTunRead::Packet(next_packet);
         }
         if read == 0 {
             return NativeTunRead::Stopped;

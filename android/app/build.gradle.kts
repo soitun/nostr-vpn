@@ -98,6 +98,9 @@ kotlin {
 
 tasks.register<Exec>("buildRustArm64") {
     workingDir = repoRoot.asFile
+    doFirst {
+        delete(rustOutputDir.dir("arm64-v8a"))
+    }
     commandLine(
         *(listOf(
                 "cargo",
