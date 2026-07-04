@@ -189,6 +189,13 @@ path = sys.argv[1]
 with open(path, encoding="utf-8") as fh:
     result = json.load(fh)
 
+def counter(value):
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
 errors = []
 if result.get("startError"):
     errors.append(f"startError={result['startError']}")
@@ -220,19 +227,30 @@ if result.get("packetTunnelStatusRawValue") == 3:
             expected = result.get("tunPacketProbeExpectedPackets")
             sent = result.get("tunPacketProbeSentPackets")
             observed = result.get("tunPacketProbeObservedPackets")
+            observed_bytes = counter(result.get("tunPacketProbeObservedBytesRead"))
+            dropped_delta = counter(result.get("tunPacketProbeDroppedDelta"))
             if (
                 result.get("tunPacketProbeReadIncreased") is not True
+                or result.get("tunPacketProbeBytesReadIncreased") is not True
+                or result.get("tunPacketProbeDroppedIncreased") is not False
                 or not isinstance(expected, int)
                 or sent != expected
                 or not isinstance(observed, int)
                 or observed < expected
+                or observed_bytes is None
+                or observed_bytes <= 0
+                or dropped_delta is None
+                or dropped_delta != 0
             ):
                 errors.append(
                     "tunPacketProbeReadIncreased="
                     f"{result.get('tunPacketProbeReadIncreased')!r} "
+                    f"bytesIncreased={result.get('tunPacketProbeBytesReadIncreased')!r} "
+                    f"droppedIncreased={result.get('tunPacketProbeDroppedIncreased')!r} "
                     f"baseline={result.get('tunPacketProbeBaselineRead')!r} "
                     f"final={result.get('tunPacketProbeFinalRead')!r} "
                     f"expected={expected!r} sent={sent!r} observed={observed!r} "
+                    f"observedBytes={observed_bytes!r} droppedDelta={dropped_delta!r} "
                     f"error={result.get('tunPacketProbeError')!r} "
                     f"sendError={result.get('tunPacketProbeSendError')!r}"
                 )
@@ -248,6 +266,9 @@ if result.get("tunPacketProbeReadIncreased") is True:
         f"->{result.get('tunPacketProbeFinalRead')} "
         f"observed={result.get('tunPacketProbeObservedPackets')}/"
         f"{result.get('tunPacketProbeExpectedPackets')} "
+        f"bytes={result.get('tunPacketProbeObservedBytesRead')} "
+        f"drops={result.get('tunPacketProbeDroppedDelta')} "
+        f"elapsedMs={result.get('tunPacketProbeElapsedMs')} "
         f"target={result.get('tunPacketProbeTarget')}"
     )
 PY

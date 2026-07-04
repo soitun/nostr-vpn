@@ -544,14 +544,26 @@ final class AppModel: ObservableObject {
             "tunPacketProbeReadIncreased": false,
         ]
 
-        guard let baseline = Self.runtimeCounter(
+        let baselineRuntimeJson = await vpnController.runtimeStateJson()
+        guard let baselineRead = Self.runtimeCounter(
             "tunPacketsRead",
-            from: await vpnController.runtimeStateJson()
-        ) else {
-            result["tunPacketProbeError"] = "baseline tunPacketsRead missing"
+            from: baselineRuntimeJson
+        ),
+            let baselineBytesRead = Self.runtimeCounter(
+                "tunBytesRead",
+                from: baselineRuntimeJson
+            ),
+            let baselineDropped = Self.runtimeCounter(
+                "tunPacketsDropped",
+                from: baselineRuntimeJson
+            )
+        else {
+            result["tunPacketProbeError"] = "baseline TUN counters missing"
             return result
         }
-        result["tunPacketProbeBaselineRead"] = Self.jsonCounterValue(baseline)
+        result["tunPacketProbeBaselineRead"] = Self.jsonCounterValue(baselineRead)
+        result["tunPacketProbeBaselineBytesRead"] = Self.jsonCounterValue(baselineBytesRead)
+        result["tunPacketProbeBaselineDropped"] = Self.jsonCounterValue(baselineDropped)
 
         var sentPackets = 0
         var sendErrors: [String] = []
@@ -563,7 +575,7 @@ final class AppModel: ObservableObject {
             }
         }
         result["tunPacketProbeSentPackets"] = sentPackets
-        let requiredRead = Self.saturatingAdd(baseline, UInt64(sentPackets))
+        let requiredRead = Self.saturatingAdd(baselineRead, UInt64(sentPackets))
         result["tunPacketProbeRequiredRead"] = Self.jsonCounterValue(requiredRead)
         if !sendErrors.isEmpty {
             result["tunPacketProbeSendError"] = sendErrors.joined(separator: "; ")
@@ -574,17 +586,38 @@ final class AppModel: ObservableObject {
         }
 
         let deadline = Date().addingTimeInterval(waitSeconds)
-        var final = baseline
+        let probeStartedAt = Date()
+        var finalRead = baselineRead
+        var finalBytesRead = baselineBytesRead
+        var finalDropped = baselineDropped
         while Date() < deadline {
-            if let current = Self.runtimeCounter(
+            let runtimeJson = await vpnController.runtimeStateJson()
+            if let currentRead = Self.runtimeCounter(
                 "tunPacketsRead",
-                from: await vpnController.runtimeStateJson()
-            ) {
-                final = current
-                if current >= requiredRead {
-                    result["tunPacketProbeFinalRead"] = Self.jsonCounterValue(current)
-                    result["tunPacketProbeObservedPackets"] = Self.jsonCounterValue(
-                        Self.saturatingSubtract(current, baseline)
+                from: runtimeJson
+            ),
+                let currentBytesRead = Self.runtimeCounter(
+                    "tunBytesRead",
+                    from: runtimeJson
+                ),
+                let currentDropped = Self.runtimeCounter(
+                    "tunPacketsDropped",
+                    from: runtimeJson
+                )
+            {
+                finalRead = currentRead
+                finalBytesRead = currentBytesRead
+                finalDropped = currentDropped
+                if currentRead >= requiredRead {
+                    Self.finishTunPacketProbeResult(
+                        &result,
+                        baselineRead: baselineRead,
+                        baselineBytesRead: baselineBytesRead,
+                        baselineDropped: baselineDropped,
+                        finalRead: currentRead,
+                        finalBytesRead: currentBytesRead,
+                        finalDropped: currentDropped,
+                        probeStartedAt: probeStartedAt
                     )
                     result["tunPacketProbeReadIncreased"] = true
                     return result
@@ -593,11 +626,41 @@ final class AppModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 250_000_000)
         }
 
-        result["tunPacketProbeFinalRead"] = Self.jsonCounterValue(final)
-        result["tunPacketProbeObservedPackets"] = Self.jsonCounterValue(
-            Self.saturatingSubtract(final, baseline)
+        Self.finishTunPacketProbeResult(
+            &result,
+            baselineRead: baselineRead,
+            baselineBytesRead: baselineBytesRead,
+            baselineDropped: baselineDropped,
+            finalRead: finalRead,
+            finalBytesRead: finalBytesRead,
+            finalDropped: finalDropped,
+            probeStartedAt: probeStartedAt
         )
         return result
+    }
+
+    nonisolated private static func finishTunPacketProbeResult(
+        _ result: inout [String: Any],
+        baselineRead: UInt64,
+        baselineBytesRead: UInt64,
+        baselineDropped: UInt64,
+        finalRead: UInt64,
+        finalBytesRead: UInt64,
+        finalDropped: UInt64,
+        probeStartedAt: Date
+    ) {
+        let observedPackets = saturatingSubtract(finalRead, baselineRead)
+        let observedBytes = saturatingSubtract(finalBytesRead, baselineBytesRead)
+        let droppedDelta = saturatingSubtract(finalDropped, baselineDropped)
+        result["tunPacketProbeFinalRead"] = jsonCounterValue(finalRead)
+        result["tunPacketProbeObservedPackets"] = jsonCounterValue(observedPackets)
+        result["tunPacketProbeFinalBytesRead"] = jsonCounterValue(finalBytesRead)
+        result["tunPacketProbeObservedBytesRead"] = jsonCounterValue(observedBytes)
+        result["tunPacketProbeBytesReadIncreased"] = observedBytes > 0
+        result["tunPacketProbeFinalDropped"] = jsonCounterValue(finalDropped)
+        result["tunPacketProbeDroppedDelta"] = jsonCounterValue(droppedDelta)
+        result["tunPacketProbeDroppedIncreased"] = droppedDelta > 0
+        result["tunPacketProbeElapsedMs"] = Int(Date().timeIntervalSince(probeStartedAt) * 1000)
     }
 
     nonisolated private static func sendDebugUdpPacket(target: String, port: UInt16) -> String? {
