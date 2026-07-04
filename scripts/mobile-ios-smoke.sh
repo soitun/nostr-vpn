@@ -221,7 +221,8 @@ copy_ios_debug_logs() {
       --domain-identifier "$BUNDLE_ID" \
       --source "Library/Application Support/Nostr VPN/$name" \
       --destination "$destination" \
-      --quiet
+      --quiet \
+      2>/dev/null
     then
       if [[ -s "$destination" ]]; then
         echo "Copied iOS debug log: $destination" >&2
