@@ -12,6 +12,7 @@ import android.graphics.drawable.Icon
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -139,17 +140,13 @@ class NostrVpnService : VpnService() {
 
         val descriptor = buildVpnInterface(config) ?: run {
             releaseMulticastLock()
-            stopServiceForeground()
-            stopSelf()
-            return false
+            return failStart(foregroundStarted, "Android VPN interface could not be established")
         }
         val handle = NativeCore.mobileTunnelNew(tunnelConfigJson)
         if (handle == 0L) {
             descriptor.close()
             releaseMulticastLock()
-            stopServiceForeground()
-            stopSelf()
-            return false
+            return failStart(foregroundStarted, "Native mobile tunnel failed to start")
         }
 
         // If the user has WG upstream enabled, the boringtun runtime
@@ -171,9 +168,12 @@ class NostrVpnService : VpnService() {
                 "VpnService.protect(wgSocketFd=$wgSocketFd) returned $protected_",
             )
             if (!protected_) {
-                Log.w(
-                    "NostrVpnService",
-                    "protect(fd) failed — WG upstream may loop into the VPN tun",
+                descriptor.close()
+                NativeCore.mobileTunnelFree(handle)
+                releaseMulticastLock()
+                return failStart(
+                    foregroundStarted,
+                    "VpnService.protect(wgSocketFd=$wgSocketFd) failed; aborting VPN start",
                 )
             }
         }
@@ -182,9 +182,7 @@ class NostrVpnService : VpnService() {
         if (!NativeCore.mobileTunnelAttachTunFd(handle, tunFd)) {
             NativeCore.mobileTunnelFree(handle)
             releaseMulticastLock()
-            stopServiceForeground()
-            stopSelf()
-            return false
+            return failStart(foregroundStarted, "Native mobile tunnel rejected Android TUN fd")
         }
 
         tunnelHandle = handle
@@ -284,6 +282,7 @@ class NostrVpnService : VpnService() {
         return candidates.filter { network ->
             val capabilities = connectivity.getNetworkCapabilities(network) ?: return@filter false
             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
                 !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
         }.toTypedArray()
     }
@@ -367,7 +366,11 @@ class NostrVpnService : VpnService() {
             }
         }
         try {
-            connectivity.registerDefaultNetworkCallback(callback)
+            val request = NetworkRequest.Builder()
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                .build()
+            connectivity.registerNetworkCallback(request, callback)
             networkCallback = callback
             refreshUnderlyingNetworks()
         } catch (_: RuntimeException) {
