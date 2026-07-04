@@ -217,12 +217,22 @@ if result.get("packetTunnelStatusRawValue") == 3:
             ):
                 if key not in runtime:
                     errors.append(f"runtime.{key} missing")
-            if result.get("tunPacketProbeReadIncreased") is not True:
+            expected = result.get("tunPacketProbeExpectedPackets")
+            sent = result.get("tunPacketProbeSentPackets")
+            observed = result.get("tunPacketProbeObservedPackets")
+            if (
+                result.get("tunPacketProbeReadIncreased") is not True
+                or not isinstance(expected, int)
+                or sent != expected
+                or not isinstance(observed, int)
+                or observed < expected
+            ):
                 errors.append(
                     "tunPacketProbeReadIncreased="
                     f"{result.get('tunPacketProbeReadIncreased')!r} "
                     f"baseline={result.get('tunPacketProbeBaselineRead')!r} "
                     f"final={result.get('tunPacketProbeFinalRead')!r} "
+                    f"expected={expected!r} sent={sent!r} observed={observed!r} "
                     f"error={result.get('tunPacketProbeError')!r} "
                     f"sendError={result.get('tunPacketProbeSendError')!r}"
                 )
@@ -236,6 +246,8 @@ if result.get("tunPacketProbeReadIncreased") is True:
         "iOS TUN packet probe passed: "
         f"tunPacketsRead {result.get('tunPacketProbeBaselineRead')}"
         f"->{result.get('tunPacketProbeFinalRead')} "
+        f"observed={result.get('tunPacketProbeObservedPackets')}/"
+        f"{result.get('tunPacketProbeExpectedPackets')} "
         f"target={result.get('tunPacketProbeTarget')}"
     )
 PY

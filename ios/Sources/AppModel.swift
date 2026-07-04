@@ -535,10 +535,12 @@ final class AppModel: ObservableObject {
     private func runDebugTunPacketProbe() async -> [String: Any] {
         let target = "10.44.255.254"
         let port: UInt16 = 9
+        let packetCount = 4
         let waitSeconds = 6.0
         var result: [String: Any] = [
             "tunPacketProbeTarget": target,
             "tunPacketProbePort": Int(port),
+            "tunPacketProbeExpectedPackets": packetCount,
             "tunPacketProbeReadIncreased": false,
         ]
 
@@ -551,8 +553,24 @@ final class AppModel: ObservableObject {
         }
         result["tunPacketProbeBaselineRead"] = Self.jsonCounterValue(baseline)
 
-        if let sendError = Self.sendDebugUdpPacket(target: target, port: port) {
-            result["tunPacketProbeSendError"] = sendError
+        var sentPackets = 0
+        var sendErrors: [String] = []
+        for _ in 0..<packetCount {
+            if let sendError = Self.sendDebugUdpPacket(target: target, port: port) {
+                sendErrors.append(sendError)
+            } else {
+                sentPackets += 1
+            }
+        }
+        result["tunPacketProbeSentPackets"] = sentPackets
+        let requiredRead = Self.saturatingAdd(baseline, UInt64(sentPackets))
+        result["tunPacketProbeRequiredRead"] = Self.jsonCounterValue(requiredRead)
+        if !sendErrors.isEmpty {
+            result["tunPacketProbeSendError"] = sendErrors.joined(separator: "; ")
+        }
+        guard sentPackets > 0 else {
+            result["tunPacketProbeError"] = "no UDP probe packets sent"
+            return result
         }
 
         let deadline = Date().addingTimeInterval(waitSeconds)
@@ -563,8 +581,11 @@ final class AppModel: ObservableObject {
                 from: await vpnController.runtimeStateJson()
             ) {
                 final = current
-                if current > baseline {
+                if current >= requiredRead {
                     result["tunPacketProbeFinalRead"] = Self.jsonCounterValue(current)
+                    result["tunPacketProbeObservedPackets"] = Self.jsonCounterValue(
+                        Self.saturatingSubtract(current, baseline)
+                    )
                     result["tunPacketProbeReadIncreased"] = true
                     return result
                 }
@@ -573,6 +594,9 @@ final class AppModel: ObservableObject {
         }
 
         result["tunPacketProbeFinalRead"] = Self.jsonCounterValue(final)
+        result["tunPacketProbeObservedPackets"] = Self.jsonCounterValue(
+            Self.saturatingSubtract(final, baseline)
+        )
         return result
     }
 
@@ -607,6 +631,15 @@ final class AppModel: ObservableObject {
             }
         }
         return sent < 0 ? String(cString: strerror(errno)) : nil
+    }
+
+    nonisolated private static func saturatingAdd(_ left: UInt64, _ right: UInt64) -> UInt64 {
+        let (value, overflow) = left.addingReportingOverflow(right)
+        return overflow ? UInt64.max : value
+    }
+
+    nonisolated private static func saturatingSubtract(_ left: UInt64, _ right: UInt64) -> UInt64 {
+        left >= right ? left - right : 0
     }
 
     nonisolated private static func runtimeCounter(_ key: String, from json: String?) -> UInt64? {

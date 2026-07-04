@@ -21,6 +21,7 @@ RUNTIME_STATE_RESULT_DIR="${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-andr
 RUNTIME_STATE_RESULT_NAME="${NVPN_ANDROID_RUNTIME_STATE_RESULT_NAME:-mobile-android-runtime-state-$$.json}"
 TUN_PACKET_PROBE="${NVPN_ANDROID_TUN_PACKET_PROBE:-1}"
 TUN_PACKET_PROBE_TARGET="${NVPN_ANDROID_TUN_PACKET_PROBE_TARGET:-10.44.255.254}"
+TUN_PACKET_PROBE_COUNT="${NVPN_ANDROID_TUN_PACKET_PROBE_COUNT:-4}"
 TUN_PACKET_PROBE_WAIT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_WAIT_SECS:-6}"
 TUN_PACKET_PROBE_TIMEOUT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_TIMEOUT_SECS:-1}"
 DEBUG_SEED_WAIT_SECS="${NVPN_ANDROID_DEBUG_SEED_WAIT_SECS:-2}"
@@ -64,9 +65,9 @@ When --vpn-cycle reaches Android's active VPN service/network state, this script
 also copies files/app-core/mobile-runtime-state.json from the debug app sandbox
 and requires fresh Rust runtime state with native TUN counter fields.
 
-By default --vpn-cycle also sends one shell ping toward a non-local 10.44/16
-address and requires tunPacketsRead to increase. Disable with
-NVPN_ANDROID_TUN_PACKET_PROBE=0 if a device image lacks ping.
+By default --vpn-cycle also sends a small shell ping burst toward a non-local
+10.44/16 address and requires tunPacketsRead to increase by at least the burst
+size. Disable with NVPN_ANDROID_TUN_PACKET_PROBE=0 if a device image lacks ping.
 EOF
 }
 
@@ -294,6 +295,7 @@ wait_for_android_runtime_state() {
 
 wait_for_tun_packets_read_after() {
   local baseline="$1"
+  local required_increase="$2"
   local start now current last_error
   start="$(date +%s)"
   last_error=""
@@ -301,11 +303,11 @@ wait_for_tun_packets_read_after() {
     if copy_android_runtime_state; then
       if last_error="$(validate_android_runtime_state 2>&1)"; then
         current="$(android_runtime_state_number tunPacketsRead 2>/dev/null || true)"
-        if [[ "$current" =~ ^[0-9]+$ ]] && (( current > baseline )); then
-          echo "Android TUN packet probe passed: tunPacketsRead $baseline->$current target=$TUN_PACKET_PROBE_TARGET"
+        if [[ "$current" =~ ^[0-9]+$ ]] && (( current >= baseline + required_increase )); then
+          echo "Android TUN packet probe passed: tunPacketsRead $baseline->$current observed=$((current - baseline))/$required_increase target=$TUN_PACKET_PROBE_TARGET"
           return 0
         fi
-        last_error="tunPacketsRead did not increase after probe (baseline=$baseline current=${current:-missing})"
+        last_error="tunPacketsRead did not increase enough after probe (baseline=$baseline current=${current:-missing} required=$required_increase)"
       fi
     else
       last_error="failed to copy files/app-core/mobile-runtime-state.json from debug app sandbox"
@@ -321,11 +323,15 @@ wait_for_tun_packets_read_after() {
 
 run_android_tun_packet_probe() {
   truthy "$TUN_PACKET_PROBE" || return 0
-  local baseline
+  local baseline count remote_cmd
   baseline="$(android_runtime_state_number tunPacketsRead 2>/dev/null || printf '0')"
   [[ "$baseline" =~ ^[0-9]+$ ]] || baseline=0
-  "$ADB" -s "$serial" shell ping -c 1 -W "$TUN_PACKET_PROBE_TIMEOUT_SECS" "$TUN_PACKET_PROBE_TARGET" >/dev/null 2>&1 || true
-  wait_for_tun_packets_read_after "$baseline"
+  count="$TUN_PACKET_PROBE_COUNT"
+  [[ "$count" =~ ^[0-9]+$ ]] || count=4
+  (( count > 0 )) || count=1
+  remote_cmd="i=0; while [ \$i -lt $count ]; do ping -c 1 -W $TUN_PACKET_PROBE_TIMEOUT_SECS $TUN_PACKET_PROBE_TARGET >/dev/null 2>&1 & i=\$((i + 1)); done; wait"
+  "$ADB" -s "$serial" shell "$remote_cmd" >/dev/null 2>&1 || true
+  wait_for_tun_packets_read_after "$baseline" "$count"
 }
 
 android_sdk() {
