@@ -1397,6 +1397,44 @@ wait_for_windows_hash() {
   die "Windows service did not switch to expected hash for $label"
 }
 
+fips_core_version_from_snapshot() {
+  local snapshot="$1"
+  jq -r '.daemon_state_file_state.fips_core_version // .daemon_status.daemon.state.fips_core_version // empty' "$snapshot"
+}
+
+current_fips_short_rev() {
+  if [[ -z "$CURRENT_FIPS_REPO" ]] || ! git -C "$CURRENT_FIPS_REPO" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+  git -C "$CURRENT_FIPS_REPO" rev-parse --short=10 HEAD
+}
+
+validate_current_fips_revision() {
+  local row="$1"
+  local row_dir="$2"
+  [[ "$row" == "current" ]] || return 0
+
+  local expected_rev
+  expected_rev="$(current_fips_short_rev)"
+  [[ -n "$expected_rev" ]] || return 0
+
+  local windows_snapshot="$row_dir/current-fips-revision-windows.json"
+  local linux_snapshot="$row_dir/current-fips-revision-linux.json"
+  capture_windows_snapshot "$windows_snapshot"
+  capture_linux_snapshot "$linux_snapshot"
+
+  local windows_version linux_version
+  windows_version="$(fips_core_version_from_snapshot "$windows_snapshot")"
+  linux_version="$(fips_core_version_from_snapshot "$linux_snapshot")"
+
+  if [[ "$windows_version" != *"rev $expected_rev"* ]]; then
+    die "current Windows daemon embedded FIPS revision mismatch: expected rev $expected_rev from $CURRENT_FIPS_REPO, got '${windows_version:-missing}'"
+  fi
+  if [[ "$linux_version" != *"rev $expected_rev"* ]]; then
+    die "current Linux daemon embedded FIPS revision mismatch: expected rev $expected_rev from $CURRENT_FIPS_REPO, got '${linux_version:-missing}'"
+  fi
+}
+
 build_current_windows() {
   local build_json="$OUTPUT_DIR/current-windows-build.json"
   mkdir -p "$OUTPUT_DIR"
@@ -1414,6 +1452,7 @@ build_current_windows() {
       NVPN_WINDOWS_SSH_PROXY_COMMAND="$WINDOWS_SSH_PROXY_COMMAND" \
       NVPN_WINDOWS_SSH_JUMP="$WINDOWS_SSH_JUMP" \
       NVPN_WINDOWS_GUEST_REPO_PATH="$WINDOWS_REPO" \
+      NVPN_WINDOWS_FIPS_REPO_PATH="$CURRENT_FIPS_REPO" \
       "$ROOT_DIR/scripts/windows-vm-git-sync.sh" "$WINDOWS_SSH"
   fi
 
@@ -2339,10 +2378,12 @@ summarize_direction() {
       windows_service_hash: ($aw.binaries.configured_hash // ""),
       windows_process_hash: ($aw.binaries.process_hash // ""),
       windows_hash_match: (($aw.binaries.configured_hash // "") != "" and ($aw.binaries.configured_hash // "") == ($aw.binaries.process_hash // "")),
+      windows_fips_core_version: ($aw.daemon_state_file_state.fips_core_version // $aw.daemon_status.daemon.state.fips_core_version // ""),
       linux_service_binary: ($al.binaries.configured_path // ""),
       linux_service_hash: ($al.binaries.configured_hash // ""),
       linux_process_hash: ($al.binaries.process_hash // ""),
       linux_hash_match: (($al.binaries.configured_hash // "") != "" and ($al.binaries.configured_hash // "") == ($al.binaries.process_hash // "")),
+      linux_fips_core_version: ($al.daemon_state_file_state.fips_core_version // $al.daemon_status.daemon.state.fips_core_version // ""),
       direct_pair_ok: (if $path_kind == "nvpn" then ($pair.direct_pair.ok // null) else null end),
       direct_capture_ok: (if $path_kind == "nvpn" then ($direct.ok // null) else null end),
       primary_direct_payload_ratio: (if $path_kind == "nvpn" then ($direct.primary_direct_payload_ratio // null) else null end),
@@ -2357,7 +2398,7 @@ summarize_direction() {
     }' >"$summary"
 
   if [[ ! -f "$SUMMARY_TSV" ]]; then
-    printf 'row\tpath\tdirection\ttool\tclient_mbps\tserver_mbps\twindows_cpu_seconds\twindows_cpu_sec_per_gb\tlinux_cpu_seconds\tlinux_cpu_sec_per_gb\twindows_hash_match\twindows_service_binary\twindows_service_hash\twindows_process_hash\tlinux_hash_match\tlinux_service_binary\tlinux_service_hash\tlinux_process_hash\tdirect_pair_ok\tdirect_capture_ok\tprimary_direct_payload_ratio\tdirect_payload_ratio\tnon_direct_payload_ratio\tnon_direct_payload_bytes\tprimary_direct_flow\tnon_direct_peers\twindows_nvpn_rx_bytes\twindows_nvpn_tx_bytes\twindows_ethernet_rx_bytes\twindows_ethernet_tx_bytes\n' >"$SUMMARY_TSV"
+    printf 'row\tpath\tdirection\ttool\tclient_mbps\tserver_mbps\twindows_cpu_seconds\twindows_cpu_sec_per_gb\tlinux_cpu_seconds\tlinux_cpu_sec_per_gb\twindows_hash_match\twindows_service_binary\twindows_service_hash\twindows_process_hash\twindows_fips_core_version\tlinux_hash_match\tlinux_service_binary\tlinux_service_hash\tlinux_process_hash\tlinux_fips_core_version\tdirect_pair_ok\tdirect_capture_ok\tprimary_direct_payload_ratio\tdirect_payload_ratio\tnon_direct_payload_ratio\tnon_direct_payload_bytes\tprimary_direct_flow\tnon_direct_peers\twindows_nvpn_rx_bytes\twindows_nvpn_tx_bytes\twindows_ethernet_rx_bytes\twindows_ethernet_tx_bytes\n' >"$SUMMARY_TSV"
   fi
   jq -r '[
     .row,
@@ -2374,10 +2415,12 @@ summarize_direction() {
     .windows_service_binary,
     .windows_service_hash,
     .windows_process_hash,
+    .windows_fips_core_version,
     .linux_hash_match,
     .linux_service_binary,
     .linux_service_hash,
     .linux_process_hash,
+    .linux_fips_core_version,
     (.direct_pair_ok // ""),
     (.direct_capture_ok // ""),
     (.primary_direct_payload_ratio // ""),
@@ -2521,6 +2564,7 @@ measure_row() {
     switch_windows_service "$expected_exe" "$row"
   fi
   wait_for_windows_hash "$expected_hash" "$row"
+  validate_current_fips_revision "$row" "$row_dir"
   wait_for_direct_pair "$row"
   select_pair "$row_dir"
 
