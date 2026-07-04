@@ -547,7 +547,8 @@ async fn flush_tun_out_batch(
         packets.clear();
         return true;
     };
-    let batch = std::mem::take(packets);
+    let next_batch = Vec::with_capacity(packets.capacity());
+    let batch = std::mem::replace(packets, next_batch);
     if let Err(error) = tx.send(batch).await {
         log_android_warn(&format!("wg-upstream: tun_out batch send failed: {error}"));
         return false;
