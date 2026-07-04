@@ -449,7 +449,7 @@ impl FipsEndpointIdentitySendRun {
         participant_key: Option<ParticipantPubkeyBytes>,
         identity: PeerIdentity,
         payload: Vec<u8>,
-    ) -> Option<Self> {
+    ) -> Self {
         let mut run = Self {
             participant_fallback,
             participant_key,
@@ -459,7 +459,7 @@ impl FipsEndpointIdentitySendRun {
             bytes_len: 0,
         };
         run.push_payload(payload);
-        Some(run)
+        run
     }
 
     fn push_payload(&mut self, payload: Vec<u8>) {

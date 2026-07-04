@@ -334,16 +334,15 @@ impl FipsPrivateMeshRuntime {
                 return;
             }
 
-            if let Some(run) = FipsEndpointIdentitySendRun::new(
+            let run = FipsEndpointIdentitySendRun::new(
                 participant_key
                     .is_none()
                     .then(|| participant_pubkey.to_string()),
                 participant_key,
                 identity,
                 payload,
-            ) {
-                runs.push(FipsEndpointSendRun::Identity(run));
-            }
+            );
+            runs.push(FipsEndpointSendRun::Identity(run));
         }
     }
 

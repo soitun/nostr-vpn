@@ -423,7 +423,7 @@ impl MobileEndpointSendRun {
         endpoint_node_addr: [u8; 16],
         identity: PeerIdentity,
         payload: Vec<u8>,
-    ) -> Option<Self> {
+    ) -> Self {
         let mut run = Self {
             participant_fallback,
             participant_key,
@@ -433,7 +433,7 @@ impl MobileEndpointSendRun {
             packet_count: 0,
         };
         run.push_payload(payload);
-        Some(run)
+        run
     }
 
     fn matches(
@@ -607,13 +607,13 @@ fn push_mobile_endpoint_send_run(
     };
 
     let previous = run.take();
-    *run = MobileEndpointSendRun::new(
+    *run = Some(MobileEndpointSendRun::new(
         participant_fallback,
         participant_key,
         endpoint_node_addr,
         identity,
         packet,
-    );
+    ));
     previous
 }
 
