@@ -3,14 +3,14 @@ import NetworkExtension
 
 enum PacketTunnelControllerError: LocalizedError {
     case managerUnavailable
-    case preferencesTimedOut
+    case preferencesTimedOut(String)
 
     var errorDescription: String? {
         switch self {
         case .managerUnavailable:
             return "VPN manager unavailable"
-        case .preferencesTimedOut:
-            return "VPN preferences timed out; approve any iOS VPN configuration prompt and retry"
+        case .preferencesTimedOut(let operation):
+            return "\(operation) VPN preferences timed out; approve any iOS VPN configuration prompt and retry"
         }
     }
 }
@@ -194,6 +194,7 @@ final class PacketTunnelController {
     ) async throws {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let completion = PreferenceOperationCompletion(continuation)
+            let timeoutSeconds = Self.preferencesOperationTimeoutSeconds
             start { error in
                 if let error {
                     _ = completion.resume(throwing: error)
@@ -201,15 +202,11 @@ final class PacketTunnelController {
                     _ = completion.resume(returning: ())
                 }
             }
-            DispatchQueue.global(qos: .utility).asyncAfter(
-                deadline: .now() + Self.preferencesOperationTimeoutSeconds
-            ) { [weak self] in
-                if completion.resume(throwing: PacketTunnelControllerError.preferencesTimedOut) {
-                    self?.debugLog(
-                        "\(operation) preferences timed out after "
-                            + "\(Int(Self.preferencesOperationTimeoutSeconds))s"
-                    )
-                }
+            Task.detached(priority: .utility) {
+                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                _ = completion.resume(
+                    throwing: PacketTunnelControllerError.preferencesTimedOut(operation)
+                )
             }
         }
     }
@@ -238,7 +235,7 @@ final class PacketTunnelController {
     }
 }
 
-private final class PreferenceOperationCompletion {
+private final class PreferenceOperationCompletion: @unchecked Sendable {
     private let lock = NSLock()
     private var completed = false
     private let continuation: CheckedContinuation<Void, Error>
