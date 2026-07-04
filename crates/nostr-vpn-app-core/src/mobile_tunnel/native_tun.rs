@@ -106,7 +106,7 @@ fn native_tun_read_loop(
     counters: Arc<MobileTunAtomicCounters>,
     packet_capacity: usize,
 ) {
-    while wait_mobile_tun_fd(fd, libc::POLLIN, &stop) {
+    'read: loop {
         for _ in 0..MOBILE_FIPS_SEND_BATCH {
             match read_mobile_tun_packet(fd, packet_capacity) {
                 NativeTunRead::Packet(packet) => {
@@ -117,7 +117,12 @@ fn native_tun_read_loop(
                         return;
                     }
                 }
-                NativeTunRead::WouldBlock => break,
+                NativeTunRead::WouldBlock => {
+                    if !wait_mobile_tun_fd(fd, libc::POLLIN, &stop) {
+                        break 'read;
+                    }
+                    break;
+                }
                 NativeTunRead::Stopped => {
                     stop.store(true, Ordering::Relaxed);
                     return;
