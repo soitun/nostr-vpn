@@ -325,7 +325,10 @@ impl FipsPrivateMeshRuntime {
         if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
             && run.matches_endpoint(endpoint_node_addr, participant_key, participant_pubkey)
         {
-            run.push_payload(payload);
+            let packet_len = payload.len();
+            if !run.push_payload(payload) {
+                warn_endpoint_bulk_rejected_packet(packet_len);
+            }
             return;
         }
 
@@ -337,7 +340,10 @@ impl FipsPrivateMeshRuntime {
             if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
                 && run.matches(identity, participant_key, participant_pubkey)
             {
-                run.push_payload(payload);
+                let packet_len = payload.len();
+                if !run.push_payload(payload) {
+                    warn_endpoint_bulk_rejected_packet(packet_len);
+                }
                 return;
             }
 

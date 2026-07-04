@@ -451,6 +451,7 @@ impl FipsEndpointIdentitySendRun {
         identity: PeerIdentity,
         payload: Vec<u8>,
     ) -> Option<Self> {
+        let packet_len = payload.len();
         let mut run = Self {
             participant_fallback,
             participant_key,
@@ -460,7 +461,11 @@ impl FipsEndpointIdentitySendRun {
             packet_count: 0,
             bytes_len: 0,
         };
-        run.push_payload(payload).then_some(run)
+        if !run.push_payload(payload) {
+            warn_endpoint_bulk_rejected_packet(packet_len);
+            return None;
+        }
+        Some(run)
     }
 
     fn push_payload(&mut self, payload: Vec<u8>) -> bool {
@@ -533,6 +538,13 @@ impl FipsEndpointIdentitySendRun {
         self.identity.node_addr().as_bytes() == endpoint_node_addr
             && self.matches_participant(participant_key, participant)
     }
+}
+
+fn warn_endpoint_bulk_rejected_packet(packet_len: usize) {
+    tracing::warn!(
+        packet_len,
+        "fips-private-mesh: routed packet rejected by FIPS endpoint bulk builder"
+    );
 }
 
 #[derive(Debug)]

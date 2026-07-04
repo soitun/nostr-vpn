@@ -429,6 +429,7 @@ impl MobileEndpointSendRun {
         identity: PeerIdentity,
         payload: Vec<u8>,
     ) -> Option<Self> {
+        let packet_len = payload.len();
         let mut run = Self {
             participant_fallback,
             participant_key,
@@ -438,7 +439,11 @@ impl MobileEndpointSendRun {
             current_bulk: FipsEndpointBulkDataBuilder::new(),
             packet_count: 0,
         };
-        run.push_payload(payload).then_some(run)
+        if !run.push_payload(payload) {
+            warn_mobile_endpoint_bulk_rejected_packet(packet_len);
+            return None;
+        }
+        Some(run)
     }
 
     fn matches(
@@ -612,7 +617,10 @@ fn push_mobile_endpoint_send_run(
             &endpoint_node_addr,
         )
     {
-        current.push_payload(packet);
+        let packet_len = packet.len();
+        if !current.push_payload(packet) {
+            warn_mobile_endpoint_bulk_rejected_packet(packet_len);
+        }
         return None;
     }
 
@@ -632,6 +640,13 @@ fn push_mobile_endpoint_send_run(
         packet,
     );
     previous
+}
+
+fn warn_mobile_endpoint_bulk_rejected_packet(packet_len: usize) {
+    tracing::warn!(
+        packet_len,
+        "mobile: routed packet rejected by FIPS endpoint bulk builder"
+    );
 }
 
 async fn flush_mobile_endpoint_send_run(
