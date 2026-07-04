@@ -14,6 +14,8 @@ LINUX_SSH_JUMP="${NVPN_WINLIN_LINUX_SSH_JUMP:-}"
 LINUX_SSH_PROXY_COMMAND="${NVPN_WINLIN_LINUX_SSH_PROXY_COMMAND:-}"
 WINDOWS_REPO="${NVPN_WINLIN_WINDOWS_REPO:-}"
 WINDOWS_FIPS_REPO="${NVPN_WINLIN_WINDOWS_FIPS_REPO:-}"
+CURRENT_FIPS_REPO="${NVPN_WINLIN_CURRENT_FIPS_REPO:-}"
+LINUX_FIPS_REPO="${NVPN_WINLIN_LINUX_FIPS_REPO:-}"
 WINDOWS_INSTALLED_NVPN="${NVPN_WINLIN_INSTALLED_NVPN:-}"
 WINDOWS_CONFIG="${NVPN_WINLIN_WINDOWS_CONFIG:-}"
 LINUX_INSTALLED_NVPN="${NVPN_WINLIN_INSTALLED_LINUX_NVPN:-}"
@@ -50,6 +52,10 @@ WINDOWS_DAEMON_LOG_TAIL_LINES="${NVPN_WINLIN_WINDOWS_DAEMON_LOG_TAIL_LINES:-4000
 MESH_MTU_PROFILE="${NVPN_WINLIN_MESH_MTU_PROFILE:-}"
 MESH_UNDERLAY_UDP_MTU="${NVPN_WINLIN_MESH_UNDERLAY_UDP_MTU:-}"
 MESH_TUNNEL_MTU="${NVPN_WINLIN_MESH_TUNNEL_MTU:-}"
+
+if [[ -z "$CURRENT_FIPS_REPO" && -d "$ROOT_DIR/../fips/.git" ]]; then
+  CURRENT_FIPS_REPO="$(cd "$ROOT_DIR/../fips" && pwd)"
+fi
 
 SUMMARY_TSV="$OUTPUT_DIR/summary.tsv"
 RUN_JSON="$OUTPUT_DIR/run.json"
@@ -131,6 +137,9 @@ Important options:
   NVPN_WINLIN_INSTALLED_LINUX_SHA256      optional expected installed Linux nvpn hash; checked before switching
   NVPN_WINLIN_CURRENT_WINDOWS_NVPN        prebuilt current nvpn.exe path; skips path discovery
   NVPN_WINLIN_CURRENT_LINUX_NVPN          prebuilt current Linux nvpn; switches Linux for current row
+  NVPN_WINLIN_CURRENT_FIPS_REPO           local FIPS checkout used to build current binaries; defaults to ../fips
+  NVPN_WINLIN_WINDOWS_FIPS_REPO           Windows FIPS checkout path for current Windows build
+  NVPN_WINLIN_LINUX_FIPS_REPO             Linux FIPS checkout path recorded for current Linux binary provenance
   NVPN_WINLIN_ALLOW_CURRENT_LINUX_AS_INSTALLED=1
                                            allow current Linux hash to equal the installed Linux baseline
   NVPN_WINLIN_WINDOWS_SSH_JUMP            optional ProxyJump for Windows SSH
@@ -2075,7 +2084,34 @@ measure_row() {
   measure_direction "$row" nvpn linux_to_windows linux "$linux_tunnel" "$row_dir/nvpn/linux_to_windows" recv
 }
 
+git_meta_value() {
+  local repo="$1"
+  local kind="$2"
+  if [[ -z "$repo" ]] || ! git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    return 0
+  fi
+  case "$kind" in
+    head)
+      git -C "$repo" rev-parse HEAD
+      ;;
+    tree)
+      git -C "$repo" rev-parse 'HEAD^{tree}'
+      ;;
+    dirty)
+      if [[ -n "$(git -C "$repo" status --short)" ]]; then
+        printf true
+      else
+        printf false
+      fi
+      ;;
+  esac
+}
+
 write_run_metadata() {
+  local current_fips_head current_fips_tree current_fips_dirty
+  current_fips_head="$(git_meta_value "$CURRENT_FIPS_REPO" head)"
+  current_fips_tree="$(git_meta_value "$CURRENT_FIPS_REPO" tree)"
+  current_fips_dirty="$(git_meta_value "$CURRENT_FIPS_REPO" dirty)"
   jq -n \
     --arg created_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg root "$ROOT_DIR" \
@@ -2085,6 +2121,12 @@ write_run_metadata() {
     --arg linux_ssh "$LINUX_SSH" \
     --arg current_windows_nvpn "$CURRENT_WINDOWS_NVPN" \
     --arg current_linux_nvpn "$CURRENT_LINUX_NVPN" \
+    --arg current_fips_repo "$CURRENT_FIPS_REPO" \
+    --arg current_fips_head "$current_fips_head" \
+    --arg current_fips_tree "$current_fips_tree" \
+    --arg current_fips_dirty "$current_fips_dirty" \
+    --arg windows_fips_repo "$WINDOWS_FIPS_REPO" \
+    --arg linux_fips_repo "$LINUX_FIPS_REPO" \
     --arg duration_secs "$DURATION_SECS" \
     --arg min_underlay_mbps "$MIN_UNDERLAY_MBPS" \
     --arg max_underlay_ratio "$MAX_UNDERLAY_RATIO" \
@@ -2116,6 +2158,12 @@ write_run_metadata() {
       linux_ssh:$linux_ssh,
       current_windows_nvpn:$current_windows_nvpn,
       current_linux_nvpn:$current_linux_nvpn,
+      current_fips_repo:$current_fips_repo,
+      current_fips_head:$current_fips_head,
+      current_fips_tree:$current_fips_tree,
+      current_fips_dirty:(if $current_fips_dirty == "" then null else ($current_fips_dirty == "true") end),
+      windows_fips_repo:$windows_fips_repo,
+      linux_fips_repo:$linux_fips_repo,
       duration_secs:($duration_secs|tonumber),
       min_underlay_mbps:($min_underlay_mbps|tonumber),
       max_underlay_ratio:($max_underlay_ratio|tonumber),
