@@ -24,7 +24,6 @@ impl MobileTunnel {
         };
         mobile_debug_log("MobileTunnel::start building tokio runtime");
         let runtime = RuntimeBuilder::new_multi_thread()
-            .worker_threads(2)
             .enable_all()
             .thread_name("nvpn-mobile-fips")
             .build()
