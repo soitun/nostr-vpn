@@ -148,7 +148,7 @@ Important options:
   NVPN_WINLIN_WINDOWS_PIPELINE_INTERVAL_SECS=1
                                            interval for Windows pipeline trace service env
   NVPN_WINLIN_WINDOWS_DAEMON_LOG_TAIL_LINES=4000
-                                           daemon log lines to save after nvpn directions
+                                           max daemon log delta lines to save after nvpn directions
 
 The Linux side is intentionally held constant by default. This isolates the
 Windows service/dataplane change while still recording the Linux service binary
@@ -1365,6 +1365,70 @@ fetch_windows_file_tail() {
 Get-Content -Tail ([int]$(ps_sq "$lines")) -Path $(ps_sq "$remote_path") -ErrorAction SilentlyContinue" >"$out"
 }
 
+capture_windows_daemon_log_marker() {
+  local snapshot="$1"
+  local out="$2"
+  local remote_log
+  remote_log="$(jq -r '.daemon_status.daemon.log_file // .daemon_status.log_file // empty' "$snapshot")"
+  if [[ -z "$remote_log" || "$remote_log" == "null" ]]; then
+    jq -n '{path:"", length:0}' >"$out"
+    return 0
+  fi
+  run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Continue'
+\$path = $(ps_sq "$remote_log")
+\$length = [int64]0
+if (Test-Path -LiteralPath \$path) {
+  \$item = Get-Item -LiteralPath \$path -ErrorAction SilentlyContinue
+  if (\$item) { \$length = [int64]\$item.Length }
+}
+[pscustomobject]@{
+  path = \$path
+  length = \$length
+  captured_at = (Get-Date).ToUniversalTime().ToString('o')
+} | ConvertTo-Json -Depth 4" >"$out"
+}
+
+capture_windows_daemon_log_delta() {
+  local marker="$1"
+  local out="$2"
+  local remote_log offset
+  remote_log="$(jq -r '.path // empty' "$marker")"
+  offset="$(jq -r '.length // 0' "$marker")"
+  if [[ -z "$remote_log" || "$remote_log" == "null" ]]; then
+    printf '' >"$out"
+    return 0
+  fi
+  run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Continue'
+\$path = $(ps_sq "$remote_log")
+\$offset = [int64]$(ps_sq "$offset")
+\$maxLines = [int]$(ps_sq "$WINDOWS_DAEMON_LOG_TAIL_LINES")
+if (!(Test-Path -LiteralPath \$path)) { exit 0 }
+\$stream = [System.IO.File]::Open(\$path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+try {
+  if (\$offset -lt 0 -or \$offset -gt \$stream.Length) { \$offset = 0 }
+  [void]\$stream.Seek(\$offset, [System.IO.SeekOrigin]::Begin)
+  \$reader = [System.IO.StreamReader]::new(\$stream, [System.Text.Encoding]::UTF8, \$true)
+  try {
+    \$text = \$reader.ReadToEnd()
+  } finally {
+    \$reader.Dispose()
+  }
+} finally {
+  \$stream.Dispose()
+}
+if (\$maxLines -gt 0) {
+  \$lines = \$text -split '\r?\n'
+  if (\$lines.Length -gt \$maxLines) {
+    \$lines = \$lines[([Math]::Max(0, \$lines.Length - \$maxLines))..(\$lines.Length - 1)]
+  }
+  [Console]::Out.Write(\$lines -join [Environment]::NewLine)
+} else {
+  [Console]::Out.Write(\$text)
+}" >"$out"
+}
+
 fetch_linux_file() {
   local remote_path="$1"
   local out="$2"
@@ -1658,6 +1722,7 @@ measure_direction() {
   mkdir -p "$out_dir"
 
   local capture_info="" capture_pid="" capture_stdout="" capture_stderr="" capture_dir=""
+  local windows_log_marker="$out_dir/windows-daemon-marker.json"
   if [[ "$path_kind" == "nvpn" ]] && is_true "$DIRECT_FIPS_CAPTURE"; then
     capture_dir="$out_dir/fips-direct-capture"
     mkdir -p "$capture_dir"
@@ -1670,6 +1735,9 @@ measure_direction() {
 
   capture_windows_snapshot "$out_dir/windows-before.json"
   capture_linux_snapshot "$out_dir/linux-before.json"
+  if [[ "$path_kind" == "nvpn" ]] && is_true "$WINDOWS_PIPELINE_TRACE"; then
+    capture_windows_daemon_log_marker "$out_dir/windows-before.json" "$windows_log_marker"
+  fi
 
   if [[ "$server_side" == "linux" ]]; then
     local remote_log
@@ -1699,7 +1767,7 @@ measure_direction() {
   capture_windows_snapshot "$out_dir/windows-after.json"
   capture_linux_snapshot "$out_dir/linux-after.json"
   if [[ "$path_kind" == "nvpn" ]] && is_true "$WINDOWS_PIPELINE_TRACE"; then
-    capture_windows_daemon_log_tail "$out_dir/windows-after.json" "$out_dir/windows-daemon.log"
+    capture_windows_daemon_log_delta "$windows_log_marker" "$out_dir/windows-daemon.log"
   fi
   summarize_direction "$row" "$path_kind" "$direction" "$out_dir"
 }
