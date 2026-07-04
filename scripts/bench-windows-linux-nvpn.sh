@@ -1501,7 +1501,7 @@ build_current_windows() {
 \$ErrorActionPreference = 'Stop'
 Set-Location $(ps_sq "$WINDOWS_REPO")
 $fips_line
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-build.ps1 -Configuration Release
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-build.ps1 -Configuration Release -DaemonOnly
 exit \$LASTEXITCODE"
   fi
 
@@ -1513,7 +1513,7 @@ exit \$LASTEXITCODE"
     --arg hash "$hash" \
     --arg repo "$WINDOWS_REPO" \
     --arg local_head "$(git -C "$ROOT_DIR" rev-parse HEAD)" \
-    '{path:$path,sha256:$hash,windows_repo:$repo,local_head:$local_head,source:"windows-build.ps1 Release"}' \
+    '{path:$path,sha256:$hash,windows_repo:$repo,local_head:$local_head,source:"windows-build.ps1 Release -DaemonOnly"}' \
     >"$build_json"
 }
 

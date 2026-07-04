@@ -4,6 +4,7 @@ param(
   [switch]$Run,
   [switch]$Publish,
   [switch]$Installer,
+  [switch]$DaemonOnly,
   [string]$Tag,
   [string]$OutputDir,
   [string]$Runtime = "win-x64"
@@ -185,11 +186,19 @@ try {
   $CargoArgs += $CargoConfigArgs
   $CargoArgs += @("build")
   $CargoArgs += $CargoLockArgs
-  $CargoArgs += @("-p", "nostr-vpn-app-core", "-p", "nvpn")
+  if ($DaemonOnly) {
+    $CargoArgs += @("-p", "nvpn")
+  } else {
+    $CargoArgs += @("-p", "nostr-vpn-app-core", "-p", "nvpn")
+  }
   if ($Configuration -eq "Release") {
     $CargoArgs += "--release"
   }
   Invoke-Checked cargo $CargoArgs
+
+  if ($DaemonOnly) {
+    return
+  }
 
   $CargoOutputDir = Join-Path $CargoTargetRoot $CargoProfile
   $AppCargoDir = Join-Path $Root "target\$Configuration"
