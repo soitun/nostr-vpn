@@ -8,6 +8,7 @@ const DEFAULT_FIPS_PEER_RATING_SCOPE: &str = "fips.peer";
 const RATING_FACT_KIND: u64 = 7368;
 const RATING_FACT_TYPE: &str = "rating";
 const RATING_FACT_SCHEMA: &str = "1";
+const PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT: usize = 500;
 
 #[derive(Debug, Subcommand)]
 enum PaidExitCommand {
@@ -182,12 +183,11 @@ struct PaidExitDiscoverArgs {
     /// FIPS peer ratings JSON exported by `fipsctl ratings export`.
     #[arg(long = "fips-peer-ratings", value_name = "PATH")]
     fips_peer_ratings: Option<PathBuf>,
+    /// Relay to query signed FIPS peer rating fact events from.
+    #[arg(long = "fips-peer-ratings-relay", value_name = "URL")]
+    fips_peer_ratings_relays: Vec<String>,
     /// Rating scope to read from the ratings file.
-    #[arg(
-        long = "rating-scope",
-        alias = "rating-context",
-        default_value = DEFAULT_FIPS_PEER_RATING_SCOPE
-    )]
+    #[arg(long = "rating-scope", default_value = DEFAULT_FIPS_PEER_RATING_SCOPE)]
     rating_scope: String,
     #[arg(long)]
     json: bool,
@@ -2268,7 +2268,7 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let app = load_or_default_config(&config_path)?;
     let relays = paid_exit_relay_urls(&app, &args.relays);
-    let rating_scores = args
+    let mut rating_scores = args
         .fips_peer_ratings
         .as_deref()
         .map(|path| load_paid_exit_rating_scores(path, &args.rating_scope))
@@ -2278,6 +2278,25 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
     } else {
         Some(unix_timestamp().saturating_sub(args.since_secs))
     };
+    let rating_relays = normalize_relay_urls(args.fips_peer_ratings_relays.clone());
+    let mut rating_relay_event_count = 0usize;
+    if !rating_relays.is_empty() {
+        let rating_events = discover_paid_exit_rating_events_from_relays(
+            &app,
+            &rating_relays,
+            args.duration_secs,
+            PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT,
+            since_unix,
+            &args.rating_scope,
+        )
+        .await?;
+        rating_relay_event_count = rating_events
+            .get("events")
+            .and_then(|events| events.as_array())
+            .map_or(0, Vec::len);
+        let relay_scores = paid_exit_rating_scores_from_value(&rating_events, &args.rating_scope)?;
+        merge_paid_exit_rating_scores(&mut rating_scores, relay_scores);
+    }
     let mut offers = discover_paid_exit_offers_from_relays(
         &app,
         &relays,
@@ -2294,6 +2313,18 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
 
     if args.json {
         let offers_json = paid_exit_offer_results_json(&offers, rating_scores.as_ref())?;
+        let ratings_json = if args.fips_peer_ratings.is_some() || !rating_relays.is_empty() {
+            Some(json!({
+                "path": args.fips_peer_ratings.as_ref().map(|path| path.display().to_string()),
+                "scope": args.rating_scope,
+                "subject_count": rating_scores.as_ref().map_or(0, HashMap::len),
+                "relay_count": rating_relays.len(),
+                "relay_event_count": rating_relay_event_count,
+                "relays": rating_relays,
+            }))
+        } else {
+            None
+        };
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
@@ -2302,23 +2333,26 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
                 "offers": offers_json,
                 "store_path": store_path,
                 "stored_count": stored_count,
-                "ratings": args.fips_peer_ratings.as_ref().map(|path| json!({
-                    "path": path.display().to_string(),
-                    "scope": args.rating_scope,
-                    "subject_count": rating_scores.as_ref().map_or(0, HashMap::len),
-                })),
+                "ratings": ratings_json,
             }))?
         );
     } else {
         println!("paid_exit_offers: {}", offers.len());
         println!("store: {} changed={stored_count}", store_path.display());
-        if let (Some(path), Some(scores)) = (args.fips_peer_ratings.as_ref(), rating_scores.as_ref())
-        {
+        if args.fips_peer_ratings.is_some() || !rating_relays.is_empty() {
+            let subject_count = rating_scores.as_ref().map_or(0, HashMap::len);
+            let file = args
+                .fips_peer_ratings
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "-".to_string());
             println!(
-                "ratings: {} scope={} subjects={}",
-                path.display(),
+                "ratings: file={} scope={} subjects={} relay_events={} relays={}",
+                file,
                 args.rating_scope,
-                scores.len()
+                subject_count,
+                rating_relay_event_count,
+                rating_relays.len()
             );
         }
         for signed in &offers {
@@ -5217,6 +5251,26 @@ fn paid_exit_rating_scores_from_value(
     Ok(scores)
 }
 
+fn merge_paid_exit_rating_scores(
+    target: &mut Option<HashMap<String, PaidExitRatingScore>>,
+    incoming: HashMap<String, PaidExitRatingScore>,
+) {
+    if incoming.is_empty() {
+        return;
+    }
+    let target = target.get_or_insert_with(HashMap::new);
+    for (subject, incoming_score) in incoming {
+        target
+            .entry(subject)
+            .and_modify(|existing| {
+                if incoming_score.created_at >= existing.created_at {
+                    *existing = incoming_score;
+                }
+            })
+            .or_insert(incoming_score);
+    }
+}
+
 fn paid_exit_rating_records(value: &serde_json::Value) -> Result<Vec<serde_json::Value>> {
     if let Some(records) = value.as_array() {
         return Ok(records.clone());
@@ -5292,9 +5346,7 @@ fn paid_exit_rating_record_from_fact_event(event_value: &serde_json::Value) -> R
             .context("rating fact event has invalid integer max_rating")?,
         "created_at": created_at,
     });
-    if let Some(scope) = paid_exit_fact_optional_scalar(event_value, "scope")
-        .or_else(|| paid_exit_fact_optional_scalar(event_value, "context"))
-    {
+    if let Some(scope) = paid_exit_fact_optional_scalar(event_value, "scope") {
         record["scope"] = json!(scope);
     }
     if let Some(sample_count) = paid_exit_fact_optional_scalar(event_value, "sample_count")
@@ -5375,8 +5427,17 @@ fn paid_exit_rating_matches_scope(rating: &serde_json::Value, expected_scope: &s
     expected_scope.is_empty()
         || rating
             .get("scope")
-            .or_else(|| rating.get("context"))
             .and_then(|value| value.as_str())
+            .is_some_and(|scope| scope.trim() == expected_scope)
+}
+
+fn paid_exit_rating_fact_matches_scope(
+    event_value: &serde_json::Value,
+    expected_scope: &str,
+) -> bool {
+    let expected_scope = expected_scope.trim();
+    expected_scope.is_empty()
+        || paid_exit_fact_optional_scalar(event_value, "scope")
             .is_some_and(|scope| scope.trim() == expected_scope)
 }
 
@@ -5448,6 +5509,92 @@ fn paid_exit_signed_offer_rating_score(
         .offer()
         .ok()
         .and_then(|offer| rating_scores.get(&offer.seller_npub).copied())
+}
+
+fn paid_exit_rating_fact_filter(limit: usize, since_unix: Option<u64>) -> Filter {
+    let mut filter = Filter::new().kind(Kind::Custom(RATING_FACT_KIND as u16));
+    if limit > 0 {
+        filter = filter.limit(limit);
+    }
+    if let Some(since_unix) = since_unix {
+        filter = filter.since(Timestamp::from(since_unix));
+    }
+    filter
+}
+
+async fn discover_paid_exit_rating_events_from_relays(
+    app: &AppConfig,
+    relays: &[String],
+    duration_secs: u64,
+    limit: usize,
+    since_unix: Option<u64>,
+    scope: &str,
+) -> Result<serde_json::Value> {
+    if relays.is_empty() {
+        return Err(anyhow!(
+            "no Nostr relays configured for paid exit rating discovery"
+        ));
+    }
+
+    let client = Client::new(app.nostr_keys()?);
+    for relay in relays {
+        client
+            .add_relay(relay)
+            .await
+            .map_err(|error| anyhow!("failed to add Nostr relay {relay}: {error}"))?;
+    }
+    client.connect().await;
+    let mut notifications = client.notifications();
+    client
+        .subscribe_to(
+            relays.to_vec(),
+            paid_exit_rating_fact_filter(limit, since_unix),
+            None,
+        )
+        .await
+        .map_err(|error| anyhow!("failed to subscribe paid exit rating facts: {error}"))?;
+
+    let timeout = tokio::time::sleep(Duration::from_secs(duration_secs));
+    tokio::pin!(timeout);
+    let mut seen_events = HashSet::new();
+    let mut events = Vec::new();
+    loop {
+        tokio::select! {
+            () = &mut timeout => break,
+            notification = notifications.recv() => {
+                match notification {
+                    Ok(RelayPoolNotification::Event { event, .. }) => {
+                        let event = (*event).clone();
+                        if !seen_events.insert(event.id.to_string()) {
+                            continue;
+                        }
+                        if event.verify().is_err() {
+                            continue;
+                        }
+                        let value = serde_json::to_value(&event)
+                            .context("failed to encode rating fact event JSON")?;
+                        if paid_exit_fact_optional_scalar(&value, "type").as_deref()
+                            != Some(RATING_FACT_TYPE)
+                        {
+                            continue;
+                        }
+                        if !paid_exit_rating_fact_matches_scope(&value, scope) {
+                            continue;
+                        }
+                        events.push(value);
+                        if limit > 0 && events.len() >= limit {
+                            break;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        }
+    }
+    client.disconnect().await;
+    Ok(json!({ "events": events }))
 }
 
 async fn discover_paid_exit_offers_from_relays(
@@ -5560,7 +5707,7 @@ mod paid_exit_rating_tests {
                     "created_at": 10
                 },
                 {
-                    "id": "other-context",
+                    "id": "other-scope",
                     "rater": "npub1local",
                     "subject": "npub1ignored",
                     "scope": "other",
@@ -5595,27 +5742,76 @@ mod paid_exit_rating_tests {
     }
 
     #[test]
-    fn rating_scores_accept_legacy_context_field() {
-        let ratings = json!({
-            "ratings": [{
-                "id": "legacy",
-                "rater": "npub1local",
-                "subject": "npub1peer",
-                "context": "fips.peer",
-                "rating": 75,
-                "min_rating": 0,
-                "max_rating": 100,
-                "created_at": 10
-            }]
-        });
+    fn merge_rating_scores_keeps_newest_per_subject() {
+        let mut scores = Some(HashMap::from([(
+            "npub1peer".to_string(),
+            PaidExitRatingScore {
+                score: 10,
+                created_at: 10,
+            },
+        )]));
+        merge_paid_exit_rating_scores(
+            &mut scores,
+            HashMap::from([
+                (
+                    "npub1peer".to_string(),
+                    PaidExitRatingScore {
+                        score: 80,
+                        created_at: 20,
+                    },
+                ),
+                (
+                    "npub1other".to_string(),
+                    PaidExitRatingScore {
+                        score: -20,
+                        created_at: 15,
+                    },
+                ),
+            ]),
+        );
 
-        let scores = paid_exit_rating_scores_from_value(&ratings, "fips.peer").unwrap();
-
+        let scores = scores.unwrap();
         assert_eq!(
             scores.get("npub1peer"),
             Some(&PaidExitRatingScore {
-                score: 50,
-                created_at: 10,
+                score: 80,
+                created_at: 20,
+            })
+        );
+        assert_eq!(
+            scores.get("npub1other"),
+            Some(&PaidExitRatingScore {
+                score: -20,
+                created_at: 15,
+            })
+        );
+    }
+
+    #[test]
+    fn merge_rating_scores_keeps_newer_existing_score() {
+        let mut scores = Some(HashMap::from([(
+            "npub1peer".to_string(),
+            PaidExitRatingScore {
+                score: 10,
+                created_at: 30,
+            },
+        )]));
+        merge_paid_exit_rating_scores(
+            &mut scores,
+            HashMap::from([(
+                "npub1peer".to_string(),
+                PaidExitRatingScore {
+                    score: 80,
+                    created_at: 20,
+                },
+            )]),
+        );
+
+        assert_eq!(
+            scores.unwrap().get("npub1peer"),
+            Some(&PaidExitRatingScore {
+                score: 10,
+                created_at: 30,
             })
         );
     }
@@ -5689,6 +5885,24 @@ mod paid_exit_rating_tests {
         let output = paid_exit_offer_results_json(&[signed], Some(&scores)).unwrap();
 
         assert_eq!(output[0]["rating_score"], 42);
+    }
+
+    #[test]
+    fn rating_fact_filter_targets_rating_kind_and_since() {
+        let filter = paid_exit_rating_fact_filter(25, Some(100));
+        let value = serde_json::to_value(filter).unwrap();
+
+        assert_eq!(value["kinds"], json!([RATING_FACT_KIND]));
+        assert_eq!(value["limit"], 25);
+        assert_eq!(value["since"], 100);
+    }
+
+    #[test]
+    fn rating_fact_scope_filter_matches_scope_tag() {
+        let event = sample_rating_fact_event("npub1crawler", "npub1peer", "fips.peer", 85, 20);
+
+        assert!(paid_exit_rating_fact_matches_scope(&event, "fips.peer"));
+        assert!(!paid_exit_rating_fact_matches_scope(&event, "other.scope"));
     }
 
     fn sample_signed_offer(offer_id: &str, created_at: u64) -> SignedPaidRouteOffer {
