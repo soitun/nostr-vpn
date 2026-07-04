@@ -30,6 +30,8 @@ DURATION_SECS="${NVPN_WINLIN_DURATION_SECS:-10}"
 PROBE_PORT_BASE="${NVPN_WINLIN_PROBE_PORT_BASE:-52310}"
 MIN_UNDERLAY_MBPS="${NVPN_WINLIN_MIN_UNDERLAY_MBPS:-250}"
 MAX_UNDERLAY_RATIO="${NVPN_WINLIN_MAX_UNDERLAY_RATIO:-2.5}"
+ALLOW_ASYMMETRIC_UNDERLAY="${NVPN_WINLIN_ALLOW_ASYMMETRIC_UNDERLAY:-0}"
+ASYMMETRIC_UNDERLAY_MIN_MBPS="${NVPN_WINLIN_ASYMMETRIC_UNDERLAY_MIN_MBPS:-1000}"
 ALLOW_NON_DIRECT="${NVPN_WINLIN_ALLOW_NON_DIRECT:-0}"
 SKIP_WINDOWS_SYNC="${NVPN_WINLIN_SKIP_WINDOWS_SYNC:-0}"
 SKIP_CURRENT_BUILD="${NVPN_WINLIN_SKIP_CURRENT_BUILD:-0}"
@@ -125,6 +127,87 @@ run_linux_sh() {
   "${ssh_cmd[@]}" "bash -lc $(sh_q "$cmd")"
 }
 
+windows_service_control_ps() {
+  cat <<'PS'
+function Query-NvpnService {
+  $query = & sc.exe queryex NvpnService 2>&1
+  [pscustomobject]@{ ExitCode = $LASTEXITCODE; Text = ($query | Out-String) }
+}
+
+function Test-NvpnServiceMissing($Query) {
+  return ($Query.ExitCode -ne 0 -and $Query.Text -match '1060')
+}
+
+function Test-NvpnServiceState($QueryText, $StateName) {
+  return ($QueryText -match ("(?m)^\s*STATE\s*:\s*\d+\s+" + [Regex]::Escape($StateName) + "\b"))
+}
+
+function Get-NvpnServicePid($QueryText) {
+  if ($QueryText -match '(?m)^\s*PID\s*:\s*(\d+)\s*$') { return [int]$Matches[1] }
+  return 0
+}
+
+function Stop-NvpnServiceProcess($QueryText) {
+  $pidValue = Get-NvpnServicePid $QueryText
+  if ($pidValue -gt 0) {
+    Stop-Process -Id $pidValue -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+  }
+}
+
+function Stop-NvpnServiceHard([int]$TimeoutSeconds = 30) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  $query = Query-NvpnService
+  if (Test-NvpnServiceMissing $query) { return }
+  if (Test-NvpnServiceState $query.Text 'STOPPED') { return }
+  & sc.exe stop NvpnService | Out-Null
+  Start-Sleep -Milliseconds 250
+  do {
+    $query = Query-NvpnService
+    if (Test-NvpnServiceMissing $query) { return }
+    if (Test-NvpnServiceState $query.Text 'STOPPED') { return }
+    Stop-NvpnServiceProcess $query.Text
+    Start-Sleep -Milliseconds 250
+  } while ((Get-Date) -lt $deadline)
+  throw "NvpnService did not stop within ${TimeoutSeconds}s: $($query.Text)"
+}
+
+function Start-NvpnServiceHard([int]$TimeoutSeconds = 30) {
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  do {
+    $query = Query-NvpnService
+    if (Test-NvpnServiceState $query.Text 'RUNNING') { return }
+    & sc.exe start NvpnService | Out-Null
+    Start-Sleep -Milliseconds 500
+  } while ((Get-Date) -lt $deadline)
+  $query = Query-NvpnService
+  if (!(Test-NvpnServiceState $query.Text 'RUNNING')) {
+    throw "NvpnService did not start within ${TimeoutSeconds}s: $($query.Text)"
+  }
+}
+
+function Restart-NvpnServiceHard([int]$TimeoutSeconds = 30) {
+  Stop-NvpnServiceHard $TimeoutSeconds
+  Start-NvpnServiceHard $TimeoutSeconds
+}
+
+function Remove-NvpnServiceHard([int]$TimeoutSeconds = 30) {
+  $query = Query-NvpnService
+  if (Test-NvpnServiceMissing $query) { return }
+  Stop-NvpnServiceHard $TimeoutSeconds
+  & sc.exe delete NvpnService | Out-Null
+  $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+  do {
+    $query = Query-NvpnService
+    if (Test-NvpnServiceMissing $query) { return }
+    Stop-NvpnServiceProcess $query.Text
+    Start-Sleep -Milliseconds 250
+  } while ((Get-Date) -lt $deadline)
+  throw "NvpnService did not finish deletion within ${TimeoutSeconds}s: $($query.Text)"
+}
+PS
+}
+
 usage() {
   cat >&2 <<'EOF'
 usage: NVPN_WINLIN_WINDOWS_SSH=<windows-ssh> \
@@ -156,6 +239,14 @@ Important options:
   NVPN_WINLIN_SKIP_CURRENT_BUILD=1        do not run scripts/windows-build.ps1
   NVPN_WINLIN_SKIP_WINDOWS_SYNC=1         do not run scripts/windows-vm-git-sync.sh
   NVPN_WINLIN_DURATION_SECS=10            probe duration per direction
+  NVPN_WINLIN_MAX_UNDERLAY_RATIO=2.5      reject asymmetric underlay before nvpn rows
+  NVPN_WINLIN_ALLOW_ASYMMETRIC_UNDERLAY=1 allow ratio failures when the slower
+                                           underlay direction still exceeds
+                                           NVPN_WINLIN_ASYMMETRIC_UNDERLAY_MIN_MBPS;
+                                           artifacts are labeled asymmetric-underlay
+  NVPN_WINLIN_ASYMMETRIC_UNDERLAY_MIN_MBPS=1000
+                                           minimum slower-direction underlay Mbps
+                                           for admitted asymmetric evidence
   NVPN_WINLIN_TUNNEL_PING_COUNT=5         ping count before each nvpn row
   NVPN_WINLIN_TUNNEL_MAX_LOSS_PERCENT=0   reject nvpn rows above this tunnel loss
   NVPN_WINLIN_WINDOWS_NVPN_FIREWALL_RULE=1
@@ -550,12 +641,8 @@ if (\$expectedHash) {
   }
 }
 Copy-Item -LiteralPath \$backup -Destination \$config -Force
-\$service = Get-Service NvpnService
-if (\$service.Status -eq 'Running') {
-  Restart-Service NvpnService -Force
-} else {
-  Start-Service NvpnService
-}"
+$(windows_service_control_ps)
+Restart-NvpnServiceHard 30"
 }
 
 backup_linux_config() {
@@ -599,17 +686,8 @@ fi"
 ensure_windows_service_running() {
   run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
 \$ErrorActionPreference = 'Stop'
-\$service = Get-Service NvpnService
-if (\$service.Status -ne 'Running') {
-  Start-Service NvpnService
-}
-\$deadline = (Get-Date).AddSeconds(20)
-do {
-  \$service = Get-Service NvpnService
-  if (\$service.Status -eq 'Running') { exit 0 }
-  Start-Sleep -Milliseconds 500
-} while ((Get-Date) -lt \$deadline)
-throw \"NvpnService did not reach Running after cleanup restore\""
+$(windows_service_control_ps)
+Start-NvpnServiceHard 20"
 }
 
 windows_snapshot_script() {
@@ -969,11 +1047,8 @@ restart_static_direct_hint_services() {
 
   run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
 \$ErrorActionPreference = 'Stop'
-if ((Get-Service NvpnService -ErrorAction SilentlyContinue).Status -eq 'Running') {
-  Restart-Service NvpnService -Force -ErrorAction Stop
-} else {
-  Start-Service NvpnService -ErrorAction Stop
-}"
+$(windows_service_control_ps)
+Restart-NvpnServiceHard 30"
   wait_for_windows_hash "$windows_installed_hash" "static-direct-hints"
 
   run_linux_sh "set -euo pipefail
@@ -1016,9 +1091,8 @@ apply_dedicated_two_node_config() {
 \$clean = [string]\$nvpn
 if (\$clean.StartsWith('\\\\?\\')) { \$clean = \$clean.Substring(4) }
 if (!(Test-Path -LiteralPath \$clean)) { throw \"nvpn.exe not found for dedicated two-node config: \$clean\" }
-if ((Get-Service NvpnService -ErrorAction SilentlyContinue).Status -eq 'Running') {
-  Stop-Service NvpnService -Force -ErrorAction Stop
-}
+$(windows_service_control_ps)
+Stop-NvpnServiceHard 30
 & \$clean init --config \$config --force | Out-Null
 if (\$LASTEXITCODE -ne 0) { throw \"nvpn init failed while creating Windows dedicated two-node config\" }
 \$publicKey = ''
@@ -1291,39 +1365,8 @@ switch_windows_service() {
 if (\$clean.StartsWith('\\?\')) { \$clean = \$clean.Substring(4) }
 if (!(Test-Path -LiteralPath \$clean)) { throw \"nvpn.exe not found: \$clean\" }
 
-function Query-NvpnService {
-  \$query = & sc.exe queryex NvpnService 2>&1
-  [pscustomobject]@{ ExitCode = \$LASTEXITCODE; Text = (\$query | Out-String) }
-}
-
-function Get-NvpnServicePid(\$QueryText) {
-  if (\$QueryText -match '(?m)^\\s*PID\\s*:\\s*(\\d+)\\s*$') { return [int]\$Matches[1] }
-  return 0
-}
-
-function Stop-NvpnServiceProcess(\$QueryText) {
-  \$pidValue = Get-NvpnServicePid \$QueryText
-  if (\$pidValue -gt 0) {
-    Stop-Process -Id \$pidValue -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Milliseconds 500
-  }
-}
-
-\$query = Query-NvpnService
-if (!(\$query.ExitCode -ne 0 -and \$query.Text -match '1060')) {
-  Stop-NvpnServiceProcess \$query.Text
-  & sc.exe delete NvpnService | Out-Null
-  \$deadline = (Get-Date).AddSeconds(30)
-  do {
-    \$query = Query-NvpnService
-    if (\$query.ExitCode -ne 0 -and \$query.Text -match '1060') { break }
-    Stop-NvpnServiceProcess \$query.Text
-    Start-Sleep -Milliseconds 250
-  } while ((Get-Date) -lt \$deadline)
-  if (!(\$query.ExitCode -ne 0 -and \$query.Text -match '1060')) {
-    throw \"NvpnService did not finish deletion before reinstall: \$(\$query.Text)\"
-  }
-}
+$(windows_service_control_ps)
+Remove-NvpnServiceHard 30
 \$args = @('service', 'install', '--force')
 if (\$config) { \$args += @('--config', \$config) }
 & \$clean @args
@@ -1349,19 +1392,7 @@ if (\$label -ne 'restore-installed' -and \$mtuTunnel) {
 }
 if (\$envValues.Count -gt 0) {
   New-ItemProperty -Path \$envPath -Name Environment -PropertyType MultiString -Value \$envValues -Force | Out-Null
-  \$query = Query-NvpnService
-  Stop-NvpnServiceProcess \$query.Text
-  \$deadline = (Get-Date).AddSeconds(10)
-  do {
-    \$query = Query-NvpnService
-    if (\$query.Text -match '(?m)^\\s*STATE\\s*:\\s*\\d+\\s+RUNNING\\b') { break }
-    & sc.exe start NvpnService | Out-Null
-    Start-Sleep -Milliseconds 500
-  } while ((Get-Date) -lt \$deadline)
-  \$query = Query-NvpnService
-  if (!(\$query.Text -match '(?m)^\\s*STATE\\s*:\\s*\\d+\\s+RUNNING\\b')) {
-    throw \"NvpnService did not restart with measured-service environment: \$(\$query.Text)\"
-  }
+  Restart-NvpnServiceHard 30
 } else {
   Remove-ItemProperty -Path \$envPath -Name Environment -ErrorAction SilentlyContinue
 }
@@ -1533,6 +1564,15 @@ row_contains_installed() {
 }
 
 validate_service_env() {
+  if [[ ! "$MIN_UNDERLAY_MBPS" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    die "NVPN_WINLIN_MIN_UNDERLAY_MBPS must be numeric"
+  fi
+  if [[ ! "$MAX_UNDERLAY_RATIO" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    die "NVPN_WINLIN_MAX_UNDERLAY_RATIO must be numeric"
+  fi
+  if [[ ! "$ASYMMETRIC_UNDERLAY_MIN_MBPS" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    die "NVPN_WINLIN_ASYMMETRIC_UNDERLAY_MIN_MBPS must be numeric"
+  fi
   if [[ -n "$MESH_MTU_PROFILE" && ! "$MESH_MTU_PROFILE" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
     die "NVPN_WINLIN_MESH_MTU_PROFILE contains unsupported characters"
   fi
@@ -1561,8 +1601,10 @@ clear_windows_service_env() {
 \$ErrorActionPreference = 'Continue'
 \$envPath = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\NvpnService'
 Remove-ItemProperty -Path \$envPath -Name Environment -ErrorAction SilentlyContinue
-if ((Get-Service NvpnService -ErrorAction SilentlyContinue).Status -eq 'Running') {
-  Restart-Service NvpnService -Force -ErrorAction SilentlyContinue
+$(windows_service_control_ps)
+\$query = Query-NvpnService
+if (!(Test-NvpnServiceMissing \$query)) {
+  Restart-NvpnServiceHard 30
 }" >/dev/null
   WINDOWS_SERVICE_ENV_APPLIED=0
 }
@@ -2514,6 +2556,8 @@ validate_underlay() {
     --slurpfile l2w "$l2w" \
     --arg min_mbps "$MIN_UNDERLAY_MBPS" \
     --arg max_ratio "$MAX_UNDERLAY_RATIO" \
+    --arg allow_asymmetric "$(is_true "$ALLOW_ASYMMETRIC_UNDERLAY" && printf true || printf false)" \
+    --arg asymmetric_min_mbps "$ASYMMETRIC_UNDERLAY_MIN_MBPS" \
     '
     def num($v): ($v // 0 | tonumber);
     (num($w2l[0].client_mbps)) as $a |
@@ -2521,17 +2565,38 @@ validate_underlay() {
     ([($a), ($b)] | min) as $min |
     ([($a), ($b)] | max) as $max |
     (if $min > 0 then $max / $min else 999999 end) as $ratio |
+    ($min_mbps | tonumber) as $strict_min |
+    ($max_ratio | tonumber) as $strict_ratio |
+    ($asymmetric_min_mbps | tonumber) as $asym_min |
+    ($allow_asymmetric == "true") as $allow_asym |
+    ($min >= $strict_min) as $min_ok |
+    ($ratio <= $strict_ratio) as $ratio_ok |
+    ($allow_asym and $min >= $asym_min) as $asym_allowed |
     {
       windows_to_linux_mbps: $a,
       linux_to_windows_mbps: $b,
-      min_required_mbps: ($min_mbps | tonumber),
-      max_allowed_ratio: ($max_ratio | tonumber),
+      min_required_mbps: $strict_min,
+      max_allowed_ratio: $strict_ratio,
       ratio: $ratio,
-      ok: ($min >= ($min_mbps | tonumber) and $ratio <= ($max_ratio | tonumber))
+      allow_asymmetric_underlay: $allow_asym,
+      asymmetric_min_required_mbps: $asym_min,
+      underlay_asymmetric: ($ratio_ok | not),
+      potentially_contended: ($min_ok and ($ratio_ok | not) and $asym_allowed),
+      ok_by: (
+        if ($min_ok | not) then "invalid-min-underlay"
+        elif $ratio_ok then "strict"
+        elif $asym_allowed then "asymmetric-underlay"
+        else "invalid-underlay-ratio"
+        end
+      ),
+      ok: ($min_ok and ($ratio_ok or $asym_allowed))
     }' >"$verdict"
   if [[ "$(jq -r '.ok' "$verdict")" != "true" ]]; then
     cat "$verdict" >&2
     die "underlay probe is not valid enough for nvpn measurement"
+  fi
+  if [[ "$(jq -r '.ok_by' "$verdict")" == "asymmetric-underlay" ]]; then
+    printf 'warning: admitting asymmetric underlay evidence; verdict=%s\n' "$(jq -c . "$verdict")" >&2
   fi
 }
 
@@ -2636,6 +2701,8 @@ write_run_metadata() {
     --arg duration_secs "$DURATION_SECS" \
     --arg min_underlay_mbps "$MIN_UNDERLAY_MBPS" \
     --arg max_underlay_ratio "$MAX_UNDERLAY_RATIO" \
+    --arg allow_asymmetric_underlay "$(is_true "$ALLOW_ASYMMETRIC_UNDERLAY" && printf true || printf false)" \
+    --arg asymmetric_underlay_min_mbps "$ASYMMETRIC_UNDERLAY_MIN_MBPS" \
     --arg tunnel_health_attempts "$TUNNEL_HEALTH_ATTEMPTS" \
     --arg tunnel_health_interval_secs "$TUNNEL_HEALTH_INTERVAL_SECS" \
     --arg tunnel_ping_count "$TUNNEL_PING_COUNT" \
@@ -2676,6 +2743,8 @@ write_run_metadata() {
       duration_secs:($duration_secs|tonumber),
       min_underlay_mbps:($min_underlay_mbps|tonumber),
       max_underlay_ratio:($max_underlay_ratio|tonumber),
+      allow_asymmetric_underlay:($allow_asymmetric_underlay == "true"),
+      asymmetric_underlay_min_mbps:($asymmetric_underlay_min_mbps|tonumber),
       tunnel_health_attempts:($tunnel_health_attempts|tonumber),
       tunnel_health_interval_secs:($tunnel_health_interval_secs|tonumber),
       tunnel_ping_count:($tunnel_ping_count|tonumber),
