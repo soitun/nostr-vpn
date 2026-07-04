@@ -5,7 +5,7 @@ use std::sync::atomic::{
 };
 use std::time::Instant;
 
-const N_STAGES: usize = 10;
+const N_STAGES: usize = 11;
 const N_COUNTERS: usize = 37;
 const HIST_BUCKETS: usize = 48;
 
@@ -18,10 +18,11 @@ pub(crate) enum Stage {
     MeshEndpointSend = 3,
     TunWrite = 4,
     TunWriteBatch = 5,
-    DirectEndpointQueue = 6,
-    DirectEndpointWake = 7,
-    DirectEndpointRecv = 8,
-    DirectEndpointFinalize = 9,
+    MeshRecv = 6,
+    DirectEndpointQueue = 7,
+    DirectEndpointWake = 8,
+    DirectEndpointRecv = 9,
+    DirectEndpointFinalize = 10,
 }
 
 impl Stage {
@@ -33,6 +34,7 @@ impl Stage {
             Stage::MeshEndpointSend => "nvpn_mesh_endpoint_send",
             Stage::TunWrite => "nvpn_tun_write",
             Stage::TunWriteBatch => "nvpn_tun_write_batch",
+            Stage::MeshRecv => "nvpn_mesh_recv",
             Stage::DirectEndpointQueue => "nvpn_direct_endpoint_queue",
             Stage::DirectEndpointWake => "nvpn_direct_endpoint_wake",
             Stage::DirectEndpointRecv => "nvpn_direct_endpoint_recv",
@@ -182,10 +184,11 @@ fn stage_from_index(idx: usize) -> Stage {
         3 => Stage::MeshEndpointSend,
         4 => Stage::TunWrite,
         5 => Stage::TunWriteBatch,
-        6 => Stage::DirectEndpointQueue,
-        7 => Stage::DirectEndpointWake,
-        8 => Stage::DirectEndpointRecv,
-        9 => Stage::DirectEndpointFinalize,
+        6 => Stage::MeshRecv,
+        7 => Stage::DirectEndpointQueue,
+        8 => Stage::DirectEndpointWake,
+        9 => Stage::DirectEndpointRecv,
+        10 => Stage::DirectEndpointFinalize,
         _ => unreachable!(),
     }
 }
@@ -243,6 +246,7 @@ pub(crate) fn increment_counter_by(counter: Counter, amount: u64) {
     }
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub(crate) fn max_counter(counter: Counter, value: u64) {
     if value > 0 && enabled() {
         COUNTERS[counter as usize].fetch_max(value, Relaxed);
@@ -328,6 +332,7 @@ pub(crate) fn record_mesh_send_batch(
     }
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub(crate) fn record_tun_write_packet(bytes: usize) {
     record_tun_write_packets(1, bytes);
 }
@@ -357,6 +362,7 @@ pub(crate) fn record_tun_write_vnet_gro_vectored_frame(segments: usize, bytes: u
     increment_counter_by(Counter::TunWriteVnetGroVectoredBytes, bytes as u64);
 }
 
+#[cfg_attr(target_os = "windows", allow(dead_code))]
 pub(crate) fn record_tun_write_would_block() {
     increment_counter_by(Counter::TunWriteWouldBlock, 1);
 }
@@ -567,6 +573,7 @@ mod tests {
     fn mesh_send_pipeline_names_are_stable() {
         assert_eq!(N_COUNTERS, 37);
         assert_eq!(Stage::TunRead.name(), "nvpn_tun_read");
+        assert_eq!(Stage::MeshRecv.name(), "nvpn_mesh_recv");
         assert_eq!(Stage::MeshRoute.name(), "nvpn_mesh_route");
         assert_eq!(Stage::MeshEndpointSend.name(), "nvpn_mesh_endpoint_send");
         assert_eq!(

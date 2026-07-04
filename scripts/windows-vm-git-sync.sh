@@ -6,6 +6,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_ROOT="$(cd "$ROOT/.." && pwd)"
 SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-win11-dev}}"
+SSH_JUMP="${NVPN_WINDOWS_SSH_JUMP:-}"
+SSH_PROXY_COMMAND="${NVPN_WINDOWS_SSH_PROXY_COMMAND:-}"
 GUEST_REPO="${NVPN_WINDOWS_GUEST_REPO_PATH:-C:\\src\\nostr-vpn}"
 GUEST_BARE_REPO="${NVPN_WINDOWS_GIT_BARE_PATH:-C:\\src\\nostr-vpn.git}"
 REMOTE_REF="${NVPN_WINDOWS_GIT_REF:-refs/heads/codex/windows-vm-sync}"
@@ -15,8 +17,27 @@ FIPS_REPO="${NVPN_WINDOWS_FIPS_REPO_PATH:-$SRC_ROOT/fips}"
 run_ps() {
   local script="$1"
   local encoded
+  local -a ssh_cmd
   encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64)"
-  ssh "$SSH_HOST" powershell.exe -NoProfile -EncodedCommand "$encoded"
+  ssh_cmd=(ssh -o BatchMode=yes)
+  if [[ -n "$SSH_PROXY_COMMAND" ]]; then
+    ssh_cmd+=(-o "ProxyCommand=$SSH_PROXY_COMMAND")
+  elif [[ -n "$SSH_JUMP" ]]; then
+    ssh_cmd+=(-J "$SSH_JUMP")
+  fi
+  ssh_cmd+=("$SSH_HOST")
+  "${ssh_cmd[@]}" powershell.exe -NoProfile -EncodedCommand "$encoded"
+}
+
+git_ssh_command() {
+  local -a ssh_cmd
+  ssh_cmd=(ssh -o BatchMode=yes)
+  if [[ -n "$SSH_PROXY_COMMAND" ]]; then
+    ssh_cmd+=(-o "ProxyCommand=$SSH_PROXY_COMMAND")
+  elif [[ -n "$SSH_JUMP" ]]; then
+    ssh_cmd+=(-J "$SSH_JUMP")
+  fi
+  printf '%q ' "${ssh_cmd[@]}"
 }
 
 ps_quote() {
@@ -95,7 +116,10 @@ sync_repo() {
   local remote_url="${SSH_HOST}:${bare_repo//\\//}"
   local sync_commit
   local local_tree
+  local local_clean
+  local remote_commit
   local remote_tree
+  local git_ssh
 
   if ! git -C "$local_repo" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     echo "Skipping Windows VM git sync for $label; local checkout not found at $local_repo"
@@ -103,18 +127,26 @@ sync_repo() {
   fi
 
   ensure_remote_bare_repo "$bare_repo"
-  sync_commit="$(make_sync_commit "$local_repo")"
+  if [[ -z "$(git -C "$local_repo" status --porcelain)" ]]; then
+    local_clean=1
+    sync_commit="$(git -C "$local_repo" rev-parse HEAD)"
+  else
+    local_clean=0
+    sync_commit="$(make_sync_commit "$local_repo")"
+  fi
   local_tree="$(git -C "$local_repo" rev-parse "$sync_commit^{tree}")"
-  if git -C "$local_repo" fetch --quiet "$remote_url" "$remote_ref" 2>/dev/null; then
+  git_ssh="$(git_ssh_command)"
+  if GIT_SSH_COMMAND="$git_ssh" git -C "$local_repo" fetch --quiet "$remote_url" "$remote_ref" 2>/dev/null; then
+    remote_commit="$(git -C "$local_repo" rev-parse FETCH_HEAD)"
     remote_tree="$(git -C "$local_repo" rev-parse "FETCH_HEAD^{tree}")"
-    if [[ "$remote_tree" == "$local_tree" ]]; then
+    if [[ "$remote_tree" == "$local_tree" && ( "$local_clean" != "1" || "$remote_commit" == "$sync_commit" ) ]]; then
       echo "WINDOWS_VM_GIT_SYNC_UNCHANGED $label"
       checkout_remote_ref "$worktree" "$bare_repo" "$remote_ref"
       return
     fi
   fi
 
-  git -C "$local_repo" push --force "$remote_url" "$sync_commit:$remote_ref"
+  GIT_SSH_COMMAND="$git_ssh" git -C "$local_repo" push --force "$remote_url" "$sync_commit:$remote_ref"
   checkout_remote_ref "$worktree" "$bare_repo" "$remote_ref"
   echo "WINDOWS_VM_GIT_SYNC_OK $label"
 }

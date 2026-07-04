@@ -145,6 +145,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         vpn_enabled,
                         expected_peers,
                         &tunnel_runtime,
+                        &[],
                         DaemonStartupFailureContext {
                             network: &network,
                             port_mapping: &port_mapping,
@@ -161,6 +162,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 .filter(|addr| addr.seen_at_ms.is_some())
                 .count();
             let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
+            let endpoint_peer_states =
+                daemon_endpoint_peer_states_from_signature(&endpoint_peer_signature);
             let runtime =
                 match crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await {
                     Ok(runtime) => runtime,
@@ -173,6 +176,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             vpn_enabled,
                             expected_peers,
                             &tunnel_runtime,
+                            &endpoint_peer_states,
                             DaemonStartupFailureContext {
                                 network: &network,
                                 port_mapping: &port_mapping,
@@ -242,6 +246,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     #[cfg(not(feature = "embedded-fips"))]
     let fips_peer_statuses = Vec::new();
     let fips_relay_statuses = current_fips_relay_statuses(&fips_tunnel_runtime).await;
+    let fips_endpoint_peer_states =
+        current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature);
     let fips_advertised_routes = current_fips_advertised_routes!(fips_tunnel_runtime, &app);
     write_daemon_state(
         &state_file,
@@ -253,6 +259,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             &tunnel_runtime,
             &fips_peer_statuses,
             &fips_relay_statuses,
+            &fips_endpoint_peer_states,
             &fips_advertised_routes,
             &vpn_status,
             &network_snapshot.summary(network_changed_at, captive_portal),
@@ -1128,6 +1135,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &tunnel_runtime,
                         &current_fips_peer_statuses!(fips_tunnel_runtime),
                         &current_fips_relay_statuses(&fips_tunnel_runtime).await,
+                        &current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature),
                         &current_fips_advertised_routes!(fips_tunnel_runtime, &app),
                         &vpn_status,
                         &network_snapshot.summary(network_changed_at, captive_portal),
@@ -1171,6 +1179,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &tunnel_runtime,
                         &current_fips_peer_statuses!(fips_tunnel_runtime),
                         &current_fips_relay_statuses(&fips_tunnel_runtime).await,
+                        &current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature),
                         &current_fips_advertised_routes!(fips_tunnel_runtime, &app),
                         &vpn_status,
                         &network_snapshot.summary(network_changed_at, captive_portal),

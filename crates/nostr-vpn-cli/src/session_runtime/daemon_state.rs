@@ -9,6 +9,7 @@ fn persist_daemon_startup_failure_state(
     vpn_enabled: bool,
     expected_peers: usize,
     tunnel_runtime: &CliTunnelRuntime,
+    fips_endpoint_peers: &[DaemonFipsEndpointPeerState],
     context: DaemonStartupFailureContext<'_>,
     vpn_status: &str,
 ) {
@@ -21,6 +22,7 @@ fn persist_daemon_startup_failure_state(
         tunnel_runtime,
         &[],
         &[],
+        fips_endpoint_peers,
         &advertised_routes,
         vpn_status,
         context.network,
@@ -148,6 +150,7 @@ pub(crate) fn build_daemon_runtime_state(
     tunnel_runtime: &CliTunnelRuntime,
     fips_peer_statuses: &[MeshPeerStatus],
     fips_relay_statuses: &[DaemonRelayState],
+    fips_endpoint_peers: &[DaemonFipsEndpointPeerState],
     advertised_routes_by_participant: &HashMap<String, Vec<String>>,
     vpn_status: &str,
     network: &NetworkSummary,
@@ -316,6 +319,7 @@ pub(crate) fn build_daemon_runtime_state(
         network: network.clone(),
         port_mapping: port_mapping.clone(),
         relays: fips_relay_statuses.to_vec(),
+        fips_endpoint_peers: fips_endpoint_peers.to_vec(),
         peers,
     }
 }
@@ -329,6 +333,7 @@ pub(crate) fn persist_daemon_runtime_state(
     tunnel_runtime: &CliTunnelRuntime,
     fips_peer_statuses: &[MeshPeerStatus],
     fips_relay_statuses: &[DaemonRelayState],
+    fips_endpoint_peers: &[DaemonFipsEndpointPeerState],
     advertised_routes_by_participant: &HashMap<String, Vec<String>>,
     vpn_status: &str,
     network: &NetworkSummary,
@@ -344,6 +349,7 @@ pub(crate) fn persist_daemon_runtime_state(
             tunnel_runtime,
             fips_peer_statuses,
             fips_relay_statuses,
+            fips_endpoint_peers,
             advertised_routes_by_participant,
             vpn_status,
             network,
@@ -362,6 +368,7 @@ pub(crate) fn persist_daemon_runtime_and_cleanup_state(
     tunnel_runtime: &CliTunnelRuntime,
     fips_peer_statuses: &[MeshPeerStatus],
     fips_relay_statuses: &[DaemonRelayState],
+    fips_endpoint_peers: &[DaemonFipsEndpointPeerState],
     advertised_routes_by_participant: &HashMap<String, Vec<String>>,
     vpn_status: &str,
     network: &NetworkSummary,
@@ -375,6 +382,7 @@ pub(crate) fn persist_daemon_runtime_and_cleanup_state(
         tunnel_runtime,
         fips_peer_statuses,
         fips_relay_statuses,
+        fips_endpoint_peers,
         advertised_routes_by_participant,
         vpn_status,
         network,
@@ -402,6 +410,7 @@ pub(crate) async fn persist_daemon_runtime_and_cleanup_state_async(
     tunnel_runtime: &CliTunnelRuntime,
     fips_peer_statuses: &[MeshPeerStatus],
     fips_relay_statuses: &[DaemonRelayState],
+    fips_endpoint_peers: &[DaemonFipsEndpointPeerState],
     advertised_routes_by_participant: &HashMap<String, Vec<String>>,
     vpn_status: &str,
     network: &NetworkSummary,
@@ -413,6 +422,7 @@ pub(crate) async fn persist_daemon_runtime_and_cleanup_state_async(
     let tunnel_runtime = tunnel_runtime.clone();
     let fips_peer_statuses = fips_peer_statuses.to_vec();
     let fips_relay_statuses = fips_relay_statuses.to_vec();
+    let fips_endpoint_peers = fips_endpoint_peers.to_vec();
     let advertised_routes_by_participant = advertised_routes_by_participant.clone();
     let vpn_status = vpn_status.to_string();
     let network = network.clone();
@@ -428,6 +438,7 @@ pub(crate) async fn persist_daemon_runtime_and_cleanup_state_async(
             &tunnel_runtime,
             &fips_peer_statuses,
             &fips_relay_statuses,
+            &fips_endpoint_peers,
             &advertised_routes_by_participant,
             &vpn_status,
             &network,
@@ -467,6 +478,7 @@ pub(crate) fn disconnected_daemon_runtime_state(
         network: network.clone(),
         port_mapping: PortMappingStatus::default(),
         relays: Vec::new(),
+        fips_endpoint_peers: Vec::new(),
         peers: Vec::new(),
     }
 }

@@ -127,7 +127,7 @@ const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(macos_default_udp_sen
 #[cfg(not(target_os = "macos"))]
 const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = None;
 #[cfg(target_os = "windows")]
-const WINDOWS_FIPS_TUN_READ_BURST: usize = 64;
+const WINDOWS_FIPS_TUN_READ_BURST: usize = 128;
 #[cfg(target_os = "windows")]
 const WINDOWS_FIPS_TUN_WRITE_BURST: usize = 128;
 

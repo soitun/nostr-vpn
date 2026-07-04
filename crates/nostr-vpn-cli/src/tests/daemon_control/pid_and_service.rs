@@ -12,6 +12,7 @@ fn daemon_runtime_state_tracks_live_endpoint_and_listen_port() {
         &tunnel_runtime,
         &[],
         &[],
+        &[],
         &std::collections::HashMap::new(),
         "Connected",
         &nostr_vpn_core::diagnostics::NetworkSummary::default(),

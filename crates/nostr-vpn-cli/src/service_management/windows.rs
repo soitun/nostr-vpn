@@ -15,6 +15,7 @@ fn windows_install_service(
     if force {
         windows_stop_service(true)?;
         windows_delete_service(true)?;
+        windows_wait_for_service_deleted(Duration::from_secs(10))?;
     } else if windows_service_query()?.is_some() {
         return Err(anyhow!(
             "system service already installed (pass --force to reinstall)"
@@ -299,6 +300,22 @@ fn windows_delete_service(ignore_missing: bool) -> Result<()> {
         "sc delete failed\nstdout: {}\nstderr: {}",
         stdout.trim(),
         stderr.trim()
+    ))
+}
+
+#[cfg(target_os = "windows")]
+fn windows_wait_for_service_deleted(timeout: Duration) -> Result<()> {
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        if windows_service_query()?.is_none() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+
+    Err(anyhow!(
+        "system service did not finish deletion within {}s",
+        timeout.as_secs()
     ))
 }
 
