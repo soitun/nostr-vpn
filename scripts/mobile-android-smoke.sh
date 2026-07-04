@@ -19,6 +19,10 @@ RUNTIME_STATE_WAIT_SECS="${NVPN_ANDROID_RUNTIME_STATE_WAIT_SECS:-12}"
 RUNTIME_STATE_MAX_AGE_SECS="${NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS:-60}"
 RUNTIME_STATE_RESULT_DIR="${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-android}"
 RUNTIME_STATE_RESULT_NAME="${NVPN_ANDROID_RUNTIME_STATE_RESULT_NAME:-mobile-android-runtime-state-$$.json}"
+TUN_PACKET_PROBE="${NVPN_ANDROID_TUN_PACKET_PROBE:-1}"
+TUN_PACKET_PROBE_TARGET="${NVPN_ANDROID_TUN_PACKET_PROBE_TARGET:-10.44.255.254}"
+TUN_PACKET_PROBE_WAIT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_WAIT_SECS:-6}"
+TUN_PACKET_PROBE_TIMEOUT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_TIMEOUT_SECS:-1}"
 DEBUG_SEED_WAIT_SECS="${NVPN_ANDROID_DEBUG_SEED_WAIT_SECS:-2}"
 DEBUG_INVITE="${NVPN_ANDROID_DEBUG_INVITE:-}"
 DEBUG_EXIT_NODE="${NVPN_ANDROID_DEBUG_EXIT_NODE:-}"
@@ -59,6 +63,10 @@ system VPN consent OK button if the prompt appears.
 When --vpn-cycle reaches Android's active VPN service/network state, this script
 also copies files/app-core/mobile-runtime-state.json from the debug app sandbox
 and requires fresh Rust runtime state with native TUN counter fields.
+
+By default --vpn-cycle also sends one shell ping toward a non-local 10.44/16
+address and requires tunPacketsRead to increase. Disable with
+NVPN_ANDROID_TUN_PACKET_PROBE=0 if a device image lacks ping.
 EOF
 }
 
@@ -176,6 +184,10 @@ vpn_inactive() {
   ! vpn_state_present
 }
 
+truthy() {
+  [[ "$1" == "1" || "$1" == "true" || "$1" == "yes" ]]
+}
+
 android_runtime_state_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$RUNTIME_STATE_RESULT_NAME"
 }
@@ -241,6 +253,23 @@ if errors:
 PY
 }
 
+android_runtime_state_number() {
+  local key="$1"
+  local result_path
+  result_path="$(android_runtime_state_path)"
+  python3 - "$result_path" "$key" <<'PY'
+import json
+import sys
+
+path, key = sys.argv[1], sys.argv[2]
+with open(path, encoding="utf-8") as fh:
+    value = json.load(fh).get(key)
+if not isinstance(value, int):
+    sys.exit(1)
+print(value)
+PY
+}
+
 wait_for_android_runtime_state() {
   local start now last_error
   start="$(date +%s)"
@@ -261,6 +290,42 @@ wait_for_android_runtime_state() {
     fi
     sleep 1
   done
+}
+
+wait_for_tun_packets_read_after() {
+  local baseline="$1"
+  local start now current last_error
+  start="$(date +%s)"
+  last_error=""
+  while true; do
+    if copy_android_runtime_state; then
+      if last_error="$(validate_android_runtime_state 2>&1)"; then
+        current="$(android_runtime_state_number tunPacketsRead 2>/dev/null || true)"
+        if [[ "$current" =~ ^[0-9]+$ ]] && (( current > baseline )); then
+          echo "Android TUN packet probe passed: tunPacketsRead $baseline->$current target=$TUN_PACKET_PROBE_TARGET"
+          return 0
+        fi
+        last_error="tunPacketsRead did not increase after probe (baseline=$baseline current=${current:-missing})"
+      fi
+    else
+      last_error="failed to copy files/app-core/mobile-runtime-state.json from debug app sandbox"
+    fi
+    now="$(date +%s)"
+    if (( now - start >= TUN_PACKET_PROBE_WAIT_SECS )); then
+      echo "$last_error" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+run_android_tun_packet_probe() {
+  truthy "$TUN_PACKET_PROBE" || return 0
+  local baseline
+  baseline="$(android_runtime_state_number tunPacketsRead 2>/dev/null || printf '0')"
+  [[ "$baseline" =~ ^[0-9]+$ ]] || baseline=0
+  "$ADB" -s "$serial" shell ping -c 1 -W "$TUN_PACKET_PROBE_TIMEOUT_SECS" "$TUN_PACKET_PROBE_TARGET" >/dev/null 2>&1 || true
+  wait_for_tun_packets_read_after "$baseline"
 }
 
 android_sdk() {
@@ -465,6 +530,11 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
   if ! wait_for_android_runtime_state; then
     dump_vpn_diagnostics
     echo "Android smoke failed: Rust mobile runtime state did not become fresh after debug connect." >&2
+    exit 1
+  fi
+  if ! run_android_tun_packet_probe; then
+    dump_vpn_diagnostics
+    echo "Android smoke failed: native TUN read counter did not advance after debug packet probe." >&2
     exit 1
   fi
 fi

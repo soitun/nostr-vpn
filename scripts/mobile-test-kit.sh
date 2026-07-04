@@ -21,7 +21,9 @@ development-signed app before launching; set NVPN_IOS_DEBUG_CREATE_NETWORK=1
 for local iOS Packet Tunnel coverage without a private invite fixture.
 Android --vpn-cycle validates the app-private Rust runtime-state file after the
 OS VPN network becomes active; tune with NVPN_ANDROID_RUNTIME_STATE_WAIT_SECS
-or NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS if a slow device needs it.
+or NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS if a slow device needs it. It also
+requires tunPacketsRead to increase after a one-packet shell ping probe; disable
+only for device images without ping via NVPN_ANDROID_TUN_PACKET_PROBE=0.
 
 Set NVPN_FIPS_REPO_PATH=/path/to/fips when testing mobile Rust code against
 unreleased local FIPS crates. Cargo.lock is restored after local-FIPS cargo
