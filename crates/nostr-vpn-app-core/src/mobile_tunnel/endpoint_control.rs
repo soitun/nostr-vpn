@@ -495,6 +495,7 @@ async fn dispatch_mobile_outbound_packets(
     packets: Vec<Vec<u8>>,
 ) -> bool {
     let mut pending_run = None;
+    let mut pending_dns_responses = Vec::new();
     for packet in packets {
         // Local MagicDNS responder. The well-known DNS address is owned by this
         // tunnel instance, so answer before mesh/WG routing and never treat it
@@ -511,11 +512,13 @@ async fn dispatch_mobile_outbound_packets(
                 if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
                     return false;
                 }
-                if !send_mobile_inbound_packets(inbound_tx_for_dns, vec![response]).await {
-                    return false;
-                }
+                pending_dns_responses.push(response);
                 continue;
             }
+        }
+
+        if !flush_mobile_inbound_packets(inbound_tx_for_dns, &mut pending_dns_responses).await {
+            return false;
         }
 
         let outgoing_peer = mesh.read().ok().and_then(|mesh| {
@@ -554,6 +557,9 @@ async fn dispatch_mobile_outbound_packets(
             return false;
         }
     }
+    if !flush_mobile_inbound_packets(inbound_tx_for_dns, &mut pending_dns_responses).await {
+        return false;
+    }
     flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await
 }
 
@@ -562,6 +568,17 @@ async fn send_mobile_inbound_packets(
     packets: Vec<Vec<u8>>,
 ) -> bool {
     packets.is_empty() || inbound_tx.send(packets).await.is_ok()
+}
+
+async fn flush_mobile_inbound_packets(
+    inbound_tx: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
+    packets: &mut Vec<Vec<u8>>,
+) -> bool {
+    if packets.is_empty() {
+        return true;
+    }
+    let batch = std::mem::replace(packets, Vec::with_capacity(MOBILE_FIPS_RECV_BATCH));
+    inbound_tx.send(batch).await.is_ok()
 }
 
 fn push_mobile_endpoint_send_run(
