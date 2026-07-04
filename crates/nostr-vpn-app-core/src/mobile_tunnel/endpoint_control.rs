@@ -413,13 +413,11 @@ fn normalize_mobile_endpoint_npub(value: &str) -> String {
     )
 }
 
-enum MobileEndpointSendRun {
-    Identity {
-        participant_fallback: Option<String>,
-        participant_key: Option<MobileParticipantPubkeyBytes>,
-        identity: PeerIdentity,
-        payloads: Vec<Vec<u8>>,
-    },
+struct MobileEndpointSendRun {
+    participant_fallback: Option<String>,
+    participant_key: Option<MobileParticipantPubkeyBytes>,
+    identity: PeerIdentity,
+    payloads: Vec<Vec<u8>>,
 }
 
 fn mobile_endpoint_send_run_matches(
@@ -481,7 +479,10 @@ async fn dispatch_mobile_outbound_packets(
         if let Some(response) =
             mobile_magic_dns_response_packet(&packet, app_config_for_dns, dns_forwarders).await
         {
-            flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await;
+            if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
+                packets.clear();
+                return false;
+            }
             if inbound_tx_for_dns.send(response).is_err() {
                 packets.clear();
                 return false;
@@ -509,19 +510,27 @@ async fn dispatch_mobile_outbound_packets(
                 endpoint_node_addr,
                 packet,
             ) {
-                send_mobile_endpoint_run(endpoint, run).await;
+                if !send_mobile_endpoint_run(endpoint, run).await {
+                    packets.clear();
+                    return false;
+                }
             }
             continue;
         }
 
-        flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await;
-        if let Some(wg_tx) = wg_send_tx {
-            dispatch_mobile_wg_packet(wg_tx, packet, wg_addr, mesh_addr);
+        if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
+            packets.clear();
+            return false;
+        }
+        if let Some(wg_tx) = wg_send_tx
+            && !dispatch_mobile_wg_packet(wg_tx, packet, wg_addr, mesh_addr).await
+        {
+            packets.clear();
+            return false;
         }
     }
     packets.clear();
-    flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await;
-    true
+    flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await
 }
 
 fn push_mobile_endpoint_send_run(
@@ -539,27 +548,22 @@ fn push_mobile_endpoint_send_run(
         return run.take();
     };
 
-    if let Some(MobileEndpointSendRun::Identity {
-        participant_fallback: current_participant_fallback,
-        participant_key: current_participant_key,
-        identity: current_identity,
-        payloads,
-    }) = run.as_mut()
+    if let Some(current) = run.as_mut()
         && mobile_endpoint_send_run_matches(
-            *current_identity,
-            *current_participant_key,
-            current_participant_fallback.as_deref(),
+            current.identity,
+            current.participant_key,
+            current.participant_fallback.as_deref(),
             identity,
             participant_key,
             participant_fallback.as_deref(),
         )
     {
-        payloads.push(packet);
+        current.payloads.push(packet);
         return None;
     }
 
     let previous = run.take();
-    *run = Some(MobileEndpointSendRun::Identity {
+    *run = Some(MobileEndpointSendRun {
         participant_fallback,
         participant_key,
         identity,
@@ -571,28 +575,27 @@ fn push_mobile_endpoint_send_run(
 async fn flush_mobile_endpoint_send_run(
     endpoint: &FipsEndpoint,
     run: &mut Option<MobileEndpointSendRun>,
-) {
+) -> bool {
     if let Some(run) = run.take() {
-        send_mobile_endpoint_run(endpoint, run).await;
+        send_mobile_endpoint_run(endpoint, run).await
+    } else {
+        true
     }
 }
 
-async fn send_mobile_endpoint_run(endpoint: &FipsEndpoint, run: MobileEndpointSendRun) {
-    match run {
-        MobileEndpointSendRun::Identity {
-            identity, payloads, ..
-        } => {
-            let _ = endpoint.send_batch_to_peer(identity, payloads).await;
-        }
-    }
+async fn send_mobile_endpoint_run(endpoint: &FipsEndpoint, run: MobileEndpointSendRun) -> bool {
+    endpoint
+        .send_batch_to_peer(run.identity, run.payloads)
+        .await
+        .is_ok()
 }
 
-fn dispatch_mobile_wg_packet(
+async fn dispatch_mobile_wg_packet(
     wg_tx: &tokio_mpsc::Sender<Vec<u8>>,
     mut packet: Vec<u8>,
     wg_addr: Option<Ipv4Addr>,
     mesh_addr: Option<Ipv4Addr>,
-) {
+) -> bool {
     // No matching mesh peer route: hand the plaintext off to the WG runtime,
     // which will boringtun-encapsulate and send out via the upstream UDP
     // socket. SNAT first so the inner source IP matches the WG peer's
@@ -601,7 +604,7 @@ fn dispatch_mobile_wg_packet(
         rewrite_ipv4_source(&mut packet, mesh, wg);
         nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut packet);
     }
-    let _ = wg_tx.try_send(packet);
+    wg_tx.send(packet).await.is_ok()
 }
 
 async fn send_mobile_endpoint_data(
