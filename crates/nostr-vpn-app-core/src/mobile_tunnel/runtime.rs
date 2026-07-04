@@ -127,15 +127,30 @@ impl MobileTunnel {
                     let wg_addr = wg_address_ipv4;
                     let mesh_addr = mesh_ipv4;
                     tasks.push(tokio::spawn(async move {
-                        while let Some(mut packet) = recv_rx.recv().await {
+                        let prepare_packet = |mut packet: Vec<u8>| {
                             if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
                                 rewrite_ipv4_destination(&mut packet, wg, mesh);
                                 nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(
                                     &mut packet,
                                 );
                             }
-                            if !send_mobile_inbound_packets(&inbound_tx_for_wg, vec![packet]).await
-                            {
+                            packet
+                        };
+                        let mut packets = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
+                        while let Some(packet) = recv_rx.recv().await {
+                            packets.clear();
+                            packets.push(prepare_packet(packet));
+                            while packets.len() < MOBILE_FIPS_RECV_BATCH {
+                                let Ok(packet) = recv_rx.try_recv() else {
+                                    break;
+                                };
+                                packets.push(prepare_packet(packet));
+                            }
+                            let batch = std::mem::replace(
+                                &mut packets,
+                                Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
+                            );
+                            if !send_mobile_inbound_packets(&inbound_tx_for_wg, batch).await {
                                 break;
                             }
                         }
