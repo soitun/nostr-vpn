@@ -206,6 +206,10 @@ truthy() {
   [[ "$1" == "1" || "$1" == "true" || "$1" == "yes" ]]
 }
 
+epoch_ms() {
+  python3 -c 'import time; print(int(time.time() * 1000))'
+}
+
 android_runtime_state_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$RUNTIME_STATE_RESULT_NAME"
 }
@@ -511,6 +515,10 @@ write_android_tun_packet_probe_summary() {
   local current_dropped="$7"
   local ping_path="$8"
   local ping_status="$9"
+  local first_observed_ms="${10}"
+  local elapsed_ms="${11}"
+  local polls="${12}"
+  local poll_interval_ms="${13}"
   local summary_path
   summary_path="$(android_tun_packet_probe_summary_path)"
   python3 - \
@@ -526,6 +534,10 @@ write_android_tun_packet_probe_summary() {
     "$current_dropped" \
     "$ping_path" \
     "$ping_status" \
+    "$first_observed_ms" \
+    "$elapsed_ms" \
+    "$polls" \
+    "$poll_interval_ms" \
     "$(android_runtime_state_path)" \
     "$(android_ping_probe_summary_path)" <<'PY'
 import json
@@ -544,6 +556,10 @@ import sys
     current_dropped,
     ping_path,
     ping_status,
+    first_observed_ms,
+    elapsed_ms,
+    polls,
+    poll_interval_ms,
     runtime_state_path,
     ping_summary_path,
 ) = sys.argv[1:]
@@ -563,6 +579,10 @@ baseline_dropped = number(baseline_dropped)
 current_dropped = number(current_dropped)
 ping_status = number(ping_status)
 ping_timeout_secs = number(ping_timeout_secs)
+first_observed_ms = number(first_observed_ms)
+elapsed_ms = number(elapsed_ms)
+polls = number(polls)
+poll_interval_ms = number(poll_interval_ms)
 
 observed = None
 if baseline is not None and current is not None:
@@ -605,6 +625,10 @@ summary = {
     "baselineDropped": baseline_dropped,
     "finalDropped": current_dropped,
     "droppedDelta": dropped_delta,
+    "firstObservedMs": first_observed_ms,
+    "elapsedMs": elapsed_ms,
+    "polls": polls,
+    "pollIntervalMs": poll_interval_ms,
     "readIncreased": observed is not None
     and required_increase is not None
     and observed >= required_increase,
@@ -650,20 +674,34 @@ wait_for_tun_packets_read_after() {
   local baseline_bytes="$4"
   local ping_path="$5"
   local ping_status="$6"
+  local start_ms="$7"
   local start now current current_bytes current_dropped bytes_delta summary_path last_error
+  local now_ms first_observed_ms elapsed_ms polls poll_interval_ms observed
   start="$(date +%s)"
+  first_observed_ms=""
+  polls=0
+  poll_interval_ms=1000
   last_error=""
   while true; do
+    polls=$((polls + 1))
     if copy_android_runtime_state; then
       if last_error="$(validate_android_runtime_state 2>&1)"; then
         current="$(android_runtime_state_number tunPacketsRead 2>/dev/null || true)"
         current_bytes="$(android_runtime_state_number tunBytesRead 2>/dev/null || true)"
         current_dropped="$(android_runtime_state_number tunPacketsDropped 2>/dev/null || true)"
+        now_ms="$(epoch_ms)"
+        if [[ "$current" =~ ^[0-9]+$ ]]; then
+          observed="$((current - baseline))"
+          if (( observed > 0 )) && [[ -z "$first_observed_ms" ]]; then
+            first_observed_ms="$((now_ms - start_ms))"
+          fi
+        fi
         if [[ "$current_dropped" =~ ^[0-9]+$ ]] && (( current_dropped > baseline_dropped )); then
           echo "tunPacketsDropped increased during probe (baseline=$baseline_dropped current=$current_dropped)" >&2
           return 1
         fi
         if [[ "$current" =~ ^[0-9]+$ ]] && (( current >= baseline + required_increase )); then
+          elapsed_ms="$((now_ms - start_ms))"
           bytes_delta="unknown"
           if [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
             bytes_delta="$((current_bytes - baseline_bytes))"
@@ -678,9 +716,13 @@ wait_for_tun_packets_read_after() {
               "$baseline_dropped" \
               "$current_dropped" \
               "$ping_path" \
-              "$ping_status"
+              "$ping_status" \
+              "${first_observed_ms:-$elapsed_ms}" \
+              "$elapsed_ms" \
+              "$polls" \
+              "$poll_interval_ms"
           )"
-          echo "Android TUN packet probe passed: tunPacketsRead $baseline->$current observed=$((current - baseline))/$required_increase tunBytesReadDelta=$bytes_delta tunPacketsDropped=$baseline_dropped->$current_dropped target=$TUN_PACKET_PROBE_TARGET summary=$summary_path"
+          echo "Android TUN packet probe passed: tunPacketsRead $baseline->$current observed=$((current - baseline))/$required_increase tunBytesReadDelta=$bytes_delta tunPacketsDropped=$baseline_dropped->$current_dropped firstObservedMs=${first_observed_ms:-$elapsed_ms} elapsedMs=$elapsed_ms polls=$polls target=$TUN_PACKET_PROBE_TARGET summary=$summary_path"
           return 0
         fi
         last_error="tunPacketsRead did not increase enough after probe (baseline=$baseline current=${current:-missing} required=$required_increase tunPacketsDropped=${current_dropped:-missing})"
@@ -699,7 +741,7 @@ wait_for_tun_packets_read_after() {
 
 run_android_tun_packet_probe() {
   truthy "$TUN_PACKET_PROBE" || return 0
-  local baseline baseline_bytes baseline_dropped count remote_cmd ping_path ping_status
+  local baseline baseline_bytes baseline_dropped count remote_cmd ping_path ping_status probe_start_ms
   local _baseline_written _baseline_written_bytes
   IFS=$'\t' read -r baseline baseline_bytes _baseline_written _baseline_written_bytes baseline_dropped \
     <<<"$(android_runtime_state_counters 2>/dev/null || printf '0\t0\t0\t0\t0')"
@@ -712,13 +754,14 @@ run_android_tun_packet_probe() {
   ping_path="$(android_ping_probe_path)"
   mkdir -p "$RUNTIME_STATE_RESULT_DIR"
   remote_cmd="ping -c $count -W $TUN_PACKET_PROBE_TIMEOUT_SECS $TUN_PACKET_PROBE_TARGET"
+  probe_start_ms="$(epoch_ms)"
   if "$ADB" -s "$serial" shell "$remote_cmd" >"$ping_path" 2>&1; then
     ping_status=0
   else
     ping_status=$?
   fi
   summarize_android_ping_probe "$ping_path" "$ping_status"
-  if ! wait_for_tun_packets_read_after "$baseline" "$count" "$baseline_dropped" "$baseline_bytes" "$ping_path" "$ping_status"; then
+  if ! wait_for_tun_packets_read_after "$baseline" "$count" "$baseline_dropped" "$baseline_bytes" "$ping_path" "$ping_status" "$probe_start_ms"; then
     return 1
   fi
   capture_android_vpn_link_stats "after-probe"
