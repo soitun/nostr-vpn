@@ -409,12 +409,19 @@ final class AppModel: ObservableObject {
 
         writeDebugProbeResult(result, name: resultName)
         let startError = await startVpnForDebugProbe()
+        result["vpnStartFinishedAt"] = ISO8601DateFormatter().string(from: Date())
         if let error = startError {
             result["startError"] = error
+            result["phase"] = "start_failed"
+            writeDebugProbeResult(result, name: resultName)
         } else if waitSeconds > 0 {
+            result["phase"] = "waiting_for_tunnel"
+            writeDebugProbeResult(result, name: resultName)
             try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
         }
         refresh()
+        result["phase"] = "collecting_status"
+        writeDebugProbeResult(result, name: resultName)
         result["phase"] = "finished"
         if let status = await vpnController.statusRawValue() {
             result["packetTunnelStatusRawValue"] = status
