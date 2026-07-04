@@ -236,7 +236,7 @@ impl NativeAppRuntime {
             own_pubkey_hex: if config_unavailable {
                 String::new()
             } else {
-                own_pubkey_hex.clone()
+                own_pubkey_hex
             },
             node_id: if config_unavailable {
                 String::new()

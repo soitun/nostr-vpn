@@ -259,7 +259,7 @@ impl AppConfig {
                 .self_magic_dns_label()
                 .is_some_and(|alias| query == alias.as_str())
             {
-                return Some(own_pubkey_hex.clone());
+                return Some(own_pubkey_hex);
             }
 
             if self

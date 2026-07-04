@@ -766,7 +766,7 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
         mut cache: Option<&mut FipsEndpointAdmissionCache>,
     ) -> Option<&'a FipsMeshPeerRuntime> {
         let packet_source = packet_source(data)?;
-        let source_allowed = match cache.as_deref_mut() {
+        let source_allowed = match cache.as_mut() {
             Some(cache) => match cache.source {
                 Some((source, allowed)) if source == packet_source => allowed,
                 _ => {
@@ -782,7 +782,7 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
         }
 
         let packet_destination = packet_destination(data)?;
-        let destination_allowed = match cache.as_deref_mut() {
+        let destination_allowed = match cache.as_mut() {
             Some(cache) => match cache.destination {
                 Some((destination, allowed)) if destination == packet_destination => allowed,
                 _ => {

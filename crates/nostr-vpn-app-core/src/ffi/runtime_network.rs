@@ -247,7 +247,7 @@ impl NativeAppRuntime {
             fips_direct_probe_expires_at_ms: daemon_peer
                 .and_then(|peer| peer.direct_probe_expires_at_ms)
                 .unwrap_or(0),
-            state: peer_state.clone(),
+            state: peer_state,
             mesh_state,
             status_text,
             last_fips_control_seen_text: Self::peer_last_fips_control_seen_text(
