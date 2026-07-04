@@ -170,7 +170,20 @@ select_serial() {
 vpn_service_running() {
   local services
   services="$("$ADB" -s "$serial" shell dumpsys activity services "$PACKAGE_NAME" 2>/dev/null | tr -d '\r')" || return 1
-  grep -q 'NostrVpnService' <<<"$services"
+  awk '
+    /ServiceRecord\{.*NostrVpnService/ {
+      in_service = 1
+      next
+    }
+    in_service && /^[[:space:]]*\* ServiceRecord/ {
+      in_service = 0
+    }
+    in_service && /app=/ {
+      if ($0 !~ /app=null/) found = 1
+      in_service = 0
+    }
+    END { exit found ? 0 : 1 }
+  ' <<<"$services"
 }
 
 vpn_network_active() {
