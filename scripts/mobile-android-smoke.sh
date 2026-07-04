@@ -19,6 +19,8 @@ RUNTIME_STATE_WAIT_SECS="${NVPN_ANDROID_RUNTIME_STATE_WAIT_SECS:-12}"
 RUNTIME_STATE_MAX_AGE_SECS="${NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS:-60}"
 RUNTIME_STATE_RESULT_DIR="${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-android}"
 RUNTIME_STATE_RESULT_NAME="${NVPN_ANDROID_RUNTIME_STATE_RESULT_NAME:-mobile-android-runtime-state-$$.json}"
+VPN_LINK_STATS_RESULT_NAME="mobile-android-vpn-link-stats-$$.txt"
+PING_PROBE_RESULT_NAME="mobile-android-ping-probe-$$.txt"
 TUN_PACKET_PROBE="${NVPN_ANDROID_TUN_PACKET_PROBE:-1}"
 TUN_PACKET_PROBE_TARGET="${NVPN_ANDROID_TUN_PACKET_PROBE_TARGET:-10.44.255.254}"
 TUN_PACKET_PROBE_COUNT="${NVPN_ANDROID_TUN_PACKET_PROBE_COUNT:-4}"
@@ -63,11 +65,15 @@ system VPN consent OK button if the prompt appears.
 
 When --vpn-cycle reaches Android's active VPN service/network state, this script
 also copies files/app-core/mobile-runtime-state.json from the debug app sandbox
-and requires fresh Rust runtime state with native TUN counter fields.
+and requires fresh Rust runtime state with native TUN counter fields. It also
+captures Android's own VPN interface counters from `ip -s link` under
+artifacts/mobile-android.
 
-By default --vpn-cycle also sends a small shell ping burst toward a non-local
-10.44/16 address and requires tunPacketsRead to increase by at least the burst
-size. Disable with NVPN_ANDROID_TUN_PACKET_PROBE=0 if a device image lacks ping.
+By default --vpn-cycle also sends a small shell ping probe toward a non-local
+10.44/16 address and requires tunPacketsRead to increase by at least the probe
+count. The ping output is saved under artifacts/mobile-android so physical peer
+targets preserve loss/jitter evidence. Disable with NVPN_ANDROID_TUN_PACKET_PROBE=0
+if a device image lacks ping.
 EOF
 }
 
@@ -193,6 +199,14 @@ android_runtime_state_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$RUNTIME_STATE_RESULT_NAME"
 }
 
+android_vpn_link_stats_path() {
+  printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$VPN_LINK_STATS_RESULT_NAME"
+}
+
+android_ping_probe_path() {
+  printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$PING_PROBE_RESULT_NAME"
+}
+
 copy_android_runtime_state() {
   local result_path
   result_path="$(android_runtime_state_path)"
@@ -295,6 +309,72 @@ print("\t".join(str(value) for value in values))
 PY
 }
 
+android_vpn_interface_name() {
+  local connectivity
+  connectivity="$("$ADB" -s "$serial" shell dumpsys connectivity 2>/dev/null | tr -d '\r')" || return 1
+  python3 -c '
+import re
+import sys
+
+text = sys.stdin.read()
+for block in re.split(r"(?=NetworkAgentInfo\{)", text):
+    if "ni{VPN CONNECTED" not in block:
+        continue
+    match = re.search(r"InterfaceName:\s*([^,\s}\]]+)", block)
+    if match:
+        print(match.group(1))
+        sys.exit(0)
+sys.exit(1)
+' <<<"$connectivity"
+}
+
+capture_android_vpn_link_stats() {
+  local label="$1"
+  local iface result_path
+  iface="$(android_vpn_interface_name)" || return 1
+  result_path="$(android_vpn_link_stats_path)"
+  mkdir -p "$RUNTIME_STATE_RESULT_DIR"
+  {
+    printf '## label=%s timestamp=%s iface=%s\n' \
+      "$label" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$iface"
+    "$ADB" -s "$serial" shell ip -s link show dev "$iface" | tr -d '\r'
+    printf '\n'
+  } >>"$result_path"
+  echo "Android VPN link counters captured ($label): $result_path iface=$iface"
+}
+
+summarize_android_ping_probe() {
+  local result_path="$1"
+  local exit_status="$2"
+  python3 - "$result_path" "$exit_status" "$TUN_PACKET_PROBE_TARGET" <<'PY'
+import re
+import sys
+
+path, exit_status, target = sys.argv[1], sys.argv[2], sys.argv[3]
+text = open(path, encoding="utf-8", errors="replace").read()
+loss = "unknown"
+loss_match = re.search(r"(\d+(?:\.\d+)?)%\s+packet loss", text)
+if loss_match:
+    loss = f"{loss_match.group(1)}%"
+
+avg_ms = "unknown"
+jitter_ms = "unknown"
+rtt_match = re.search(
+    r"(?:rtt|round-trip)[^=]*=\s*([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+)\s*ms",
+    text,
+)
+if rtt_match:
+    avg_ms = rtt_match.group(2)
+    jitter_ms = rtt_match.group(4)
+
+print(
+    "Android packet probe ping summary: "
+    f"target={target} exit={exit_status} loss={loss} avg_ms={avg_ms} "
+    f"jitter_ms={jitter_ms} output={path}"
+)
+PY
+}
+
 wait_for_android_runtime_state() {
   local start now last_error
   start="$(date +%s)"
@@ -359,7 +439,7 @@ wait_for_tun_packets_read_after() {
 
 run_android_tun_packet_probe() {
   truthy "$TUN_PACKET_PROBE" || return 0
-  local baseline baseline_bytes baseline_dropped count remote_cmd
+  local baseline baseline_bytes baseline_dropped count remote_cmd ping_path ping_status
   local _baseline_written _baseline_written_bytes
   IFS=$'\t' read -r baseline baseline_bytes _baseline_written _baseline_written_bytes baseline_dropped \
     <<<"$(android_runtime_state_counters 2>/dev/null || printf '0\t0\t0\t0\t0')"
@@ -369,9 +449,19 @@ run_android_tun_packet_probe() {
   count="$TUN_PACKET_PROBE_COUNT"
   [[ "$count" =~ ^[0-9]+$ ]] || count=4
   (( count > 0 )) || count=1
-  remote_cmd="i=0; while [ \$i -lt $count ]; do ping -c 1 -W $TUN_PACKET_PROBE_TIMEOUT_SECS $TUN_PACKET_PROBE_TARGET >/dev/null 2>&1 & i=\$((i + 1)); done; wait"
-  "$ADB" -s "$serial" shell "$remote_cmd" >/dev/null 2>&1 || true
-  wait_for_tun_packets_read_after "$baseline" "$count" "$baseline_dropped" "$baseline_bytes"
+  ping_path="$(android_ping_probe_path)"
+  mkdir -p "$RUNTIME_STATE_RESULT_DIR"
+  remote_cmd="ping -c $count -W $TUN_PACKET_PROBE_TIMEOUT_SECS $TUN_PACKET_PROBE_TARGET"
+  if "$ADB" -s "$serial" shell "$remote_cmd" >"$ping_path" 2>&1; then
+    ping_status=0
+  else
+    ping_status=$?
+  fi
+  summarize_android_ping_probe "$ping_path" "$ping_status"
+  if ! wait_for_tun_packets_read_after "$baseline" "$count" "$baseline_dropped" "$baseline_bytes"; then
+    return 1
+  fi
+  capture_android_vpn_link_stats "after-probe"
 }
 
 android_sdk() {
@@ -576,6 +666,11 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
   if ! wait_for_android_runtime_state; then
     dump_vpn_diagnostics
     echo "Android smoke failed: Rust mobile runtime state did not become fresh after debug connect." >&2
+    exit 1
+  fi
+  if ! capture_android_vpn_link_stats "after-connect"; then
+    dump_vpn_diagnostics
+    echo "Android smoke failed: Android VPN interface counters were not readable after debug connect." >&2
     exit 1
   fi
   if ! run_android_tun_packet_probe; then
