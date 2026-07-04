@@ -1347,7 +1347,7 @@ wait_for_direct_pair() {
       --arg reason "$wait_reason" \
       '{row:$row,attempt:($attempt|tonumber),attempts:($attempts|tonumber),reason:$reason}' \
       >"$tmpdir/wait-state.json"
-    printf 'waiting for %s direct Windows/Linux peer pair (%s/45)\n' "$row" "$attempt" >&2
+    printf 'waiting for %s direct Windows/Linux peer pair (%s/45): %s\n' "$row" "$attempt" "$wait_reason" >&2
     sleep 2
   done
   local failure_dir="$row_dir/direct-pair-timeout"
@@ -2081,6 +2081,9 @@ write_run_metadata() {
     --arg root "$ROOT_DIR" \
     --arg git_head "$(git -C "$ROOT_DIR" rev-parse HEAD)" \
     --arg rows "$ROWS" \
+    --arg windows_ssh "$WINDOWS_SSH" \
+    --arg linux_ssh "$LINUX_SSH" \
+    --arg current_windows_nvpn "$CURRENT_WINDOWS_NVPN" \
     --arg current_linux_nvpn "$CURRENT_LINUX_NVPN" \
     --arg duration_secs "$DURATION_SECS" \
     --arg min_underlay_mbps "$MIN_UNDERLAY_MBPS" \
@@ -2109,6 +2112,9 @@ write_run_metadata() {
       repo:$root,
       git_head:$git_head,
       rows:$rows,
+      windows_ssh:$windows_ssh,
+      linux_ssh:$linux_ssh,
+      current_windows_nvpn:$current_windows_nvpn,
       current_linux_nvpn:$current_linux_nvpn,
       duration_secs:($duration_secs|tonumber),
       min_underlay_mbps:($min_underlay_mbps|tonumber),
