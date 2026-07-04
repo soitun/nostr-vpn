@@ -217,10 +217,27 @@ if result.get("packetTunnelStatusRawValue") == 3:
             ):
                 if key not in runtime:
                     errors.append(f"runtime.{key} missing")
+            if result.get("tunPacketProbeReadIncreased") is not True:
+                errors.append(
+                    "tunPacketProbeReadIncreased="
+                    f"{result.get('tunPacketProbeReadIncreased')!r} "
+                    f"baseline={result.get('tunPacketProbeBaselineRead')!r} "
+                    f"final={result.get('tunPacketProbeFinalRead')!r} "
+                    f"error={result.get('tunPacketProbeError')!r} "
+                    f"sendError={result.get('tunPacketProbeSendError')!r}"
+                )
 
 if errors:
     print("iOS VPN probe failed: " + ", ".join(errors), file=sys.stderr)
     sys.exit(1)
+
+if result.get("tunPacketProbeReadIncreased") is True:
+    print(
+        "iOS TUN packet probe passed: "
+        f"tunPacketsRead {result.get('tunPacketProbeBaselineRead')}"
+        f"->{result.get('tunPacketProbeFinalRead')} "
+        f"target={result.get('tunPacketProbeTarget')}"
+    )
 PY
 }
 

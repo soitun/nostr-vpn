@@ -419,6 +419,11 @@ final class AppModel: ObservableObject {
         result["phase"] = "finished"
         if let status = await vpnController.statusRawValue() {
             result["packetTunnelStatusRawValue"] = status
+            if status == 3 {
+                for (key, value) in await runDebugTunPacketProbe() {
+                    result[key] = value
+                }
+            }
         }
         if let runtimeJson = await vpnController.runtimeStateJson() {
             result["packetTunnelRuntimeStateJson"] = String(runtimeJson.prefix(4096))
@@ -525,6 +530,107 @@ final class AppModel: ObservableObject {
             result["fetchError"] = String(describing: error)
         }
         return result
+    }
+
+    private func runDebugTunPacketProbe() async -> [String: Any] {
+        let target = "10.44.255.254"
+        let port: UInt16 = 9
+        let waitSeconds = 6.0
+        var result: [String: Any] = [
+            "tunPacketProbeTarget": target,
+            "tunPacketProbePort": Int(port),
+            "tunPacketProbeReadIncreased": false,
+        ]
+
+        guard let baseline = Self.runtimeCounter(
+            "tunPacketsRead",
+            from: await vpnController.runtimeStateJson()
+        ) else {
+            result["tunPacketProbeError"] = "baseline tunPacketsRead missing"
+            return result
+        }
+        result["tunPacketProbeBaselineRead"] = Self.jsonCounterValue(baseline)
+
+        if let sendError = Self.sendDebugUdpPacket(target: target, port: port) {
+            result["tunPacketProbeSendError"] = sendError
+        }
+
+        let deadline = Date().addingTimeInterval(waitSeconds)
+        var final = baseline
+        while Date() < deadline {
+            if let current = Self.runtimeCounter(
+                "tunPacketsRead",
+                from: await vpnController.runtimeStateJson()
+            ) {
+                final = current
+                if current > baseline {
+                    result["tunPacketProbeFinalRead"] = Self.jsonCounterValue(current)
+                    result["tunPacketProbeReadIncreased"] = true
+                    return result
+                }
+            }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
+
+        result["tunPacketProbeFinalRead"] = Self.jsonCounterValue(final)
+        return result
+    }
+
+    nonisolated private static func sendDebugUdpPacket(target: String, port: UInt16) -> String? {
+        let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+        guard fd >= 0 else {
+            return String(cString: strerror(errno))
+        }
+        defer { close(fd) }
+
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = port.bigEndian
+        guard inet_pton(AF_INET, target, &addr.sin_addr) == 1 else {
+            return "invalid IPv4 target"
+        }
+
+        let payload = [UInt8]("nvpn".utf8)
+        let sent = payload.withUnsafeBytes { bytes in
+            withUnsafePointer(to: &addr) { pointer in
+                pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockAddr in
+                    sendto(
+                        fd,
+                        bytes.baseAddress,
+                        bytes.count,
+                        0,
+                        sockAddr,
+                        socklen_t(MemoryLayout<sockaddr_in>.size)
+                    )
+                }
+            }
+        }
+        return sent < 0 ? String(cString: strerror(errno)) : nil
+    }
+
+    nonisolated private static func runtimeCounter(_ key: String, from json: String?) -> UInt64? {
+        guard let json,
+              let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let value = object[key]
+        else {
+            return nil
+        }
+        if let number = value as? NSNumber {
+            return number.uint64Value
+        }
+        if let string = value as? String {
+            return UInt64(string)
+        }
+        return nil
+    }
+
+    nonisolated private static func jsonCounterValue(_ value: UInt64) -> Any {
+        if value <= UInt64(Int.max) {
+            return Int(value)
+        }
+        return String(value)
     }
 
     private func writeDebugProbeResult(_ result: [String: Any], name: String) {
