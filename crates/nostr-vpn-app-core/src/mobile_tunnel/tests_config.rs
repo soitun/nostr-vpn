@@ -106,10 +106,10 @@
             shared_roster_signed_by: String::new(),
         }];
         let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
-        let mesh = Arc::new(RwLock::new(FipsMeshRuntime::with_local_routes(
+        let mesh = new_mobile_mesh(FipsMeshRuntime::with_local_routes(
             config.peers.clone(),
             vec![],
-        )));
+        ));
         let now = unix_timestamp();
         let presence = Arc::new(RwLock::new(HashMap::from([(
             peer.to_string(),

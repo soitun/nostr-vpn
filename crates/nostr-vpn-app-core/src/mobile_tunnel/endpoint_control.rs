@@ -59,7 +59,7 @@ fn mobile_elapsed_at_least(now: u64, timestamp: u64, interval_secs: u64) -> bool
 #[allow(clippy::too_many_arguments)]
 async fn handle_mobile_endpoint_message(
     endpoint: &FipsEndpoint,
-    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    mesh: &MobileMesh,
     mesh_peers: &Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
     peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
     peer_hints: &Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
@@ -120,7 +120,7 @@ async fn handle_mobile_endpoint_message(
 #[allow(clippy::too_many_arguments)]
 async fn handle_mobile_control_frame(
     endpoint: &FipsEndpoint,
-    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    mesh: &MobileMesh,
     mesh_peers: &Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
     peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
     peer_hints: &Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
@@ -212,7 +212,7 @@ async fn handle_mobile_control_frame(
 #[allow(clippy::too_many_arguments)]
 async fn apply_mobile_roster_frame(
     endpoint: &FipsEndpoint,
-    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    mesh: &MobileMesh,
     mesh_peers: &Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
     peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
     peer_hints: &Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
@@ -232,12 +232,10 @@ async fn apply_mobile_roster_frame(
     let updated_peers = updated.peers.clone();
     let updated_peer_identities = mobile_peer_identity_map(&updated_peers);
     let updated_hints = updated.peer_hints.clone();
-    {
-        let mut mesh = mesh
-            .write()
-            .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))?;
-        *mesh = FipsMeshRuntime::with_local_routes(updated_peers.clone(), local_routes);
-    }
+    replace_mobile_mesh(
+        mesh,
+        FipsMeshRuntime::with_local_routes(updated_peers.clone(), local_routes),
+    )?;
     {
         let mut peers = mesh_peers
             .write()
@@ -285,13 +283,11 @@ async fn reply_mobile_ping(
 }
 
 fn mobile_control_source_pubkey(
-    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    mesh: &MobileMesh,
     source_peer: PeerIdentity,
     frame: &FipsControlFrame,
 ) -> Result<Option<String>> {
-    let mesh = mesh
-        .read()
-        .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))?;
+    let mesh = mobile_mesh_snapshot(mesh)?;
     Ok(control_frame_source_pubkey(&mesh, source_peer, frame))
 }
 
@@ -488,7 +484,7 @@ impl MobileEndpointSendRun {
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_mobile_outbound_packets(
     endpoint: &FipsEndpoint,
-    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    mesh: &MobileMesh,
     peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
     wg_send_tx: Option<&tokio_mpsc::Sender<Vec<Vec<u8>>>>,
     wg_addr: Option<Ipv4Addr>,
@@ -502,6 +498,7 @@ async fn dispatch_mobile_outbound_packets(
     let mut pending_run = None;
     let mut pending_dns_responses = Vec::new();
     let mut pending_wg_packets = Vec::new();
+    let mesh = mesh.read().ok().map(|mesh| Arc::clone(&*mesh));
     for packet in packets {
         // Local MagicDNS responder. The well-known DNS address is owned by this
         // tunnel instance, so answer before mesh/WG routing and never treat it
@@ -530,7 +527,7 @@ async fn dispatch_mobile_outbound_packets(
             return false;
         }
 
-        let outgoing_peer = mesh.read().ok().and_then(|mesh| {
+        let outgoing_peer = mesh.as_ref().and_then(|mesh| {
             mesh.route_outbound_packet_peer(&packet).map(|peer| {
                 (
                     peer.participant_pubkey_bytes

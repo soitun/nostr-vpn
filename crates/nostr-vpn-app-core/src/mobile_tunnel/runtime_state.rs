@@ -122,7 +122,7 @@ fn mobile_runtime_state_path(config_path: &Path) -> Option<PathBuf> {
 async fn persist_mobile_runtime_state(
     path: &Path,
     endpoint: &FipsEndpoint,
-    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    mesh: &MobileMesh,
     presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: &Arc<RwLock<MobileTunnelConfig>>,
     tun_counters: &MobileTunAtomicCounters,
@@ -140,9 +140,7 @@ async fn persist_mobile_runtime_state(
         .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
         .clone();
     let state = {
-        let mesh = mesh
-            .read()
-            .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))?;
+        let mesh = mobile_mesh_snapshot(mesh)?;
         let presence = presence
             .read()
             .map_err(|_| anyhow!("mobile FIPS presence lock poisoned"))?;
@@ -391,16 +389,14 @@ fn mobile_peer_ping_due(
 
 async fn mobile_ping_peers(
     endpoint: &FipsEndpoint,
-    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    mesh: &MobileMesh,
     peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
     presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     network_id: &str,
 ) -> Result<usize> {
     let now = unix_timestamp();
     let peers = {
-        let mesh = mesh
-            .read()
-            .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))?;
+        let mesh = mobile_mesh_snapshot(mesh)?;
         mesh.peer_pubkeys()
     };
     let participants = {
@@ -642,7 +638,7 @@ struct MobileRosterSentState {
 
 async fn sync_mobile_signed_roster_with_connected_peers(
     endpoint: &FipsEndpoint,
-    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    mesh: &MobileMesh,
     peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
     presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     app_config: &Arc<RwLock<AppConfig>>,
@@ -728,14 +724,11 @@ fn mobile_current_signed_roster_from_store(
 }
 
 fn mobile_connected_roster_peers(
-    mesh: &Arc<RwLock<FipsMeshRuntime>>,
+    mesh: &MobileMesh,
     presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
 ) -> Result<HashSet<String>> {
     let now = unix_timestamp();
-    let peers = mesh
-        .read()
-        .map_err(|_| anyhow!("mobile FIPS mesh lock poisoned"))?
-        .peer_pubkeys();
+    let peers = mobile_mesh_snapshot(mesh)?.peer_pubkeys();
     let presence = presence
         .read()
         .map_err(|_| anyhow!("mobile FIPS presence lock poisoned"))?;

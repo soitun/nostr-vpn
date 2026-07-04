@@ -467,10 +467,29 @@ pub(crate) fn tunnel_provider_options_config_json(data_dir: &str) -> String {
     })
 }
 
+type MobileMesh = Arc<RwLock<Arc<FipsMeshRuntime>>>;
+
+fn new_mobile_mesh(runtime: FipsMeshRuntime) -> MobileMesh {
+    Arc::new(RwLock::new(Arc::new(runtime)))
+}
+
+fn mobile_mesh_snapshot(mesh: &MobileMesh) -> Result<Arc<FipsMeshRuntime>> {
+    mesh.read()
+        .map(|mesh| Arc::clone(&*mesh))
+        .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))
+}
+
+fn replace_mobile_mesh(mesh: &MobileMesh, runtime: FipsMeshRuntime) -> Result<()> {
+    *mesh
+        .write()
+        .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))? = Arc::new(runtime);
+    Ok(())
+}
+
 pub(crate) struct MobileTunnel {
     runtime: Runtime,
     endpoint: Option<Arc<FipsEndpoint>>,
-    mesh: Arc<RwLock<FipsMeshRuntime>>,
+    mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: Arc<RwLock<MobileTunnelConfig>>,
     app_config: Arc<RwLock<AppConfig>>,

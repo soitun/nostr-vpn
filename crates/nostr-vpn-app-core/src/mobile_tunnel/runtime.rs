@@ -78,10 +78,10 @@ impl MobileTunnel {
         mobile_debug_log("MobileTunnel::start_async FIPS endpoint bound");
         let endpoint = Arc::new(endpoint);
         let local_routes = vec![config.local_address.clone()];
-        let mesh = Arc::new(RwLock::new(FipsMeshRuntime::with_local_routes(
+        let mesh = new_mobile_mesh(FipsMeshRuntime::with_local_routes(
             initial_peers.clone(),
             local_routes,
-        )));
+        ));
         let peer_identities = Arc::new(RwLock::new(mobile_peer_identity_map(&initial_peers)));
         let mesh_peers = Arc::new(RwLock::new(initial_peers));
         let peer_hints = Arc::new(RwLock::new(config.peer_hints.clone()));
@@ -507,9 +507,7 @@ impl MobileTunnel {
                 .await
                 .context("mobile FIPS relay snapshot")?;
             let state = {
-                let mesh = mesh
-                    .read()
-                    .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))?;
+                let mesh = mobile_mesh_snapshot(&mesh)?;
                 let presence = presence
                     .read()
                     .map_err(|_| anyhow!("mobile FIPS presence lock poisoned"))?;
@@ -577,7 +575,7 @@ async fn push_mobile_wg_inbound_batch(
 
 struct MobileTunnelStarted {
     endpoint: Arc<FipsEndpoint>,
-    mesh: Arc<RwLock<FipsMeshRuntime>>,
+    mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: Arc<RwLock<MobileTunnelConfig>>,
     app_config: Arc<RwLock<AppConfig>>,

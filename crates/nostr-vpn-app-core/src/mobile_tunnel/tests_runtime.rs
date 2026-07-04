@@ -393,10 +393,10 @@
     ) -> (Arc<RwLock<AppConfig>>, AtomicBool) {
         let admin_app_config = Arc::new(RwLock::new(admin_app));
         let app_config_dirty = AtomicBool::new(false);
-        let mesh = Arc::new(RwLock::new(FipsMeshRuntime::with_local_routes(
+        let mesh = new_mobile_mesh(FipsMeshRuntime::with_local_routes(
             Vec::new(),
             vec![admin_mobile.local_address.clone()],
-        )));
+        ));
         let mesh_peers = Arc::new(RwLock::new(Vec::new()));
         let peer_identities = Arc::new(RwLock::new(MobilePeerIdentityMap::default()));
         let peer_hints = Arc::new(RwLock::new(HashMap::new()));
