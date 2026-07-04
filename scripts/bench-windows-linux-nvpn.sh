@@ -53,6 +53,7 @@ MESH_MTU_PROFILE="${NVPN_WINLIN_MESH_MTU_PROFILE:-}"
 MESH_UNDERLAY_UDP_MTU="${NVPN_WINLIN_MESH_UNDERLAY_UDP_MTU:-}"
 MESH_TUNNEL_MTU="${NVPN_WINLIN_MESH_TUNNEL_MTU:-}"
 STATIC_DIRECT_HINTS="${NVPN_WINLIN_STATIC_DIRECT_HINTS:-0}"
+STATIC_DIRECT_ONLY="${NVPN_WINLIN_STATIC_DIRECT_ONLY:-0}"
 
 if [[ -z "$CURRENT_FIPS_REPO" && -d "$ROOT_DIR/../fips/.git" ]]; then
   CURRENT_FIPS_REPO="$(cd "$ROOT_DIR/../fips" && pwd)"
@@ -162,6 +163,7 @@ Important options:
   NVPN_WINLIN_RESTORE_INSTALLED=1         restore installed Windows service image at exit
   NVPN_WINLIN_RESTORE_LINUX_INSTALLED=1   restore Linux /usr/local/bin/nvpn from backup at exit
   NVPN_WINLIN_STATIC_DIRECT_HINTS=1       temporarily seed reciprocal Windows/Linux FIPS endpoint hints
+  NVPN_WINLIN_STATIC_DIRECT_ONLY=1        with static hints, temporarily disable Nostr/bootstrap discovery
   NVPN_WINLIN_DIRECT_FIPS_CAPTURE=1       capture Linux UDP/51820 during nvpn rows
   NVPN_WINLIN_LINUX_CAPTURE_IFACE=enp1s0  optional capture interface override
   NVPN_WINLIN_WINDOWS_PIPELINE_TRACE=1    enable nvpn pipeline trace on the measured Windows service
@@ -853,18 +855,22 @@ apply_static_direct_hints() {
   local windows_hint linux_hint
   windows_hint="${linux_peer}=${linux_underlay}:51820"
   linux_hint="${windows_peer}=${windows_underlay}:51820"
-  printf 'seeding static direct FIPS hints: Windows config peer=%s endpoint=%s; Linux config peer=%s endpoint=%s\n' \
-    "$linux_peer" "${linux_underlay}:51820" "$windows_peer" "${windows_underlay}:51820" >&2
+  printf 'seeding static direct FIPS hints: Windows config peer=%s endpoint=%s; Linux config peer=%s endpoint=%s; static_only=%s\n' \
+    "$linux_peer" "${linux_underlay}:51820" "$windows_peer" "${windows_underlay}:51820" "$(is_true "$STATIC_DIRECT_ONLY" && printf true || printf false)" >&2
 
   run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
 \$ErrorActionPreference = 'Stop'
 \$nvpn = $(ps_sq "$WINDOWS_INSTALLED_NVPN")
 \$config = $(ps_sq "$WINDOWS_CONFIG")
 \$hint = $(ps_sq "$windows_hint")
+\$staticOnly = $(ps_sq "$(is_true "$STATIC_DIRECT_ONLY" && printf true || printf false)")
 \$clean = [string]\$nvpn
 if (\$clean.StartsWith('\\\\?\\')) { \$clean = \$clean.Substring(4) }
 if (!(Test-Path -LiteralPath \$clean)) { throw \"nvpn.exe not found for static direct hints: \$clean\" }
 \$argv = @('set', '--config', \$config, '--fips-peer-endpoint', \$hint)
+if (\$staticOnly -eq 'true') {
+  \$argv += @('--fips-nostr-discovery-enabled', 'false', '--fips-bootstrap-enabled', 'false')
+}
 & \$clean @argv | Out-Null
 if (\$LASTEXITCODE -ne 0) { throw \"nvpn set failed while seeding Windows static direct hints\" }"
 
@@ -872,7 +878,11 @@ if (\$LASTEXITCODE -ne 0) { throw \"nvpn set failed while seeding Windows static
 nvpn=$(sh_q "$LINUX_INSTALLED_NVPN")
 config=$(sh_q "$LINUX_CONFIG")
 hint=$(sh_q "$linux_hint")
-\"\$nvpn\" set --config \"\$config\" --fips-peer-endpoint \"\$hint\" >/dev/null"
+if [[ $(sh_q "$(is_true "$STATIC_DIRECT_ONLY" && printf true || printf false)") == true ]]; then
+  \"\$nvpn\" set --config \"\$config\" --fips-peer-endpoint \"\$hint\" --fips-nostr-discovery-enabled false --fips-bootstrap-enabled false >/dev/null
+else
+  \"\$nvpn\" set --config \"\$config\" --fips-peer-endpoint \"\$hint\" >/dev/null
+fi"
 
   jq -n \
     --arg applied_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -886,6 +896,7 @@ hint=$(sh_q "$linux_hint")
     --arg linux_peer "$linux_peer" \
     --arg windows_hint "$windows_hint" \
     --arg linux_hint "$linux_hint" \
+    --arg static_direct_only "$(is_true "$STATIC_DIRECT_ONLY" && printf true || printf false)" \
     '{
       applied_at:$applied_at,
       windows_config:$windows_config,
@@ -897,7 +908,8 @@ hint=$(sh_q "$linux_hint")
       windows_peer:$windows_peer,
       linux_peer:$linux_peer,
       windows_config_hint:$windows_hint,
-      linux_config_hint:$linux_hint
+      linux_config_hint:$linux_hint,
+      static_direct_only:($static_direct_only == "true")
     }' >"$OUTPUT_DIR/static-direct-hints.json"
   rm -rf "$tmpdir"
 }
@@ -1253,6 +1265,9 @@ validate_service_env() {
   fi
   if [[ -n "$MESH_TUNNEL_MTU" && ! "$MESH_TUNNEL_MTU" =~ ^[0-9]+$ ]]; then
     die "NVPN_WINLIN_MESH_TUNNEL_MTU must be numeric"
+  fi
+  if is_true "$STATIC_DIRECT_ONLY" && ! is_true "$STATIC_DIRECT_HINTS"; then
+    die "NVPN_WINLIN_STATIC_DIRECT_ONLY requires NVPN_WINLIN_STATIC_DIRECT_HINTS=1"
   fi
 }
 
@@ -2280,6 +2295,7 @@ write_run_metadata() {
     --arg linux_installed_expected_hash "$LINUX_INSTALLED_EXPECTED_HASH" \
     --arg allow_current_linux_as_installed "$(is_true "$ALLOW_CURRENT_LINUX_AS_INSTALLED" && printf true || printf false)" \
     --arg static_direct_hints "$(is_true "$STATIC_DIRECT_HINTS" && printf true || printf false)" \
+    --arg static_direct_only "$(is_true "$STATIC_DIRECT_ONLY" && printf true || printf false)" \
     --arg windows_ssh_proxy_command "$([[ -n "$WINDOWS_SSH_PROXY_COMMAND" ]] && printf true || printf false)" \
     --arg linux_ssh_proxy_command "$([[ -n "$LINUX_SSH_PROXY_COMMAND" ]] && printf true || printf false)" \
     --arg windows_ssh_jump "$([[ -n "$WINDOWS_SSH_JUMP" ]] && printf true || printf false)" \
@@ -2318,6 +2334,7 @@ write_run_metadata() {
       linux_installed_expected_hash:$linux_installed_expected_hash,
       allow_current_linux_as_installed:($allow_current_linux_as_installed == "true"),
       static_direct_hints:($static_direct_hints == "true"),
+      static_direct_only:($static_direct_only == "true"),
       windows_ssh_proxy_command:($windows_ssh_proxy_command == "true"),
       linux_ssh_proxy_command:($linux_ssh_proxy_command == "true"),
       windows_ssh_jump:($windows_ssh_jump == "true"),
