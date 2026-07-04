@@ -416,19 +416,20 @@ fn normalize_mobile_endpoint_npub(value: &str) -> String {
 struct MobileEndpointSendRun {
     participant_fallback: Option<String>,
     participant_key: Option<MobileParticipantPubkeyBytes>,
+    endpoint_node_addr: [u8; 16],
     identity: PeerIdentity,
     payloads: Vec<Vec<u8>>,
 }
 
 fn mobile_endpoint_send_run_matches(
-    current_identity: PeerIdentity,
     current_participant_key: Option<MobileParticipantPubkeyBytes>,
     current_participant_fallback: Option<&str>,
-    identity: PeerIdentity,
+    current_endpoint_node_addr: &[u8; 16],
     participant_key: Option<MobileParticipantPubkeyBytes>,
     participant_fallback: Option<&str>,
+    endpoint_node_addr: &[u8; 16],
 ) -> bool {
-    if current_identity != identity {
+    if current_endpoint_node_addr != endpoint_node_addr {
         return false;
     }
     match (current_participant_key, participant_key) {
@@ -541,6 +542,20 @@ fn push_mobile_endpoint_send_run(
     endpoint_node_addr: [u8; 16],
     packet: Vec<u8>,
 ) -> Option<MobileEndpointSendRun> {
+    if let Some(current) = run.as_mut()
+        && mobile_endpoint_send_run_matches(
+            current.participant_key,
+            current.participant_fallback.as_deref(),
+            &current.endpoint_node_addr,
+            participant_key,
+            participant_fallback.as_deref(),
+            &endpoint_node_addr,
+        )
+    {
+        current.payloads.push(packet);
+        return None;
+    }
+
     let identity = peer_identities.read().ok().and_then(|identities| {
         mobile_identity_for_send(&identities, participant_key.as_ref(), &endpoint_node_addr)
     });
@@ -548,24 +563,11 @@ fn push_mobile_endpoint_send_run(
         return run.take();
     };
 
-    if let Some(current) = run.as_mut()
-        && mobile_endpoint_send_run_matches(
-            current.identity,
-            current.participant_key,
-            current.participant_fallback.as_deref(),
-            identity,
-            participant_key,
-            participant_fallback.as_deref(),
-        )
-    {
-        current.payloads.push(packet);
-        return None;
-    }
-
     let previous = run.take();
     *run = Some(MobileEndpointSendRun {
         participant_fallback,
         participant_key,
+        endpoint_node_addr,
         identity,
         payloads: vec![packet],
     });
