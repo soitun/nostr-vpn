@@ -28,6 +28,13 @@ assert_contains() {
   [[ "$haystack" == *"$needle"* ]] || fail "$label: missing '$needle' in '$haystack'"
 }
 
+assert_not_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local label="$3"
+  [[ "$haystack" != *"$needle"* ]] || fail "$label: unexpectedly contained '$needle' in '$haystack'"
+}
+
 assert_fails() {
   local label="$1"
   shift
@@ -74,19 +81,34 @@ JSON
 test_backend_start_command() {
   local cmd
 
-  WG_THREADS=1
+  BACKEND=boringtun
+  WG_THREADS=
   cmd="$(backend_start_command boringtun /usr/local/bin/boringtun-cli wgbench0 /tmp/tun /tmp/log /tmp/pid)"
   assert_contains "$cmd" "WG_TUN_NAME_FILE=/tmp/tun" "boringtun tun-name env"
-  assert_contains "$cmd" "WG_THREADS=1" "boringtun threads env"
+  assert_not_contains "$cmd" "WG_THREADS=" "boringtun default leaves threads unset"
   assert_contains "$cmd" "--disable-drop-privileges" "boringtun drop-privileges flag"
   assert_contains "$cmd" "/usr/local/bin/boringtun-cli" "boringtun binary"
   assert_contains "$cmd" "wgbench0" "boringtun interface"
 
+  WG_THREADS=4
+  cmd="$(backend_start_command boringtun /usr/local/bin/boringtun-cli wgbench0 /tmp/tun /tmp/log /tmp/pid)"
+  assert_contains "$cmd" "WG_THREADS=4" "boringtun explicit threads env"
+  assert_eq "$(backend_threads_arg)" "4" "boringtun explicit threads summary"
+
+  WG_THREADS=default
+  cmd="$(backend_start_command boringtun /usr/local/bin/boringtun-cli wgbench0 /tmp/tun /tmp/log /tmp/pid)"
+  assert_not_contains "$cmd" "WG_THREADS=" "boringtun default label leaves threads unset"
+  assert_eq "$(backend_threads_arg)" "" "boringtun default threads summary"
+
+  WG_THREADS=4
+  BACKEND=wireguard-go
   cmd="$(backend_start_command wireguard-go /usr/local/bin/wireguard-go utun /tmp/tun /tmp/log /tmp/pid)"
   assert_contains "$cmd" "WG_TUN_NAME_FILE=/tmp/tun" "wireguard-go tun-name env"
+  assert_not_contains "$cmd" "WG_THREADS=" "wireguard-go leaves threads unset"
   assert_contains "$cmd" "--foreground" "wireguard-go foreground flag"
   assert_contains "$cmd" "/usr/local/bin/wireguard-go" "wireguard-go binary"
   assert_contains "$cmd" "utun" "wireguard-go interface"
+  assert_eq "$(backend_threads_arg)" "" "wireguard-go threads summary"
 }
 
 test_ping_parser() {
@@ -123,13 +145,25 @@ test_iperf_parser() {
 
 test_validate_backend() {
   BACKEND=boringtun
+  WG_THREADS=
+  validate_backend
+  WG_THREADS=default
+  validate_backend
+  WG_THREADS=8
   validate_backend
   BACKEND=wireguard-go
+  WG_THREADS=
   validate_backend
 
   assert_fails \
     "invalid backend" \
     bash -c 'source "$1"; BACKEND=bad-backend; validate_backend' \
+    bash "$ROOT_DIR/scripts/bench-userspace-wg-host-pair.sh"
+
+  assert_fails_with \
+    "invalid WG thread count" \
+    "invalid NVPN_WG_HOST_PAIR_THREADS=bad" \
+    bash -c 'source "$1"; BACKEND=boringtun; WG_THREADS=bad; validate_backend' \
     bash "$ROOT_DIR/scripts/bench-userspace-wg-host-pair.sh"
 }
 
@@ -175,7 +209,7 @@ test_cpu_stress_summary_and_metadata_shape() {
 
   OUTPUT_DIR="$dir"
   SUMMARY="$dir/summary.tsv"
-  BACKEND=wireguard-go
+  BACKEND=boringtun
   WG_THREADS=2
   CPU_STRESS=1
   CPU_STRESS_SIDES=both
@@ -197,7 +231,7 @@ test_cpu_stress_summary_and_metadata_shape() {
 
   row="$(tail -n1 "$SUMMARY")"
   IFS=$'\t' read -r -a columns <<<"$row"
-  assert_eq "${columns[0]}" "wireguard-go" "summary backend"
+  assert_eq "${columns[0]}" "boringtun" "summary backend"
   assert_eq "${columns[1]}" "2" "summary backend threads"
   assert_eq "${columns[2]}" "true" "summary CPU stress enabled"
   assert_eq "${columns[3]}" "both" "summary CPU stress sides"
@@ -216,6 +250,8 @@ test_cpu_stress_summary_and_metadata_shape() {
   assert_eq "$got" "3" "metadata remote CPU stress workers"
   got="$(jq -r '.summary' "$dir/metadata.json")"
   assert_eq "$got" "$SUMMARY" "metadata summary path"
+  got="$(jq -r '.threads' "$dir/metadata.json")"
+  assert_eq "$got" "2" "metadata explicit backend threads"
 
   rm -rf "$dir"
 }
@@ -392,10 +428,10 @@ EOF
   export HELPER_LOG="$log"
   export HELPER_STATE="$state"
   LOCAL_PRIV_HELPER="$helper"
-  BACKEND=wireguard-go
-  LOCAL_BACKEND_BIN=wireguard-go
+  BACKEND=boringtun
+  LOCAL_BACKEND_BIN=boringtun-cli
   LOCAL_IFACE_REQUEST=utun
-  WG_THREADS=1
+  WG_THREADS=
   OUTPUT_DIR="$dir/out"
 
   local_backend_helper_available || fail "fake backend helper was not detected"
@@ -411,9 +447,9 @@ EOF
 
   unset -f sudo
 
-  grep -Fq 'check-backend wireguard-go wireguard-go' "$log" \
+  grep -Fq 'check-backend boringtun boringtun-cli' "$log" \
     || fail "helper check-backend command not recorded"
-  grep -Fq 'start-backend wireguard-go wireguard-go utun 1' "$log" \
+  grep -Eq '^start-backend boringtun boringtun-cli utun ?$' "$log" \
     || fail "helper start-backend command not recorded"
   grep -Fq "stop-backend $state" "$log" \
     || fail "helper stop-backend command not recorded"

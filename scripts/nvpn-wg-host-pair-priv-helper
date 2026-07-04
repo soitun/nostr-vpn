@@ -162,6 +162,11 @@ valid_threads() {
   }
 }
 
+valid_threads_or_default() {
+  local threads="$1"
+  [[ -z "$threads" || "$threads" == "default" ]] || valid_threads "$threads"
+}
+
 valid_mtu() {
   local mtu="$1"
   is_uint "$mtu" && (( mtu >= 576 && mtu <= 9000 )) || {
@@ -328,7 +333,7 @@ start_backend() {
   backend_bin="$(trusted_backend_path "$backend" "$requested_bin")"
   nohup_bin="$(trusted_cmd_path nohup)"
   valid_iface_request "$iface" || fail "bad interface request"
-  valid_threads "$threads" || fail "bad thread count"
+  valid_threads_or_default "$threads" || fail "bad thread count"
 
   state_root="$(ensure_backend_state_root)"
   state_dir="$(mktemp -d "$state_root/backend.XXXXXX")"
@@ -342,9 +347,15 @@ start_backend() {
 
   case "$backend" in
     boringtun)
-      WG_TUN_NAME_FILE="$tun_name_file" WG_THREADS="$threads" \
-        "$nohup_bin" "$backend_bin" --foreground --disable-drop-privileges "$iface" \
-        >"$log_file" 2>&1 &
+      if [[ -n "$threads" && "$threads" != "default" ]]; then
+        WG_TUN_NAME_FILE="$tun_name_file" WG_THREADS="$threads" \
+          "$nohup_bin" "$backend_bin" --foreground --disable-drop-privileges "$iface" \
+          >"$log_file" 2>&1 &
+      else
+        WG_TUN_NAME_FILE="$tun_name_file" \
+          "$nohup_bin" "$backend_bin" --foreground --disable-drop-privileges "$iface" \
+          >"$log_file" 2>&1 &
+      fi
       ;;
     wireguard-go)
       WG_TUN_NAME_FILE="$tun_name_file" \
@@ -487,6 +498,8 @@ self_test() {
   ! valid_mtu 99 >/dev/null 2>&1
   valid_threads 1
   ! valid_threads 0 >/dev/null 2>&1
+  valid_threads_or_default ""
+  valid_threads_or_default default
   valid_port 51871
   ! valid_port 70000 >/dev/null 2>&1
   valid_pubkey "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa="
@@ -510,6 +523,7 @@ Actions:
   check-backend BACKEND BACKEND_BIN
   start-backend BACKEND BACKEND_BIN IFACE THREADS
     Starts a trusted local userspace WG backend and prints its state dir.
+    THREADS may be empty/default to leave backend thread defaults untouched.
   stop-backend STATE_DIR
   configure-iface IFACE LOCAL_IP REMOTE_IP MTU
   wg-set IFACE LISTEN_PORT PEER_PUBKEY ALLOWED_IP_CIDR32 ENDPOINT

@@ -34,7 +34,7 @@ REMOTE_LISTEN_PORT="${NVPN_WG_HOST_PAIR_REMOTE_LISTEN_PORT:-51871}"
 LOCAL_TUNNEL_IP="${NVPN_WG_HOST_PAIR_LOCAL_TUNNEL_IP:-10.44.77.1}"
 REMOTE_TUNNEL_IP="${NVPN_WG_HOST_PAIR_REMOTE_TUNNEL_IP:-10.44.77.2}"
 WG_MTU="${NVPN_WG_HOST_PAIR_MTU:-1420}"
-WG_THREADS="${NVPN_WG_HOST_PAIR_THREADS:-1}"
+WG_THREADS="${NVPN_WG_HOST_PAIR_THREADS:-}"
 PING_COUNT="${NVPN_WG_HOST_PAIR_PING_COUNT:-100}"
 PING_INTERVAL="${NVPN_WG_HOST_PAIR_PING_INTERVAL:-0.01}"
 IPERF_DURATION="${NVPN_WG_HOST_PAIR_IPERF_DURATION_SECS:-10}"
@@ -291,6 +291,15 @@ backend_is_supported() {
 
 validate_backend() {
   backend_is_supported || die "unsupported NVPN_WG_HOST_PAIR_BACKEND=$BACKEND; expected boringtun or wireguard-go"
+  if [[ -n "$WG_THREADS" && "$WG_THREADS" != "default" && ! "$WG_THREADS" =~ ^[1-9][0-9]*$ ]]; then
+    die "invalid NVPN_WG_HOST_PAIR_THREADS=$WG_THREADS (expected positive integer or default)"
+  fi
+}
+
+backend_threads_arg() {
+  if [[ "$BACKEND" == "boringtun" && -n "$WG_THREADS" && "$WG_THREADS" != "default" ]]; then
+    printf '%s\n' "$WG_THREADS"
+  fi
 }
 
 preflight_result=0
@@ -476,8 +485,13 @@ backend_start_command() {
   local pid_path="$6"
   case "$backend" in
     boringtun)
-      printf 'nohup env WG_TUN_NAME_FILE=%q WG_THREADS=%q %q --foreground --disable-drop-privileges %q >%q 2>&1 & echo $! >%q' \
-        "$tun_name_file" "$WG_THREADS" "$bin" "$iface" "$log_path" "$pid_path"
+      if [[ -n "$WG_THREADS" && "$WG_THREADS" != "default" ]]; then
+        printf 'nohup env WG_TUN_NAME_FILE=%q WG_THREADS=%q %q --foreground --disable-drop-privileges %q >%q 2>&1 & echo $! >%q' \
+          "$tun_name_file" "$WG_THREADS" "$bin" "$iface" "$log_path" "$pid_path"
+      else
+        printf 'nohup env WG_TUN_NAME_FILE=%q %q --foreground --disable-drop-privileges %q >%q 2>&1 & echo $! >%q' \
+          "$tun_name_file" "$bin" "$iface" "$log_path" "$pid_path"
+      fi
       ;;
     wireguard-go)
       printf 'nohup env WG_TUN_NAME_FILE=%q %q --foreground %q >%q 2>&1 & echo $! >%q' \
@@ -501,7 +515,7 @@ start_local_backend() {
   LOCAL_BACKEND_ARTIFACT_TUN_NAME="$OUTPUT_DIR/local-tun-name"
 
   if local_backend_helper_available; then
-    LOCAL_BACKEND_STATE_DIR="$(run_local_priv_helper start-backend "$BACKEND" "$LOCAL_BACKEND_BIN" "$LOCAL_IFACE_REQUEST" "$WG_THREADS" | tr -d '\r')"
+    LOCAL_BACKEND_STATE_DIR="$(run_local_priv_helper start-backend "$BACKEND" "$LOCAL_BACKEND_BIN" "$LOCAL_IFACE_REQUEST" "$(backend_threads_arg)" | tr -d '\r')"
     [[ -n "$LOCAL_BACKEND_STATE_DIR" ]] || die "local privileged helper did not report a backend state directory"
     LOCAL_PID_FILE="$LOCAL_BACKEND_STATE_DIR/backend.pid"
     LOCAL_TUN_NAME_FILE="$LOCAL_BACKEND_STATE_DIR/tun-name"
@@ -719,7 +733,7 @@ start_backends() {
   remote_sh "rm -rf $(q "$REMOTE_WORK_DIR"); mkdir -p $(q "$REMOTE_WORK_DIR")"
   case "$(remote_os)" in
     Darwin)
-      REMOTE_BACKEND_STATE_DIR="$(run_remote_priv_helper start-backend "$BACKEND" "$REMOTE_BACKEND_BIN" "$REMOTE_IFACE_REQUEST" "$WG_THREADS" | tr -d '\r')"
+      REMOTE_BACKEND_STATE_DIR="$(run_remote_priv_helper start-backend "$BACKEND" "$REMOTE_BACKEND_BIN" "$REMOTE_IFACE_REQUEST" "$(backend_threads_arg)" | tr -d '\r')"
       [[ -n "$REMOTE_BACKEND_STATE_DIR" ]] || die "remote privileged helper did not report a backend state directory"
       REMOTE_PID_FILE="$REMOTE_BACKEND_STATE_DIR/backend.pid"
       REMOTE_TUN_NAME_FILE="$REMOTE_BACKEND_STATE_DIR/tun-name"
@@ -990,7 +1004,7 @@ write_summary_row() {
   local remote_cpu="${16}"
 
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "$BACKEND" "$WG_THREADS" "$(is_true "$CPU_STRESS" && printf true || printf false)" \
+    "$BACKEND" "$(backend_threads_arg)" "$(is_true "$CPU_STRESS" && printf true || printf false)" \
     "$CPU_STRESS_SIDES" "$LOCAL_CPU_STRESS_WORKERS_STARTED" "$REMOTE_CPU_STRESS_WORKERS_STARTED" \
     "$LOCAL_IFACE" "$REMOTE_IFACE" \
     "$ping_f_loss" "$ping_f_avg" "$ping_f_p95" "$ping_f_p99" "$ping_f_max" \
@@ -1003,7 +1017,7 @@ write_metadata() {
   jq -nc \
     --arg started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg backend "$BACKEND" \
-    --arg threads "$WG_THREADS" \
+    --arg threads "$(backend_threads_arg)" \
     --arg cpu_stress_enabled "$(is_true "$CPU_STRESS" && printf true || printf false)" \
     --arg cpu_stress_sides "$CPU_STRESS_SIDES" \
     --arg local_cpu_stress_workers "$LOCAL_CPU_STRESS_WORKERS_STARTED" \
@@ -1057,7 +1071,7 @@ Common optional env:
   NVPN_WG_HOST_PAIR_REMOTE_PRIV_HELPER  remote Darwin helper path (default: /opt/nvpn/bin/nvpn-wg-host-pair-priv-helper)
   NVPN_WG_HOST_PAIR_LOCAL_IFACE         default utun on macOS
   NVPN_WG_HOST_PAIR_REMOTE_IFACE        default wgbench0 on Linux remote, utun on Darwin remote
-  NVPN_WG_HOST_PAIR_THREADS             WG_THREADS for boringtun (default 1)
+  NVPN_WG_HOST_PAIR_THREADS             optional WG_THREADS for boringtun; unset/default leaves backend default
   NVPN_WG_HOST_PAIR_OUTPUT_DIR          artifact directory
   NVPN_WG_HOST_PAIR_INTERACTIVE_SUDO    set 1 for operator-local sudo prompt
   NVPN_WG_HOST_PAIR_ASSUME_LOCAL_BACKEND_TUN
