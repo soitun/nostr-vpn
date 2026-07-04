@@ -21,6 +21,7 @@ RUNTIME_STATE_RESULT_DIR="${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-andr
 RUNTIME_STATE_RESULT_NAME="${NVPN_ANDROID_RUNTIME_STATE_RESULT_NAME:-mobile-android-runtime-state-$$.json}"
 VPN_LINK_STATS_RESULT_NAME="mobile-android-vpn-link-stats-$$.txt"
 PING_PROBE_RESULT_NAME="mobile-android-ping-probe-$$.txt"
+PING_PROBE_SUMMARY_RESULT_NAME="mobile-android-ping-probe-summary-$$.json"
 TUN_PACKET_PROBE="${NVPN_ANDROID_TUN_PACKET_PROBE:-1}"
 TUN_PACKET_PROBE_TARGET="${NVPN_ANDROID_TUN_PACKET_PROBE_TARGET:-10.44.255.254}"
 TUN_PACKET_PROBE_COUNT="${NVPN_ANDROID_TUN_PACKET_PROBE_COUNT:-4}"
@@ -213,6 +214,10 @@ android_vpn_link_stats_path() {
 
 android_ping_probe_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$PING_PROBE_RESULT_NAME"
+}
+
+android_ping_probe_summary_path() {
+  printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$PING_PROBE_SUMMARY_RESULT_NAME"
 }
 
 copy_android_runtime_state() {
@@ -409,31 +414,83 @@ capture_android_vpn_link_stats() {
 summarize_android_ping_probe() {
   local result_path="$1"
   local exit_status="$2"
-  python3 - "$result_path" "$exit_status" "$TUN_PACKET_PROBE_TARGET" <<'PY'
+  local summary_path
+  summary_path="$(android_ping_probe_summary_path)"
+  python3 - "$result_path" "$summary_path" "$exit_status" "$TUN_PACKET_PROBE_TARGET" <<'PY'
+import json
+import math
 import re
 import sys
 
-path, exit_status, target = sys.argv[1], sys.argv[2], sys.argv[3]
+path, summary_path, exit_status, target = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 text = open(path, encoding="utf-8", errors="replace").read()
-loss = "unknown"
+loss = None
 loss_match = re.search(r"(\d+(?:\.\d+)?)%\s+packet loss", text)
 if loss_match:
-    loss = f"{loss_match.group(1)}%"
+    loss = float(loss_match.group(1))
 
-avg_ms = "unknown"
-jitter_ms = "unknown"
+transmitted = None
+received = None
+packet_match = re.search(r"(\d+)\s+packets transmitted,\s+(\d+)\s+(?:packets )?received", text)
+if packet_match:
+    transmitted = int(packet_match.group(1))
+    received = int(packet_match.group(2))
+
+min_ms = None
+avg_ms = None
+max_ms = None
+jitter_ms = None
 rtt_match = re.search(
     r"(?:rtt|round-trip)[^=]*=\s*([\d.]+)/([\d.]+)/([\d.]+)/([\d.]+)\s*ms",
     text,
 )
 if rtt_match:
-    avg_ms = rtt_match.group(2)
-    jitter_ms = rtt_match.group(4)
+    min_ms = float(rtt_match.group(1))
+    avg_ms = float(rtt_match.group(2))
+    max_ms = float(rtt_match.group(3))
+    jitter_ms = float(rtt_match.group(4))
+
+samples = sorted(float(match) for match in re.findall(r"time[=<]\s*([\d.]+)", text))
+
+def percentile(values, pct):
+    if not values:
+        return None
+    index = math.ceil(len(values) * pct / 100) - 1
+    index = min(max(index, 0), len(values) - 1)
+    return round(values[index], 3)
+
+summary = {
+    "target": target,
+    "exitStatus": int(exit_status),
+    "transmitted": transmitted,
+    "received": received,
+    "packetLossPct": loss,
+    "samples": len(samples),
+    "minMs": min_ms,
+    "avgMs": avg_ms,
+    "maxMs": max_ms,
+    "mdevMs": jitter_ms,
+    "p95Ms": percentile(samples, 95),
+    "p99Ms": percentile(samples, 99),
+    "rawOutput": path,
+}
+with open(summary_path, "w", encoding="utf-8") as fh:
+    json.dump(summary, fh, sort_keys=True, indent=2)
+    fh.write("\n")
+
+def display(value, suffix=""):
+    if value is None:
+        return "unknown"
+    if isinstance(value, float):
+        return f"{value:.3f}".rstrip("0").rstrip(".") + suffix
+    return f"{value}{suffix}"
 
 print(
     "Android packet probe ping summary: "
-    f"target={target} exit={exit_status} loss={loss} avg_ms={avg_ms} "
-    f"jitter_ms={jitter_ms} output={path}"
+    f"target={target} exit={exit_status} loss={display(loss, '%')} "
+    f"samples={len(samples)} avg_ms={display(avg_ms)} p95_ms={display(summary['p95Ms'])} "
+    f"p99_ms={display(summary['p99Ms'])} max_ms={display(max_ms)} "
+    f"mdev_ms={display(jitter_ms)} output={path} summary={summary_path}"
 )
 PY
 }

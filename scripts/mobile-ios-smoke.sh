@@ -258,13 +258,25 @@ def counter(value):
     return None
 
 def probe_summary():
+    expected = counter(result.get("tunPacketProbeExpectedPackets"))
+    observed = counter(result.get("tunPacketProbeObservedPackets"))
+    missing = counter(result.get("tunPacketProbeMissingPackets"))
+    loss_pct = "?"
+    observed_pct = "?"
+    if expected and expected > 0:
+        if missing is not None:
+            loss_pct = f"{(missing * 100.0 / expected):.1f}%"
+        if observed is not None:
+            observed_pct = f"{(observed * 100.0 / expected):.1f}%"
     parts = [
         f"read={result.get('tunPacketProbeBaselineRead')}->{result.get('tunPacketProbeFinalRead')}",
         (
             f"observed={result.get('tunPacketProbeObservedPackets')}/"
             f"{result.get('tunPacketProbeExpectedPackets')}"
         ),
+        f"observedPct={observed_pct}",
         f"missing={result.get('tunPacketProbeMissingPackets', '?')}",
+        f"lossPct={loss_pct}",
         f"bytes={result.get('tunPacketProbeObservedBytesRead')}",
         f"drops={result.get('tunPacketProbeDroppedDelta')}",
         f"firstMs={result.get('tunPacketProbeFirstObservedMs', '?')}",
