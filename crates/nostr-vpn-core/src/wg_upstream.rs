@@ -537,7 +537,7 @@ async fn handle_tunn_result(
         TunnResult::WriteToTunnelV4(packet, _) | TunnResult::WriteToTunnelV6(packet, _) => {
             let len = packet.len();
             if let Some(tx) = tun_out_tx {
-                if let Err(error) = tx.try_send(packet.to_vec()) {
+                if let Err(error) = tx.send(packet.to_vec()).await {
                     log_android_warn(&format!(
                         "wg-upstream: tun_out send failed ({len} bytes): {error}"
                     ));
