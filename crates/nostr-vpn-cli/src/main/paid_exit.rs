@@ -5861,6 +5861,34 @@ mod paid_exit_rating_tests {
     }
 
     #[test]
+    fn rating_fact_signer_can_differ_from_rater() {
+        let crawler = Keys::generate();
+        let rater = Keys::generate();
+        let rater_npub = rater.public_key().to_bech32().unwrap();
+        let event = sample_rating_fact_event_signed_by(
+            &crawler,
+            &rater_npub,
+            "npub1peer",
+            "fips.peer",
+            75,
+            21,
+        );
+        let signed_event: Event = serde_json::from_value(event.clone()).unwrap();
+        assert_ne!(signed_event.pubkey, rater.public_key());
+        let ratings = json!({"events": [event]});
+
+        let scores = paid_exit_rating_scores_from_value(&ratings, "fips.peer").unwrap();
+
+        assert_eq!(
+            scores.get("npub1peer"),
+            Some(&PaidExitRatingScore {
+                score: 50,
+                created_at: 21,
+            })
+        );
+    }
+
+    #[test]
     fn rating_scores_accept_hashtree_query_output_from_fips_fact_events() {
         let event = sample_rating_fact_event("npub1crawler", "npub1peer", "fips.peer", 15, 40);
         let ratings = json!({
@@ -6017,6 +6045,17 @@ mod paid_exit_rating_tests {
         created_at: u64,
     ) -> serde_json::Value {
         let keys = Keys::generate();
+        sample_rating_fact_event_signed_by(&keys, rater, subject, scope, rating, created_at)
+    }
+
+    fn sample_rating_fact_event_signed_by(
+        keys: &Keys,
+        rater: &str,
+        subject: &str,
+        scope: &str,
+        rating: i64,
+        created_at: u64,
+    ) -> serde_json::Value {
         let id = "550e8400-e29b-41d4-a716-446655440000";
         let rater_index = rater.to_lowercase();
         let subject_index = subject.to_lowercase();
@@ -6042,7 +6081,7 @@ mod paid_exit_rating_tests {
         let event = EventBuilder::new(Kind::Custom(RATING_FACT_KIND as u16), "")
             .tags(tags)
             .custom_created_at(Timestamp::from(created_at))
-            .sign_with_keys(&keys)
+            .sign_with_keys(keys)
             .unwrap();
 
         serde_json::to_value(event).unwrap()
