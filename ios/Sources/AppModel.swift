@@ -431,17 +431,23 @@ final class AppModel: ObservableObject {
         writeDebugProbeResult(result, name: resultName)
         let statusStartedAt = Date()
         result["phase"] = "finished"
-        if let status = await vpnController.statusRawValue() {
-            result["packetTunnelStatusRawValue"] = status
-            if status == 3 {
-                for (key, value) in await runDebugTunPacketProbe(arguments: arguments) {
-                    result[key] = value
-                }
+        let packetTunnelStatus = await vpnController.statusRawValue()
+        if let packetTunnelStatus {
+            result["packetTunnelStatusRawValue"] = packetTunnelStatus
+        }
+        let packetTunnelConnected = packetTunnelStatus == 3
+        result["packetTunnelConnected"] = packetTunnelConnected
+        if packetTunnelConnected {
+            for (key, value) in await runDebugTunPacketProbe(arguments: arguments) {
+                result[key] = value
             }
+        } else {
+            await stopFailedDebugProbeTunnel()
         }
         if let runtimeJson = await vpnController.runtimeStateJson() {
             result["packetTunnelRuntimeStateJson"] = String(runtimeJson.prefix(4096))
         }
+        refresh()
         result["exitNode"] = state.exitNode
         result["vpnEnabled"] = state.vpnEnabled
         result["vpnActive"] = state.vpnActive
@@ -497,6 +503,17 @@ final class AppModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 500_000_000)
         }
         refresh()
+    }
+
+    private func stopFailedDebugProbeTunnel() async {
+        if state.vpnEnabled {
+            dispatch(NativeActions.disconnectVpn())
+        }
+        do {
+            try await vpnController.stop()
+        } catch {
+            debugLog("debug probe failed-state stop failed: \(String(describing: error))")
+        }
     }
 
     private func startVpnForDebugProbe() async -> String? {

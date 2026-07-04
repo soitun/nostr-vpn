@@ -417,6 +417,7 @@ def write_probe_summary(validation_errors=None):
     for key in (
         "phase",
         "packetTunnelStatusRawValue",
+        "packetTunnelConnected",
         "vpnEnabled",
         "vpnActive",
         "startError",
