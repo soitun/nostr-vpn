@@ -5861,6 +5861,26 @@ mod paid_exit_rating_tests {
     }
 
     #[test]
+    fn rating_scores_accept_hashtree_query_output_from_fips_fact_events() {
+        let event = sample_rating_fact_event("npub1crawler", "npub1peer", "fips.peer", 15, 40);
+        let ratings = json!({
+            "root": "nhash1testfixture",
+            "count": 1,
+            "events": [event],
+        });
+
+        let scores = paid_exit_rating_scores_from_value(&ratings, "fips.peer").unwrap();
+
+        assert_eq!(
+            scores.get("npub1peer"),
+            Some(&PaidExitRatingScore {
+                score: -70,
+                created_at: 40,
+            })
+        );
+    }
+
+    #[test]
     fn ratings_sort_offers_good_unknown_bad() {
         let good = sample_signed_offer("good", 10);
         let unknown = sample_signed_offer("unknown", 30);
@@ -5998,8 +6018,14 @@ mod paid_exit_rating_tests {
     ) -> serde_json::Value {
         let keys = Keys::generate();
         let id = "550e8400-e29b-41d4-a716-446655440000";
+        let rater_index = rater.to_lowercase();
+        let subject_index = subject.to_lowercase();
+        let scope_index = scope.to_lowercase();
         let tags = vec![
             sample_rating_fact_tag(["i", id, "subject"]),
+            sample_rating_fact_tag(["i", &rater_index]),
+            sample_rating_fact_tag(["i", &subject_index]),
+            sample_rating_fact_tag(["i", &scope_index]),
             sample_rating_fact_tag(["type", RATING_FACT_TYPE]),
             sample_rating_fact_tag(["schema", RATING_FACT_SCHEMA]),
             sample_rating_fact_tag(["created_at", &created_at.to_string()]),
