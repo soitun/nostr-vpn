@@ -114,104 +114,83 @@ impl MobileTunnel {
                 tokio_mpsc::channel::<Vec<Vec<u8>>>(MOBILE_TUN_OUTBOUND_BATCH_CHANNEL_CAPACITY);
             let (recv_tx, mut recv_rx) =
                 tokio_mpsc::channel::<Vec<Vec<u8>>>(MOBILE_TUN_INBOUND_BATCH_CHANNEL_CAPACITY);
-            match WgUpstreamRuntime::start_with_channels(wg_config, send_rx, recv_tx).await {
-                Ok(runtime) => {
-                    wg_socket_fd = runtime.udp_socket_fd();
-                    let upstream = runtime.upstream();
-                    let handshake = runtime.handshake_observer();
-                    wg_runtime = Some(runtime);
-                    wg_send_tx = Some(send_tx);
-                    // Forward decrypted WG packets back to the OS as
-                    // inbound traffic. DNAT: rewrite the WG-side
-                    // destination IP back to the mesh tun address so
-                    // the OS routes the reply to the local app stack.
-                    let inbound_tx_for_wg = inbound_tx.clone();
-                    let wg_addr = wg_address_ipv4;
-                    let mesh_addr = mesh_ipv4;
-                    tasks.push(tokio::spawn(async move {
-                        let prepare_packet = |mut packet: Vec<u8>| {
-                            if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
-                                rewrite_ipv4_destination(&mut packet, wg, mesh);
-                                nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(
-                                    &mut packet,
-                                );
+            let runtime = WgUpstreamRuntime::start_with_channels(wg_config, send_rx, recv_tx)
+                .await
+                .context("failed to start mobile WG runtime")?;
+            wg_socket_fd = runtime.udp_socket_fd();
+            let upstream = runtime.upstream();
+            let handshake = runtime.handshake_observer();
+            wg_runtime = Some(runtime);
+            wg_send_tx = Some(send_tx);
+            // Forward decrypted WG packets back to the OS as
+            // inbound traffic. DNAT: rewrite the WG-side
+            // destination IP back to the mesh tun address so
+            // the OS routes the reply to the local app stack.
+            let inbound_tx_for_wg = inbound_tx.clone();
+            let wg_addr = wg_address_ipv4;
+            let mesh_addr = mesh_ipv4;
+            tasks.push(tokio::spawn(async move {
+                let prepare_packet = |mut packet: Vec<u8>| {
+                    if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
+                        rewrite_ipv4_destination(&mut packet, wg, mesh);
+                        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(
+                            &mut packet,
+                        );
+                    }
+                    packet
+                };
+                let mut packets = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
+                while let Some(batch) = recv_rx.recv().await {
+                    for packet in batch {
+                        packets.push(prepare_packet(packet));
+                        if packets.len() == MOBILE_FIPS_RECV_BATCH {
+                            if !flush_mobile_inbound_packets(&inbound_tx_for_wg, &mut packets).await
+                            {
+                                return;
                             }
-                            packet
+                        }
+                    }
+
+                    while packets.len() < MOBILE_FIPS_RECV_BATCH {
+                        let Ok(batch) = recv_rx.try_recv() else {
+                            break;
                         };
-                        let mut packets = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
-                        while let Some(batch) = recv_rx.recv().await {
-                            for packet in batch {
-                                packets.push(prepare_packet(packet));
-                                if packets.len() == MOBILE_FIPS_RECV_BATCH {
-                                    if !flush_mobile_inbound_packets(
-                                        &inbound_tx_for_wg,
-                                        &mut packets,
-                                    )
-                                    .await
-                                    {
-                                        return;
-                                    }
-                                }
-                            }
-
-                            while packets.len() < MOBILE_FIPS_RECV_BATCH {
-                                let Ok(batch) = recv_rx.try_recv() else {
-                                    break;
-                                };
-                                for packet in batch {
-                                    packets.push(prepare_packet(packet));
-                                    if packets.len() == MOBILE_FIPS_RECV_BATCH {
-                                        if !flush_mobile_inbound_packets(
-                                            &inbound_tx_for_wg,
-                                            &mut packets,
-                                        )
-                                        .await
-                                        {
-                                            return;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if !packets.is_empty() {
+                        for packet in batch {
+                            packets.push(prepare_packet(packet));
+                            if packets.len() == MOBILE_FIPS_RECV_BATCH {
                                 if !flush_mobile_inbound_packets(&inbound_tx_for_wg, &mut packets)
                                     .await
                                 {
-                                    break;
+                                    return;
                                 }
                             }
                         }
-                    }));
-                    // Watchdog: log if the handshake doesn't complete
-                    // promptly, but do not block mobile tunnel startup.
-                    // Android must receive the native handle first so it can
-                    // call VpnService.protect(fd) on the WG UDP socket before
-                    // the default VPN route traps retry traffic.
-                    let timeout = DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT;
-                    tasks.push(tokio::spawn(async move {
-                        if handshake.wait_for_handshake(timeout).await {
-                            tracing::info!(
-                                ?upstream,
-                                "wg-upstream: mobile tunnel handshake completed"
-                            );
-                        } else {
-                            tracing::warn!(
-                                ?upstream,
-                                "wg-upstream: no handshake within {timeout:?} on mobile tunnel; \
-                                 traffic will queue until upstream becomes reachable"
-                            );
-                        }
-                    }));
+                    }
+
+                    if !packets.is_empty()
+                        && !flush_mobile_inbound_packets(&inbound_tx_for_wg, &mut packets).await
+                    {
+                        break;
+                    }
                 }
-                Err(error) => {
-                    // Don't fail the whole tunnel — FIPS mesh still
-                    // works. Just log and continue without WG.
+            }));
+            // Watchdog: log if the handshake doesn't complete
+            // promptly, but do not block mobile tunnel startup.
+            // Android must receive the native handle first so it can
+            // call VpnService.protect(fd) on the WG UDP socket before
+            // the default VPN route traps retry traffic.
+            let timeout = DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT;
+            tasks.push(tokio::spawn(async move {
+                if handshake.wait_for_handshake(timeout).await {
+                    tracing::info!(?upstream, "wg-upstream: mobile tunnel handshake completed");
+                } else {
                     tracing::warn!(
-                        ?error,
-                        "wg-upstream: failed to start mobile WG runtime; continuing without WG upstream"
+                        ?upstream,
+                        "wg-upstream: no handshake within {timeout:?} on mobile tunnel; \
+                         traffic will queue until upstream becomes reachable"
                     );
                 }
-            }
+            }));
         }
 
         let send_task = {
