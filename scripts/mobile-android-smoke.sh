@@ -771,15 +771,14 @@ wait_for_tun_packets_read_after() {
   local required_increase="$2"
   local baseline_dropped="$3"
   local baseline_bytes="$4"
-  local ping_path="$5"
-  local ping_status="$6"
-  local start_ms="$7"
-  local start now current current_bytes current_dropped bytes_delta summary_path last_error
-  local now_ms first_observed_ms elapsed_ms polls poll_interval_ms observed
+  local start_ms="$5"
+  local start now current current_bytes current_dropped bytes_delta last_error
+  local now_ms first_observed_ms elapsed_ms polls poll_interval_ms poll_interval_secs observed
   start="$(date +%s)"
   first_observed_ms=""
   polls=0
-  poll_interval_ms=1000
+  poll_interval_ms=100
+  poll_interval_secs=0.1
   last_error=""
   while true; do
     polls=$((polls + 1))
@@ -805,23 +804,15 @@ wait_for_tun_packets_read_after() {
           if [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
             bytes_delta="$((current_bytes - baseline_bytes))"
           fi
-          summary_path="$(
-            write_android_tun_packet_probe_summary \
-              "$baseline" \
-              "$current" \
-              "$required_increase" \
-              "$baseline_bytes" \
-              "$current_bytes" \
-              "$baseline_dropped" \
-              "$current_dropped" \
-              "$ping_path" \
-              "$ping_status" \
-              "${first_observed_ms:-$elapsed_ms}" \
-              "$elapsed_ms" \
-              "$polls" \
-              "$poll_interval_ms"
-          )"
-          echo "Android TUN packet probe passed: tunPacketsRead $baseline->$current observed=$((current - baseline))/$required_increase tunBytesReadDelta=$bytes_delta tunPacketsDropped=$baseline_dropped->$current_dropped firstObservedMs=${first_observed_ms:-$elapsed_ms} elapsedMs=$elapsed_ms polls=$polls target=$TUN_PACKET_PROBE_TARGET summary=$summary_path"
+          TUN_PACKET_PROBE_FINAL_READ="$current"
+          TUN_PACKET_PROBE_FINAL_BYTES_READ="$current_bytes"
+          TUN_PACKET_PROBE_FINAL_DROPPED="$current_dropped"
+          TUN_PACKET_PROBE_FIRST_OBSERVED_MS="${first_observed_ms:-$elapsed_ms}"
+          TUN_PACKET_PROBE_ELAPSED_MS="$elapsed_ms"
+          TUN_PACKET_PROBE_POLLS="$polls"
+          TUN_PACKET_PROBE_POLL_INTERVAL_MS="$poll_interval_ms"
+          TUN_PACKET_PROBE_BYTES_DELTA="$bytes_delta"
+          echo "Android TUN packet probe observed: tunPacketsRead $baseline->$current observed=$((current - baseline))/$required_increase tunBytesReadDelta=$bytes_delta tunPacketsDropped=$baseline_dropped->$current_dropped firstObservedMs=${first_observed_ms:-$elapsed_ms} elapsedMs=$elapsed_ms polls=$polls target=$TUN_PACKET_PROBE_TARGET"
           return 0
         fi
         last_error="tunPacketsRead did not increase enough after probe (baseline=$baseline current=${current:-missing} required=$required_increase tunPacketsDropped=${current_dropped:-missing})"
@@ -834,13 +825,14 @@ wait_for_tun_packets_read_after() {
       echo "$last_error" >&2
       return 1
     fi
-    sleep 1
+    sleep "$poll_interval_secs"
   done
 }
 
 run_android_tun_packet_probe() {
   truthy "$TUN_PACKET_PROBE" || return 0
   local baseline baseline_bytes baseline_dropped count remote_cmd ping_path ping_status probe_start_ms
+  local ping_pid summary_path wait_status
   local _baseline_written _baseline_written_bytes
   IFS=$'\t' read -r baseline baseline_bytes _baseline_written _baseline_written_bytes baseline_dropped \
     <<<"$(android_runtime_state_counters 2>/dev/null || printf '0\t0\t0\t0\t0')"
@@ -854,15 +846,36 @@ run_android_tun_packet_probe() {
   mkdir -p "$RUNTIME_STATE_RESULT_DIR"
   remote_cmd="ping -c $count -W $TUN_PACKET_PROBE_TIMEOUT_SECS $TUN_PACKET_PROBE_TARGET"
   probe_start_ms="$(epoch_ms)"
-  if "$ADB" -s "$serial" shell "$remote_cmd" >"$ping_path" 2>&1; then
+  "$ADB" -s "$serial" shell "$remote_cmd" >"$ping_path" 2>&1 &
+  ping_pid="$!"
+  wait_status=0
+  wait_for_tun_packets_read_after "$baseline" "$count" "$baseline_dropped" "$baseline_bytes" "$probe_start_ms" || wait_status=$?
+  if wait "$ping_pid"; then
     ping_status=0
   else
     ping_status=$?
   fi
   summarize_android_ping_probe "$ping_path" "$ping_status"
-  if ! wait_for_tun_packets_read_after "$baseline" "$count" "$baseline_dropped" "$baseline_bytes" "$ping_path" "$ping_status" "$probe_start_ms"; then
-    return 1
+  if (( wait_status != 0 )); then
+    return "$wait_status"
   fi
+  summary_path="$(
+    write_android_tun_packet_probe_summary \
+      "$baseline" \
+      "$TUN_PACKET_PROBE_FINAL_READ" \
+      "$count" \
+      "$baseline_bytes" \
+      "$TUN_PACKET_PROBE_FINAL_BYTES_READ" \
+      "$baseline_dropped" \
+      "$TUN_PACKET_PROBE_FINAL_DROPPED" \
+      "$ping_path" \
+      "$ping_status" \
+      "$TUN_PACKET_PROBE_FIRST_OBSERVED_MS" \
+      "$TUN_PACKET_PROBE_ELAPSED_MS" \
+      "$TUN_PACKET_PROBE_POLLS" \
+      "$TUN_PACKET_PROBE_POLL_INTERVAL_MS"
+  )"
+  echo "Android TUN packet probe passed: tunPacketsRead $baseline->$TUN_PACKET_PROBE_FINAL_READ observed=$((TUN_PACKET_PROBE_FINAL_READ - baseline))/$count tunBytesReadDelta=$TUN_PACKET_PROBE_BYTES_DELTA tunPacketsDropped=$baseline_dropped->$TUN_PACKET_PROBE_FINAL_DROPPED firstObservedMs=$TUN_PACKET_PROBE_FIRST_OBSERVED_MS elapsedMs=$TUN_PACKET_PROBE_ELAPSED_MS polls=$TUN_PACKET_PROBE_POLLS target=$TUN_PACKET_PROBE_TARGET summary=$summary_path"
   capture_android_vpn_link_stats "after-probe"
 }
 
