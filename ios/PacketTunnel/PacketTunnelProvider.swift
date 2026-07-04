@@ -16,6 +16,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         options: [String: NSObject]?,
         completionHandler: @escaping (Error?) -> Void
     ) {
+        let startedAt = ProcessInfo.processInfo.systemUptime
         NSLog("nvpn-pkt: startTunnel entered")
         packetDebugLog("startTunnel entered options=\(options.map { Array($0.keys).sorted() } ?? [])")
         let configuration = (protocolConfiguration as? NETunnelProviderProtocol)?.providerConfiguration ?? [:]
@@ -45,9 +46,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         activeTunnelCalls = 0
         tunnelCondition.unlock()
         var excludedRoutes = parsedConfig.excludedRoutes
-        let resolvedWgExcludedRoute = consumeCString(
-            nostr_vpn_mobile_tunnel_wg_excluded_route(handle)
-        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let resolvedWgExcludedRoute = withTunnelHandle({ handle in
+            consumeCString(nostr_vpn_mobile_tunnel_wg_excluded_route(handle))
+        })?.trimmingCharacters(in: .whitespacesAndNewlines) else {
+            NSLog("nvpn-pkt: tunnel stopped before WG excluded route lookup")
+            packetDebugLog("tunnel stopped before WG excluded route lookup")
+            stopRustTunnel()
+            completionHandler(PacketTunnelError.startFailed)
+            return
+        }
         if !resolvedWgExcludedRoute.isEmpty && !excludedRoutes.contains(resolvedWgExcludedRoute) {
             excludedRoutes.append(resolvedWgExcludedRoute)
             packetDebugLog("added resolved WG excluded route \(resolvedWgExcludedRoute)")
@@ -117,10 +124,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
 
         NSLog("nvpn-pkt: calling setTunnelNetworkSettings")
         packetDebugLog("calling setTunnelNetworkSettings")
+        let settingsStartedAt = ProcessInfo.processInfo.systemUptime
         setTunnelNetworkSettings(settings) { [weak self] error in
             if let error {
-                NSLog("nvpn-pkt: setTunnelNetworkSettings failed: \(error)")
-                packetDebugLog("setTunnelNetworkSettings failed: \(error)")
+                let settingsMs = elapsedMs(since: settingsStartedAt)
+                NSLog("nvpn-pkt: setTunnelNetworkSettings failed after \(settingsMs)ms: \(error)")
+                packetDebugLog("setTunnelNetworkSettings failed after \(settingsMs)ms: \(error)")
                 self?.stopRustTunnel()
                 completionHandler(error)
                 return
@@ -129,17 +138,29 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler(PacketTunnelError.startFailed)
                 return
             }
-            guard nostr_vpn_mobile_tunnel_attach_current_tun_fd(handle) else {
-                NSLog("nvpn-pkt: failed to attach utun fd to Rust")
-                packetDebugLog("failed to attach utun fd")
+            let attachResult = self.withTunnelHandle { handle in
+                nostr_vpn_mobile_tunnel_attach_current_tun_fd(handle)
+            }
+            guard attachResult == true else {
+                let reason = attachResult == nil
+                    ? "tunnel stopped before utun fd attach"
+                    : "failed to attach utun fd to Rust"
+                let settingsMs = elapsedMs(since: settingsStartedAt)
+                NSLog("nvpn-pkt: \(reason) after \(settingsMs)ms")
+                packetDebugLog("\(reason) after \(settingsMs)ms")
                 self.stopRustTunnel()
                 completionHandler(PacketTunnelError.startFailed)
                 return
             }
-            NSLog("nvpn-pkt: setTunnelNetworkSettings succeeded — native utun fd attached")
-            packetDebugLog("setTunnelNetworkSettings succeeded")
+            let settingsMs = elapsedMs(since: settingsStartedAt)
+            let totalMs = elapsedMs(since: startedAt)
+            NSLog(
+                "nvpn-pkt: setTunnelNetworkSettings succeeded in \(settingsMs)ms; "
+                    + "native utun fd attached total=\(totalMs)ms"
+            )
+            packetDebugLog("setTunnelNetworkSettings succeeded settingsMs=\(settingsMs) totalMs=\(totalMs)")
             NSLog("nvpn-pkt: completionHandler(nil) — VPN should transition to connected")
-            packetDebugLog("completionHandler nil")
+            packetDebugLog("completionHandler nil totalMs=\(totalMs)")
             completionHandler(nil)
         }
     }
@@ -384,6 +405,10 @@ private func packetDebugLog(_ message: String) {
         try? data.write(to: logUrl)
     }
     #endif
+}
+
+private func elapsedMs(since start: TimeInterval) -> Int {
+    max(0, Int((ProcessInfo.processInfo.systemUptime - start) * 1000))
 }
 
 private func ipv4Mask(prefixLength: Int) -> String {
