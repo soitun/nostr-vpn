@@ -131,7 +131,7 @@ fn native_tun_read_loop(
         if !packets.is_empty() {
             let batch = std::mem::replace(&mut packets, Vec::with_capacity(MOBILE_FIPS_SEND_BATCH));
             let batch_len = batch.len();
-            if !send_native_tun_packet_batch(&outbound_tx, &stop, batch) {
+            if stop.load(Ordering::Relaxed) || outbound_tx.blocking_send(batch).is_err() {
                 for _ in 0..batch_len {
                     counters.note_drop();
                 }
@@ -141,17 +141,6 @@ fn native_tun_read_loop(
         }
     }
     stop.store(true, Ordering::Relaxed);
-}
-
-fn send_native_tun_packet_batch(
-    outbound_tx: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
-    stop: &AtomicBool,
-    packets: Vec<Vec<u8>>,
-) -> bool {
-    if packets.is_empty() || stop.load(Ordering::Relaxed) {
-        return false;
-    }
-    outbound_tx.blocking_send(packets).is_ok()
 }
 
 fn native_tun_write_loop(
