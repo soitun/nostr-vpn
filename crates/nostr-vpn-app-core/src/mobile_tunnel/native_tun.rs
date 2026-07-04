@@ -187,19 +187,16 @@ enum NativeTunRead {
 }
 
 fn read_mobile_tun_packet(fd: c_int, packet_capacity: usize) -> NativeTunRead {
-    let mut packet = Vec::<u8>::with_capacity(native_tun_read_capacity(packet_capacity));
+    let mut packet = Vec::<u8>::with_capacity(packet_capacity);
     loop {
-        let read = unsafe {
-            libc::read(
-                fd,
-                packet.as_mut_ptr().cast::<libc::c_void>(),
-                packet.capacity(),
-            )
-        };
+        let read = read_mobile_tun_payload(fd, &mut packet);
         if read > 0 {
             let len = usize::try_from(read).unwrap_or(0);
-            if !native_tun_finish_read(&mut packet, len) {
+            let Some(packet_len) = mobile_tun_payload_len(len) else {
                 return NativeTunRead::Stopped;
+            };
+            unsafe {
+                packet.set_len(packet_len);
             }
             return NativeTunRead::Packet(packet);
         }
@@ -218,37 +215,40 @@ fn read_mobile_tun_packet(fd: c_int, packet_capacity: usize) -> NativeTunRead {
 }
 
 #[cfg(target_os = "android")]
-fn native_tun_read_capacity(packet_capacity: usize) -> usize {
-    packet_capacity
+fn read_mobile_tun_payload(fd: c_int, packet: &mut Vec<u8>) -> isize {
+    unsafe {
+        libc::read(
+            fd,
+            packet.as_mut_ptr().cast::<libc::c_void>(),
+            packet.capacity(),
+        )
+    }
 }
 
 #[cfg(target_os = "ios")]
-fn native_tun_read_capacity(packet_capacity: usize) -> usize {
-    packet_capacity.saturating_add(IOS_UTUN_HEADER_LEN)
+fn read_mobile_tun_payload(fd: c_int, packet: &mut Vec<u8>) -> isize {
+    let mut header = [0u8; IOS_UTUN_HEADER_LEN];
+    let mut iov = [
+        libc::iovec {
+            iov_base: header.as_mut_ptr().cast::<libc::c_void>(),
+            iov_len: header.len(),
+        },
+        libc::iovec {
+            iov_base: packet.as_mut_ptr().cast::<libc::c_void>(),
+            iov_len: packet.capacity(),
+        },
+    ];
+    unsafe { libc::readv(fd, iov.as_mut_ptr(), iov.len() as c_int) }
 }
 
 #[cfg(target_os = "android")]
-fn native_tun_finish_read(packet: &mut Vec<u8>, len: usize) -> bool {
-    unsafe {
-        packet.set_len(len);
-    }
-    true
+fn mobile_tun_payload_len(read_len: usize) -> Option<usize> {
+    Some(read_len)
 }
 
 #[cfg(target_os = "ios")]
-fn native_tun_finish_read(packet: &mut Vec<u8>, len: usize) -> bool {
-    if len <= IOS_UTUN_HEADER_LEN {
-        return false;
-    }
-    unsafe {
-        std::ptr::copy(
-            packet.as_ptr().add(IOS_UTUN_HEADER_LEN),
-            packet.as_mut_ptr(),
-            len - IOS_UTUN_HEADER_LEN,
-        );
-        packet.set_len(len - IOS_UTUN_HEADER_LEN);
-    }
-    true
+fn mobile_tun_payload_len(read_len: usize) -> Option<usize> {
+    (read_len > IOS_UTUN_HEADER_LEN).then_some(read_len - IOS_UTUN_HEADER_LEN)
 }
 
 #[cfg(target_os = "android")]
