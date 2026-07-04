@@ -383,6 +383,9 @@ final class AppModel: ObservableObject {
             "phase": "starting",
             "startedAt": ISO8601DateFormatter().string(from: Date()),
         ]
+        for (key, value) in Self.appBuildMetadata() {
+            result[key] = value
+        }
 
         await stopVpnForDebugProbe()
 
@@ -781,6 +784,28 @@ final class AppModel: ObservableObject {
             return Int(value)
         }
         return String(value)
+    }
+
+    nonisolated private static func appBuildMetadata() -> [String: Any] {
+        var metadata: [String: Any] = [:]
+        if let bundleIdentifier = Bundle.main.bundleIdentifier,
+           !bundleIdentifier.isEmpty {
+            metadata["appBundleIdentifier"] = bundleIdentifier
+        }
+        for (infoKey, resultKey) in [
+            ("CFBundleShortVersionString", "appVersionName"),
+            ("CFBundleVersion", "appVersionCode"),
+            ("NVPNBuildGitSha", "appBuildGitSha"),
+            ("NVPNBuildTimestampUTC", "appBuildTimestampUtc"),
+        ] {
+            if let value = Bundle.main.object(forInfoDictionaryKey: infoKey) as? String {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty && !trimmed.hasPrefix("$(") {
+                    metadata[resultKey] = trimmed
+                }
+            }
+        }
+        return metadata
     }
 
     private func writeDebugProbeResult(_ result: [String: Any], name: String) {

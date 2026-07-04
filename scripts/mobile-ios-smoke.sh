@@ -185,6 +185,8 @@ build_device_app() {
     -destination "$DEVICE_DESTINATION"
     DEVELOPMENT_TEAM="$team"
     CODE_SIGN_IDENTITY="$DEVICE_CODE_SIGN_IDENTITY"
+    NVPN_BUILD_GIT_SHA="$NVPN_BUILD_GIT_SHA"
+    NVPN_BUILD_TIMESTAMP_UTC="$NVPN_BUILD_TIMESTAMP_UTC"
     build
   )
   "${cmd[@]}"
@@ -262,11 +264,11 @@ copy_ios_debug_logs() {
 validate_vpn_probe_result() {
   local result_path="$1"
   local summary_path="$VPN_RESULT_DIR/$TUN_PACKET_PROBE_SUMMARY_NAME"
-  python3 - "$result_path" "$summary_path" <<'PY'
+  python3 - "$result_path" "$summary_path" "$NVPN_BUILD_GIT_SHA" <<'PY'
 import json
 import sys
 
-path, summary_path = sys.argv[1], sys.argv[2]
+path, summary_path, expected_build_git_sha = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path, encoding="utf-8") as fh:
     result = json.load(fh)
 
@@ -368,6 +370,14 @@ def write_probe_summary():
     return summary_path
 
 errors = []
+actual_build_git_sha = result.get("appBuildGitSha")
+if expected_build_git_sha:
+    if not actual_build_git_sha:
+        errors.append(f"appBuildGitSha missing expected={expected_build_git_sha!r}")
+    elif actual_build_git_sha != expected_build_git_sha:
+        errors.append(
+            f"appBuildGitSha={actual_build_git_sha!r} expected={expected_build_git_sha!r}"
+        )
 if result.get("phase") != "finished" or "finishedAt" not in result:
     errors.append(
         "debug probe did not finish "
