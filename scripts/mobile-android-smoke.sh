@@ -338,12 +338,13 @@ sys.exit(1)
 
 capture_android_vpn_link_stats() {
   local label="$1"
-  local body captured iface result_path status unavailable_reason
+  local body captured iface result_path status unavailable_reason source
   result_path="$(android_vpn_link_stats_path)"
   body="$(mktemp)"
   captured=0
   status=0
   unavailable_reason=""
+  source="ip -s link"
   if ! iface="$(android_vpn_interface_name)"; then
     iface="unknown"
     unavailable_reason="unable to resolve active Android VPN interface"
@@ -357,11 +358,34 @@ capture_android_vpn_link_stats() {
     status=$?
     unavailable_reason="ip -s link show dev $iface exited $status"
   fi
+  if [[ "$captured" -ne 1 && "$iface" != "unknown" ]]; then
+    local proc_body
+    proc_body="$(mktemp)"
+    if "$ADB" -s "$serial" shell cat /proc/net/dev 2>&1 \
+      | tr -d '\r' \
+      | awk -v iface="$iface" '
+          {
+            split($1, name, ":")
+            if (name[1] == iface) {
+              print
+              found = 1
+            }
+          }
+          END { exit found ? 0 : 1 }
+        ' >"$proc_body"
+    then
+      mv "$proc_body" "$body"
+      captured=1
+      source="/proc/net/dev"
+    else
+      rm -f "$proc_body"
+    fi
+  fi
   mkdir -p "$RUNTIME_STATE_RESULT_DIR"
   {
-    printf '## label=%s timestamp=%s iface=%s linkStats=%s\n' \
+    printf '## label=%s timestamp=%s iface=%s linkStats=%s source=%s\n' \
       "$label" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$iface" \
-      "$([[ "$captured" -eq 1 ]] && printf captured || printf unavailable)"
+      "$([[ "$captured" -eq 1 ]] && printf captured || printf unavailable)" "$source"
     if [[ "$captured" -eq 1 ]]; then
       cat "$body"
     else
@@ -375,8 +399,10 @@ capture_android_vpn_link_stats() {
   rm -f "$body"
   if [[ "$captured" -eq 1 ]]; then
     echo "Android VPN link counters captured ($label): $result_path iface=$iface"
+    return 0
   else
     echo "Android VPN link counters unavailable ($label): $result_path iface=$iface reason=$unavailable_reason"
+    return 1
   fi
 }
 
@@ -724,7 +750,7 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
   fi
   if ! run_android_tun_packet_probe; then
     dump_vpn_diagnostics
-    echo "Android smoke failed: native TUN read counter did not advance after debug packet probe." >&2
+    echo "Android smoke failed: native TUN packet probe or VPN link counter capture failed." >&2
     exit 1
   fi
   if ! cleanup_android_vpn_after_pass; then
