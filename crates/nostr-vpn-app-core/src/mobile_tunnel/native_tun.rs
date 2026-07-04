@@ -256,7 +256,7 @@ fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> bool 
     if packet.is_empty() {
         return true;
     }
-    while wait_mobile_tun_fd(fd, libc::POLLOUT, stop) {
+    while !stop.load(Ordering::Relaxed) {
         let written =
             unsafe { libc::write(fd, packet.as_ptr().cast::<libc::c_void>(), packet.len()) };
         if written == isize::try_from(packet.len()).unwrap_or(-1) {
@@ -266,8 +266,11 @@ fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> bool 
             return false;
         }
         let error = std::io::Error::last_os_error();
-        if mobile_tun_errno_is_interrupted(error.raw_os_error())
-            || mobile_tun_errno_is_again(error.raw_os_error())
+        if mobile_tun_errno_is_interrupted(error.raw_os_error()) {
+            continue;
+        }
+        if mobile_tun_errno_is_again(error.raw_os_error())
+            && wait_mobile_tun_fd(fd, libc::POLLOUT, stop)
         {
             continue;
         }
@@ -284,7 +287,7 @@ fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> bool 
     let Some(header) = ios_utun_packet_header(packet) else {
         return true;
     };
-    while wait_mobile_tun_fd(fd, libc::POLLOUT, stop) {
+    while !stop.load(Ordering::Relaxed) {
         let mut iov = [
             libc::iovec {
                 iov_base: header.as_ptr().cast::<libc::c_void>().cast_mut(),
@@ -303,8 +306,11 @@ fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> bool 
             return false;
         }
         let error = std::io::Error::last_os_error();
-        if mobile_tun_errno_is_interrupted(error.raw_os_error())
-            || mobile_tun_errno_is_again(error.raw_os_error())
+        if mobile_tun_errno_is_interrupted(error.raw_os_error()) {
+            continue;
+        }
+        if mobile_tun_errno_is_again(error.raw_os_error())
+            && wait_mobile_tun_fd(fd, libc::POLLOUT, stop)
         {
             continue;
         }
