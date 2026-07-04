@@ -399,6 +399,30 @@ udp_receiver_limit_summary() {
     }' "${files[@]}"
 }
 
+node_b_udp_stat_summary() {
+  local artifact_dir="$1"
+  local summary="$2"
+  local counter="$3"
+  local raw_dir stat_file
+  raw_dir="$(tsv_value "$summary" raw_dir 2>/dev/null || true)"
+  for stat_file in \
+    "$raw_dir"/*-node-b-udp-stats.txt \
+    "$artifact_dir/raw"/*-node-b-udp-stats.txt; do
+    [[ -n "$stat_file" && -f "$stat_file" ]] || continue
+    awk -v want="$counter" '
+      $1 == want {
+        print $2 + 0
+        found = 1
+        exit
+      }
+      END {
+        if (!found) print "n/a"
+      }' "$stat_file"
+    return
+  done
+  printf 'n/a\n'
+}
+
 connected_udp_socket_buffer_summary() {
   local artifact_dir="$1"
   local summary="$2"
@@ -531,6 +555,57 @@ cpu_phase_metric() {
     }' "$phase_file"
 }
 
+positive_count() {
+  local value="${1:-}"
+  awk -v value="$value" 'BEGIN { print (value != "" && value != "n/a" && value + 0 > 0) ? "true" : "false" }'
+}
+
+udp_loss_attribution() {
+  local zero_status="$1"
+  local blocking_hard_total="$2"
+  local udp_namespace_rcvbuf_errors="$3"
+  local connected_udp_kernel_dropped="$4"
+  local connected_udp_peer_kernel_dropped="$5"
+  local connected_udp_drain_bulk_dropped="$6"
+  local connected_udp_direct_decrypt_bulk_shed="$7"
+  local node_b_udp_rcvbuf_errors="$8"
+  local receiver_limited hard_path
+
+  if [[ "$zero_status" == "true" ]]; then
+    printf 'none\n'
+    return
+  fi
+
+  if [[ "$(positive_count "$udp_namespace_rcvbuf_errors")" == "true" ||
+        "$(positive_count "$node_b_udp_rcvbuf_errors")" == "true" ]]; then
+    receiver_limited=true
+  else
+    receiver_limited=false
+  fi
+
+  if [[ "$(positive_count "$blocking_hard_total")" == "true" ||
+        "$(positive_count "$connected_udp_kernel_dropped")" == "true" ||
+        "$(positive_count "$connected_udp_peer_kernel_dropped")" == "true" ||
+        "$(positive_count "$connected_udp_drain_bulk_dropped")" == "true" ||
+        "$(positive_count "$connected_udp_direct_decrypt_bulk_shed")" == "true" ]]; then
+    hard_path=true
+  else
+    hard_path=false
+  fi
+
+  if [[ "$receiver_limited" == "true" && "$hard_path" == "true" ]]; then
+    printf 'mixed-hard+receiver-rcvbuf\n'
+  elif [[ "$receiver_limited" == "true" ]]; then
+    printf 'receiver-rcvbuf\n'
+  elif [[ "$hard_path" == "true" ]]; then
+    printf 'dataplane-hard-event\n'
+  elif [[ "$blocking_hard_total" == "n/a" ]]; then
+    printf 'missing-hard-events\n'
+  else
+    printf 'unattributed-udp-loss\n'
+  fi
+}
+
 candidate_status() {
   local backend="$1"
   local zero_status="$2"
@@ -556,7 +631,7 @@ write_header() {
     tcp_single_cpu_s_per_gbyte tcp_4_cpu_s_per_gbyte tcp_8_cpu_s_per_gbyte \
     udp_200_mbps udp_200_loss_pct udp_1000_mbps udp_1000_loss_pct ping_loss_pct ping_avg_ms \
     iperf_udp200_sockbuf iperf_udp1000_sockbuf udp_receiver_rmem udp_receiver_wmem \
-    udp_ping_zero hard_events_total hard_events \
+    node_b_udp_rcvbuf_errors udp_ping_zero udp_loss_attribution hard_events_total hard_events \
     udp_kernel_dropped_total udp_namespace_rcvbuf_errors_total connected_udp_kernel_dropped_total \
     connected_udp_peer_kernel_dropped_total connected_udp_drain_bulk_dropped_total \
     connected_udp_direct_decrypt_bulk_shed_total connected_udp_recv_buf connected_udp_send_buf \
@@ -575,6 +650,7 @@ write_row() {
   local git_head ref_git_head fips_head nvpn_dirty fips_dirty ref_dirty dirty stress placement dataplane
   local hard_total hard_events blocking_hard_total zero_status candidate
   local iperf_udp200_sockbuf iperf_udp1000_sockbuf udp_receiver_rmem udp_receiver_wmem
+  local node_b_udp_rcvbuf_errors attribution
   local udp_kernel_dropped udp_namespace_rcvbuf_errors connected_udp_kernel_dropped
   local connected_udp_peer_kernel_dropped connected_udp_drain_bulk_dropped connected_udp_direct_decrypt_bulk_shed
   local connected_udp_recv_buf connected_udp_send_buf
@@ -631,6 +707,7 @@ write_row() {
   iperf_udp200_sockbuf="$(iperf_udp_socket_buffer_summary "$artifact_dir" "$summary" udp-200)"
   iperf_udp1000_sockbuf="$(iperf_udp_socket_buffer_summary "$artifact_dir" "$summary" udp-1000)"
   IFS=$'\t' read -r udp_receiver_rmem udp_receiver_wmem < <(udp_receiver_limit_summary "$artifact_dir" "$summary")
+  node_b_udp_rcvbuf_errors="$(node_b_udp_stat_summary "$artifact_dir" "$summary" UdpRcvbufErrors)"
   IFS=$'\t' read -r hard_total hard_events < <(hard_event_summary "$artifact_dir" "$summary")
   blocking_hard_total="$(blocking_hard_event_total_from_summary "$hard_total" "$hard_events")"
   udp_kernel_dropped="$(hard_event_total_from_summary "$hard_total" "$hard_events" udp_kernel_dropped)"
@@ -641,6 +718,15 @@ write_row() {
   connected_udp_direct_decrypt_bulk_shed="$(hard_event_total_from_summary "$hard_total" "$hard_events" connected_udp_direct_decrypt_bulk_shed)"
   IFS=$'\t' read -r connected_udp_recv_buf connected_udp_send_buf < <(connected_udp_socket_buffer_summary "$artifact_dir" "$summary")
   zero_status="$(loss_zero_status "$udp_200_loss" "$udp_1000_loss" "$ping_loss")"
+  attribution="$(udp_loss_attribution \
+    "$zero_status" \
+    "$blocking_hard_total" \
+    "$udp_namespace_rcvbuf_errors" \
+    "$connected_udp_kernel_dropped" \
+    "$connected_udp_peer_kernel_dropped" \
+    "$connected_udp_drain_bulk_dropped" \
+    "$connected_udp_direct_decrypt_bulk_shed" \
+    "$node_b_udp_rcvbuf_errors")"
   candidate="$(candidate_status "$backend" "$zero_status" "$hard_total" "$blocking_hard_total")"
 
   if [[ -n "$threads" ]]; then
@@ -676,7 +762,9 @@ write_row() {
     "$(tsv_escape "$iperf_udp1000_sockbuf")" \
     "$(tsv_escape "$udp_receiver_rmem")" \
     "$(tsv_escape "$udp_receiver_wmem")" \
+    "$(tsv_escape "$node_b_udp_rcvbuf_errors")" \
     "$(tsv_escape "$zero_status")" \
+    "$(tsv_escape "$attribution")" \
     "$(tsv_escape "$hard_total")" \
     "$(tsv_escape "$hard_events")" \
     "$(tsv_escape "$udp_kernel_dropped")" \

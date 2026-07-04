@@ -1051,7 +1051,7 @@ test_docker_comparison_outputs() {
 
 test_docker_benchmark_table_outputs() {
   local dir out fields current_status current_events current_socket published_status published_events legacy_status wg_status
-  local current_receiver current_provenance markdown_row
+  local current_receiver published_receiver current_provenance markdown_row
   dir="$(mktemp -d)"
   write_summary_fixture \
     "$dir/current/summary.tsv" \
@@ -1089,6 +1089,12 @@ test_docker_benchmark_table_outputs() {
       printf 'net.ipv4.udp_wmem_min\t4096\n'
     } >"$dir/current/raw/nvpn-$service-udp-receiver-limits.tsv"
   done
+  {
+    printf 'UdpInDatagrams                  1000               0.0\n'
+    printf 'UdpInErrors                     0                  0.0\n'
+    printf 'UdpOutDatagrams                 100                0.0\n'
+    printf 'UdpRcvbufErrors                 0                  0.0\n'
+  } >"$dir/current/raw/nvpn-node-b-udp-stats.txt"
 
   write_summary_fixture \
     "$dir/published/summary.tsv" \
@@ -1108,6 +1114,12 @@ test_docker_benchmark_table_outputs() {
     printf 'connected_udp_kernel_dropped\t0.5\t3\n'
     printf 'connected_udp_peer_kernel_dropped\t0.2\t2\n'
   } >"$dir/published/raw/nvpn-pipeline-hard-event-totals.tsv"
+  {
+    printf 'UdpInDatagrams                  1000               0.0\n'
+    printf 'UdpInErrors                     5                  0.0\n'
+    printf 'UdpOutDatagrams                 100                0.0\n'
+    printf 'UdpRcvbufErrors                 5                  0.0\n'
+  } >"$dir/published/raw/nvpn-node-b-udp-stats.txt"
 
   write_summary_fixture \
     "$dir/legacy/summary.tsv" \
@@ -1151,20 +1163,22 @@ test_docker_benchmark_table_outputs() {
   current_status="$(table_values "$out/stress-table.tsv" current udp_ping_zero hard_events_total hard_events candidate)"
   current_events="$(table_values "$out/stress-table.tsv" current udp_kernel_dropped_total udp_namespace_rcvbuf_errors_total connected_udp_kernel_dropped_total connected_udp_peer_kernel_dropped_total connected_udp_drain_bulk_dropped_total connected_udp_direct_decrypt_bulk_shed_total)"
   current_socket="$(table_values "$out/stress-table.tsv" current connected_udp_recv_buf connected_udp_send_buf)"
-  current_receiver="$(table_values "$out/stress-table.tsv" current iperf_udp200_sockbuf iperf_udp1000_sockbuf udp_receiver_rmem udp_receiver_wmem)"
+  current_receiver="$(table_values "$out/stress-table.tsv" current iperf_udp200_sockbuf iperf_udp1000_sockbuf udp_receiver_rmem udp_receiver_wmem node_b_udp_rcvbuf_errors udp_loss_attribution)"
   published_status="$(table_values "$out/stress-table.tsv" published udp_ping_zero hard_events_total hard_events candidate)"
+  published_receiver="$(table_values "$out/stress-table.tsv" published node_b_udp_rcvbuf_errors udp_loss_attribution)"
   published_events="$(table_values "$out/stress-table.tsv" published udp_kernel_dropped_total udp_namespace_rcvbuf_errors_total connected_udp_kernel_dropped_total connected_udp_peer_kernel_dropped_total connected_udp_drain_bulk_dropped_total connected_udp_direct_decrypt_bulk_shed_total)"
   legacy_status="$(table_values "$out/stress-table.tsv" legacy udp_ping_zero hard_events_total hard_events candidate)"
   wg_status="$(table_values "$out/stress-table.tsv" wg backend udp_ping_zero hard_events_total candidate)"
   current_provenance="$(table_values "$out/stress-table.tsv" current git_head fips_head dirty stress)"
   markdown_row="$(grep -F '| current | nvpn |' "$out/stress-table.md")"
 
-  assert_eq "$fields" "41" "Docker benchmark table field count"
+  assert_eq "$fields" "43" "Docker benchmark table field count"
   assert_eq "$current_status" $'true\t7\trx_loop_slow_maintenance_skipped:7\tpass' "Docker benchmark table current status"
   assert_eq "$current_events" $'0\t0\t0\t0\t0\t0' "Docker benchmark table current event split"
   assert_eq "$current_socket" $'16777216/33554432\t8388608/16777216' "Docker benchmark table connected UDP buffer summary"
-  assert_eq "$current_receiver" $'1:0/212992/212992\t4:4194304/8388608/8388608\t212992/212992\t212992/212992' "Docker benchmark table receiver buffer summary"
+  assert_eq "$current_receiver" $'1:0/212992/212992\t4:4194304/8388608/8388608\t212992/212992\t212992/212992\t0\tnone' "Docker benchmark table receiver buffer summary"
   assert_eq "$published_status" $'false\t10\tudp_namespace_rcvbuf_errors:5;connected_udp_kernel_dropped:3;connected_udp_peer_kernel_dropped:2\tfail' "Docker benchmark table published status"
+  assert_eq "$published_receiver" $'5\tmixed-hard+receiver-rcvbuf' "Docker benchmark table UDP loss attribution"
   assert_eq "$published_events" $'0\t5\t3\t2\t0\t0' "Docker benchmark table published event split"
   assert_eq "$legacy_status" $'true\t15\tdecrypt_fallback_pressure_drain:15\tfail' "Docker benchmark table legacy phase hard-event fallback"
   assert_eq "$wg_status" $'wireguard-go\ttrue\tn/a\treference' "Docker benchmark table WG reference status"
