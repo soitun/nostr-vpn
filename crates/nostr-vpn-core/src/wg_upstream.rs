@@ -26,7 +26,7 @@
 //!     daemon path; the runtime owns reader+writer tasks that talk to
 //!     the OS tun directly.
 
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::os::raw::c_int;
 use std::sync::Arc;
 use std::time::Duration;
@@ -282,112 +282,39 @@ impl WireGuardExitFingerprint {
     }
 }
 
-enum PumpEvent {
-    Timer,
-    UdpDatagram { source: IpAddr, payload: Vec<u8> },
-    TunPacket(Vec<u8>),
-    TunReaderClosed,
-}
-
 async fn run_pump(
     mut tunn: Tunn,
     udp: Arc<UdpSocket>,
     upstream: SocketAddr,
-    tun_in_rx: Option<TunPacketRx>,
+    mut tun_in_rx: Option<TunPacketRx>,
     tun_out_tx: Option<TunPacketTx>,
     handshake: Arc<HandshakeState>,
 ) {
     log_android_info(&format!(
         "wg-upstream: run_pump starting, upstream={upstream}"
     ));
-    {
-        let mut buf = vec![0u8; MAX_WG_PACKET];
-        match tunn.format_handshake_initiation(&mut buf, false) {
-            TunnResult::WriteToNetwork(packet) => {
-                let len = packet.len();
-                match udp.send_to(packet, upstream).await {
-                    Ok(n) => log_android_info(&format!(
-                        "wg-upstream: initial handshake init sent ({n}/{len} bytes to {upstream})"
-                    )),
-                    Err(error) => {
-                        log_android_warn(&format!(
-                            "wg-upstream: initial handshake send failed: {error}"
-                        ));
-                        tracing::warn!(?error, "wg-upstream: initial handshake send failed");
-                    }
+
+    let mut udp_buf = vec![0u8; MAX_WG_PACKET];
+    let mut out = vec![0u8; MAX_WG_PACKET];
+    match tunn.format_handshake_initiation(&mut out, false) {
+        TunnResult::WriteToNetwork(packet) => {
+            let len = packet.len();
+            match udp.send_to(packet, upstream).await {
+                Ok(n) => log_android_info(&format!(
+                    "wg-upstream: initial handshake init sent ({n}/{len} bytes to {upstream})"
+                )),
+                Err(error) => {
+                    log_android_warn(&format!(
+                        "wg-upstream: initial handshake send failed: {error}"
+                    ));
+                    tracing::warn!(?error, "wg-upstream: initial handshake send failed");
                 }
             }
-            _ => log_android_info(
-                "wg-upstream: format_handshake_initiation returned non-WriteToNetwork",
-            ),
+        }
+        _ => {
+            log_android_info("wg-upstream: format_handshake_initiation returned non-WriteToNetwork")
         }
     }
-
-    let (event_tx, mut event_rx) = mpsc::channel::<PumpEvent>(256);
-
-    let timer_tx = event_tx.clone();
-    let timer_task = tokio::spawn(async move {
-        let mut ticker = interval(TIMER_TICK);
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        loop {
-            ticker.tick().await;
-            if timer_tx.send(PumpEvent::Timer).await.is_err() {
-                return;
-            }
-        }
-    });
-
-    let udp_rx_socket = udp.clone();
-    let udp_tx = event_tx.clone();
-    let udp_task = tokio::spawn(async move {
-        let mut buf = vec![0u8; MAX_WG_PACKET];
-        let mut count: u32 = 0;
-        loop {
-            match udp_rx_socket.recv_from(&mut buf).await {
-                Ok((n, src)) => {
-                    count = count.saturating_add(1);
-                    let msg_type = if n >= 4 {
-                        u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]])
-                    } else {
-                        0
-                    };
-                    log_android_info(&format!(
-                        "wg-upstream: udp recv #{count} from {src} ({n}B type={msg_type})"
-                    ));
-                    let event = PumpEvent::UdpDatagram {
-                        source: src.ip(),
-                        payload: buf[..n].to_vec(),
-                    };
-                    if udp_tx.send(event).await.is_err() {
-                        return;
-                    }
-                }
-                Err(error) => {
-                    log_android_warn(&format!("wg-upstream: udp recv failed: {error}"));
-                    tracing::warn!(?error, "wg-upstream: udp recv failed");
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-            }
-        }
-    });
-
-    let tun_forward_task = tun_in_rx.map(|mut tun_rx| {
-        let tun_forward_tx = event_tx.clone();
-        tokio::spawn(async move {
-            while let Some(packet) = tun_rx.recv().await {
-                if tun_forward_tx
-                    .send(PumpEvent::TunPacket(packet))
-                    .await
-                    .is_err()
-                {
-                    return;
-                }
-            }
-            let _ = tun_forward_tx.send(PumpEvent::TunReaderClosed).await;
-        })
-    });
-
-    drop(event_tx);
 
     // Recovery state: when boringtun's `update_timers` mysteriously
     // declines to send a keepalive (observed on iOS — session goes
@@ -395,22 +322,18 @@ async fn run_pump(
     // NoCurrentSession), force a re-handshake ourselves.
     let mut consecutive_decap_errors: u32 = 0;
     let mut last_self_keepalive = std::time::Instant::now();
+    let mut ticker = interval(TIMER_TICK);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
-    while let Some(event) = event_rx.recv().await {
-        match event {
-            PumpEvent::Timer => {
-                let mut out = vec![0u8; MAX_WG_PACKET];
-                let result = tunn.update_timers(&mut out);
-                handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
-                drain_decapsulate(&mut tunn, &udp, upstream, tun_out_tx.as_ref()).await;
-                let (age, _, _, _, _) = tunn.stats();
-                let mut current = handshake.last_age.write().await;
-                let prev = current.is_some();
-                *current = age;
-                if !prev && age.is_some() {
-                    handshake.completed.notify_waiters();
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {
+                {
+                    let result = tunn.update_timers(&mut out);
+                    handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
                 }
-                drop(current);
+                drain_decapsulate(&mut tunn, &udp, upstream, tun_out_tx.as_ref(), &mut out).await;
+                let (age, _) = refresh_handshake_state(&tunn, &handshake).await;
 
                 // Belt-and-braces keepalive: every 20s, if the
                 // session is alive, push a 0-byte plaintext through
@@ -420,8 +343,7 @@ async fn run_pump(
                 // persistent_keepalive reliably on iOS-suspended runtimes.
                 if age.is_some() && last_self_keepalive.elapsed() >= Duration::from_secs(20) {
                     last_self_keepalive = std::time::Instant::now();
-                    let mut ka_out = vec![0u8; MAX_WG_PACKET];
-                    let ka_result = tunn.encapsulate(&[], &mut ka_out);
+                    let ka_result = tunn.encapsulate(&[], &mut out);
                     if let TunnResult::WriteToNetwork(packet) = &ka_result {
                         log_android_info(&format!(
                             "wg-upstream: self-keepalive {} bytes",
@@ -431,36 +353,35 @@ async fn run_pump(
                     handle_tunn_result(&ka_result, &udp, upstream, tun_out_tx.as_ref()).await;
                 }
             }
-            PumpEvent::UdpDatagram { source, payload } => {
-                let mut out = vec![0u8; MAX_WG_PACKET];
-                let result = tunn.decapsulate(Some(source), &payload, &mut out);
-                match &result {
-                    TunnResult::Done => {
-                        consecutive_decap_errors = 0;
+            received = udp.recv_from(&mut udp_buf) => {
+                let (len, source) = match received {
+                    Ok(received) => received,
+                    Err(error) => {
+                        log_android_warn(&format!("wg-upstream: udp recv failed: {error}"));
+                        tracing::warn!(?error, "wg-upstream: udp recv failed");
+                        continue;
                     }
-                    TunnResult::Err(e) => {
+                };
+
+                {
+                    let result = tunn.decapsulate(Some(source.ip()), &udp_buf[..len], &mut out);
+                    if matches!(result, TunnResult::Done) {
+                        consecutive_decap_errors = 0;
+                    } else if let TunnResult::Err(error) = &result {
                         consecutive_decap_errors = consecutive_decap_errors.saturating_add(1);
                         log_android_warn(&format!(
-                            "wg-upstream: decap err {e:?} (run={consecutive_decap_errors})"
+                            "wg-upstream: decap err {error:?} (run={consecutive_decap_errors})"
                         ));
-                    }
-                    TunnResult::WriteToNetwork(_)
-                    | TunnResult::WriteToTunnelV4(_, _)
-                    | TunnResult::WriteToTunnelV6(_, _) => {
+                    } else {
                         consecutive_decap_errors = 0;
                     }
+                    handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
                 }
-                handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
-                drain_decapsulate(&mut tunn, &udp, upstream, tun_out_tx.as_ref()).await;
-                let (age, _, _, _, _) = tunn.stats();
-                let mut current = handshake.last_age.write().await;
-                let prev = current.is_some();
-                *current = age;
-                if !prev && age.is_some() {
+                drain_decapsulate(&mut tunn, &udp, upstream, tun_out_tx.as_ref(), &mut out).await;
+                let (age, newly_completed) = refresh_handshake_state(&tunn, &handshake).await;
+                if newly_completed {
                     log_android_info(&format!("wg-upstream: handshake completed, age={age:?}"));
-                    handshake.completed.notify_waiters();
                 }
-                drop(current);
 
                 // 5+ consecutive decap errors means our session lost
                 // sync with the upstream. Force a fresh handshake init
@@ -471,47 +392,56 @@ async fn run_pump(
                         "wg-upstream: forcing re-handshake after persistent decap errors",
                     );
                     consecutive_decap_errors = 0;
-                    let mut hs_out = vec![0u8; MAX_WG_PACKET];
                     if let TunnResult::WriteToNetwork(packet) =
-                        tunn.format_handshake_initiation(&mut hs_out, true)
+                        tunn.format_handshake_initiation(&mut out, true)
                     {
                         let _ = udp.send_to(packet, upstream).await;
                     }
                 }
             }
-            PumpEvent::TunPacket(packet) => {
-                let len = packet.len();
-                let mut out = vec![0u8; MAX_WG_PACKET];
-                let result = tunn.encapsulate(&packet, &mut out);
-                let kind = match &result {
-                    TunnResult::Done => "Done",
-                    TunnResult::Err(e) => {
-                        log_android_warn(&format!("wg-upstream: encap err {e:?}"));
-                        "Err"
-                    }
-                    TunnResult::WriteToNetwork(p) => {
-                        log_android_info(&format!(
-                            "wg-upstream: encap {len}B tun -> {}B net",
-                            p.len()
-                        ));
-                        "WriteToNetwork"
-                    }
-                    TunnResult::WriteToTunnelV4(_, _) | TunnResult::WriteToTunnelV6(_, _) => {
-                        "WriteToTunnel"
-                    }
+            packet = recv_tun_packet(&mut tun_in_rx) => {
+                let Some(packet) = packet else {
+                    break;
                 };
-                let _ = kind;
+                let len = packet.len();
+                let result = tunn.encapsulate(&packet, &mut out);
+                if let TunnResult::Err(error) = &result {
+                    log_android_warn(&format!("wg-upstream: encap err {error:?}"));
+                }
+                if let TunnResult::WriteToNetwork(packet) = &result {
+                    if len == 0 {
+                        log_android_info(&format!(
+                            "wg-upstream: encap keepalive -> {}B net",
+                            packet.len()
+                        ));
+                    }
+                }
                 handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
             }
-            PumpEvent::TunReaderClosed => break,
         }
     }
+}
 
-    timer_task.abort();
-    udp_task.abort();
-    if let Some(handle) = tun_forward_task {
-        handle.abort();
+async fn recv_tun_packet(tun_in_rx: &mut Option<TunPacketRx>) -> Option<Vec<u8>> {
+    match tun_in_rx {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
     }
+}
+
+async fn refresh_handshake_state(
+    tunn: &Tunn,
+    handshake: &Arc<HandshakeState>,
+) -> (Option<Duration>, bool) {
+    let (age, _, _, _, _) = tunn.stats();
+    let mut current = handshake.last_age.write().await;
+    let prev = current.is_some();
+    *current = age;
+    let newly_completed = !prev && age.is_some();
+    if newly_completed {
+        handshake.completed.notify_waiters();
+    }
+    (age, newly_completed)
 }
 
 async fn handle_tunn_result(
@@ -556,10 +486,10 @@ async fn drain_decapsulate(
     udp: &Arc<UdpSocket>,
     upstream: SocketAddr,
     tun_out_tx: Option<&mpsc::Sender<Vec<u8>>>,
+    out: &mut [u8],
 ) {
     loop {
-        let mut out = vec![0u8; MAX_WG_PACKET];
-        let result = tunn.decapsulate(None, &[], &mut out);
+        let result = tunn.decapsulate(None, &[], out);
         match &result {
             TunnResult::Done | TunnResult::Err(_) => return,
             _ => handle_tunn_result(&result, udp, upstream, tun_out_tx).await,
