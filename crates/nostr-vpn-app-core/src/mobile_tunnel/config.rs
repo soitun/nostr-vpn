@@ -40,6 +40,8 @@ const MOBILE_FIPS_RECV_BATCH: usize = 64;
 const MOBILE_FIPS_SEND_BATCH: usize = 64;
 const MOBILE_TUN_OUTBOUND_BATCH_CHANNEL_CAPACITY: usize =
     TUNNEL_CHANNEL_CAPACITY / MOBILE_FIPS_SEND_BATCH;
+const MOBILE_TUN_INBOUND_BATCH_CHANNEL_CAPACITY: usize =
+    TUNNEL_CHANNEL_CAPACITY / MOBILE_FIPS_RECV_BATCH;
 const MOBILE_EXIT_NODE_DEFAULT_ROUTES: &[&str] = &["0.0.0.0/0"];
 const MOBILE_EXIT_NODE_DNS_SERVERS: &[&str] = &["1.1.1.1", "9.9.9.9"];
 const MOBILE_MAGIC_DNS_FORWARDERS: &[&str] = &["1.1.1.1:53", "9.9.9.9:53"];
@@ -476,7 +478,7 @@ pub(crate) struct MobileTunnel {
     tun_counters: Arc<MobileTunAtomicCounters>,
     #[cfg(any(target_os = "android", target_os = "ios"))]
     outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
-    inbound_rx: Option<mpsc::Receiver<Vec<u8>>>,
+    inbound_rx: Option<mpsc::Receiver<Vec<Vec<u8>>>>,
     tasks: Vec<JoinHandle<()>>,
     wg_upstream: Option<WgUpstreamRuntime>,
     #[cfg(any(target_os = "android", target_os = "ios"))]

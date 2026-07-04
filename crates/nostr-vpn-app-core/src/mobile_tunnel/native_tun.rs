@@ -15,7 +15,7 @@ impl NativeTunRuntime {
     fn start(
         fd: c_int,
         outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
-        inbound_rx: mpsc::Receiver<Vec<u8>>,
+        inbound_rx: mpsc::Receiver<Vec<Vec<u8>>>,
         packet_capacity: usize,
         counters: Arc<MobileTunAtomicCounters>,
     ) -> Result<Self> {
@@ -155,30 +155,19 @@ fn send_native_tun_packet_batch(
 
 fn native_tun_write_loop(
     fd: c_int,
-    inbound_rx: mpsc::Receiver<Vec<u8>>,
+    inbound_rx: mpsc::Receiver<Vec<Vec<u8>>>,
     stop: Arc<AtomicBool>,
     counters: Arc<MobileTunAtomicCounters>,
 ) {
     while !stop.load(Ordering::Relaxed) {
-        let packet = match inbound_rx.recv() {
-            Ok(packet) => packet,
+        let packets = match inbound_rx.recv() {
+            Ok(packets) => packets,
             Err(_) => break,
         };
-        if !write_native_tun_inbound_packet(fd, &packet, &stop, &counters) {
-            break;
-        }
-        for _ in 1..MOBILE_FIPS_RECV_BATCH {
+        for packet in packets {
             if stop.load(Ordering::Relaxed) {
                 break;
             }
-            let packet = match inbound_rx.try_recv() {
-                Ok(packet) => packet,
-                Err(mpsc::TryRecvError::Empty) => break,
-                Err(mpsc::TryRecvError::Disconnected) => {
-                    stop.store(true, Ordering::Relaxed);
-                    return;
-                }
-            };
             if !write_native_tun_inbound_packet(fd, &packet, &stop, &counters) {
                 stop.store(true, Ordering::Relaxed);
                 return;

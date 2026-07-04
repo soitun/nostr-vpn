@@ -92,7 +92,8 @@ impl MobileTunnel {
         let tun_counters = Arc::new(MobileTunAtomicCounters::default());
         let (outbound_tx, mut outbound_rx) =
             tokio_mpsc::channel::<Vec<Vec<u8>>>(MOBILE_TUN_OUTBOUND_BATCH_CHANNEL_CAPACITY);
-        let (inbound_tx, inbound_rx) = mpsc::sync_channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
+        let (inbound_tx, inbound_rx) =
+            mpsc::sync_channel::<Vec<Vec<u8>>>(MOBILE_TUN_INBOUND_BATCH_CHANNEL_CAPACITY);
 
         // If the user has WG upstream enabled, stand up the boringtun
         // pump alongside the FIPS endpoint. The WG runtime is fed via
@@ -133,7 +134,7 @@ impl MobileTunnel {
                                     &mut packet,
                                 );
                             }
-                            if inbound_tx_for_wg.send(packet).is_err() {
+                            if !send_mobile_inbound_packets(&inbound_tx_for_wg, vec![packet]) {
                                 break;
                             }
                         }
@@ -349,6 +350,7 @@ impl MobileTunnel {
             tokio::spawn(async move {
                 let mut control_fragments = FipsControlFragmentBuffer::default();
                 let mut messages = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
+                let mut inbound_packets = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
                 'recv: loop {
                     let Some(_) = endpoint
                         .recv_batch_into(&mut messages, MOBILE_FIPS_RECV_BATCH)
@@ -356,6 +358,7 @@ impl MobileTunnel {
                     else {
                         break;
                     };
+                    inbound_packets.clear();
                     for message in messages.drain(..) {
                         match handle_mobile_endpoint_message(
                             &endpoint,
@@ -371,7 +374,7 @@ impl MobileTunnel {
                             &network_id,
                             &join_request_active,
                             &mut control_fragments,
-                            &inbound_tx,
+                            &mut inbound_packets,
                             message,
                         )
                         .await
@@ -384,6 +387,15 @@ impl MobileTunnel {
                                     "mobile: failed to handle FIPS control frame"
                                 );
                             }
+                        }
+                    }
+                    if !inbound_packets.is_empty() {
+                        let batch = std::mem::replace(
+                            &mut inbound_packets,
+                            Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
+                        );
+                        if !send_mobile_inbound_packets(&inbound_tx, batch) {
+                            break 'recv;
                         }
                     }
                 }
@@ -541,7 +553,7 @@ struct MobileTunnelStarted {
         allow(dead_code)
     )]
     outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
-    inbound_rx: mpsc::Receiver<Vec<u8>>,
+    inbound_rx: mpsc::Receiver<Vec<Vec<u8>>>,
     tasks: Vec<JoinHandle<()>>,
     wg_upstream: Option<WgUpstreamRuntime>,
     wg_upstream_socket_fd: c_int,

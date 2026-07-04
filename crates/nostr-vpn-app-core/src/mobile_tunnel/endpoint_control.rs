@@ -71,7 +71,7 @@ async fn handle_mobile_endpoint_message(
     network_id: &str,
     join_request_active: &AtomicBool,
     control_fragments: &mut FipsControlFragmentBuffer,
-    inbound_tx: &mpsc::SyncSender<Vec<u8>>,
+    inbound_packets: &mut Vec<Vec<u8>>,
     message: FipsEndpointMessage,
 ) -> Result<bool> {
     if handle_mobile_control_frame(
@@ -112,9 +112,7 @@ async fn handle_mobile_endpoint_message(
         );
         let mut bytes = packet.bytes;
         nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut bytes);
-        if inbound_tx.send(bytes).is_err() {
-            return Ok(false);
-        }
+        inbound_packets.push(bytes);
     }
     Ok(true)
 }
@@ -447,7 +445,7 @@ async fn dispatch_mobile_outbound_packets(
     wg_send_tx: Option<&tokio_mpsc::Sender<Vec<u8>>>,
     wg_addr: Option<Ipv4Addr>,
     mesh_addr: Option<Ipv4Addr>,
-    inbound_tx_for_dns: &mpsc::SyncSender<Vec<u8>>,
+    inbound_tx_for_dns: &mpsc::SyncSender<Vec<Vec<u8>>>,
     app_config_for_dns: &Arc<RwLock<AppConfig>>,
     dns_forwarders: &[SocketAddr],
     packets: &mut Vec<Vec<u8>>,
@@ -466,7 +464,7 @@ async fn dispatch_mobile_outbound_packets(
                 packets.clear();
                 return false;
             }
-            if inbound_tx_for_dns.send(response).is_err() {
+            if !send_mobile_inbound_packets(inbound_tx_for_dns, vec![response]) {
                 packets.clear();
                 return false;
             }
@@ -514,6 +512,13 @@ async fn dispatch_mobile_outbound_packets(
     }
     packets.clear();
     flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await
+}
+
+fn send_mobile_inbound_packets(
+    inbound_tx: &mpsc::SyncSender<Vec<Vec<u8>>>,
+    packets: Vec<Vec<u8>>,
+) -> bool {
+    packets.is_empty() || inbound_tx.send(packets).is_ok()
 }
 
 fn push_mobile_endpoint_send_run(

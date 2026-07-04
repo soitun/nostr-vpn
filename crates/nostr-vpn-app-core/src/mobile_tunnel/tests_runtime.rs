@@ -358,14 +358,16 @@
         for _ in 0..50 {
             loop {
                 match started.inbound_rx.try_recv() {
-                    Ok(bytes) => {
-                        if let Some(index) = remaining
-                            .iter()
-                            .position(|packet| packet.as_slice() == bytes)
-                        {
-                            remaining.swap_remove(index);
-                            if remaining.is_empty() {
-                                return;
+                    Ok(batch) => {
+                        for bytes in batch {
+                            if let Some(index) = remaining
+                                .iter()
+                                .position(|packet| packet.as_slice() == bytes)
+                            {
+                                remaining.swap_remove(index);
+                                if remaining.is_empty() {
+                                    return;
+                                }
                             }
                         }
                     }
