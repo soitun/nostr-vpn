@@ -1182,21 +1182,28 @@ summarize_direct_fips_capture() {
   local row="$1"
   local direction="$2"
   local capture="$3"
-  local direction_summary="$4"
+  local client_jsonl="$4"
   local selected_pair="$OUTPUT_DIR/$row/selected-pair.json"
   local summary="$capture/summary.json"
-  python3 - "$capture/stdout.txt" "$selected_pair" "$direction_summary" "$summary" "$direction" <<'PY'
+  python3 - "$capture/stdout.txt" "$selected_pair" "$client_jsonl" "$summary" "$direction" <<'PY'
 import json
 import re
 import sys
 from pathlib import Path
 
-capture_path, pair_path, direction_summary_path, out_path = map(Path, sys.argv[1:5])
+capture_path, pair_path, client_jsonl_path, out_path = map(Path, sys.argv[1:5])
 direction = sys.argv[5]
 pair = json.loads(pair_path.read_text())
-direction_summary = json.loads(direction_summary_path.read_text())
 windows = pair["windows_underlay"]
 linux = pair["linux_underlay"]
+client_summary = {}
+for raw_line in client_jsonl_path.read_text(errors="replace").splitlines():
+    try:
+        parsed = json.loads(raw_line)
+    except json.JSONDecodeError:
+        continue
+    if parsed.get("role") == "client":
+        client_summary = parsed
 line_re = re.compile(
     r"\bIP\s+(\d+\.\d+\.\d+\.\d+)\.(\d+)\s+>\s+(\d+\.\d+\.\d+\.\d+)\.(\d+):\s+UDP,\s+length\s+(\d+)"
 )
@@ -1254,7 +1261,7 @@ for line in capture_path.read_text(errors="replace").splitlines():
         entry["packets"] += 1
         entry["payload_bytes"] += length
 
-client_bytes = int(direction_summary.get("client_bytes") or 0)
+client_bytes = int(client_summary.get("bytes") or 0)
 min_direct_bytes = int(client_bytes * 0.5)
 expected_src = windows if direction == "windows_to_linux" else linux
 expected_dst = linux if direction == "windows_to_linux" else windows
@@ -1534,6 +1541,8 @@ summarize_direction() {
   local before_linux="$dir/linux-before.json"
   local after_linux="$dir/linux-after.json"
   local summary="$dir/summary.json"
+  local selected_pair="$OUTPUT_DIR/$row/selected-pair.json"
+  local direct_capture_summary="$dir/fips-direct-capture/summary.json"
 
   jq -n \
     --arg row "$row" \
@@ -1545,6 +1554,8 @@ summarize_direction() {
     --slurpfile after_win "$after_win" \
     --slurpfile before_linux "$before_linux" \
     --slurpfile after_linux "$after_linux" \
+    --slurpfile selected_pair <(if [[ -f "$selected_pair" ]]; then cat "$selected_pair"; fi) \
+    --slurpfile direct_capture <(if [[ -f "$direct_capture_summary" ]]; then cat "$direct_capture_summary"; fi) \
     --argjson win_nvpn_delta "$(jq -n --slurpfile before "$before_win" --slurpfile after "$after_win" --arg adapter nvpn "$adapter_delta_jq")" \
     --argjson win_eth_delta "$(jq -n --slurpfile before "$before_win" --slurpfile after "$after_win" --arg adapter Ethernet "$adapter_delta_jq")" \
     '
@@ -1555,6 +1566,8 @@ summarize_direction() {
     $after_win[0] as $aw |
     $before_linux[0] as $bl |
     $after_linux[0] as $al |
+    ($selected_pair[0] // {}) as $pair |
+    ($direct_capture[0] // {}) as $direct |
     (num($aw.process.cpu_seconds) - num($bw.process.cpu_seconds)) as $win_cpu |
     (num($al.process.cpu_seconds) - num($bl.process.cpu_seconds)) as $linux_cpu |
     (num($client.bytes) / 1000000000.0) as $gb |
@@ -1581,13 +1594,21 @@ summarize_direction() {
       linux_service_hash: ($al.binaries.configured_hash // ""),
       linux_process_hash: ($al.binaries.process_hash // ""),
       linux_hash_match: (($al.binaries.configured_hash // "") != "" and ($al.binaries.configured_hash // "") == ($al.binaries.process_hash // "")),
+      direct_pair_ok: (if $path_kind == "nvpn" then ($pair.direct_pair.ok // null) else null end),
+      direct_capture_ok: (if $path_kind == "nvpn" then ($direct.ok // null) else null end),
+      primary_direct_payload_ratio: (if $path_kind == "nvpn" then ($direct.primary_direct_payload_ratio // null) else null end),
+      direct_payload_ratio: (if $path_kind == "nvpn" then ($direct.direct_payload_ratio // null) else null end),
+      non_direct_payload_ratio: (if $path_kind == "nvpn" then ($direct.non_direct_payload_ratio // null) else null end),
+      non_direct_payload_bytes: (if $path_kind == "nvpn" then ($direct.non_direct_payload_bytes // null) else null end),
+      primary_direct_flow: (if $path_kind == "nvpn" then ($direct.primary_direct_flow // "") else "" end),
+      non_direct_peers: (if $path_kind == "nvpn" then ($direct.non_direct_peers // {}) else {} end),
       windows_nvpn_delta: $win_nvpn_delta,
       windows_ethernet_delta: $win_eth_delta,
       linux_process_path: ($al.process.path // "")
     }' >"$summary"
 
   if [[ ! -f "$SUMMARY_TSV" ]]; then
-    printf 'row\tpath\tdirection\ttool\tclient_mbps\tserver_mbps\twindows_cpu_seconds\twindows_cpu_sec_per_gb\tlinux_cpu_seconds\tlinux_cpu_sec_per_gb\twindows_hash_match\twindows_service_binary\twindows_service_hash\twindows_process_hash\tlinux_hash_match\tlinux_service_binary\tlinux_service_hash\tlinux_process_hash\twindows_nvpn_rx_bytes\twindows_nvpn_tx_bytes\twindows_ethernet_rx_bytes\twindows_ethernet_tx_bytes\n' >"$SUMMARY_TSV"
+    printf 'row\tpath\tdirection\ttool\tclient_mbps\tserver_mbps\twindows_cpu_seconds\twindows_cpu_sec_per_gb\tlinux_cpu_seconds\tlinux_cpu_sec_per_gb\twindows_hash_match\twindows_service_binary\twindows_service_hash\twindows_process_hash\tlinux_hash_match\tlinux_service_binary\tlinux_service_hash\tlinux_process_hash\tdirect_pair_ok\tdirect_capture_ok\tprimary_direct_payload_ratio\tdirect_payload_ratio\tnon_direct_payload_ratio\tnon_direct_payload_bytes\tprimary_direct_flow\tnon_direct_peers\twindows_nvpn_rx_bytes\twindows_nvpn_tx_bytes\twindows_ethernet_rx_bytes\twindows_ethernet_tx_bytes\n' >"$SUMMARY_TSV"
   fi
   jq -r '[
     .row,
@@ -1608,6 +1629,14 @@ summarize_direction() {
     .linux_service_binary,
     .linux_service_hash,
     .linux_process_hash,
+    (.direct_pair_ok // ""),
+    (.direct_capture_ok // ""),
+    (.primary_direct_payload_ratio // ""),
+    (.direct_payload_ratio // ""),
+    (.non_direct_payload_ratio // ""),
+    (.non_direct_payload_bytes // ""),
+    .primary_direct_flow,
+    (.non_direct_peers | tojson),
     .windows_nvpn_delta.received_bytes,
     .windows_nvpn_delta.sent_bytes,
     .windows_ethernet_delta.received_bytes,
@@ -1664,6 +1693,7 @@ measure_direction() {
     stop_linux_fips_capture "$capture_pid"
     fetch_linux_file "$capture_stdout" "$capture_dir/stdout.txt"
     fetch_linux_file "$capture_stderr" "$capture_dir/stderr.txt"
+    summarize_direct_fips_capture "$row" "$direction" "$capture_dir" "$out_dir/client.jsonl"
   fi
 
   capture_windows_snapshot "$out_dir/windows-after.json"
@@ -1672,9 +1702,6 @@ measure_direction() {
     capture_windows_daemon_log_tail "$out_dir/windows-after.json" "$out_dir/windows-daemon.log"
   fi
   summarize_direction "$row" "$path_kind" "$direction" "$out_dir"
-  if [[ -n "$capture_info" ]]; then
-    summarize_direct_fips_capture "$row" "$direction" "$capture_dir" "$out_dir/summary.json"
-  fi
 }
 
 validate_underlay() {
