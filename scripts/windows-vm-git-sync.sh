@@ -13,6 +13,7 @@ GUEST_BARE_REPO="${NVPN_WINDOWS_GIT_BARE_PATH:-C:\\src\\nostr-vpn.git}"
 REMOTE_REF="${NVPN_WINDOWS_GIT_REF:-refs/heads/codex/windows-vm-sync}"
 REMOTE_URL="${NVPN_WINDOWS_GIT_REMOTE_URL:-${SSH_HOST}:${GUEST_BARE_REPO//\\//}}"
 FIPS_REPO="${NVPN_WINDOWS_FIPS_REPO_PATH:-$SRC_ROOT/fips}"
+CDK_SPILMAN_REPO="${NVPN_WINDOWS_CDK_SPILMAN_REPO_PATH:-$SRC_ROOT/cashu_spilman_channels}"
 
 run_ps() {
   local script="$1"
@@ -158,6 +159,7 @@ case "${NVPN_WINDOWS_SYNC_PATH_DEPS:-1}" in
     ;;
   *)
     sync_repo "cashu-service" "$SRC_ROOT/cashu-service" "C:\\src\\cashu-service" "C:\\src\\cashu-service.git" "refs/heads/codex/windows-vm-sync-cashu-service"
+    sync_repo "cashu_spilman_channels" "$CDK_SPILMAN_REPO" "C:\\src\\cashu_spilman_channels" "C:\\src\\cashu_spilman_channels.git" "refs/heads/codex/windows-vm-sync-cashu-spilman-channels"
     sync_repo "nostr-pubsub" "$SRC_ROOT/nostr-pubsub" "C:\\src\\nostr-pubsub" "C:\\src\\nostr-pubsub.git" "refs/heads/codex/windows-vm-sync-nostr-pubsub"
     sync_repo "fips" "$FIPS_REPO" "C:\\src\\fips" "C:\\src\\fips.git" "refs/heads/codex/windows-vm-sync-fips"
     sync_repo "hashtree" "$SRC_ROOT/hashtree" "C:\\src\\hashtree" "C:\\src\\hashtree.git" "refs/heads/codex/windows-vm-sync-hashtree"
