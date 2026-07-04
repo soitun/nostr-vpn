@@ -902,6 +902,8 @@ build_current_windows() {
 
   if ! is_true "$SKIP_WINDOWS_SYNC"; then
     NVPN_WINDOWS_SSH_HOST="$WINDOWS_SSH" \
+      NVPN_WINDOWS_SSH_PROXY_COMMAND="$WINDOWS_SSH_PROXY_COMMAND" \
+      NVPN_WINDOWS_SSH_JUMP="$WINDOWS_SSH_JUMP" \
       NVPN_WINDOWS_GUEST_REPO_PATH="$WINDOWS_REPO" \
       "$ROOT_DIR/scripts/windows-vm-git-sync.sh" "$WINDOWS_SSH"
   fi
