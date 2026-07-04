@@ -31,6 +31,7 @@ TUN_PACKET_PROBE_TARGET="${NVPN_IOS_TUN_PACKET_PROBE_TARGET:-10.44.255.254}"
 TUN_PACKET_PROBE_PORT="${NVPN_IOS_TUN_PACKET_PROBE_PORT:-9}"
 TUN_PACKET_PROBE_COUNT="${NVPN_IOS_TUN_PACKET_PROBE_COUNT:-4}"
 TUN_PACKET_PROBE_WAIT_SECS="${NVPN_IOS_TUN_PACKET_PROBE_WAIT_SECS:-6}"
+TUN_PACKET_PROBE_REQUIRE_REPLY="${NVPN_IOS_TUN_PACKET_PROBE_REQUIRE_REPLY:-0}"
 cleanup_after_vpn_cycle="${NVPN_IOS_CLEANUP_AFTER_VPN_CYCLE:-1}"
 SCREENSHOT="$ROOT/artifacts/nostr-vpn-ios.png"
 
@@ -69,7 +70,9 @@ updates.
 The physical-device packet probe defaults to 4 UDP packets toward the debug
 non-local tunnel probe target. Override with NVPN_IOS_TUN_PACKET_PROBE_TARGET,
 NVPN_IOS_TUN_PACKET_PROBE_PORT, NVPN_IOS_TUN_PACKET_PROBE_COUNT, and
-NVPN_IOS_TUN_PACKET_PROBE_WAIT_SECS.
+NVPN_IOS_TUN_PACKET_PROBE_WAIT_SECS. Set
+NVPN_IOS_TUN_PACKET_PROBE_REQUIRE_REPLY=1 with a reachable peer target to
+require native TUN write counters to increase.
 EOF
 }
 
@@ -264,11 +267,12 @@ copy_ios_debug_logs() {
 validate_vpn_probe_result() {
   local result_path="$1"
   local summary_path="$VPN_RESULT_DIR/$TUN_PACKET_PROBE_SUMMARY_NAME"
-  python3 - "$result_path" "$summary_path" "$NVPN_BUILD_GIT_SHA" <<'PY'
+  python3 - "$result_path" "$summary_path" "$NVPN_BUILD_GIT_SHA" "$TUN_PACKET_PROBE_REQUIRE_REPLY" <<'PY'
 import json
 import sys
 
-path, summary_path, expected_build_git_sha = sys.argv[1], sys.argv[2], sys.argv[3]
+path, summary_path, expected_build_git_sha, require_reply_raw = sys.argv[1:5]
+require_reply = require_reply_raw.strip().lower() in {"1", "true", "yes", "on"}
 with open(path, encoding="utf-8") as fh:
     result = json.load(fh)
 
@@ -287,6 +291,8 @@ def probe_values():
     observed = counter(result.get("tunPacketProbeObservedPackets"))
     missing = counter(result.get("tunPacketProbeMissingPackets"))
     observed_bytes = counter(result.get("tunPacketProbeObservedBytesRead"))
+    observed_written = counter(result.get("tunPacketProbeObservedWritten"))
+    observed_bytes_written = counter(result.get("tunPacketProbeObservedBytesWritten"))
     dropped_delta = counter(result.get("tunPacketProbeDroppedDelta"))
     loss_pct = None
     observed_pct = None
@@ -305,6 +311,8 @@ def probe_values():
         "observedPct": observed_pct,
         "packetLossPct": loss_pct,
         "observedBytesRead": observed_bytes,
+        "observedWritten": observed_written,
+        "observedBytesWritten": observed_bytes_written,
         "droppedDelta": dropped_delta,
         "firstObservedMs": counter(result.get("tunPacketProbeFirstObservedMs")),
         "elapsedMs": counter(result.get("tunPacketProbeElapsedMs")),
@@ -314,11 +322,21 @@ def probe_values():
         "finalRead": counter(result.get("tunPacketProbeFinalRead")),
         "baselineBytesRead": counter(result.get("tunPacketProbeBaselineBytesRead")),
         "finalBytesRead": counter(result.get("tunPacketProbeFinalBytesRead")),
+        "baselineWritten": counter(result.get("tunPacketProbeBaselineWritten")),
+        "finalWritten": counter(result.get("tunPacketProbeFinalWritten")),
+        "baselineBytesWritten": counter(result.get("tunPacketProbeBaselineBytesWritten")),
+        "finalBytesWritten": counter(result.get("tunPacketProbeFinalBytesWritten")),
         "baselineDropped": counter(result.get("tunPacketProbeBaselineDropped")),
         "finalDropped": counter(result.get("tunPacketProbeFinalDropped")),
         "readIncreased": result.get("tunPacketProbeReadIncreased"),
         "bytesReadIncreased": result.get("tunPacketProbeBytesReadIncreased"),
+        "writtenIncreased": result.get("tunPacketProbeWrittenIncreased"),
+        "bytesWrittenIncreased": result.get("tunPacketProbeBytesWrittenIncreased"),
         "droppedIncreased": result.get("tunPacketProbeDroppedIncreased"),
+        "replyRequired": require_reply,
+        "replyObserved": result.get("tunPacketProbeWrittenIncreased") is True
+        and result.get("tunPacketProbeBytesWrittenIncreased") is True
+        and result.get("tunPacketProbeDroppedIncreased") is False,
         "error": result.get("tunPacketProbeError"),
         "sendError": result.get("tunPacketProbeSendError"),
         "rawOutput": path,
@@ -340,6 +358,8 @@ def probe_summary():
         f"missing={values['missing']}",
         f"lossPct={display(values['packetLossPct'], '%')}",
         f"bytes={values['observedBytesRead']}",
+        f"written={values['observedWritten']}",
+        f"bytesWritten={values['observedBytesWritten']}",
         f"drops={values['droppedDelta']}",
         f"firstMs={values['firstObservedMs']}",
         f"elapsedMs={values['elapsedMs']}",
@@ -364,6 +384,7 @@ def write_probe_summary():
             "tunBytesWritten": counter(runtime.get("tunBytesWritten")),
             "tunPacketsDropped": counter(runtime.get("tunPacketsDropped")),
         }
+    values["replyRequired"] = require_reply
     for key in (
         "appBundleIdentifier",
         "appVersionName",
@@ -423,6 +444,8 @@ if result.get("packetTunnelStatusRawValue") == 3:
             sent = result.get("tunPacketProbeSentPackets")
             observed = result.get("tunPacketProbeObservedPackets")
             observed_bytes = counter(result.get("tunPacketProbeObservedBytesRead"))
+            observed_written = counter(result.get("tunPacketProbeObservedWritten"))
+            observed_bytes_written = counter(result.get("tunPacketProbeObservedBytesWritten"))
             dropped_delta = counter(result.get("tunPacketProbeDroppedDelta"))
             if (
                 result.get("tunPacketProbeReadIncreased") is not True
@@ -448,6 +471,25 @@ if result.get("packetTunnelStatusRawValue") == 3:
                     f"observedBytes={observed_bytes!r} droppedDelta={dropped_delta!r} "
                     f"error={result.get('tunPacketProbeError')!r} "
                     f"sendError={result.get('tunPacketProbeSendError')!r}"
+                )
+            if require_reply and (
+                result.get("tunPacketProbeWrittenIncreased") is not True
+                or result.get("tunPacketProbeBytesWrittenIncreased") is not True
+                or observed_written is None
+                or observed_written <= 0
+                or observed_bytes_written is None
+                or observed_bytes_written <= 0
+                or dropped_delta != 0
+            ):
+                errors.append(
+                    "tunPacketProbeWrittenIncreased="
+                    f"{result.get('tunPacketProbeWrittenIncreased')!r} "
+                    f"bytesWrittenIncreased={result.get('tunPacketProbeBytesWrittenIncreased')!r} "
+                    f"baselineWritten={result.get('tunPacketProbeBaselineWritten')!r} "
+                    f"finalWritten={result.get('tunPacketProbeFinalWritten')!r} "
+                    f"observedWritten={observed_written!r} "
+                    f"observedBytesWritten={observed_bytes_written!r} "
+                    f"droppedDelta={dropped_delta!r}"
                 )
 
 if errors:

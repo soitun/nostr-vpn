@@ -587,6 +587,14 @@ final class AppModel: ObservableObject {
                 "tunBytesRead",
                 from: baselineRuntimeJson
             ),
+            let baselineWritten = Self.runtimeCounter(
+                "tunPacketsWritten",
+                from: baselineRuntimeJson
+            ),
+            let baselineBytesWritten = Self.runtimeCounter(
+                "tunBytesWritten",
+                from: baselineRuntimeJson
+            ),
             let baselineDropped = Self.runtimeCounter(
                 "tunPacketsDropped",
                 from: baselineRuntimeJson
@@ -597,6 +605,8 @@ final class AppModel: ObservableObject {
         }
         result["tunPacketProbeBaselineRead"] = Self.jsonCounterValue(baselineRead)
         result["tunPacketProbeBaselineBytesRead"] = Self.jsonCounterValue(baselineBytesRead)
+        result["tunPacketProbeBaselineWritten"] = Self.jsonCounterValue(baselineWritten)
+        result["tunPacketProbeBaselineBytesWritten"] = Self.jsonCounterValue(baselineBytesWritten)
         result["tunPacketProbeBaselineDropped"] = Self.jsonCounterValue(baselineDropped)
 
         var sentPackets = 0
@@ -623,6 +633,8 @@ final class AppModel: ObservableObject {
         let probeStartedAt = Date()
         var finalRead = baselineRead
         var finalBytesRead = baselineBytesRead
+        var finalWritten = baselineWritten
+        var finalBytesWritten = baselineBytesWritten
         var finalDropped = baselineDropped
         var pollCount = 0
         var firstObservedAt: Date?
@@ -637,6 +649,14 @@ final class AppModel: ObservableObject {
                     "tunBytesRead",
                     from: runtimeJson
                 ),
+                let currentWritten = Self.runtimeCounter(
+                    "tunPacketsWritten",
+                    from: runtimeJson
+                ),
+                let currentBytesWritten = Self.runtimeCounter(
+                    "tunBytesWritten",
+                    from: runtimeJson
+                ),
                 let currentDropped = Self.runtimeCounter(
                     "tunPacketsDropped",
                     from: runtimeJson
@@ -644,6 +664,8 @@ final class AppModel: ObservableObject {
             {
                 finalRead = currentRead
                 finalBytesRead = currentBytesRead
+                finalWritten = currentWritten
+                finalBytesWritten = currentBytesWritten
                 finalDropped = currentDropped
                 if currentRead > baselineRead && firstObservedAt == nil {
                     firstObservedAt = Date()
@@ -654,9 +676,13 @@ final class AppModel: ObservableObject {
                         sentPackets: sentPackets,
                         baselineRead: baselineRead,
                         baselineBytesRead: baselineBytesRead,
+                        baselineWritten: baselineWritten,
+                        baselineBytesWritten: baselineBytesWritten,
                         baselineDropped: baselineDropped,
                         finalRead: currentRead,
                         finalBytesRead: currentBytesRead,
+                        finalWritten: currentWritten,
+                        finalBytesWritten: currentBytesWritten,
                         finalDropped: currentDropped,
                         probeStartedAt: probeStartedAt,
                         firstObservedAt: firstObservedAt,
@@ -674,9 +700,13 @@ final class AppModel: ObservableObject {
             sentPackets: sentPackets,
             baselineRead: baselineRead,
             baselineBytesRead: baselineBytesRead,
+            baselineWritten: baselineWritten,
+            baselineBytesWritten: baselineBytesWritten,
             baselineDropped: baselineDropped,
             finalRead: finalRead,
             finalBytesRead: finalBytesRead,
+            finalWritten: finalWritten,
+            finalBytesWritten: finalBytesWritten,
             finalDropped: finalDropped,
             probeStartedAt: probeStartedAt,
             firstObservedAt: firstObservedAt,
@@ -690,9 +720,13 @@ final class AppModel: ObservableObject {
         sentPackets: Int,
         baselineRead: UInt64,
         baselineBytesRead: UInt64,
+        baselineWritten: UInt64,
+        baselineBytesWritten: UInt64,
         baselineDropped: UInt64,
         finalRead: UInt64,
         finalBytesRead: UInt64,
+        finalWritten: UInt64,
+        finalBytesWritten: UInt64,
         finalDropped: UInt64,
         probeStartedAt: Date,
         firstObservedAt: Date?,
@@ -700,6 +734,8 @@ final class AppModel: ObservableObject {
     ) {
         let observedPackets = saturatingSubtract(finalRead, baselineRead)
         let observedBytes = saturatingSubtract(finalBytesRead, baselineBytesRead)
+        let observedWritten = saturatingSubtract(finalWritten, baselineWritten)
+        let observedBytesWritten = saturatingSubtract(finalBytesWritten, baselineBytesWritten)
         let droppedDelta = saturatingSubtract(finalDropped, baselineDropped)
         let missingPackets = saturatingSubtract(UInt64(sentPackets), observedPackets)
         result["tunPacketProbeFinalRead"] = jsonCounterValue(finalRead)
@@ -708,6 +744,12 @@ final class AppModel: ObservableObject {
         result["tunPacketProbeFinalBytesRead"] = jsonCounterValue(finalBytesRead)
         result["tunPacketProbeObservedBytesRead"] = jsonCounterValue(observedBytes)
         result["tunPacketProbeBytesReadIncreased"] = observedBytes > 0
+        result["tunPacketProbeFinalWritten"] = jsonCounterValue(finalWritten)
+        result["tunPacketProbeObservedWritten"] = jsonCounterValue(observedWritten)
+        result["tunPacketProbeFinalBytesWritten"] = jsonCounterValue(finalBytesWritten)
+        result["tunPacketProbeObservedBytesWritten"] = jsonCounterValue(observedBytesWritten)
+        result["tunPacketProbeWrittenIncreased"] = observedWritten > 0
+        result["tunPacketProbeBytesWrittenIncreased"] = observedBytesWritten > 0
         result["tunPacketProbeFinalDropped"] = jsonCounterValue(finalDropped)
         result["tunPacketProbeDroppedDelta"] = jsonCounterValue(droppedDelta)
         result["tunPacketProbeDroppedIncreased"] = droppedDelta > 0

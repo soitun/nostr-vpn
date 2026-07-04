@@ -34,6 +34,7 @@ TUN_PACKET_PROBE_TARGET="${NVPN_ANDROID_TUN_PACKET_PROBE_TARGET:-10.44.255.254}"
 TUN_PACKET_PROBE_COUNT="${NVPN_ANDROID_TUN_PACKET_PROBE_COUNT:-4}"
 TUN_PACKET_PROBE_WAIT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_WAIT_SECS:-6}"
 TUN_PACKET_PROBE_TIMEOUT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_TIMEOUT_SECS:-1}"
+TUN_PACKET_PROBE_REQUIRE_REPLY="${NVPN_ANDROID_TUN_PACKET_PROBE_REQUIRE_REPLY:-0}"
 DEBUG_SEED_WAIT_SECS="${NVPN_ANDROID_DEBUG_SEED_WAIT_SECS:-2}"
 DEBUG_INVITE="${NVPN_ANDROID_DEBUG_INVITE:-}"
 DEBUG_EXIT_NODE="${NVPN_ANDROID_DEBUG_EXIT_NODE:-}"
@@ -84,8 +85,9 @@ By default --vpn-cycle also sends a small shell ping probe toward a non-local
 10.44/16 address and requires tunPacketsRead to increase by at least the probe
 count. The ping output is saved under artifacts/mobile-android so physical peer
 targets preserve loss/jitter evidence; a separate TUN counter summary JSON records
-the native packet observation. Disable with NVPN_ANDROID_TUN_PACKET_PROBE=0 if a
-device image lacks ping.
+the native packet observation. Set NVPN_ANDROID_TUN_PACKET_PROBE_REQUIRE_REPLY=1
+with a reachable peer target to require ping replies plus native TUN write
+counters. Disable with NVPN_ANDROID_TUN_PACKET_PROBE=0 if a device image lacks ping.
 
 After a successful --vpn-cycle pass, the script disconnects the debug VPN so
 devices are left clean for the next smoke. Use --leave-vpn-active to preserve a
@@ -655,14 +657,18 @@ write_android_tun_packet_probe_summary() {
   local required_increase="$3"
   local baseline_bytes="$4"
   local current_bytes="$5"
-  local baseline_dropped="$6"
-  local current_dropped="$7"
-  local ping_path="$8"
-  local ping_status="$9"
-  local first_observed_ms="${10}"
-  local elapsed_ms="${11}"
-  local polls="${12}"
-  local poll_interval_ms="${13}"
+  local baseline_written="$6"
+  local current_written="$7"
+  local baseline_bytes_written="$8"
+  local current_bytes_written="$9"
+  local baseline_dropped="${10}"
+  local current_dropped="${11}"
+  local ping_path="${12}"
+  local ping_status="${13}"
+  local first_observed_ms="${14}"
+  local elapsed_ms="${15}"
+  local polls="${16}"
+  local poll_interval_ms="${17}"
   local summary_path
   summary_path="$(android_tun_packet_probe_summary_path)"
   python3 - \
@@ -674,6 +680,10 @@ write_android_tun_packet_probe_summary() {
     "$required_increase" \
     "$baseline_bytes" \
     "$current_bytes" \
+    "$baseline_written" \
+    "$current_written" \
+    "$baseline_bytes_written" \
+    "$current_bytes_written" \
     "$baseline_dropped" \
     "$current_dropped" \
     "$ping_path" \
@@ -682,6 +692,7 @@ write_android_tun_packet_probe_summary() {
     "$elapsed_ms" \
     "$polls" \
     "$poll_interval_ms" \
+    "$TUN_PACKET_PROBE_REQUIRE_REPLY" \
     "$(android_runtime_state_path)" \
     "$(android_ping_probe_summary_path)" \
     "$(android_vpn_link_stats_path)" \
@@ -699,6 +710,10 @@ import sys
     required_increase,
     baseline_bytes,
     current_bytes,
+    baseline_written,
+    current_written,
+    baseline_bytes_written,
+    current_bytes_written,
     baseline_dropped,
     current_dropped,
     ping_path,
@@ -707,6 +722,7 @@ import sys
     elapsed_ms,
     polls,
     poll_interval_ms,
+    require_reply,
     runtime_state_path,
     ping_summary_path,
     vpn_link_stats_path,
@@ -725,6 +741,10 @@ current = number(current)
 required_increase = number(required_increase)
 baseline_bytes = number(baseline_bytes)
 current_bytes = number(current_bytes)
+baseline_written = number(baseline_written)
+current_written = number(current_written)
+baseline_bytes_written = number(baseline_bytes_written)
+current_bytes_written = number(current_bytes_written)
 baseline_dropped = number(baseline_dropped)
 current_dropped = number(current_dropped)
 ping_status = number(ping_status)
@@ -733,6 +753,7 @@ first_observed_ms = number(first_observed_ms)
 elapsed_ms = number(elapsed_ms)
 polls = number(polls)
 poll_interval_ms = number(poll_interval_ms)
+require_reply = str(require_reply).strip().lower() in {"1", "true", "yes", "on"}
 
 observed = None
 if baseline is not None and current is not None:
@@ -754,14 +775,42 @@ bytes_delta = None
 if baseline_bytes is not None and current_bytes is not None:
     bytes_delta = current_bytes - baseline_bytes
 
+written_delta = None
+if baseline_written is not None and current_written is not None:
+    written_delta = current_written - baseline_written
+
+bytes_written_delta = None
+if baseline_bytes_written is not None and current_bytes_written is not None:
+    bytes_written_delta = current_bytes_written - baseline_bytes_written
+
 dropped_delta = None
 if baseline_dropped is not None and current_dropped is not None:
     dropped_delta = current_dropped - baseline_dropped
+
+ping_received = None
+try:
+    with open(ping_summary_path, encoding="utf-8") as fh:
+        ping_summary = json.load(fh)
+    value = ping_summary.get("received")
+    if isinstance(value, int):
+        ping_received = value
+except (OSError, json.JSONDecodeError):
+    pass
+
+reply_observed = (
+    (ping_received is None or ping_received > 0)
+    and written_delta is not None
+    and written_delta > 0
+    and bytes_written_delta is not None
+    and bytes_written_delta > 0
+    and (dropped_delta is None or dropped_delta == 0)
+)
 
 summary = {
     "target": target,
     "pingTimeoutSecs": ping_timeout_secs,
     "pingExitStatus": ping_status,
+    "pingReceived": ping_received,
     "expected": required_increase,
     "observed": observed,
     "missing": missing,
@@ -772,6 +821,14 @@ summary = {
     "baselineBytesRead": baseline_bytes,
     "finalBytesRead": current_bytes,
     "observedBytesRead": bytes_delta,
+    "baselineWritten": baseline_written,
+    "finalWritten": current_written,
+    "observedWritten": written_delta,
+    "baselineBytesWritten": baseline_bytes_written,
+    "finalBytesWritten": current_bytes_written,
+    "observedBytesWritten": bytes_written_delta,
+    "writtenIncreased": written_delta is not None and written_delta > 0,
+    "bytesWrittenIncreased": bytes_written_delta is not None and bytes_written_delta > 0,
     "baselineDropped": baseline_dropped,
     "finalDropped": current_dropped,
     "droppedDelta": dropped_delta,
@@ -784,6 +841,8 @@ summary = {
     and observed >= required_increase,
     "bytesReadIncreased": bytes_delta is not None and bytes_delta > 0,
     "droppedIncreased": dropped_delta is not None and dropped_delta > 0,
+    "replyRequired": require_reply,
+    "replyObserved": reply_observed,
     "rawPingOutput": ping_path,
     "pingSummaryOutput": ping_summary_path,
     "vpnLinkStatsOutput": vpn_link_stats_path,
@@ -840,7 +899,7 @@ wait_for_tun_packets_read_after() {
   local baseline_dropped="$3"
   local baseline_bytes="$4"
   local start_ms="$5"
-  local start now current current_bytes current_dropped bytes_delta last_error
+  local start now current current_bytes current_written current_bytes_written current_dropped bytes_delta last_error
   local now_ms first_observed_ms elapsed_ms polls poll_interval_ms poll_interval_secs observed
   start="$(date +%s)"
   first_observed_ms=""
@@ -854,6 +913,8 @@ wait_for_tun_packets_read_after() {
       if last_error="$(validate_android_runtime_state 2>&1)"; then
         current="$(android_runtime_state_number tunPacketsRead 2>/dev/null || true)"
         current_bytes="$(android_runtime_state_number tunBytesRead 2>/dev/null || true)"
+        current_written="$(android_runtime_state_number tunPacketsWritten 2>/dev/null || true)"
+        current_bytes_written="$(android_runtime_state_number tunBytesWritten 2>/dev/null || true)"
         current_dropped="$(android_runtime_state_number tunPacketsDropped 2>/dev/null || true)"
         now_ms="$(epoch_ms)"
         if [[ "$current" =~ ^[0-9]+$ ]]; then
@@ -874,6 +935,8 @@ wait_for_tun_packets_read_after() {
           fi
           TUN_PACKET_PROBE_FINAL_READ="$current"
           TUN_PACKET_PROBE_FINAL_BYTES_READ="$current_bytes"
+          TUN_PACKET_PROBE_FINAL_WRITTEN="$current_written"
+          TUN_PACKET_PROBE_FINAL_BYTES_WRITTEN="$current_bytes_written"
           TUN_PACKET_PROBE_FINAL_DROPPED="$current_dropped"
           TUN_PACKET_PROBE_FIRST_OBSERVED_MS="${first_observed_ms:-$elapsed_ms}"
           TUN_PACKET_PROBE_ELAPSED_MS="$elapsed_ms"
@@ -901,11 +964,13 @@ run_android_tun_packet_probe() {
   truthy "$TUN_PACKET_PROBE" || return 0
   local baseline baseline_bytes baseline_dropped count remote_cmd ping_path ping_status probe_start_ms
   local ping_pid summary_path wait_status
-  local _baseline_written _baseline_written_bytes
-  IFS=$'\t' read -r baseline baseline_bytes _baseline_written _baseline_written_bytes baseline_dropped \
+  local baseline_written baseline_bytes_written
+  IFS=$'\t' read -r baseline baseline_bytes baseline_written baseline_bytes_written baseline_dropped \
     <<<"$(android_runtime_state_counters 2>/dev/null || printf '0\t0\t0\t0\t0')"
   [[ "$baseline" =~ ^[0-9]+$ ]] || baseline=0
   [[ "$baseline_bytes" =~ ^[0-9]+$ ]] || baseline_bytes=0
+  [[ "$baseline_written" =~ ^[0-9]+$ ]] || baseline_written=0
+  [[ "$baseline_bytes_written" =~ ^[0-9]+$ ]] || baseline_bytes_written=0
   [[ "$baseline_dropped" =~ ^[0-9]+$ ]] || baseline_dropped=0
   count="$TUN_PACKET_PROBE_COUNT"
   [[ "$count" =~ ^[0-9]+$ ]] || count=4
@@ -934,6 +999,10 @@ run_android_tun_packet_probe() {
       "$count" \
       "$baseline_bytes" \
       "$TUN_PACKET_PROBE_FINAL_BYTES_READ" \
+      "$baseline_written" \
+      "$TUN_PACKET_PROBE_FINAL_WRITTEN" \
+      "$baseline_bytes_written" \
+      "$TUN_PACKET_PROBE_FINAL_BYTES_WRITTEN" \
       "$baseline_dropped" \
       "$TUN_PACKET_PROBE_FINAL_DROPPED" \
       "$ping_path" \
@@ -943,7 +1012,38 @@ run_android_tun_packet_probe() {
       "$TUN_PACKET_PROBE_POLLS" \
       "$TUN_PACKET_PROBE_POLL_INTERVAL_MS"
   )"
-  echo "Android TUN packet probe passed: tunPacketsRead $baseline->$TUN_PACKET_PROBE_FINAL_READ observed=$((TUN_PACKET_PROBE_FINAL_READ - baseline))/$count tunBytesReadDelta=$TUN_PACKET_PROBE_BYTES_DELTA tunPacketsDropped=$baseline_dropped->$TUN_PACKET_PROBE_FINAL_DROPPED firstObservedMs=$TUN_PACKET_PROBE_FIRST_OBSERVED_MS elapsedMs=$TUN_PACKET_PROBE_ELAPSED_MS polls=$TUN_PACKET_PROBE_POLLS target=$TUN_PACKET_PROBE_TARGET summary=$summary_path"
+  if truthy "$TUN_PACKET_PROBE_REQUIRE_REPLY"; then
+    if ! python3 - "$summary_path" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    summary = json.load(fh)
+
+errors = []
+if not isinstance(summary.get("pingReceived"), int) or summary["pingReceived"] <= 0:
+    errors.append(f"pingReceived={summary.get('pingReceived')!r}")
+if summary.get("writtenIncreased") is not True:
+    errors.append(
+        "tunPacketsWritten="
+        f"{summary.get('baselineWritten')!r}->{summary.get('finalWritten')!r}"
+    )
+if summary.get("bytesWrittenIncreased") is not True:
+    errors.append(
+        "tunBytesWritten="
+        f"{summary.get('baselineBytesWritten')!r}->{summary.get('finalBytesWritten')!r}"
+    )
+if summary.get("droppedIncreased") is True:
+    errors.append(f"droppedDelta={summary.get('droppedDelta')!r}")
+if errors:
+    print("Android TUN reply probe failed: " + ", ".join(errors), file=sys.stderr)
+    sys.exit(1)
+PY
+    then
+      return 1
+    fi
+  fi
+  echo "Android TUN packet probe passed: tunPacketsRead $baseline->$TUN_PACKET_PROBE_FINAL_READ observed=$((TUN_PACKET_PROBE_FINAL_READ - baseline))/$count tunBytesReadDelta=$TUN_PACKET_PROBE_BYTES_DELTA tunPacketsWritten=$baseline_written->$TUN_PACKET_PROBE_FINAL_WRITTEN tunBytesWritten=$baseline_bytes_written->$TUN_PACKET_PROBE_FINAL_BYTES_WRITTEN tunPacketsDropped=$baseline_dropped->$TUN_PACKET_PROBE_FINAL_DROPPED firstObservedMs=$TUN_PACKET_PROBE_FIRST_OBSERVED_MS elapsedMs=$TUN_PACKET_PROBE_ELAPSED_MS polls=$TUN_PACKET_PROBE_POLLS target=$TUN_PACKET_PROBE_TARGET summary=$summary_path"
   capture_android_vpn_link_stats "after-probe"
 }
 
