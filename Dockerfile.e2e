@@ -33,16 +33,17 @@ RUN case "$NVPN_PATCH_LOCAL_FIPS" in \
           ;; \
       esac
 
-# BuildKit cache mounts: persist the cargo registry, git checkouts, and
-# target/ across builds. Without this, every source change re-downloads
-# every dep + recompiles the whole graph (~3 min). With it, an incremental
-# rebuild after editing one crate is ~30s. The target dir is mounted at
-# the workspace target/ path; the final binary is copied out at the end of
-# the RUN so it survives the cache-mount unmount.
+# BuildKit cache mounts persist registry/git deps and target/ across builds.
+# Refresh local source mtimes first: Docker preserves old worktree mtimes, while
+# the mounted target cache can contain newer artifacts from another branch.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/app/nostr-vpn/target \
-    cargo build --release --features embedded-fips -p nvpn \
+    find crates -type f \( -name '*.rs' -o -name 'Cargo.toml' \) -exec touch {} + \
+    && if [ -d /app/fips/crates ]; then \
+      find /app/fips/crates -type f \( -name '*.rs' -o -name 'Cargo.toml' \) -exec touch {} +; \
+    fi \
+    && cargo build --release --features embedded-fips -p nvpn \
     && cp target/release/nvpn /tmp/nvpn
 
 FROM ${NVPN_E2E_RUNTIME_IMAGE} AS runtime
