@@ -416,24 +416,67 @@ struct MobileEndpointSendRun {
     participant_key: Option<MobileParticipantPubkeyBytes>,
     endpoint_node_addr: [u8; 16],
     identity: PeerIdentity,
-    payloads: Vec<Vec<u8>>,
+    bulk_bodies: Vec<FipsEndpointBulkData>,
+    current_bulk: FipsEndpointBulkDataBuilder,
+    packet_count: usize,
 }
 
-fn mobile_endpoint_send_run_matches(
-    current_participant_key: Option<MobileParticipantPubkeyBytes>,
-    current_participant_fallback: Option<&str>,
-    current_endpoint_node_addr: &[u8; 16],
-    participant_key: Option<MobileParticipantPubkeyBytes>,
-    participant_fallback: Option<&str>,
-    endpoint_node_addr: &[u8; 16],
-) -> bool {
-    if current_endpoint_node_addr != endpoint_node_addr {
-        return false;
+impl MobileEndpointSendRun {
+    fn new(
+        participant_fallback: Option<String>,
+        participant_key: Option<MobileParticipantPubkeyBytes>,
+        endpoint_node_addr: [u8; 16],
+        identity: PeerIdentity,
+        payload: Vec<u8>,
+    ) -> Option<Self> {
+        let mut run = Self {
+            participant_fallback,
+            participant_key,
+            endpoint_node_addr,
+            identity,
+            bulk_bodies: Vec::new(),
+            current_bulk: FipsEndpointBulkDataBuilder::new(),
+            packet_count: 0,
+        };
+        run.push_payload(payload).then_some(run)
     }
-    match (current_participant_key, participant_key) {
-        (Some(left), Some(right)) => left == right,
-        (None, None) => current_participant_fallback == participant_fallback,
-        _ => false,
+
+    fn matches(
+        &self,
+        participant_key: Option<MobileParticipantPubkeyBytes>,
+        participant_fallback: Option<&str>,
+        endpoint_node_addr: &[u8; 16],
+    ) -> bool {
+        if self.endpoint_node_addr != *endpoint_node_addr {
+            return false;
+        }
+        match (self.participant_key, participant_key) {
+            (Some(left), Some(right)) => left == right,
+            (None, None) => self.participant_fallback.as_deref() == participant_fallback,
+            _ => false,
+        }
+    }
+
+    fn push_payload(&mut self, payload: Vec<u8>) -> bool {
+        if !self.current_bulk.can_push_packet(&payload) {
+            self.finish_current_bulk();
+        }
+        if !self.current_bulk.push_packet(&payload) {
+            return false;
+        }
+        self.packet_count = self.packet_count.saturating_add(1);
+        true
+    }
+
+    fn finish_current_bulk(&mut self) {
+        if let Some(body) = std::mem::take(&mut self.current_bulk).finish() {
+            self.bulk_bodies.push(body);
+        }
+    }
+
+    fn into_send_parts(mut self) -> (PeerIdentity, Vec<FipsEndpointBulkData>, usize) {
+        self.finish_current_bulk();
+        (self.identity, self.bulk_bodies, self.packet_count)
     }
 }
 
@@ -530,16 +573,13 @@ fn push_mobile_endpoint_send_run(
     packet: Vec<u8>,
 ) -> Option<MobileEndpointSendRun> {
     if let Some(current) = run.as_mut()
-        && mobile_endpoint_send_run_matches(
-            current.participant_key,
-            current.participant_fallback.as_deref(),
-            &current.endpoint_node_addr,
+        && current.matches(
             participant_key,
             participant_fallback.as_deref(),
             &endpoint_node_addr,
         )
     {
-        current.payloads.push(packet);
+        current.push_payload(packet);
         return None;
     }
 
@@ -551,13 +591,13 @@ fn push_mobile_endpoint_send_run(
     };
 
     let previous = run.take();
-    *run = Some(MobileEndpointSendRun {
+    *run = MobileEndpointSendRun::new(
         participant_fallback,
         participant_key,
         endpoint_node_addr,
         identity,
-        payloads: vec![packet],
-    });
+        packet,
+    );
     previous
 }
 
@@ -573,8 +613,12 @@ async fn flush_mobile_endpoint_send_run(
 }
 
 async fn send_mobile_endpoint_run(endpoint: &FipsEndpoint, run: MobileEndpointSendRun) -> bool {
+    let (identity, bulk_bodies, packet_count) = run.into_send_parts();
+    if packet_count == 0 {
+        return true;
+    }
     endpoint
-        .send_batch_to_peer(run.identity, run.payloads)
+        .send_endpoint_bulk_data_batch_to_peer(identity, bulk_bodies)
         .await
         .is_ok()
 }

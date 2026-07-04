@@ -17,9 +17,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use fips_endpoint::{
-    Config as FipsConfig, ConnectPolicy, FipsEndpoint, FipsEndpointMessage, FipsEndpointPeer,
-    FipsEndpointRelayStatus, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
-    PeerIdentity, TransportInstances, UdpConfig,
+    Config as FipsConfig, ConnectPolicy, FipsEndpoint, FipsEndpointBulkData,
+    FipsEndpointBulkDataBuilder, FipsEndpointMessage, FipsEndpointPeer, FipsEndpointRelayStatus,
+    NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig, PeerIdentity,
+    TransportInstances, UdpConfig,
 };
 use nostr_sdk::prelude::PublicKey;
 use nostr_vpn_core::config::{
