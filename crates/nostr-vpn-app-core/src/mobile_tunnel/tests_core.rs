@@ -304,7 +304,7 @@
         let client_tunnel_ip = assert_mobile_fips_exit_config(&client_mobile, &exit_pubkey);
         let packet = test_ipv4_packet(client_tunnel_ip, Ipv4Addr::new(203, 0, 113, 45));
         let packet_two = test_ipv4_packet(client_tunnel_ip, Ipv4Addr::new(203, 0, 113, 46));
-        let started = Box::pin(MobileTunnel::start_async(client_mobile, client_app))
+        let mut started = Box::pin(MobileTunnel::start_async(client_mobile, client_app))
             .await
             .expect("start client mobile tunnel");
         let mut messages = send_mobile_packets_until_received(
@@ -359,7 +359,7 @@
         let mut expected_reply_two = reply_two;
         nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut expected_reply_two);
         let expected_replies = vec![expected_reply, expected_reply_two];
-        receive_mobile_inbound_packets_until(&started, &expected_replies).await;
+        receive_mobile_inbound_packets_until(&mut started, &expected_replies).await;
 
         shutdown_started_mobile_tunnel(started).await;
         exit_endpoint

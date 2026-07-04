@@ -445,7 +445,7 @@ async fn dispatch_mobile_outbound_packets(
     wg_send_tx: Option<&tokio_mpsc::Sender<Vec<u8>>>,
     wg_addr: Option<Ipv4Addr>,
     mesh_addr: Option<Ipv4Addr>,
-    inbound_tx_for_dns: &mpsc::SyncSender<Vec<Vec<u8>>>,
+    inbound_tx_for_dns: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
     app_config_for_dns: &Arc<RwLock<AppConfig>>,
     dns_forwarders: &[SocketAddr],
     packets: &mut Vec<Vec<u8>>,
@@ -464,7 +464,7 @@ async fn dispatch_mobile_outbound_packets(
                 packets.clear();
                 return false;
             }
-            if !send_mobile_inbound_packets(inbound_tx_for_dns, vec![response]) {
+            if !send_mobile_inbound_packets(inbound_tx_for_dns, vec![response]).await {
                 packets.clear();
                 return false;
             }
@@ -514,11 +514,11 @@ async fn dispatch_mobile_outbound_packets(
     flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await
 }
 
-fn send_mobile_inbound_packets(
-    inbound_tx: &mpsc::SyncSender<Vec<Vec<u8>>>,
+async fn send_mobile_inbound_packets(
+    inbound_tx: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
     packets: Vec<Vec<u8>>,
 ) -> bool {
-    packets.is_empty() || inbound_tx.send(packets).is_ok()
+    packets.is_empty() || inbound_tx.send(packets).await.is_ok()
 }
 
 fn push_mobile_endpoint_send_run(

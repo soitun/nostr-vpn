@@ -93,7 +93,7 @@ impl MobileTunnel {
         let (outbound_tx, mut outbound_rx) =
             tokio_mpsc::channel::<Vec<Vec<u8>>>(MOBILE_TUN_OUTBOUND_BATCH_CHANNEL_CAPACITY);
         let (inbound_tx, inbound_rx) =
-            mpsc::sync_channel::<Vec<Vec<u8>>>(MOBILE_TUN_INBOUND_BATCH_CHANNEL_CAPACITY);
+            tokio_mpsc::channel::<Vec<Vec<u8>>>(MOBILE_TUN_INBOUND_BATCH_CHANNEL_CAPACITY);
 
         // If the user has WG upstream enabled, stand up the boringtun
         // pump alongside the FIPS endpoint. The WG runtime is fed via
@@ -134,7 +134,8 @@ impl MobileTunnel {
                                     &mut packet,
                                 );
                             }
-                            if !send_mobile_inbound_packets(&inbound_tx_for_wg, vec![packet]) {
+                            if !send_mobile_inbound_packets(&inbound_tx_for_wg, vec![packet]).await
+                            {
                                 break;
                             }
                         }
@@ -394,7 +395,7 @@ impl MobileTunnel {
                             &mut inbound_packets,
                             Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
                         );
-                        if !send_mobile_inbound_packets(&inbound_tx, batch) {
+                        if !send_mobile_inbound_packets(&inbound_tx, batch).await {
                             break 'recv;
                         }
                     }
@@ -553,7 +554,7 @@ struct MobileTunnelStarted {
         allow(dead_code)
     )]
     outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
-    inbound_rx: mpsc::Receiver<Vec<Vec<u8>>>,
+    inbound_rx: tokio_mpsc::Receiver<Vec<Vec<u8>>>,
     tasks: Vec<JoinHandle<()>>,
     wg_upstream: Option<WgUpstreamRuntime>,
     wg_upstream_socket_fd: c_int,

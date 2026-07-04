@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, RwLock,
     atomic::{AtomicBool, Ordering},
-    mpsc,
 };
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 

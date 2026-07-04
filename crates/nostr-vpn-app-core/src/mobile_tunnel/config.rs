@@ -478,7 +478,7 @@ pub(crate) struct MobileTunnel {
     tun_counters: Arc<MobileTunAtomicCounters>,
     #[cfg(any(target_os = "android", target_os = "ios"))]
     outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
-    inbound_rx: Option<mpsc::Receiver<Vec<Vec<u8>>>>,
+    inbound_rx: Option<tokio_mpsc::Receiver<Vec<Vec<u8>>>>,
     tasks: Vec<JoinHandle<()>>,
     wg_upstream: Option<WgUpstreamRuntime>,
     #[cfg(any(target_os = "android", target_os = "ios"))]

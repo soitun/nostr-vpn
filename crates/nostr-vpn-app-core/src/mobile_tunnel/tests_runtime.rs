@@ -351,7 +351,7 @@
     }
 
     async fn receive_mobile_inbound_packets_until(
-        started: &MobileTunnelStarted,
+        started: &mut MobileTunnelStarted,
         packets: &[Vec<u8>],
     ) {
         let mut remaining = packets.to_vec();
@@ -371,7 +371,7 @@
                             }
                         }
                     }
-                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(tokio_mpsc::error::TryRecvError::Empty) => break,
                     Err(error) => panic!("mobile inbound channel closed: {error}"),
                 }
             }

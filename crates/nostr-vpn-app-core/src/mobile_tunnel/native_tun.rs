@@ -15,7 +15,7 @@ impl NativeTunRuntime {
     fn start(
         fd: c_int,
         outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
-        inbound_rx: mpsc::Receiver<Vec<Vec<u8>>>,
+        inbound_rx: tokio_mpsc::Receiver<Vec<Vec<u8>>>,
         packet_capacity: usize,
         counters: Arc<MobileTunAtomicCounters>,
     ) -> Result<Self> {
@@ -156,14 +156,14 @@ fn send_native_tun_packet_batch(
 
 fn native_tun_write_loop(
     fd: c_int,
-    inbound_rx: mpsc::Receiver<Vec<Vec<u8>>>,
+    mut inbound_rx: tokio_mpsc::Receiver<Vec<Vec<u8>>>,
     stop: Arc<AtomicBool>,
     counters: Arc<MobileTunAtomicCounters>,
 ) {
     while !stop.load(Ordering::Relaxed) {
-        let packets = match inbound_rx.recv() {
-            Ok(packets) => packets,
-            Err(_) => break,
+        let packets = match inbound_rx.blocking_recv() {
+            Some(packets) => packets,
+            None => break,
         };
         for packet in packets {
             if stop.load(Ordering::Relaxed) {
