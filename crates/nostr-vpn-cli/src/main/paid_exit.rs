@@ -969,14 +969,19 @@ fn paid_exit_status_snapshot_json(
         .offers
         .iter()
         .map(|(key, record)| {
-            json!({
+            let mut value = json!({
                 "key": key,
                 "offer": record.offer,
                 "event_id": record.signed_offer.event.id.to_string(),
                 "relays": record.relay_urls,
                 "first_seen_unix": record.first_seen_unix,
                 "last_seen_unix": record.last_seen_unix,
-            })
+            });
+            if let Some(score) = record.rating_score {
+                value["rating_score"] = json!(score);
+                value["rating_updated_at_unix"] = json!(record.rating_updated_at_unix);
+            }
+            value
         })
         .collect::<Vec<_>>();
     let channels = store
@@ -1329,8 +1334,12 @@ fn print_paid_exit_status_snapshot(app: &AppConfig, store_path: &Path, store: &P
         println!("paid_exit_offers:");
         for (key, record) in &store.offers {
             let offer = &record.offer;
+            let rating_text = record
+                .rating_score
+                .map(|score| format!(" rating_score={score:+}"))
+                .unwrap_or_default();
             println!(
-                "  {key} price={} country={} class={} upstream={} last_seen={}",
+                "  {key} price={} country={} class={} upstream={} last_seen={}{}",
                 paid_exit_price_text(
                     offer.pricing.price_msat,
                     offer.pricing.per_units,
@@ -1339,7 +1348,8 @@ fn print_paid_exit_status_snapshot(app: &AppConfig, store_path: &Path, store: &P
                 display_or_none(&offer.location.country_code),
                 offer.location.network_class.as_str(),
                 offer.access.upstream.as_str(),
-                record.last_seen_unix
+                record.last_seen_unix,
+                rating_text
             );
         }
     }
@@ -2309,7 +2319,8 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
         paid_exit_sort_offers_by_rating(&mut offers, scores);
     }
     let store_path = paid_route_store_file_path(&config_path);
-    let stored_count = persist_paid_exit_discovered_offers(&store_path, &offers, &relays)?;
+    let stored_count =
+        persist_paid_exit_discovered_offers(&store_path, &offers, &relays, rating_scores.as_ref())?;
 
     if args.json {
         let offers_json = paid_exit_offer_results_json(&offers, rating_scores.as_ref())?;
@@ -5095,12 +5106,22 @@ fn persist_paid_exit_discovered_offers(
     store_path: &Path,
     offers: &[SignedPaidRouteOffer],
     relays: &[String],
+    rating_scores: Option<&HashMap<String, PaidExitRatingScore>>,
 ) -> Result<usize> {
     let mut store = load_paid_route_store(store_path)?;
     let mut changed_count = 0usize;
     let seen_at_unix = unix_timestamp();
     for signed in offers {
-        if store.upsert_signed_offer(signed.clone(), relays.to_vec(), seen_at_unix)? {
+        let offer = signed.offer()?;
+        let mut changed = store.upsert_signed_offer(signed.clone(), relays.to_vec(), seen_at_unix)?;
+        if let Some(score) = rating_scores.and_then(|scores| scores.get(&offer.seller_npub)) {
+            changed |= store.upsert_offer_rating_score(
+                &offer.seller_npub,
+                score.score,
+                score.created_at,
+            );
+        }
+        if changed {
             changed_count += 1;
         }
     }
@@ -5888,6 +5909,38 @@ mod paid_exit_rating_tests {
     }
 
     #[test]
+    fn discovered_offers_persist_rating_scores() {
+        let store_path = temp_paid_exit_store_path("rating-score");
+        let signed = sample_signed_offer("rated", 10);
+        let seller_npub = signed.offer().unwrap().seller_npub;
+        let mut scores = HashMap::new();
+        scores.insert(
+            seller_npub.clone(),
+            PaidExitRatingScore {
+                score: 42,
+                created_at: 123,
+            },
+        );
+
+        let changed = persist_paid_exit_discovered_offers(
+            &store_path,
+            &[signed],
+            &["wss://relay.example".to_string()],
+            Some(&scores),
+        )
+        .unwrap();
+
+        assert_eq!(changed, 1);
+        let store = load_paid_route_store(&store_path).unwrap();
+        let record = store.offers.values().next().expect("stored offer");
+        assert_eq!(record.offer.seller_npub, seller_npub);
+        assert_eq!(record.rating_score, Some(42));
+        assert_eq!(record.rating_updated_at_unix, 123);
+
+        let _ = std::fs::remove_file(store_path);
+    }
+
+    #[test]
     fn rating_fact_filter_targets_rating_kind_and_since() {
         let filter = paid_exit_rating_fact_filter(25, Some(100));
         let value = serde_json::to_value(filter).unwrap();
@@ -5915,6 +5968,17 @@ mod paid_exit_rating_tests {
             None,
         );
         SignedPaidRouteOffer::sign(offer, &keys, created_at).unwrap()
+    }
+
+    fn temp_paid_exit_store_path(name: &str) -> std::path::PathBuf {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "nvpn-paid-exit-{name}-{}-{now}.json",
+            std::process::id()
+        ))
     }
 
     fn sample_rating_fact_event(

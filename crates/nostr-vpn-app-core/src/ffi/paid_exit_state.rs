@@ -351,13 +351,7 @@ fn paid_route_market_state(
         .iter()
         .map(|(key, record)| paid_route_offer_state(key, record))
         .collect::<Vec<_>>();
-    offers.sort_by(|left, right| {
-        right
-            .last_seen_unix
-            .cmp(&left.last_seen_unix)
-            .then_with(|| left.price_msat.cmp(&right.price_msat))
-            .then_with(|| left.seller_npub.cmp(&right.seller_npub))
-    });
+    offers.sort_by(|left, right| paid_route_offer_order(left, right, "quality"));
     let filter = normalize_paid_route_market_filter(filter);
     let country_options = paid_route_offer_country_options(&offers);
     let network_class_options = paid_route_offer_network_class_options(&offers);
@@ -513,18 +507,28 @@ fn paid_route_offer_order(
 ) -> std::cmp::Ordering {
     match sort {
         "price" => paid_route_offer_price_order(left, right)
+            .then_with(|| paid_route_offer_rating_order(left, right))
             .then_with(|| paid_route_offer_quality_order(left, right))
             .then_with(|| paid_route_offer_newest_order(left, right))
             .then_with(|| left.key.cmp(&right.key)),
         "newest" => paid_route_offer_newest_order(left, right)
+            .then_with(|| paid_route_offer_rating_order(left, right))
             .then_with(|| paid_route_offer_quality_order(left, right))
             .then_with(|| paid_route_offer_price_order(left, right))
             .then_with(|| left.key.cmp(&right.key)),
-        _ => paid_route_offer_quality_order(left, right)
+        _ => paid_route_offer_rating_order(left, right)
+            .then_with(|| paid_route_offer_quality_order(left, right))
             .then_with(|| paid_route_offer_price_order(left, right))
             .then_with(|| paid_route_offer_newest_order(left, right))
             .then_with(|| left.key.cmp(&right.key)),
     }
+}
+
+fn paid_route_offer_rating_order(
+    left: &NativePaidRouteOfferState,
+    right: &NativePaidRouteOfferState,
+) -> std::cmp::Ordering {
+    right.rating_score.cmp(&left.rating_score)
 }
 
 fn paid_route_offer_price_order(
@@ -555,6 +559,56 @@ fn paid_route_offer_quality_order(
         .then_with(|| left.jitter_ms.cmp(&right.jitter_ms))
         .then_with(|| right.down_bps.cmp(&left.down_bps))
         .then_with(|| right.up_bps.cmp(&left.up_bps))
+}
+
+#[cfg(test)]
+mod paid_route_offer_order_tests {
+    use super::*;
+
+    #[test]
+    fn default_order_ranks_good_unknown_bad_ratings() {
+        let mut offers = vec![
+            offer("bad", Some(-80), 1),
+            offer("unknown", None, 1),
+            offer("good", Some(80), 1),
+        ];
+
+        offers.sort_by(|left, right| paid_route_offer_order(left, right, "quality"));
+
+        assert_eq!(
+            offers
+                .iter()
+                .map(|offer| offer.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["good", "unknown", "bad"]
+        );
+    }
+
+    #[test]
+    fn price_order_uses_rating_as_tie_breaker() {
+        let mut offers = vec![offer("bad", Some(-80), 10), offer("good", Some(80), 10)];
+
+        offers.sort_by(|left, right| paid_route_offer_order(left, right, "price"));
+
+        assert_eq!(
+            offers
+                .iter()
+                .map(|offer| offer.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["good", "bad"]
+        );
+    }
+
+    fn offer(key: &str, rating_score: Option<i64>, price_msat: u64) -> NativePaidRouteOfferState {
+        NativePaidRouteOfferState {
+            key: key.to_string(),
+            has_rating: rating_score.is_some(),
+            rating_score: rating_score.unwrap_or_default(),
+            price_msat,
+            per_units: 1,
+            ..NativePaidRouteOfferState::default()
+        }
+    }
 }
 
 fn paid_route_offer_country_options(offers: &[NativePaidRouteOfferState]) -> Vec<String> {
@@ -662,6 +716,9 @@ fn paid_route_offer_state(
         network_class: offer.location.network_class.as_str().to_string(),
         ipv4: offer.ip_support.ipv4,
         ipv6: offer.ip_support.ipv6,
+        has_rating: record.rating_score.is_some(),
+        rating_score: record.rating_score.unwrap_or_default(),
+        rating_updated_at_unix: record.rating_updated_at_unix,
         has_quality: quality.is_some(),
         quality_text: paid_route_quality_text(quality),
         bandwidth_text: paid_route_bandwidth_text(quality),

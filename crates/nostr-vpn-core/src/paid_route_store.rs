@@ -88,6 +88,10 @@ pub struct PaidRouteOfferRecord {
     pub offer: PaidRouteOffer,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relay_urls: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rating_score: Option<i64>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rating_updated_at_unix: u64,
     pub first_seen_unix: u64,
     pub last_seen_unix: u64,
 }
@@ -588,17 +592,50 @@ impl PaidRouteStore {
             .get(&key)
             .map(|record| record.first_seen_unix)
             .unwrap_or(seen_at_unix);
+        let (rating_score, rating_updated_at_unix) = self
+            .offers
+            .get(&key)
+            .map(|record| (record.rating_score, record.rating_updated_at_unix))
+            .unwrap_or((None, 0));
         self.offers.insert(
             key,
             PaidRouteOfferRecord {
                 signed_offer,
                 offer,
                 relay_urls,
+                rating_score,
+                rating_updated_at_unix,
                 first_seen_unix,
                 last_seen_unix: seen_at_unix,
             },
         );
         Ok(true)
+    }
+
+    pub fn upsert_offer_rating_score(
+        &mut self,
+        seller_npub: &str,
+        score: i64,
+        updated_at_unix: u64,
+    ) -> bool {
+        let seller_npub = seller_npub.trim();
+        if seller_npub.is_empty() {
+            return false;
+        }
+        let score = score.clamp(-100, 100);
+        let mut changed = false;
+        for record in self.offers.values_mut() {
+            if record.offer.seller_npub != seller_npub
+                || record.rating_updated_at_unix > updated_at_unix
+            {
+                continue;
+            }
+            let before = (record.rating_score, record.rating_updated_at_unix);
+            record.rating_score = Some(score);
+            record.rating_updated_at_unix = updated_at_unix;
+            changed |= before != (record.rating_score, record.rating_updated_at_unix);
+        }
+        changed
     }
 
     pub fn upsert_quote(&mut self, quote: PaidRouteQuote, updated_at_unix: u64) -> bool {
@@ -2763,6 +2800,11 @@ impl PaidRouteStore {
                 record.offer = offer;
             }
             record.relay_urls = normalize_relay_list(record.relay_urls.clone());
+            if let Some(score) = record.rating_score {
+                record.rating_score = Some(score.clamp(-100, 100));
+            } else {
+                record.rating_updated_at_unix = 0;
+            }
         }
         self.offers.retain(|key, record| {
             record.signed_offer.verify().is_ok()
@@ -5796,6 +5838,48 @@ mod tests {
         assert_eq!(record.first_seen_unix, 101);
         assert_eq!(record.last_seen_unix, 201);
         assert_eq!(record.relay_urls, vec!["wss://c.example"]);
+    }
+
+    #[test]
+    fn paid_route_store_persists_offer_rating_score() {
+        let seller = Keys::generate();
+        let old = signed_paid_exit_offer_from_config(
+            "internet-exit",
+            &seller,
+            &sample_config(),
+            None,
+            100,
+        )
+        .expect("old offer");
+        let new = signed_paid_exit_offer_from_config(
+            "internet-exit",
+            &seller,
+            &sample_config(),
+            None,
+            200,
+        )
+        .expect("new offer");
+        let seller_npub = old.offer().expect("offer").seller_npub;
+        let key = paid_route_offer_store_key(&seller_npub, "internet-exit");
+        let mut store = PaidRouteStore::default();
+
+        store
+            .upsert_signed_offer(old, vec!["wss://relay.example".to_string()], 101)
+            .expect("store offer");
+        assert!(store.upsert_offer_rating_score(&seller_npub, 80, 120));
+        assert!(!store.upsert_offer_rating_score(&seller_npub, -80, 110));
+        store
+            .upsert_signed_offer(new, vec!["wss://relay.example".to_string()], 201)
+            .expect("replace offer");
+
+        let record = &store.offers[&key];
+        assert_eq!(record.rating_score, Some(80));
+        assert_eq!(record.rating_updated_at_unix, 120);
+
+        assert!(store.upsert_offer_rating_score(&seller_npub, -120, 220));
+        let record = &store.offers[&key];
+        assert_eq!(record.rating_score, Some(-100));
+        assert_eq!(record.rating_updated_at_unix, 220);
     }
 
     #[test]
