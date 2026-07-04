@@ -183,7 +183,7 @@ impl MobileTunnel {
             let app_config_for_dns = Arc::clone(&app_config);
             let dns_forwarders = mobile_magic_dns_forwarders_for_config(&config);
             tokio::spawn(async move {
-                while let Some(mut packets) = outbound_rx.recv().await {
+                while let Some(packets) = outbound_rx.recv().await {
                     if !dispatch_mobile_outbound_packets(
                         &endpoint,
                         &mesh,
@@ -194,7 +194,7 @@ impl MobileTunnel {
                         &inbound_tx_for_dns,
                         &app_config_for_dns,
                         &dns_forwarders,
-                        &mut packets,
+                        packets,
                     )
                     .await
                     {

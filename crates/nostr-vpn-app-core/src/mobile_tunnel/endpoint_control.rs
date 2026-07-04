@@ -491,12 +491,10 @@ async fn dispatch_mobile_outbound_packets(
     inbound_tx_for_dns: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
     app_config_for_dns: &Arc<RwLock<AppConfig>>,
     dns_forwarders: &[SocketAddr],
-    packets: &mut Vec<Vec<u8>>,
+    packets: Vec<Vec<u8>>,
 ) -> bool {
     let mut pending_run = None;
-    let packet_count = packets.len();
-    for index in 0..packet_count {
-        let packet = std::mem::take(&mut packets[index]);
+    for packet in packets {
         // Local MagicDNS responder. The well-known DNS address is owned by this
         // tunnel instance, so answer before mesh/WG routing and never treat it
         // as a remote nvpn node.
@@ -504,11 +502,9 @@ async fn dispatch_mobile_outbound_packets(
             mobile_magic_dns_response_packet(&packet, app_config_for_dns, dns_forwarders).await
         {
             if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
-                packets.clear();
                 return false;
             }
             if !send_mobile_inbound_packets(inbound_tx_for_dns, vec![response]).await {
-                packets.clear();
                 return false;
             }
             continue;
@@ -535,7 +531,6 @@ async fn dispatch_mobile_outbound_packets(
                 packet,
             ) {
                 if !send_mobile_endpoint_run(endpoint, run).await {
-                    packets.clear();
                     return false;
                 }
             }
@@ -543,17 +538,14 @@ async fn dispatch_mobile_outbound_packets(
         }
 
         if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
-            packets.clear();
             return false;
         }
         if let Some(wg_tx) = wg_send_tx
             && !dispatch_mobile_wg_packet(wg_tx, packet, wg_addr, mesh_addr).await
         {
-            packets.clear();
             return false;
         }
     }
-    packets.clear();
     flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await
 }
 
