@@ -278,7 +278,9 @@ async fn reply_mobile_ping(
         replied_at: unix_timestamp(),
     };
     let encoded = encode_fips_control_frame(&reply)?;
-    let _ = endpoint.send_to_peer(source_peer, encoded).await;
+    if let Err(error) = endpoint.send_to_peer(source_peer, encoded).await {
+        tracing::warn!(?error, "mobile: failed to reply to FIPS peer ping");
+    }
     Ok(())
 }
 
@@ -633,7 +635,17 @@ async fn send_mobile_endpoint_run(endpoint: &FipsEndpoint, run: MobileEndpointSe
     if packet_count == 0 {
         return true;
     }
-    endpoint.send_batch_to_peer(identity, payloads).await.is_ok()
+    match endpoint.send_batch_to_peer(identity, payloads).await {
+        Ok(()) => true,
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                packet_count,
+                "mobile: failed to send FIPS endpoint data batch"
+            );
+            false
+        }
+    }
 }
 
 fn push_mobile_wg_packet(
