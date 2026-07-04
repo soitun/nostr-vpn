@@ -48,6 +48,43 @@ docker_bench_size_to_bytes() {
   esac
 }
 
+docker_bench_configure_iperf_socket_buffer_limits() {
+  local log_prefix="$1"
+  local socket_buffer="$2"
+  [[ -n "$socket_buffer" ]] || return 0
+
+  local bytes service sysctl_log actual_rmem actual_wmem
+  bytes="$(docker_bench_size_to_bytes "$socket_buffer")" || {
+    printf '%s: invalid NVPN_DOCKER_IPERF_SOCKET_BUFFER=%s (expected bytes or K/M/G suffix)\n' \
+      "$log_prefix" "$socket_buffer" >&2
+    return 2
+  }
+
+  for service in node-a node-b; do
+    sysctl_log="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+      "sysctl -w net.core.rmem_max=$bytes net.core.wmem_max=$bytes" 2>&1 || true)"
+    actual_rmem="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+      'sysctl -n net.core.rmem_max' 2>/dev/null || true)"
+    actual_wmem="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+      'sysctl -n net.core.wmem_max' 2>/dev/null || true)"
+    if [[ ! "$actual_rmem" =~ ^[0-9]+$ ]] \
+      || [[ ! "$actual_wmem" =~ ^[0-9]+$ ]] \
+      || (( actual_rmem < bytes || actual_wmem < bytes )); then
+      printf '%s: failed to raise UDP socket buffer sysctls in %s for NVPN_DOCKER_IPERF_SOCKET_BUFFER=%s (wanted >=%s, got rmem_max=%s, wmem_max=%s)\n' \
+        "$log_prefix" \
+        "$service" \
+        "$socket_buffer" \
+        "$bytes" \
+        "${actual_rmem:-unknown}" \
+        "${actual_wmem:-unknown}" >&2
+      if [[ -n "$sysctl_log" ]]; then
+        printf '%s\n' "$sysctl_log" >&2
+      fi
+      return 1
+    fi
+  done
+}
+
 docker_bench_local_fips_patch_enabled() {
   if [[ -n "${NVPN_PATCH_LOCAL_FIPS+x}" ]]; then
     docker_bench_bool_enabled "$NVPN_PATCH_LOCAL_FIPS"

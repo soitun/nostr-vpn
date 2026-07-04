@@ -1597,11 +1597,14 @@ test_wireguard_go_perf_docker_records_cpu_phase_artifact() {
   assert_file_contains "$script" "docker_bench_iperf_transfer_bytes" "wireguard-go Docker perf transfer-byte accounting"
 }
 
-test_boringtun_perf_docker_raises_iperf_socket_buffer_limits() {
-  local script="$ROOT_DIR/scripts/perf-docker-boringtun.sh"
-  assert_file_contains "$script" "configure_iperf_socket_buffer_limits" "boringtun Docker perf socket-buffer limit hook"
-  assert_file_contains "$script" 'net.core.rmem_max=$bytes net.core.wmem_max=$bytes' "boringtun Docker perf raises UDP receiver sysctls"
-  assert_file_contains "$script" "failed to raise UDP socket buffer sysctls" "boringtun Docker perf fails closed on capped receiver buffers"
+test_docker_perf_scripts_share_iperf_socket_buffer_limit_helper() {
+  local helper="$ROOT_DIR/scripts/lib-docker-bench-summary.sh"
+  assert_file_contains "$helper" "docker_bench_configure_iperf_socket_buffer_limits" "Docker perf shared socket-buffer limit helper"
+  assert_file_contains "$helper" 'net.core.rmem_max=$bytes net.core.wmem_max=$bytes' "Docker perf shared helper raises UDP receiver sysctls"
+  assert_file_contains "$helper" "failed to raise UDP socket buffer sysctls" "Docker perf shared helper fails closed on capped receiver buffers"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker.sh" "docker_bench_configure_iperf_socket_buffer_limits perf" "nvpn Docker perf uses shared socket-buffer helper"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker-wireguard-go.sh" "docker_bench_configure_iperf_socket_buffer_limits perf-wireguard-go" "wireguard-go Docker perf uses shared socket-buffer helper"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker-boringtun.sh" "docker_bench_configure_iperf_socket_buffer_limits perf-boringtun" "boringtun Docker perf uses shared socket-buffer helper"
 }
 
 test_json_and_ping_parsers
@@ -1642,6 +1645,6 @@ test_docker_comparison_selects_wireguard_go_reference
 test_docker_comparison_labels_same_backend_profiles
 test_nvpn_perf_docker_records_daemon_cpu_phase_artifact
 test_wireguard_go_perf_docker_records_cpu_phase_artifact
-test_boringtun_perf_docker_raises_iperf_socket_buffer_limits
+test_docker_perf_scripts_share_iperf_socket_buffer_limit_helper
 
 printf 'docker benchmark summary self-test passed\n'
