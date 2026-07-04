@@ -438,8 +438,7 @@ struct FipsEndpointIdentitySendRun {
     participant_fallback: Option<String>,
     participant_key: Option<ParticipantPubkeyBytes>,
     identity: PeerIdentity,
-    bulk_bodies: Vec<FipsEndpointBulkData>,
-    current_bulk: FipsEndpointBulkDataBuilder,
+    payloads: Vec<Vec<u8>>,
     packet_count: usize,
     bytes_len: usize,
 }
@@ -451,58 +450,40 @@ impl FipsEndpointIdentitySendRun {
         identity: PeerIdentity,
         payload: Vec<u8>,
     ) -> Option<Self> {
-        let packet_len = payload.len();
         let mut run = Self {
             participant_fallback,
             participant_key,
             identity,
-            bulk_bodies: Vec::new(),
-            current_bulk: FipsEndpointBulkDataBuilder::new(),
+            payloads: Vec::new(),
             packet_count: 0,
             bytes_len: 0,
         };
-        if !run.push_payload(payload) {
-            warn_endpoint_bulk_rejected_packet(packet_len);
-            return None;
-        }
+        run.push_payload(payload);
         Some(run)
     }
 
-    fn push_payload(&mut self, payload: Vec<u8>) -> bool {
+    fn push_payload(&mut self, payload: Vec<u8>) {
         let bytes_len = payload.len();
-        if !self.current_bulk.can_push_packet(&payload) {
-            self.finish_current_bulk();
-        }
-        if !self.current_bulk.push_packet(&payload) {
-            return false;
-        }
+        self.payloads.push(payload);
         self.packet_count = self.packet_count.saturating_add(1);
         self.bytes_len = self.bytes_len.saturating_add(bytes_len);
-        true
-    }
-
-    fn finish_current_bulk(&mut self) {
-        if let Some(body) = std::mem::take(&mut self.current_bulk).finish() {
-            self.bulk_bodies.push(body);
-        }
     }
 
     fn into_send_parts(
-        mut self,
+        self,
     ) -> (
         Option<String>,
         Option<ParticipantPubkeyBytes>,
         PeerIdentity,
-        Vec<FipsEndpointBulkData>,
+        Vec<Vec<u8>>,
         usize,
         usize,
     ) {
-        self.finish_current_bulk();
         (
             self.participant_fallback,
             self.participant_key,
             self.identity,
-            self.bulk_bodies,
+            self.payloads,
             self.packet_count,
             self.bytes_len,
         )
@@ -538,13 +519,6 @@ impl FipsEndpointIdentitySendRun {
         self.identity.node_addr().as_bytes() == endpoint_node_addr
             && self.matches_participant(participant_key, participant)
     }
-}
-
-fn warn_endpoint_bulk_rejected_packet(packet_len: usize) {
-    tracing::warn!(
-        packet_len,
-        "fips-private-mesh: routed packet rejected by FIPS endpoint bulk builder"
-    );
 }
 
 #[derive(Debug)]

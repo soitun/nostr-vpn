@@ -412,8 +412,7 @@ struct MobileEndpointSendRun {
     participant_key: Option<MobileParticipantPubkeyBytes>,
     endpoint_node_addr: [u8; 16],
     identity: PeerIdentity,
-    bulk_bodies: Vec<FipsEndpointBulkData>,
-    current_bulk: FipsEndpointBulkDataBuilder,
+    payloads: Vec<Vec<u8>>,
     packet_count: usize,
 }
 
@@ -425,20 +424,15 @@ impl MobileEndpointSendRun {
         identity: PeerIdentity,
         payload: Vec<u8>,
     ) -> Option<Self> {
-        let packet_len = payload.len();
         let mut run = Self {
             participant_fallback,
             participant_key,
             endpoint_node_addr,
             identity,
-            bulk_bodies: Vec::new(),
-            current_bulk: FipsEndpointBulkDataBuilder::new(),
+            payloads: Vec::new(),
             packet_count: 0,
         };
-        if !run.push_payload(payload) {
-            warn_mobile_endpoint_bulk_rejected_packet(packet_len);
-            return None;
-        }
+        run.push_payload(payload);
         Some(run)
     }
 
@@ -458,26 +452,13 @@ impl MobileEndpointSendRun {
         }
     }
 
-    fn push_payload(&mut self, payload: Vec<u8>) -> bool {
-        if !self.current_bulk.can_push_packet(&payload) {
-            self.finish_current_bulk();
-        }
-        if !self.current_bulk.push_packet(&payload) {
-            return false;
-        }
+    fn push_payload(&mut self, payload: Vec<u8>) {
+        self.payloads.push(payload);
         self.packet_count = self.packet_count.saturating_add(1);
-        true
     }
 
-    fn finish_current_bulk(&mut self) {
-        if let Some(body) = std::mem::take(&mut self.current_bulk).finish() {
-            self.bulk_bodies.push(body);
-        }
-    }
-
-    fn into_send_parts(mut self) -> (PeerIdentity, Vec<FipsEndpointBulkData>, usize) {
-        self.finish_current_bulk();
-        (self.identity, self.bulk_bodies, self.packet_count)
+    fn into_send_parts(self) -> (PeerIdentity, Vec<Vec<u8>>, usize) {
+        (self.identity, self.payloads, self.packet_count)
     }
 }
 
@@ -614,10 +595,7 @@ fn push_mobile_endpoint_send_run(
             &endpoint_node_addr,
         )
     {
-        let packet_len = packet.len();
-        if !current.push_payload(packet) {
-            warn_mobile_endpoint_bulk_rejected_packet(packet_len);
-        }
+        current.push_payload(packet);
         return None;
     }
 
@@ -639,13 +617,6 @@ fn push_mobile_endpoint_send_run(
     previous
 }
 
-fn warn_mobile_endpoint_bulk_rejected_packet(packet_len: usize) {
-    tracing::warn!(
-        packet_len,
-        "mobile: routed packet rejected by FIPS endpoint bulk builder"
-    );
-}
-
 async fn flush_mobile_endpoint_send_run(
     endpoint: &FipsEndpoint,
     run: &mut Option<MobileEndpointSendRun>,
@@ -658,14 +629,11 @@ async fn flush_mobile_endpoint_send_run(
 }
 
 async fn send_mobile_endpoint_run(endpoint: &FipsEndpoint, run: MobileEndpointSendRun) -> bool {
-    let (identity, bulk_bodies, packet_count) = run.into_send_parts();
+    let (identity, payloads, packet_count) = run.into_send_parts();
     if packet_count == 0 {
         return true;
     }
-    endpoint
-        .send_endpoint_bulk_data_batch_to_peer(identity, bulk_bodies)
-        .await
-        .is_ok()
+    endpoint.send_batch_to_peer(identity, payloads).await.is_ok()
 }
 
 fn push_mobile_wg_packet(

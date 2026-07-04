@@ -603,8 +603,7 @@
         assert!(run.participant_fallback.is_none());
         assert_eq!(run.participant_key, Some(participant_key));
         assert_eq!(run.identity, identity);
-        assert!(run.bulk_bodies.is_empty());
-        assert_eq!(run.current_bulk.packet_count(), 2);
+        assert_eq!(run.payloads, vec![vec![1], vec![2]]);
         assert_eq!(run.packet_count, 2);
         assert_eq!(run.bytes_len, 2);
     }

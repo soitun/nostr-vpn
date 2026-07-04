@@ -318,10 +318,7 @@ impl FipsPrivateMeshRuntime {
         if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
             && run.matches_endpoint(endpoint_node_addr, participant_key, participant_pubkey)
         {
-            let packet_len = payload.len();
-            if !run.push_payload(payload) {
-                warn_endpoint_bulk_rejected_packet(packet_len);
-            }
+            run.push_payload(payload);
             return;
         }
 
@@ -333,10 +330,7 @@ impl FipsPrivateMeshRuntime {
             if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
                 && run.matches(identity, participant_key, participant_pubkey)
             {
-                let packet_len = payload.len();
-                if !run.push_payload(payload) {
-                    warn_endpoint_bulk_rejected_packet(packet_len);
-                }
+                run.push_payload(payload);
                 return;
             }
 
@@ -365,12 +359,12 @@ impl FipsPrivateMeshRuntime {
                         participant_fallback,
                         participant_key,
                         identity,
-                        bulk_bodies,
+                        payloads,
                         packet_count,
                         bytes_len,
                     ) = run.into_send_parts();
                     self.endpoint
-                        .send_endpoint_bulk_data_batch_to_peer(identity, bulk_bodies)
+                        .send_batch_to_peer(identity, payloads)
                         .await
                         .with_context(|| {
                             format!(
@@ -403,12 +397,12 @@ impl FipsPrivateMeshRuntime {
                         participant_fallback,
                         participant_key,
                         identity,
-                        bulk_bodies,
+                        payloads,
                         packet_count,
                         bytes_len,
                     ) = run.into_send_parts();
                     self.endpoint
-                        .blocking_send_endpoint_bulk_data_batch_to_peer(identity, bulk_bodies)
+                        .blocking_send_batch_to_peer(identity, payloads)
                         .with_context(|| {
                             format!(
                                 "failed to send {packet_count} private packets over FIPS endpoint data"
