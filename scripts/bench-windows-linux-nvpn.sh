@@ -1420,19 +1420,23 @@ validate_current_fips_revision() {
 
   local windows_snapshot="$row_dir/current-fips-revision-windows.json"
   local linux_snapshot="$row_dir/current-fips-revision-linux.json"
-  capture_windows_snapshot "$windows_snapshot"
-  capture_linux_snapshot "$linux_snapshot"
-
   local windows_version linux_version
-  windows_version="$(fips_core_version_from_snapshot "$windows_snapshot")"
-  linux_version="$(fips_core_version_from_snapshot "$linux_snapshot")"
+  for attempt in $(seq 1 40); do
+    capture_windows_snapshot "$windows_snapshot"
+    capture_linux_snapshot "$linux_snapshot"
+    windows_version="$(fips_core_version_from_snapshot "$windows_snapshot")"
+    linux_version="$(fips_core_version_from_snapshot "$linux_snapshot")"
 
-  if [[ "$windows_version" != *"rev $expected_rev"* ]]; then
-    die "current Windows daemon embedded FIPS revision mismatch: expected rev $expected_rev from $CURRENT_FIPS_REPO, got '${windows_version:-missing}'"
-  fi
-  if [[ "$linux_version" != *"rev $expected_rev"* ]]; then
-    die "current Linux daemon embedded FIPS revision mismatch: expected rev $expected_rev from $CURRENT_FIPS_REPO, got '${linux_version:-missing}'"
-  fi
+    if [[ "$windows_version" == *"rev $expected_rev"* && "$linux_version" == *"rev $expected_rev"* ]]; then
+      return 0
+    fi
+
+    printf 'waiting for current daemon FIPS rev %s (%s/40): windows=%s linux=%s\n' \
+      "$expected_rev" "$attempt" "${windows_version:-missing}" "${linux_version:-missing}" >&2
+    sleep 1
+  done
+
+  die "current daemon embedded FIPS revision mismatch after restart: expected rev $expected_rev from $CURRENT_FIPS_REPO, Windows got '${windows_version:-missing}', Linux got '${linux_version:-missing}'"
 }
 
 build_current_windows() {
