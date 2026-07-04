@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/local-fips-workspace.sh"
 
 usage() {
   cat >&2 <<'EOF'
@@ -36,66 +38,13 @@ approval before the debug connect/disconnect cycle can run unattended.
 EOF
 }
 
-LOCK_SNAPSHOT=""
-MANIFEST_SNAPSHOT=""
-
 fail() {
   printf 'mobile test kit failed: %s\n' "$*" >&2
   exit 1
 }
 
-restore_lock() {
-  if [[ -n "$LOCK_SNAPSHOT" && -f "$LOCK_SNAPSHOT" && -f "$ROOT/Cargo.lock" ]]; then
-    if ! cmp -s "$LOCK_SNAPSHOT" "$ROOT/Cargo.lock"; then
-      cp -p "$LOCK_SNAPSHOT" "$ROOT/Cargo.lock"
-      printf 'restored Cargo.lock after local-FIPS cargo run\n'
-    fi
-  fi
-  if [[ -n "$MANIFEST_SNAPSHOT" && -f "$MANIFEST_SNAPSHOT" && -f "$ROOT/Cargo.toml" ]]; then
-    if ! cmp -s "$MANIFEST_SNAPSHOT" "$ROOT/Cargo.toml"; then
-      cp -p "$MANIFEST_SNAPSHOT" "$ROOT/Cargo.toml"
-      printf 'restored Cargo.toml after local-FIPS cargo run\n'
-    fi
-  fi
-}
-
-prepare_lock_restore() {
-  [[ -z "$LOCK_SNAPSHOT" ]] || return 0
-  LOCK_SNAPSHOT="$(mktemp)"
-  MANIFEST_SNAPSHOT="$(mktemp)"
-  cp -p "$ROOT/Cargo.lock" "$LOCK_SNAPSHOT"
-  cp -p "$ROOT/Cargo.toml" "$MANIFEST_SNAPSHOT"
-  trap restore_lock EXIT
-}
-
-validated_fips_repo_path() {
-  local fips_path="${NVPN_FIPS_REPO_PATH:-}"
-  [[ -n "$fips_path" ]] || fail "NVPN_FIPS_REPO_PATH is empty"
-  [[ -d "$fips_path/crates/fips-core" ]] || fail "missing $fips_path/crates/fips-core"
-  [[ -d "$fips_path/crates/fips-endpoint" ]] || fail "missing $fips_path/crates/fips-endpoint"
-  [[ -d "$fips_path/crates/fips-identity" ]] || fail "missing $fips_path/crates/fips-identity"
-  printf '%s\n' "$fips_path"
-}
-
-prepare_local_fips_manifest() {
-  if [[ -n "${NVPN_FIPS_REPO_PATH:-}" ]]; then
-    local fips_path
-    fips_path="$(validated_fips_repo_path)"
-    prepare_lock_restore
-    NVPN_LOCAL_FIPS_CORE_PATH="$fips_path/crates/fips-core" \
-    NVPN_LOCAL_FIPS_ENDPOINT_PATH="$fips_path/crates/fips-endpoint" \
-    NVPN_LOCAL_FIPS_IDENTITY_PATH="$fips_path/crates/fips-identity" \
-      perl -0pi -e '
-        s#fips-core = \{ version = "([^"]+)", path = "[^"]*" \}#fips-core = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_CORE_PATH}" }#;
-        s#fips-endpoint = \{ version = "([^"]+)", path = "[^"]*" \}#fips-endpoint = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_ENDPOINT_PATH}" }#;
-        s#fips-identity = \{ version = "([^"]+)", path = "[^"]*" \}#fips-identity = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_IDENTITY_PATH}" }#;
-      ' "$ROOT/Cargo.toml"
-    printf 'using local FIPS crates from %s\n' "$fips_path"
-  fi
-}
-
 cargo_test() {
-  prepare_local_fips_manifest
+  nvpn_prepare_local_fips_workspace "$ROOT"
   (cd "$ROOT" && cargo test "$@")
 }
 
