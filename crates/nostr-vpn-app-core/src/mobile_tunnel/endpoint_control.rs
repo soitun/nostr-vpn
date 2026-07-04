@@ -491,6 +491,7 @@ async fn dispatch_mobile_outbound_packets(
     inbound_tx_for_dns: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
     app_config_for_dns: &Arc<RwLock<AppConfig>>,
     dns_forwarders: &[SocketAddr],
+    magic_dns_server: Option<Ipv4Addr>,
     packets: Vec<Vec<u8>>,
 ) -> bool {
     let mut pending_run = None;
@@ -498,16 +499,23 @@ async fn dispatch_mobile_outbound_packets(
         // Local MagicDNS responder. The well-known DNS address is owned by this
         // tunnel instance, so answer before mesh/WG routing and never treat it
         // as a remote nvpn node.
-        if let Some(response) =
-            mobile_magic_dns_response_packet(&packet, app_config_for_dns, dns_forwarders).await
-        {
-            if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
-                return false;
+        if let Some(magic_dns_server) = magic_dns_server {
+            if let Some(response) = mobile_magic_dns_response_packet(
+                &packet,
+                app_config_for_dns,
+                dns_forwarders,
+                magic_dns_server,
+            )
+            .await
+            {
+                if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
+                    return false;
+                }
+                if !send_mobile_inbound_packets(inbound_tx_for_dns, vec![response]).await {
+                    return false;
+                }
+                continue;
             }
-            if !send_mobile_inbound_packets(inbound_tx_for_dns, vec![response]).await {
-                return false;
-            }
-            continue;
         }
 
         let outgoing_peer = mesh.read().ok().and_then(|mesh| {

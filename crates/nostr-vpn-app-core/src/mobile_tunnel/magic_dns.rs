@@ -10,8 +10,9 @@ async fn mobile_magic_dns_response_packet(
     packet: &[u8],
     app_config: &Arc<RwLock<AppConfig>>,
     forwarders: &[SocketAddr],
+    magic_dns_server: Ipv4Addr,
 ) -> Option<Vec<u8>> {
-    let query = parse_mobile_magic_dns_query(packet)?;
+    let query = parse_mobile_magic_dns_query(packet, magic_dns_server)?;
     let response = {
         let app = app_config.read().ok()?;
         let records = build_magic_dns_records(&app);
@@ -25,7 +26,10 @@ async fn mobile_magic_dns_response_packet(
     build_mobile_dns_response_packet(&query, &response)
 }
 
-fn parse_mobile_magic_dns_query(packet: &[u8]) -> Option<MobileDnsQuery<'_>> {
+fn parse_mobile_magic_dns_query(
+    packet: &[u8],
+    magic_dns_server: Ipv4Addr,
+) -> Option<MobileDnsQuery<'_>> {
     if packet.len() < 28 || packet[0] >> 4 != 4 {
         return None;
     }
@@ -41,11 +45,12 @@ fn parse_mobile_magic_dns_query(packet: &[u8]) -> Option<MobileDnsQuery<'_>> {
     if fragment != 0 {
         return None;
     }
-    let source = Ipv4Addr::new(packet[12], packet[13], packet[14], packet[15]);
-    let destination = Ipv4Addr::new(packet[16], packet[17], packet[18], packet[19]);
-    if destination != parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER)? {
+    let magic_dns_octets = magic_dns_server.octets();
+    if &packet[16..20] != magic_dns_octets.as_slice() {
         return None;
     }
+    let destination = magic_dns_server;
+    let source = Ipv4Addr::new(packet[12], packet[13], packet[14], packet[15]);
     let udp = header_len;
     let source_port = u16::from_be_bytes([packet[udp], packet[udp + 1]]);
     let destination_port = u16::from_be_bytes([packet[udp + 2], packet[udp + 3]]);

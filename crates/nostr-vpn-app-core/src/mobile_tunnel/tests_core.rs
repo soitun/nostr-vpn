@@ -408,7 +408,9 @@
             .expect("tokio runtime");
 
         let response = runtime
-            .block_on(mobile_magic_dns_response_packet(&query, &app, &[]))
+            .block_on(mobile_magic_dns_response_packet(
+                &query, &app, &[], dns_server,
+            ))
             .expect("dns response packet");
 
         assert_eq!(&response[12..16], &dns_server.octets());
@@ -446,7 +448,9 @@
             .expect("tokio runtime");
 
         let response = runtime
-            .block_on(mobile_magic_dns_response_packet(&query, &app, &[]))
+            .block_on(mobile_magic_dns_response_packet(
+                &query, &app, &[], dns_server,
+            ))
             .expect("dns response packet");
 
         assert_eq!(response[31] & 0x0f, 2, "DNS rcode should be SERVFAIL");
