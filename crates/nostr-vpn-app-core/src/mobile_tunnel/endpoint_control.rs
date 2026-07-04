@@ -469,7 +469,6 @@ async fn dispatch_mobile_outbound_packets(
     inbound_tx_for_dns: &mpsc::SyncSender<Vec<u8>>,
     app_config_for_dns: &Arc<RwLock<AppConfig>>,
     dns_forwarders: &[SocketAddr],
-    outbound_count: &mut u32,
     packets: &mut Vec<Vec<u8>>,
 ) -> bool {
     let mut pending_run = None;
@@ -517,7 +516,7 @@ async fn dispatch_mobile_outbound_packets(
 
         flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await;
         if let Some(wg_tx) = wg_send_tx {
-            dispatch_mobile_wg_packet(wg_tx, packet, wg_addr, mesh_addr, outbound_count);
+            dispatch_mobile_wg_packet(wg_tx, packet, wg_addr, mesh_addr);
         }
     }
     packets.clear();
@@ -593,41 +592,14 @@ fn dispatch_mobile_wg_packet(
     mut packet: Vec<u8>,
     wg_addr: Option<Ipv4Addr>,
     mesh_addr: Option<Ipv4Addr>,
-    outbound_count: &mut u32,
 ) {
     // No matching mesh peer route: hand the plaintext off to the WG runtime,
     // which will boringtun-encapsulate and send out via the upstream UDP
     // socket. SNAT first so the inner source IP matches the WG peer's
     // configured address; Mullvad/Proton silently drop other source IPs.
-    let len_before = packet.len();
-    let pre_log = if *outbound_count <= 10 && packet.len() >= 20 && packet[0] >> 4 == 4 {
-        *outbound_count = (*outbound_count).saturating_add(1);
-        let proto = packet[9];
-        let src_before = format!(
-            "{}.{}.{}.{}",
-            packet[12], packet[13], packet[14], packet[15]
-        );
-        let dst = format!(
-            "{}.{}.{}.{}",
-            packet[16], packet[17], packet[18], packet[19]
-        );
-        Some((proto, src_before, dst))
-    } else {
-        None
-    };
     if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
         rewrite_ipv4_source(&mut packet, mesh, wg);
         nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut packet);
-    }
-    if let Some((proto, src_before, dst)) = pre_log {
-        let src_after = format!(
-            "{}.{}.{}.{}",
-            packet[12], packet[13], packet[14], packet[15]
-        );
-        log_pump_packet(&format!(
-            "outbound #{} {len_before}B proto={proto} src={src_before}->{src_after} dst={dst}",
-            *outbound_count
-        ));
     }
     let _ = wg_tx.try_send(packet);
 }

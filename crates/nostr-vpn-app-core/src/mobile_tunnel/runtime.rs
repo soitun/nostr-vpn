@@ -126,36 +126,8 @@ impl MobileTunnel {
                     let wg_addr = wg_address_ipv4;
                     let mesh_addr = mesh_ipv4;
                     tasks.push(tokio::spawn(async move {
-                        let mut count: u32 = 0;
                         while let Some(mut packet) = recv_rx.recv().await {
-                            count = count.saturating_add(1);
-                            // Log first 10 inbound packets so we can
-                            // verify the DNAT / packet shape on iOS.
-                            if count <= 10 && packet.len() >= 20 && packet[0] >> 4 == 4 {
-                                let proto = packet[9];
-                                let src = format!(
-                                    "{}.{}.{}.{}",
-                                    packet[12], packet[13], packet[14], packet[15]
-                                );
-                                let dst_before = format!(
-                                    "{}.{}.{}.{}",
-                                    packet[16], packet[17], packet[18], packet[19]
-                                );
-                                if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
-                                    rewrite_ipv4_destination(&mut packet, wg, mesh);
-                                    nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(
-                                        &mut packet,
-                                    );
-                                }
-                                let dst_after = format!(
-                                    "{}.{}.{}.{}",
-                                    packet[16], packet[17], packet[18], packet[19]
-                                );
-                                log_pump_packet(&format!(
-                                    "inbound #{count} {} bytes proto={proto} {src}:* -> {dst_before}->{dst_after}",
-                                    packet.len()
-                                ));
-                            } else if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
+                            if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
                                 rewrite_ipv4_destination(&mut packet, wg, mesh);
                                 nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(
                                     &mut packet,
@@ -209,7 +181,6 @@ impl MobileTunnel {
             let app_config_for_dns = Arc::clone(&app_config);
             let dns_forwarders = mobile_magic_dns_forwarders_for_config(&config);
             tokio::spawn(async move {
-                let mut outbound_count: u32 = 0;
                 let mut packets = Vec::with_capacity(MOBILE_FIPS_SEND_BATCH);
                 while let Some(packet) = outbound_rx.recv().await {
                     drain_mobile_outbound_ready(&mut outbound_rx, &mut packets, packet);
@@ -223,7 +194,6 @@ impl MobileTunnel {
                         &inbound_tx_for_dns,
                         &app_config_for_dns,
                         &dns_forwarders,
-                        &mut outbound_count,
                         &mut packets,
                     )
                     .await

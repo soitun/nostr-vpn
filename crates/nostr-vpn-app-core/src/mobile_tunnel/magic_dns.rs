@@ -227,26 +227,6 @@ fn unix_timestamp() -> u64 {
         .map_or(0, |elapsed| elapsed.as_secs())
 }
 
-/// Append-once-per-line packet diagnostic for local debug builds.
-fn log_pump_packet(message: &str) {
-    #[cfg(all(debug_assertions, any(target_os = "ios", target_os = "android")))]
-    {
-        use std::fs::OpenOptions;
-        use std::io::Write;
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let path = std::env::temp_dir().join("nvpn-wg.log");
-        let secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs_f64())
-            .unwrap_or(0.0);
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-            let _ = writeln!(file, "{secs:.3} mobile-pump: {message}");
-        }
-    }
-    #[cfg(not(all(debug_assertions, any(target_os = "ios", target_os = "android"))))]
-    let _ = message;
-}
-
 fn empty_config() -> MobileTunnelConfig {
     MobileTunnelConfig {
         config_path: String::new(),
