@@ -17,6 +17,11 @@ val hasReleaseSigning =
         releaseStorePassword.isPresent &&
         releaseKeyAlias.isPresent &&
         releaseKeyPassword.isPresent
+val buildGitSha = providers.environmentVariable("NVPN_BUILD_GIT_SHA").orElse("").get()
+val buildTimestampUtc = providers.environmentVariable("NVPN_BUILD_TIMESTAMP_UTC").orElse("").get()
+
+fun buildConfigString(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 android {
     namespace = "org.nostrvpn.app"
@@ -28,6 +33,8 @@ android {
         targetSdk = 36
         versionCode = 40087
         versionName = "4.0.87"
+        buildConfigField("String", "NVPN_BUILD_GIT_SHA", buildConfigString(buildGitSha))
+        buildConfigField("String", "NVPN_BUILD_TIMESTAMP_UTC", buildConfigString(buildTimestampUtc))
 
         ndk {
             abiFilters += "arm64-v8a"

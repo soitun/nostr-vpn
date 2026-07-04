@@ -3,8 +3,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
+source "$ROOT/scripts/release_common.sh"
+# shellcheck disable=SC1091
 source "$ROOT/scripts/mobile_env.sh"
+load_release_env "$ROOT"
 load_mobile_env "$ROOT"
+resolve_shared_build_metadata "$ROOT"
 PACKAGE_NAME="${NVPN_ANDROID_PACKAGE:-org.nostrvpn.app}"
 MAIN_ACTIVITY="${NVPN_ANDROID_ACTIVITY:-org.nostrvpn.app/.MainActivity}"
 DEBUG_ACTION_EXTRA="${NVPN_ANDROID_DEBUG_ACTION_EXTRA:-org.nostrvpn.app.DEBUG_ACTION}"
@@ -19,6 +23,7 @@ RUNTIME_STATE_WAIT_SECS="${NVPN_ANDROID_RUNTIME_STATE_WAIT_SECS:-12}"
 RUNTIME_STATE_MAX_AGE_SECS="${NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS:-60}"
 RUNTIME_STATE_RESULT_DIR="${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-android}"
 RUNTIME_STATE_RESULT_NAME="${NVPN_ANDROID_RUNTIME_STATE_RESULT_NAME:-mobile-android-runtime-state-$$.json}"
+ANDROID_BUILD_METADATA_RESULT_NAME="${NVPN_ANDROID_BUILD_METADATA_RESULT_NAME:-mobile-android-build-metadata-$$.json}"
 VPN_LINK_STATS_RESULT_NAME="mobile-android-vpn-link-stats-$$.txt"
 PING_PROBE_RESULT_NAME="mobile-android-ping-probe-$$.txt"
 PING_PROBE_SUMMARY_RESULT_NAME="mobile-android-ping-probe-summary-$$.json"
@@ -50,6 +55,7 @@ usage: scripts/mobile-android-smoke.sh [--no-build] [--clear] [--vpn-cycle] [--c
 Builds and installs the debug APK, launches the app through adb, and optionally
 cycles the debug VPN action. Values may live in .env.mobile.local, shell env,
 or --serial. Keep device identifiers and signing details out of committed files.
+The installed debug app must report build metadata matching this repo checkout.
 
 First-run Android VPN permission prompts may need manual approval before
 --vpn-cycle can run unattended.
@@ -214,6 +220,10 @@ android_runtime_state_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$RUNTIME_STATE_RESULT_NAME"
 }
 
+android_build_metadata_path() {
+  printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$ANDROID_BUILD_METADATA_RESULT_NAME"
+}
+
 android_vpn_link_stats_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$VPN_LINK_STATS_RESULT_NAME"
 }
@@ -244,6 +254,78 @@ copy_android_runtime_state() {
   fi
   rm -f "$result_path.tmp"
   return 1
+}
+
+copy_android_build_metadata() {
+  local result_path
+  result_path="$(android_build_metadata_path)"
+  mkdir -p "$RUNTIME_STATE_RESULT_DIR"
+  rm -f "$result_path.tmp"
+  if "$ADB" -s "$serial" exec-out \
+    run-as "$PACKAGE_NAME" sh -c 'test -s files/app-core/android-build-metadata.json && cat files/app-core/android-build-metadata.json' \
+    >"$result_path.tmp" 2>/dev/null && [[ -s "$result_path.tmp" ]]
+  then
+    mv "$result_path.tmp" "$result_path"
+    return 0
+  fi
+  rm -f "$result_path.tmp"
+  return 1
+}
+
+validate_android_build_metadata() {
+  local result_path
+  result_path="$(android_build_metadata_path)"
+  python3 - "$result_path" "$NVPN_BUILD_GIT_SHA" "$PACKAGE_NAME" <<'PY'
+import json
+import sys
+
+path, expected_build_git_sha, expected_package = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path, encoding="utf-8") as fh:
+        metadata = json.load(fh)
+except (OSError, json.JSONDecodeError) as error:
+    print(f"Android build metadata invalid JSON: {error}", file=sys.stderr)
+    sys.exit(1)
+
+errors = []
+actual_package = metadata.get("appPackageName")
+if actual_package != expected_package:
+    errors.append(f"appPackageName={actual_package!r} expected={expected_package!r}")
+actual_build_git_sha = metadata.get("appBuildGitSha")
+if expected_build_git_sha:
+    if not actual_build_git_sha:
+        errors.append(f"appBuildGitSha missing expected={expected_build_git_sha!r}")
+    elif actual_build_git_sha != expected_build_git_sha:
+        errors.append(
+            f"appBuildGitSha={actual_build_git_sha!r} expected={expected_build_git_sha!r}"
+        )
+
+if errors:
+    print("Android build metadata invalid: " + ", ".join(errors), file=sys.stderr)
+    sys.exit(1)
+PY
+}
+
+wait_for_android_build_metadata() {
+  local start now last_error
+  start="$(date +%s)"
+  last_error=""
+  while true; do
+    if copy_android_build_metadata; then
+      if last_error="$(validate_android_build_metadata 2>&1)"; then
+        echo "Android build metadata passed: $(android_build_metadata_path)"
+        return 0
+      fi
+    else
+      last_error="failed to copy files/app-core/android-build-metadata.json from debug app sandbox"
+    fi
+    now="$(date +%s)"
+    if (( now - start >= RUNTIME_STATE_WAIT_SECS )); then
+      echo "$last_error" >&2
+      return 1
+    fi
+    sleep 1
+  done
 }
 
 validate_android_runtime_state() {
@@ -962,6 +1044,7 @@ fi
 
 start_main_activity
 "$ADB" -s "$serial" shell pm path "$PACKAGE_NAME" >/dev/null
+wait_for_android_build_metadata
 
 if [[ "$vpn_cycle" -eq 1 ]]; then
   seed_debug_config

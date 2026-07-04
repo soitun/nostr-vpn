@@ -51,6 +51,7 @@ class MainActivity : ComponentActivity() {
         NativeCore.initializeAndroidContext(applicationContext)
         val dataDir = appCoreDataDir(this)
         seedMobileConfig(dataDir)
+        writeAndroidBuildMetadata(dataDir)
         // Pass empty so the FFI falls back to its own CARGO_PKG_VERSION
         // (workspace-inherited). Avoids drift between BuildConfig.VERSION_NAME
         // and the bundled nvpn binary's version.
@@ -439,6 +440,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        writeAndroidBuildMetadata(appCoreDataDir(this))
         deepLink = intent.dataString
         debugAction = intent.getStringExtra(EXTRA_DEBUG_ACTION)
         debugInvite = intent.getStringExtra(EXTRA_DEBUG_INVITE)
@@ -471,6 +473,28 @@ class MainActivity : ComponentActivity() {
         }.getOrNull()
     }
 
+    private fun writeAndroidBuildMetadata(dataDir: java.io.File) {
+        runCatching {
+            dataDir.mkdirs()
+            val metadata = JSONObject()
+                .put("appPackageName", BuildConfig.APPLICATION_ID)
+                .put("appVersionName", BuildConfig.VERSION_NAME)
+                .put("appVersionCode", BuildConfig.VERSION_CODE)
+            BuildConfig.NVPN_BUILD_GIT_SHA.trim()
+                .takeIf { it.isNotEmpty() && !it.startsWith("\${") }
+                ?.let { metadata.put("appBuildGitSha", it) }
+            BuildConfig.NVPN_BUILD_TIMESTAMP_UTC.trim()
+                .takeIf { it.isNotEmpty() && !it.startsWith("\${") }
+                ?.let { metadata.put("appBuildTimestampUtc", it) }
+            dataDir.resolve(ANDROID_BUILD_METADATA_FILE).writeText(
+                metadata.toString(2) + "\n",
+                Charsets.UTF_8,
+            )
+        }.onFailure { error ->
+            android.util.Log.w("NostrVpn", "failed to write Android build metadata", error)
+        }
+    }
+
     private fun AppState.withAndroidNotice(androidError: String, vpnLockdownActive: Boolean): AppState {
         if (error.isNotBlank()) return this
         if (androidError.isNotBlank()) return copy(error = androidError)
@@ -497,6 +521,7 @@ class MainActivity : ComponentActivity() {
         const val DEBUG_ACTION_ADD_NETWORK = "add_network"
         const val DEBUG_ACTION_CLEAR_EXIT = "clear_exit"
         const val DEBUG_ACTION_SET_WIREGUARD_EXIT = "set_wireguard_exit"
+        private const val ANDROID_BUILD_METADATA_FILE = "android-build-metadata.json"
         private const val ANDROID_LOCAL_NETWORK_OPT_IN_API = 36
         private const val ANDROID_ACCESS_LOCAL_NETWORK_API = 37
         private const val ACCESS_LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
