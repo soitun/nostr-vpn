@@ -44,6 +44,9 @@ TUNNEL_HEALTH_ATTEMPTS="${NVPN_WINLIN_TUNNEL_HEALTH_ATTEMPTS:-20}"
 TUNNEL_HEALTH_INTERVAL_SECS="${NVPN_WINLIN_TUNNEL_HEALTH_INTERVAL_SECS:-3}"
 TUNNEL_PING_COUNT="${NVPN_WINLIN_TUNNEL_PING_COUNT:-5}"
 TUNNEL_MAX_LOSS_PERCENT="${NVPN_WINLIN_TUNNEL_MAX_LOSS_PERCENT:-0}"
+WINDOWS_PIPELINE_TRACE="${NVPN_WINLIN_WINDOWS_PIPELINE_TRACE:-0}"
+WINDOWS_PIPELINE_INTERVAL_SECS="${NVPN_WINLIN_WINDOWS_PIPELINE_INTERVAL_SECS:-1}"
+WINDOWS_DAEMON_LOG_TAIL_LINES="${NVPN_WINLIN_WINDOWS_DAEMON_LOG_TAIL_LINES:-4000}"
 
 SUMMARY_TSV="$OUTPUT_DIR/summary.tsv"
 RUN_JSON="$OUTPUT_DIR/run.json"
@@ -141,6 +144,11 @@ Important options:
   NVPN_WINLIN_RESTORE_LINUX_INSTALLED=1   restore Linux /usr/local/bin/nvpn from backup at exit
   NVPN_WINLIN_DIRECT_FIPS_CAPTURE=1       capture Linux UDP/51820 during nvpn rows
   NVPN_WINLIN_LINUX_CAPTURE_IFACE=enp1s0  optional capture interface override
+  NVPN_WINLIN_WINDOWS_PIPELINE_TRACE=1    enable nvpn pipeline trace on the measured Windows service
+  NVPN_WINLIN_WINDOWS_PIPELINE_INTERVAL_SECS=1
+                                           interval for Windows pipeline trace service env
+  NVPN_WINLIN_WINDOWS_DAEMON_LOG_TAIL_LINES=4000
+                                           daemon log lines to save after nvpn directions
 
 The Linux side is intentionally held constant by default. This isolates the
 Windows service/dataplane change while still recording the Linux service binary
@@ -770,36 +778,88 @@ switch_windows_service() {
   local label="$2"
   local exe_ps
   local config_ps
+  local label_ps
+  local trace_ps
+  local interval_ps
   exe_ps="$(ps_sq "$exe")"
   config_ps="$(ps_sq "$WINDOWS_CONFIG")"
+  label_ps="$(ps_sq "$label")"
+  trace_ps="$(ps_sq "$WINDOWS_PIPELINE_TRACE")"
+  interval_ps="$(ps_sq "$WINDOWS_PIPELINE_INTERVAL_SECS")"
   printf 'switching Windows service for %s to %s\n' "$label" "$exe" >&2
   run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
 \$ErrorActionPreference = 'Stop'
 \$exe = $exe_ps
 \$config = $config_ps
+\$label = $label_ps
+\$pipelineTrace = $trace_ps
+\$pipelineInterval = $interval_ps
 \$clean = [string]\$exe
 if (\$clean.StartsWith('\\?\')) { \$clean = \$clean.Substring(4) }
 if (!(Test-Path -LiteralPath \$clean)) { throw \"nvpn.exe not found: \$clean\" }
-\$query = & sc.exe queryex NvpnService 2>&1
-\$queryText = \$query | Out-String
-if (!(\$LASTEXITCODE -ne 0 -and \$queryText -match '1060')) {
-  & sc.exe stop NvpnService | Out-Null
+
+function Query-NvpnService {
+  \$query = & sc.exe queryex NvpnService 2>&1
+  [pscustomobject]@{ ExitCode = \$LASTEXITCODE; Text = (\$query | Out-String) }
+}
+
+function Get-NvpnServicePid(\$QueryText) {
+  if (\$QueryText -match '(?m)^\\s*PID\\s*:\\s*(\\d+)\\s*$') { return [int]\$Matches[1] }
+  return 0
+}
+
+function Stop-NvpnServiceProcess(\$QueryText) {
+  \$pidValue = Get-NvpnServicePid \$QueryText
+  if (\$pidValue -gt 0) {
+    Stop-Process -Id \$pidValue -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 500
+  }
+}
+
+\$query = Query-NvpnService
+if (!(\$query.ExitCode -ne 0 -and \$query.Text -match '1060')) {
+  Stop-NvpnServiceProcess \$query.Text
   & sc.exe delete NvpnService | Out-Null
   \$deadline = (Get-Date).AddSeconds(30)
   do {
-    \$query = & sc.exe queryex NvpnService 2>&1
-    \$queryText = \$query | Out-String
-    if (\$LASTEXITCODE -ne 0 -and \$queryText -match '1060') { break }
+    \$query = Query-NvpnService
+    if (\$query.ExitCode -ne 0 -and \$query.Text -match '1060') { break }
+    Stop-NvpnServiceProcess \$query.Text
     Start-Sleep -Milliseconds 250
   } while ((Get-Date) -lt \$deadline)
-  if (!(\$LASTEXITCODE -ne 0 -and \$queryText -match '1060')) {
-    throw \"NvpnService did not finish deletion before reinstall: \$queryText\"
+  if (!(\$query.ExitCode -ne 0 -and \$query.Text -match '1060')) {
+    throw \"NvpnService did not finish deletion before reinstall: \$(\$query.Text)\"
   }
 }
-\$args = @('service', 'install')
+\$args = @('service', 'install', '--force')
 if (\$config) { \$args += @('--config', \$config) }
 & \$clean @args
-exit \$LASTEXITCODE"
+if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }
+\$envPath = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\NvpnService'
+if (\$label -ne 'restore-installed' -and \$pipelineTrace -match '^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$') {
+  \$intervalValue = if (\$pipelineInterval -match '^\\d+$' -and [int]\$pipelineInterval -gt 0) { \$pipelineInterval } else { '1' }
+  New-ItemProperty -Path \$envPath -Name Environment -PropertyType MultiString -Value @(
+    'NVPN_PIPELINE_TRACE=1',
+    \"NVPN_PIPELINE_INTERVAL_SECS=\$intervalValue\",
+    \"FIPS_PERF_INTERVAL_SECS=\$intervalValue\"
+  ) -Force | Out-Null
+  \$query = Query-NvpnService
+  Stop-NvpnServiceProcess \$query.Text
+  \$deadline = (Get-Date).AddSeconds(10)
+  do {
+    \$query = Query-NvpnService
+    if (\$query.Text -match '(?m)^\\s*STATE\\s*:\\s*\\d+\\s+RUNNING\\b') { break }
+    & sc.exe start NvpnService | Out-Null
+    Start-Sleep -Milliseconds 500
+  } while ((Get-Date) -lt \$deadline)
+  \$query = Query-NvpnService
+  if (!(\$query.Text -match '(?m)^\\s*STATE\\s*:\\s*\\d+\\s+RUNNING\\b')) {
+    throw \"NvpnService did not restart with pipeline trace environment: \$(\$query.Text)\"
+  }
+} else {
+  Remove-ItemProperty -Path \$envPath -Name Environment -ErrorAction SilentlyContinue
+}
+exit 0"
 }
 
 wait_for_windows_hash() {
@@ -1287,10 +1347,31 @@ fetch_windows_file() {
 Get-Content -Raw -Path $(ps_sq "$remote_path") -ErrorAction SilentlyContinue" >"$out"
 }
 
+fetch_windows_file_tail() {
+  local remote_path="$1"
+  local lines="$2"
+  local out="$3"
+  run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Continue'
+Get-Content -Tail ([int]$(ps_sq "$lines")) -Path $(ps_sq "$remote_path") -ErrorAction SilentlyContinue" >"$out"
+}
+
 fetch_linux_file() {
   local remote_path="$1"
   local out="$2"
   run_linux_sh "cat $(sh_q "$remote_path") 2>/dev/null || true" >"$out"
+}
+
+capture_windows_daemon_log_tail() {
+  local snapshot="$1"
+  local out="$2"
+  local remote_log
+  remote_log="$(jq -r '.daemon_status.daemon.log_file // .daemon_status.log_file // empty' "$snapshot")"
+  if [[ -z "$remote_log" || "$remote_log" == "null" ]]; then
+    printf '' >"$out"
+    return 0
+  fi
+  fetch_windows_file_tail "$remote_log" "$WINDOWS_DAEMON_LOG_TAIL_LINES" "$out"
 }
 
 capture_windows_ping() {
@@ -1585,6 +1666,9 @@ measure_direction() {
 
   capture_windows_snapshot "$out_dir/windows-after.json"
   capture_linux_snapshot "$out_dir/linux-after.json"
+  if [[ "$path_kind" == "nvpn" ]] && is_true "$WINDOWS_PIPELINE_TRACE"; then
+    capture_windows_daemon_log_tail "$out_dir/windows-after.json" "$out_dir/windows-daemon.log"
+  fi
   summarize_direction "$row" "$path_kind" "$direction" "$out_dir"
   if [[ -n "$capture_info" ]]; then
     summarize_direct_fips_capture "$row" "$direction" "$capture_dir" "$out_dir/summary.json"
@@ -1645,7 +1729,11 @@ measure_row() {
   current_configured_hash="$(jq -r '.binaries.configured_hash // empty' "$current_snapshot")"
   current_process_hash="$(jq -r '.binaries.process_hash // empty' "$current_snapshot")"
   rm -f "$current_snapshot"
-  if [[ "$current_running" == "true" && "$current_configured_hash" == "$expected_hash" && "$current_process_hash" == "$expected_hash" ]]; then
+  local force_windows_switch=0
+  if is_true "$WINDOWS_PIPELINE_TRACE" && [[ "$row" != "installed" ]]; then
+    force_windows_switch=1
+  fi
+  if [[ "$force_windows_switch" == "0" && "$current_running" == "true" && "$current_configured_hash" == "$expected_hash" && "$current_process_hash" == "$expected_hash" ]]; then
     printf 'Windows service already running expected %s image\n' "$row" >&2
   else
     switch_windows_service "$expected_exe" "$row"
@@ -1688,6 +1776,9 @@ write_run_metadata() {
     --arg tunnel_max_loss_percent "$TUNNEL_MAX_LOSS_PERCENT" \
     --arg direct_fips_capture "$DIRECT_FIPS_CAPTURE" \
     --arg linux_capture_iface "$LINUX_CAPTURE_IFACE" \
+    --arg windows_pipeline_trace "$WINDOWS_PIPELINE_TRACE" \
+    --arg windows_pipeline_interval_secs "$WINDOWS_PIPELINE_INTERVAL_SECS" \
+    --arg windows_daemon_log_tail_lines "$WINDOWS_DAEMON_LOG_TAIL_LINES" \
     --arg linux_installed_expected_hash "$LINUX_INSTALLED_EXPECTED_HASH" \
     --arg allow_current_linux_as_installed "$(is_true "$ALLOW_CURRENT_LINUX_AS_INSTALLED" && printf true || printf false)" \
     --arg windows_ssh_proxy_command "$([[ -n "$WINDOWS_SSH_PROXY_COMMAND" ]] && printf true || printf false)" \
@@ -1695,7 +1786,32 @@ write_run_metadata() {
     --arg windows_ssh_jump "$([[ -n "$WINDOWS_SSH_JUMP" ]] && printf true || printf false)" \
     --arg linux_ssh_jump "$([[ -n "$LINUX_SSH_JUMP" ]] && printf true || printf false)" \
     --arg output_dir "$OUTPUT_DIR" \
-    '{created_at:$created_at,repo:$root,git_head:$git_head,rows:$rows,current_linux_nvpn:$current_linux_nvpn,duration_secs:($duration_secs|tonumber),min_underlay_mbps:($min_underlay_mbps|tonumber),max_underlay_ratio:($max_underlay_ratio|tonumber),tunnel_health_attempts:($tunnel_health_attempts|tonumber),tunnel_health_interval_secs:($tunnel_health_interval_secs|tonumber),tunnel_ping_count:($tunnel_ping_count|tonumber),tunnel_max_loss_percent:($tunnel_max_loss_percent|tonumber),direct_fips_capture:$direct_fips_capture,linux_capture_iface:$linux_capture_iface,linux_installed_expected_hash:$linux_installed_expected_hash,allow_current_linux_as_installed:($allow_current_linux_as_installed == "true"),windows_ssh_proxy_command:($windows_ssh_proxy_command == "true"),linux_ssh_proxy_command:($linux_ssh_proxy_command == "true"),windows_ssh_jump:($windows_ssh_jump == "true"),linux_ssh_jump:($linux_ssh_jump == "true"),output_dir:$output_dir}' \
+    '{
+      created_at:$created_at,
+      repo:$root,
+      git_head:$git_head,
+      rows:$rows,
+      current_linux_nvpn:$current_linux_nvpn,
+      duration_secs:($duration_secs|tonumber),
+      min_underlay_mbps:($min_underlay_mbps|tonumber),
+      max_underlay_ratio:($max_underlay_ratio|tonumber),
+      tunnel_health_attempts:($tunnel_health_attempts|tonumber),
+      tunnel_health_interval_secs:($tunnel_health_interval_secs|tonumber),
+      tunnel_ping_count:($tunnel_ping_count|tonumber),
+      tunnel_max_loss_percent:($tunnel_max_loss_percent|tonumber),
+      direct_fips_capture:$direct_fips_capture,
+      linux_capture_iface:$linux_capture_iface,
+      windows_pipeline_trace:$windows_pipeline_trace,
+      windows_pipeline_interval_secs:($windows_pipeline_interval_secs|tonumber),
+      windows_daemon_log_tail_lines:($windows_daemon_log_tail_lines|tonumber),
+      linux_installed_expected_hash:$linux_installed_expected_hash,
+      allow_current_linux_as_installed:($allow_current_linux_as_installed == "true"),
+      windows_ssh_proxy_command:($windows_ssh_proxy_command == "true"),
+      linux_ssh_proxy_command:($linux_ssh_proxy_command == "true"),
+      windows_ssh_jump:($windows_ssh_jump == "true"),
+      linux_ssh_jump:($linux_ssh_jump == "true"),
+      output_dir:$output_dir
+    }' \
     >"$RUN_JSON"
 }
 
