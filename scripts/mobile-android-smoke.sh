@@ -271,6 +271,30 @@ print(value)
 PY
 }
 
+android_runtime_state_counters() {
+  local result_path
+  result_path="$(android_runtime_state_path)"
+  python3 - "$result_path" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+keys = (
+    "tunPacketsRead",
+    "tunBytesRead",
+    "tunPacketsWritten",
+    "tunBytesWritten",
+    "tunPacketsDropped",
+)
+with open(path, encoding="utf-8") as fh:
+    state = json.load(fh)
+values = [state.get(key) for key in keys]
+if not all(isinstance(value, int) and value >= 0 for value in values):
+    sys.exit(1)
+print("\t".join(str(value) for value in values))
+PY
+}
+
 wait_for_android_runtime_state() {
   local start now last_error
   start="$(date +%s)"
@@ -296,18 +320,30 @@ wait_for_android_runtime_state() {
 wait_for_tun_packets_read_after() {
   local baseline="$1"
   local required_increase="$2"
-  local start now current last_error
+  local baseline_dropped="$3"
+  local baseline_bytes="$4"
+  local start now current current_bytes current_dropped bytes_delta last_error
   start="$(date +%s)"
   last_error=""
   while true; do
     if copy_android_runtime_state; then
       if last_error="$(validate_android_runtime_state 2>&1)"; then
         current="$(android_runtime_state_number tunPacketsRead 2>/dev/null || true)"
+        current_bytes="$(android_runtime_state_number tunBytesRead 2>/dev/null || true)"
+        current_dropped="$(android_runtime_state_number tunPacketsDropped 2>/dev/null || true)"
+        if [[ "$current_dropped" =~ ^[0-9]+$ ]] && (( current_dropped > baseline_dropped )); then
+          echo "tunPacketsDropped increased during probe (baseline=$baseline_dropped current=$current_dropped)" >&2
+          return 1
+        fi
         if [[ "$current" =~ ^[0-9]+$ ]] && (( current >= baseline + required_increase )); then
-          echo "Android TUN packet probe passed: tunPacketsRead $baseline->$current observed=$((current - baseline))/$required_increase target=$TUN_PACKET_PROBE_TARGET"
+          bytes_delta="unknown"
+          if [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
+            bytes_delta="$((current_bytes - baseline_bytes))"
+          fi
+          echo "Android TUN packet probe passed: tunPacketsRead $baseline->$current observed=$((current - baseline))/$required_increase tunBytesReadDelta=$bytes_delta tunPacketsDropped=$baseline_dropped->$current_dropped target=$TUN_PACKET_PROBE_TARGET"
           return 0
         fi
-        last_error="tunPacketsRead did not increase enough after probe (baseline=$baseline current=${current:-missing} required=$required_increase)"
+        last_error="tunPacketsRead did not increase enough after probe (baseline=$baseline current=${current:-missing} required=$required_increase tunPacketsDropped=${current_dropped:-missing})"
       fi
     else
       last_error="failed to copy files/app-core/mobile-runtime-state.json from debug app sandbox"
@@ -323,15 +359,19 @@ wait_for_tun_packets_read_after() {
 
 run_android_tun_packet_probe() {
   truthy "$TUN_PACKET_PROBE" || return 0
-  local baseline count remote_cmd
-  baseline="$(android_runtime_state_number tunPacketsRead 2>/dev/null || printf '0')"
+  local baseline baseline_bytes baseline_dropped count remote_cmd
+  local _baseline_written _baseline_written_bytes
+  IFS=$'\t' read -r baseline baseline_bytes _baseline_written _baseline_written_bytes baseline_dropped \
+    <<<"$(android_runtime_state_counters 2>/dev/null || printf '0\t0\t0\t0\t0')"
   [[ "$baseline" =~ ^[0-9]+$ ]] || baseline=0
+  [[ "$baseline_bytes" =~ ^[0-9]+$ ]] || baseline_bytes=0
+  [[ "$baseline_dropped" =~ ^[0-9]+$ ]] || baseline_dropped=0
   count="$TUN_PACKET_PROBE_COUNT"
   [[ "$count" =~ ^[0-9]+$ ]] || count=4
   (( count > 0 )) || count=1
   remote_cmd="i=0; while [ \$i -lt $count ]; do ping -c 1 -W $TUN_PACKET_PROBE_TIMEOUT_SECS $TUN_PACKET_PROBE_TARGET >/dev/null 2>&1 & i=\$((i + 1)); done; wait"
   "$ADB" -s "$serial" shell "$remote_cmd" >/dev/null 2>&1 || true
-  wait_for_tun_packets_read_after "$baseline" "$count"
+  wait_for_tun_packets_read_after "$baseline" "$count" "$baseline_dropped" "$baseline_bytes"
 }
 
 android_sdk() {
