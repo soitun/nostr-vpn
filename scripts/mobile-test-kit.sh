@@ -13,14 +13,13 @@ Modes:
   rust       Run shared Rust mobile/core tests only.
   fast       Run Rust tests plus Android and iOS debug builds.
   simulator  Run fast checks, then iOS simulator and Android adb launch smokes.
-  device     Run opt-in physical-device smokes using env-provided identifiers.
+  device     Run opt-in local physical-device VPN/TUN smokes.
 
 Device identifiers are intentionally not stored in the repo. Use environment
 variables such as NVPN_ANDROID_SERIAL and NVPN_IOS_DEVICE when needed, or copy
-.env.mobile.example to .env.mobile.local for local ignored values. Set
-NVPN_IOS_INSTALL=1 when physical iOS should build/install the exact current
-development-signed app before launching; set NVPN_IOS_DEBUG_CREATE_NETWORK=1
-for local iOS Packet Tunnel coverage without a private invite fixture.
+.env.mobile.example to .env.mobile.local for local ignored values. Device mode
+builds/installs the exact current iOS development-signed app and uses local iOS
+Packet Tunnel coverage without a private invite fixture by default.
 Android --vpn-cycle validates the app-private Rust runtime-state file after the
 OS VPN network becomes active; tune with NVPN_ANDROID_RUNTIME_STATE_WAIT_SECS
 or NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS if a slow device needs it. It also
@@ -34,8 +33,10 @@ local-FIPS cargo runs so platform iteration does not leave workspace churn
 behind.
 
 Simulator mode verifies app build/install/launch. Real VPN dataplane checks
-need physical devices; first-run OS VPN permission prompts may require a manual
-approval before the debug connect/disconnect cycle can run unattended.
+need physical devices. Device mode uses debug-created local networks for OS
+VPN/TUN coverage without private peer fixtures: Android may tap the system VPN
+consent prompt on a trusted local test device, and iOS builds/installs the
+current development-signed app before launch, requiring local signing env.
 EOF
 }
 
@@ -86,8 +87,8 @@ case "$mode" in
     "$ROOT/scripts/mobile-android-smoke.sh" --no-build
     ;;
   device)
-    "$ROOT/scripts/mobile-android-smoke.sh" --vpn-cycle
-    "$ROOT/scripts/mobile-ios-smoke.sh" device --vpn-cycle
+    "$ROOT/scripts/mobile-android-smoke.sh" --create-network --accept-vpn-dialog --vpn-cycle
+    "$ROOT/scripts/mobile-ios-smoke.sh" device --install --create-network --vpn-cycle
     ;;
   -h|--help|help)
     usage

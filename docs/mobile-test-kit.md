@@ -49,15 +49,18 @@ Run this after VPN dataplane, reconnect, LAN discovery, roster transfer, or
 mobile tunnel config changes:
 
 ```sh
-NVPN_ANDROID_SERIAL=<adb-serial> just android-smoke-vpn
-NVPN_IOS_DEVICE=<device-id> just ios-smoke-device
+just mobile-test-kit-device
 ```
 
-The iOS device command assumes a development build is already installed and uses
-debug launch arguments to cycle the VPN state. Android installs the debug APK and
-uses the debug action extra, then checks that both `NostrVpnService` and an
-Android VPN network become active. Fresh Android installs need private seeded
-state first, for example `NVPN_ANDROID_DEBUG_INVITE=<invite>` or
-`NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE=<ignored-local-file>`. Device
-identifiers, signing teams, local hostnames, IP addresses, and personal names
-must stay in environment variables, local shell history, or ignored files.
+This runs the local OS VPN/TUN packet path without private peer fixtures.
+Android builds/installs the debug APK, creates a debug-only local network,
+cycles the VPN, captures runtime-state/link/ping/TUN summaries, and may tap the
+system VPN consent prompt on a trusted local test device. iOS builds/installs
+the current development-signed app, creates a debug-only local network, cycles
+the Packet Tunnel, and validates the current build metadata plus TUN packet
+probe counters. Keep `NVPN_ANDROID_SERIAL`, `NVPN_IOS_DEVICE`,
+`NVPN_IOS_TEAM_ID`, and any other device/signing values in shell env or
+`.env.mobile.local`.
+
+For peer latency, jitter, loss, and throughput evidence, run the underlying
+smoke scripts with real ignored-local invite or WireGuard fixture values.
