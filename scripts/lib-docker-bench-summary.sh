@@ -272,6 +272,18 @@ docker_bench_extra_env_stale_assignment_message() {
       printf '%s\n' \
         "FIPS_DECRYPT_FMP_PREOWNER_AEAD_HELPERS was removed; FMP uses the canonical source-affine owner path"
       ;;
+    FIPS_ENCRYPT_WORKERS|FIPS_DECRYPT_WORKERS)
+      printf '%s\n' \
+        "$name is retired; current FIPS sizes dataplane workers from available parallelism"
+      ;;
+    FIPS_WORKER_CHANNEL_CAP|FIPS_DECRYPT_WORKER_CHANNEL_CAP|FIPS_DECRYPT_WORKER_PRIORITY_CHANNEL_CAP)
+      printf '%s\n' \
+        "$name is not read by current FIPS; remove the stale worker queue cap override"
+      ;;
+    FIPS_SEND_BACKPRESSURE_SLEEP_AFTER|FIPS_SEND_BACKPRESSURE_SLEEP_MICROS|FIPS_SEND_BACKPRESSURE_DROP_AFTER)
+      printf '%s\n' \
+        "$name is not read by current FIPS; Linux sends use the canonical bulk sender"
+      ;;
   esac
 }
 

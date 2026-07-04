@@ -16,7 +16,7 @@ COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml"
 
 NETWORK_ID="${NVPN_PERF_NETWORK_ID:-docker-fips-perf}"
 CONFIG_PATH="/root/.config/nvpn/config.toml"
-KNOWN_PERF_PHASES="unimpaired-underlay,constrained-underlay,worker-queue-pressure,rx-maintenance-fault"
+KNOWN_PERF_PHASES="unimpaired-underlay,constrained-underlay,rx-maintenance-fault"
 PERF_PHASE_ALIASES="clean-underlay=unimpaired-underlay"
 DURATION="${NVPN_PERF_DURATION_SECS:-8}"
 LOAD_DURATION="${NVPN_PERF_LOAD_DURATION_SECS:-12}"
@@ -66,24 +66,6 @@ RX_MAINT_POST_MAX_PING_AVG_MS="${NVPN_PERF_RX_MAINT_POST_MAX_PING_AVG_MS:-100}"
 RX_MAINT_POST_MAX_PING_MAX_MS="${NVPN_PERF_RX_MAINT_POST_MAX_PING_MAX_MS:-150}"
 RX_MAINT_POST_MAX_PING_P95_MS="${NVPN_PERF_RX_MAINT_POST_MAX_PING_P95_MS:-$RX_MAINT_POST_MAX_PING_MAX_MS}"
 RX_MAINT_POST_MAX_PING_P99_MS="${NVPN_PERF_RX_MAINT_POST_MAX_PING_P99_MS:-$RX_MAINT_POST_MAX_PING_MAX_MS}"
-WORKER_QUEUE_PRESSURE_CAP="${NVPN_PERF_WORKER_QUEUE_PRESSURE_CAP:-8}"
-WORKER_QUEUE_PRESSURE_DECRYPT_CAP="${NVPN_PERF_DECRYPT_WORKER_QUEUE_PRESSURE_CAP:-$WORKER_QUEUE_PRESSURE_CAP}"
-WORKER_QUEUE_PRESSURE_MIN_TCP_MBIT="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MIN_TCP_MBIT:-20}"
-WORKER_QUEUE_PRESSURE_MIN_REVERSE_TCP_MBIT="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MIN_REVERSE_TCP_MBIT:-20}"
-# This phase deliberately shrinks the encrypt-worker channel while saturating
-# TCP. Hosted CI can drop short ICMP bursts under that synthetic pressure, so
-# keep the during-load budget broad and rely on the tighter post-load check to
-# catch lingering interactive starvation.
-WORKER_QUEUE_PRESSURE_MAX_PING_LOSS_PERCENT="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MAX_PING_LOSS_PERCENT:-20}"
-WORKER_QUEUE_PRESSURE_MAX_PING_AVG_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MAX_PING_AVG_MS:-100}"
-WORKER_QUEUE_PRESSURE_MAX_PING_MAX_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MAX_PING_MAX_MS:-200}"
-WORKER_QUEUE_PRESSURE_MAX_PING_P95_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MAX_PING_P95_MS:-$WORKER_QUEUE_PRESSURE_MAX_PING_MAX_MS}"
-WORKER_QUEUE_PRESSURE_MAX_PING_P99_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_MAX_PING_P99_MS:-$WORKER_QUEUE_PRESSURE_MAX_PING_MAX_MS}"
-WORKER_QUEUE_PRESSURE_POST_MAX_PING_LOSS_PERCENT="${NVPN_PERF_WORKER_QUEUE_PRESSURE_POST_MAX_PING_LOSS_PERCENT:-5}"
-WORKER_QUEUE_PRESSURE_POST_MAX_PING_AVG_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_POST_MAX_PING_AVG_MS:-100}"
-WORKER_QUEUE_PRESSURE_POST_MAX_PING_MAX_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_POST_MAX_PING_MAX_MS:-150}"
-WORKER_QUEUE_PRESSURE_POST_MAX_PING_P95_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_POST_MAX_PING_P95_MS:-$WORKER_QUEUE_PRESSURE_POST_MAX_PING_MAX_MS}"
-WORKER_QUEUE_PRESSURE_POST_MAX_PING_P99_MS="${NVPN_PERF_WORKER_QUEUE_PRESSURE_POST_MAX_PING_P99_MS:-$WORKER_QUEUE_PRESSURE_POST_MAX_PING_MAX_MS}"
 PIPELINE_TRACE="${NVPN_PERF_PIPELINE_TRACE:-1}"
 PIPELINE_INTERVAL_SECS="${NVPN_PERF_PIPELINE_INTERVAL_SECS:-5}"
 FAIL_ON_PRIORITY_HARD_EVENTS="${NVPN_PERF_FAIL_ON_PRIORITY_HARD_EVENTS:-1}"
@@ -144,7 +126,6 @@ Aliases:
 Examples:
   $(basename "$0") --phase rx-maintenance-fault
   $(basename "$0") --phases unimpaired-underlay,rx-maintenance-fault
-  NVPN_PERF_PHASES=worker-queue-pressure $(basename "$0")
   NVPN_PERF_SKIP_BUILD=1 $(basename "$0")
   NVPN_E2E_BUILDER_IMAGE=local-rust NVPN_E2E_RUNTIME_IMAGE=local-runtime $(basename "$0")
   NVPN_PERF_PIPELINE_INTERVAL_SECS=1 $(basename "$0") --phase unimpaired-underlay
@@ -152,7 +133,6 @@ Examples:
   NVPN_PERF_MIN_IPERF_INTERVAL_MBIT=1 NVPN_PERF_MAX_IPERF_STALL_INTERVALS=0 $(basename "$0") --phase unimpaired-underlay
   NVPN_DOCKER_IPERF_TIMEOUT_SECS=20 $(basename "$0") --phase unimpaired-underlay
   NVPN_DOCKER_CPU_STRESS=1 NVPN_DOCKER_CPU_STRESS_SIDES=remote $(basename "$0") --phase unimpaired-underlay
-  NVPN_PERF_FAIL_ON_PRIORITY_HARD_EVENTS=0 $(basename "$0") --phase worker-queue-pressure
   NVPN_PERF_MAX_PRIORITY_QUEUE_WAIT_MS=0 $(basename "$0") --phase unimpaired-underlay
   NVPN_PERF_MIN_PRIORITY_QUEUE_WAIT_RATE_PER_SEC=0 $(basename "$0") --phase unimpaired-underlay
   NVPN_PERF_RX_MAINT_MAX_PRIORITY_QUEUE_WAIT_MS=200 $(basename "$0") --phase rx-maintenance-fault
@@ -431,7 +411,7 @@ validate_perf_phases() {
     phase="$(canonical_perf_phase "$(trim "$raw")")"
     [[ -z "$phase" ]] && continue
     case "$phase" in
-      unimpaired-underlay|constrained-underlay|worker-queue-pressure|rx-maintenance-fault)
+      unimpaired-underlay|constrained-underlay|rx-maintenance-fault)
         selected=$((selected + 1))
         ;;
       *)
@@ -2198,37 +2178,6 @@ run_rx_maintenance_fault_phase() {
   done
 }
 
-run_worker_queue_pressure_phase() {
-  if ! phase_enabled "worker-queue-pressure"; then
-    echo "Skipping worker-queue pressure phase because NVPN_PERF_PHASES=$PERF_PHASES"
-    return
-  fi
-
-  if [[ "$WORKER_QUEUE_PRESSURE_CAP" == "0" ]]; then
-    echo "Skipping worker-queue pressure phase because NVPN_PERF_WORKER_QUEUE_PRESSURE_CAP=0"
-    return
-  fi
-
-  echo "--- restarting mesh with worker queue pressure: FIPS_WORKER_CHANNEL_CAP=${WORKER_QUEUE_PRESSURE_CAP} FIPS_DECRYPT_WORKER_CHANNEL_CAP=${WORKER_QUEUE_PRESSURE_DECRYPT_CAP} ---"
-  stop_connects
-  start_connects 0 "FIPS_WORKER_CHANNEL_CAP='$WORKER_QUEUE_PRESSURE_CAP' FIPS_DECRYPT_WORKER_CHANNEL_CAP='$WORKER_QUEUE_PRESSURE_DECRYPT_CAP'"
-  wait_for_mesh
-  run_perf_phase \
-    "worker-queue-pressure" \
-    "$WORKER_QUEUE_PRESSURE_MIN_TCP_MBIT" \
-    "$WORKER_QUEUE_PRESSURE_MIN_REVERSE_TCP_MBIT" \
-    "$WORKER_QUEUE_PRESSURE_MAX_PING_LOSS_PERCENT" \
-    "$WORKER_QUEUE_PRESSURE_MAX_PING_AVG_MS" \
-    "$WORKER_QUEUE_PRESSURE_MAX_PING_P95_MS" \
-    "$WORKER_QUEUE_PRESSURE_MAX_PING_P99_MS" \
-    "$WORKER_QUEUE_PRESSURE_MAX_PING_MAX_MS" \
-    "$WORKER_QUEUE_PRESSURE_POST_MAX_PING_LOSS_PERCENT" \
-    "$WORKER_QUEUE_PRESSURE_POST_MAX_PING_AVG_MS" \
-    "$WORKER_QUEUE_PRESSURE_POST_MAX_PING_P95_MS" \
-    "$WORKER_QUEUE_PRESSURE_POST_MAX_PING_P99_MS" \
-    "$WORKER_QUEUE_PRESSURE_POST_MAX_PING_MAX_MS"
-}
-
 start_compose_services() {
   if is_true "$SKIP_BUILD"; then
     "${COMPOSE[@]}" up -d --no-build node-a node-b >/dev/null
@@ -2343,7 +2292,6 @@ else
   echo "Skipping unimpaired-underlay phase because NVPN_PERF_PHASES=$PERF_PHASES"
 fi
 run_constrained_underlay_phase
-run_worker_queue_pressure_phase
 run_rx_maintenance_fault_phase
 
 echo "nvpn+FIPS perf regression docker e2e passed: throughput stayed above floor and pings did not wedge under or after TCP load"

@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Short Linux/docker platform-split matrix for nvpn+FIPS dataplane changes.
 #
-# This wraps e2e-fips-perf-regression-docker.sh so default-path, worker-count,
-# and backpressure knobs are exercised through the same direct-path and
-# TCP/ping no-wedge assertions. It is intentionally local/docker coverage only;
-# real Mac-to-Mac Wi-Fi/screenshare soak remains operator-local.
+# This wraps e2e-fips-perf-regression-docker.sh so selected profiles use the
+# same direct-path and TCP/ping no-wedge assertions. It is intentionally
+# local/docker coverage only; real Mac-to-Mac Wi-Fi/screenshare soak remains
+# operator-local.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_DIR="${NVPN_PLATFORM_MATRIX_OUTPUT_DIR:-$ROOT_DIR/artifacts/fips-platform-matrix/$(date -u +%Y%m%dT%H%M%SZ)}"
-SCENARIO_CSV="${NVPN_PLATFORM_MATRIX_SCENARIOS:-default,single-encrypt-worker,tight-send-backpressure,tight-backpressure}"
+SCENARIO_CSV="${NVPN_PLATFORM_MATRIX_SCENARIOS:-default}"
 PROJECT_PREFIX="${NVPN_PLATFORM_MATRIX_PROJECT_PREFIX:-nostr-vpn-e2e-fips-matrix}"
 FAIL_FAST="${NVPN_PLATFORM_MATRIX_FAIL_FAST:-0}"
 ATTEMPTS="${NVPN_PLATFORM_MATRIX_ATTEMPTS:-1}"
@@ -21,7 +21,6 @@ LOAD_DURATION_SECS="${NVPN_PLATFORM_MATRIX_LOAD_DURATION_SECS:-6}"
 # is not decided by one packet in a short 20-ping window.
 PING_COUNT="${NVPN_PLATFORM_MATRIX_PING_COUNT:-60}"
 PING_INTERVAL="${NVPN_PLATFORM_MATRIX_PING_INTERVAL:-0.1}"
-WORKER_QUEUE_PRESSURE_CAP="${NVPN_PLATFORM_MATRIX_WORKER_QUEUE_PRESSURE_CAP:-4}"
 RX_MAINT_FAULT_MS="${NVPN_PLATFORM_MATRIX_RX_MAINT_FAULT_MS:-150}"
 PHASES="${NVPN_PLATFORM_MATRIX_PHASES:-}"
 EXTRA_ENV="${NVPN_PLATFORM_MATRIX_EXTRA_ENV:-}"
@@ -66,25 +65,9 @@ scenario_extra_env() {
     default)
       :
       ;;
-    single-encrypt-worker)
-      printf 'FIPS_ENCRYPT_WORKERS=1 FIPS_DECRYPT_WORKERS=0'
-      ;;
-    tight-send-backpressure)
-      printf 'FIPS_WORKER_CHANNEL_CAP=%q FIPS_DECRYPT_WORKER_CHANNEL_CAP=%q FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=%q FIPS_SEND_BACKPRESSURE_DROP_AFTER=%q' \
-        "${NVPN_PLATFORM_MATRIX_TIGHT_WORKER_CHANNEL_CAP:-4}" \
-        "${NVPN_PLATFORM_MATRIX_TIGHT_SEND_DECRYPT_WORKER_CHANNEL_CAP:-32768}" \
-        "${NVPN_PLATFORM_MATRIX_BACKPRESSURE_SLEEP_MICROS:-500}" \
-        "${NVPN_PLATFORM_MATRIX_BACKPRESSURE_DROP_AFTER:-0}"
-      ;;
-    tight-backpressure)
-      printf 'FIPS_WORKER_CHANNEL_CAP=%q FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=%q FIPS_SEND_BACKPRESSURE_DROP_AFTER=%q' \
-        "${NVPN_PLATFORM_MATRIX_TIGHT_WORKER_CHANNEL_CAP:-4}" \
-        "${NVPN_PLATFORM_MATRIX_BACKPRESSURE_SLEEP_MICROS:-500}" \
-        "${NVPN_PLATFORM_MATRIX_BACKPRESSURE_DROP_AFTER:-0}"
-      ;;
     *)
       echo "unknown platform matrix scenario: $scenario" >&2
-      echo "known scenarios: default, single-encrypt-worker, tight-send-backpressure, tight-backpressure" >&2
+      echo "known scenarios: default" >&2
       return 1
       ;;
   esac
@@ -131,7 +114,6 @@ for raw_scenario in "${scenarios[@]}"; do
       NVPN_PERF_LOAD_DURATION_SECS="$LOAD_DURATION_SECS" \
       NVPN_PERF_PING_COUNT="$PING_COUNT" \
       NVPN_PERF_PING_INTERVAL="$PING_INTERVAL" \
-      NVPN_PERF_WORKER_QUEUE_PRESSURE_CAP="$WORKER_QUEUE_PRESSURE_CAP" \
       NVPN_PERF_RX_MAINT_FAULT_MS="$RX_MAINT_FAULT_MS" \
       NVPN_PERF_PHASES="$PHASES" \
       NVPN_PERF_OUTPUT_DIR="$phase_dir" \

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Local self-tests for the Docker FIPS platform-matrix wrapper.
 #
-# These tests use a fake perf runner and do not start Docker. They pin scenario
-# env construction so red-case probes keep testing the intended pressure source.
+# These tests use a fake perf runner and do not start Docker. They pin wrapper
+# behavior so the matrix stays a thin profile runner instead of growing stale
+# daemon knobs.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -33,7 +34,7 @@ RUNNER
   chmod +x "$runner"
 }
 
-test_tight_send_backpressure_env_is_isolated_from_decrypt_cap() {
+test_extra_env_is_forwarded_to_runner_and_summary() {
   local dir runner got want summary_env
   dir="$(mktemp -d)"
   runner="$dir/fake-runner.sh"
@@ -42,45 +43,20 @@ test_tight_send_backpressure_env_is_isolated_from_decrypt_cap() {
   NVPN_FAKE_RUNNER_ENV_LOG="$dir/env.log" \
   NVPN_PLATFORM_MATRIX_RUNNER="$runner" \
   NVPN_PLATFORM_MATRIX_OUTPUT_DIR="$dir/out" \
-  NVPN_PLATFORM_MATRIX_SCENARIOS=tight-send-backpressure \
-  NVPN_PLATFORM_MATRIX_TIGHT_WORKER_CHANNEL_CAP=5 \
-  NVPN_PLATFORM_MATRIX_TIGHT_SEND_DECRYPT_WORKER_CHANNEL_CAP=1234 \
-  NVPN_PLATFORM_MATRIX_BACKPRESSURE_SLEEP_MICROS=600 \
-  NVPN_PLATFORM_MATRIX_BACKPRESSURE_DROP_AFTER=2 \
+  NVPN_PLATFORM_MATRIX_EXTRA_ENV="NVPN_DOCKER_DATAPLANE_PROFILE=linux-vnet-lan" \
   "$MATRIX_SCRIPT" >"$dir/stdout"
 
   got="$(cat "$dir/env.log")"
-  want="FIPS_WORKER_CHANNEL_CAP=5 FIPS_DECRYPT_WORKER_CHANNEL_CAP=1234 FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=600 FIPS_SEND_BACKPRESSURE_DROP_AFTER=2"
-  assert_eq "$got" "$want" "tight-send-backpressure runner env"
+  want="NVPN_DOCKER_DATAPLANE_PROFILE=linux-vnet-lan"
+  assert_eq "$got" "$want" "extra env runner env"
 
   summary_env="$(awk -F '\t' 'NR == 2 { print $7 }' "$dir/out/summary.tsv")"
-  assert_eq "$summary_env" "$want" "tight-send-backpressure summary env"
+  assert_eq "$summary_env" "$want" "extra env summary env"
 
   rm -rf "$dir"
 }
 
-test_tight_backpressure_keeps_combined_worker_pressure() {
-  local dir runner got want
-  dir="$(mktemp -d)"
-  runner="$dir/fake-runner.sh"
-  write_fake_runner "$runner"
-
-  NVPN_FAKE_RUNNER_ENV_LOG="$dir/env.log" \
-  NVPN_PLATFORM_MATRIX_RUNNER="$runner" \
-  NVPN_PLATFORM_MATRIX_OUTPUT_DIR="$dir/out" \
-  NVPN_PLATFORM_MATRIX_SCENARIOS=tight-backpressure \
-  NVPN_PLATFORM_MATRIX_TIGHT_WORKER_CHANNEL_CAP=6 \
-  NVPN_PLATFORM_MATRIX_BACKPRESSURE_SLEEP_MICROS=700 \
-  "$MATRIX_SCRIPT" >"$dir/stdout"
-
-  got="$(cat "$dir/env.log")"
-  want="FIPS_WORKER_CHANNEL_CAP=6 FIPS_SEND_BACKPRESSURE_SLEEP_AFTER=1 FIPS_SEND_BACKPRESSURE_SLEEP_MICROS=700 FIPS_SEND_BACKPRESSURE_DROP_AFTER=0"
-  assert_eq "$got" "$want" "tight-backpressure runner env"
-
-  rm -rf "$dir"
-}
-
-test_default_scenarios_include_send_and_combined_backpressure() {
+test_default_scenarios_include_default_only() {
   local dir runner scenarios
   dir="$(mktemp -d)"
   runner="$dir/fake-runner.sh"
@@ -94,13 +70,13 @@ test_default_scenarios_include_send_and_combined_backpressure() {
   scenarios="$(awk -F '\t' 'NR > 1 { csv = csv sep $1; sep = "," } END { print csv }' "$dir/out/summary.tsv")"
   assert_eq \
     "$scenarios" \
-    "default,single-encrypt-worker,tight-send-backpressure,tight-backpressure" \
+    "default" \
     "default scenario order"
 
   rm -rf "$dir"
 }
 
-test_unknown_scenario_lists_tight_send_backpressure() {
+test_unknown_scenario_lists_default() {
   local dir runner err
   dir="$(mktemp -d)"
   runner="$dir/fake-runner.sh"
@@ -116,9 +92,9 @@ test_unknown_scenario_lists_tight_send_backpressure() {
     fail "unknown scenario unexpectedly passed"
   fi
 
-  if ! grep -Fq "tight-send-backpressure" "$err"; then
+  if ! grep -Fq "known scenarios: default" "$err"; then
     cat "$err" >&2
-    fail "unknown scenario stderr did not list tight-send-backpressure"
+    fail "unknown scenario stderr did not list default"
   fi
 
   rm -rf "$dir"
@@ -154,10 +130,9 @@ test_ping_count_default_and_override_are_forwarded() {
   rm -rf "$dir"
 }
 
-test_tight_send_backpressure_env_is_isolated_from_decrypt_cap
-test_tight_backpressure_keeps_combined_worker_pressure
-test_default_scenarios_include_send_and_combined_backpressure
-test_unknown_scenario_lists_tight_send_backpressure
+test_extra_env_is_forwarded_to_runner_and_summary
+test_default_scenarios_include_default_only
+test_unknown_scenario_lists_default
 test_ping_count_default_and_override_are_forwarded
 
 printf 'fips platform matrix harness self-test passed\n'

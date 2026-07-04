@@ -982,18 +982,18 @@ test_phase_argument_selection() {
   got="$(bash "$PERF_SCRIPT" --list-phases)"
   assert_eq \
     "$got" \
-    $'unimpaired-underlay\nconstrained-underlay\nworker-queue-pressure\nrx-maintenance-fault\nalias: clean-underlay=unimpaired-underlay' \
+    $'unimpaired-underlay\nconstrained-underlay\nrx-maintenance-fault\nalias: clean-underlay=unimpaired-underlay' \
     "phase list includes canonical names and alias"
 
   got="$(
     bash -c '
       source "$1"
-      parse_args --phases " worker-queue-pressure , constrained-underlay "
+      parse_args --phases " rx-maintenance-fault , constrained-underlay "
       validate_perf_phases
       printf "%s\n" "$PERF_PHASES"
     ' bash "$PERF_SCRIPT"
   )"
-  assert_eq "$got" " worker-queue-pressure , constrained-underlay " "--phases selection"
+  assert_eq "$got" " rx-maintenance-fault , constrained-underlay " "--phases selection"
 
   assert_fails_with \
     "unknown phase argument" \
@@ -1172,7 +1172,6 @@ test_perf_harness_supports_cpu_stress() {
   assert_file_contains "$PERF_SCRIPT" "write_perf_metadata" "perf harness writes benchmark metadata"
   assert_file_contains "$PERF_SCRIPT" "NVPN_PERF_PIPELINE_INTERVAL_SECS=1" "perf harness pipeline interval help example"
   assert_file_contains "$PERF_SCRIPT" "NVPN_PERF_MAX_TCP_RETRANS=1000" "perf harness retransmit ceiling help example"
-  assert_file_contains "$PERF_SCRIPT" "NVPN_PERF_FAIL_ON_PRIORITY_HARD_EVENTS=0" "perf harness priority hard-event opt-out help example"
   assert_file_contains "$PERF_SCRIPT" "NVPN_PERF_MAX_PRIORITY_QUEUE_WAIT_MS=0" "perf harness priority wait opt-out help example"
   assert_file_contains "$PERF_SCRIPT" "NVPN_PERF_MIN_PRIORITY_QUEUE_WAIT_RATE_PER_SEC=0" "perf harness priority wait rate opt-out help example"
   assert_file_contains "$PERF_SCRIPT" "docker_bench_stop_cpu_stress" "perf harness stops docker CPU stress"

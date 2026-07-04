@@ -13,7 +13,7 @@
 # Benchmark-compatible daemon profiles:
 #   NVPN_DOCKER_DATAPLANE_PROFILE=linux-vnet-lan
 #   NVPN_DOCKER_PLACEMENT_PROFILE=worker-open
-#   NVPN_SOAK_EXTRA_ENV="FIPS_WORKER_CHANNEL_CAP=32768 ..."
+#   NVPN_SOAK_EXTRA_ENV="NVPN_PIPELINE_TRACE=1 ..."
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -68,11 +68,6 @@ ALLOW_NON_DIRECT="${NVPN_SOAK_ALLOW_NON_DIRECT:-0}"
 ALLOW_QUEUE_EVENTS="${NVPN_SOAK_ALLOW_QUEUE_EVENTS:-${NVPN_SOAK_ALLOW_QUEUE_DROPS:-0}}"
 ALLOW_QUEUE_WAIT="${NVPN_SOAK_ALLOW_QUEUE_WAIT:-$ALLOW_QUEUE_EVENTS}"
 FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
-FIPS_ENCRYPT_WORKERS="${NVPN_SOAK_ENCRYPT_WORKERS:-}"
-FIPS_DECRYPT_WORKERS="${NVPN_SOAK_DECRYPT_WORKERS:-}"
-FIPS_WORKER_CHANNEL_CAP="${NVPN_SOAK_WORKER_CHANNEL_CAP:-}"
-FIPS_DECRYPT_WORKER_CHANNEL_CAP="${NVPN_SOAK_DECRYPT_WORKER_CHANNEL_CAP:-}"
-FIPS_DECRYPT_WORKER_PRIORITY_CHANNEL_CAP="${NVPN_SOAK_DECRYPT_WORKER_PRIORITY_CHANNEL_CAP:-}"
 EXTRA_ENV="${NVPN_SOAK_EXTRA_ENV:-}"
 
 cleanup() {
@@ -255,11 +250,6 @@ daemon_env() {
   local env_string profile_env
   profile_env="$(docker_bench_effective_extra_env)"
   env_string=""
-  env_string+="$(append_env_assignment FIPS_ENCRYPT_WORKERS "$FIPS_ENCRYPT_WORKERS")"
-  env_string+="$(append_env_assignment FIPS_DECRYPT_WORKERS "$FIPS_DECRYPT_WORKERS")"
-  env_string+="$(append_env_assignment FIPS_WORKER_CHANNEL_CAP "$FIPS_WORKER_CHANNEL_CAP")"
-  env_string+="$(append_env_assignment FIPS_DECRYPT_WORKER_CHANNEL_CAP "$FIPS_DECRYPT_WORKER_CHANNEL_CAP")"
-  env_string+="$(append_env_assignment FIPS_DECRYPT_WORKER_PRIORITY_CHANNEL_CAP "$FIPS_DECRYPT_WORKER_PRIORITY_CHANNEL_CAP")"
   env_string+="$(append_env_assignments_string "$profile_env")"
   env_string+="$(append_env_assignments_string "$EXTRA_ENV")"
   env_string+=" NVPN_PIPELINE_TRACE=1 NVPN_PIPELINE_INTERVAL_SECS=$PIPELINE_INTERVAL_SECS"
