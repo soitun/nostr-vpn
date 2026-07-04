@@ -105,13 +105,15 @@ impl MobileTunnel {
         let mesh_ipv4 = parse_ipv4(&config.local_address);
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
         let mut wg_runtime: Option<WgUpstreamRuntime> = None;
-        let mut wg_send_tx: Option<tokio_mpsc::Sender<Vec<u8>>> = None;
+        let mut wg_send_tx: Option<tokio_mpsc::Sender<Vec<Vec<u8>>>> = None;
         let mut wg_socket_fd: c_int = -1;
         let mut wg_address_ipv4: Option<Ipv4Addr> = None;
         if let Some(wg_config) = config.wireguard_exit.as_ref() {
             wg_address_ipv4 = parse_ipv4(&wg_config.address);
-            let (send_tx, send_rx) = tokio_mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
-            let (recv_tx, mut recv_rx) = tokio_mpsc::channel::<Vec<u8>>(TUNNEL_CHANNEL_CAPACITY);
+            let (send_tx, send_rx) =
+                tokio_mpsc::channel::<Vec<Vec<u8>>>(MOBILE_TUN_OUTBOUND_BATCH_CHANNEL_CAPACITY);
+            let (recv_tx, mut recv_rx) =
+                tokio_mpsc::channel::<Vec<Vec<u8>>>(MOBILE_TUN_INBOUND_BATCH_CHANNEL_CAPACITY);
             match WgUpstreamRuntime::start_with_channels(wg_config, send_rx, recv_tx).await {
                 Ok(runtime) => {
                     wg_socket_fd = runtime.udp_socket_fd();
@@ -137,21 +139,49 @@ impl MobileTunnel {
                             packet
                         };
                         let mut packets = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
-                        while let Some(packet) = recv_rx.recv().await {
-                            packets.clear();
-                            packets.push(prepare_packet(packet));
+                        while let Some(batch) = recv_rx.recv().await {
+                            for packet in batch {
+                                packets.push(prepare_packet(packet));
+                                if packets.len() == MOBILE_FIPS_RECV_BATCH {
+                                    let batch = std::mem::replace(
+                                        &mut packets,
+                                        Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
+                                    );
+                                    if !send_mobile_inbound_packets(&inbound_tx_for_wg, batch).await
+                                    {
+                                        return;
+                                    }
+                                }
+                            }
+
                             while packets.len() < MOBILE_FIPS_RECV_BATCH {
-                                let Ok(packet) = recv_rx.try_recv() else {
+                                let Ok(batch) = recv_rx.try_recv() else {
                                     break;
                                 };
-                                packets.push(prepare_packet(packet));
+                                for packet in batch {
+                                    packets.push(prepare_packet(packet));
+                                    if packets.len() == MOBILE_FIPS_RECV_BATCH {
+                                        let batch = std::mem::replace(
+                                            &mut packets,
+                                            Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
+                                        );
+                                        if !send_mobile_inbound_packets(&inbound_tx_for_wg, batch)
+                                            .await
+                                        {
+                                            return;
+                                        }
+                                    }
+                                }
                             }
-                            let batch = std::mem::replace(
-                                &mut packets,
-                                Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
-                            );
-                            if !send_mobile_inbound_packets(&inbound_tx_for_wg, batch).await {
-                                break;
+
+                            if !packets.is_empty() {
+                                let batch = std::mem::replace(
+                                    &mut packets,
+                                    Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
+                                );
+                                if !send_mobile_inbound_packets(&inbound_tx_for_wg, batch).await {
+                                    break;
+                                }
                             }
                         }
                     }));

@@ -485,7 +485,7 @@ async fn dispatch_mobile_outbound_packets(
     endpoint: &FipsEndpoint,
     mesh: &Arc<RwLock<FipsMeshRuntime>>,
     peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
-    wg_send_tx: Option<&tokio_mpsc::Sender<Vec<u8>>>,
+    wg_send_tx: Option<&tokio_mpsc::Sender<Vec<Vec<u8>>>>,
     wg_addr: Option<Ipv4Addr>,
     mesh_addr: Option<Ipv4Addr>,
     inbound_tx_for_dns: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
@@ -496,6 +496,7 @@ async fn dispatch_mobile_outbound_packets(
 ) -> bool {
     let mut pending_run = None;
     let mut pending_dns_responses = Vec::new();
+    let mut pending_wg_packets = Vec::new();
     for packet in packets {
         // Local MagicDNS responder. The well-known DNS address is owned by this
         // tunnel instance, so answer before mesh/WG routing and never treat it
@@ -510,6 +511,9 @@ async fn dispatch_mobile_outbound_packets(
             .await
             {
                 if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
+                    return false;
+                }
+                if !flush_mobile_wg_packets(wg_send_tx, &mut pending_wg_packets).await {
                     return false;
                 }
                 pending_dns_responses.push(response);
@@ -533,6 +537,9 @@ async fn dispatch_mobile_outbound_packets(
             })
         });
         if let Some((participant_fallback, participant_key, endpoint_node_addr)) = outgoing_peer {
+            if !flush_mobile_wg_packets(wg_send_tx, &mut pending_wg_packets).await {
+                return false;
+            }
             if let Some(run) = push_mobile_endpoint_send_run(
                 &mut pending_run,
                 peer_identities,
@@ -551,13 +558,14 @@ async fn dispatch_mobile_outbound_packets(
         if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
             return false;
         }
-        if let Some(wg_tx) = wg_send_tx
-            && !dispatch_mobile_wg_packet(wg_tx, packet, wg_addr, mesh_addr).await
-        {
-            return false;
+        if wg_send_tx.is_some() {
+            push_mobile_wg_packet(&mut pending_wg_packets, packet, wg_addr, mesh_addr);
         }
     }
     if !flush_mobile_inbound_packets(inbound_tx_for_dns, &mut pending_dns_responses).await {
+        return false;
+    }
+    if !flush_mobile_wg_packets(wg_send_tx, &mut pending_wg_packets).await {
         return false;
     }
     flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await
@@ -579,6 +587,21 @@ async fn flush_mobile_inbound_packets(
     }
     let batch = std::mem::replace(packets, Vec::with_capacity(MOBILE_FIPS_RECV_BATCH));
     inbound_tx.send(batch).await.is_ok()
+}
+
+async fn flush_mobile_wg_packets(
+    wg_tx: Option<&tokio_mpsc::Sender<Vec<Vec<u8>>>>,
+    packets: &mut Vec<Vec<u8>>,
+) -> bool {
+    if packets.is_empty() {
+        return true;
+    }
+    let Some(wg_tx) = wg_tx else {
+        packets.clear();
+        return true;
+    };
+    let batch = std::mem::replace(packets, Vec::with_capacity(MOBILE_FIPS_SEND_BATCH));
+    wg_tx.send(batch).await.is_ok()
 }
 
 fn push_mobile_endpoint_send_run(
@@ -640,12 +663,12 @@ async fn send_mobile_endpoint_run(endpoint: &FipsEndpoint, run: MobileEndpointSe
         .is_ok()
 }
 
-async fn dispatch_mobile_wg_packet(
-    wg_tx: &tokio_mpsc::Sender<Vec<u8>>,
+fn push_mobile_wg_packet(
+    packets: &mut Vec<Vec<u8>>,
     mut packet: Vec<u8>,
     wg_addr: Option<Ipv4Addr>,
     mesh_addr: Option<Ipv4Addr>,
-) -> bool {
+) {
     // No matching mesh peer route: hand the plaintext off to the WG runtime,
     // which will boringtun-encapsulate and send out via the upstream UDP
     // socket. SNAT first so the inner source IP matches the WG peer's
@@ -654,7 +677,7 @@ async fn dispatch_mobile_wg_packet(
         rewrite_ipv4_source(&mut packet, mesh, wg);
         nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut packet);
     }
-    wg_tx.send(packet).await.is_ok()
+    packets.push(packet);
 }
 
 async fn send_mobile_endpoint_data(

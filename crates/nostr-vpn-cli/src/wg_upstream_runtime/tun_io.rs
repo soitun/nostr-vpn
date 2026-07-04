@@ -7,8 +7,8 @@ pub async fn start_wg_runtime_with_posix_tun(
     config: &WireGuardExitConfig,
     tun: Arc<TunSocket>,
 ) -> Result<WgUpstreamRuntime> {
-    let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(WG_TUN_CHANNEL_CAPACITY);
-    let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(WG_TUN_CHANNEL_CAPACITY);
+    let (in_tx, in_rx) = mpsc::channel::<Vec<Vec<u8>>>(WG_TUN_BATCH_CHANNEL_CAPACITY);
+    let (out_tx, out_rx) = mpsc::channel::<Vec<Vec<u8>>>(WG_TUN_BATCH_CHANNEL_CAPACITY);
     let reader = spawn_posix_tun_reader(tun.clone(), in_tx);
     let writer = spawn_posix_tun_writer(tun, out_rx);
     WgUpstreamRuntime::start_with_io(config, Some((in_rx, out_tx)), Some((reader, writer))).await
@@ -20,15 +20,18 @@ pub async fn start_wg_runtime_with_wintun(
     config: &WireGuardExitConfig,
     session: Arc<WintunSession>,
 ) -> Result<WgUpstreamRuntime> {
-    let (in_tx, in_rx) = mpsc::channel::<Vec<u8>>(WG_TUN_CHANNEL_CAPACITY);
-    let (out_tx, out_rx) = mpsc::channel::<Vec<u8>>(WG_TUN_CHANNEL_CAPACITY);
+    let (in_tx, in_rx) = mpsc::channel::<Vec<Vec<u8>>>(WG_TUN_BATCH_CHANNEL_CAPACITY);
+    let (out_tx, out_rx) = mpsc::channel::<Vec<Vec<u8>>>(WG_TUN_BATCH_CHANNEL_CAPACITY);
     let reader = spawn_wintun_reader(session.clone(), in_tx);
     let writer = spawn_wintun_writer(session, out_rx);
     WgUpstreamRuntime::start_with_io(config, Some((in_rx, out_tx)), Some((reader, writer))).await
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn spawn_posix_tun_reader(tun: Arc<TunSocket>, tun_tx: mpsc::Sender<Vec<u8>>) -> JoinHandle<()> {
+fn spawn_posix_tun_reader(
+    tun: Arc<TunSocket>,
+    tun_tx: mpsc::Sender<Vec<Vec<u8>>>,
+) -> JoinHandle<()> {
     use std::os::unix::io::{AsRawFd, RawFd};
     use tokio::io::Interest;
     use tokio::io::unix::AsyncFd;
@@ -50,6 +53,7 @@ fn spawn_posix_tun_reader(tun: Arc<TunSocket>, tun_tx: mpsc::Sender<Vec<u8>>) ->
             }
         };
         let mut buf = vec![0u8; MAX_WG_PACKET];
+        let mut packets = Vec::with_capacity(WG_TUN_BATCH_CAPACITY);
         loop {
             let mut guard = match async_fd.readable().await {
                 Ok(g) => g,
@@ -61,8 +65,24 @@ fn spawn_posix_tun_reader(tun: Arc<TunSocket>, tun_tx: mpsc::Sender<Vec<u8>>) ->
             match tun.read(&mut buf) {
                 Ok([]) => guard.clear_ready(),
                 Ok(packet) => {
-                    let bytes = packet.to_vec();
-                    if tun_tx.send(bytes).await.is_err() {
+                    packets.clear();
+                    packets.push(packet.to_vec());
+                    for _ in 1..WG_TUN_BATCH_CAPACITY {
+                        match tun.read(&mut buf) {
+                            Ok([]) => {
+                                guard.clear_ready();
+                                break;
+                            }
+                            Ok(packet) => packets.push(packet.to_vec()),
+                            Err(_) => {
+                                guard.clear_ready();
+                                break;
+                            }
+                        }
+                    }
+                    let batch =
+                        std::mem::replace(&mut packets, Vec::with_capacity(WG_TUN_BATCH_CAPACITY));
+                    if tun_tx.send(batch).await.is_err() {
                         return;
                     }
                 }
@@ -73,17 +93,22 @@ fn spawn_posix_tun_reader(tun: Arc<TunSocket>, tun_tx: mpsc::Sender<Vec<u8>>) ->
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn spawn_posix_tun_writer(tun: Arc<TunSocket>, mut rx: mpsc::Receiver<Vec<u8>>) -> JoinHandle<()> {
+fn spawn_posix_tun_writer(
+    tun: Arc<TunSocket>,
+    mut rx: mpsc::Receiver<Vec<Vec<u8>>>,
+) -> JoinHandle<()> {
     tokio::spawn(async move {
-        while let Some(packet) = rx.recv().await {
-            match packet.first().map(|byte| byte >> 4) {
-                Some(4) => {
-                    let _ = tun.write4(&packet);
+        while let Some(packets) = rx.recv().await {
+            for packet in packets {
+                match packet.first().map(|byte| byte >> 4) {
+                    Some(4) => {
+                        let _ = tun.write4(&packet);
+                    }
+                    Some(6) => {
+                        let _ = tun.write6(&packet);
+                    }
+                    _ => {}
                 }
-                Some(6) => {
-                    let _ = tun.write6(&packet);
-                }
-                _ => {}
             }
         }
     })
@@ -92,7 +117,7 @@ fn spawn_posix_tun_writer(tun: Arc<TunSocket>, mut rx: mpsc::Receiver<Vec<u8>>) 
 #[cfg(target_os = "windows")]
 fn spawn_wintun_reader(
     session: Arc<WintunSession>,
-    tun_tx: mpsc::Sender<Vec<u8>>,
+    tun_tx: mpsc::Sender<Vec<Vec<u8>>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
         struct ShutdownOnDrop(Arc<WintunSession>);
@@ -113,20 +138,15 @@ fn spawn_wintun_reader(
                         return;
                     }
                 };
-                let bytes = packet.bytes().to_vec();
+                let mut packets = Vec::with_capacity(WG_TUN_BATCH_CAPACITY);
+                packets.push(packet.bytes().to_vec());
                 drop(packet);
-                if tun_tx.blocking_send(bytes).is_err() {
-                    return;
-                }
 
-                for _ in 1..WG_WINTUN_READ_BURST {
+                for _ in 1..WG_TUN_BATCH_CAPACITY {
                     match session.try_receive() {
                         Ok(Some(packet)) => {
-                            let bytes = packet.bytes().to_vec();
+                            packets.push(packet.bytes().to_vec());
                             drop(packet);
-                            if tun_tx.blocking_send(bytes).is_err() {
-                                return;
-                            }
                         }
                         Ok(None) => break,
                         Err(error) => {
@@ -134,6 +154,9 @@ fn spawn_wintun_reader(
                             return;
                         }
                     }
+                }
+                if tun_tx.blocking_send(packets).is_err() {
+                    return;
                 }
             }
         });
@@ -144,24 +167,26 @@ fn spawn_wintun_reader(
 #[cfg(target_os = "windows")]
 fn spawn_wintun_writer(
     session: Arc<WintunSession>,
-    mut rx: mpsc::Receiver<Vec<u8>>,
+    mut rx: mpsc::Receiver<Vec<Vec<u8>>>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
-        while let Some(packet) = rx.recv().await {
-            let Ok(size) = u16::try_from(packet.len()) else {
-                tracing::warn!(
-                    "wg-upstream: wintun packet too large to send ({} bytes)",
-                    packet.len()
-                );
-                continue;
-            };
-            match session.allocate_send_packet(size) {
-                Ok(mut outbound) => {
-                    outbound.bytes_mut().copy_from_slice(&packet);
-                    session.send_packet(outbound);
-                }
-                Err(error) => {
-                    tracing::warn!(?error, "wg-upstream: wintun allocate_send_packet failed");
+        while let Some(packets) = rx.recv().await {
+            for packet in packets {
+                let Ok(size) = u16::try_from(packet.len()) else {
+                    tracing::warn!(
+                        "wg-upstream: wintun packet too large to send ({} bytes)",
+                        packet.len()
+                    );
+                    continue;
+                };
+                match session.allocate_send_packet(size) {
+                    Ok(mut outbound) => {
+                        outbound.bytes_mut().copy_from_slice(&packet);
+                        session.send_packet(outbound);
+                    }
+                    Err(error) => {
+                        tracing::warn!(?error, "wg-upstream: wintun allocate_send_packet failed");
+                    }
                 }
             }
         }

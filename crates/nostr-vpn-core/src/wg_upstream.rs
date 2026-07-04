@@ -19,8 +19,8 @@
 //! Platforms wire the tun side through one of three constructors:
 //!   * `start_handshake_only` — no tun, just a connectivity probe (safe
 //!     to run on a host with live internet).
-//!   * `start_with_channels` — caller pumps plaintext packets via mpsc
-//!     channels. Used by mobile (iOS NEPacketTunnelProvider, Android
+//!   * `start_with_channels` — caller pumps plaintext packet batches via
+//!     mpsc channels. Used by mobile (iOS NEPacketTunnelProvider, Android
 //!     VpnService) where the OS owns the tun.
 //!   * `start_with_tun` (POSIX) / `start_with_wintun` (Windows) — the
 //!     daemon path; the runtime owns reader+writer tasks that talk to
@@ -47,8 +47,9 @@ pub const MAX_WG_PACKET: usize = 65_535;
 const TIMER_TICK: Duration = Duration::from_millis(250);
 
 type TunPacket = Vec<u8>;
-type TunPacketRx = mpsc::Receiver<TunPacket>;
-type TunPacketTx = mpsc::Sender<TunPacket>;
+type TunPacketBatch = Vec<TunPacket>;
+type TunPacketRx = mpsc::Receiver<TunPacketBatch>;
+type TunPacketTx = mpsc::Sender<TunPacketBatch>;
 type TunIo = (TunPacketRx, TunPacketTx);
 type TunTaskHandles = (JoinHandle<()>, JoinHandle<()>);
 
@@ -102,8 +103,9 @@ impl WgUpstreamRuntime {
 
     /// Build the runtime with raw mpsc channels for tun I/O. Used by
     /// platforms where the OS owns the tun (iOS NEPacketTunnelProvider,
-    /// Android VpnService): the host code feeds plaintext packets into
-    /// `tun_in_rx` and reads plaintext packets out of `tun_out_tx`.
+    /// Android VpnService): the host code feeds plaintext packet batches
+    /// into `tun_in_rx` and reads plaintext packet batches out of
+    /// `tun_out_tx`.
     pub async fn start_with_channels(
         config: &WireGuardExitConfig,
         tun_in_rx: TunPacketRx,
@@ -324,15 +326,33 @@ async fn run_pump(
     let mut last_self_keepalive = std::time::Instant::now();
     let mut ticker = interval(TIMER_TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut tun_out_batch = Vec::new();
 
     loop {
         tokio::select! {
             _ = ticker.tick() => {
+                tun_out_batch.clear();
                 {
                     let result = tunn.update_timers(&mut out);
-                    handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
+                    handle_tunn_result(
+                        &result,
+                        &udp,
+                        upstream,
+                        tun_out_tx.as_ref(),
+                        &mut tun_out_batch,
+                    ).await;
                 }
-                drain_decapsulate(&mut tunn, &udp, upstream, tun_out_tx.as_ref(), &mut out).await;
+                drain_decapsulate(
+                    &mut tunn,
+                    &udp,
+                    upstream,
+                    tun_out_tx.as_ref(),
+                    &mut out,
+                    &mut tun_out_batch,
+                ).await;
+                if !flush_tun_out_batch(tun_out_tx.as_ref(), &mut tun_out_batch).await {
+                    break;
+                }
                 let (age, _) = refresh_handshake_state(&tunn, &handshake).await;
 
                 // Belt-and-braces keepalive: every 20s, if the
@@ -350,10 +370,20 @@ async fn run_pump(
                             packet.len()
                         ));
                     }
-                    handle_tunn_result(&ka_result, &udp, upstream, tun_out_tx.as_ref()).await;
+                    handle_tunn_result(
+                        &ka_result,
+                        &udp,
+                        upstream,
+                        tun_out_tx.as_ref(),
+                        &mut tun_out_batch,
+                    ).await;
+                    if !flush_tun_out_batch(tun_out_tx.as_ref(), &mut tun_out_batch).await {
+                        break;
+                    }
                 }
             }
             received = udp.recv_from(&mut udp_buf) => {
+                tun_out_batch.clear();
                 let (len, source) = match received {
                     Ok(received) => received,
                     Err(error) => {
@@ -375,9 +405,25 @@ async fn run_pump(
                     } else {
                         consecutive_decap_errors = 0;
                     }
-                    handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
+                    handle_tunn_result(
+                        &result,
+                        &udp,
+                        upstream,
+                        tun_out_tx.as_ref(),
+                        &mut tun_out_batch,
+                    ).await;
                 }
-                drain_decapsulate(&mut tunn, &udp, upstream, tun_out_tx.as_ref(), &mut out).await;
+                drain_decapsulate(
+                    &mut tunn,
+                    &udp,
+                    upstream,
+                    tun_out_tx.as_ref(),
+                    &mut out,
+                    &mut tun_out_batch,
+                ).await;
+                if !flush_tun_out_batch(tun_out_tx.as_ref(), &mut tun_out_batch).await {
+                    break;
+                }
                 let (age, newly_completed) = refresh_handshake_state(&tunn, &handshake).await;
                 if newly_completed {
                     log_android_info(&format!("wg-upstream: handshake completed, age={age:?}"));
@@ -399,30 +445,42 @@ async fn run_pump(
                     }
                 }
             }
-            packet = recv_tun_packet(&mut tun_in_rx) => {
-                let Some(packet) = packet else {
+            packets = recv_tun_packets(&mut tun_in_rx) => {
+                let Some(packets) = packets else {
                     break;
                 };
-                let len = packet.len();
-                let result = tunn.encapsulate(&packet, &mut out);
-                if let TunnResult::Err(error) = &result {
-                    log_android_warn(&format!("wg-upstream: encap err {error:?}"));
-                }
-                if let TunnResult::WriteToNetwork(packet) = &result {
-                    if len == 0 {
-                        log_android_info(&format!(
-                            "wg-upstream: encap keepalive -> {}B net",
-                            packet.len()
-                        ));
+                tun_out_batch.clear();
+                for packet in packets {
+                    let len = packet.len();
+                    let result = tunn.encapsulate(&packet, &mut out);
+                    if let TunnResult::Err(error) = &result {
+                        log_android_warn(&format!("wg-upstream: encap err {error:?}"));
                     }
+                    if let TunnResult::WriteToNetwork(packet) = &result {
+                        if len == 0 {
+                            log_android_info(&format!(
+                                "wg-upstream: encap keepalive -> {}B net",
+                                packet.len()
+                            ));
+                        }
+                    }
+                    handle_tunn_result(
+                        &result,
+                        &udp,
+                        upstream,
+                        tun_out_tx.as_ref(),
+                        &mut tun_out_batch,
+                    ).await;
                 }
-                handle_tunn_result(&result, &udp, upstream, tun_out_tx.as_ref()).await;
+                if !flush_tun_out_batch(tun_out_tx.as_ref(), &mut tun_out_batch).await {
+                    break;
+                }
             }
         }
     }
 }
 
-async fn recv_tun_packet(tun_in_rx: &mut Option<TunPacketRx>) -> Option<Vec<u8>> {
+async fn recv_tun_packets(tun_in_rx: &mut Option<TunPacketRx>) -> Option<TunPacketBatch> {
     match tun_in_rx {
         Some(rx) => rx.recv().await,
         None => std::future::pending().await,
@@ -448,7 +506,8 @@ async fn handle_tunn_result(
     result: &TunnResult<'_>,
     udp: &Arc<UdpSocket>,
     upstream: SocketAddr,
-    tun_out_tx: Option<&mpsc::Sender<Vec<u8>>>,
+    tun_out_tx: Option<&TunPacketTx>,
+    tun_out_batch: &mut TunPacketBatch,
 ) {
     match result {
         TunnResult::Done => {}
@@ -466,12 +525,8 @@ async fn handle_tunn_result(
         }
         TunnResult::WriteToTunnelV4(packet, _) | TunnResult::WriteToTunnelV6(packet, _) => {
             let len = packet.len();
-            if let Some(tx) = tun_out_tx {
-                if let Err(error) = tx.send(packet.to_vec()).await {
-                    log_android_warn(&format!(
-                        "wg-upstream: tun_out send failed ({len} bytes): {error}"
-                    ));
-                }
+            if tun_out_tx.is_some() {
+                tun_out_batch.push(packet.to_vec());
             } else {
                 log_android_warn(&format!(
                     "wg-upstream: dropped {len}-byte plaintext (no tun_out_tx)"
@@ -481,18 +536,38 @@ async fn handle_tunn_result(
     }
 }
 
+async fn flush_tun_out_batch(
+    tun_out_tx: Option<&TunPacketTx>,
+    packets: &mut TunPacketBatch,
+) -> bool {
+    if packets.is_empty() {
+        return true;
+    }
+    let Some(tx) = tun_out_tx else {
+        packets.clear();
+        return true;
+    };
+    let batch = std::mem::take(packets);
+    if let Err(error) = tx.send(batch).await {
+        log_android_warn(&format!("wg-upstream: tun_out batch send failed: {error}"));
+        return false;
+    }
+    true
+}
+
 async fn drain_decapsulate(
     tunn: &mut Tunn,
     udp: &Arc<UdpSocket>,
     upstream: SocketAddr,
-    tun_out_tx: Option<&mpsc::Sender<Vec<u8>>>,
+    tun_out_tx: Option<&TunPacketTx>,
     out: &mut [u8],
+    tun_out_batch: &mut TunPacketBatch,
 ) {
     loop {
         let result = tunn.decapsulate(None, &[], out);
         match &result {
             TunnResult::Done | TunnResult::Err(_) => return,
-            _ => handle_tunn_result(&result, udp, upstream, tun_out_tx).await,
+            _ => handle_tunn_result(&result, udp, upstream, tun_out_tx, tun_out_batch).await,
         }
     }
 }
@@ -910,13 +985,14 @@ mod tests {
         );
 
         tun_in_tx
-            .send(request)
+            .send(vec![request])
             .await
             .expect("send plaintext packet into tunnel");
-        let actual_reply = tokio::time::timeout(Duration::from_secs(10), tun_out_rx.recv())
+        let actual_replies = tokio::time::timeout(Duration::from_secs(10), tun_out_rx.recv())
             .await
             .expect("reply timeout")
             .expect("reply channel closed");
+        let actual_reply = actual_replies.into_iter().next().expect("reply packet");
         runtime.shutdown().await;
         server_pump.abort();
         let _ = server_pump.await;
