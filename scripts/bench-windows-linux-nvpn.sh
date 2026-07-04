@@ -47,6 +47,9 @@ TUNNEL_MAX_LOSS_PERCENT="${NVPN_WINLIN_TUNNEL_MAX_LOSS_PERCENT:-0}"
 WINDOWS_PIPELINE_TRACE="${NVPN_WINLIN_WINDOWS_PIPELINE_TRACE:-0}"
 WINDOWS_PIPELINE_INTERVAL_SECS="${NVPN_WINLIN_WINDOWS_PIPELINE_INTERVAL_SECS:-1}"
 WINDOWS_DAEMON_LOG_TAIL_LINES="${NVPN_WINLIN_WINDOWS_DAEMON_LOG_TAIL_LINES:-4000}"
+MESH_MTU_PROFILE="${NVPN_WINLIN_MESH_MTU_PROFILE:-}"
+MESH_UNDERLAY_UDP_MTU="${NVPN_WINLIN_MESH_UNDERLAY_UDP_MTU:-}"
+MESH_TUNNEL_MTU="${NVPN_WINLIN_MESH_TUNNEL_MTU:-}"
 
 SUMMARY_TSV="$OUTPUT_DIR/summary.tsv"
 RUN_JSON="$OUTPUT_DIR/run.json"
@@ -57,6 +60,8 @@ WINDOWS_CONFIG_BACKUP=""
 WINDOWS_CONFIG_BACKUP_HASH=""
 LINUX_INSTALLED_BACKUP=""
 LINUX_INSTALLED_BACKUP_HASH=""
+WINDOWS_SERVICE_ENV_APPLIED=0
+LINUX_SERVICE_ENV_APPLIED=0
 
 die() {
   printf 'windows-linux nvpn bench failed: %s\n' "$*" >&2
@@ -151,6 +156,9 @@ Important options:
                                            interval for Windows pipeline trace service env
   NVPN_WINLIN_WINDOWS_DAEMON_LOG_TAIL_LINES=4000
                                            max daemon log delta lines to save after nvpn directions
+  NVPN_WINLIN_MESH_MTU_PROFILE=lan         set measured services' NVPN_MESH_MTU_PROFILE
+  NVPN_WINLIN_MESH_UNDERLAY_UDP_MTU=1420   set measured services' NVPN_MESH_UNDERLAY_UDP_MTU
+  NVPN_WINLIN_MESH_TUNNEL_MTU=1290         set measured services' NVPN_MESH_TUNNEL_MTU
 
 The Linux side is intentionally held constant by default. This isolates the
 Windows service/dataplane change while still recording the Linux service binary
@@ -452,6 +460,12 @@ cleanup() {
         wait_for_linux_hash "$LINUX_INSTALLED_BACKUP_HASH" "restore-installed" >/dev/null 2>&1 || true
       fi
     fi
+  fi
+  if [[ "$WINDOWS_SERVICE_ENV_APPLIED" == "1" ]]; then
+    clear_windows_service_env >/dev/null 2>&1 || true
+  fi
+  if [[ "$LINUX_SERVICE_ENV_APPLIED" == "1" ]]; then
+    clear_linux_service_env >/dev/null 2>&1 || true
   fi
   if is_true "$WINDOWS_NVPN_FIREWALL_RULE" && ! is_true "$KEEP_NVPN_FIREWALL_RULE"; then
     run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
@@ -827,6 +841,7 @@ exe=$(sh_q "$exe")
 config=$(sh_q "$LINUX_CONFIG")
 [[ -x \"\$exe\" ]] || { echo \"nvpn binary not executable: \$exe\" >&2; exit 1; }
 sudo -n \"\$exe\" service install --force --config \"\$config\""
+  apply_linux_service_env "$label"
 }
 
 wait_for_linux_hash() {
@@ -863,11 +878,17 @@ switch_windows_service() {
   local label_ps
   local trace_ps
   local interval_ps
+  local mtu_profile_ps
+  local mtu_underlay_ps
+  local mtu_tunnel_ps
   exe_ps="$(ps_sq "$exe")"
   config_ps="$(ps_sq "$WINDOWS_CONFIG")"
   label_ps="$(ps_sq "$label")"
   trace_ps="$(ps_sq "$WINDOWS_PIPELINE_TRACE")"
   interval_ps="$(ps_sq "$WINDOWS_PIPELINE_INTERVAL_SECS")"
+  mtu_profile_ps="$(ps_sq "$MESH_MTU_PROFILE")"
+  mtu_underlay_ps="$(ps_sq "$MESH_UNDERLAY_UDP_MTU")"
+  mtu_tunnel_ps="$(ps_sq "$MESH_TUNNEL_MTU")"
   printf 'switching Windows service for %s to %s\n' "$label" "$exe" >&2
   run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
 \$ErrorActionPreference = 'Stop'
@@ -876,6 +897,9 @@ switch_windows_service() {
 \$label = $label_ps
 \$pipelineTrace = $trace_ps
 \$pipelineInterval = $interval_ps
+\$mtuProfile = $mtu_profile_ps
+\$mtuUnderlay = $mtu_underlay_ps
+\$mtuTunnel = $mtu_tunnel_ps
 \$clean = [string]\$exe
 if (\$clean.StartsWith('\\?\')) { \$clean = \$clean.Substring(4) }
 if (!(Test-Path -LiteralPath \$clean)) { throw \"nvpn.exe not found: \$clean\" }
@@ -918,13 +942,26 @@ if (\$config) { \$args += @('--config', \$config) }
 & \$clean @args
 if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }
 \$envPath = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\NvpnService'
+\$envValues = @()
 if (\$label -ne 'restore-installed' -and \$pipelineTrace -match '^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$') {
   \$intervalValue = if (\$pipelineInterval -match '^\\d+$' -and [int]\$pipelineInterval -gt 0) { \$pipelineInterval } else { '1' }
-  New-ItemProperty -Path \$envPath -Name Environment -PropertyType MultiString -Value @(
+  \$envValues += @(
     'NVPN_PIPELINE_TRACE=1',
     \"NVPN_PIPELINE_INTERVAL_SECS=\$intervalValue\",
     \"FIPS_PERF_INTERVAL_SECS=\$intervalValue\"
-  ) -Force | Out-Null
+  )
+}
+if (\$label -ne 'restore-installed' -and \$mtuProfile) {
+  \$envValues += \"NVPN_MESH_MTU_PROFILE=\$mtuProfile\"
+}
+if (\$label -ne 'restore-installed' -and \$mtuUnderlay) {
+  \$envValues += \"NVPN_MESH_UNDERLAY_UDP_MTU=\$mtuUnderlay\"
+}
+if (\$label -ne 'restore-installed' -and \$mtuTunnel) {
+  \$envValues += \"NVPN_MESH_TUNNEL_MTU=\$mtuTunnel\"
+}
+if (\$envValues.Count -gt 0) {
+  New-ItemProperty -Path \$envPath -Name Environment -PropertyType MultiString -Value \$envValues -Force | Out-Null
   \$query = Query-NvpnService
   Stop-NvpnServiceProcess \$query.Text
   \$deadline = (Get-Date).AddSeconds(10)
@@ -936,12 +973,15 @@ if (\$label -ne 'restore-installed' -and \$pipelineTrace -match '^(1|true|TRUE|T
   } while ((Get-Date) -lt \$deadline)
   \$query = Query-NvpnService
   if (!(\$query.Text -match '(?m)^\\s*STATE\\s*:\\s*\\d+\\s+RUNNING\\b')) {
-    throw \"NvpnService did not restart with pipeline trace environment: \$(\$query.Text)\"
+    throw \"NvpnService did not restart with measured-service environment: \$(\$query.Text)\"
   }
 } else {
   Remove-ItemProperty -Path \$envPath -Name Environment -ErrorAction SilentlyContinue
 }
 exit 0"
+  if [[ "$label" != "restore-installed" ]] && measured_service_env_enabled; then
+    WINDOWS_SERVICE_ENV_APPLIED=1
+  fi
 }
 
 wait_for_windows_hash() {
@@ -1060,6 +1100,79 @@ row_contains_installed() {
     *,installed,*) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+validate_service_env() {
+  if [[ -n "$MESH_MTU_PROFILE" && ! "$MESH_MTU_PROFILE" =~ ^[A-Za-z0-9_.:-]+$ ]]; then
+    die "NVPN_WINLIN_MESH_MTU_PROFILE contains unsupported characters"
+  fi
+  if [[ -n "$MESH_UNDERLAY_UDP_MTU" && ! "$MESH_UNDERLAY_UDP_MTU" =~ ^[0-9]+$ ]]; then
+    die "NVPN_WINLIN_MESH_UNDERLAY_UDP_MTU must be numeric"
+  fi
+  if [[ -n "$MESH_TUNNEL_MTU" && ! "$MESH_TUNNEL_MTU" =~ ^[0-9]+$ ]]; then
+    die "NVPN_WINLIN_MESH_TUNNEL_MTU must be numeric"
+  fi
+}
+
+measured_service_env_enabled() {
+  is_true "$WINDOWS_PIPELINE_TRACE" ||
+    [[ -n "$MESH_MTU_PROFILE" || -n "$MESH_UNDERLAY_UDP_MTU" || -n "$MESH_TUNNEL_MTU" ]]
+}
+
+measured_linux_mtu_env_enabled() {
+  [[ -n "$MESH_MTU_PROFILE" || -n "$MESH_UNDERLAY_UDP_MTU" || -n "$MESH_TUNNEL_MTU" ]]
+}
+
+clear_windows_service_env() {
+  run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Continue'
+\$envPath = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\NvpnService'
+Remove-ItemProperty -Path \$envPath -Name Environment -ErrorAction SilentlyContinue
+if ((Get-Service NvpnService -ErrorAction SilentlyContinue).Status -eq 'Running') {
+  Restart-Service NvpnService -Force -ErrorAction SilentlyContinue
+}" >/dev/null
+  WINDOWS_SERVICE_ENV_APPLIED=0
+}
+
+clear_linux_service_env() {
+  run_linux_sh "set -euo pipefail
+dropin=/etc/systemd/system/nvpn.service.d/50-nvpn-winlin-perf-env.conf
+if [[ -e \"\$dropin\" ]]; then
+  sudo -n rm -f \"\$dropin\"
+  sudo -n systemctl daemon-reload
+  sudo -n systemctl restart nvpn.service
+fi"
+  LINUX_SERVICE_ENV_APPLIED=0
+}
+
+apply_linux_service_env() {
+  local label="$1"
+  if [[ "$label" == "restore-installed" ]] || ! measured_linux_mtu_env_enabled; then
+    clear_linux_service_env >/dev/null 2>&1 || true
+    return 0
+  fi
+
+  printf 'applying Linux measured-service env for %s\n' "$label" >&2
+  run_linux_sh "set -euo pipefail
+sudo -n install -d -m 0755 /etc/systemd/system/nvpn.service.d
+tmp=\$(mktemp)
+{
+  printf '%s\n' '[Service]'
+  if [[ -n $(sh_q "$MESH_MTU_PROFILE") ]]; then
+    printf 'Environment=%s\n' $(sh_q "\"NVPN_MESH_MTU_PROFILE=$MESH_MTU_PROFILE\"")
+  fi
+  if [[ -n $(sh_q "$MESH_UNDERLAY_UDP_MTU") ]]; then
+    printf 'Environment=%s\n' $(sh_q "\"NVPN_MESH_UNDERLAY_UDP_MTU=$MESH_UNDERLAY_UDP_MTU\"")
+  fi
+  if [[ -n $(sh_q "$MESH_TUNNEL_MTU") ]]; then
+    printf 'Environment=%s\n' $(sh_q "\"NVPN_MESH_TUNNEL_MTU=$MESH_TUNNEL_MTU\"")
+  fi
+} >\"\$tmp\"
+sudo -n install -m 0644 \"\$tmp\" /etc/systemd/system/nvpn.service.d/50-nvpn-winlin-perf-env.conf
+rm -f \"\$tmp\"
+sudo -n systemctl daemon-reload
+sudo -n systemctl restart nvpn.service"
+  LINUX_SERVICE_ENV_APPLIED=1
 }
 
 write_selected_pair_json() {
@@ -1981,6 +2094,9 @@ write_run_metadata() {
     --arg windows_pipeline_trace "$WINDOWS_PIPELINE_TRACE" \
     --arg windows_pipeline_interval_secs "$WINDOWS_PIPELINE_INTERVAL_SECS" \
     --arg windows_daemon_log_tail_lines "$WINDOWS_DAEMON_LOG_TAIL_LINES" \
+    --arg mesh_mtu_profile "$MESH_MTU_PROFILE" \
+    --arg mesh_underlay_udp_mtu "$MESH_UNDERLAY_UDP_MTU" \
+    --arg mesh_tunnel_mtu "$MESH_TUNNEL_MTU" \
     --arg linux_installed_expected_hash "$LINUX_INSTALLED_EXPECTED_HASH" \
     --arg allow_current_linux_as_installed "$(is_true "$ALLOW_CURRENT_LINUX_AS_INSTALLED" && printf true || printf false)" \
     --arg windows_ssh_proxy_command "$([[ -n "$WINDOWS_SSH_PROXY_COMMAND" ]] && printf true || printf false)" \
@@ -2006,6 +2122,9 @@ write_run_metadata() {
       windows_pipeline_trace:$windows_pipeline_trace,
       windows_pipeline_interval_secs:($windows_pipeline_interval_secs|tonumber),
       windows_daemon_log_tail_lines:($windows_daemon_log_tail_lines|tonumber),
+      mesh_mtu_profile:$mesh_mtu_profile,
+      mesh_underlay_udp_mtu:$mesh_underlay_udp_mtu,
+      mesh_tunnel_mtu:$mesh_tunnel_mtu,
       linux_installed_expected_hash:$linux_installed_expected_hash,
       allow_current_linux_as_installed:($allow_current_linux_as_installed == "true"),
       windows_ssh_proxy_command:($windows_ssh_proxy_command == "true"),
@@ -2024,6 +2143,7 @@ main() {
   fi
 
   require_inputs
+  validate_service_env
   need_cmd ssh
   need_cmd jq
   need_cmd iconv
