@@ -408,11 +408,10 @@ final class AppModel: ObservableObject {
         refresh()
 
         writeDebugProbeResult(result, name: resultName)
-        if let error = await startVpnForDebugProbe() {
+        let startError = await startVpnForDebugProbe()
+        if let error = startError {
             result["startError"] = error
-        }
-
-        if waitSeconds > 0 {
+        } else if waitSeconds > 0 {
             try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
         }
         refresh()
@@ -500,7 +499,7 @@ final class AppModel: ObservableObject {
             return nil
         } catch {
             dispatch(NativeActions.disconnectVpn())
-            let message = String(describing: error)
+            let message = error.localizedDescription
             debugLog("debug probe start failed: \(message)")
             return message
         }

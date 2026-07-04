@@ -179,6 +179,38 @@ copy_vpn_probe_result() {
   printf '%s\n' "$result_path"
 }
 
+copy_ios_debug_logs() {
+  local device="$1"
+  local stem="${VPN_RESULT_NAME%.json}"
+  local copied=0
+  mkdir -p "$VPN_RESULT_DIR"
+  for name in app-debug.log nvpn-pkt-debug.log; do
+    local destination="$VPN_RESULT_DIR/$stem-$name"
+    rm -f "$destination"
+    if xcrun devicectl device copy from \
+      --device "$device" \
+      --domain-type appDataContainer \
+      --domain-identifier "$BUNDLE_ID" \
+      --source "Library/Application Support/Nostr VPN/$name" \
+      --destination "$destination" \
+      --quiet
+    then
+      if [[ -s "$destination" ]]; then
+        echo "Copied iOS debug log: $destination" >&2
+        copied=1
+      else
+        rm -f "$destination"
+      fi
+    else
+      rm -f "$destination"
+    fi
+  done
+  if [[ "$copied" -eq 1 ]]; then
+    return 0
+  fi
+  return 1
+}
+
 validate_vpn_probe_result() {
   local result_path="$1"
   python3 - "$result_path" <<'PY'
@@ -306,8 +338,14 @@ run_vpn_cycle() {
   launch_device "$device" "${args[@]}"
   sleep "$((VPN_START_WAIT_SECS + VPN_RESULT_WAIT_SECS))"
   local result_path
-  result_path="$(copy_vpn_probe_result "$device")"
-  validate_vpn_probe_result "$result_path"
+  if ! result_path="$(copy_vpn_probe_result "$device")"; then
+    copy_ios_debug_logs "$device" || true
+    return 1
+  fi
+  if ! validate_vpn_probe_result "$result_path"; then
+    copy_ios_debug_logs "$device" || true
+    return 1
+  fi
   echo "iOS device VPN probe passed: $result_path"
 }
 

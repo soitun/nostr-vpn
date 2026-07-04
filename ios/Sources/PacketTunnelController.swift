@@ -10,12 +10,13 @@ enum PacketTunnelControllerError: LocalizedError {
         case .managerUnavailable:
             return "VPN manager unavailable"
         case .preferencesTimedOut:
-            return "VPN preferences timed out"
+            return "VPN preferences timed out; approve any iOS VPN configuration prompt and retry"
         }
     }
 }
 
 final class PacketTunnelController {
+    private static let preferencesOperationTimeoutSeconds: TimeInterval = 10
     private let providerBundleIdentifier = Bundle.main.object(
         forInfoDictionaryKey: "NVPNPacketTunnelBundleIdentifier"
     ) as? String ?? "fi.siriusbusiness.nvpn.PacketTunnel"
@@ -79,7 +80,10 @@ final class PacketTunnelController {
 
     func stop() async throws {
         debugLog("PacketTunnelController.stop begin")
-        let manager = try await loadOrCreateManager()
+        guard let manager = try await loadExistingManager() else {
+            debugLog("stop skipped: no existing manager")
+            return
+        }
         activeManager = manager
         manager.connection.stopVPNTunnel()
         debugLog("stopVPNTunnel returned status=\(manager.connection.status.rawValue)")
@@ -87,7 +91,9 @@ final class PacketTunnelController {
 
     func statusRawValue() async -> Int? {
         do {
-            let manager = try await loadOrCreateManager()
+            guard let manager = try await loadExistingManager() else {
+                return nil
+            }
             return manager.connection.status.rawValue
         } catch {
             debugLog("status failed: \(String(describing: error))")
@@ -105,7 +111,14 @@ final class PacketTunnelController {
 
     private func providerMessage(_ message: String) async -> String? {
         do {
-            let manager = try await loadOrCreateManager()
+            guard let manager = try await loadExistingManager() else {
+                debugLog("providerMessage \(message) skipped: no existing manager")
+                return nil
+            }
+            guard manager.connection.status == .connected else {
+                debugLog("providerMessage \(message) skipped status=\(manager.connection.status.rawValue)")
+                return nil
+            }
             guard let session = manager.connection as? NETunnelProviderSession else {
                 return nil
             }
@@ -130,17 +143,21 @@ final class PacketTunnelController {
     }
 
     private func loadOrCreateManager() async throws -> NETunnelProviderManager {
-        let managers = try await loadAllManagers()
-        debugLog("loaded managers count=\(managers.count)")
-        if let existing = managers.first(where: { manager in
-            (manager.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier
-                == providerBundleIdentifier
-        }) {
+        if let existing = try await loadExistingManager() {
             debugLog("using existing manager status=\(existing.connection.status.rawValue)")
             return existing
         }
         debugLog("creating new manager")
         return NETunnelProviderManager()
+    }
+
+    private func loadExistingManager() async throws -> NETunnelProviderManager? {
+        let managers = try await loadAllManagers()
+        debugLog("loaded managers count=\(managers.count)")
+        return managers.first(where: { manager in
+            (manager.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier
+                == providerBundleIdentifier
+        })
     }
 
     private func loadAllManagers() async throws -> [NETunnelProviderManager] {
@@ -156,24 +173,42 @@ final class PacketTunnelController {
     }
 
     private func save(_ manager: NETunnelProviderManager) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await withPreferencesTimeout(operation: "save") { finish in
             manager.saveToPreferences { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume(returning: ())
-                }
+                finish(error)
             }
         }
     }
 
     private func reload(_ manager: NETunnelProviderManager) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        try await withPreferencesTimeout(operation: "reload") { finish in
             manager.loadFromPreferences { error in
+                finish(error)
+            }
+        }
+    }
+
+    private func withPreferencesTimeout(
+        operation: String,
+        start: (@escaping (Error?) -> Void) -> Void
+    ) async throws {
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let completion = PreferenceOperationCompletion(continuation)
+            start { error in
                 if let error {
-                    continuation.resume(throwing: error)
+                    _ = completion.resume(throwing: error)
                 } else {
-                    continuation.resume(returning: ())
+                    _ = completion.resume(returning: ())
+                }
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(
+                deadline: .now() + Self.preferencesOperationTimeoutSeconds
+            ) { [weak self] in
+                if completion.resume(throwing: PacketTunnelControllerError.preferencesTimedOut) {
+                    self?.debugLog(
+                        "\(operation) preferences timed out after "
+                            + "\(Int(Self.preferencesOperationTimeoutSeconds))s"
+                    )
                 }
             }
         }
@@ -200,5 +235,43 @@ final class PacketTunnelController {
             try? data.write(to: logUrl)
         }
         #endif
+    }
+}
+
+private final class PreferenceOperationCompletion {
+    private let lock = NSLock()
+    private var completed = false
+    private let continuation: CheckedContinuation<Void, Error>
+
+    init(_ continuation: CheckedContinuation<Void, Error>) {
+        self.continuation = continuation
+    }
+
+    @discardableResult
+    func resume(returning value: Void) -> Bool {
+        guard markCompleted() else {
+            return false
+        }
+        continuation.resume(returning: value)
+        return true
+    }
+
+    @discardableResult
+    func resume(throwing error: Error) -> Bool {
+        guard markCompleted() else {
+            return false
+        }
+        continuation.resume(throwing: error)
+        return true
+    }
+
+    private func markCompleted() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !completed else {
+            return false
+        }
+        completed = true
+        return true
     }
 }
