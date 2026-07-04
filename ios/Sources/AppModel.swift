@@ -537,10 +537,12 @@ final class AppModel: ObservableObject {
         let port: UInt16 = 9
         let packetCount = 4
         let waitSeconds = 6.0
+        let pollIntervalNanoseconds: UInt64 = 100_000_000
         var result: [String: Any] = [
             "tunPacketProbeTarget": target,
             "tunPacketProbePort": Int(port),
             "tunPacketProbeExpectedPackets": packetCount,
+            "tunPacketProbePollIntervalMs": Int(pollIntervalNanoseconds / 1_000_000),
             "tunPacketProbeReadIncreased": false,
         ]
 
@@ -590,7 +592,10 @@ final class AppModel: ObservableObject {
         var finalRead = baselineRead
         var finalBytesRead = baselineBytesRead
         var finalDropped = baselineDropped
+        var pollCount = 0
+        var firstObservedAt: Date?
         while Date() < deadline {
+            pollCount += 1
             let runtimeJson = await vpnController.runtimeStateJson()
             if let currentRead = Self.runtimeCounter(
                 "tunPacketsRead",
@@ -608,52 +613,66 @@ final class AppModel: ObservableObject {
                 finalRead = currentRead
                 finalBytesRead = currentBytesRead
                 finalDropped = currentDropped
+                if currentRead > baselineRead && firstObservedAt == nil {
+                    firstObservedAt = Date()
+                }
                 if currentRead >= requiredRead {
                     Self.finishTunPacketProbeResult(
                         &result,
+                        sentPackets: sentPackets,
                         baselineRead: baselineRead,
                         baselineBytesRead: baselineBytesRead,
                         baselineDropped: baselineDropped,
                         finalRead: currentRead,
                         finalBytesRead: currentBytesRead,
                         finalDropped: currentDropped,
-                        probeStartedAt: probeStartedAt
+                        probeStartedAt: probeStartedAt,
+                        firstObservedAt: firstObservedAt,
+                        pollCount: pollCount
                     )
                     result["tunPacketProbeReadIncreased"] = true
                     return result
                 }
             }
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            try? await Task.sleep(nanoseconds: pollIntervalNanoseconds)
         }
 
         Self.finishTunPacketProbeResult(
             &result,
+            sentPackets: sentPackets,
             baselineRead: baselineRead,
             baselineBytesRead: baselineBytesRead,
             baselineDropped: baselineDropped,
             finalRead: finalRead,
             finalBytesRead: finalBytesRead,
             finalDropped: finalDropped,
-            probeStartedAt: probeStartedAt
+            probeStartedAt: probeStartedAt,
+            firstObservedAt: firstObservedAt,
+            pollCount: pollCount
         )
         return result
     }
 
     nonisolated private static func finishTunPacketProbeResult(
         _ result: inout [String: Any],
+        sentPackets: Int,
         baselineRead: UInt64,
         baselineBytesRead: UInt64,
         baselineDropped: UInt64,
         finalRead: UInt64,
         finalBytesRead: UInt64,
         finalDropped: UInt64,
-        probeStartedAt: Date
+        probeStartedAt: Date,
+        firstObservedAt: Date?,
+        pollCount: Int
     ) {
         let observedPackets = saturatingSubtract(finalRead, baselineRead)
         let observedBytes = saturatingSubtract(finalBytesRead, baselineBytesRead)
         let droppedDelta = saturatingSubtract(finalDropped, baselineDropped)
+        let missingPackets = saturatingSubtract(UInt64(sentPackets), observedPackets)
         result["tunPacketProbeFinalRead"] = jsonCounterValue(finalRead)
         result["tunPacketProbeObservedPackets"] = jsonCounterValue(observedPackets)
+        result["tunPacketProbeMissingPackets"] = jsonCounterValue(missingPackets)
         result["tunPacketProbeFinalBytesRead"] = jsonCounterValue(finalBytesRead)
         result["tunPacketProbeObservedBytesRead"] = jsonCounterValue(observedBytes)
         result["tunPacketProbeBytesReadIncreased"] = observedBytes > 0
@@ -661,6 +680,12 @@ final class AppModel: ObservableObject {
         result["tunPacketProbeDroppedDelta"] = jsonCounterValue(droppedDelta)
         result["tunPacketProbeDroppedIncreased"] = droppedDelta > 0
         result["tunPacketProbeElapsedMs"] = Int(Date().timeIntervalSince(probeStartedAt) * 1000)
+        result["tunPacketProbePolls"] = pollCount
+        if let firstObservedAt {
+            result["tunPacketProbeFirstObservedMs"] = Int(
+                firstObservedAt.timeIntervalSince(probeStartedAt) * 1000
+            )
+        }
     }
 
     nonisolated private static func sendDebugUdpPacket(target: String, port: UInt16) -> String? {

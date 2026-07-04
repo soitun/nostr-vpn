@@ -189,12 +189,37 @@ path = sys.argv[1]
 with open(path, encoding="utf-8") as fh:
     result = json.load(fh)
 
+runtime = None
+
 def counter(value):
     if isinstance(value, int):
         return value
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return None
+
+def probe_summary():
+    parts = [
+        f"read={result.get('tunPacketProbeBaselineRead')}->{result.get('tunPacketProbeFinalRead')}",
+        (
+            f"observed={result.get('tunPacketProbeObservedPackets')}/"
+            f"{result.get('tunPacketProbeExpectedPackets')}"
+        ),
+        f"missing={result.get('tunPacketProbeMissingPackets', '?')}",
+        f"bytes={result.get('tunPacketProbeObservedBytesRead')}",
+        f"drops={result.get('tunPacketProbeDroppedDelta')}",
+        f"firstMs={result.get('tunPacketProbeFirstObservedMs', '?')}",
+        f"elapsedMs={result.get('tunPacketProbeElapsedMs')}",
+        f"polls={result.get('tunPacketProbePolls', '?')}",
+        f"target={result.get('tunPacketProbeTarget')}",
+    ]
+    if isinstance(runtime, dict):
+        parts.extend([
+            f"runtimeRead={runtime.get('tunPacketsRead')}",
+            f"runtimeWritten={runtime.get('tunPacketsWritten')}",
+            f"runtimeDropped={runtime.get('tunPacketsDropped')}",
+        ])
+    return "iOS TUN packet probe counters: " + " ".join(parts)
 
 errors = []
 if result.get("startError"):
@@ -256,21 +281,14 @@ if result.get("packetTunnelStatusRawValue") == 3:
                 )
 
 if errors:
+    if result.get("tunPacketProbeBaselineRead") is not None:
+        print(probe_summary(), file=sys.stderr)
     print("iOS VPN probe failed: " + ", ".join(errors), file=sys.stderr)
     sys.exit(1)
 
 if result.get("tunPacketProbeReadIncreased") is True:
-    print(
-        "iOS TUN packet probe passed: "
-        f"tunPacketsRead {result.get('tunPacketProbeBaselineRead')}"
-        f"->{result.get('tunPacketProbeFinalRead')} "
-        f"observed={result.get('tunPacketProbeObservedPackets')}/"
-        f"{result.get('tunPacketProbeExpectedPackets')} "
-        f"bytes={result.get('tunPacketProbeObservedBytesRead')} "
-        f"drops={result.get('tunPacketProbeDroppedDelta')} "
-        f"elapsedMs={result.get('tunPacketProbeElapsedMs')} "
-        f"target={result.get('tunPacketProbeTarget')}"
-    )
+    print("iOS TUN packet probe passed")
+    print(probe_summary())
 PY
 }
 
