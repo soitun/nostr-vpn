@@ -181,6 +181,29 @@
     }
 
     #[test]
+    fn link_event_refresh_restarts_when_underlay_mtu_changes() {
+        let app = AppConfig::generated();
+        let network_id = app.effective_network_id();
+        let current = FipsPrivateTunnelConfig::from_app(
+            &app,
+            &network_id,
+            "utun100",
+            app.own_nostr_pubkey_hex().ok().as_deref(),
+            None,
+            &[],
+        )
+        .expect("fips tunnel config");
+        let mut next = current.clone();
+
+        next.mesh_mtu.underlay_udp = next.mesh_mtu.underlay_udp.saturating_sub(1);
+
+        assert!(
+            fips_tunnel_requires_endpoint_restart(&current, &next),
+            "route refresh must restart FIPS when the transport underlay MTU changes"
+        );
+    }
+
+    #[test]
     fn tunnel_config_keeps_static_endpoint_hint_for_control_only_admin() {
         let alice_keys = Keys::generate();
         let admin_keys = Keys::generate();

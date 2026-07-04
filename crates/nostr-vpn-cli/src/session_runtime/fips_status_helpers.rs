@@ -452,7 +452,20 @@ async fn refresh_fips_tunnel_runtime_after_link_event(
     )
     .await?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
-    if let Some(existing) = runtime.as_mut() {
+    if runtime
+        .as_ref()
+        .is_some_and(|existing| existing.requires_endpoint_restart(&config))
+    {
+        if let Some(existing) = runtime.take() {
+            existing.stop().await?;
+        }
+        let started = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
+        eprintln!(
+            "daemon: restarted FIPS private mesh on {} after {reason}",
+            started.iface()
+        );
+        *runtime = Some(started);
+    } else if let Some(existing) = runtime.as_mut() {
         existing.apply_config(config).await?;
         eprintln!(
             "daemon: refreshed FIPS private mesh paths on {} after {reason}",
