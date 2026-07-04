@@ -389,6 +389,38 @@
     }
 
     #[test]
+    fn private_mesh_mtu_lan_profile_clamps_to_underlay_interface_mtu() {
+        let mtu = super::clamp_mesh_mtu_to_underlay_interface_mtu(
+            super::resolve_private_mesh_mtu(Some("lan"), None, None),
+            Some(1400),
+        );
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: 1352,
+                tunnel: 1222,
+            }
+        );
+    }
+
+    #[test]
+    fn private_mesh_mtu_interface_mtu_does_not_raise_safe_default() {
+        let mtu = super::clamp_mesh_mtu_to_underlay_interface_mtu(
+            super::resolve_private_mesh_mtu(None, None, None),
+            Some(9000),
+        );
+
+        assert_eq!(
+            mtu,
+            super::MeshMtu {
+                underlay_udp: nostr_vpn_core::MESH_UNDERLAY_UDP_MTU,
+                tunnel: nostr_vpn_core::MESH_TUNNEL_MTU,
+            }
+        );
+    }
+
+    #[test]
     fn peer_endpoint_hint_addr_accepts_only_udp_socket_addresses() {
         assert_eq!(
             super::peer_endpoint_hint_addr(&PeerEndpointHint::udp("192.168.50.22:51820")),

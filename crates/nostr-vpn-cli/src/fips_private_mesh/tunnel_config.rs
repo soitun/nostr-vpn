@@ -244,6 +244,14 @@ impl FipsPrivateTunnelConfig {
         })
     }
 
+    pub(crate) fn clamp_mesh_mtu_to_underlay_interface_mtu(
+        &mut self,
+        underlay_interface_mtu: Option<u32>,
+    ) {
+        self.mesh_mtu =
+            clamp_mesh_mtu_to_underlay_interface_mtu(self.mesh_mtu, underlay_interface_mtu);
+    }
+
     fn local_allowed_ips(&self) -> Vec<String> {
         let mut routes = vec![self.local_address.clone()];
         routes.extend(self.local_advertised_routes.iter().cloned());

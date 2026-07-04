@@ -104,6 +104,8 @@ pub struct NetworkSummary {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_interface: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_interface_mtu: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_ipv4: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub primary_ipv6: Option<String>,

@@ -461,6 +461,7 @@ async fn refresh_fips_tunnel_config(
     app: &AppConfig,
     config_path: &Path,
     network_id: &str,
+    underlay_interface_mtu: Option<u32>,
     own_pubkey: Option<&str>,
 ) -> Result<()> {
     let config = fips_tunnel_config_from_app_async(
@@ -468,6 +469,7 @@ async fn refresh_fips_tunnel_config(
         config_path,
         network_id,
         runtime.iface().to_string(),
+        underlay_interface_mtu,
         own_pubkey,
         None,
         &runtime.peer_endpoint_hints(),
@@ -482,6 +484,7 @@ fn fips_tunnel_config_from_app(
     config_path: &Path,
     network_id: &str,
     iface: impl Into<String>,
+    underlay_interface_mtu: Option<u32>,
     own_pubkey: Option<&str>,
     recent_peers: Option<&nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
     live_peer_endpoints: &[(String, Vec<(String, u64)>)],
@@ -494,6 +497,7 @@ fn fips_tunnel_config_from_app(
         recent_peers,
         live_peer_endpoints,
     )?;
+    config.clamp_mesh_mtu_to_underlay_interface_mtu(underlay_interface_mtu);
     #[cfg(feature = "paid-exit")]
     {
         config.paid_exit = app.paid_exit.clone();
@@ -584,6 +588,7 @@ async fn fips_tunnel_config_from_app_async(
     config_path: &Path,
     network_id: &str,
     iface: impl Into<String>,
+    underlay_interface_mtu: Option<u32>,
     own_pubkey: Option<&str>,
     recent_peers: Option<&nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
     live_peer_endpoints: &[(String, Vec<(String, u64)>)],
@@ -602,6 +607,7 @@ async fn fips_tunnel_config_from_app_async(
             &config_path,
             &network_id,
             iface,
+            underlay_interface_mtu,
             own_pubkey.as_deref(),
             recent_peers.as_ref(),
             &live_peer_endpoints,
@@ -642,6 +648,7 @@ struct SyncFipsPrivateRuntimeContext<'a> {
     config_path: &'a Path,
     network_id: &'a str,
     iface: &'a str,
+    underlay_interface_mtu: Option<u32>,
     own_pubkey: Option<&'a str>,
     vpn_enabled: bool,
     expected_peers: usize,
@@ -676,6 +683,7 @@ async fn sync_fips_private_runtime(
         context.config_path,
         context.network_id,
         config_iface,
+        context.underlay_interface_mtu,
         context.own_pubkey,
         None,
         &live_peer_endpoints,

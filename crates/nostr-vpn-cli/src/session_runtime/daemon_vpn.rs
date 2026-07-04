@@ -131,6 +131,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 &config_path,
                 &network_id,
                 iface.clone(),
+                network_snapshot.default_interface_mtu,
                 own_pubkey.as_deref(),
                 Some(&recent_peers),
                 &[],
@@ -345,6 +346,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 config_path: &config_path,
                                 network_id: &network_id,
                                 fallback_iface: &iface,
+                                underlay_interface_mtu: network_snapshot.default_interface_mtu,
                                 own_pubkey: own_pubkey.as_deref(),
                                 recent_peers: Some(&recent_peers),
                                 last_endpoint_peer_signature:
@@ -368,6 +370,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 config_path: &config_path,
                                 network_id: &network_id,
                                 fallback_iface: &iface,
+                                underlay_interface_mtu: network_snapshot.default_interface_mtu,
                                 own_pubkey: own_pubkey.as_deref(),
                                 recent_peers: Some(&recent_peers),
                                 last_endpoint_peer_signature:
@@ -436,6 +439,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             config_path: &config_path,
                             network_id: &network_id,
                             fallback_iface: &iface,
+                            underlay_interface_mtu: network_snapshot.default_interface_mtu,
                             own_pubkey: own_pubkey.as_deref(),
                             recent_peers: Some(&recent_peers),
                             last_endpoint_peer_signature: &mut last_fips_endpoint_peer_signature,
@@ -456,6 +460,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             config_path: &config_path,
                             network_id: &network_id,
                             fallback_iface: &iface,
+                            underlay_interface_mtu: network_snapshot.default_interface_mtu,
                             own_pubkey: own_pubkey.as_deref(),
                             recent_peers: Some(&recent_peers),
                             last_endpoint_peer_signature: &mut last_fips_endpoint_peer_signature,
@@ -679,6 +684,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         config_path: &config_path,
                                         network_id: &network_id,
                                         fallback_iface: &iface,
+                                        underlay_interface_mtu: network_snapshot
+                                            .default_interface_mtu,
                                         own_pubkey: own_pubkey.as_deref(),
                                         // Recent endpoints are only dial hints; fips still has to
                                         // authenticate them. Keeping these hints lets mobile/link
@@ -780,6 +787,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                     &app,
                                     &config_path,
                                     &network_id,
+                                    network_snapshot.default_interface_mtu,
                                     own_pubkey.as_deref(),
                                 )
                                 .await
@@ -800,6 +808,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                             config_path: &config_path,
                                             network_id: &network_id,
                                             fallback_iface: &iface,
+                                            underlay_interface_mtu: network_snapshot
+                                                .default_interface_mtu,
                                             own_pubkey: own_pubkey.as_deref(),
                                             recent_peers: Some(&recent_peers),
                                             last_endpoint_peer_signature:
@@ -844,6 +854,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                     &app,
                                     &config_path,
                                     &network_id,
+                                    network_snapshot.default_interface_mtu,
                                     own_pubkey.as_deref(),
                                 )
                                 .await
@@ -919,6 +930,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                             &app,
                                             &config_path,
                                             &network_id,
+                                            network_snapshot.default_interface_mtu,
                                             own_pubkey.as_deref(),
                                         )
                                         .await
@@ -1095,6 +1107,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             config_path: &config_path,
                             network_id: &network_id,
                             iface: &iface,
+                            underlay_interface_mtu: network_snapshot.default_interface_mtu,
                             own_pubkey: own_pubkey.as_deref(),
                             vpn_enabled,
                             expected_peers,
