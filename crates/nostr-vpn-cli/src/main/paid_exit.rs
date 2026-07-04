@@ -5,6 +5,9 @@ struct PaidExitArgs {
 }
 
 const DEFAULT_FIPS_PEER_RATING_SCOPE: &str = "fips.peer";
+const RATING_FACT_KIND: u64 = 7368;
+const RATING_FACT_TYPE: &str = "rating";
+const RATING_FACT_SCHEMA: &str = "1";
 
 #[derive(Debug, Subcommand)]
 enum PaidExitCommand {
@@ -5192,15 +5195,15 @@ fn paid_exit_rating_scores_from_value(
 ) -> Result<HashMap<String, PaidExitRatingScore>> {
     let mut scores: HashMap<String, PaidExitRatingScore> = HashMap::new();
     for rating in paid_exit_rating_records(value)? {
-        if !paid_exit_rating_matches_scope(rating, scope) {
+        if !paid_exit_rating_matches_scope(&rating, scope) {
             continue;
         }
-        let subject = paid_exit_rating_string_field(rating, "subject")?;
-        let rating_value = paid_exit_rating_i64_field(rating, "rating")?;
-        let min_rating = paid_exit_rating_i64_field(rating, "min_rating")?;
-        let max_rating = paid_exit_rating_i64_field(rating, "max_rating")?;
+        let subject = paid_exit_rating_string_field(&rating, "subject")?;
+        let rating_value = paid_exit_rating_i64_field(&rating, "rating")?;
+        let min_rating = paid_exit_rating_i64_field(&rating, "min_rating")?;
+        let max_rating = paid_exit_rating_i64_field(&rating, "max_rating")?;
         let score = paid_exit_normalized_rating_score(rating_value, min_rating, max_rating)?;
-        let created_at = paid_exit_rating_u64_field(rating, "created_at").unwrap_or_default();
+        let created_at = paid_exit_rating_u64_field(&rating, "created_at").unwrap_or_default();
         let incoming = PaidExitRatingScore { score, created_at };
         scores
             .entry(subject)
@@ -5214,15 +5217,157 @@ fn paid_exit_rating_scores_from_value(
     Ok(scores)
 }
 
-fn paid_exit_rating_records(value: &serde_json::Value) -> Result<&[serde_json::Value]> {
+fn paid_exit_rating_records(value: &serde_json::Value) -> Result<Vec<serde_json::Value>> {
     if let Some(records) = value.as_array() {
-        return Ok(records);
+        return Ok(records.clone());
     }
-    value
+
+    if let Some(records) = value
         .get("ratings")
         .and_then(|ratings| ratings.as_array())
-        .map(Vec::as_slice)
-        .ok_or_else(|| anyhow!("ratings JSON must be an array or an object with a ratings array"))
+    {
+        return Ok(records.clone());
+    }
+
+    if let Some(events) = value.get("events").and_then(|events| events.as_array()) {
+        return paid_exit_rating_records_from_events(events);
+    }
+
+    Err(anyhow!(
+        "ratings JSON must be an array, an object with a ratings array, or an object with an events array"
+    ))
+}
+
+fn paid_exit_rating_records_from_events(
+    events: &[serde_json::Value],
+) -> Result<Vec<serde_json::Value>> {
+    events
+        .iter()
+        .map(paid_exit_rating_record_from_fact_event)
+        .collect()
+}
+
+fn paid_exit_rating_record_from_fact_event(event_value: &serde_json::Value) -> Result<serde_json::Value> {
+    let event: Event = serde_json::from_value(event_value.clone())
+        .context("rating fact event is not valid Nostr event JSON")?;
+    event
+        .verify()
+        .map_err(|error| anyhow!("rating fact event verification failed: {error}"))?;
+
+    let kind = event_value
+        .get("kind")
+        .and_then(|value| value.as_u64())
+        .ok_or_else(|| anyhow!("rating fact event is missing integer kind"))?;
+    if kind != RATING_FACT_KIND {
+        return Err(anyhow!(
+            "rating fact event kind must be {RATING_FACT_KIND}, got {kind}"
+        ));
+    }
+
+    let record_type = paid_exit_fact_scalar(event_value, "type")?;
+    if record_type != RATING_FACT_TYPE {
+        return Err(anyhow!("unexpected rating fact event type {record_type}"));
+    }
+    let schema = paid_exit_fact_scalar(event_value, "schema")?;
+    if schema != RATING_FACT_SCHEMA {
+        return Err(anyhow!("unsupported rating fact schema {schema}"));
+    }
+
+    let id = paid_exit_fact_subject_id(event_value)
+        .or_else(|| event_value.get("id").and_then(|value| value.as_str()).map(ToOwned::to_owned))
+        .ok_or_else(|| anyhow!("rating fact event is missing subject id"))?;
+    let created_at = paid_exit_fact_optional_scalar(event_value, "created_at")
+        .and_then(|value| value.parse::<u64>().ok())
+        .or_else(|| event_value.get("created_at").and_then(|value| value.as_u64()))
+        .unwrap_or_default();
+    let mut record = json!({
+        "id": id,
+        "rater": paid_exit_fact_scalar(event_value, "rater")?,
+        "subject": paid_exit_fact_scalar(event_value, "subject")?,
+        "rating": paid_exit_fact_scalar(event_value, "rating")?.parse::<i64>()
+            .context("rating fact event has invalid integer rating")?,
+        "min_rating": paid_exit_fact_scalar(event_value, "min_rating")?.parse::<i64>()
+            .context("rating fact event has invalid integer min_rating")?,
+        "max_rating": paid_exit_fact_scalar(event_value, "max_rating")?.parse::<i64>()
+            .context("rating fact event has invalid integer max_rating")?,
+        "created_at": created_at,
+    });
+    if let Some(scope) = paid_exit_fact_optional_scalar(event_value, "scope")
+        .or_else(|| paid_exit_fact_optional_scalar(event_value, "context"))
+    {
+        record["scope"] = json!(scope);
+    }
+    if let Some(sample_count) = paid_exit_fact_optional_scalar(event_value, "sample_count")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        record["sample_count"] = json!(sample_count);
+    }
+    if let Some(window_start) = paid_exit_fact_optional_scalar(event_value, "window_start")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        record["window_start"] = json!(window_start);
+    }
+    if let Some(window_end) = paid_exit_fact_optional_scalar(event_value, "window_end")
+        .and_then(|value| value.parse::<u64>().ok())
+    {
+        record["window_end"] = json!(window_end);
+    }
+    if let Some(reason) = paid_exit_fact_optional_scalar(event_value, "reason") {
+        record["reason"] = json!(reason);
+    }
+    let tags = paid_exit_fact_values(event_value, "tag");
+    if !tags.is_empty() {
+        record["tags"] = json!(tags);
+    }
+    let evidence = paid_exit_fact_values(event_value, "evidence");
+    if !evidence.is_empty() {
+        record["evidence"] = json!(evidence);
+    }
+    Ok(record)
+}
+
+fn paid_exit_fact_subject_id(event_value: &serde_json::Value) -> Option<String> {
+    paid_exit_fact_tags(event_value).into_iter().find_map(|tag| {
+        let parts = tag.as_array()?;
+        let name = parts.first()?.as_str()?;
+        if name == "i" && parts.get(2).and_then(|value| value.as_str()) == Some("subject") {
+            parts.get(1)?.as_str().map(ToOwned::to_owned)
+        } else {
+            None
+        }
+    })
+}
+
+fn paid_exit_fact_scalar(event_value: &serde_json::Value, key: &str) -> Result<String> {
+    paid_exit_fact_optional_scalar(event_value, key)
+        .ok_or_else(|| anyhow!("rating fact event is missing scalar tag {key}"))
+}
+
+fn paid_exit_fact_optional_scalar(event_value: &serde_json::Value, key: &str) -> Option<String> {
+    paid_exit_fact_values(event_value, key).into_iter().next()
+}
+
+fn paid_exit_fact_values(event_value: &serde_json::Value, key: &str) -> Vec<String> {
+    paid_exit_fact_tags(event_value)
+        .into_iter()
+        .filter_map(|tag| {
+            let parts = tag.as_array()?;
+            if parts.first().and_then(|value| value.as_str()) != Some(key) {
+                return None;
+            }
+            parts.get(1).and_then(|value| value.as_str()).map(str::trim)
+        })
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn paid_exit_fact_tags(event_value: &serde_json::Value) -> Vec<&serde_json::Value> {
+    event_value
+        .get("tags")
+        .and_then(|tags| tags.as_array())
+        .map(|tags| tags.iter().collect())
+        .unwrap_or_default()
 }
 
 fn paid_exit_rating_matches_scope(rating: &serde_json::Value, expected_scope: &str) -> bool {
@@ -5398,6 +5543,7 @@ fn paid_exit_offer_results_json(
 #[cfg(all(test, feature = "paid-exit"))]
 mod paid_exit_rating_tests {
     use super::*;
+    use nostr_sdk::prelude::{EventBuilder, Kind, Tag, Timestamp};
 
     #[test]
     fn rating_scores_use_scope_and_newest_record() {
@@ -5475,6 +5621,22 @@ mod paid_exit_rating_tests {
     }
 
     #[test]
+    fn rating_scores_accept_signed_fact_events() {
+        let event = sample_rating_fact_event("npub1crawler", "npub1peer", "fips.peer", 85, 20);
+        let ratings = json!({"events": [event]});
+
+        let scores = paid_exit_rating_scores_from_value(&ratings, "fips.peer").unwrap();
+
+        assert_eq!(
+            scores.get("npub1peer"),
+            Some(&PaidExitRatingScore {
+                score: 70,
+                created_at: 20,
+            })
+        );
+    }
+
+    #[test]
     fn ratings_sort_offers_good_unknown_bad() {
         let good = sample_signed_offer("good", 10);
         let unknown = sample_signed_offer("unknown", 30);
@@ -5539,5 +5701,42 @@ mod paid_exit_rating_tests {
             None,
         );
         SignedPaidRouteOffer::sign(offer, &keys, created_at).unwrap()
+    }
+
+    fn sample_rating_fact_event(
+        rater: &str,
+        subject: &str,
+        scope: &str,
+        rating: i64,
+        created_at: u64,
+    ) -> serde_json::Value {
+        let keys = Keys::generate();
+        let id = "550e8400-e29b-41d4-a716-446655440000";
+        let tags = vec![
+            sample_rating_fact_tag(["i", id, "subject"]),
+            sample_rating_fact_tag(["type", RATING_FACT_TYPE]),
+            sample_rating_fact_tag(["schema", RATING_FACT_SCHEMA]),
+            sample_rating_fact_tag(["created_at", &created_at.to_string()]),
+            sample_rating_fact_tag(["rater", rater]),
+            sample_rating_fact_tag(["subject", subject]),
+            sample_rating_fact_tag(["scope", scope]),
+            sample_rating_fact_tag(["rating", &rating.to_string()]),
+            sample_rating_fact_tag(["min_rating", "0"]),
+            sample_rating_fact_tag(["max_rating", "100"]),
+            sample_rating_fact_tag(["sample_count", "7"]),
+            sample_rating_fact_tag(["tag", "fips"]),
+            sample_rating_fact_tag(["tag", "peer"]),
+        ];
+        let event = EventBuilder::new(Kind::Custom(RATING_FACT_KIND as u16), "")
+            .tags(tags)
+            .custom_created_at(Timestamp::from(created_at))
+            .sign_with_keys(&keys)
+            .unwrap();
+
+        serde_json::to_value(event).unwrap()
+    }
+
+    fn sample_rating_fact_tag<const N: usize>(parts: [&str; N]) -> Tag {
+        Tag::parse(parts).unwrap()
     }
 }
