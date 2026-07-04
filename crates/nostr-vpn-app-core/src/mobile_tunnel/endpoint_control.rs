@@ -571,13 +571,6 @@ async fn dispatch_mobile_outbound_packets(
     flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await
 }
 
-async fn send_mobile_inbound_packets(
-    inbound_tx: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
-    packets: Vec<Vec<u8>>,
-) -> bool {
-    packets.is_empty() || inbound_tx.send(packets).await.is_ok()
-}
-
 async fn flush_mobile_inbound_packets(
     inbound_tx: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
     packets: &mut Vec<Vec<u8>>,

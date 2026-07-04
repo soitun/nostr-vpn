@@ -143,11 +143,11 @@ impl MobileTunnel {
                             for packet in batch {
                                 packets.push(prepare_packet(packet));
                                 if packets.len() == MOBILE_FIPS_RECV_BATCH {
-                                    let batch = std::mem::replace(
+                                    if !flush_mobile_inbound_packets(
+                                        &inbound_tx_for_wg,
                                         &mut packets,
-                                        Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
-                                    );
-                                    if !send_mobile_inbound_packets(&inbound_tx_for_wg, batch).await
+                                    )
+                                    .await
                                     {
                                         return;
                                     }
@@ -161,12 +161,11 @@ impl MobileTunnel {
                                 for packet in batch {
                                     packets.push(prepare_packet(packet));
                                     if packets.len() == MOBILE_FIPS_RECV_BATCH {
-                                        let batch = std::mem::replace(
+                                        if !flush_mobile_inbound_packets(
+                                            &inbound_tx_for_wg,
                                             &mut packets,
-                                            Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
-                                        );
-                                        if !send_mobile_inbound_packets(&inbound_tx_for_wg, batch)
-                                            .await
+                                        )
+                                        .await
                                         {
                                             return;
                                         }
@@ -175,11 +174,9 @@ impl MobileTunnel {
                             }
 
                             if !packets.is_empty() {
-                                let batch = std::mem::replace(
-                                    &mut packets,
-                                    Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
-                                );
-                                if !send_mobile_inbound_packets(&inbound_tx_for_wg, batch).await {
+                                if !flush_mobile_inbound_packets(&inbound_tx_for_wg, &mut packets)
+                                    .await
+                                {
                                     break;
                                 }
                             }
@@ -438,11 +435,7 @@ impl MobileTunnel {
                         }
                     }
                     if !inbound_packets.is_empty() {
-                        let batch = std::mem::replace(
-                            &mut inbound_packets,
-                            Vec::with_capacity(MOBILE_FIPS_RECV_BATCH),
-                        );
-                        if !send_mobile_inbound_packets(&inbound_tx, batch).await {
+                        if !flush_mobile_inbound_packets(&inbound_tx, &mut inbound_packets).await {
                             break 'recv;
                         }
                     }
