@@ -378,10 +378,11 @@ final class AppModel: ObservableObject {
         let wireGuardConfig = Self.wireGuardConfig(from: arguments, supportDir: supportDir)
         let resolveHost = Self.argumentValue(after: "--nvpn-debug-resolve-host", in: arguments)
         let skipFetch = arguments.contains("--nvpn-debug-skip-fetch")
+        let probeStartedAt = Date()
         var result: [String: Any] = [
             "url": urlString,
             "phase": "starting",
-            "startedAt": ISO8601DateFormatter().string(from: Date()),
+            "startedAt": ISO8601DateFormatter().string(from: probeStartedAt),
         ]
         for (key, value) in Self.appBuildMetadata() {
             result[key] = value
@@ -411,7 +412,9 @@ final class AppModel: ObservableObject {
         refresh()
 
         writeDebugProbeResult(result, name: resultName)
+        let vpnStartStartedAt = Date()
         let startError = await startVpnForDebugProbe()
+        result["vpnStartElapsedMs"] = Self.elapsedMilliseconds(since: vpnStartStartedAt)
         result["vpnStartFinishedAt"] = ISO8601DateFormatter().string(from: Date())
         if let error = startError {
             result["startError"] = error
@@ -419,12 +422,14 @@ final class AppModel: ObservableObject {
             writeDebugProbeResult(result, name: resultName)
         } else if waitSeconds > 0 {
             result["phase"] = "waiting_for_tunnel"
+            result["vpnWaitRequestedMs"] = Int(waitSeconds * 1000)
             writeDebugProbeResult(result, name: resultName)
             try? await Task.sleep(nanoseconds: UInt64(waitSeconds * 1_000_000_000))
         }
         refresh()
         result["phase"] = "collecting_status"
         writeDebugProbeResult(result, name: resultName)
+        let statusStartedAt = Date()
         result["phase"] = "finished"
         if let status = await vpnController.statusRawValue() {
             result["packetTunnelStatusRawValue"] = status
@@ -449,6 +454,7 @@ final class AppModel: ObservableObject {
         result["wireguardExitEnabled"] = state.wireguardExitEnabled
         result["wireguardExitConfigured"] = state.wireguardExitConfigured
         result["wireguardExitEndpoint"] = state.wireguardExitEndpoint
+        result["statusCollectionElapsedMs"] = Self.elapsedMilliseconds(since: statusStartedAt)
 
         if let host = resolveHost?.trimmingCharacters(in: .whitespacesAndNewlines),
            !host.isEmpty {
@@ -461,10 +467,13 @@ final class AppModel: ObservableObject {
         }
 
         if !skipFetch {
+            let fetchStartedAt = Date()
             for (key, value) in await fetchDebugProbe(urlString: urlString) {
                 result[key] = value
             }
+            result["fetchElapsedMs"] = Self.elapsedMilliseconds(since: fetchStartedAt)
         }
+        result["debugProbeElapsedMs"] = Self.elapsedMilliseconds(since: probeStartedAt)
         result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
         writeDebugProbeResult(result, name: resultName)
         #endif
@@ -826,6 +835,10 @@ final class AppModel: ObservableObject {
             return Int(value)
         }
         return String(value)
+    }
+
+    nonisolated private static func elapsedMilliseconds(since start: Date) -> Int {
+        max(0, Int(Date().timeIntervalSince(start) * 1000))
     }
 
     nonisolated private static func appBuildMetadata() -> [String: Any] {

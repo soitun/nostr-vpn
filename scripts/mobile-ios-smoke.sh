@@ -400,7 +400,7 @@ def probe_summary():
         ])
     return "iOS TUN packet probe counters: " + " ".join(parts)
 
-def write_probe_summary():
+def write_probe_summary(validation_errors=None):
     values = probe_values()
     if isinstance(runtime, dict):
         values["runtime"] = {
@@ -411,6 +411,26 @@ def write_probe_summary():
             "tunPacketsDropped": counter(runtime.get("tunPacketsDropped")),
         }
     values["replyRequired"] = require_reply
+    values["passed"] = not validation_errors
+    if validation_errors:
+        values["validationErrors"] = validation_errors
+    for key in (
+        "phase",
+        "packetTunnelStatusRawValue",
+        "vpnEnabled",
+        "vpnActive",
+        "startError",
+        "vpnStartElapsedMs",
+        "vpnWaitRequestedMs",
+        "statusCollectionElapsedMs",
+        "fetchElapsedMs",
+        "debugProbeElapsedMs",
+        "startedAt",
+        "vpnStartFinishedAt",
+        "finishedAt",
+    ):
+        if key in result:
+            values[key] = result[key]
     for key in (
         "appBundleIdentifier",
         "appVersionName",
@@ -519,8 +539,10 @@ if result.get("packetTunnelStatusRawValue") == 3:
                 )
 
 if errors:
+    summary_written = write_probe_summary(errors)
     if result.get("tunPacketProbeBaselineRead") is not None:
         print(probe_summary(), file=sys.stderr)
+    print("iOS TUN packet probe summary: " + summary_written, file=sys.stderr)
     print("iOS VPN probe failed: " + ", ".join(errors), file=sys.stderr)
     sys.exit(1)
 
