@@ -115,7 +115,8 @@ async fn flush_pending_fips_roster_recipients(
 }
 
 #[cfg(feature = "embedded-fips")]
-type EndpointPeerSignature = Vec<(String, bool, bool, Vec<(String, Option<u64>, u8)>)>;
+pub(crate) type EndpointPeerSignature =
+    Vec<(String, bool, bool, Vec<(String, Option<u64>, u8)>)>;
 
 #[cfg(feature = "embedded-fips")]
 struct RecentPeerRefresh<'a> {
@@ -281,6 +282,32 @@ fn endpoint_peer_signature(
                 addresses,
             )
         })
+        .collect()
+}
+
+#[cfg(feature = "embedded-fips")]
+pub(crate) fn daemon_endpoint_peer_states_from_signature(
+    signature: &EndpointPeerSignature,
+) -> Vec<DaemonFipsEndpointPeerState> {
+    signature
+        .iter()
+        .map(
+            |(npub, auto_reconnect, discovery_fallback_transit, addresses)| {
+                DaemonFipsEndpointPeerState {
+                    npub: npub.clone(),
+                    addresses: addresses
+                        .iter()
+                        .map(|(addr, seen_at_ms, priority)| DaemonFipsEndpointPeerAddressState {
+                            addr: addr.clone(),
+                            seen_at_ms: *seen_at_ms,
+                            priority: *priority,
+                        })
+                        .collect(),
+                    auto_reconnect: *auto_reconnect,
+                    discovery_fallback_transit: *discovery_fallback_transit,
+                }
+            },
+        )
         .collect()
 }
 

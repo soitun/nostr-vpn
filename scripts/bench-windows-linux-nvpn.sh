@@ -914,6 +914,30 @@ fi"
   rm -rf "$tmpdir"
 }
 
+restart_static_direct_hint_services() {
+  if ! is_true "$STATIC_DIRECT_HINTS"; then
+    return 0
+  fi
+
+  local windows_installed_hash linux_installed_hash
+  windows_installed_hash="$(windows_hash "$WINDOWS_INSTALLED_NVPN" | tr -d '\r\n')"
+  linux_installed_hash="$(linux_hash "$LINUX_INSTALLED_NVPN" | tr -d '\r\n')"
+  printf 'restarting services after static direct FIPS hints\n' >&2
+
+  run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Stop'
+if ((Get-Service NvpnService -ErrorAction SilentlyContinue).Status -eq 'Running') {
+  Restart-Service NvpnService -Force -ErrorAction Stop
+} else {
+  Start-Service NvpnService -ErrorAction Stop
+}"
+  wait_for_windows_hash "$windows_installed_hash" "static-direct-hints"
+
+  run_linux_sh "set -euo pipefail
+sudo -n systemctl restart nvpn.service"
+  wait_for_linux_hash "$linux_installed_hash" "static-direct-hints"
+}
+
 windows_hash() {
   local path="$1"
   run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
@@ -1513,6 +1537,12 @@ wait_for_direct_pair() {
   rm -rf "$failure_dir"
   mkdir -p "$failure_dir"
   cp -f "$tmpdir"/* "$failure_dir"/ 2>/dev/null || true
+  if [[ -f "$failure_dir/windows.json" ]]; then
+    capture_windows_daemon_log_tail "$failure_dir/windows.json" "$failure_dir/windows-daemon.log" >/dev/null 2>&1 || true
+  fi
+  if [[ -f "$failure_dir/linux.json" ]]; then
+    capture_linux_daemon_log_tail "$failure_dir/linux.json" "$failure_dir/linux-daemon.log" >/dev/null 2>&1 || true
+  fi
   rm -rf "$tmpdir"
   die "timed out waiting for $row direct Windows/Linux peer pair"
 }
@@ -1812,6 +1842,17 @@ fetch_linux_file() {
   run_linux_sh "cat $(sh_q "$remote_path") 2>/dev/null || true" >"$out"
 }
 
+fetch_linux_file_tail() {
+  local remote_path="$1"
+  local lines="$2"
+  local out="$3"
+  run_linux_sh "path=$(sh_q "$remote_path")
+lines=$(sh_q "$lines")
+if [[ -f \"\$path\" ]]; then
+  tail -n \"\$lines\" \"\$path\" 2>/dev/null || true
+fi" >"$out"
+}
+
 capture_windows_daemon_log_tail() {
   local snapshot="$1"
   local out="$2"
@@ -1822,6 +1863,18 @@ capture_windows_daemon_log_tail() {
     return 0
   fi
   fetch_windows_file_tail "$remote_log" "$WINDOWS_DAEMON_LOG_TAIL_LINES" "$out"
+}
+
+capture_linux_daemon_log_tail() {
+  local snapshot="$1"
+  local out="$2"
+  local remote_log
+  remote_log="$(jq -r '.daemon_status.daemon.log_file // .daemon_status.log_file // empty' "$snapshot")"
+  if [[ -z "$remote_log" || "$remote_log" == "null" ]]; then
+    printf '' >"$out"
+    return 0
+  fi
+  fetch_linux_file_tail "$remote_log" "$WINDOWS_DAEMON_LOG_TAIL_LINES" "$out"
 }
 
 capture_windows_ping() {
@@ -2368,6 +2421,7 @@ main() {
   backup_windows_config
   backup_linux_config
   apply_static_direct_hints
+  restart_static_direct_hint_services
   ensure_probe_binaries
   if row_contains_current && [[ -n "$CURRENT_LINUX_NVPN" ]]; then
     backup_linux_installed_binary

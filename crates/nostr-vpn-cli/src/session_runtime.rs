@@ -27,6 +27,20 @@ macro_rules! current_fips_peer_statuses {
     };
 }
 
+#[cfg(feature = "embedded-fips")]
+macro_rules! current_fips_endpoint_peer_states {
+    ($signature:expr) => {
+        daemon_endpoint_peer_states_from_signature($signature)
+    };
+}
+
+#[cfg(not(feature = "embedded-fips"))]
+macro_rules! current_fips_endpoint_peer_states {
+    ($signature:expr) => {
+        Vec::<DaemonFipsEndpointPeerState>::new()
+    };
+}
+
 include!("session_runtime/fips_status_helpers.rs");
 include!("session_runtime/connect_vpn.rs");
 include!("session_runtime/daemon_vpn.rs");

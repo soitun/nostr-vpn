@@ -396,6 +396,16 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
             url: "wss://relay.example".to_string(),
             status: "connected".to_string(),
         }],
+        &[crate::DaemonFipsEndpointPeerState {
+            npub: "npub1configured".to_string(),
+            addresses: vec![crate::DaemonFipsEndpointPeerAddressState {
+                addr: "192.0.2.10:51820".to_string(),
+                seen_at_ms: None,
+                priority: 100,
+            }],
+            auto_reconnect: true,
+            discovery_fallback_transit: false,
+        }],
         &std::collections::HashMap::new(),
         "VPN on",
         &nostr_vpn_core::diagnostics::NetworkSummary::default(),
@@ -410,6 +420,8 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
     assert_eq!(state.vpn_status, "VPN on");
     assert_eq!(state.relays.len(), 1);
     assert_eq!(state.relays[0].status, "connected");
+    assert_eq!(state.fips_endpoint_peers.len(), 1);
+    assert_eq!(state.fips_endpoint_peers[0].addresses[0].addr, "192.0.2.10:51820");
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -427,6 +439,7 @@ fn fips_runtime_state_is_ready_without_waiting_for_every_peer() {
         true,
         2,
         &tunnel_runtime,
+        &[],
         &[],
         &[],
         &std::collections::HashMap::new(),
@@ -491,6 +504,7 @@ fn fips_runtime_state_rejects_far_future_peer_timestamps() {
             rx_bytes: 0,
             error: Some("fips link pending".to_string()),
         }],
+        &[],
         &[],
         &std::collections::HashMap::new(),
         "VPN on",

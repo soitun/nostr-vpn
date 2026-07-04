@@ -78,8 +78,29 @@ struct DaemonRuntimeState {
     port_mapping: PortMappingStatus,
     #[serde(default)]
     relays: Vec<DaemonRelayState>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    fips_endpoint_peers: Vec<DaemonFipsEndpointPeerState>,
     #[serde(default)]
     peers: Vec<DaemonPeerState>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+struct DaemonFipsEndpointPeerState {
+    npub: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    addresses: Vec<DaemonFipsEndpointPeerAddressState>,
+    #[serde(default)]
+    auto_reconnect: bool,
+    #[serde(default)]
+    discovery_fallback_transit: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct DaemonFipsEndpointPeerAddressState {
+    addr: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    seen_at_ms: Option<u64>,
+    priority: u8,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
