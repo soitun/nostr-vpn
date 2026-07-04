@@ -35,8 +35,12 @@ just ios-smoke
 ```
 
 The simulator smoke verifies build, install, launch, and screenshot capture. Use
-`NVPN_IOS_DEVICE=<device-id> just ios-smoke-device` for the physical-device VPN
-permission and Packet Tunnel path; keep local device identifiers out of git.
+`NVPN_IOS_DEVICE=<device-id> just ios-smoke-device` or
+`scripts/mobile-ios-smoke.sh device --device <device-id> --vpn-cycle --create-network`
+for the physical-device VPN permission and Packet Tunnel path; keep local device
+identifiers out of git. A passing physical VPN cycle asks the debug app to
+disconnect afterwards unless `--leave-vpn-active` is set. The packet probe target,
+port, count, and wait can be overridden with `NVPN_IOS_TUN_PACKET_PROBE_*`.
 
 The native shell includes SwiftUI state/action surfaces, invite QR,
 copy/share/import, roster, routing, settings, diagnostics, deep links, app icon,

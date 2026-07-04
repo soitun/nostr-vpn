@@ -419,7 +419,7 @@ final class AppModel: ObservableObject {
         if let status = await vpnController.statusRawValue() {
             result["packetTunnelStatusRawValue"] = status
             if status == 3 {
-                for (key, value) in await runDebugTunPacketProbe() {
+                for (key, value) in await runDebugTunPacketProbe(arguments: arguments) {
                     result[key] = value
                 }
             }
@@ -531,11 +531,34 @@ final class AppModel: ObservableObject {
         return result
     }
 
-    private func runDebugTunPacketProbe() async -> [String: Any] {
-        let target = "10.44.255.254"
-        let port: UInt16 = 9
-        let packetCount = 4
-        let waitSeconds = 6.0
+    private func runDebugTunPacketProbe(arguments: [String]) async -> [String: Any] {
+        let requestedTarget = Self.argumentValue(
+            after: "--nvpn-debug-tun-probe-target",
+            in: arguments
+        )?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let target: String
+        if let requestedTarget, !requestedTarget.isEmpty {
+            target = requestedTarget
+        } else {
+            target = "10.44.255.254"
+        }
+        let port = Self.argumentValue(after: "--nvpn-debug-tun-probe-port", in: arguments)
+            .flatMap(UInt16.init) ?? 9
+        let packetCount = Self.clampedIntArgument(
+            "--nvpn-debug-tun-probe-count",
+            in: arguments,
+            defaultValue: 4,
+            minValue: 1,
+            maxValue: 256
+        )
+        let waitSeconds = Self.clampedDoubleArgument(
+            "--nvpn-debug-tun-probe-wait-seconds",
+            in: arguments,
+            defaultValue: 6.0,
+            minValue: 0.5,
+            maxValue: 60.0
+        )
         let pollIntervalNanoseconds: UInt64 = 100_000_000
         var result: [String: Any] = [
             "tunPacketProbeTarget": target,
@@ -782,12 +805,41 @@ final class AppModel: ObservableObject {
         return arguments[valueIndex]
     }
 
+    nonisolated private static func clampedIntArgument(
+        _ name: String,
+        in arguments: [String],
+        defaultValue: Int,
+        minValue: Int,
+        maxValue: Int
+    ) -> Int {
+        guard let parsed = argumentValue(after: name, in: arguments).flatMap(Int.init) else {
+            return defaultValue
+        }
+        return min(max(parsed, minValue), maxValue)
+    }
+
+    nonisolated private static func clampedDoubleArgument(
+        _ name: String,
+        in arguments: [String],
+        defaultValue: Double,
+        minValue: Double,
+        maxValue: Double
+    ) -> Double {
+        guard let parsed = argumentValue(after: name, in: arguments).flatMap(Double.init),
+              parsed.isFinite
+        else {
+            return defaultValue
+        }
+        return min(max(parsed, minValue), maxValue)
+    }
+
     nonisolated private static func redactedDebugArguments(_ arguments: [String]) -> [String] {
         let sensitiveFlags = [
             "--nvpn-debug-import-invite",
             "--nvpn-debug-exit-node",
             "--nvpn-debug-fetch-url",
             "--nvpn-debug-result",
+            "--nvpn-debug-tun-probe-target",
             "--nvpn-debug-wireguard-config-base64",
             "--nvpn-debug-wireguard-config-file",
         ]

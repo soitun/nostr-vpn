@@ -26,19 +26,30 @@ VPN_START_WAIT_SECS="${NVPN_IOS_VPN_START_WAIT_SECS:-12}"
 VPN_RESULT_WAIT_SECS="${NVPN_IOS_VPN_RESULT_WAIT_SECS:-4}"
 VPN_RESULT_NAME="${NVPN_IOS_VPN_RESULT_NAME:-mobile-ios-smoke-vpn-$$.json}"
 VPN_RESULT_DIR="${NVPN_IOS_RESULT_DIR:-$ROOT/artifacts/mobile-ios}"
+TUN_PACKET_PROBE_TARGET="${NVPN_IOS_TUN_PACKET_PROBE_TARGET:-10.44.255.254}"
+TUN_PACKET_PROBE_PORT="${NVPN_IOS_TUN_PACKET_PROBE_PORT:-9}"
+TUN_PACKET_PROBE_COUNT="${NVPN_IOS_TUN_PACKET_PROBE_COUNT:-4}"
+TUN_PACKET_PROBE_WAIT_SECS="${NVPN_IOS_TUN_PACKET_PROBE_WAIT_SECS:-6}"
+cleanup_after_vpn_cycle="${NVPN_IOS_CLEANUP_AFTER_VPN_CYCLE:-1}"
 SCREENSHOT="$ROOT/artifacts/nostr-vpn-ios.png"
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/mobile-ios-smoke.sh [simulator|device] [--install] [--create-network] [--vpn-cycle]
+usage: scripts/mobile-ios-smoke.sh [simulator|device] [--install] [--create-network] [--vpn-cycle] [--device DEVICE] [--leave-vpn-active]
 
 simulator  Builds, installs, launches, and screenshots the simulator app.
 device     Launches an already installed development build on a physical device.
 --install  Builds and installs the current development-signed iphoneos app
            before launching device mode.
+--device DEVICE
+           Selects the physical device identifier for this run. Equivalent to
+           NVPN_IOS_DEVICE=DEVICE.
 --create-network
            Creates a local debug network before the device VPN cycle, for OS
            Packet Tunnel coverage without peer dataplane coverage.
+--leave-vpn-active
+           Preserve a passing VPN cycle for manual inspection. By default a
+           passing --vpn-cycle asks the debug app to disconnect afterwards.
 
 Physical-device mode requires NVPN_IOS_DEVICE or NVPN_IOS_DEVICE_ID. Values may
 live in .env.mobile.local or shell env. Keep device identifiers and signing
@@ -52,6 +63,11 @@ Device install mode requires Xcode signing access for NVPN_IOS_BUNDLE_ID and
 NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID. Set NVPN_IOS_TEAM_ID in the shell or local
 env file; set NVPN_IOS_ALLOW_PROVISIONING_UPDATES=0 to avoid automatic profile
 updates.
+
+The physical-device packet probe defaults to 4 UDP packets toward the debug
+non-local tunnel probe target. Override with NVPN_IOS_TUN_PACKET_PROBE_TARGET,
+NVPN_IOS_TUN_PACKET_PROBE_PORT, NVPN_IOS_TUN_PACKET_PROBE_COUNT, and
+NVPN_IOS_TUN_PACKET_PROBE_WAIT_SECS.
 EOF
 }
 
@@ -68,6 +84,17 @@ while [[ $# -gt 0 ]]; do
       ;;
     --create-network)
       CREATE_NETWORK=1
+      ;;
+    --device)
+      if [[ $# -lt 2 ]]; then
+        echo "--device requires a value" >&2
+        exit 2
+      fi
+      export NVPN_IOS_DEVICE="$2"
+      shift
+      ;;
+    --leave-vpn-active)
+      cleanup_after_vpn_cycle=0
       ;;
     --vpn-cycle)
       vpn_cycle=1
@@ -331,6 +358,10 @@ run_vpn_cycle() {
     --nvpn-debug-skip-fetch
     --nvpn-debug-wait-seconds "$VPN_START_WAIT_SECS"
     --nvpn-debug-result "$VPN_RESULT_NAME"
+    --nvpn-debug-tun-probe-target "$TUN_PACKET_PROBE_TARGET"
+    --nvpn-debug-tun-probe-port "$TUN_PACKET_PROBE_PORT"
+    --nvpn-debug-tun-probe-count "$TUN_PACKET_PROBE_COUNT"
+    --nvpn-debug-tun-probe-wait-seconds "$TUN_PACKET_PROBE_WAIT_SECS"
   )
   if bool_is_true "$CREATE_NETWORK"; then
     args+=(--nvpn-debug-add-network "$DEBUG_NETWORK_NAME")
@@ -347,6 +378,18 @@ run_vpn_cycle() {
     return 1
   fi
   echo "iOS device VPN probe passed: $result_path"
+  cleanup_ios_vpn_after_pass "$device"
+}
+
+cleanup_ios_vpn_after_pass() {
+  local device="$1"
+  bool_is_true "$cleanup_after_vpn_cycle" || return 0
+  if ! launch_device "$device" --nvpn-disconnect >/dev/null; then
+    echo "iOS VPN cleanup failed: debug disconnect launch failed" >&2
+    return 1
+  fi
+  sleep 2
+  echo "iOS VPN cleanup requested: debug disconnect launched"
 }
 
 run_device() {
