@@ -1206,6 +1206,8 @@ write_selected_pair_json() {
       and (($peer.fips_transport_type // "") == "udp")
       and (($peer.fips_transport_addr // "") | startswith($underlay + ":"))
       and (($peer.runtime_endpoint // "") == ($peer.fips_transport_addr // ""))
+      and (($peer.last_fips_seen_at // null) != null)
+      and (($peer.last_handshake_at // null) != null)
       and ((($peer.fips_last_outbound_route // "") == "") or (($peer.fips_last_outbound_route // "") == "direct"));
     def peer_summary($peer):
       if $peer == null then null else
@@ -1247,8 +1249,8 @@ write_selected_pair_json() {
       reason((($l.daemon.state.local_endpoint // "") | startswith($linux_underlay + ":")); "Linux local FIPS endpoint is not on the selected Linux underlay"),
       reason(($win_matches | length) == 1; "Windows status must have exactly one peer whose FIPS transport is the Linux underlay"),
       reason(($lin_matches | length) == 1; "Linux status must have exactly one peer whose FIPS transport is the Windows underlay"),
-      reason(direct_peer($windows_view_peer; $linux_underlay); "Windows-selected Linux peer is not reachable direct UDP to the Linux underlay"),
-      reason(direct_peer($linux_view_peer; $windows_underlay); "Linux-selected Windows peer is not reachable direct UDP to the Windows underlay"),
+      reason(direct_peer($windows_view_peer; $linux_underlay); "Windows-selected Linux peer is not an authenticated direct FIPS UDP link to the Linux underlay"),
+      reason(direct_peer($linux_view_peer; $windows_underlay); "Linux-selected Windows peer is not an authenticated direct FIPS UDP link to the Windows underlay"),
       reason(($linux_tunnel != "" and $windows_tunnel != "" and $linux_tunnel != $windows_tunnel); "selected peer tunnel IPs must be present and distinct")
     ]) as $reasons |
     {
