@@ -4,7 +4,7 @@ struct PaidExitArgs {
     command: PaidExitCommand,
 }
 
-const DEFAULT_FIPS_PEER_RATING_CONTEXT: &str = "fips.peer";
+const DEFAULT_FIPS_PEER_RATING_SCOPE: &str = "fips.peer";
 
 #[derive(Debug, Subcommand)]
 enum PaidExitCommand {
@@ -179,9 +179,13 @@ struct PaidExitDiscoverArgs {
     /// FIPS peer ratings JSON exported by `fipsctl ratings export`.
     #[arg(long = "fips-peer-ratings", value_name = "PATH")]
     fips_peer_ratings: Option<PathBuf>,
-    /// Rating context to read from the ratings file.
-    #[arg(long = "rating-context", default_value = DEFAULT_FIPS_PEER_RATING_CONTEXT)]
-    rating_context: String,
+    /// Rating scope to read from the ratings file.
+    #[arg(
+        long = "rating-scope",
+        alias = "rating-context",
+        default_value = DEFAULT_FIPS_PEER_RATING_SCOPE
+    )]
+    rating_scope: String,
     #[arg(long)]
     json: bool,
 }
@@ -2264,7 +2268,7 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
     let rating_scores = args
         .fips_peer_ratings
         .as_deref()
-        .map(|path| load_paid_exit_rating_scores(path, &args.rating_context))
+        .map(|path| load_paid_exit_rating_scores(path, &args.rating_scope))
         .transpose()?;
     let since_unix = if args.since_secs == 0 {
         None
@@ -2297,7 +2301,7 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
                 "stored_count": stored_count,
                 "ratings": args.fips_peer_ratings.as_ref().map(|path| json!({
                     "path": path.display().to_string(),
-                    "context": args.rating_context,
+                    "scope": args.rating_scope,
                     "subject_count": rating_scores.as_ref().map_or(0, HashMap::len),
                 })),
             }))?
@@ -2308,9 +2312,9 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
         if let (Some(path), Some(scores)) = (args.fips_peer_ratings.as_ref(), rating_scores.as_ref())
         {
             println!(
-                "ratings: {} context={} subjects={}",
+                "ratings: {} scope={} subjects={}",
                 path.display(),
-                args.rating_context,
+                args.rating_scope,
                 scores.len()
             );
         }
@@ -5173,22 +5177,22 @@ struct PaidExitRatingScore {
 
 fn load_paid_exit_rating_scores(
     path: &Path,
-    context: &str,
+    scope: &str,
 ) -> Result<HashMap<String, PaidExitRatingScore>> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("failed to read paid exit ratings {}", path.display()))?;
     let value: serde_json::Value = serde_json::from_str(&content)
         .with_context(|| format!("failed to parse paid exit ratings {}", path.display()))?;
-    paid_exit_rating_scores_from_value(&value, context)
+    paid_exit_rating_scores_from_value(&value, scope)
 }
 
 fn paid_exit_rating_scores_from_value(
     value: &serde_json::Value,
-    context: &str,
+    scope: &str,
 ) -> Result<HashMap<String, PaidExitRatingScore>> {
     let mut scores: HashMap<String, PaidExitRatingScore> = HashMap::new();
     for rating in paid_exit_rating_records(value)? {
-        if !paid_exit_rating_matches_context(rating, context) {
+        if !paid_exit_rating_matches_scope(rating, scope) {
             continue;
         }
         let subject = paid_exit_rating_string_field(rating, "subject")?;
@@ -5221,13 +5225,14 @@ fn paid_exit_rating_records(value: &serde_json::Value) -> Result<&[serde_json::V
         .ok_or_else(|| anyhow!("ratings JSON must be an array or an object with a ratings array"))
 }
 
-fn paid_exit_rating_matches_context(rating: &serde_json::Value, expected_context: &str) -> bool {
-    let expected_context = expected_context.trim();
-    expected_context.is_empty()
+fn paid_exit_rating_matches_scope(rating: &serde_json::Value, expected_scope: &str) -> bool {
+    let expected_scope = expected_scope.trim();
+    expected_scope.is_empty()
         || rating
-            .get("context")
+            .get("scope")
+            .or_else(|| rating.get("context"))
             .and_then(|value| value.as_str())
-            .is_some_and(|context| context.trim() == expected_context)
+            .is_some_and(|scope| scope.trim() == expected_scope)
 }
 
 fn paid_exit_rating_string_field(rating: &serde_json::Value, key: &str) -> Result<String> {
@@ -5395,14 +5400,14 @@ mod paid_exit_rating_tests {
     use super::*;
 
     #[test]
-    fn rating_scores_use_context_and_newest_record() {
+    fn rating_scores_use_scope_and_newest_record() {
         let ratings = json!({
             "ratings": [
                 {
                     "id": "old",
                     "rater": "npub1local",
                     "subject": "npub1peer",
-                    "context": "fips.peer",
+                    "scope": "fips.peer",
                     "rating": 90,
                     "min_rating": 0,
                     "max_rating": 100,
@@ -5412,7 +5417,7 @@ mod paid_exit_rating_tests {
                     "id": "other-context",
                     "rater": "npub1local",
                     "subject": "npub1ignored",
-                    "context": "other",
+                    "scope": "other",
                     "rating": 100,
                     "min_rating": 0,
                     "max_rating": 100,
@@ -5422,7 +5427,7 @@ mod paid_exit_rating_tests {
                     "id": "new",
                     "rater": "npub1local",
                     "subject": "npub1peer",
-                    "context": "fips.peer",
+                    "scope": "fips.peer",
                     "rating": 20,
                     "min_rating": 0,
                     "max_rating": 100,
@@ -5441,6 +5446,32 @@ mod paid_exit_rating_tests {
             })
         );
         assert!(!scores.contains_key("npub1ignored"));
+    }
+
+    #[test]
+    fn rating_scores_accept_legacy_context_field() {
+        let ratings = json!({
+            "ratings": [{
+                "id": "legacy",
+                "rater": "npub1local",
+                "subject": "npub1peer",
+                "context": "fips.peer",
+                "rating": 75,
+                "min_rating": 0,
+                "max_rating": 100,
+                "created_at": 10
+            }]
+        });
+
+        let scores = paid_exit_rating_scores_from_value(&ratings, "fips.peer").unwrap();
+
+        assert_eq!(
+            scores.get("npub1peer"),
+            Some(&PaidExitRatingScore {
+                score: 50,
+                created_at: 10,
+            })
+        );
     }
 
     #[test]
