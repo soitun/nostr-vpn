@@ -270,13 +270,6 @@ impl FipsPrivateTunnelConfig {
         ips
     }
 
-    fn interface_route_targets(&self) -> Vec<String> {
-        let mut targets = self.route_targets.clone();
-        targets.sort();
-        targets.dedup();
-        targets
-    }
-
     #[cfg(any(target_os = "linux", target_os = "macos", test))]
     fn endpoint_hint_ipv4_hosts(&self) -> Vec<Ipv4Addr> {
         let mut hosts = self
@@ -383,7 +376,6 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     mesh: Arc<FipsPrivateMeshRuntime>,
     config: FipsPrivateTunnelConfig,
     _tun: Arc<SystemTun>,
-    tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
     fips_host: Option<crate::fips_host_tunnel::FipsHostTunnelRuntime>,
     tun_send_worker: FipsTunSendWorker,
     mesh_recv_worker: FipsMeshRecvWorker,

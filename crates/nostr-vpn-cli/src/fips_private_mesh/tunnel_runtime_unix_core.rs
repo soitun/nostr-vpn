@@ -45,25 +45,17 @@ impl FipsPrivateTunnelRuntime {
                 .context("failed to set FIPS tunnel nonblocking")?,
         );
         let iface = tun.name().context("failed to read FIPS tunnel name")?;
-        let tun_fd = Arc::new(
-            AsyncFd::with_interest(
-                BorrowedTunFd::new(tun.as_raw_fd(), tun.vnet_hdr()),
-                Interest::WRITABLE,
-            )
-            .context("failed to register FIPS tunnel fd with reactor")?,
-        );
+        let tun_fd = BorrowedTunFd::new(tun.as_raw_fd(), tun.vnet_hdr());
 
         let (event_tx, event_rx) = mpsc::channel::<FipsPrivateMeshEvent>(1024);
         let tun_send_worker = spawn_tun_send_worker(Arc::clone(&tun), Arc::clone(&mesh));
-        let mesh_recv_worker =
-            spawn_mesh_recv_worker(Arc::clone(&mesh), Arc::clone(&tun_fd), event_tx);
+        let mesh_recv_worker = spawn_mesh_recv_worker(Arc::clone(&mesh), tun_fd, event_tx);
 
         let mut runtime = Self {
             iface,
             mesh,
             config: config.clone(),
             _tun: tun,
-            tun_fd,
             fips_host: None,
             tun_send_worker,
             mesh_recv_worker,

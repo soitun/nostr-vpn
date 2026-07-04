@@ -126,6 +126,7 @@ fn tunnel_mtu_for_underlay(underlay_udp_mtu: u16) -> u16 {
         .max(MESH_MIN_TUNNEL_MTU)
 }
 
+#[cfg(target_os = "linux")]
 fn exit_node_ipv4_mss_clamp(tunnel_mtu: u16) -> u16 {
     tunnel_mtu.saturating_sub(40).max(536)
 }

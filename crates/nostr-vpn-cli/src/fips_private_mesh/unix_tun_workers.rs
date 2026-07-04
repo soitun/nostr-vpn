@@ -174,7 +174,7 @@ fn partition_local_tun_pipeline_packets(
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn spawn_mesh_recv_worker(
     mesh: Arc<FipsPrivateMeshRuntime>,
-    tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
+    tun_fd: BorrowedTunFd,
     event_tx: mpsc::Sender<FipsPrivateMeshEvent>,
 ) -> FipsMeshRecvWorker {
     spawn_blocking_mesh_recv_worker(mesh, tun_fd, event_tx)
@@ -193,11 +193,10 @@ async fn stop_mesh_recv_worker(worker: FipsMeshRecvWorker, mesh: &FipsPrivateMes
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn spawn_blocking_mesh_recv_worker(
     mesh: Arc<FipsPrivateMeshRuntime>,
-    tun_fd: Arc<AsyncFd<BorrowedTunFd>>,
+    tun_fd: BorrowedTunFd,
     event_tx: mpsc::Sender<FipsPrivateMeshEvent>,
 ) -> FipsMeshRecvWorker {
     let stop = Arc::new(AtomicBool::new(false));
-    let tun_fd = *tun_fd.get_ref();
     let thread_stop = Arc::clone(&stop);
     let thread = std::thread::Builder::new()
         .name("nvpn-fips-mesh-recv".to_string())

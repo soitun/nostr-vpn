@@ -57,14 +57,12 @@ use std::sync::{Mutex, RwLock};
 use std::thread::{self, JoinHandle as ThreadJoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use tokio::io::Interest;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use tokio::io::unix::AsyncFd;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use tokio::sync::mpsc;
 
 const FIPS_PEER_ONLINE_GRACE_SECS: u64 = 20;
 const FIPS_PEER_MAX_FUTURE_SKEW_SECS: u64 = 2;
+#[cfg(test)]
 const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 const FIPS_LAN_DISCOVERY_SCOPE_PREFIX: &str = "nostr-vpn";
 const FIPS_PEER_CAPS_GRACE_SECS: u64 = 600;
@@ -92,14 +90,6 @@ const FIPS_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 5;
 const FIPS_PEER_LINK_PING_INTERVAL_SECS: u64 = 5;
 const FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 30;
 const FIPS_PEER_PING_MAX_PER_TICK: usize = 2;
-const FIPS_CONTROL_SEND_TIMEOUT_SECS: u64 = 5;
-const FIPS_PAID_ROUTE_USAGE_FLUSH_INTERVAL_MS: u64 = 1_000;
-const FIPS_PAID_ROUTE_USAGE_FLUSH_PACKET_THRESHOLD: u64 = 64;
-const FIPS_PAID_ROUTE_USAGE_FLUSH_BYTE_THRESHOLD: u64 = 64 * 1024;
-const FIPS_PAID_ROUTE_PAYMENT_RECEIVE_LIMIT: usize = 100;
-const FIPS_PAID_ROUTE_PAYMENT_RECEIVE_SINCE_SECS: u64 = 3_600;
-const FIPS_PAID_ROUTE_PAYMENT_RECEIVER_RETRY_SECS: u64 = 5;
-const FIPS_PAID_ROUTE_PAYMENT_SEEN_MAX: usize = 4096;
 const FIPS_CONTROL_RTT_MAX_ACCEPT_MS: u128 = 10_000;
 const MESH_LAN_UNDERLAY_UDP_MTU: u16 = 1452;
 const MESH_LAN_TUNNEL_MTU: u16 = 1322;

@@ -82,42 +82,9 @@ impl FipsPrivateMeshRuntime {
         })
     }
 
-    pub(crate) fn npub(&self) -> &str {
-        self.endpoint.npub()
-    }
-
     pub(crate) async fn send_tunnel_packet(&self, packet: &[u8]) -> Result<bool> {
         let mesh = self.mesh.load();
         let Some(outgoing) = mesh.route_outbound_packet_with_peer(packet) else {
-            return Ok(false);
-        };
-        let bytes_len = outgoing.bytes.len();
-        #[cfg(feature = "paid-exit")]
-        self.note_paid_route_outbound_packet(
-            Some(outgoing.participant_pubkey),
-            outgoing.participant_pubkey_bytes,
-            &outgoing.bytes,
-        )?;
-
-        self.send_endpoint_data(
-            outgoing.participant_pubkey,
-            outgoing.participant_pubkey_bytes,
-            outgoing.endpoint_node_addr,
-            outgoing.bytes,
-        )
-        .await
-        .context("failed to send private packet over FIPS endpoint data")?;
-        self.note_tx(
-            Some(outgoing.participant_pubkey),
-            outgoing.participant_pubkey_bytes,
-            bytes_len,
-        )?;
-        Ok(true)
-    }
-
-    pub(crate) async fn send_tunnel_packet_owned(&self, packet: Vec<u8>) -> Result<bool> {
-        let mesh = self.mesh.load();
-        let Some(outgoing) = mesh.route_outbound_packet_owned_with_peer(packet) else {
             return Ok(false);
         };
         let bytes_len = outgoing.bytes.len();
