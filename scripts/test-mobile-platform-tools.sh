@@ -20,9 +20,11 @@ make_fips_fixture() {
 assert_failed_run_restores_lock() {
   local label="$1"
   shift
-  local snapshot out rc
-  snapshot="$(mktemp)"
-  cp -p "$ROOT/Cargo.lock" "$snapshot"
+  local lock_snapshot manifest_snapshot out rc
+  lock_snapshot="$(mktemp)"
+  manifest_snapshot="$(mktemp)"
+  cp -p "$ROOT/Cargo.lock" "$lock_snapshot"
+  cp -p "$ROOT/Cargo.toml" "$manifest_snapshot"
 
   set +e
   out="$("$@" 2>&1)"
@@ -30,19 +32,27 @@ assert_failed_run_restores_lock() {
   set -e
 
   if (( rc == 0 )); then
-    rm -f "$snapshot"
+    rm -f "$lock_snapshot" "$manifest_snapshot"
     printf '%s\n' "$out" >&2
     fail "$label unexpectedly passed"
   fi
-  if ! cmp -s "$snapshot" "$ROOT/Cargo.lock"; then
-    cp -p "$snapshot" "$ROOT/Cargo.lock"
-    rm -f "$snapshot"
+  if ! cmp -s "$lock_snapshot" "$ROOT/Cargo.lock"; then
+    cp -p "$lock_snapshot" "$ROOT/Cargo.lock"
+    rm -f "$lock_snapshot" "$manifest_snapshot"
     printf '%s\n' "$out" >&2
     fail "$label left Cargo.lock modified"
   fi
-  rm -f "$snapshot"
+  if ! cmp -s "$manifest_snapshot" "$ROOT/Cargo.toml"; then
+    cp -p "$manifest_snapshot" "$ROOT/Cargo.toml"
+    rm -f "$lock_snapshot" "$manifest_snapshot"
+    printf '%s\n' "$out" >&2
+    fail "$label left Cargo.toml modified"
+  fi
+  rm -f "$lock_snapshot" "$manifest_snapshot"
   grep -Fq 'restored Cargo.lock after local-FIPS cargo run' <<<"$out" \
     || fail "$label did not report Cargo.lock restore"
+  grep -Fq 'restored Cargo.toml after local-FIPS cargo run' <<<"$out" \
+    || fail "$label did not report Cargo.toml restore"
 }
 
 test_run_ios_restores_lock_after_failed_local_fips_cargo() {

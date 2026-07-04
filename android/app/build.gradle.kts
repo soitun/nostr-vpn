@@ -8,22 +8,6 @@ import org.gradle.api.tasks.Exec
 
 val repoRoot = layout.projectDirectory.dir("../..")
 val rustOutputDir = layout.projectDirectory.dir("src/main/jniLibs")
-
-fun localFipsCargoConfigArgs(): List<String> {
-    val fipsPath = System.getenv("NVPN_FIPS_REPO_PATH")?.takeIf { it.isNotBlank() } ?: return emptyList()
-    val fipsRoot = file(fipsPath)
-    val crateNames = listOf("fips-core", "fips-endpoint", "fips-identity")
-    crateNames.forEach { crateName ->
-        val crateDir = fipsRoot.resolve("crates/$crateName")
-        require(crateDir.isDirectory) {
-            "NVPN_FIPS_REPO_PATH must point at a fips checkout with $crateName"
-        }
-    }
-    return crateNames.flatMap { crateName ->
-        val crateDir = fipsRoot.resolve("crates/$crateName").absolutePath
-        listOf("--config", "patch.crates-io.$crateName.path=\"$crateDir\"")
-    }
-}
 val releaseStoreFile = providers.environmentVariable("ANDROID_KEYSTORE_PATH")
 val releaseStorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD")
 val releaseKeyAlias = providers.environmentVariable("ANDROID_KEY_ALIAS")
@@ -125,9 +109,7 @@ tasks.register<Exec>("buildRustArm64") {
                 "--output-dir",
                 rustOutputDir.asFile.absolutePath,
                 "build",
-            ) +
-            localFipsCargoConfigArgs() +
-            listOf(
+            ) + listOf(
                 "--package",
                 "nostr-vpn-app-core",
                 "--release",

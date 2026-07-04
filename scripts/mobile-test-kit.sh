@@ -26,8 +26,9 @@ requires tunPacketsRead to increase after a small shell ping burst; disable only
 for device images without ping via NVPN_ANDROID_TUN_PACKET_PROBE=0.
 
 Set NVPN_FIPS_REPO_PATH=/path/to/fips when testing mobile Rust code against
-unreleased local FIPS crates. Cargo.lock is restored after local-FIPS cargo
-runs so platform iteration does not leave lockfile churn behind.
+unreleased local FIPS crates. Cargo.toml and Cargo.lock are restored after
+local-FIPS cargo runs so platform iteration does not leave workspace churn
+behind.
 
 Simulator mode verifies app build/install/launch. Real VPN dataplane checks
 need physical devices; first-run OS VPN permission prompts may require a manual
@@ -36,7 +37,7 @@ EOF
 }
 
 LOCK_SNAPSHOT=""
-cargo_config_args=()
+MANIFEST_SNAPSHOT=""
 
 fail() {
   printf 'mobile test kit failed: %s\n' "$*" >&2
@@ -50,12 +51,20 @@ restore_lock() {
       printf 'restored Cargo.lock after local-FIPS cargo run\n'
     fi
   fi
+  if [[ -n "$MANIFEST_SNAPSHOT" && -f "$MANIFEST_SNAPSHOT" && -f "$ROOT/Cargo.toml" ]]; then
+    if ! cmp -s "$MANIFEST_SNAPSHOT" "$ROOT/Cargo.toml"; then
+      cp -p "$MANIFEST_SNAPSHOT" "$ROOT/Cargo.toml"
+      printf 'restored Cargo.toml after local-FIPS cargo run\n'
+    fi
+  fi
 }
 
 prepare_lock_restore() {
   [[ -z "$LOCK_SNAPSHOT" ]] || return 0
   LOCK_SNAPSHOT="$(mktemp)"
+  MANIFEST_SNAPSHOT="$(mktemp)"
   cp -p "$ROOT/Cargo.lock" "$LOCK_SNAPSHOT"
+  cp -p "$ROOT/Cargo.toml" "$MANIFEST_SNAPSHOT"
   trap restore_lock EXIT
 }
 
@@ -68,28 +77,26 @@ validated_fips_repo_path() {
   printf '%s\n' "$fips_path"
 }
 
-prepare_cargo_config() {
-  cargo_config_args=()
+prepare_local_fips_manifest() {
   if [[ -n "${NVPN_FIPS_REPO_PATH:-}" ]]; then
     local fips_path
     fips_path="$(validated_fips_repo_path)"
     prepare_lock_restore
-    cargo_config_args+=(
-      --config "patch.crates-io.fips-core.path=\"$fips_path/crates/fips-core\""
-      --config "patch.crates-io.fips-endpoint.path=\"$fips_path/crates/fips-endpoint\""
-      --config "patch.crates-io.fips-identity.path=\"$fips_path/crates/fips-identity\""
-    )
+    NVPN_LOCAL_FIPS_CORE_PATH="$fips_path/crates/fips-core" \
+    NVPN_LOCAL_FIPS_ENDPOINT_PATH="$fips_path/crates/fips-endpoint" \
+    NVPN_LOCAL_FIPS_IDENTITY_PATH="$fips_path/crates/fips-identity" \
+      perl -0pi -e '
+        s#fips-core = \{ version = "([^"]+)", path = "[^"]*" \}#fips-core = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_CORE_PATH}" }#;
+        s#fips-endpoint = \{ version = "([^"]+)", path = "[^"]*" \}#fips-endpoint = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_ENDPOINT_PATH}" }#;
+        s#fips-identity = \{ version = "([^"]+)", path = "[^"]*" \}#fips-identity = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_IDENTITY_PATH}" }#;
+      ' "$ROOT/Cargo.toml"
     printf 'using local FIPS crates from %s\n' "$fips_path"
   fi
 }
 
 cargo_test() {
-  prepare_cargo_config
-  if ((${#cargo_config_args[@]})); then
-    (cd "$ROOT" && cargo test "${cargo_config_args[@]}" "$@")
-  else
-    (cd "$ROOT" && cargo test "$@")
-  fi
+  prepare_local_fips_manifest
+  (cd "$ROOT" && cargo test "$@")
 }
 
 run_rust() {
