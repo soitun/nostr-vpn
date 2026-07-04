@@ -78,7 +78,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 #[cfg(feature = "paid-exit")]
 use nostr_sdk::{
     Client,
-    prelude::{Event, Filter, Keys, Kind, RelayPoolNotification, Timestamp, ToBech32},
+    prelude::{
+        Alphabet, Event, Filter, Keys, Kind, RelayPoolNotification, SingleLetterTag, Timestamp,
+        ToBech32,
+    },
 };
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::config::normalize_relay_urls;

@@ -5532,13 +5532,20 @@ fn paid_exit_signed_offer_rating_score(
         .and_then(|offer| rating_scores.get(&offer.seller_npub).copied())
 }
 
-fn paid_exit_rating_fact_filter(limit: usize, since_unix: Option<u64>) -> Filter {
+fn paid_exit_rating_fact_filter(limit: usize, since_unix: Option<u64>, scope: &str) -> Filter {
     let mut filter = Filter::new().kind(Kind::Custom(RATING_FACT_KIND as u16));
     if limit > 0 {
         filter = filter.limit(limit);
     }
     if let Some(since_unix) = since_unix {
         filter = filter.since(Timestamp::from(since_unix));
+    }
+    let scope = scope.trim();
+    if !scope.is_empty() {
+        filter = filter.custom_tag(
+            SingleLetterTag::lowercase(Alphabet::I),
+            scope.to_lowercase(),
+        );
     }
     filter
 }
@@ -5569,7 +5576,7 @@ async fn discover_paid_exit_rating_events_from_relays(
     client
         .subscribe_to(
             relays.to_vec(),
-            paid_exit_rating_fact_filter(limit, since_unix),
+            paid_exit_rating_fact_filter(limit, since_unix, scope),
             None,
         )
         .await
@@ -5942,12 +5949,13 @@ mod paid_exit_rating_tests {
 
     #[test]
     fn rating_fact_filter_targets_rating_kind_and_since() {
-        let filter = paid_exit_rating_fact_filter(25, Some(100));
+        let filter = paid_exit_rating_fact_filter(25, Some(100), "fips.peer");
         let value = serde_json::to_value(filter).unwrap();
 
         assert_eq!(value["kinds"], json!([RATING_FACT_KIND]));
         assert_eq!(value["limit"], 25);
         assert_eq!(value["since"], 100);
+        assert_eq!(value["#i"], json!(["fips.peer"]));
     }
 
     #[test]
