@@ -260,6 +260,16 @@ impl NativeAppRuntime {
         Ok(())
     }
 
+    pub(super) fn buy_best_paid_route_offer(
+        &mut self,
+        mint_url: Option<&str>,
+        channel_capacity_sat: Option<u64>,
+    ) -> Result<()> {
+        let store = load_paid_route_store(&self.paid_route_store_path())?;
+        let offer_key = store.best_rated_offer_key()?;
+        self.buy_paid_route_offer(&offer_key, mint_url, channel_capacity_sat)
+    }
+
     pub(super) fn select_paid_route_session(
         &mut self,
         session_id: &str,

@@ -139,6 +139,10 @@ pub enum NativeAppAction {
         mint_url: Option<String>,
         channel_capacity_sat: Option<u64>,
     },
+    BuyBestPaidRouteOffer {
+        mint_url: Option<String>,
+        channel_capacity_sat: Option<u64>,
+    },
     SelectPaidRouteSession {
         session_id: String,
         connect: bool,
@@ -357,6 +361,20 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<NativeAppAction>(&encoded).expect("parse action"),
             action
+        );
+
+        let best = NativeAppAction::BuyBestPaidRouteOffer {
+            mint_url: Some("https://mint.minibits.cash/Bitcoin".to_string()),
+            channel_capacity_sat: Some(100),
+        };
+        let encoded = serde_json::to_string(&best).expect("serialize best buy");
+        assert_eq!(
+            encoded,
+            r#"{"type":"buy_best_paid_route_offer","mintUrl":"https://mint.minibits.cash/Bitcoin","channelCapacitySat":100}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<NativeAppAction>(&encoded).expect("parse best buy"),
+            best
         );
 
         let select = NativeAppAction::SelectPaidRouteSession {

@@ -198,7 +198,10 @@ struct PaidExitBuyArgs {
     #[arg(long)]
     config: Option<PathBuf>,
     /// Store key, offer id, or seller npub of the paid-exit offer to buy.
-    offer: String,
+    offer: Option<String>,
+    /// Buy the highest-rated stored paid-exit offer; unknown sellers rank as neutral.
+    #[arg(long = "best-rated")]
+    best_rated: bool,
     /// Cashu mint URL to use. Defaults to a compatible wallet/default mint.
     #[arg(long)]
     mint: Option<String>,
@@ -2424,8 +2427,9 @@ fn paid_exit_buy_once(args: PaidExitBuyArgs) -> Result<PaidExitBuyResult> {
         .context("failed to encode buyer npub")?;
     let store_path = paid_route_store_file_path(&config_path);
     let mut store = load_paid_route_store(&store_path)?;
+    let offer_selector = paid_exit_buy_offer_selector(&args, &store)?;
     let result = store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
-        offer_selector: args.offer,
+        offer_selector,
         buyer_npub,
         mint_url: args.mint,
         channel_capacity_sat: args.channel_capacity_sat,
@@ -2457,6 +2461,26 @@ fn paid_exit_buy_once(args: PaidExitBuyArgs) -> Result<PaidExitBuyResult> {
         selected_exit_node,
         daemon_reload_attempted,
     })
+}
+
+fn paid_exit_buy_offer_selector(args: &PaidExitBuyArgs, store: &PaidRouteStore) -> Result<String> {
+    match (args.best_rated, args.offer.as_deref()) {
+        (true, Some(_)) => Err(anyhow!(
+            "--best-rated cannot be combined with an explicit paid-exit offer selector"
+        )),
+        (true, None) => store.best_rated_offer_key(),
+        (false, Some(offer)) => {
+            let offer = offer.trim();
+            if offer.is_empty() {
+                Err(anyhow!("paid exit offer selector is empty"))
+            } else {
+                Ok(offer.to_string())
+            }
+        }
+        (false, None) => Err(anyhow!(
+            "paid exit offer selector is required unless --best-rated is supplied"
+        )),
+    }
 }
 
 fn paid_exit_use_command(args: PaidExitUseArgs) -> Result<()> {
@@ -5996,6 +6020,63 @@ mod paid_exit_rating_tests {
     }
 
     #[test]
+    fn buy_best_rated_selector_uses_persisted_offer_scores() {
+        let good = sample_signed_offer("good", 10);
+        let newcomer = sample_signed_offer("newcomer", 20);
+        let bad = sample_signed_offer("bad", 30);
+        let good_offer = good.offer().unwrap();
+        let newcomer_offer = newcomer.offer().unwrap();
+        let bad_offer = bad.offer().unwrap();
+        let good_key = nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
+            &good_offer.seller_npub,
+            &good_offer.offer_id,
+        );
+        let newcomer_key = nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
+            &newcomer_offer.seller_npub,
+            &newcomer_offer.offer_id,
+        );
+        let mut store = PaidRouteStore::default();
+        store
+            .upsert_signed_offer(good, vec!["wss://relay.example".to_string()], 100)
+            .unwrap();
+        store
+            .upsert_signed_offer(newcomer, vec!["wss://relay.example".to_string()], 110)
+            .unwrap();
+        store
+            .upsert_signed_offer(bad, vec!["wss://relay.example".to_string()], 120)
+            .unwrap();
+        assert!(store.upsert_offer_rating_score(&good_offer.seller_npub, 70, 130));
+        assert!(store.upsert_offer_rating_score(&bad_offer.seller_npub, -70, 130));
+        let mut args = sample_buy_args(None, true);
+
+        assert_eq!(
+            paid_exit_buy_offer_selector(&args, &store).unwrap(),
+            good_key
+        );
+
+        assert!(store.upsert_offer_rating_score(&good_offer.seller_npub, -90, 140));
+        assert_eq!(
+            paid_exit_buy_offer_selector(&args, &store).unwrap(),
+            newcomer_key
+        );
+
+        args.offer = Some("manual-offer".to_string());
+        assert!(paid_exit_buy_offer_selector(&args, &store)
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be combined"));
+        assert_eq!(
+            paid_exit_buy_offer_selector(&sample_buy_args(Some("manual-offer"), false), &store)
+                .unwrap(),
+            "manual-offer"
+        );
+        assert!(paid_exit_buy_offer_selector(&sample_buy_args(None, false), &store)
+            .unwrap_err()
+            .to_string()
+            .contains("required unless --best-rated"));
+    }
+
+    #[test]
     fn rating_fact_filter_targets_rating_kind_and_since() {
         let filter = paid_exit_rating_fact_filter(25, Some(100), "fips.peer");
         let value = serde_json::to_value(filter).unwrap();
@@ -6035,6 +6116,20 @@ mod paid_exit_rating_tests {
             "nvpn-paid-exit-{name}-{}-{now}.json",
             std::process::id()
         ))
+    }
+
+    fn sample_buy_args(offer: Option<&str>, best_rated: bool) -> PaidExitBuyArgs {
+        PaidExitBuyArgs {
+            config: None,
+            offer: offer.map(ToOwned::to_owned),
+            best_rated,
+            mint: None,
+            channel_capacity_sat: None,
+            initial_paid_msat: 0,
+            no_select_exit_node: false,
+            no_reload_daemon: false,
+            json: false,
+        }
     }
 
     fn sample_rating_fact_event(

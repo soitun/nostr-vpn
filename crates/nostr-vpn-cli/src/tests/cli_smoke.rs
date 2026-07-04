@@ -90,6 +90,20 @@ fn clap_paid_exit_receive_payments_defaults_to_no_since_filter() {
     assert_eq!(args.since_secs, 0);
 }
 
+#[cfg(feature = "paid-exit")]
+#[test]
+fn clap_paid_exit_buy_supports_best_rated_selector() {
+    let cli = Cli::parse_from(["nvpn", "paid-exit", "buy", "--best-rated"]);
+    let Command::PaidExit(args) = cli.command else {
+        panic!("expected paid-exit command");
+    };
+    let PaidExitCommand::Buy(args) = args.command else {
+        panic!("expected buy command");
+    };
+    assert!(args.best_rated);
+    assert_eq!(args.offer, None);
+}
+
 #[cfg(not(feature = "paid-exit"))]
 #[test]
 fn clap_omits_paid_exit_command_by_default() {

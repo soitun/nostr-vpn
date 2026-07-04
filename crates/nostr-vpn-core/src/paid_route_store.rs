@@ -999,6 +999,21 @@ impl PaidRouteStore {
         Ok(result)
     }
 
+    pub fn best_rated_offer_key(&self) -> Result<String> {
+        self.offers
+            .iter()
+            .max_by(|(left_key, left), (right_key, right)| {
+                paid_route_offer_autoselect_score(left)
+                    .cmp(&paid_route_offer_autoselect_score(right))
+                    .then_with(|| left.last_seen_unix.cmp(&right.last_seen_unix))
+                    .then_with(|| right_key.cmp(left_key))
+            })
+            .map(|(key, _)| key.clone())
+            .ok_or_else(|| {
+                anyhow!("no paid route offers are stored; discover offers before buying")
+            })
+    }
+
     pub fn attach_buyer_spilman_channel(
         &mut self,
         request: AttachPaidRouteBuyerSpilmanChannelRequest,
@@ -2914,6 +2929,10 @@ fn default_version() -> u8 {
 
 fn is_zero(value: &u64) -> bool {
     *value == 0
+}
+
+fn paid_route_offer_autoselect_score(record: &PaidRouteOfferRecord) -> i64 {
+    record.rating_score.unwrap_or_default()
 }
 
 fn normalize_relay_list(values: Vec<String>) -> Vec<String> {
@@ -5880,6 +5899,77 @@ mod tests {
         let record = &store.offers[&key];
         assert_eq!(record.rating_score, Some(-100));
         assert_eq!(record.rating_updated_at_unix, 220);
+    }
+
+    #[test]
+    fn best_rated_offer_key_prefers_good_then_newcomer_over_degraded() {
+        let good_seller = Keys::generate();
+        let newcomer_seller = Keys::generate();
+        let bad_seller = Keys::generate();
+        let good_offer = signed_paid_exit_offer_from_config(
+            "internet-exit",
+            &good_seller,
+            &sample_config(),
+            None,
+            100,
+        )
+        .expect("good offer");
+        let newcomer_offer = signed_paid_exit_offer_from_config(
+            "internet-exit",
+            &newcomer_seller,
+            &sample_config(),
+            None,
+            100,
+        )
+        .expect("newcomer offer");
+        let bad_offer = signed_paid_exit_offer_from_config(
+            "internet-exit",
+            &bad_seller,
+            &sample_config(),
+            None,
+            100,
+        )
+        .expect("bad offer");
+        let good = good_offer.offer().expect("good offer record");
+        let newcomer = newcomer_offer.offer().expect("newcomer offer record");
+        let bad = bad_offer.offer().expect("bad offer record");
+        let good_key = paid_route_offer_store_key(&good.seller_npub, &good.offer_id);
+        let newcomer_key = paid_route_offer_store_key(&newcomer.seller_npub, &newcomer.offer_id);
+        let bad_key = paid_route_offer_store_key(&bad.seller_npub, &bad.offer_id);
+        let mut store = PaidRouteStore::default();
+
+        store
+            .upsert_signed_offer(good_offer, vec!["wss://relay.example".to_string()], 100)
+            .expect("store good");
+        store
+            .upsert_signed_offer(newcomer_offer, vec!["wss://relay.example".to_string()], 110)
+            .expect("store newcomer");
+        store
+            .upsert_signed_offer(bad_offer, vec!["wss://relay.example".to_string()], 120)
+            .expect("store bad");
+        assert!(store.upsert_offer_rating_score(&good.seller_npub, 80, 130));
+        assert!(store.upsert_offer_rating_score(&bad.seller_npub, -80, 130));
+
+        assert_eq!(
+            store.best_rated_offer_key().expect("best rated offer"),
+            good_key
+        );
+
+        assert!(store.upsert_offer_rating_score(&good.seller_npub, -90, 140));
+        assert_eq!(
+            store.best_rated_offer_key().expect("newcomer before bad"),
+            newcomer_key
+        );
+
+        assert!(store.upsert_offer_rating_score(&newcomer.seller_npub, -10, 150));
+        assert_eq!(
+            store.best_rated_offer_key().expect("least bad offer"),
+            newcomer_key
+        );
+        assert_ne!(
+            store.best_rated_offer_key().expect("not worse bad offer"),
+            bad_key
+        );
     }
 
     #[test]

@@ -113,6 +113,14 @@ impl NativeAppRuntime {
         Err(paid_exit_not_built_error())
     }
 
+    fn buy_best_paid_route_offer(
+        &mut self,
+        _mint_url: Option<&str>,
+        _channel_capacity_sat: Option<u64>,
+    ) -> Result<()> {
+        Err(paid_exit_not_built_error())
+    }
+
     fn select_paid_route_session(&mut self, _session_id: &str, _connect: bool) -> Result<()> {
         Err(paid_exit_not_built_error())
     }

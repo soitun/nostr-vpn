@@ -279,6 +279,10 @@ impl NativeAppRuntime {
                 mint_url,
                 channel_capacity_sat,
             } => self.buy_paid_route_offer(&offer_key, mint_url.as_deref(), channel_capacity_sat),
+            NativeAppAction::BuyBestPaidRouteOffer {
+                mint_url,
+                channel_capacity_sat,
+            } => self.buy_best_paid_route_offer(mint_url.as_deref(), channel_capacity_sat),
             NativeAppAction::SelectPaidRouteSession {
                 session_id,
                 connect,
