@@ -5766,11 +5766,19 @@ fn paid_exit_rating_records_from_events(
     events: &[serde_json::Value],
     trusted_authors: &HashSet<String>,
 ) -> Result<Vec<serde_json::Value>> {
-    events
-        .iter()
-        .filter(|event| paid_exit_rating_event_author_is_trusted(event, trusted_authors))
-        .map(paid_exit_rating_record_from_fact_event)
-        .collect()
+    let mut records = Vec::new();
+    for event_value in events {
+        let Ok(event) = paid_exit_verified_rating_fact_event(event_value) else {
+            continue;
+        };
+        if !paid_exit_rating_event_author_is_trusted(&event, trusted_authors) {
+            continue;
+        }
+        if let Ok(record) = paid_exit_rating_record_from_verified_fact_event(&event) {
+            records.push(record);
+        }
+    }
+    Ok(records)
 }
 
 fn paid_exit_trusted_rating_author_set(authors: &[String]) -> Result<HashSet<String>> {
@@ -5792,17 +5800,13 @@ fn paid_exit_normalize_rating_author(author: &str) -> Result<String> {
 }
 
 fn paid_exit_rating_event_author_is_trusted(
-    event_value: &serde_json::Value,
+    event: &Event,
     trusted_authors: &HashSet<String>,
 ) -> bool {
     if trusted_authors.is_empty() {
         return true;
     }
-    event_value
-        .get("pubkey")
-        .and_then(|value| value.as_str())
-        .and_then(|pubkey| paid_exit_normalize_rating_author(pubkey).ok())
-        .is_some_and(|author| trusted_authors.contains(&author))
+    trusted_authors.contains(&event.pubkey.to_hex())
 }
 
 fn paid_exit_rating_record_author_is_trusted(
@@ -5819,22 +5823,24 @@ fn paid_exit_rating_record_author_is_trusted(
         .is_some_and(|author| trusted_authors.contains(&author))
 }
 
-fn paid_exit_rating_record_from_fact_event(event_value: &serde_json::Value) -> Result<serde_json::Value> {
+fn paid_exit_verified_rating_fact_event(event_value: &serde_json::Value) -> Result<Event> {
     let event: Event = serde_json::from_value(event_value.clone())
         .context("rating fact event is not valid Nostr event JSON")?;
     event
         .verify()
         .map_err(|error| anyhow!("rating fact event verification failed: {error}"))?;
-
-    let kind = event_value
-        .get("kind")
-        .and_then(|value| value.as_u64())
-        .ok_or_else(|| anyhow!("rating fact event is missing integer kind"))?;
-    if kind != RATING_FACT_KIND {
+    if event.kind != Kind::Custom(RATING_FACT_KIND as u16) {
         return Err(anyhow!(
-            "rating fact event kind must be {RATING_FACT_KIND}, got {kind}"
+            "rating fact event kind must be {RATING_FACT_KIND}, got {:?}",
+            event.kind
         ));
     }
+    Ok(event)
+}
+
+fn paid_exit_rating_record_from_verified_fact_event(event: &Event) -> Result<serde_json::Value> {
+    let event_value = serde_json::to_value(event).context("failed to encode rating fact event JSON")?;
+    let event_value = &event_value;
 
     let record_type = paid_exit_fact_scalar(event_value, "type")?;
     if record_type != RATING_FACT_TYPE {
@@ -6437,6 +6443,55 @@ mod paid_exit_rating_tests {
             })
         );
         assert!(!scores.contains_key("npub1spampeer"));
+    }
+
+    #[test]
+    fn rating_event_import_skips_spoofed_trusted_pubkey_spam() {
+        let trusted_crawler = Keys::generate();
+        let untrusted_crawler = Keys::generate();
+        let rater = Keys::generate();
+        let rater_npub = rater.public_key().to_bech32().unwrap();
+        let trusted_subject = Keys::generate().public_key().to_bech32().unwrap();
+        let spam_subject = Keys::generate().public_key().to_bech32().unwrap();
+        let trusted = sample_rating_fact_event_signed_by(
+            &trusted_crawler,
+            &rater_npub,
+            &trusted_subject,
+            "fips.peer",
+            90,
+            32,
+        );
+        let mut spoofed = sample_rating_fact_event_signed_by(
+            &untrusted_crawler,
+            &rater_npub,
+            &spam_subject,
+            "fips.peer",
+            100,
+            33,
+        );
+        spoofed["pubkey"] = json!(trusted_crawler.public_key().to_hex());
+        let malformed = json!({
+            "kind": RATING_FACT_KIND,
+            "pubkey": trusted_crawler.public_key().to_hex(),
+        });
+        let trusted_authors =
+            paid_exit_trusted_rating_author_set(&[trusted_crawler.public_key().to_hex()]).unwrap();
+
+        let scores = paid_exit_rating_scores_from_value(
+            &json!({"events": [spoofed, malformed, trusted]}),
+            "fips.peer",
+            &trusted_authors,
+        )
+        .unwrap();
+
+        assert_eq!(
+            scores.get(&trusted_subject),
+            Some(&PaidExitRatingScore {
+                score: 80,
+                created_at: 32,
+            })
+        );
+        assert!(!scores.contains_key(&spam_subject));
     }
 
     #[test]
