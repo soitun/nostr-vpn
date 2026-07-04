@@ -165,6 +165,10 @@ test_validate_backend() {
     "invalid NVPN_WG_HOST_PAIR_THREADS=bad" \
     bash -c 'source "$1"; BACKEND=boringtun; WG_THREADS=bad; validate_backend' \
     bash "$ROOT_DIR/scripts/bench-userspace-wg-host-pair.sh"
+
+  BACKEND=wireguard-go
+  WG_THREADS=bad
+  validate_backend
 }
 
 test_cpu_stress_helpers() {

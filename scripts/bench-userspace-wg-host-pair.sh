@@ -291,7 +291,7 @@ backend_is_supported() {
 
 validate_backend() {
   backend_is_supported || die "unsupported NVPN_WG_HOST_PAIR_BACKEND=$BACKEND; expected boringtun or wireguard-go"
-  if [[ -n "$WG_THREADS" && "$WG_THREADS" != "default" && ! "$WG_THREADS" =~ ^[1-9][0-9]*$ ]]; then
+  if [[ "$BACKEND" == "boringtun" && -n "$WG_THREADS" && "$WG_THREADS" != "default" && ! "$WG_THREADS" =~ ^[1-9][0-9]*$ ]]; then
     die "invalid NVPN_WG_HOST_PAIR_THREADS=$WG_THREADS (expected positive integer or default)"
   fi
 }
