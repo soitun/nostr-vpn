@@ -44,8 +44,9 @@ A WireGuard config can be layered on with
 `NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG(_FILE)`, but it does not create the
 required nvpn network by itself. The command verifies that both `NostrVpnService`
 and an Android VPN network become active after debug connect, then saves the
-runtime-state JSON, Android VPN `ip -s link` counters, and ping-probe output
-under `artifacts/mobile-android`.
+runtime-state JSON, Android VPN `ip -s link` counters, ping-probe output, a
+ping latency/loss summary JSON, and a native TUN counter summary JSON under
+`artifacts/mobile-android`.
 
 The native shell includes state, invite, roster, routing, diagnostics,
 deep-link, VPN permission surfaces, and Android `VpnService` packet handling

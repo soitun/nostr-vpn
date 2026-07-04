@@ -22,6 +22,7 @@ RUNTIME_STATE_RESULT_NAME="${NVPN_ANDROID_RUNTIME_STATE_RESULT_NAME:-mobile-andr
 VPN_LINK_STATS_RESULT_NAME="mobile-android-vpn-link-stats-$$.txt"
 PING_PROBE_RESULT_NAME="mobile-android-ping-probe-$$.txt"
 PING_PROBE_SUMMARY_RESULT_NAME="mobile-android-ping-probe-summary-$$.json"
+TUN_PACKET_PROBE_SUMMARY_RESULT_NAME="mobile-android-tun-probe-summary-$$.json"
 TUN_PACKET_PROBE="${NVPN_ANDROID_TUN_PACKET_PROBE:-1}"
 TUN_PACKET_PROBE_TARGET="${NVPN_ANDROID_TUN_PACKET_PROBE_TARGET:-10.44.255.254}"
 TUN_PACKET_PROBE_COUNT="${NVPN_ANDROID_TUN_PACKET_PROBE_COUNT:-4}"
@@ -74,8 +75,9 @@ captures Android's own VPN interface counters from `ip -s link` or
 By default --vpn-cycle also sends a small shell ping probe toward a non-local
 10.44/16 address and requires tunPacketsRead to increase by at least the probe
 count. The ping output is saved under artifacts/mobile-android so physical peer
-targets preserve loss/jitter evidence. Disable with NVPN_ANDROID_TUN_PACKET_PROBE=0
-if a device image lacks ping.
+targets preserve loss/jitter evidence; a separate TUN counter summary JSON records
+the native packet observation. Disable with NVPN_ANDROID_TUN_PACKET_PROBE=0 if a
+device image lacks ping.
 
 After a successful --vpn-cycle pass, the script disconnects the debug VPN so
 devices are left clean for the next smoke. Use --leave-vpn-active to preserve a
@@ -218,6 +220,10 @@ android_ping_probe_path() {
 
 android_ping_probe_summary_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$PING_PROBE_SUMMARY_RESULT_NAME"
+}
+
+android_tun_packet_probe_summary_path() {
+  printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$TUN_PACKET_PROBE_SUMMARY_RESULT_NAME"
 }
 
 copy_android_runtime_state() {
@@ -495,6 +501,126 @@ print(
 PY
 }
 
+write_android_tun_packet_probe_summary() {
+  local baseline="$1"
+  local current="$2"
+  local required_increase="$3"
+  local baseline_bytes="$4"
+  local current_bytes="$5"
+  local baseline_dropped="$6"
+  local current_dropped="$7"
+  local ping_path="$8"
+  local ping_status="$9"
+  local summary_path
+  summary_path="$(android_tun_packet_probe_summary_path)"
+  python3 - \
+    "$summary_path" \
+    "$TUN_PACKET_PROBE_TARGET" \
+    "$TUN_PACKET_PROBE_TIMEOUT_SECS" \
+    "$baseline" \
+    "$current" \
+    "$required_increase" \
+    "$baseline_bytes" \
+    "$current_bytes" \
+    "$baseline_dropped" \
+    "$current_dropped" \
+    "$ping_path" \
+    "$ping_status" \
+    "$(android_runtime_state_path)" \
+    "$(android_ping_probe_summary_path)" <<'PY'
+import json
+import sys
+
+(
+    summary_path,
+    target,
+    ping_timeout_secs,
+    baseline,
+    current,
+    required_increase,
+    baseline_bytes,
+    current_bytes,
+    baseline_dropped,
+    current_dropped,
+    ping_path,
+    ping_status,
+    runtime_state_path,
+    ping_summary_path,
+) = sys.argv[1:]
+
+def number(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+baseline = number(baseline)
+current = number(current)
+required_increase = number(required_increase)
+baseline_bytes = number(baseline_bytes)
+current_bytes = number(current_bytes)
+baseline_dropped = number(baseline_dropped)
+current_dropped = number(current_dropped)
+ping_status = number(ping_status)
+ping_timeout_secs = number(ping_timeout_secs)
+
+observed = None
+if baseline is not None and current is not None:
+    observed = max(current - baseline, 0)
+
+missing = None
+if required_increase is not None and observed is not None:
+    missing = max(required_increase - observed, 0)
+
+observed_pct = None
+packet_loss_pct = None
+if required_increase and required_increase > 0:
+    if observed is not None:
+        observed_pct = round(observed * 100.0 / required_increase, 3)
+    if missing is not None:
+        packet_loss_pct = round(missing * 100.0 / required_increase, 3)
+
+bytes_delta = None
+if baseline_bytes is not None and current_bytes is not None:
+    bytes_delta = current_bytes - baseline_bytes
+
+dropped_delta = None
+if baseline_dropped is not None and current_dropped is not None:
+    dropped_delta = current_dropped - baseline_dropped
+
+summary = {
+    "target": target,
+    "pingTimeoutSecs": ping_timeout_secs,
+    "pingExitStatus": ping_status,
+    "expected": required_increase,
+    "observed": observed,
+    "missing": missing,
+    "observedPct": observed_pct,
+    "packetLossPct": packet_loss_pct,
+    "baselineRead": baseline,
+    "finalRead": current,
+    "baselineBytesRead": baseline_bytes,
+    "finalBytesRead": current_bytes,
+    "observedBytesRead": bytes_delta,
+    "baselineDropped": baseline_dropped,
+    "finalDropped": current_dropped,
+    "droppedDelta": dropped_delta,
+    "readIncreased": observed is not None
+    and required_increase is not None
+    and observed >= required_increase,
+    "bytesReadIncreased": bytes_delta is not None and bytes_delta > 0,
+    "droppedIncreased": dropped_delta is not None and dropped_delta > 0,
+    "rawPingOutput": ping_path,
+    "pingSummaryOutput": ping_summary_path,
+    "runtimeStateOutput": runtime_state_path,
+}
+with open(summary_path, "w", encoding="utf-8") as fh:
+    json.dump(summary, fh, sort_keys=True, indent=2)
+    fh.write("\n")
+PY
+  printf '%s\n' "$summary_path"
+}
+
 wait_for_android_runtime_state() {
   local start now last_error
   start="$(date +%s)"
@@ -522,7 +648,9 @@ wait_for_tun_packets_read_after() {
   local required_increase="$2"
   local baseline_dropped="$3"
   local baseline_bytes="$4"
-  local start now current current_bytes current_dropped bytes_delta last_error
+  local ping_path="$5"
+  local ping_status="$6"
+  local start now current current_bytes current_dropped bytes_delta summary_path last_error
   start="$(date +%s)"
   last_error=""
   while true; do
@@ -540,7 +668,19 @@ wait_for_tun_packets_read_after() {
           if [[ "$current_bytes" =~ ^[0-9]+$ ]]; then
             bytes_delta="$((current_bytes - baseline_bytes))"
           fi
-          echo "Android TUN packet probe passed: tunPacketsRead $baseline->$current observed=$((current - baseline))/$required_increase tunBytesReadDelta=$bytes_delta tunPacketsDropped=$baseline_dropped->$current_dropped target=$TUN_PACKET_PROBE_TARGET"
+          summary_path="$(
+            write_android_tun_packet_probe_summary \
+              "$baseline" \
+              "$current" \
+              "$required_increase" \
+              "$baseline_bytes" \
+              "$current_bytes" \
+              "$baseline_dropped" \
+              "$current_dropped" \
+              "$ping_path" \
+              "$ping_status"
+          )"
+          echo "Android TUN packet probe passed: tunPacketsRead $baseline->$current observed=$((current - baseline))/$required_increase tunBytesReadDelta=$bytes_delta tunPacketsDropped=$baseline_dropped->$current_dropped target=$TUN_PACKET_PROBE_TARGET summary=$summary_path"
           return 0
         fi
         last_error="tunPacketsRead did not increase enough after probe (baseline=$baseline current=${current:-missing} required=$required_increase tunPacketsDropped=${current_dropped:-missing})"
@@ -578,7 +718,7 @@ run_android_tun_packet_probe() {
     ping_status=$?
   fi
   summarize_android_ping_probe "$ping_path" "$ping_status"
-  if ! wait_for_tun_packets_read_after "$baseline" "$count" "$baseline_dropped" "$baseline_bytes"; then
+  if ! wait_for_tun_packets_read_after "$baseline" "$count" "$baseline_dropped" "$baseline_bytes" "$ping_path" "$ping_status"; then
     return 1
   fi
   capture_android_vpn_link_stats "after-probe"
