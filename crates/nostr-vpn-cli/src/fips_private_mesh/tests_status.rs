@@ -320,8 +320,8 @@
         assert_eq!(
             mtu,
             super::MeshMtu {
-                underlay_udp: 1420,
-                tunnel: 1290,
+                underlay_udp: 1452,
+                tunnel: 1322,
             }
         );
     }
@@ -337,8 +337,8 @@
         assert_eq!(
             mtu,
             super::MeshMtu {
-                underlay_udp: 1420,
-                tunnel: 1290,
+                underlay_udp: 1452,
+                tunnel: 1322,
             }
         );
     }
@@ -608,4 +608,3 @@
 
         assert_eq!(destination.npub(), endpoint_npub);
     }
-
