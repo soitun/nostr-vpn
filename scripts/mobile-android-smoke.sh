@@ -25,6 +25,7 @@ RUNTIME_STATE_RESULT_DIR="${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-andr
 RUNTIME_STATE_RESULT_NAME="${NVPN_ANDROID_RUNTIME_STATE_RESULT_NAME:-mobile-android-runtime-state-$$.json}"
 ANDROID_BUILD_METADATA_RESULT_NAME="${NVPN_ANDROID_BUILD_METADATA_RESULT_NAME:-mobile-android-build-metadata-$$.json}"
 VPN_LINK_STATS_RESULT_NAME="mobile-android-vpn-link-stats-$$.txt"
+VPN_LINK_STATS_SUMMARY_RESULT_NAME="mobile-android-vpn-link-stats-summary-$$.tsv"
 PING_PROBE_RESULT_NAME="mobile-android-ping-probe-$$.txt"
 PING_PROBE_SUMMARY_RESULT_NAME="mobile-android-ping-probe-summary-$$.json"
 TUN_PACKET_PROBE_SUMMARY_RESULT_NAME="mobile-android-tun-probe-summary-$$.json"
@@ -76,7 +77,8 @@ When --vpn-cycle reaches Android's active VPN service/network state, this script
 also copies files/app-core/mobile-runtime-state.json from the debug app sandbox
 and requires fresh Rust runtime state with native TUN counter fields. It also
 captures Android's own VPN interface counters from `ip -s link` or
-`/proc/net/dev` under artifacts/mobile-android.
+`/proc/net/dev` under artifacts/mobile-android, plus normalized link-counter
+summary rows.
 
 By default --vpn-cycle also sends a small shell ping probe toward a non-local
 10.44/16 address and requires tunPacketsRead to increase by at least the probe
@@ -239,6 +241,10 @@ android_build_metadata_path() {
 
 android_vpn_link_stats_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$VPN_LINK_STATS_RESULT_NAME"
+}
+
+android_vpn_link_stats_summary_path() {
+  printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$VPN_LINK_STATS_SUMMARY_RESULT_NAME"
 }
 
 android_ping_probe_path() {
@@ -449,12 +455,14 @@ sys.exit(1)
 capture_android_vpn_link_stats() {
   local label="$1"
   local body captured iface result_path status unavailable_reason source
+  local timestamp
   result_path="$(android_vpn_link_stats_path)"
   body="$(mktemp)"
   captured=0
   status=0
   unavailable_reason=""
   source="ip -s link"
+  timestamp="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
   if ! iface="$(android_vpn_interface_name)"; then
     iface="unknown"
     unavailable_reason="unable to resolve active Android VPN interface"
@@ -494,7 +502,7 @@ capture_android_vpn_link_stats() {
   mkdir -p "$RUNTIME_STATE_RESULT_DIR"
   {
     printf '## label=%s timestamp=%s iface=%s linkStats=%s source=%s\n' \
-      "$label" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$iface" \
+      "$label" "$timestamp" "$iface" \
       "$([[ "$captured" -eq 1 ]] && printf captured || printf unavailable)" "$source"
     if [[ "$captured" -eq 1 ]]; then
       cat "$body"
@@ -506,6 +514,9 @@ capture_android_vpn_link_stats() {
     fi
     printf '\n'
   } >>"$result_path"
+  if [[ "$captured" -eq 1 ]]; then
+    write_android_vpn_link_stats_summary "$label" "$timestamp" "$iface" "$source" "$result_path" "$body"
+  fi
   rm -f "$body"
   if [[ "$captured" -eq 1 ]]; then
     echo "Android VPN link counters captured ($label): $result_path iface=$iface"
@@ -514,6 +525,44 @@ capture_android_vpn_link_stats() {
     echo "Android VPN link counters unavailable ($label): $result_path iface=$iface reason=$unavailable_reason"
     return 1
   fi
+}
+
+write_android_vpn_link_stats_summary() {
+  local label="$1"
+  local timestamp="$2"
+  local iface="$3"
+  local source="$4"
+  local raw_path="$5"
+  local body_path="$6"
+  local summary_path
+  summary_path="$(android_vpn_link_stats_summary_path)"
+  if [[ ! -s "$summary_path" ]]; then
+    printf 'label\ttimestamp\tiface\tsource\tparseStatus\trxBytes\trxPackets\trxDropped\ttxBytes\ttxPackets\ttxDropped\trawOutput\n' >"$summary_path"
+  fi
+  if ! awk -v label="$label" -v timestamp="$timestamp" -v iface="$iface" \
+    -v source="$source" -v raw="$raw_path" '
+      function emit(rx_bytes, rx_packets, rx_dropped, tx_bytes, tx_packets, tx_dropped) {
+        printf "%s\t%s\t%s\t%s\tparsed\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+          label, timestamp, iface, source,
+          rx_bytes, rx_packets, rx_dropped, tx_bytes, tx_packets, tx_dropped, raw
+        found = 1
+      }
+      $1 == iface ":" && NF >= 17 { emit($2, $3, $5, $10, $11, $13); next }
+      $1 == "RX:" { want_rx = 1; next }
+      want_rx && NF >= 4 && $1 ~ /^[0-9]+$/ {
+        rx_bytes = $1; rx_packets = $2; rx_dropped = $4; want_rx = 0; next
+      }
+      $1 == "TX:" { want_tx = 1; next }
+      want_tx && NF >= 4 && $1 ~ /^[0-9]+$/ {
+        emit(rx_bytes, rx_packets, rx_dropped, $1, $2, $4); want_tx = 0; next
+      }
+      END { exit found ? 0 : 1 }
+    ' "$body_path" >>"$summary_path"
+  then
+    printf '%s\t%s\t%s\t%s\tunparsed\t\t\t\t\t\t\t%s\n' \
+      "$label" "$timestamp" "$iface" "$source" "$raw_path" >>"$summary_path"
+  fi
+  echo "Android VPN link counter summary: $summary_path label=$label iface=$iface"
 }
 
 summarize_android_ping_probe() {
@@ -635,6 +684,8 @@ write_android_tun_packet_probe_summary() {
     "$poll_interval_ms" \
     "$(android_runtime_state_path)" \
     "$(android_ping_probe_summary_path)" \
+    "$(android_vpn_link_stats_path)" \
+    "$(android_vpn_link_stats_summary_path)" \
     "$(android_build_metadata_path)" <<'PY'
 import json
 import sys
@@ -658,6 +709,8 @@ import sys
     poll_interval_ms,
     runtime_state_path,
     ping_summary_path,
+    vpn_link_stats_path,
+    vpn_link_stats_summary_path,
     build_metadata_path,
 ) = sys.argv[1:]
 
@@ -733,6 +786,8 @@ summary = {
     "droppedIncreased": dropped_delta is not None and dropped_delta > 0,
     "rawPingOutput": ping_path,
     "pingSummaryOutput": ping_summary_path,
+    "vpnLinkStatsOutput": vpn_link_stats_path,
+    "vpnLinkStatsSummaryOutput": vpn_link_stats_summary_path,
     "runtimeStateOutput": runtime_state_path,
     "buildMetadataOutput": build_metadata_path,
 }

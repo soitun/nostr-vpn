@@ -364,6 +364,15 @@ def write_probe_summary():
             "tunBytesWritten": counter(runtime.get("tunBytesWritten")),
             "tunPacketsDropped": counter(runtime.get("tunPacketsDropped")),
         }
+    for key in (
+        "appBundleIdentifier",
+        "appVersionName",
+        "appVersionCode",
+        "appBuildGitSha",
+        "appBuildTimestampUtc",
+    ):
+        if key in result:
+            values[key] = result[key]
     with open(summary_path, "w", encoding="utf-8") as fh:
         json.dump(values, fh, sort_keys=True, indent=2)
         fh.write("\n")

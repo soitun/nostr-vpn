@@ -25,7 +25,8 @@ Android --vpn-cycle validates the app-private Rust runtime-state file after the
 OS VPN network becomes active; tune with NVPN_ANDROID_RUNTIME_STATE_WAIT_SECS
 or NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS if a slow device needs it. It also
 requires tunPacketsRead to increase after a small shell ping burst; disable only
-for device images without ping via NVPN_ANDROID_TUN_PACKET_PROBE=0.
+for device images without ping via NVPN_ANDROID_TUN_PACKET_PROBE=0. The Android
+artifacts include normalized ping, TUN packet, and VPN link-counter summaries.
 
 Set NVPN_FIPS_REPO_PATH=/path/to/fips when testing mobile Rust code against
 unreleased local FIPS crates. Cargo.toml and Cargo.lock are restored after
