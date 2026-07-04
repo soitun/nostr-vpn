@@ -110,17 +110,20 @@ fn native_tun_read_loop(
     let mut read_packet = Vec::<u8>::with_capacity(packet_capacity);
     'read: loop {
         packets.clear();
-        for _ in 0..MOBILE_FIPS_SEND_BATCH {
+        while packets.len() < MOBILE_FIPS_SEND_BATCH {
             match read_mobile_tun_packet(fd, &mut read_packet) {
                 NativeTunRead::Packet(packet) => {
                     counters.note_read(packet.len());
                     packets.push(packet);
                 }
                 NativeTunRead::WouldBlock => {
-                    if packets.is_empty() && !wait_mobile_tun_fd(fd, libc::POLLIN, &stop) {
+                    if !packets.is_empty() {
+                        break;
+                    }
+                    if !wait_mobile_tun_fd(fd, libc::POLLIN, &stop) {
                         break 'read;
                     }
-                    break;
+                    continue;
                 }
                 NativeTunRead::Stopped => {
                     stop.store(true, Ordering::Relaxed);

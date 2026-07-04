@@ -7,6 +7,7 @@ use std::io::Write;
 #[cfg(test)]
 use std::net::UdpSocket;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+#[cfg(any(target_os = "android", target_os = "ios"))]
 use std::os::raw::c_int;
 use std::path::{Path, PathBuf};
 use std::sync::{

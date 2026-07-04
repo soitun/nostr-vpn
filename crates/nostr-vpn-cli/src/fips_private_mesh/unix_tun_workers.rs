@@ -13,9 +13,6 @@ fn spawn_tun_send_worker(
             let mut send_runs = Vec::new();
             let pipeline_profile_enabled = crate::pipeline_profile::enabled();
             while !thread_stop.load(Ordering::Acquire) {
-                if !wait_fd_readable_blocking(tun_fd.as_raw_fd(), &thread_stop) {
-                    break;
-                }
                 batch.clear();
                 let mut drained = 0;
                 let mut drained_bytes = 0usize;
@@ -56,24 +53,31 @@ fn spawn_tun_send_worker(
                     }
                 }
 
-                if !batch.is_empty() {
-                    if pipeline_profile_enabled {
-                        crate::pipeline_profile::record_tun_read_batch(
-                            batch.len(),
-                            drained_bytes,
-                            FIPS_TUN_READ_BURST,
-                        );
+                if batch.is_empty() {
+                    if sleep_after_error {
+                        std::thread::sleep(Duration::from_millis(100));
+                    } else if !wait_fd_readable_blocking(tun_fd.as_raw_fd(), &thread_stop) {
+                        break;
                     }
-                    let pending =
-                        std::mem::replace(&mut batch, Vec::with_capacity(FIPS_TUN_READ_BURST));
-                    send_mesh_packet_batch_blocking_or_log(
-                        &mesh,
-                        tun_fd,
-                        pending,
-                        &mut send_runs,
-                        &thread_stop,
+                    continue;
+                }
+
+                if pipeline_profile_enabled {
+                    crate::pipeline_profile::record_tun_read_batch(
+                        batch.len(),
+                        drained_bytes,
+                        FIPS_TUN_READ_BURST,
                     );
                 }
+                let pending =
+                    std::mem::replace(&mut batch, Vec::with_capacity(FIPS_TUN_READ_BURST));
+                send_mesh_packet_batch_blocking_or_log(
+                    &mesh,
+                    tun_fd,
+                    pending,
+                    &mut send_runs,
+                    &thread_stop,
+                );
 
                 if sleep_after_error {
                     std::thread::sleep(Duration::from_millis(100));

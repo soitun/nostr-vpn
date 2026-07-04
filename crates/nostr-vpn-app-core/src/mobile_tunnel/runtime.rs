@@ -47,6 +47,7 @@ impl MobileTunnel {
             wg_upstream: started.wg_upstream,
             #[cfg(any(target_os = "android", target_os = "ios"))]
             native_tun: None,
+            #[cfg(target_os = "android")]
             wg_upstream_socket_fd: started.wg_upstream_socket_fd,
         })
     }
@@ -106,6 +107,7 @@ impl MobileTunnel {
         let mut tasks: Vec<JoinHandle<()>> = Vec::new();
         let mut wg_runtime: Option<WgUpstreamRuntime> = None;
         let mut wg_send_tx: Option<tokio_mpsc::Sender<Vec<Vec<u8>>>> = None;
+        #[cfg(target_os = "android")]
         let mut wg_socket_fd: c_int = -1;
         let mut wg_address_ipv4: Option<Ipv4Addr> = None;
         if let Some(wg_config) = config.wireguard_exit.as_ref() {
@@ -117,7 +119,10 @@ impl MobileTunnel {
             let runtime = WgUpstreamRuntime::start_with_channels(wg_config, send_rx, recv_tx)
                 .await
                 .context("failed to start mobile WG runtime")?;
-            wg_socket_fd = runtime.udp_socket_fd();
+            #[cfg(target_os = "android")]
+            {
+                wg_socket_fd = runtime.udp_socket_fd();
+            }
             let upstream = runtime.upstream();
             let handshake = runtime.handshake_observer();
             wg_runtime = Some(runtime);
@@ -428,6 +433,7 @@ impl MobileTunnel {
             inbound_rx,
             tasks,
             wg_upstream: wg_runtime,
+            #[cfg(target_os = "android")]
             wg_upstream_socket_fd: wg_socket_fd,
         })
     }
@@ -437,6 +443,7 @@ impl MobileTunnel {
     /// `protect(fd)` on this so the encrypted UDP escapes the VPN
     /// tun. iOS relies on the resolved upstream route being declared
     /// as an `excludedRoutes` entry at tunnel-establish time instead.
+    #[cfg(target_os = "android")]
     pub(crate) fn wg_upstream_socket_fd(&self) -> c_int {
         self.wg_upstream_socket_fd
     }
@@ -589,6 +596,7 @@ struct MobileTunnelStarted {
     inbound_rx: tokio_mpsc::Receiver<Vec<Vec<u8>>>,
     tasks: Vec<JoinHandle<()>>,
     wg_upstream: Option<WgUpstreamRuntime>,
+    #[cfg(target_os = "android")]
     wg_upstream_socket_fd: c_int,
 }
 

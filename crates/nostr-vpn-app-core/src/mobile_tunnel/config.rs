@@ -502,8 +502,8 @@ pub(crate) struct MobileTunnel {
     wg_upstream: Option<WgUpstreamRuntime>,
     #[cfg(any(target_os = "android", target_os = "ios"))]
     native_tun: Option<NativeTunRuntime>,
-    /// Raw fd of the boringtun UDP socket. On Android the host
-    /// reads this and calls `VpnService.protect(fd)` so the encrypted
-    /// UDP escapes the VPN tun. -1 when WG upstream isn't running.
+    /// Raw fd of the boringtun UDP socket. Android reads this and calls
+    /// `VpnService.protect(fd)` so encrypted UDP escapes the VPN tun.
+    #[cfg(target_os = "android")]
     wg_upstream_socket_fd: c_int,
 }
