@@ -157,6 +157,7 @@ case "${NVPN_WINDOWS_SYNC_PATH_DEPS:-1}" in
   0|false|FALSE|False|no|NO|No|off|OFF|Off)
     ;;
   *)
+    sync_repo "cashu-service" "$SRC_ROOT/cashu-service" "C:\\src\\cashu-service" "C:\\src\\cashu-service.git" "refs/heads/codex/windows-vm-sync-cashu-service"
     sync_repo "nostr-pubsub" "$SRC_ROOT/nostr-pubsub" "C:\\src\\nostr-pubsub" "C:\\src\\nostr-pubsub.git" "refs/heads/codex/windows-vm-sync-nostr-pubsub"
     sync_repo "fips" "$FIPS_REPO" "C:\\src\\fips" "C:\\src\\fips.git" "refs/heads/codex/windows-vm-sync-fips"
     sync_repo "hashtree" "$SRC_ROOT/hashtree" "C:\\src\\hashtree" "C:\\src\\hashtree.git" "refs/heads/codex/windows-vm-sync-hashtree"

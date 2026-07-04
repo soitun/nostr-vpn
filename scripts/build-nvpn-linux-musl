@@ -7,6 +7,8 @@ BUILD_ROOT=${NVPN_LINUX_MUSL_BUILD_ROOT:-${TMPDIR:-/tmp}}
 TARGET_DIR=${NVPN_LINUX_MUSL_TARGET_DIR:-$WORKSPACE/target}
 WORK_DIR=$(mktemp -d "$BUILD_ROOT/nvpn-linux-musl.XXXXXX")
 FIPS_REPO_PATH=${NVPN_FIPS_REPO_PATH:-}
+CASHU_SERVICE_REPO_PATH=${NVPN_CASHU_SERVICE_REPO_PATH:-}
+CDK_SPILMAN_REPO_PATH=${NVPN_CDK_SPILMAN_REPO_PATH:-${NVPN_CASHU_SPILMAN_REPO_PATH:-}}
 DOCKER_ENV=()
 
 source "$WORKSPACE/scripts/release_common.sh"
@@ -71,7 +73,49 @@ if [[ -n "$FIPS_REPO_PATH" ]]; then
     echo "NVPN_FIPS_REPO_PATH does not contain fips-endpoint sources" >&2
     exit 1
   fi
+
+  NVPN_LOCAL_FIPS_CORE_PATH=".fips-patch/crates/fips-core" \
+  NVPN_LOCAL_FIPS_ENDPOINT_PATH=".fips-patch/crates/fips-endpoint" \
+  NVPN_LOCAL_FIPS_IDENTITY_PATH=".fips-patch/crates/fips-identity" \
+    perl -0pi -e '
+      s#fips-core = \{ version = "([^"]+)", path = "[^"]*" \}#fips-core = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_CORE_PATH}" }#;
+      s#fips-endpoint = \{ version = "([^"]+)", path = "[^"]*" \}#fips-endpoint = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_ENDPOINT_PATH}" }#;
+      s#fips-identity = \{ version = "([^"]+)", path = "[^"]*" \}#fips-identity = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_IDENTITY_PATH}" }#;
+    ' "$WORK_DIR/Cargo.toml"
 fi
+
+if [[ -z "$CASHU_SERVICE_REPO_PATH" && -d "$WORKSPACE/../cashu-service/.git" ]]; then
+  CASHU_SERVICE_REPO_PATH="$(cd "$WORKSPACE/../cashu-service" && pwd)"
+fi
+if [[ -n "$CASHU_SERVICE_REPO_PATH" ]]; then
+  CASHU_PATCH_DIR="$WORK_DIR/.cashu-service-patch"
+  mkdir -p "$CASHU_PATCH_DIR"
+  git -C "$CASHU_SERVICE_REPO_PATH" archive --format=tar HEAD | tar -x -C "$CASHU_PATCH_DIR"
+  if [[ ! -f "$CASHU_PATCH_DIR/crates/cashu-service/Cargo.toml" ]]; then
+    echo "NVPN_CASHU_SERVICE_REPO_PATH does not contain cashu-service sources" >&2
+    exit 1
+  fi
+  NVPN_LOCAL_CASHU_SERVICE_PATH=".cashu-service-patch/crates/cashu-service" \
+    perl -0pi -e '
+      s#cashu-service = \{ version = "([^"]+)", path = "[^"]*"(, [^}]*)? \}#cashu-service = { version = "$1", path = "$ENV{NVPN_LOCAL_CASHU_SERVICE_PATH}"$2 }#;
+    ' "$WORK_DIR/Cargo.toml"
+fi
+
+if [[ -z "$CDK_SPILMAN_REPO_PATH" && -d "$WORKSPACE/../cashu_spilman_channels/.git" ]]; then
+  CDK_SPILMAN_REPO_PATH="$(cd "$WORKSPACE/../cashu_spilman_channels" && pwd)"
+fi
+if [[ -n "$CDK_SPILMAN_REPO_PATH" ]]; then
+  CDK_SPILMAN_PATCH_DIR="$WORK_DIR/cashu_spilman_channels"
+  mkdir -p "$CDK_SPILMAN_PATCH_DIR"
+  git -C "$CDK_SPILMAN_REPO_PATH" archive --format=tar HEAD | tar -x -C "$CDK_SPILMAN_PATCH_DIR"
+  if [[ ! -f "$CDK_SPILMAN_PATCH_DIR/crates/cdk-spilman/Cargo.toml" ]]; then
+    echo "NVPN_CDK_SPILMAN_REPO_PATH does not contain cdk-spilman sources" >&2
+    exit 1
+  fi
+fi
+
+perl -0pi -e 's#exclude = \["linux"\]#exclude = ["linux", ".fips-patch", ".cashu-service-patch", "cashu_spilman_channels"]#' \
+  "$WORK_DIR/Cargo.toml"
 
 docker run --rm -i \
   -u "$(id -u):$(id -g)" \
