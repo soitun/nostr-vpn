@@ -150,12 +150,9 @@ fn native_tun_write_loop(
             Ok(packet) => packet,
             Err(_) => break,
         };
-        let packet_len = packet.len();
-        if !write_mobile_tun_packet(fd, &packet, &stop) {
-            counters.note_drop();
+        if !write_native_tun_inbound_packet(fd, &packet, &stop, &counters) {
             break;
         }
-        counters.note_write(packet_len);
         for _ in 1..MOBILE_FIPS_RECV_BATCH {
             if stop.load(Ordering::Relaxed) {
                 break;
@@ -168,21 +165,42 @@ fn native_tun_write_loop(
                     return;
                 }
             };
-            let packet_len = packet.len();
-            if !write_mobile_tun_packet(fd, &packet, &stop) {
-                counters.note_drop();
+            if !write_native_tun_inbound_packet(fd, &packet, &stop, &counters) {
                 stop.store(true, Ordering::Relaxed);
                 return;
             }
-            counters.note_write(packet_len);
         }
     }
     stop.store(true, Ordering::Relaxed);
 }
 
+fn write_native_tun_inbound_packet(
+    fd: c_int,
+    packet: &[u8],
+    stop: &AtomicBool,
+    counters: &MobileTunAtomicCounters,
+) -> bool {
+    let packet_len = packet.len();
+    match write_mobile_tun_packet(fd, packet, stop) {
+        NativeTunWrite::Written => counters.note_write(packet_len),
+        NativeTunWrite::Dropped => counters.note_drop(),
+        NativeTunWrite::Stopped => {
+            counters.note_drop();
+            return false;
+        }
+    }
+    true
+}
+
 enum NativeTunRead {
     Packet(Vec<u8>),
     WouldBlock,
+    Stopped,
+}
+
+enum NativeTunWrite {
+    Written,
+    Dropped,
     Stopped,
 }
 
@@ -252,18 +270,18 @@ fn mobile_tun_payload_len(read_len: usize) -> Option<usize> {
 }
 
 #[cfg(target_os = "android")]
-fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> bool {
+fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> NativeTunWrite {
     if packet.is_empty() {
-        return true;
+        return NativeTunWrite::Dropped;
     }
     while !stop.load(Ordering::Relaxed) {
         let written =
             unsafe { libc::write(fd, packet.as_ptr().cast::<libc::c_void>(), packet.len()) };
         if written == isize::try_from(packet.len()).unwrap_or(-1) {
-            return true;
+            return NativeTunWrite::Written;
         }
         if written >= 0 {
-            return false;
+            return NativeTunWrite::Stopped;
         }
         let error = std::io::Error::last_os_error();
         if mobile_tun_errno_is_interrupted(error.raw_os_error()) {
@@ -274,18 +292,18 @@ fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> bool 
         {
             continue;
         }
-        return false;
+        return NativeTunWrite::Stopped;
     }
-    false
+    NativeTunWrite::Stopped
 }
 
 #[cfg(target_os = "ios")]
-fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> bool {
+fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> NativeTunWrite {
     if packet.is_empty() {
-        return true;
+        return NativeTunWrite::Dropped;
     }
     let Some(header) = ios_utun_packet_header(packet) else {
-        return true;
+        return NativeTunWrite::Dropped;
     };
     while !stop.load(Ordering::Relaxed) {
         let mut iov = [
@@ -300,10 +318,10 @@ fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> bool 
         ];
         let written = unsafe { libc::writev(fd, iov.as_mut_ptr(), iov.len() as c_int) };
         if written == isize::try_from(packet.len() + IOS_UTUN_HEADER_LEN).unwrap_or(-1) {
-            return true;
+            return NativeTunWrite::Written;
         }
         if written >= 0 {
-            return false;
+            return NativeTunWrite::Stopped;
         }
         let error = std::io::Error::last_os_error();
         if mobile_tun_errno_is_interrupted(error.raw_os_error()) {
@@ -314,9 +332,9 @@ fn write_mobile_tun_packet(fd: c_int, packet: &[u8], stop: &AtomicBool) -> bool 
         {
             continue;
         }
-        return false;
+        return NativeTunWrite::Stopped;
     }
-    false
+    NativeTunWrite::Stopped
 }
 
 #[cfg(target_os = "ios")]
