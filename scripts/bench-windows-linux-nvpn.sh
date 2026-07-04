@@ -52,6 +52,7 @@ WINDOWS_DAEMON_LOG_TAIL_LINES="${NVPN_WINLIN_WINDOWS_DAEMON_LOG_TAIL_LINES:-4000
 MESH_MTU_PROFILE="${NVPN_WINLIN_MESH_MTU_PROFILE:-}"
 MESH_UNDERLAY_UDP_MTU="${NVPN_WINLIN_MESH_UNDERLAY_UDP_MTU:-}"
 MESH_TUNNEL_MTU="${NVPN_WINLIN_MESH_TUNNEL_MTU:-}"
+STATIC_DIRECT_HINTS="${NVPN_WINLIN_STATIC_DIRECT_HINTS:-0}"
 
 if [[ -z "$CURRENT_FIPS_REPO" && -d "$ROOT_DIR/../fips/.git" ]]; then
   CURRENT_FIPS_REPO="$(cd "$ROOT_DIR/../fips" && pwd)"
@@ -64,6 +65,8 @@ WINDOWS_FIREWALL_RULE_NAME="nvpn-winlin-perf-$RANDOM-$$"
 WINDOWS_NVPN_FIREWALL_RULE_PREFIX="nvpn-winlin-nvpn-$RANDOM-$$"
 WINDOWS_CONFIG_BACKUP=""
 WINDOWS_CONFIG_BACKUP_HASH=""
+LINUX_CONFIG_BACKUP=""
+LINUX_CONFIG_BACKUP_HASH=""
 LINUX_INSTALLED_BACKUP=""
 LINUX_INSTALLED_BACKUP_HASH=""
 WINDOWS_SERVICE_ENV_APPLIED=0
@@ -158,6 +161,7 @@ Important options:
   NVPN_WINLIN_ALLOW_NON_DIRECT=1          allow non-direct FIPS peer path
   NVPN_WINLIN_RESTORE_INSTALLED=1         restore installed Windows service image at exit
   NVPN_WINLIN_RESTORE_LINUX_INSTALLED=1   restore Linux /usr/local/bin/nvpn from backup at exit
+  NVPN_WINLIN_STATIC_DIRECT_HINTS=1       temporarily seed reciprocal Windows/Linux FIPS endpoint hints
   NVPN_WINLIN_DIRECT_FIPS_CAPTURE=1       capture Linux UDP/51820 during nvpn rows
   NVPN_WINLIN_LINUX_CAPTURE_IFACE=enp1s0  optional capture interface override
   NVPN_WINLIN_WINDOWS_PIPELINE_TRACE=1    enable nvpn pipeline trace on the measured Windows service
@@ -470,6 +474,9 @@ cleanup() {
       fi
     fi
   fi
+  if is_true "$RESTORE_LINUX_INSTALLED" && [[ -n "${LINUX_CONFIG_BACKUP:-}" ]]; then
+    restore_linux_config >/dev/null 2>&1 || true
+  fi
   if [[ "$WINDOWS_SERVICE_ENV_APPLIED" == "1" ]]; then
     clear_windows_service_env >/dev/null 2>&1 || true
   fi
@@ -544,6 +551,44 @@ if (\$service.Status -eq 'Running') {
 } else {
   Start-Service NvpnService
 }"
+}
+
+backup_linux_config() {
+  if ! is_true "$RESTORE_LINUX_INSTALLED" || [[ -z "$LINUX_CONFIG" || -n "$LINUX_CONFIG_BACKUP" ]]; then
+    return 0
+  fi
+  local backup_json="$OUTPUT_DIR/linux-config-backup.json"
+  printf 'backing up Linux config %s\n' "$LINUX_CONFIG" >&2
+  run_linux_sh "set -euo pipefail
+config=$(sh_q "$LINUX_CONFIG")
+backup=\$(mktemp /tmp/nvpn-winlin-config.XXXXXX.toml)
+[[ -f \"\$config\" ]] || { echo \"Linux nvpn config not found: \$config\" >&2; exit 1; }
+cp -p \"\$config\" \"\$backup\"
+sha=\$(sha256sum \"\$backup\" | awk '{print \$1}')
+jq -n --arg config \"\$config\" --arg backup \"\$backup\" --arg sha256 \"\$sha\" '{config:\$config,backup:\$backup,sha256:\$sha256}'" \
+    >"$backup_json"
+  LINUX_CONFIG_BACKUP="$(jq -r '.backup // empty' "$backup_json")"
+  LINUX_CONFIG_BACKUP_HASH="$(jq -r '.sha256 // empty' "$backup_json")"
+  [[ -n "$LINUX_CONFIG_BACKUP" ]] || die "failed to back up Linux config"
+}
+
+restore_linux_config() {
+  [[ -n "$LINUX_CONFIG_BACKUP" && -n "$LINUX_CONFIG" ]] || return 0
+  run_linux_sh "set -euo pipefail
+config=$(sh_q "$LINUX_CONFIG")
+backup=$(sh_q "$LINUX_CONFIG_BACKUP")
+expected=$(sh_q "$LINUX_CONFIG_BACKUP_HASH")
+[[ -f \"\$backup\" ]] || { echo \"Linux nvpn config backup not found: \$backup\" >&2; exit 1; }
+if [[ -n \"\$expected\" ]]; then
+  actual=\$(sha256sum \"\$backup\" | awk '{print \$1}')
+  [[ \"\$actual\" == \"\$expected\" ]] || { echo \"Linux nvpn config backup hash mismatch expected=\$expected actual=\$actual\" >&2; exit 1; }
+fi
+sudo -n cp -p \"\$backup\" \"\$config\"
+if systemctl is-active --quiet nvpn.service; then
+  sudo -n systemctl restart nvpn.service
+else
+  sudo -n systemctl start nvpn.service
+fi"
 }
 
 ensure_windows_service_running() {
@@ -767,6 +812,94 @@ jq -n --slurpfile service \"\$svc\" --slurpfile status \"\$status\" --slurpfile 
   --arg service_hash \"\$service_hash\" \
   --arg process_hash \"\$process_hash\" \
   '{captured_at:\$captured_at,service_status:(\$service[0] // {}),daemon_status:(\$status[0] // {}),process:(\$process[0] // null),binaries:{configured_path:\$service_binary,configured_hash:\$service_hash,process_path:(\$process[0].path // \"\"),process_hash:\$process_hash},adapters:(\$adapters[0] // [])}'" >"$out"
+}
+
+apply_static_direct_hints() {
+  if ! is_true "$STATIC_DIRECT_HINTS"; then
+    return 0
+  fi
+  [[ -n "$WINDOWS_CONFIG" ]] || die "NVPN_WINLIN_STATIC_DIRECT_HINTS requires a resolved Windows config path"
+  [[ -n "$LINUX_CONFIG" ]] || die "NVPN_WINLIN_STATIC_DIRECT_HINTS requires a resolved Linux config path"
+  [[ -n "$WINDOWS_CONFIG_BACKUP" ]] || die "NVPN_WINLIN_STATIC_DIRECT_HINTS requires NVPN_WINLIN_RESTORE_INSTALLED=1 for Windows config backup"
+  [[ -n "$LINUX_CONFIG_BACKUP" ]] || die "NVPN_WINLIN_STATIC_DIRECT_HINTS requires NVPN_WINLIN_RESTORE_LINUX_INSTALLED=1 for Linux config backup"
+
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  capture_windows_snapshot "$tmpdir/windows.json"
+  capture_linux_snapshot "$tmpdir/linux.json"
+  jq '.daemon_status' "$tmpdir/windows.json" >"$tmpdir/windows-status.json"
+  jq '.daemon_status' "$tmpdir/linux.json" >"$tmpdir/linux-status.json"
+
+  local windows_underlay linux_underlay windows_tunnel linux_tunnel windows_peer linux_peer
+  windows_underlay="$(jq -r '.daemon.state.network.primaryIpv4 // empty' "$tmpdir/windows-status.json")"
+  linux_underlay="$(jq -r '.daemon.state.network.primaryIpv4 // empty' "$tmpdir/linux-status.json")"
+  windows_tunnel="$(jq -r '(.tunnel_ip // "") | split("/")[0]' "$tmpdir/windows-status.json")"
+  linux_tunnel="$(jq -r '(.tunnel_ip // "") | split("/")[0]' "$tmpdir/linux-status.json")"
+  [[ -n "$windows_underlay" ]] || die "Windows status missing primary underlay IP for static direct hints"
+  [[ -n "$linux_underlay" ]] || die "Linux status missing primary underlay IP for static direct hints"
+  [[ "$windows_underlay" != "$linux_underlay" ]] || die "Windows/Linux underlay IPs are not distinct for static direct hints"
+  [[ -n "$windows_tunnel" ]] || die "Windows status missing tunnel IP for static direct hints"
+  [[ -n "$linux_tunnel" ]] || die "Linux status missing tunnel IP for static direct hints"
+
+  linux_peer="$(jq -r --arg tunnel "$linux_tunnel" \
+    '[.daemon.state.peers[]? | select(((.tunnel_ip // "") | split("/")[0]) == $tunnel) | .participant_pubkey] | first // empty' \
+    "$tmpdir/windows-status.json")"
+  windows_peer="$(jq -r --arg tunnel "$windows_tunnel" \
+    '[.daemon.state.peers[]? | select(((.tunnel_ip // "") | split("/")[0]) == $tunnel) | .participant_pubkey] | first // empty' \
+    "$tmpdir/linux-status.json")"
+  [[ -n "$linux_peer" ]] || die "Windows status did not expose Linux participant key for static direct hints"
+  [[ -n "$windows_peer" ]] || die "Linux status did not expose Windows participant key for static direct hints"
+
+  local windows_hint linux_hint
+  windows_hint="${linux_peer}=${linux_underlay}:51820"
+  linux_hint="${windows_peer}=${windows_underlay}:51820"
+  printf 'seeding static direct FIPS hints: Windows config peer=%s endpoint=%s; Linux config peer=%s endpoint=%s\n' \
+    "$linux_peer" "${linux_underlay}:51820" "$windows_peer" "${windows_underlay}:51820" >&2
+
+  run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Stop'
+\$nvpn = $(ps_sq "$WINDOWS_INSTALLED_NVPN")
+\$config = $(ps_sq "$WINDOWS_CONFIG")
+\$hint = $(ps_sq "$windows_hint")
+\$clean = [string]\$nvpn
+if (\$clean.StartsWith('\\\\?\\')) { \$clean = \$clean.Substring(4) }
+if (!(Test-Path -LiteralPath \$clean)) { throw \"nvpn.exe not found for static direct hints: \$clean\" }
+\$argv = @('set', '--config', \$config, '--fips-peer-endpoint', \$hint)
+& \$clean @argv | Out-Null
+if (\$LASTEXITCODE -ne 0) { throw \"nvpn set failed while seeding Windows static direct hints\" }"
+
+  run_linux_sh "set -euo pipefail
+nvpn=$(sh_q "$LINUX_INSTALLED_NVPN")
+config=$(sh_q "$LINUX_CONFIG")
+hint=$(sh_q "$linux_hint")
+\"\$nvpn\" set --config \"\$config\" --fips-peer-endpoint \"\$hint\" >/dev/null"
+
+  jq -n \
+    --arg applied_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg windows_config "$WINDOWS_CONFIG" \
+    --arg linux_config "$LINUX_CONFIG" \
+    --arg windows_underlay "$windows_underlay" \
+    --arg linux_underlay "$linux_underlay" \
+    --arg windows_tunnel "$windows_tunnel" \
+    --arg linux_tunnel "$linux_tunnel" \
+    --arg windows_peer "$windows_peer" \
+    --arg linux_peer "$linux_peer" \
+    --arg windows_hint "$windows_hint" \
+    --arg linux_hint "$linux_hint" \
+    '{
+      applied_at:$applied_at,
+      windows_config:$windows_config,
+      linux_config:$linux_config,
+      windows_underlay:$windows_underlay,
+      linux_underlay:$linux_underlay,
+      windows_tunnel:$windows_tunnel,
+      linux_tunnel:$linux_tunnel,
+      windows_peer:$windows_peer,
+      linux_peer:$linux_peer,
+      windows_config_hint:$windows_hint,
+      linux_config_hint:$linux_hint
+    }' >"$OUTPUT_DIR/static-direct-hints.json"
+  rm -rf "$tmpdir"
 }
 
 windows_hash() {
@@ -2146,6 +2279,7 @@ write_run_metadata() {
     --arg mesh_tunnel_mtu "$MESH_TUNNEL_MTU" \
     --arg linux_installed_expected_hash "$LINUX_INSTALLED_EXPECTED_HASH" \
     --arg allow_current_linux_as_installed "$(is_true "$ALLOW_CURRENT_LINUX_AS_INSTALLED" && printf true || printf false)" \
+    --arg static_direct_hints "$(is_true "$STATIC_DIRECT_HINTS" && printf true || printf false)" \
     --arg windows_ssh_proxy_command "$([[ -n "$WINDOWS_SSH_PROXY_COMMAND" ]] && printf true || printf false)" \
     --arg linux_ssh_proxy_command "$([[ -n "$LINUX_SSH_PROXY_COMMAND" ]] && printf true || printf false)" \
     --arg windows_ssh_jump "$([[ -n "$WINDOWS_SSH_JUMP" ]] && printf true || printf false)" \
@@ -2183,6 +2317,7 @@ write_run_metadata() {
       mesh_tunnel_mtu:$mesh_tunnel_mtu,
       linux_installed_expected_hash:$linux_installed_expected_hash,
       allow_current_linux_as_installed:($allow_current_linux_as_installed == "true"),
+      static_direct_hints:($static_direct_hints == "true"),
       windows_ssh_proxy_command:($windows_ssh_proxy_command == "true"),
       linux_ssh_proxy_command:($linux_ssh_proxy_command == "true"),
       windows_ssh_jump:($windows_ssh_jump == "true"),
@@ -2214,6 +2349,8 @@ main() {
   resolve_installed_linux_nvpn
   trap cleanup EXIT
   backup_windows_config
+  backup_linux_config
+  apply_static_direct_hints
   ensure_probe_binaries
   if row_contains_current && [[ -n "$CURRENT_LINUX_NVPN" ]]; then
     backup_linux_installed_binary
