@@ -203,24 +203,7 @@ pub extern "C" fn nostr_vpn_mobile_tunnel_new(
     config_json: *const c_char,
 ) -> *mut NvpnMobileTunnelHandle {
     let config_json = c_string_lossy(config_json);
-    mobile_debug_log("nostr_vpn_mobile_tunnel_new enter");
-    match panic::catch_unwind(AssertUnwindSafe(|| MobileTunnel::start(&config_json))) {
-        Ok(Ok(tunnel)) => {
-            mobile_debug_log("nostr_vpn_mobile_tunnel_new success");
-            Box::into_raw(Box::new(NvpnMobileTunnelHandle { tunnel }))
-        }
-        Ok(Err(error)) => {
-            mobile_debug_log(format!("nostr_vpn_mobile_tunnel_new error: {error:#}"));
-            ptr::null_mut()
-        }
-        Err(payload) => {
-            mobile_debug_log(format!(
-                "nostr_vpn_mobile_tunnel_new panic: {}",
-                panic_payload_message(&payload)
-            ));
-            ptr::null_mut()
-        }
-    }
+    start_mobile_tunnel_handle(&config_json)
 }
 
 #[unsafe(no_mangle)]
@@ -509,10 +492,7 @@ pub extern "system" fn Java_org_nostrvpn_app_core_NativeCore_mobileTunnelNew(
     config_json: JString<'_>,
 ) -> jlong {
     let config_json = jni_string_lossy(&mut env, &config_json);
-    match MobileTunnel::start(&config_json) {
-        Ok(tunnel) => Box::into_raw(Box::new(NvpnMobileTunnelHandle { tunnel })) as jlong,
-        Err(_) => 0,
-    }
+    start_mobile_tunnel_handle(&config_json) as jlong
 }
 
 #[cfg(target_os = "android")]
@@ -636,6 +616,27 @@ fn jni_json_string(env: JNIEnv<'_>, value: &impl Serialize) -> jstring {
 fn jni_raw_string(env: JNIEnv<'_>, value: String) -> jstring {
     env.new_string(value)
         .map_or(ptr::null_mut(), |value| value.into_raw())
+}
+
+fn start_mobile_tunnel_handle(config_json: &str) -> *mut NvpnMobileTunnelHandle {
+    mobile_debug_log("mobile tunnel start enter");
+    match panic::catch_unwind(AssertUnwindSafe(|| MobileTunnel::start(config_json))) {
+        Ok(Ok(tunnel)) => {
+            mobile_debug_log("mobile tunnel start success");
+            Box::into_raw(Box::new(NvpnMobileTunnelHandle { tunnel }))
+        }
+        Ok(Err(error)) => {
+            mobile_debug_log(format!("mobile tunnel start error: {error:#}"));
+            ptr::null_mut()
+        }
+        Err(payload) => {
+            mobile_debug_log(format!(
+                "mobile tunnel start panic: {}",
+                panic_payload_message(&payload)
+            ));
+            ptr::null_mut()
+        }
+    }
 }
 
 fn json_string(value: &impl Serialize) -> *mut c_char {
