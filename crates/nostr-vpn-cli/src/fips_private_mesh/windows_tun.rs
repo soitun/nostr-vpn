@@ -35,6 +35,7 @@ fn spawn_windows_fips_tun_read_thread(
     packet_tx: mpsc::Sender<Vec<Vec<u8>>>,
 ) -> ThreadJoinHandle<()> {
     thread::spawn(move || {
+        let debug_packets = windows_fips_packet_debug_enabled();
         while !stop.load(Ordering::Relaxed) {
             let packet = match session.receive_blocking() {
                 Ok(packet) => packet,
@@ -48,7 +49,7 @@ fn spawn_windows_fips_tun_read_thread(
             let mut batch = Vec::with_capacity(WINDOWS_FIPS_TUN_READ_BURST);
             let payload = packet.bytes().to_vec();
             drop(packet);
-            if windows_fips_packet_debug_enabled() {
+            if debug_packets {
                 eprintln!(
                     "fips: Windows Wintun read {} bytes {}",
                     payload.len(),
@@ -61,7 +62,7 @@ fn spawn_windows_fips_tun_read_thread(
                     Ok(Some(packet)) => {
                         let payload = packet.bytes().to_vec();
                         drop(packet);
-                        if windows_fips_packet_debug_enabled() {
+                        if debug_packets {
                             eprintln!(
                                 "fips: Windows Wintun read {} bytes {}",
                                 payload.len(),
@@ -136,7 +137,8 @@ fn write_windows_fips_packet_batch(session: &Arc<Session>, packets: &mut Vec<Vec
     if packets.is_empty() {
         return;
     }
-    if windows_fips_packet_debug_enabled() {
+    let debug_packets = windows_fips_packet_debug_enabled();
+    if debug_packets {
         for packet in packets.iter() {
             eprintln!(
                 "fips: Windows mesh -> Wintun {} bytes {}",
