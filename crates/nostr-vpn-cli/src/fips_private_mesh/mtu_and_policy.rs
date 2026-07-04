@@ -118,6 +118,27 @@ fn clamp_mtu(value: Option<u16>, min: u16) -> Option<u16> {
     value.map(|mtu| mtu.clamp(min, MESH_MAX_MTU))
 }
 
+fn clamp_mesh_mtu_to_underlay_interface_mtu(
+    mut mtu: MeshMtu,
+    underlay_interface_mtu: Option<u32>,
+) -> MeshMtu {
+    let Some(interface_udp_mtu) = underlay_udp_mtu_for_interface_mtu(underlay_interface_mtu) else {
+        return mtu;
+    };
+    let underlay_udp = interface_udp_mtu.max(MESH_MIN_UNDERLAY_UDP_MTU);
+    if mtu.underlay_udp > underlay_udp {
+        mtu.underlay_udp = underlay_udp;
+        mtu.tunnel = mtu.tunnel.min(tunnel_mtu_for_underlay(underlay_udp));
+    }
+    mtu
+}
+
+fn underlay_udp_mtu_for_interface_mtu(interface_mtu: Option<u32>) -> Option<u16> {
+    const IPV6_UDP_OVERHEAD: u32 = 48;
+    let udp_mtu = interface_mtu?.saturating_sub(IPV6_UDP_OVERHEAD);
+    (udp_mtu > 0).then_some(udp_mtu.min(MESH_MAX_MTU as u32) as u16)
+}
+
 fn tunnel_mtu_for_underlay(underlay_udp_mtu: u16) -> u16 {
     let tunnel_headroom =
         nostr_vpn_core::MESH_UNDERLAY_UDP_MTU.saturating_sub(nostr_vpn_core::MESH_TUNNEL_MTU);

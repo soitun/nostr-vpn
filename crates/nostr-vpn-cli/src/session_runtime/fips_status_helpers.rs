@@ -131,6 +131,7 @@ struct FipsRestartContext<'a> {
     config_path: &'a std::path::Path,
     network_id: &'a str,
     fallback_iface: &'a str,
+    underlay_interface_mtu: Option<u32>,
     own_pubkey: Option<&'a str>,
     recent_peers: Option<&'a nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
     last_endpoint_peer_signature: &'a mut EndpointPeerSignature,
@@ -444,13 +445,27 @@ async fn refresh_fips_tunnel_runtime_after_link_event(
         context.config_path,
         context.network_id,
         config_iface,
+        context.underlay_interface_mtu,
         context.own_pubkey,
         context.recent_peers,
         &live_peer_endpoints,
     )
     .await?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
-    if let Some(existing) = runtime.as_mut() {
+    if runtime
+        .as_ref()
+        .is_some_and(|existing| existing.requires_endpoint_restart(&config))
+    {
+        if let Some(existing) = runtime.take() {
+            existing.stop().await?;
+        }
+        let started = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
+        eprintln!(
+            "daemon: restarted FIPS private mesh on {} after {reason}",
+            started.iface()
+        );
+        *runtime = Some(started);
+    } else if let Some(existing) = runtime.as_mut() {
         existing.apply_config(config).await?;
         eprintln!(
             "daemon: refreshed FIPS private mesh paths on {} after {reason}",
@@ -521,6 +536,7 @@ async fn refresh_fips_tunnel_runtime_peer_paths_in_place(
         context.config_path,
         context.network_id,
         current.iface().to_string(),
+        context.underlay_interface_mtu,
         context.own_pubkey,
         context.recent_peers,
         &live_peer_endpoints,

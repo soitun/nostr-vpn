@@ -34,6 +34,7 @@ use crate::{DaemonPeerState, DaemonStatus, unix_timestamp};
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct NetworkSnapshot {
     pub default_interface: Option<String>,
+    pub default_interface_mtu: Option<u32>,
     pub primary_ipv4: Option<Ipv4Addr>,
     pub primary_ipv6: Option<Ipv6Addr>,
     pub gateway_ipv4: Option<Ipv4Addr>,
@@ -45,6 +46,9 @@ impl NetworkSnapshot {
     pub(crate) fn fingerprint(&self) -> String {
         [
             self.default_interface.as_deref().unwrap_or(""),
+            &self
+                .default_interface_mtu
+                .map_or_else(String::new, |value| value.to_string()),
             &self
                 .primary_ipv4
                 .map_or_else(String::new, |value| value.to_string()),
@@ -74,6 +78,7 @@ impl NetworkSnapshot {
     ) -> NetworkSummary {
         NetworkSummary {
             default_interface: self.default_interface.clone(),
+            default_interface_mtu: self.default_interface_mtu,
             primary_ipv4: self.primary_ipv4.map(|value| value.to_string()),
             primary_ipv6: self.primary_ipv6.map(|value| value.to_string()),
             gateway_ipv4: self.gateway_ipv4.map(|value| value.to_string()),
@@ -90,11 +95,13 @@ pub(crate) fn prefer_nonempty_network_snapshot(
     latest: NetworkSnapshot,
 ) -> NetworkSnapshot {
     let latest_is_empty = latest.default_interface.is_none()
+        && latest.default_interface_mtu.is_none()
         && latest.primary_ipv4.is_none()
         && latest.primary_ipv6.is_none()
         && latest.gateway_ipv4.is_none()
         && latest.gateway_ipv6.is_none();
     let previous_has_underlay = previous.default_interface.is_some()
+        || previous.default_interface_mtu.is_some()
         || previous.primary_ipv4.is_some()
         || previous.primary_ipv6.is_some()
         || previous.gateway_ipv4.is_some()
@@ -125,6 +132,7 @@ pub(crate) fn capture_network_snapshot() -> NetworkSnapshot {
     };
 
     snapshot.default_interface = Some(interface.name.clone());
+    snapshot.default_interface_mtu = interface.mtu;
     snapshot.primary_ipv4 = interface
         .ipv4_addrs()
         .into_iter()
@@ -160,6 +168,7 @@ fn capture_macos_network_snapshot() -> NetworkSnapshot {
     };
 
     snapshot.default_interface = Some(underlay.interface.clone());
+    snapshot.default_interface_mtu = interface_mtu_by_name(&underlay.interface);
     snapshot.primary_ipv4 = macos_ipconfig_ipv4_for_interface(&underlay.interface)
         .ok()
         .flatten();
@@ -174,6 +183,14 @@ fn capture_macos_network_snapshot() -> NetworkSnapshot {
         });
 
     snapshot
+}
+
+#[cfg(target_os = "macos")]
+fn interface_mtu_by_name(name: &str) -> Option<u32> {
+    get_interfaces()
+        .into_iter()
+        .find(|interface| interface.name == name)
+        .and_then(|interface| interface.mtu)
 }
 
 pub(crate) async fn run_netcheck_report(app: &AppConfig, timeout_secs: u64) -> NetcheckReport {

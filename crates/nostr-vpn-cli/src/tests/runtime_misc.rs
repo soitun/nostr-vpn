@@ -432,6 +432,7 @@ fn fips_tunnel_config_carries_paid_route_payment_streaming_inputs() {
         &config_path,
         &network_id,
         "utun-test",
+        None,
         Some(&own_pubkey),
         None,
         &[],

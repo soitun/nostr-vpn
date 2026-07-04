@@ -146,9 +146,16 @@ impl FipsPrivateTunnelConfig {
         } else {
             0
         };
-        let mut recent_peer_endpoints = recent_peers
-            .map(|cache| cache.as_static_peer_endpoints_with_seen_at())
-            .unwrap_or_default();
+        // With discovery disabled, configured static endpoints are the whole path;
+        // stamped recent/live hints can redirect a deterministic direct setup.
+        let stamped_endpoint_hints_enabled = app.fips_nostr_discovery_enabled;
+        let mut recent_peer_endpoints = if stamped_endpoint_hints_enabled {
+            recent_peers
+                .map(|cache| cache.as_static_peer_endpoints_with_seen_at())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         recent_peer_endpoints = filter_stamped_tunnel_endpoints(
             recent_peer_endpoints,
             &tunnel_endpoint_hosts,
@@ -170,24 +177,27 @@ impl FipsPrivateTunnelConfig {
         // Live capability hints are accepted only for network signal peers because
         // they are claims carried by that peer. The disk cache above is
         // different: it records peers this endpoint already authenticated.
-        recent_peer_endpoints.extend(
-            filter_stamped_tunnel_endpoints(
-                live_peer_endpoints
-                    .iter()
-                    .filter(|(participant, _)| {
-                        desired_endpoint_hint_npubs
-                            .contains(&normalize_fips_endpoint_npub(participant))
-                    })
-                    .cloned()
-                    .collect(),
-                &tunnel_endpoint_hosts,
-                &local_private_subnets,
-            )
-            .into_iter()
-            .filter(|(participant, _)| {
-                desired_endpoint_hint_npubs.contains(&normalize_fips_endpoint_npub(participant))
-            }),
-        );
+        if stamped_endpoint_hints_enabled {
+            recent_peer_endpoints.extend(
+                filter_stamped_tunnel_endpoints(
+                    live_peer_endpoints
+                        .iter()
+                        .filter(|(participant, _)| {
+                            desired_endpoint_hint_npubs
+                                .contains(&normalize_fips_endpoint_npub(participant))
+                        })
+                        .cloned()
+                        .collect(),
+                    &tunnel_endpoint_hosts,
+                    &local_private_subnets,
+                )
+                .into_iter()
+                .filter(|(participant, _)| {
+                    desired_endpoint_hint_npubs
+                        .contains(&normalize_fips_endpoint_npub(participant))
+                }),
+            );
+        }
         let endpoint_peers =
             fips_endpoint_peers_from_mesh(&peers, operator_static, recent_peer_endpoints);
         route_targets.sort();
@@ -242,6 +252,14 @@ impl FipsPrivateTunnelConfig {
             #[cfg(target_os = "linux")]
             control_plane_bypass_hosts: crate::control_plane_bypass_ipv4_hosts(app),
         })
+    }
+
+    pub(crate) fn clamp_mesh_mtu_to_underlay_interface_mtu(
+        &mut self,
+        underlay_interface_mtu: Option<u32>,
+    ) {
+        self.mesh_mtu =
+            clamp_mesh_mtu_to_underlay_interface_mtu(self.mesh_mtu, underlay_interface_mtu);
     }
 
     fn local_allowed_ips(&self) -> Vec<String> {

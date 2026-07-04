@@ -8,6 +8,7 @@ mod tests {
         let tunnel_runtime = CliTunnelRuntime::new("utun100");
         let previous = crate::diagnostics::NetworkSnapshot {
             default_interface: Some("eth0".to_string()),
+            default_interface_mtu: None,
             primary_ipv4: Some(Ipv4Addr::new(192, 168, 64, 2)),
             primary_ipv6: None,
             gateway_ipv4: Some(Ipv4Addr::new(192, 168, 64, 1)),
@@ -15,6 +16,7 @@ mod tests {
         };
         let latest = crate::diagnostics::NetworkSnapshot {
             default_interface: Some("utun100".to_string()),
+            default_interface_mtu: None,
             primary_ipv4: Some(Ipv4Addr::new(10, 44, 210, 253)),
             primary_ipv6: None,
             gateway_ipv4: None,
@@ -32,6 +34,7 @@ mod tests {
         let tunnel_runtime = CliTunnelRuntime::new("utun100");
         let previous = crate::diagnostics::NetworkSnapshot {
             default_interface: Some("en0".to_string()),
+            default_interface_mtu: None,
             primary_ipv4: Some(Ipv4Addr::new(192, 168, 64, 5)),
             primary_ipv6: None,
             gateway_ipv4: Some(Ipv4Addr::new(192, 168, 64, 1)),
@@ -39,6 +42,7 @@ mod tests {
         };
         let latest = crate::diagnostics::NetworkSnapshot {
             default_interface: Some("en0".to_string()),
+            default_interface_mtu: None,
             primary_ipv4: None,
             primary_ipv6: "fd18:89b8:ca8c:d693::1".parse().ok(),
             gateway_ipv4: None,
