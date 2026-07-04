@@ -52,9 +52,10 @@ device     Launches an already installed development build on a physical device.
            Preserve a passing VPN cycle for manual inspection. By default a
            passing --vpn-cycle asks the debug app to disconnect afterwards.
 
-Physical-device mode requires NVPN_IOS_DEVICE or NVPN_IOS_DEVICE_ID. Values may
-live in .env.mobile.local or shell env. Keep device identifiers and signing
-details out of committed files.
+Physical-device mode uses NVPN_IOS_DEVICE/NVPN_IOS_DEVICE_ID when set, or auto-
+selects the only connected physical iPhone/iPad. Values may live in
+.env.mobile.local or shell env. Keep device identifiers and signing details out
+of committed files.
 
 Simulator mode is a launch smoke only; iOS Packet Tunnel dataplane checks need
 a physical device, and first-run VPN/profile permission prompts may need a
@@ -124,6 +125,24 @@ run_simulator() {
     exit 1
   fi
   echo "iOS simulator smoke passed: $SCREENSHOT"
+}
+
+auto_select_ios_device() {
+  xcrun xctrace list devices 2>/dev/null | awk '
+    /^== Devices ==/ { in_devices = 1; next }
+    /^== Simulators ==/ { in_devices = 0 }
+    in_devices && /iPhone|iPad/ {
+      device = $0
+      sub(/^.*\(/, "", device)
+      sub(/\)[[:space:]]*$/, "", device)
+      if (device ~ /^[0-9A-Fa-f-]{8,}$/) devices[++count] = device
+    }
+    END {
+      if (count == 1) { print devices[1]; exit 0 }
+      if (count > 1) exit 2
+      exit 1
+    }
+  '
 }
 
 launch_device() {
@@ -349,6 +368,11 @@ def write_probe_summary():
     return summary_path
 
 errors = []
+if result.get("phase") != "finished" or "finishedAt" not in result:
+    errors.append(
+        "debug probe did not finish "
+        f"phase={result.get('phase')!r} finishedAt={result.get('finishedAt')!r}"
+    )
 if result.get("startError"):
     errors.append(f"startError={result['startError']}")
 if result.get("packetTunnelStatusRawValue") != 3:
@@ -464,8 +488,19 @@ cleanup_ios_vpn_after_pass() {
 run_device() {
   local device="${NVPN_IOS_DEVICE:-${NVPN_IOS_DEVICE_ID:-}}"
   if [[ -z "$device" ]]; then
-    echo "Set NVPN_IOS_DEVICE to the physical iOS device identifier for device smoke" >&2
-    exit 1
+    if device="$(auto_select_ios_device)"; then
+      echo "iOS device smoke auto-selected the only connected physical mobile device"
+    else
+      case "$?" in
+        2)
+          echo "Set NVPN_IOS_DEVICE because multiple physical iOS mobile devices are connected" >&2
+          ;;
+        *)
+          echo "Set NVPN_IOS_DEVICE because no physical iOS mobile device could be auto-selected" >&2
+          ;;
+      esac
+      exit 1
+    fi
   fi
 
   xcrun devicectl device info details --device "$device" >/dev/null
