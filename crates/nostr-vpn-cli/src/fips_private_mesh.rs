@@ -55,7 +55,6 @@ use std::sync::{Mutex, RwLock};
 #[cfg(target_os = "windows")]
 use std::thread::{self, JoinHandle as ThreadJoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use tokio::sync::mpsc;
 
