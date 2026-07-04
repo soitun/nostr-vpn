@@ -40,8 +40,6 @@ use sha2::{Digest, Sha256};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
-#[cfg(any(target_os = "linux", test))]
-use std::fs;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
