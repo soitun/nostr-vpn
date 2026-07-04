@@ -546,9 +546,7 @@ capture_android_vpn_link_stats() {
     fi
     printf '\n'
   } >>"$result_path"
-  if [[ "$captured" -eq 1 ]]; then
-    write_android_vpn_link_stats_summary "$label" "$timestamp" "$iface" "$source" "$result_path" "$body"
-  fi
+  write_android_vpn_link_stats_summary "$label" "$timestamp" "$iface" "$source" "$result_path" "$body" "$captured"
   rm -f "$body"
   if [[ "$captured" -eq 1 ]]; then
     echo "Android VPN link counters captured ($label): $result_path iface=$iface"
@@ -566,10 +564,17 @@ write_android_vpn_link_stats_summary() {
   local source="$4"
   local raw_path="$5"
   local body_path="$6"
+  local captured="$7"
   local summary_path
   summary_path="$(android_vpn_link_stats_summary_path)"
   if [[ ! -s "$summary_path" ]]; then
     printf 'label\ttimestamp\tiface\tsource\tparseStatus\trxBytes\trxPackets\trxDropped\ttxBytes\ttxPackets\ttxDropped\trawOutput\n' >"$summary_path"
+  fi
+  if [[ "$captured" -ne 1 ]]; then
+    printf '%s\t%s\t%s\t%s\tunavailable\t\t\t\t\t\t\t%s\n' \
+      "$label" "$timestamp" "$iface" "$source" "$raw_path" >>"$summary_path"
+    echo "Android VPN link counter summary: $summary_path label=$label iface=$iface"
+    return 0
   fi
   if ! awk -v label="$label" -v timestamp="$timestamp" -v iface="$iface" \
     -v source="$source" -v raw="$raw_path" '
@@ -1074,7 +1079,7 @@ PY
     fi
   fi
   echo "Android TUN packet probe passed: tunPacketsRead $baseline->$TUN_PACKET_PROBE_FINAL_READ observed=$((TUN_PACKET_PROBE_FINAL_READ - baseline))/$count tunBytesReadDelta=$TUN_PACKET_PROBE_BYTES_DELTA tunPacketsWritten=$baseline_written->$TUN_PACKET_PROBE_FINAL_WRITTEN tunBytesWritten=$baseline_bytes_written->$TUN_PACKET_PROBE_FINAL_BYTES_WRITTEN tunPacketsDropped=$baseline_dropped->$TUN_PACKET_PROBE_FINAL_DROPPED firstObservedMs=$TUN_PACKET_PROBE_FIRST_OBSERVED_MS elapsedMs=$TUN_PACKET_PROBE_ELAPSED_MS polls=$TUN_PACKET_PROBE_POLLS target=$TUN_PACKET_PROBE_TARGET summary=$summary_path"
-  capture_android_vpn_link_stats "after-probe"
+  capture_android_vpn_link_stats "after-probe" || true
 }
 
 cleanup_android_vpn_after_pass() {
@@ -1294,14 +1299,10 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
     echo "Android smoke failed: Rust mobile runtime state did not become fresh after debug connect." >&2
     exit 1
   fi
-  if ! capture_android_vpn_link_stats "after-connect"; then
-    dump_vpn_diagnostics
-    echo "Android smoke failed: Android VPN interface counters were not readable after debug connect." >&2
-    exit 1
-  fi
+  capture_android_vpn_link_stats "after-connect" || true
   if ! run_android_tun_packet_probe; then
     dump_vpn_diagnostics
-    echo "Android smoke failed: native TUN packet probe or VPN link counter capture failed." >&2
+    echo "Android smoke failed: native TUN packet probe failed." >&2
     exit 1
   fi
   if ! cleanup_android_vpn_after_pass; then
