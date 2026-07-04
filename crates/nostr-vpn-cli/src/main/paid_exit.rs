@@ -4,6 +4,8 @@ struct PaidExitArgs {
     command: PaidExitCommand,
 }
 
+const DEFAULT_FIPS_PEER_RATING_CONTEXT: &str = "fips.peer";
+
 #[derive(Debug, Subcommand)]
 enum PaidExitCommand {
     /// Show paid-exit seller config, wallet, offers, channels, and sessions.
@@ -174,6 +176,12 @@ struct PaidExitDiscoverArgs {
     /// Ignore offer events older than this many seconds.
     #[arg(long, default_value_t = 86_400)]
     since_secs: u64,
+    /// FIPS peer ratings JSON exported by `fipsctl ratings export`.
+    #[arg(long = "fips-peer-ratings", value_name = "PATH")]
+    fips_peer_ratings: Option<PathBuf>,
+    /// Rating context to read from the ratings file.
+    #[arg(long = "rating-context", default_value = DEFAULT_FIPS_PEER_RATING_CONTEXT)]
+    rating_context: String,
     #[arg(long)]
     json: bool,
 }
@@ -1699,6 +1707,21 @@ pub(crate) fn paid_exit_offer_summary_line(
     )
 }
 
+fn paid_exit_offer_summary_line_with_rating(
+    offer: &PaidRouteOffer,
+    event_id: impl std::fmt::Display,
+    rating_scores: Option<&HashMap<String, PaidExitRatingScore>>,
+) -> String {
+    let mut line = paid_exit_offer_summary_line(offer, event_id);
+    if let Some(score) = rating_scores
+        .and_then(|scores| scores.get(&offer.seller_npub))
+        .map(|score| score.score)
+    {
+        line.push_str(&format!(" rating_score={score:+}"));
+    }
+    line
+}
+
 fn paid_exit_mints_text(mints: &[String]) -> String {
     if mints.is_empty() {
         "none".to_string()
@@ -2238,12 +2261,17 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let app = load_or_default_config(&config_path)?;
     let relays = paid_exit_relay_urls(&app, &args.relays);
+    let rating_scores = args
+        .fips_peer_ratings
+        .as_deref()
+        .map(|path| load_paid_exit_rating_scores(path, &args.rating_context))
+        .transpose()?;
     let since_unix = if args.since_secs == 0 {
         None
     } else {
         Some(unix_timestamp().saturating_sub(args.since_secs))
     };
-    let offers = discover_paid_exit_offers_from_relays(
+    let mut offers = discover_paid_exit_offers_from_relays(
         &app,
         &relays,
         args.duration_secs,
@@ -2251,11 +2279,14 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
         since_unix,
     )
     .await?;
+    if let Some(scores) = rating_scores.as_ref() {
+        paid_exit_sort_offers_by_rating(&mut offers, scores);
+    }
     let store_path = paid_route_store_file_path(&config_path);
     let stored_count = persist_paid_exit_discovered_offers(&store_path, &offers, &relays)?;
 
     if args.json {
-        let offers_json = paid_exit_offer_results_json(&offers)?;
+        let offers_json = paid_exit_offer_results_json(&offers, rating_scores.as_ref())?;
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
@@ -2264,14 +2295,35 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
                 "offers": offers_json,
                 "store_path": store_path,
                 "stored_count": stored_count,
+                "ratings": args.fips_peer_ratings.as_ref().map(|path| json!({
+                    "path": path.display().to_string(),
+                    "context": args.rating_context,
+                    "subject_count": rating_scores.as_ref().map_or(0, HashMap::len),
+                })),
             }))?
         );
     } else {
         println!("paid_exit_offers: {}", offers.len());
         println!("store: {} changed={stored_count}", store_path.display());
+        if let (Some(path), Some(scores)) = (args.fips_peer_ratings.as_ref(), rating_scores.as_ref())
+        {
+            println!(
+                "ratings: {} context={} subjects={}",
+                path.display(),
+                args.rating_context,
+                scores.len()
+            );
+        }
         for signed in &offers {
             let offer = signed.offer()?;
-            println!("{}", paid_exit_offer_summary_line(&offer, &signed.event.id));
+            println!(
+                "{}",
+                paid_exit_offer_summary_line_with_rating(
+                    &offer,
+                    &signed.event.id,
+                    rating_scores.as_ref()
+                )
+            );
         }
     }
 
@@ -5113,6 +5165,141 @@ pub(crate) async fn publish_paid_exit_payment_event_to_relays(
     }))
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PaidExitRatingScore {
+    score: i64,
+    created_at: u64,
+}
+
+fn load_paid_exit_rating_scores(
+    path: &Path,
+    context: &str,
+) -> Result<HashMap<String, PaidExitRatingScore>> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("failed to read paid exit ratings {}", path.display()))?;
+    let value: serde_json::Value = serde_json::from_str(&content)
+        .with_context(|| format!("failed to parse paid exit ratings {}", path.display()))?;
+    paid_exit_rating_scores_from_value(&value, context)
+}
+
+fn paid_exit_rating_scores_from_value(
+    value: &serde_json::Value,
+    context: &str,
+) -> Result<HashMap<String, PaidExitRatingScore>> {
+    let mut scores: HashMap<String, PaidExitRatingScore> = HashMap::new();
+    for rating in paid_exit_rating_records(value)? {
+        if !paid_exit_rating_matches_context(rating, context) {
+            continue;
+        }
+        let subject = paid_exit_rating_string_field(rating, "subject")?;
+        let rating_value = paid_exit_rating_i64_field(rating, "rating")?;
+        let min_rating = paid_exit_rating_i64_field(rating, "min_rating")?;
+        let max_rating = paid_exit_rating_i64_field(rating, "max_rating")?;
+        let score = paid_exit_normalized_rating_score(rating_value, min_rating, max_rating)?;
+        let created_at = paid_exit_rating_u64_field(rating, "created_at").unwrap_or_default();
+        let incoming = PaidExitRatingScore { score, created_at };
+        scores
+            .entry(subject)
+            .and_modify(|existing| {
+                if incoming.created_at >= existing.created_at {
+                    *existing = incoming;
+                }
+            })
+            .or_insert(incoming);
+    }
+    Ok(scores)
+}
+
+fn paid_exit_rating_records(value: &serde_json::Value) -> Result<&[serde_json::Value]> {
+    if let Some(records) = value.as_array() {
+        return Ok(records);
+    }
+    value
+        .get("ratings")
+        .and_then(|ratings| ratings.as_array())
+        .map(Vec::as_slice)
+        .ok_or_else(|| anyhow!("ratings JSON must be an array or an object with a ratings array"))
+}
+
+fn paid_exit_rating_matches_context(rating: &serde_json::Value, expected_context: &str) -> bool {
+    let expected_context = expected_context.trim();
+    expected_context.is_empty()
+        || rating
+            .get("context")
+            .and_then(|value| value.as_str())
+            .is_some_and(|context| context.trim() == expected_context)
+}
+
+fn paid_exit_rating_string_field(rating: &serde_json::Value, key: &str) -> Result<String> {
+    rating
+        .get(key)
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| anyhow!("rating record is missing string field {key}"))
+}
+
+fn paid_exit_rating_i64_field(rating: &serde_json::Value, key: &str) -> Result<i64> {
+    rating
+        .get(key)
+        .and_then(|value| value.as_i64())
+        .ok_or_else(|| anyhow!("rating record is missing integer field {key}"))
+}
+
+fn paid_exit_rating_u64_field(rating: &serde_json::Value, key: &str) -> Option<u64> {
+    rating.get(key).and_then(|value| value.as_u64())
+}
+
+fn paid_exit_normalized_rating_score(
+    rating: i64,
+    min_rating: i64,
+    max_rating: i64,
+) -> Result<i64> {
+    if min_rating >= max_rating {
+        return Err(anyhow!(
+            "invalid rating range {min_rating}..{max_rating}"
+        ));
+    }
+    if rating < min_rating || rating > max_rating {
+        return Err(anyhow!(
+            "rating {rating} outside range {min_rating}..{max_rating}"
+        ));
+    }
+    let rating = i128::from(rating);
+    let min = i128::from(min_rating);
+    let max = i128::from(max_rating);
+    let width = max - min;
+    let centered = rating.saturating_mul(2) - min - max;
+    Ok(((centered.saturating_mul(100)) / width) as i64)
+}
+
+fn paid_exit_sort_offers_by_rating(
+    offers: &mut [SignedPaidRouteOffer],
+    rating_scores: &HashMap<String, PaidExitRatingScore>,
+) {
+    offers.sort_by(|left, right| {
+        let left_score = paid_exit_signed_offer_rating_score(left, rating_scores)
+            .map_or(0, |score| score.score);
+        let right_score = paid_exit_signed_offer_rating_score(right, rating_scores)
+            .map_or(0, |score| score.score);
+        right_score
+            .cmp(&left_score)
+            .then_with(|| right.event.created_at.as_secs().cmp(&left.event.created_at.as_secs()))
+            .then_with(|| left.event.id.to_string().cmp(&right.event.id.to_string()))
+    });
+}
+
+fn paid_exit_signed_offer_rating_score(
+    signed: &SignedPaidRouteOffer,
+    rating_scores: &HashMap<String, PaidExitRatingScore>,
+) -> Option<PaidExitRatingScore> {
+    signed
+        .offer()
+        .ok()
+        .and_then(|offer| rating_scores.get(&offer.seller_npub).copied())
+}
+
 async fn discover_paid_exit_offers_from_relays(
     app: &AppConfig,
     relays: &[String],
@@ -5177,16 +5364,149 @@ async fn discover_paid_exit_offers_from_relays(
     Ok(offers)
 }
 
-fn paid_exit_offer_results_json(offers: &[SignedPaidRouteOffer]) -> Result<Vec<serde_json::Value>> {
+fn paid_exit_offer_results_json(
+    offers: &[SignedPaidRouteOffer],
+    rating_scores: Option<&HashMap<String, PaidExitRatingScore>>,
+) -> Result<Vec<serde_json::Value>> {
     offers
         .iter()
         .map(|signed| {
             let offer: PaidRouteOffer = signed.offer()?;
-            Ok(json!({
+            let rating_score = rating_scores
+                .and_then(|scores| scores.get(&offer.seller_npub))
+                .map(|score| score.score);
+            let mut value = json!({
                 "event_id": signed.event.id.to_string(),
                 "created_at": signed.event.created_at.as_secs(),
                 "offer": offer,
-            }))
+            });
+            if rating_scores.is_some() {
+                value["rating_score"] = rating_score
+                    .map(|score| json!(score))
+                    .unwrap_or(serde_json::Value::Null);
+            }
+            Ok(value)
         })
         .collect()
+}
+
+#[cfg(all(test, feature = "paid-exit"))]
+mod paid_exit_rating_tests {
+    use super::*;
+
+    #[test]
+    fn rating_scores_use_context_and_newest_record() {
+        let ratings = json!({
+            "ratings": [
+                {
+                    "id": "old",
+                    "rater": "npub1local",
+                    "subject": "npub1peer",
+                    "context": "fips.peer",
+                    "rating": 90,
+                    "min_rating": 0,
+                    "max_rating": 100,
+                    "created_at": 10
+                },
+                {
+                    "id": "other-context",
+                    "rater": "npub1local",
+                    "subject": "npub1ignored",
+                    "context": "other",
+                    "rating": 100,
+                    "min_rating": 0,
+                    "max_rating": 100,
+                    "created_at": 20
+                },
+                {
+                    "id": "new",
+                    "rater": "npub1local",
+                    "subject": "npub1peer",
+                    "context": "fips.peer",
+                    "rating": 20,
+                    "min_rating": 0,
+                    "max_rating": 100,
+                    "created_at": 30
+                }
+            ]
+        });
+
+        let scores = paid_exit_rating_scores_from_value(&ratings, "fips.peer").unwrap();
+
+        assert_eq!(
+            scores.get("npub1peer"),
+            Some(&PaidExitRatingScore {
+                score: -60,
+                created_at: 30,
+            })
+        );
+        assert!(!scores.contains_key("npub1ignored"));
+    }
+
+    #[test]
+    fn ratings_sort_offers_good_unknown_bad() {
+        let good = sample_signed_offer("good", 10);
+        let unknown = sample_signed_offer("unknown", 30);
+        let bad = sample_signed_offer("bad", 40);
+        let good_npub = good.offer().unwrap().seller_npub;
+        let bad_npub = bad.offer().unwrap().seller_npub;
+        let mut scores = HashMap::new();
+        scores.insert(
+            good_npub.clone(),
+            PaidExitRatingScore {
+                score: 80,
+                created_at: 1,
+            },
+        );
+        scores.insert(
+            bad_npub,
+            PaidExitRatingScore {
+                score: -80,
+                created_at: 1,
+            },
+        );
+        let mut offers = vec![bad, unknown, good];
+
+        paid_exit_sort_offers_by_rating(&mut offers, &scores);
+
+        assert_eq!(offers[0].offer().unwrap().seller_npub, good_npub);
+        assert_eq!(
+            paid_exit_signed_offer_rating_score(&offers[1], &scores).map(|score| score.score),
+            None
+        );
+        assert_eq!(
+            paid_exit_signed_offer_rating_score(&offers[2], &scores).map(|score| score.score),
+            Some(-80)
+        );
+    }
+
+    #[test]
+    fn offer_results_json_includes_rating_score_when_loaded() {
+        let signed = sample_signed_offer("rated", 10);
+        let seller_npub = signed.offer().unwrap().seller_npub;
+        let mut scores = HashMap::new();
+        scores.insert(
+            seller_npub,
+            PaidExitRatingScore {
+                score: 42,
+                created_at: 1,
+            },
+        );
+
+        let output = paid_exit_offer_results_json(&[signed], Some(&scores)).unwrap();
+
+        assert_eq!(output[0]["rating_score"], 42);
+    }
+
+    fn sample_signed_offer(offer_id: &str, created_at: u64) -> SignedPaidRouteOffer {
+        let keys = Keys::generate();
+        let config = PaidExitConfig::default();
+        let offer = PaidRouteOffer::from_paid_exit_config(
+            offer_id,
+            keys.public_key().to_bech32().unwrap(),
+            &config,
+            None,
+        );
+        SignedPaidRouteOffer::sign(offer, &keys, created_at).unwrap()
+    }
 }

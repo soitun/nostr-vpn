@@ -352,6 +352,8 @@ async fn paid_exit_buyer_payment_roundtrips_through_local_relay() {
         duration_secs: 1,
         limit: 10,
         since_secs: 0,
+        fips_peer_ratings: None,
+        rating_context: DEFAULT_FIPS_PEER_RATING_CONTEXT.to_string(),
         json: false,
     })
     .await
