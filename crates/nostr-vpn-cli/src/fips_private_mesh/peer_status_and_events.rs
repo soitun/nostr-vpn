@@ -687,32 +687,6 @@ fn fips_tunnel_endpoint_hosts(app: &AppConfig, network_id: &str) -> HashSet<IpAd
     hosts
 }
 
-// The historical FIPS endpoint cache (`daemon.fips-cache.json`) persisted observed
-// peer transport addresses across daemon restarts. For peers reached via NAT
-// traversal the observed address is an ephemeral source port that closes when
-// the session ends; replaying it on the next start makes fips-core dial a dead
-// socket forever instead of falling back to udp:nat traversal. The cache is gone;
-// peer endpoint discovery is delegated to fips-core's overlay (Nostr advert +
-// udp:nat). Any stale cache file from older builds is removed at startup.
-pub(crate) fn legacy_fips_endpoint_cache_file_path(config_path: &Path) -> PathBuf {
-    let parent = config_path
-        .parent()
-        .map_or_else(|| Path::new(".").to_path_buf(), PathBuf::from);
-    parent.join("daemon.fips-cache.json")
-}
-
-pub(crate) fn purge_legacy_fips_endpoint_cache(config_path: &Path) {
-    let path = legacy_fips_endpoint_cache_file_path(config_path);
-    if let Err(error) = fs::remove_file(&path)
-        && error.kind() != std::io::ErrorKind::NotFound
-    {
-        eprintln!(
-            "daemon: failed to remove legacy FIPS endpoint cache {}: {error}",
-            path.display()
-        );
-    }
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct FipsRelayStatus {
     pub(crate) url: String,

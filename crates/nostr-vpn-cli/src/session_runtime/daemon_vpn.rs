@@ -60,8 +60,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         ));
     }
     let state_file = daemon_state_file_path(&config_path);
-    #[cfg(feature = "embedded-fips")]
-    crate::fips_private_mesh::purge_legacy_fips_endpoint_cache(&config_path);
     let _ = fs::remove_file(daemon_control_file_path(&config_path));
     #[cfg(feature = "embedded-fips")]
     let recent_peers_path = crate::recent_peers_store::recent_peers_file_path(&config_path);

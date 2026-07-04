@@ -40,13 +40,14 @@ use sha2::{Digest, Sha256};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
+#[cfg(any(target_os = "linux", test))]
 use std::fs;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::io::{AsRawFd, RawFd};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

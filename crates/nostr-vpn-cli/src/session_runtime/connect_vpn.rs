@@ -55,8 +55,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     )
     .await;
     #[cfg(feature = "embedded-fips")]
-    crate::fips_private_mesh::purge_legacy_fips_endpoint_cache(&config_path);
-    #[cfg(feature = "embedded-fips")]
     let (mut fips_tunnel_runtime, mut last_fips_endpoint_peer_signature) = {
         let config = fips_tunnel_config_from_app(
             &app,
