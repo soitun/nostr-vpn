@@ -37,7 +37,7 @@ SCREENSHOT="$ROOT/artifacts/nostr-vpn-ios.png"
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/mobile-ios-smoke.sh [simulator|device] [--install] [--create-network] [--vpn-cycle] [--device DEVICE] [--leave-vpn-active]
+usage: scripts/mobile-ios-smoke.sh [simulator|device] [--install] [--create-network] [--vpn-cycle] [--device DEVICE] [--leave-vpn-active] [--probe-target IP] [--probe-port PORT] [--probe-count N] [--probe-require-reply]
 
 simulator  Builds, installs, launches, and screenshots the simulator app.
 device     Launches an already installed development build on a physical device.
@@ -68,11 +68,10 @@ env file; set NVPN_IOS_ALLOW_PROVISIONING_UPDATES=0 to avoid automatic profile
 updates.
 
 The physical-device packet probe defaults to 4 UDP packets toward the debug
-non-local tunnel probe target. Override with NVPN_IOS_TUN_PACKET_PROBE_TARGET,
-NVPN_IOS_TUN_PACKET_PROBE_PORT, NVPN_IOS_TUN_PACKET_PROBE_COUNT, and
-NVPN_IOS_TUN_PACKET_PROBE_WAIT_SECS. Set
-NVPN_IOS_TUN_PACKET_PROBE_REQUIRE_REPLY=1 with a reachable peer target to
-require native TUN write counters to increase.
+non-local tunnel probe target. Use --probe-target, --probe-port, --probe-count,
+and --probe-require-reply for a reachable peer row that requires native TUN write
+counters to increase. NVPN_IOS_TUN_PACKET_PROBE_WAIT_SECS still controls the
+observation window.
 EOF
 }
 
@@ -97,6 +96,33 @@ while [[ $# -gt 0 ]]; do
       fi
       export NVPN_IOS_DEVICE="$2"
       shift
+      ;;
+    --probe-target)
+      if [[ $# -lt 2 ]]; then
+        echo "--probe-target requires a value" >&2
+        exit 2
+      fi
+      TUN_PACKET_PROBE_TARGET="$2"
+      shift
+      ;;
+    --probe-port)
+      if [[ $# -lt 2 ]]; then
+        echo "--probe-port requires a value" >&2
+        exit 2
+      fi
+      TUN_PACKET_PROBE_PORT="$2"
+      shift
+      ;;
+    --probe-count)
+      if [[ $# -lt 2 ]]; then
+        echo "--probe-count requires a value" >&2
+        exit 2
+      fi
+      TUN_PACKET_PROBE_COUNT="$2"
+      shift
+      ;;
+    --probe-require-reply)
+      TUN_PACKET_PROBE_REQUIRE_REPLY=1
       ;;
     --leave-vpn-active)
       cleanup_after_vpn_cycle=0

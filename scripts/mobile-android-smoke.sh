@@ -52,7 +52,7 @@ serial="${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/mobile-android-smoke.sh [--no-build] [--clear] [--vpn-cycle] [--create-network] [--accept-vpn-dialog] [--leave-vpn-active] [--serial SERIAL]
+usage: scripts/mobile-android-smoke.sh [--no-build] [--clear] [--vpn-cycle] [--create-network] [--accept-vpn-dialog] [--leave-vpn-active] [--serial SERIAL] [--probe-target IP] [--probe-count N] [--probe-timeout SECS] [--probe-require-reply] [--no-tun-probe]
 
 Builds and installs the debug APK, launches the app through adb, and optionally
 cycles the debug VPN action. Values may live in .env.mobile.local, shell env,
@@ -85,9 +85,9 @@ By default --vpn-cycle also sends a small shell ping probe toward a non-local
 10.44/16 address and requires tunPacketsRead to increase by at least the probe
 count. The ping output is saved under artifacts/mobile-android so physical peer
 targets preserve loss/jitter evidence; a separate TUN counter summary JSON records
-the native packet observation. Set NVPN_ANDROID_TUN_PACKET_PROBE_REQUIRE_REPLY=1
-with a reachable peer target to require ping replies plus native TUN write
-counters. Disable with NVPN_ANDROID_TUN_PACKET_PROBE=0 if a device image lacks ping.
+the native packet observation. Use --probe-target with --probe-require-reply for
+a reachable peer row that requires ping replies plus native TUN write counters.
+Disable with --no-tun-probe if a device image lacks ping.
 
 After a successful --vpn-cycle pass, the script disconnects the debug VPN so
 devices are left clean for the next smoke. Use --leave-vpn-active to preserve a
@@ -122,6 +122,36 @@ while [[ $# -gt 0 ]]; do
       fi
       serial="$2"
       shift
+      ;;
+    --probe-target)
+      if [[ $# -lt 2 ]]; then
+        echo "--probe-target requires a value" >&2
+        exit 2
+      fi
+      TUN_PACKET_PROBE_TARGET="$2"
+      shift
+      ;;
+    --probe-count)
+      if [[ $# -lt 2 ]]; then
+        echo "--probe-count requires a value" >&2
+        exit 2
+      fi
+      TUN_PACKET_PROBE_COUNT="$2"
+      shift
+      ;;
+    --probe-timeout)
+      if [[ $# -lt 2 ]]; then
+        echo "--probe-timeout requires a value" >&2
+        exit 2
+      fi
+      TUN_PACKET_PROBE_TIMEOUT_SECS="$2"
+      shift
+      ;;
+    --probe-require-reply)
+      TUN_PACKET_PROBE_REQUIRE_REPLY=1
+      ;;
+    --no-tun-probe)
+      TUN_PACKET_PROBE=0
       ;;
     -h|--help)
       usage
