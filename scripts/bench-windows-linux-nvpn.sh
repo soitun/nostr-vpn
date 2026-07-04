@@ -653,6 +653,19 @@ $serviceStatus = Invoke-JsonCommand $nvpn @("service", "status", "--json")
 $daemonStatus = Invoke-JsonCommand $nvpn @("status", "--json", "--discover-secs", "0")
 $svc = Get-CimInstance Win32_Service -Filter "Name='NvpnService'" -ErrorAction SilentlyContinue
 
+$daemonStateFileState = $null
+if ($daemonStatus -and $daemonStatus.daemon -and $daemonStatus.daemon.state_file) {
+  $stateFile = Clean-PathValue ([string]$daemonStatus.daemon.state_file)
+  if ($stateFile -and (Test-Path -LiteralPath $stateFile)) {
+    try {
+      $daemonStateFileState = Get-Content -Raw -LiteralPath $stateFile -ErrorAction Stop | ConvertFrom-Json
+      $daemonStatus.daemon.state = $daemonStateFileState
+    } catch {
+      $daemonStateFileState = $null
+    }
+  }
+}
+
 $servicePid = $null
 if ($serviceStatus -and $serviceStatus.pid) { $servicePid = [int]$serviceStatus.pid }
 elseif ($svc -and $svc.ProcessId) { $servicePid = [int]$svc.ProcessId }
@@ -719,6 +732,7 @@ foreach ($adapter in (Get-NetAdapter -ErrorAction SilentlyContinue)) {
   } else { $null }
   service_status = $serviceStatus
   daemon_status = $daemonStatus
+  daemon_state_file_state = $daemonStateFileState
   process = if ($proc) {
     [pscustomobject]@{
       pid = [uint32]$proc.Id
@@ -755,10 +769,19 @@ tmpdir=\$(mktemp -d)
 trap 'rm -rf \"\$tmpdir\"' EXIT
 svc=\$tmpdir/service.json
 status=\$tmpdir/status.json
+raw_state=\$tmpdir/daemon-state.json
 proc=\$tmpdir/process.json
 adapters=\$tmpdir/adapters.json
 if ! $nvpn_q service status --json >\"\$svc\" 2>/dev/null; then printf '{}\n' >\"\$svc\"; fi
 if ! $nvpn_q status --json --discover-secs 0 >\"\$status\" 2>/dev/null; then printf '{}\n' >\"\$status\"; fi
+state_file=\$(jq -r '.daemon.state_file // empty' \"\$status\")
+if [[ -n \"\$state_file\" && -r \"\$state_file\" ]] && jq -e 'type == \"object\"' \"\$state_file\" >/dev/null 2>&1; then
+  cp \"\$state_file\" \"\$raw_state\"
+  jq --slurpfile raw \"\$raw_state\" '.daemon.state = \$raw[0]' \"\$status\" >\"\$status.with-raw\"
+  mv \"\$status.with-raw\" \"\$status\"
+else
+  printf 'null\n' >\"\$raw_state\"
+fi
 pid=\$(jq -r '.pid // empty' \"\$svc\")
 service_binary=\$(jq -r '.binary_path // empty' \"\$svc\")
 service_hash=\"\"
@@ -808,12 +831,12 @@ route_iface=\$(ip route show default 2>/dev/null | awk '{print \$5; exit}')
     --arg rx_errors \"\$(read_stat rx_errors)\" --arg tx_errors \"\$(read_stat tx_errors)\" \
     '{name:\$name,received_bytes:(\$rx_bytes|tonumber),sent_bytes:(\$tx_bytes|tonumber),received_packets:(\$rx_packets|tonumber),sent_packets:(\$tx_packets|tonumber),received_discards:(\$rx_dropped|tonumber),sent_discards:(\$tx_dropped|tonumber),received_errors:(\$rx_errors|tonumber),sent_errors:(\$tx_errors|tonumber)}'
 done | jq -s '.' >\"\$adapters\"
-jq -n --slurpfile service \"\$svc\" --slurpfile status \"\$status\" --slurpfile process \"\$proc\" --slurpfile adapters \"\$adapters\" \
+jq -n --slurpfile service \"\$svc\" --slurpfile status \"\$status\" --slurpfile raw_state \"\$raw_state\" --slurpfile process \"\$proc\" --slurpfile adapters \"\$adapters\" \
   --arg captured_at \"\$(date -u +%Y-%m-%dT%H:%M:%SZ)\" \
   --arg service_binary \"\$service_binary\" \
   --arg service_hash \"\$service_hash\" \
   --arg process_hash \"\$process_hash\" \
-  '{captured_at:\$captured_at,service_status:(\$service[0] // {}),daemon_status:(\$status[0] // {}),process:(\$process[0] // null),binaries:{configured_path:\$service_binary,configured_hash:\$service_hash,process_path:(\$process[0].path // \"\"),process_hash:\$process_hash},adapters:(\$adapters[0] // [])}'" >"$out"
+  '{captured_at:\$captured_at,service_status:(\$service[0] // {}),daemon_status:(\$status[0] // {}),daemon_state_file_state:(\$raw_state[0] // null),process:(\$process[0] // null),binaries:{configured_path:\$service_binary,configured_hash:\$service_hash,process_path:(\$process[0].path // \"\"),process_hash:\$process_hash},adapters:(\$adapters[0] // [])}'" >"$out"
 }
 
 apply_static_direct_hints() {
