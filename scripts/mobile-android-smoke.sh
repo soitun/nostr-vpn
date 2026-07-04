@@ -32,6 +32,7 @@ DEBUG_EXIT_NODE="${NVPN_ANDROID_DEBUG_EXIT_NODE:-}"
 DEBUG_WIREGUARD_CONFIG="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG:-}"
 DEBUG_WIREGUARD_CONFIG_FILE="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE:-}"
 DEBUG_NETWORK_NAME="${NVPN_ANDROID_DEBUG_NETWORK_NAME:-Android smoke}"
+cleanup_after_vpn_cycle="${NVPN_ANDROID_CLEANUP_AFTER_VPN_CYCLE:-1}"
 
 build=1
 clear_state=0
@@ -42,7 +43,7 @@ serial="${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/mobile-android-smoke.sh [--no-build] [--clear] [--vpn-cycle] [--create-network] [--accept-vpn-dialog] [--serial SERIAL]
+usage: scripts/mobile-android-smoke.sh [--no-build] [--clear] [--vpn-cycle] [--create-network] [--accept-vpn-dialog] [--leave-vpn-active] [--serial SERIAL]
 
 Builds and installs the debug APK, launches the app through adb, and optionally
 cycles the debug VPN action. Values may live in .env.mobile.local, shell env,
@@ -74,6 +75,10 @@ By default --vpn-cycle also sends a small shell ping probe toward a non-local
 count. The ping output is saved under artifacts/mobile-android so physical peer
 targets preserve loss/jitter evidence. Disable with NVPN_ANDROID_TUN_PACKET_PROBE=0
 if a device image lacks ping.
+
+After a successful --vpn-cycle pass, the script disconnects the debug VPN so
+devices are left clean for the next smoke. Use --leave-vpn-active to preserve a
+passing tunnel for manual inspection; failing runs still preserve their state.
 EOF
 }
 
@@ -90,6 +95,9 @@ while [[ $# -gt 0 ]]; do
       ;;
     --accept-vpn-dialog)
       accept_vpn_dialog=1
+      ;;
+    --leave-vpn-active)
+      cleanup_after_vpn_cycle=0
       ;;
     --vpn-cycle)
       vpn_cycle=1
@@ -330,17 +338,46 @@ sys.exit(1)
 
 capture_android_vpn_link_stats() {
   local label="$1"
-  local iface result_path
-  iface="$(android_vpn_interface_name)" || return 1
+  local body captured iface result_path status unavailable_reason
   result_path="$(android_vpn_link_stats_path)"
+  body="$(mktemp)"
+  captured=0
+  status=0
+  unavailable_reason=""
+  if ! iface="$(android_vpn_interface_name)"; then
+    iface="unknown"
+    unavailable_reason="unable to resolve active Android VPN interface"
+  elif "$ADB" -s "$serial" shell ip -s link show dev "$iface" 2>&1 | tr -d '\r' >"$body"; then
+    if grep -Eq '(^|[[:space:]])RX:' "$body" && grep -Eq '(^|[[:space:]])TX:' "$body"; then
+      captured=1
+    else
+      unavailable_reason="ip -s link show dev $iface returned no RX/TX counters"
+    fi
+  else
+    status=$?
+    unavailable_reason="ip -s link show dev $iface exited $status"
+  fi
   mkdir -p "$RUNTIME_STATE_RESULT_DIR"
   {
-    printf '## label=%s timestamp=%s iface=%s\n' \
-      "$label" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$iface"
-    "$ADB" -s "$serial" shell ip -s link show dev "$iface" | tr -d '\r'
+    printf '## label=%s timestamp=%s iface=%s linkStats=%s\n' \
+      "$label" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$iface" \
+      "$([[ "$captured" -eq 1 ]] && printf captured || printf unavailable)"
+    if [[ "$captured" -eq 1 ]]; then
+      cat "$body"
+    else
+      printf 'unavailable: %s\n' "$unavailable_reason"
+      if [[ -s "$body" ]]; then
+        sed 's/^/    /' "$body"
+      fi
+    fi
     printf '\n'
   } >>"$result_path"
-  echo "Android VPN link counters captured ($label): $result_path iface=$iface"
+  rm -f "$body"
+  if [[ "$captured" -eq 1 ]]; then
+    echo "Android VPN link counters captured ($label): $result_path iface=$iface"
+  else
+    echo "Android VPN link counters unavailable ($label): $result_path iface=$iface reason=$unavailable_reason"
+  fi
 }
 
 summarize_android_ping_probe() {
@@ -462,6 +499,18 @@ run_android_tun_packet_probe() {
     return 1
   fi
   capture_android_vpn_link_stats "after-probe"
+}
+
+cleanup_android_vpn_after_pass() {
+  truthy "$cleanup_after_vpn_cycle" || return 0
+  start_main_activity --es "$DEBUG_ACTION_EXTRA" disconnect
+  if wait_until "$VPN_STOP_WAIT_SECS" vpn_inactive; then
+    echo "Android VPN cleanup passed: debug disconnect left no active VPN service/network"
+    return 0
+  fi
+  dump_vpn_diagnostics
+  echo "Android smoke failed: VPN remained active after post-pass cleanup." >&2
+  return 1
 }
 
 android_sdk() {
@@ -676,6 +725,9 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
   if ! run_android_tun_packet_probe; then
     dump_vpn_diagnostics
     echo "Android smoke failed: native TUN read counter did not advance after debug packet probe." >&2
+    exit 1
+  fi
+  if ! cleanup_android_vpn_after_pass; then
     exit 1
   fi
 fi

@@ -235,7 +235,6 @@ class NostrVpnService : VpnService() {
             .setSession("Nostr VPN")
             .setConfigureIntent(configureIntent())
             .setMtu(config.optInt("mtu", 1150))
-            .setBlocking(true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
         }
