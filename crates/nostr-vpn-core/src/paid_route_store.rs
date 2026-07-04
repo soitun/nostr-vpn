@@ -5915,6 +5915,7 @@ mod tests {
             },
             location: PaidRouteLocationHint::default(),
             ip_support: PaidRouteIpSupport::default(),
+            rating_discovery: Default::default(),
         }
     }
 

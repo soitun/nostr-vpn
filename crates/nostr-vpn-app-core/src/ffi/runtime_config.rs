@@ -154,6 +154,15 @@ impl NativeAppRuntime {
         if let Some(value) = patch.paid_exit_ipv6 {
             self.config.paid_exit.ip_support.ipv6 = value;
         }
+        if let Some(value) = patch.paid_exit_rating_file {
+            self.config.paid_exit.rating_discovery.file = value.trim().to_string();
+        }
+        if let Some(value) = patch.paid_exit_rating_relays {
+            self.config.paid_exit.rating_discovery.relays = normalize_relay_urls(value);
+        }
+        if let Some(value) = patch.paid_exit_rating_scope {
+            self.config.paid_exit.rating_discovery.scope = value.trim().to_string();
+        }
         if let Some(value) = patch.fips_host_tunnel_enabled {
             self.config.fips_host_tunnel_enabled = value;
         }

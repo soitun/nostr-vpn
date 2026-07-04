@@ -23,6 +23,7 @@ pub const PAID_ROUTE_OFFER_VERSION: &str = "1";
 pub const PAID_ROUTE_OFFER_APP: &str = "fips/paid-route-offer";
 pub const PAID_ROUTE_PAYMENT_VERSION: &str = "1";
 pub const PAID_ROUTE_PAYMENT_APP: &str = "fips/paid-route-payment";
+pub const DEFAULT_FIPS_PEER_RATING_SCOPE: &str = "fips.peer";
 
 const DEFAULT_PRICE_DENOMINATOR_UNITS: u64 = 1_000_000;
 const DEFAULT_MAX_CHANNEL_CAPACITY_SAT: u64 = 1_000;
@@ -271,6 +272,48 @@ impl Default for PaidRouteChannelTerms {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaidExitRatingDiscoveryConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub file: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub relays: Vec<String>,
+    #[serde(
+        default = "default_fips_peer_rating_scope",
+        skip_serializing_if = "fips_peer_rating_scope_is_default"
+    )]
+    pub scope: String,
+}
+
+impl Default for PaidExitRatingDiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            file: String::new(),
+            relays: Vec::new(),
+            scope: default_fips_peer_rating_scope(),
+        }
+    }
+}
+
+impl PaidExitRatingDiscoveryConfig {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn normalize(&mut self) {
+        self.file = self.file.trim().to_string();
+        self.relays = normalize_string_list(&self.relays);
+        self.scope = self.scope.trim().to_string();
+        if self.scope.is_empty() {
+            self.scope = default_fips_peer_rating_scope();
+        }
+    }
+
+    pub fn configured(&self) -> bool {
+        !self.file.trim().is_empty() || !self.relays.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PaidExitConfig {
     #[serde(default, skip_serializing_if = "is_false")]
@@ -285,6 +328,11 @@ pub struct PaidExitConfig {
     pub location: PaidRouteLocationHint,
     #[serde(default)]
     pub ip_support: PaidRouteIpSupport,
+    #[serde(
+        default,
+        skip_serializing_if = "PaidExitRatingDiscoveryConfig::is_default"
+    )]
+    pub rating_discovery: PaidExitRatingDiscoveryConfig,
 }
 
 impl PaidExitConfig {
@@ -300,6 +348,7 @@ impl PaidExitConfig {
         self.channel.accepted_mints = normalize_string_list(&self.channel.accepted_mints);
         self.location.country_code = normalize_country_code(&self.location.country_code);
         self.location.region = self.location.region.trim().to_string();
+        self.rating_discovery.normalize();
     }
 
     #[cfg(feature = "paid-exit")]
@@ -403,8 +452,17 @@ impl PaidExitConfig {
             channel: offer.channel.clone(),
             location: offer.location.clone(),
             ip_support: offer.ip_support.clone(),
+            rating_discovery: PaidExitRatingDiscoveryConfig::default(),
         }
     }
+}
+
+fn default_fips_peer_rating_scope() -> String {
+    DEFAULT_FIPS_PEER_RATING_SCOPE.to_string()
+}
+
+fn fips_peer_rating_scope_is_default(value: &str) -> bool {
+    value == DEFAULT_FIPS_PEER_RATING_SCOPE
 }
 
 fn paid_route_amount_due_msat(
@@ -1557,6 +1615,14 @@ mod tests {
                 network_class: ExitNetworkClass::Residential,
             },
             ip_support: PaidRouteIpSupport::default(),
+            rating_discovery: PaidExitRatingDiscoveryConfig {
+                file: " ratings.json ".to_string(),
+                relays: vec![
+                    " wss://ratings-b.example ".to_string(),
+                    "wss://ratings-a.example,wss://ratings-b.example".to_string(),
+                ],
+                scope: " ".to_string(),
+            },
         };
 
         config.normalize();
@@ -1574,6 +1640,15 @@ mod tests {
         );
         assert_eq!(config.location.country_code, "FI");
         assert_eq!(config.location.region, "Uusimaa");
+        assert_eq!(config.rating_discovery.file, "ratings.json");
+        assert_eq!(
+            config.rating_discovery.relays,
+            vec!["wss://ratings-a.example", "wss://ratings-b.example"]
+        );
+        assert_eq!(
+            config.rating_discovery.scope,
+            DEFAULT_FIPS_PEER_RATING_SCOPE
+        );
     }
 
     #[test]
@@ -2201,6 +2276,7 @@ mod tests {
                 ipv4: true,
                 ipv6: false,
             },
+            rating_discovery: PaidExitRatingDiscoveryConfig::default(),
         }
     }
 

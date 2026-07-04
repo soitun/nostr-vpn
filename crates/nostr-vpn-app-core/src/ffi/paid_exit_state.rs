@@ -1008,5 +1008,6 @@ fn paid_exit_config_from_offer(offer: &PaidRouteOffer) -> PaidExitConfig {
         channel: offer.channel.clone(),
         location: offer.location.clone(),
         ip_support: offer.ip_support.clone(),
+        rating_discovery: Default::default(),
     }
 }

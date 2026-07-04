@@ -473,6 +473,12 @@ exit 0
                 paid_exit_network_class: Some("dc".to_string()),
                 paid_exit_ipv4: Some(true),
                 paid_exit_ipv6: Some(false),
+                paid_exit_rating_file: Some(" ratings.json ".to_string()),
+                paid_exit_rating_relays: Some(vec![
+                    " wss://ratings-b.example ".to_string(),
+                    "wss://ratings-a.example,wss://ratings-b.example".to_string(),
+                ]),
+                paid_exit_rating_scope: Some(" fips.peer.test ".to_string()),
                 ..SettingsPatch::default()
             },
         });
@@ -498,6 +504,81 @@ exit 0
         assert_eq!(saved.paid_exit.location.network_class.as_str(), "datacenter");
         assert!(saved.paid_exit.ip_support.ipv4);
         assert!(!saved.paid_exit.ip_support.ipv6);
+        assert_eq!(saved.paid_exit.rating_discovery.file, "ratings.json");
+        assert_eq!(
+            saved.paid_exit.rating_discovery.relays,
+            vec![
+                "wss://ratings-a.example".to_string(),
+                "wss://ratings-b.example".to_string()
+            ]
+        );
+        assert_eq!(saved.paid_exit.rating_discovery.scope, "fips.peer.test");
+
+        let raw = fs::read_to_string(&runtime.config_path).expect("read persisted config");
+        assert!(raw.contains("rating_discovery"));
+        assert!(raw.contains("scope = \"fips.peer.test\""));
+        assert!(raw.contains("wss://ratings-a.example"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(all(unix, feature = "paid-exit"))]
+    #[test]
+    fn discover_paid_route_offers_passes_configured_rating_sources() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-paid-rating-discover-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let calls_path = dir.join("calls.txt");
+        let script_path = dir.join("nvpn");
+        let rating_path = dir.join("ratings.json");
+        fs::write(&rating_path, r#"{"ratings":[]}"#).expect("write ratings file");
+        let calls_literal = calls_path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let script = format!(
+            r#"#!/bin/sh
+CALLS="{calls_literal}"
+printf '%s\n' "$*" >> "$CALLS"
+exit 0
+"#
+        );
+        fs::write(&script_path, script).expect("write fake nvpn");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("fake nvpn metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make fake nvpn executable");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.config_path = dir.join("config.toml");
+        runtime.nvpn_bin = Some(script_path);
+        runtime.config.paid_exit.rating_discovery.file = rating_path.display().to_string();
+        runtime.config.paid_exit.rating_discovery.relays = vec![
+            "wss://ratings-a.example".to_string(),
+            "wss://ratings-b.example".to_string(),
+        ];
+        runtime.config.paid_exit.rating_discovery.scope = "fips.peer.test".to_string();
+
+        runtime.dispatch(NativeAppAction::DiscoverPaidRouteOffers { duration_secs: 5 });
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        let calls = fs::read_to_string(&calls_path).expect("read fake nvpn calls");
+        assert!(calls.contains("paid-exit discover --config"));
+        assert!(calls.contains("--duration-secs 5 --json"));
+        assert!(calls.contains("--fips-peer-ratings"));
+        assert!(calls.contains(rating_path.to_string_lossy().as_ref()));
+        assert!(calls.contains("--fips-peer-ratings-relay wss://ratings-a.example"));
+        assert!(calls.contains("--fips-peer-ratings-relay wss://ratings-b.example"));
+        assert!(calls.contains("--rating-scope fips.peer.test"));
 
         let _ = fs::remove_dir_all(&dir);
     }

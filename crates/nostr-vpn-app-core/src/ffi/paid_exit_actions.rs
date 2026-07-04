@@ -667,15 +667,29 @@ impl NativeAppRuntime {
 
     pub(super) fn discover_paid_route_offers(&mut self, duration_secs: u64) -> Result<()> {
         let duration_secs = duration_secs.clamp(1, 30).to_string();
-        let output = self.run_nvpn([
-            "paid-exit",
-            "discover",
-            "--config",
-            self.config_path_str()?,
-            "--duration-secs",
-            &duration_secs,
-            "--json",
-        ])?;
+        let rating_discovery = &self.config.paid_exit.rating_discovery;
+        let mut args = vec![
+            "paid-exit".to_string(),
+            "discover".to_string(),
+            "--config".to_string(),
+            self.config_path_str()?.to_string(),
+            "--duration-secs".to_string(),
+            duration_secs,
+            "--json".to_string(),
+        ];
+        if !rating_discovery.file.trim().is_empty() {
+            args.push("--fips-peer-ratings".to_string());
+            args.push(rating_discovery.file.clone());
+        }
+        for relay in &rating_discovery.relays {
+            args.push("--fips-peer-ratings-relay".to_string());
+            args.push(relay.clone());
+        }
+        if rating_discovery.configured() {
+            args.push("--rating-scope".to_string());
+            args.push(rating_discovery.scope.clone());
+        }
+        let output = self.run_nvpn_vec(&args)?;
         ensure_success("nvpn paid-exit discover", &output)
     }
 

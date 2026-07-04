@@ -454,6 +454,22 @@ fileprivate struct FfiConverterUInt64: FfiConverterPrimitive {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterInt64: FfiConverterPrimitive {
+    typealias FfiType = Int64
+    typealias SwiftType = Int64
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Int64 {
+        return try lift(readInt(&buf))
+    }
+
+    public static func write(_ value: Int64, into buf: inout [UInt8]) {
+        writeInt(&buf, lower(value))
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterBool : FfiConverter {
     typealias FfiType = Int8
     typealias SwiftType = Bool
@@ -3140,6 +3156,9 @@ public struct NativePaidRouteOfferState {
     public var networkClass: String
     public var ipv4: Bool
     public var ipv6: Bool
+    public var hasRating: Bool
+    public var ratingScore: Int64
+    public var ratingUpdatedAtUnix: UInt64
     public var hasQuality: Bool
     public var qualityText: String
     public var bandwidthText: String
@@ -3155,7 +3174,7 @@ public struct NativePaidRouteOfferState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(key: String, offerId: String, sellerNpub: String, statusText: String, priceText: String, meter: String, priceMsat: UInt64, perUnits: UInt64, perUnitsText: String, acceptedMints: [String], maxChannelCapacitySat: UInt64, channelExpirySecs: UInt64, freeProbeUnits: UInt64, freeProbeText: String, graceUnits: UInt64, graceText: String, countryCode: String, region: String, asn: UInt32, networkClass: String, ipv4: Bool, ipv6: Bool, hasQuality: Bool, qualityText: String, bandwidthText: String, latencyMs: UInt32, jitterMs: UInt32, packetLossPpm: UInt32, downBps: UInt64, upBps: UInt64, uptimeSecs: UInt64, firstSeenUnix: UInt64, lastSeenUnix: UInt64, relayUrls: [String]) {
+    public init(key: String, offerId: String, sellerNpub: String, statusText: String, priceText: String, meter: String, priceMsat: UInt64, perUnits: UInt64, perUnitsText: String, acceptedMints: [String], maxChannelCapacitySat: UInt64, channelExpirySecs: UInt64, freeProbeUnits: UInt64, freeProbeText: String, graceUnits: UInt64, graceText: String, countryCode: String, region: String, asn: UInt32, networkClass: String, ipv4: Bool, ipv6: Bool, hasRating: Bool, ratingScore: Int64, ratingUpdatedAtUnix: UInt64, hasQuality: Bool, qualityText: String, bandwidthText: String, latencyMs: UInt32, jitterMs: UInt32, packetLossPpm: UInt32, downBps: UInt64, upBps: UInt64, uptimeSecs: UInt64, firstSeenUnix: UInt64, lastSeenUnix: UInt64, relayUrls: [String]) {
         self.key = key
         self.offerId = offerId
         self.sellerNpub = sellerNpub
@@ -3178,6 +3197,9 @@ public struct NativePaidRouteOfferState {
         self.networkClass = networkClass
         self.ipv4 = ipv4
         self.ipv6 = ipv6
+        self.hasRating = hasRating
+        self.ratingScore = ratingScore
+        self.ratingUpdatedAtUnix = ratingUpdatedAtUnix
         self.hasQuality = hasQuality
         self.qualityText = qualityText
         self.bandwidthText = bandwidthText
@@ -3266,6 +3288,15 @@ extension NativePaidRouteOfferState: Equatable, Hashable {
         if lhs.ipv6 != rhs.ipv6 {
             return false
         }
+        if lhs.hasRating != rhs.hasRating {
+            return false
+        }
+        if lhs.ratingScore != rhs.ratingScore {
+            return false
+        }
+        if lhs.ratingUpdatedAtUnix != rhs.ratingUpdatedAtUnix {
+            return false
+        }
         if lhs.hasQuality != rhs.hasQuality {
             return false
         }
@@ -3328,6 +3359,9 @@ extension NativePaidRouteOfferState: Equatable, Hashable {
         hasher.combine(networkClass)
         hasher.combine(ipv4)
         hasher.combine(ipv6)
+        hasher.combine(hasRating)
+        hasher.combine(ratingScore)
+        hasher.combine(ratingUpdatedAtUnix)
         hasher.combine(hasQuality)
         hasher.combine(qualityText)
         hasher.combine(bandwidthText)
@@ -3374,6 +3408,9 @@ public struct FfiConverterTypeNativePaidRouteOfferState: FfiConverterRustBuffer 
                 networkClass: FfiConverterString.read(from: &buf),
                 ipv4: FfiConverterBool.read(from: &buf),
                 ipv6: FfiConverterBool.read(from: &buf),
+                hasRating: FfiConverterBool.read(from: &buf),
+                ratingScore: FfiConverterInt64.read(from: &buf),
+                ratingUpdatedAtUnix: FfiConverterUInt64.read(from: &buf),
                 hasQuality: FfiConverterBool.read(from: &buf),
                 qualityText: FfiConverterString.read(from: &buf),
                 bandwidthText: FfiConverterString.read(from: &buf),
@@ -3412,6 +3449,9 @@ public struct FfiConverterTypeNativePaidRouteOfferState: FfiConverterRustBuffer 
         FfiConverterString.write(value.networkClass, into: &buf)
         FfiConverterBool.write(value.ipv4, into: &buf)
         FfiConverterBool.write(value.ipv6, into: &buf)
+        FfiConverterBool.write(value.hasRating, into: &buf)
+        FfiConverterInt64.write(value.ratingScore, into: &buf)
+        FfiConverterUInt64.write(value.ratingUpdatedAtUnix, into: &buf)
         FfiConverterBool.write(value.hasQuality, into: &buf)
         FfiConverterString.write(value.qualityText, into: &buf)
         FfiConverterString.write(value.bandwidthText, into: &buf)
@@ -5203,6 +5243,9 @@ public struct SettingsPatch {
     public var paidExitNetworkClass: String?
     public var paidExitIpv4: Bool?
     public var paidExitIpv6: Bool?
+    public var paidExitRatingFile: String?
+    public var paidExitRatingRelays: [String]?
+    public var paidExitRatingScope: String?
     public var fipsHostTunnelEnabled: Bool?
     public var connectToNonRosterFipsPeers: Bool?
     public var fipsNostrDiscoveryEnabled: Bool?
@@ -5215,7 +5258,7 @@ public struct SettingsPatch {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(nodeName: String?, endpoint: String?, tunnelIp: String?, listenPort: UInt16?, relays: [String]?, disabledRelays: [String]?, exitNode: String?, exitNodeLeakProtection: Bool?, advertiseExitNode: Bool?, advertisedRoutes: String?, wireguardExitEnabled: Bool?, wireguardExitInterface: String?, wireguardExitAddress: String?, wireguardExitPrivateKey: String?, wireguardExitPeerPublicKey: String?, wireguardExitPeerPresharedKey: String?, wireguardExitEndpoint: String?, wireguardExitAllowedIps: String?, wireguardExitDns: String?, wireguardExitMtu: UInt16?, wireguardExitPersistentKeepaliveSecs: UInt16?, wireguardExitConfig: String?, paidExitEnabled: Bool?, paidExitUpstream: String?, paidExitMeter: String?, paidExitPriceMsat: UInt64?, paidExitPerUnits: UInt64?, paidExitAcceptedMints: String?, paidExitMaxChannelCapacitySat: UInt64?, paidExitChannelExpirySecs: UInt64?, paidExitFreeProbeUnits: UInt64?, paidExitGraceUnits: UInt64?, paidExitCountryCode: String?, paidExitRegion: String?, paidExitAsn: String?, paidExitNetworkClass: String?, paidExitIpv4: Bool?, paidExitIpv6: Bool?, fipsHostTunnelEnabled: Bool?, connectToNonRosterFipsPeers: Bool?, fipsNostrDiscoveryEnabled: Bool?, fipsBootstrapEnabled: Bool?, fipsBootstrapPeers: [String: [String]]?, fipsHostInboundTcpPorts: String?, autoconnect: Bool?, launchOnStartup: Bool?, closeToTrayOnClose: Bool?) {
+    public init(nodeName: String?, endpoint: String?, tunnelIp: String?, listenPort: UInt16?, relays: [String]?, disabledRelays: [String]?, exitNode: String?, exitNodeLeakProtection: Bool?, advertiseExitNode: Bool?, advertisedRoutes: String?, wireguardExitEnabled: Bool?, wireguardExitInterface: String?, wireguardExitAddress: String?, wireguardExitPrivateKey: String?, wireguardExitPeerPublicKey: String?, wireguardExitPeerPresharedKey: String?, wireguardExitEndpoint: String?, wireguardExitAllowedIps: String?, wireguardExitDns: String?, wireguardExitMtu: UInt16?, wireguardExitPersistentKeepaliveSecs: UInt16?, wireguardExitConfig: String?, paidExitEnabled: Bool?, paidExitUpstream: String?, paidExitMeter: String?, paidExitPriceMsat: UInt64?, paidExitPerUnits: UInt64?, paidExitAcceptedMints: String?, paidExitMaxChannelCapacitySat: UInt64?, paidExitChannelExpirySecs: UInt64?, paidExitFreeProbeUnits: UInt64?, paidExitGraceUnits: UInt64?, paidExitCountryCode: String?, paidExitRegion: String?, paidExitAsn: String?, paidExitNetworkClass: String?, paidExitIpv4: Bool?, paidExitIpv6: Bool?, paidExitRatingFile: String?, paidExitRatingRelays: [String]?, paidExitRatingScope: String?, fipsHostTunnelEnabled: Bool?, connectToNonRosterFipsPeers: Bool?, fipsNostrDiscoveryEnabled: Bool?, fipsBootstrapEnabled: Bool?, fipsBootstrapPeers: [String: [String]]?, fipsHostInboundTcpPorts: String?, autoconnect: Bool?, launchOnStartup: Bool?, closeToTrayOnClose: Bool?) {
         self.nodeName = nodeName
         self.endpoint = endpoint
         self.tunnelIp = tunnelIp
@@ -5254,6 +5297,9 @@ public struct SettingsPatch {
         self.paidExitNetworkClass = paidExitNetworkClass
         self.paidExitIpv4 = paidExitIpv4
         self.paidExitIpv6 = paidExitIpv6
+        self.paidExitRatingFile = paidExitRatingFile
+        self.paidExitRatingRelays = paidExitRatingRelays
+        self.paidExitRatingScope = paidExitRatingScope
         self.fipsHostTunnelEnabled = fipsHostTunnelEnabled
         self.connectToNonRosterFipsPeers = connectToNonRosterFipsPeers
         self.fipsNostrDiscoveryEnabled = fipsNostrDiscoveryEnabled
@@ -5387,6 +5433,15 @@ extension SettingsPatch: Equatable, Hashable {
         if lhs.paidExitIpv6 != rhs.paidExitIpv6 {
             return false
         }
+        if lhs.paidExitRatingFile != rhs.paidExitRatingFile {
+            return false
+        }
+        if lhs.paidExitRatingRelays != rhs.paidExitRatingRelays {
+            return false
+        }
+        if lhs.paidExitRatingScope != rhs.paidExitRatingScope {
+            return false
+        }
         if lhs.fipsHostTunnelEnabled != rhs.fipsHostTunnelEnabled {
             return false
         }
@@ -5456,6 +5511,9 @@ extension SettingsPatch: Equatable, Hashable {
         hasher.combine(paidExitNetworkClass)
         hasher.combine(paidExitIpv4)
         hasher.combine(paidExitIpv6)
+        hasher.combine(paidExitRatingFile)
+        hasher.combine(paidExitRatingRelays)
+        hasher.combine(paidExitRatingScope)
         hasher.combine(fipsHostTunnelEnabled)
         hasher.combine(connectToNonRosterFipsPeers)
         hasher.combine(fipsNostrDiscoveryEnabled)
@@ -5515,6 +5573,9 @@ public struct FfiConverterTypeSettingsPatch: FfiConverterRustBuffer {
                 paidExitNetworkClass: FfiConverterOptionString.read(from: &buf),
                 paidExitIpv4: FfiConverterOptionBool.read(from: &buf),
                 paidExitIpv6: FfiConverterOptionBool.read(from: &buf),
+                paidExitRatingFile: FfiConverterOptionString.read(from: &buf),
+                paidExitRatingRelays: FfiConverterOptionSequenceString.read(from: &buf),
+                paidExitRatingScope: FfiConverterOptionString.read(from: &buf),
                 fipsHostTunnelEnabled: FfiConverterOptionBool.read(from: &buf),
                 connectToNonRosterFipsPeers: FfiConverterOptionBool.read(from: &buf),
                 fipsNostrDiscoveryEnabled: FfiConverterOptionBool.read(from: &buf),
@@ -5566,6 +5627,9 @@ public struct FfiConverterTypeSettingsPatch: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.paidExitNetworkClass, into: &buf)
         FfiConverterOptionBool.write(value.paidExitIpv4, into: &buf)
         FfiConverterOptionBool.write(value.paidExitIpv6, into: &buf)
+        FfiConverterOptionString.write(value.paidExitRatingFile, into: &buf)
+        FfiConverterOptionSequenceString.write(value.paidExitRatingRelays, into: &buf)
+        FfiConverterOptionString.write(value.paidExitRatingScope, into: &buf)
         FfiConverterOptionBool.write(value.fipsHostTunnelEnabled, into: &buf)
         FfiConverterOptionBool.write(value.connectToNonRosterFipsPeers, into: &buf)
         FfiConverterOptionBool.write(value.fipsNostrDiscoveryEnabled, into: &buf)
