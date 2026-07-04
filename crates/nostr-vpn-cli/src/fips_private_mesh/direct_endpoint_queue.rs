@@ -159,44 +159,11 @@ impl FipsDirectEndpointQueue {
                 return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
             }
         }
-        let mut queued = state
-            .batches
-            .pop_front()
+        let (queued, coalesced_batches) = pop_limited_source_batch(&mut state, limit.max(1))
             .ok_or(std::sync::mpsc::RecvTimeoutError::Timeout)?;
-        record_direct_endpoint_queue_residence(&queued);
-        limit_queued_direct_endpoint_runs_to_remaining(&mut queued, limit.max(1), &mut state);
-        let Some(source_node_addr) = queued.source_node_addr else {
-            crate::pipeline_profile::record_direct_endpoint_rx_batch(1, queued.packets, 1);
-            return Ok(queued.runs);
-        };
-
-        let mut packet_count = queued.packets;
-        let mut coalesced_batches = 1usize;
-        while packet_count < limit {
-            let Some(next) = state.batches.front() else {
-                break;
-            };
-            if next.source_node_addr != Some(source_node_addr) {
-                break;
-            }
-            let mut next = state
-                .batches
-                .pop_front()
-                .expect("front batch must remain present while queue lock is held");
-            record_direct_endpoint_queue_residence(&next);
-            limit_queued_direct_endpoint_runs_to_remaining(
-                &mut next,
-                limit.saturating_sub(packet_count),
-                &mut state,
-            );
-            packet_count = packet_count.saturating_add(next.packets);
-            coalesced_batches = coalesced_batches.saturating_add(1);
-            queued.runs.append(&mut next.runs);
-        }
-
         crate::pipeline_profile::record_direct_endpoint_rx_batch(
             queued.runs.len(),
-            packet_count,
+            queued.packets,
             coalesced_batches,
         );
         Ok(queued.runs)
@@ -210,16 +177,12 @@ impl FipsDirectEndpointQueue {
             .state
             .lock()
             .map_err(|_| std::sync::mpsc::TryRecvError::Disconnected)?;
-        let mut queued = state
-            .batches
-            .pop_front()
+        let (queued, coalesced_batches) = pop_limited_source_batch(&mut state, limit.max(1))
             .ok_or(std::sync::mpsc::TryRecvError::Empty)?;
-        record_direct_endpoint_queue_residence(&queued);
-        limit_queued_direct_endpoint_runs_to_remaining(&mut queued, limit.max(1), &mut state);
         crate::pipeline_profile::record_direct_endpoint_rx_batch(
             queued.runs.len(),
             queued.packets,
-            1,
+            coalesced_batches,
         );
         Ok(queued.runs)
     }
@@ -241,6 +204,44 @@ impl FipsDirectEndpointQueue {
         );
         Ok(queued.runs)
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn pop_limited_source_batch(
+    state: &mut FipsDirectEndpointQueueState,
+    limit: usize,
+) -> Option<(FipsDirectEndpointQueuedRuns, usize)> {
+    let mut queued = state.batches.pop_front()?;
+    record_direct_endpoint_queue_residence(&queued);
+    limit_queued_direct_endpoint_runs_to_remaining(&mut queued, limit, state);
+    let Some(source_node_addr) = queued.source_node_addr else {
+        return Some((queued, 1));
+    };
+
+    let mut coalesced_batches = 1usize;
+    while queued.packets < limit {
+        let Some(next) = state.batches.front() else {
+            break;
+        };
+        if next.source_node_addr != Some(source_node_addr) {
+            break;
+        }
+        let mut next = state
+            .batches
+            .pop_front()
+            .expect("front batch must remain present while queue lock is held");
+        record_direct_endpoint_queue_residence(&next);
+        limit_queued_direct_endpoint_runs_to_remaining(
+            &mut next,
+            limit.saturating_sub(queued.packets),
+            state,
+        );
+        queued.packets = queued.packets.saturating_add(next.packets);
+        coalesced_batches = coalesced_batches.saturating_add(1);
+        queued.runs.append(&mut next.runs);
+    }
+
+    Some((queued, coalesced_batches))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
