@@ -116,6 +116,8 @@ sync_repo() {
   local remote_url="${SSH_HOST}:${bare_repo//\\//}"
   local sync_commit
   local local_tree
+  local local_clean
+  local remote_commit
   local remote_tree
   local git_ssh
 
@@ -125,12 +127,19 @@ sync_repo() {
   fi
 
   ensure_remote_bare_repo "$bare_repo"
-  sync_commit="$(make_sync_commit "$local_repo")"
+  if [[ -z "$(git -C "$local_repo" status --porcelain)" ]]; then
+    local_clean=1
+    sync_commit="$(git -C "$local_repo" rev-parse HEAD)"
+  else
+    local_clean=0
+    sync_commit="$(make_sync_commit "$local_repo")"
+  fi
   local_tree="$(git -C "$local_repo" rev-parse "$sync_commit^{tree}")"
   git_ssh="$(git_ssh_command)"
   if GIT_SSH_COMMAND="$git_ssh" git -C "$local_repo" fetch --quiet "$remote_url" "$remote_ref" 2>/dev/null; then
+    remote_commit="$(git -C "$local_repo" rev-parse FETCH_HEAD)"
     remote_tree="$(git -C "$local_repo" rev-parse "FETCH_HEAD^{tree}")"
-    if [[ "$remote_tree" == "$local_tree" ]]; then
+    if [[ "$remote_tree" == "$local_tree" && ( "$local_clean" != "1" || "$remote_commit" == "$sync_commit" ) ]]; then
       echo "WINDOWS_VM_GIT_SYNC_UNCHANGED $label"
       checkout_remote_ref "$worktree" "$bare_repo" "$remote_ref"
       return
