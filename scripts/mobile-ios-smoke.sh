@@ -26,6 +26,7 @@ VPN_START_WAIT_SECS="${NVPN_IOS_VPN_START_WAIT_SECS:-12}"
 VPN_RESULT_WAIT_SECS="${NVPN_IOS_VPN_RESULT_WAIT_SECS:-4}"
 VPN_RESULT_NAME="${NVPN_IOS_VPN_RESULT_NAME:-mobile-ios-smoke-vpn-$$.json}"
 VPN_RESULT_DIR="${NVPN_IOS_RESULT_DIR:-$ROOT/artifacts/mobile-ios}"
+TUN_PACKET_PROBE_SUMMARY_NAME="${NVPN_IOS_TUN_PACKET_PROBE_SUMMARY_NAME:-mobile-ios-tun-probe-summary-$$.json}"
 TUN_PACKET_PROBE_TARGET="${NVPN_IOS_TUN_PACKET_PROBE_TARGET:-10.44.255.254}"
 TUN_PACKET_PROBE_PORT="${NVPN_IOS_TUN_PACKET_PROBE_PORT:-9}"
 TUN_PACKET_PROBE_COUNT="${NVPN_IOS_TUN_PACKET_PROBE_COUNT:-4}"
@@ -240,11 +241,12 @@ copy_ios_debug_logs() {
 
 validate_vpn_probe_result() {
   local result_path="$1"
-  python3 - "$result_path" <<'PY'
+  local summary_path="$VPN_RESULT_DIR/$TUN_PACKET_PROBE_SUMMARY_NAME"
+  python3 - "$result_path" "$summary_path" <<'PY'
 import json
 import sys
 
-path = sys.argv[1]
+path, summary_path = sys.argv[1], sys.argv[2]
 with open(path, encoding="utf-8") as fh:
     result = json.load(fh)
 
@@ -257,32 +259,70 @@ def counter(value):
         return int(value)
     return None
 
-def probe_summary():
+def probe_values():
     expected = counter(result.get("tunPacketProbeExpectedPackets"))
+    sent = counter(result.get("tunPacketProbeSentPackets"))
     observed = counter(result.get("tunPacketProbeObservedPackets"))
     missing = counter(result.get("tunPacketProbeMissingPackets"))
-    loss_pct = "?"
-    observed_pct = "?"
+    observed_bytes = counter(result.get("tunPacketProbeObservedBytesRead"))
+    dropped_delta = counter(result.get("tunPacketProbeDroppedDelta"))
+    loss_pct = None
+    observed_pct = None
     if expected and expected > 0:
         if missing is not None:
-            loss_pct = f"{(missing * 100.0 / expected):.1f}%"
+            loss_pct = round(missing * 100.0 / expected, 3)
         if observed is not None:
-            observed_pct = f"{(observed * 100.0 / expected):.1f}%"
+            observed_pct = round(observed * 100.0 / expected, 3)
+    return {
+        "target": result.get("tunPacketProbeTarget"),
+        "port": counter(result.get("tunPacketProbePort")),
+        "expected": expected,
+        "sent": sent,
+        "observed": observed,
+        "missing": missing,
+        "observedPct": observed_pct,
+        "packetLossPct": loss_pct,
+        "observedBytesRead": observed_bytes,
+        "droppedDelta": dropped_delta,
+        "firstObservedMs": counter(result.get("tunPacketProbeFirstObservedMs")),
+        "elapsedMs": counter(result.get("tunPacketProbeElapsedMs")),
+        "polls": counter(result.get("tunPacketProbePolls")),
+        "pollIntervalMs": counter(result.get("tunPacketProbePollIntervalMs")),
+        "baselineRead": counter(result.get("tunPacketProbeBaselineRead")),
+        "finalRead": counter(result.get("tunPacketProbeFinalRead")),
+        "baselineBytesRead": counter(result.get("tunPacketProbeBaselineBytesRead")),
+        "finalBytesRead": counter(result.get("tunPacketProbeFinalBytesRead")),
+        "baselineDropped": counter(result.get("tunPacketProbeBaselineDropped")),
+        "finalDropped": counter(result.get("tunPacketProbeFinalDropped")),
+        "readIncreased": result.get("tunPacketProbeReadIncreased"),
+        "bytesReadIncreased": result.get("tunPacketProbeBytesReadIncreased"),
+        "droppedIncreased": result.get("tunPacketProbeDroppedIncreased"),
+        "error": result.get("tunPacketProbeError"),
+        "sendError": result.get("tunPacketProbeSendError"),
+        "rawOutput": path,
+    }
+
+def display(value, suffix=""):
+    if value is None:
+        return "?"
+    if isinstance(value, float):
+        return f"{value:.3f}".rstrip("0").rstrip(".") + suffix
+    return f"{value}{suffix}"
+
+def probe_summary():
+    values = probe_values()
     parts = [
-        f"read={result.get('tunPacketProbeBaselineRead')}->{result.get('tunPacketProbeFinalRead')}",
-        (
-            f"observed={result.get('tunPacketProbeObservedPackets')}/"
-            f"{result.get('tunPacketProbeExpectedPackets')}"
-        ),
-        f"observedPct={observed_pct}",
-        f"missing={result.get('tunPacketProbeMissingPackets', '?')}",
-        f"lossPct={loss_pct}",
-        f"bytes={result.get('tunPacketProbeObservedBytesRead')}",
-        f"drops={result.get('tunPacketProbeDroppedDelta')}",
-        f"firstMs={result.get('tunPacketProbeFirstObservedMs', '?')}",
-        f"elapsedMs={result.get('tunPacketProbeElapsedMs')}",
-        f"polls={result.get('tunPacketProbePolls', '?')}",
-        f"target={result.get('tunPacketProbeTarget')}",
+        f"read={values['baselineRead']}->{values['finalRead']}",
+        f"observed={values['observed']}/{values['expected']}",
+        f"observedPct={display(values['observedPct'], '%')}",
+        f"missing={values['missing']}",
+        f"lossPct={display(values['packetLossPct'], '%')}",
+        f"bytes={values['observedBytesRead']}",
+        f"drops={values['droppedDelta']}",
+        f"firstMs={values['firstObservedMs']}",
+        f"elapsedMs={values['elapsedMs']}",
+        f"polls={values['polls']}",
+        f"target={values['target']}",
     ]
     if isinstance(runtime, dict):
         parts.extend([
@@ -291,6 +331,21 @@ def probe_summary():
             f"runtimeDropped={runtime.get('tunPacketsDropped')}",
         ])
     return "iOS TUN packet probe counters: " + " ".join(parts)
+
+def write_probe_summary():
+    values = probe_values()
+    if isinstance(runtime, dict):
+        values["runtime"] = {
+            "tunPacketsRead": counter(runtime.get("tunPacketsRead")),
+            "tunBytesRead": counter(runtime.get("tunBytesRead")),
+            "tunPacketsWritten": counter(runtime.get("tunPacketsWritten")),
+            "tunBytesWritten": counter(runtime.get("tunBytesWritten")),
+            "tunPacketsDropped": counter(runtime.get("tunPacketsDropped")),
+        }
+    with open(summary_path, "w", encoding="utf-8") as fh:
+        json.dump(values, fh, sort_keys=True, indent=2)
+        fh.write("\n")
+    return summary_path
 
 errors = []
 if result.get("startError"):
@@ -360,6 +415,7 @@ if errors:
 if result.get("tunPacketProbeReadIncreased") is True:
     print("iOS TUN packet probe passed")
     print(probe_summary())
+    print("iOS TUN packet probe summary: " + write_probe_summary())
 PY
 }
 

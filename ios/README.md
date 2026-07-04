@@ -41,6 +41,8 @@ for the physical-device VPN permission and Packet Tunnel path; keep local device
 identifiers out of git. A passing physical VPN cycle asks the debug app to
 disconnect afterwards unless `--leave-vpn-active` is set. The packet probe target,
 port, count, and wait can be overridden with `NVPN_IOS_TUN_PACKET_PROBE_*`.
+Physical VPN cycles save the raw debug result and TUN packet-probe summary JSON
+under `artifacts/mobile-ios`.
 
 The native shell includes SwiftUI state/action surfaces, invite QR,
 copy/share/import, roster, routing, settings, diagnostics, deep links, app icon,
