@@ -9,6 +9,7 @@ private let defaultMobileMtu = 1150
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private var tunnelHandle: OpaquePointer?
     private var tunnelRunning = false
+    private var tunnelGeneration: UInt64 = 0
     private var activeTunnelCalls = 0
     private let tunnelCondition = NSCondition()
 
@@ -32,26 +33,29 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
         NSLog("nvpn-pkt: calling nostr_vpn_mobile_tunnel_new (configLen=\(configJson.count))")
         packetDebugLog("calling nostr_vpn_mobile_tunnel_new configLen=\(configJson.count)")
+        let startGeneration = beginRustTunnelStart()
         guard let handle = configJson.withCString({ nostr_vpn_mobile_tunnel_new($0) }) else {
             NSLog("nvpn-pkt: nostr_vpn_mobile_tunnel_new returned NULL")
             packetDebugLog("nostr_vpn_mobile_tunnel_new returned NULL")
+            stopRustTunnel(generation: startGeneration)
+            completionHandler(PacketTunnelError.startFailed)
+            return
+        }
+        guard installRustTunnel(handle, generation: startGeneration) else {
+            NSLog("nvpn-pkt: tunnel stopped before Rust runtime install")
+            packetDebugLog("tunnel stopped before Rust runtime install")
             completionHandler(PacketTunnelError.startFailed)
             return
         }
         NSLog("nvpn-pkt: rust runtime up, handle=\(handle)")
         packetDebugLog("rust runtime up")
-        tunnelCondition.lock()
-        tunnelHandle = handle
-        tunnelRunning = true
-        activeTunnelCalls = 0
-        tunnelCondition.unlock()
         var excludedRoutes = parsedConfig.excludedRoutes
-        guard let resolvedWgExcludedRoute = withTunnelHandle({ handle in
+        guard let resolvedWgExcludedRoute = withTunnelHandle(generation: startGeneration, { handle in
             consumeCString(nostr_vpn_mobile_tunnel_wg_excluded_route(handle))
         })?.trimmingCharacters(in: .whitespacesAndNewlines) else {
             NSLog("nvpn-pkt: tunnel stopped before WG excluded route lookup")
             packetDebugLog("tunnel stopped before WG excluded route lookup")
-            stopRustTunnel()
+            stopRustTunnel(generation: startGeneration)
             completionHandler(PacketTunnelError.startFailed)
             return
         }
@@ -130,7 +134,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 let settingsMs = elapsedMs(since: settingsStartedAt)
                 NSLog("nvpn-pkt: setTunnelNetworkSettings failed after \(settingsMs)ms: \(error)")
                 packetDebugLog("setTunnelNetworkSettings failed after \(settingsMs)ms: \(error)")
-                self?.stopRustTunnel()
+                self?.stopRustTunnel(generation: startGeneration)
                 completionHandler(error)
                 return
             }
@@ -138,7 +142,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 completionHandler(PacketTunnelError.startFailed)
                 return
             }
-            let attachResult = self.withTunnelHandle { handle in
+            let attachResult = self.withTunnelHandle(generation: startGeneration) { handle in
                 nostr_vpn_mobile_tunnel_attach_current_tun_fd(handle)
             }
             guard attachResult == true else {
@@ -148,7 +152,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
                 let settingsMs = elapsedMs(since: settingsStartedAt)
                 NSLog("nvpn-pkt: \(reason) after \(settingsMs)ms")
                 packetDebugLog("\(reason) after \(settingsMs)ms")
-                self.stopRustTunnel()
+                self.stopRustTunnel(generation: startGeneration)
                 completionHandler(PacketTunnelError.startFailed)
                 return
             }
@@ -215,8 +219,40 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         return (normalized, [""], false)
     }
 
-    private func stopRustTunnel() {
+    private func beginRustTunnelStart() -> UInt64 {
+        stopRustTunnel()
         tunnelCondition.lock()
+        tunnelGeneration &+= 1
+        let generation = tunnelGeneration
+        tunnelRunning = true
+        activeTunnelCalls = 0
+        tunnelCondition.unlock()
+        return generation
+    }
+
+    private func installRustTunnel(_ handle: OpaquePointer, generation: UInt64) -> Bool {
+        var shouldFree = false
+        var installed = false
+        tunnelCondition.lock()
+        if tunnelRunning, tunnelGeneration == generation, tunnelHandle == nil {
+            tunnelHandle = handle
+            installed = true
+        } else {
+            shouldFree = true
+        }
+        tunnelCondition.unlock()
+        if shouldFree {
+            nostr_vpn_mobile_tunnel_free(handle)
+        }
+        return installed
+    }
+
+    private func stopRustTunnel(generation expectedGeneration: UInt64? = nil) {
+        tunnelCondition.lock()
+        if let expectedGeneration, tunnelGeneration != expectedGeneration {
+            tunnelCondition.unlock()
+            return
+        }
         tunnelRunning = false
         let handle = tunnelHandle
         tunnelHandle = nil
@@ -230,9 +266,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         }
     }
 
-    private func withTunnelHandle<T>(_ body: (OpaquePointer) -> T) -> T? {
+    private func withTunnelHandle<T>(
+        generation expectedGeneration: UInt64? = nil,
+        _ body: (OpaquePointer) -> T
+    ) -> T? {
         tunnelCondition.lock()
-        guard tunnelRunning, let handle = tunnelHandle else {
+        guard tunnelRunning,
+              expectedGeneration == nil || tunnelGeneration == expectedGeneration,
+              let handle = tunnelHandle
+        else {
             tunnelCondition.unlock()
             return nil
         }
