@@ -202,7 +202,7 @@ fn spawn_blocking_mesh_recv_worker(
     let thread = std::thread::Builder::new()
         .name("nvpn-fips-mesh-recv".to_string())
         .spawn(move || {
-            let recv_burst = fips_mesh_recv_burst();
+            let recv_burst = FIPS_MESH_RECV_BURST;
             let mut packet_batch = DirectTunWriteBatch::with_capacity(recv_burst);
             #[cfg(target_os = "linux")]
             let mut vnet_write_preparer = LinuxVnetWritePreparer::new();

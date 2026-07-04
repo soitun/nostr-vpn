@@ -32,8 +32,7 @@
     use nostr_vpn_core::fips_mesh::FipsPaidRouteAdmission;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
-        BorrowedTunFd, DirectTunWriteBatch, TunPipelinePacket, parse_fips_mesh_recv_burst,
-        raw_write_packet_to_tun,
+        BorrowedTunFd, DirectTunWriteBatch, TunPipelinePacket, raw_write_packet_to_tun,
     };
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
@@ -82,17 +81,6 @@
         assert_eq!(parse_linux_tun_tx_queue_len(Some("0"), 4096), None);
         assert_eq!(parse_linux_tun_tx_queue_len(Some("off"), 4096), None);
         assert_eq!(parse_linux_tun_tx_queue_len(Some("no"), 4096), None);
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    #[test]
-    fn mesh_recv_burst_env_keeps_endpoint_batch_bounds() {
-        assert_eq!(parse_fips_mesh_recv_burst(None, 64), 64);
-        assert_eq!(parse_fips_mesh_recv_burst(Some(""), 64), 64);
-        assert_eq!(parse_fips_mesh_recv_burst(Some("not-a-number"), 64), 64);
-        assert_eq!(parse_fips_mesh_recv_burst(Some("0"), 64), 1);
-        assert_eq!(parse_fips_mesh_recv_burst(Some("32"), 64), 32);
-        assert_eq!(parse_fips_mesh_recv_burst(Some("999"), 64), 128);
     }
 
     #[test]

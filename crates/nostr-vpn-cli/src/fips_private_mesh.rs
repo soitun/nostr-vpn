@@ -194,24 +194,6 @@ fn parse_linux_tun_tx_queue_len(raw: Option<&str>, default: usize) -> Option<usi
         .map(|value| value.clamp(64, 65_536))
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn fips_mesh_recv_burst() -> usize {
-    static VALUE: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
-    *VALUE.get_or_init(|| {
-        parse_fips_mesh_recv_burst(
-            std::env::var("NVPN_FIPS_MESH_RECV_BURST").ok().as_deref(),
-            FIPS_MESH_RECV_BURST,
-        )
-    })
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-fn parse_fips_mesh_recv_burst(raw: Option<&str>, default: usize) -> usize {
-    raw.and_then(|raw| raw.trim().parse::<usize>().ok())
-        .unwrap_or(default)
-        .clamp(1, 128)
-}
-
 fn fips_lan_discovery_scope(network_id: &str) -> String {
     let digest = Sha256::digest(network_id.trim().as_bytes());
     format!(
