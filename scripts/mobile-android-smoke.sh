@@ -67,8 +67,8 @@ system VPN consent OK button if the prompt appears.
 When --vpn-cycle reaches Android's active VPN service/network state, this script
 also copies files/app-core/mobile-runtime-state.json from the debug app sandbox
 and requires fresh Rust runtime state with native TUN counter fields. It also
-captures Android's own VPN interface counters from `ip -s link` under
-artifacts/mobile-android.
+captures Android's own VPN interface counters from `ip -s link` or
+`/proc/net/dev` under artifacts/mobile-android.
 
 By default --vpn-cycle also sends a small shell ping probe toward a non-local
 10.44/16 address and requires tunPacketsRead to increase by at least the probe
