@@ -6575,6 +6575,93 @@ mod paid_exit_rating_tests {
         );
     }
 
+    #[test]
+    fn degraded_paid_exit_probe_rating_fact_makes_best_rated_avoid_seller() {
+        let degraded = sample_signed_offer("degraded", 30);
+        let newcomer = sample_signed_offer("newcomer", 20);
+        let degraded_offer = degraded.offer().unwrap();
+        let newcomer_offer = newcomer.offer().unwrap();
+        let degraded_key = nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
+            &degraded_offer.seller_npub,
+            &degraded_offer.offer_id,
+        );
+        let newcomer_key = nostr_vpn_core::paid_route_store::paid_route_offer_store_key(
+            &newcomer_offer.seller_npub,
+            &newcomer_offer.offer_id,
+        );
+        let degraded_probe = sample_probe_record(
+            None,
+            Some(PaidRouteQualityMetrics {
+                latency_ms: Some(1_500),
+                jitter_ms: Some(300),
+                packet_loss_ppm: Some(250_000),
+                down_bps: Some(100_000),
+                last_seen_unix: Some(124),
+                ..PaidRouteQualityMetrics::default()
+            }),
+        );
+        let (rating, created_at) =
+            paid_exit_rating_from_session_probe(&degraded_probe, 999).unwrap();
+        assert_eq!((rating, created_at), (0, 124));
+
+        let rater = Keys::generate();
+        let rater_npub = rater.public_key().to_bech32().unwrap();
+        let event = build_paid_exit_rating_fact_event(
+            &rater,
+            &rater_npub,
+            &degraded_offer.seller_npub,
+            "fips.peer",
+            "session-degraded",
+            rating,
+            created_at,
+        )
+        .unwrap();
+        let event_value = serde_json::to_value(&event).unwrap();
+        assert!(paid_exit_rating_fact_matches_scope(
+            &event_value,
+            "fips.peer"
+        ));
+
+        let scores =
+            paid_exit_rating_scores_from_value(&json!({"events": [event_value]}), "fips.peer")
+                .unwrap();
+        assert_eq!(
+            scores.get(&degraded_offer.seller_npub),
+            Some(&PaidExitRatingScore {
+                score: -100,
+                created_at: 124,
+            })
+        );
+
+        let mut ranked = vec![degraded.clone(), newcomer.clone()];
+        paid_exit_sort_offers_by_rating(&mut ranked, &scores);
+        assert_eq!(
+            ranked[0].offer().unwrap().seller_npub,
+            newcomer_offer.seller_npub
+        );
+
+        let store_path = temp_paid_exit_store_path("degraded-rating-bridge");
+        let changed = persist_paid_exit_discovered_offers(
+            &store_path,
+            &[degraded, newcomer],
+            &["wss://relay.example".to_string()],
+            Some(&scores),
+        )
+        .unwrap();
+        assert_eq!(changed, 2);
+
+        let store = load_paid_route_store(&store_path).unwrap();
+        let degraded_record = store.offers.get(&degraded_key).expect("degraded offer");
+        assert_eq!(degraded_record.rating_score, Some(-100));
+        assert_eq!(degraded_record.rating_updated_at_unix, 124);
+        assert_eq!(
+            paid_exit_buy_offer_selector(&sample_buy_args(None, true), &store).unwrap(),
+            newcomer_key
+        );
+
+        let _ = std::fs::remove_file(store_path);
+    }
+
     fn sample_signed_offer(offer_id: &str, created_at: u64) -> SignedPaidRouteOffer {
         let keys = Keys::generate();
         let config = PaidExitConfig::default();
