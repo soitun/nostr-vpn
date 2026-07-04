@@ -760,13 +760,22 @@ PS
 
 capture_windows_snapshot() {
   local out="$1"
-  run_windows_ps "$(windows_snapshot_script)" >"$out"
+  local tmp
+  tmp="$(mktemp "${out}.XXXXXX")"
+  if run_windows_ps "$(windows_snapshot_script)" >"$tmp" &&
+    jq -e 'type == "object"' "$tmp" >/dev/null 2>&1; then
+    mv "$tmp" "$out"
+    return 0
+  fi
+  mv "$tmp" "${out}.invalid" 2>/dev/null || true
+  return 1
 }
 
 capture_linux_snapshot() {
   local out="$1"
-  local nvpn_q
+  local nvpn_q tmp
   nvpn_q="$(sh_q "$LINUX_NVPN")"
+  tmp="$(mktemp "${out}.XXXXXX")"
   run_linux_sh "set -euo pipefail
 tmpdir=\$(mktemp -d)
 trap 'rm -rf \"\$tmpdir\"' EXIT
@@ -839,7 +848,15 @@ jq -n --slurpfile service \"\$svc\" --slurpfile status \"\$status\" --slurpfile 
   --arg service_binary \"\$service_binary\" \
   --arg service_hash \"\$service_hash\" \
   --arg process_hash \"\$process_hash\" \
-  '{captured_at:\$captured_at,service_status:(\$service[0] // {}),daemon_status:(\$status[0] // {}),daemon_state_file_state:(\$raw_state[0] // null),process:(\$process[0] // null),binaries:{configured_path:\$service_binary,configured_hash:\$service_hash,process_path:(\$process[0].path // \"\"),process_hash:\$process_hash},adapters:(\$adapters[0] // [])}'" >"$out"
+  '{captured_at:\$captured_at,service_status:(\$service[0] // {}),daemon_status:(\$status[0] // {}),daemon_state_file_state:(\$raw_state[0] // null),process:(\$process[0] // null),binaries:{configured_path:\$service_binary,configured_hash:\$service_hash,process_path:(\$process[0].path // \"\"),process_hash:\$process_hash},adapters:(\$adapters[0] // [])}'" >"$tmp" &&
+    jq -e 'type == "object"' "$tmp" >/dev/null 2>&1
+  local status=$?
+  if [[ "$status" == "0" ]]; then
+    mv "$tmp" "$out"
+    return 0
+  fi
+  mv "$tmp" "${out}.invalid" 2>/dev/null || true
+  return "$status"
 }
 
 apply_static_direct_hints() {
@@ -2657,7 +2674,7 @@ main() {
   write_run_metadata
   resolve_installed_windows_nvpn
   resolve_installed_linux_nvpn
-  trap cleanup EXIT
+  trap 'status=$?; cleanup || true; exit "$status"' EXIT
   backup_windows_config
   backup_linux_config
   if is_true "$DEDICATED_TWO_NODE"; then
