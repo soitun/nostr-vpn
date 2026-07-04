@@ -79,8 +79,8 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 use nostr_sdk::{
     Client,
     prelude::{
-        Alphabet, Event, EventBuilder, Filter, Keys, Kind, RelayPoolNotification, SingleLetterTag,
-        Tag, Timestamp, ToBech32,
+        Alphabet, Event, EventBuilder, Filter, Keys, Kind, PublicKey, RelayPoolNotification,
+        SingleLetterTag, Tag, Timestamp, ToBech32,
     },
 };
 #[cfg(feature = "paid-exit")]

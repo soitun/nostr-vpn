@@ -160,6 +160,10 @@ impl NativeAppRuntime {
         if let Some(value) = patch.paid_exit_rating_relays {
             self.config.paid_exit.rating_discovery.relays = normalize_relay_urls(value);
         }
+        if let Some(value) = patch.paid_exit_trusted_rating_authors {
+            self.config.paid_exit.rating_discovery.trusted_authors =
+                Self::normalize_string_list(value);
+        }
         if let Some(value) = patch.paid_exit_rating_scope {
             self.config.paid_exit.rating_discovery.scope = value.trim().to_string();
         }
@@ -226,6 +230,19 @@ impl NativeAppRuntime {
                 .relays
                 .retain(|relay| !disabled_relays.contains(relay));
         }
+    }
+
+    fn normalize_string_list(values: Vec<String>) -> Vec<String> {
+        let mut values = values
+            .iter()
+            .flat_map(|value| value.split(','))
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .collect::<Vec<_>>();
+        values.sort();
+        values.dedup();
+        values
     }
 
     fn connect_vpn(&mut self) -> Result<()> {

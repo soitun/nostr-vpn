@@ -388,6 +388,7 @@ pub struct SettingsPatch {
     pub paid_exit_ipv6: Option<bool>,
     pub paid_exit_rating_file: Option<String>,
     pub paid_exit_rating_relays: Option<Vec<String>>,
+    pub paid_exit_trusted_rating_authors: Option<Vec<String>>,
     pub paid_exit_rating_scope: Option<String>,
     pub fips_host_tunnel_enabled: Option<bool>,
     pub connect_to_non_roster_fips_peers: Option<bool>,

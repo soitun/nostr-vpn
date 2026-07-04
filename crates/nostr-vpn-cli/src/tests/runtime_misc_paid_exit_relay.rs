@@ -2,6 +2,7 @@ use crate::*;
 use nostr_sdk::async_utility::futures_util::{SinkExt, StreamExt};
 use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config;
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
@@ -57,6 +58,73 @@ async fn paid_exit_offer_publish_and_discover_roundtrips_through_local_relay() {
 
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
+async fn paid_exit_rating_discovery_filters_untrusted_relay_publishers() {
+    let trusted_author = Keys::generate();
+    let untrusted_author = Keys::generate();
+    let trusted_npub = trusted_author.public_key().to_bech32().unwrap();
+    let untrusted_npub = untrusted_author.public_key().to_bech32().unwrap();
+    let trusted_seller = Keys::generate();
+    let spam_seller = Keys::generate();
+    let trusted_seller_npub = trusted_seller.public_key().to_bech32().unwrap();
+    let spam_seller_npub = spam_seller.public_key().to_bech32().unwrap();
+    let trusted_event = build_paid_exit_rating_fact_event(
+        &trusted_author,
+        &trusted_npub,
+        &trusted_seller_npub,
+        "fips.peer",
+        "session-trusted",
+        90,
+        600,
+    )
+    .expect("trusted rating event");
+    let spam_event = build_paid_exit_rating_fact_event(
+        &untrusted_author,
+        &untrusted_npub,
+        &spam_seller_npub,
+        "fips.peer",
+        "session-spam",
+        100,
+        601,
+    )
+    .expect("spam rating event");
+    let relay = LocalNostrRelay::spawn_with_events(vec![
+        serde_json::to_value(spam_event).expect("encode spam event"),
+        serde_json::to_value(trusted_event).expect("encode trusted event"),
+    ])
+    .await;
+    let app = AppConfig::generated();
+    let trusted_authors =
+        paid_exit_trusted_rating_author_set(&[trusted_author.public_key().to_hex()]).unwrap();
+
+    let events = discover_paid_exit_rating_events_from_relays(
+        &app,
+        std::slice::from_ref(&relay.url),
+        1,
+        PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT,
+        None,
+        "fips.peer",
+        &trusted_authors,
+    )
+    .await
+    .expect("discover rating facts");
+
+    assert_eq!(events["events"].as_array().expect("events").len(), 1);
+    let scores = paid_exit_rating_scores_from_value(&events, "fips.peer", &trusted_authors)
+        .expect("rating scores");
+    assert_eq!(
+        scores.get(&trusted_seller_npub),
+        Some(&PaidExitRatingScore {
+            score: 80,
+            created_at: 600,
+        })
+    );
+    assert!(!scores.contains_key(&spam_seller_npub));
+
+    relay.stop().await;
+}
+
+#[cfg(feature = "paid-exit")]
+#[tokio::test]
 async fn paid_exit_rating_discovery_replays_historical_facts_from_local_relay() {
     let rater = Keys::generate();
     let rater_npub = rater.public_key().to_bech32().expect("rater npub");
@@ -101,12 +169,14 @@ async fn paid_exit_rating_discovery_replays_historical_facts_from_local_relay() 
         1,
         None,
         "fips.peer",
+        &HashSet::new(),
     )
     .await
     .expect("discover rating facts");
 
     assert_eq!(events["events"].as_array().expect("events").len(), 1);
-    let scores = paid_exit_rating_scores_from_value(&events, "fips.peer").expect("rating scores");
+    let scores = paid_exit_rating_scores_from_value(&events, "fips.peer", &HashSet::new())
+        .expect("rating scores");
     assert_eq!(
         scores.get(&seller_npub),
         Some(&PaidExitRatingScore {

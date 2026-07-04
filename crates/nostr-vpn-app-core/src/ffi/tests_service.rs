@@ -478,6 +478,10 @@ exit 0
                     " wss://ratings-b.example ".to_string(),
                     "wss://ratings-a.example,wss://ratings-b.example".to_string(),
                 ]),
+                paid_exit_trusted_rating_authors: Some(vec![
+                    " npub1authorb ".to_string(),
+                    "npub1authora,npub1authorb".to_string(),
+                ]),
                 paid_exit_rating_scope: Some(" fips.peer.test ".to_string()),
                 ..SettingsPatch::default()
             },
@@ -512,10 +516,15 @@ exit 0
                 "wss://ratings-b.example".to_string()
             ]
         );
+        assert_eq!(
+            saved.paid_exit.rating_discovery.trusted_authors,
+            vec!["npub1authora".to_string(), "npub1authorb".to_string()]
+        );
         assert_eq!(saved.paid_exit.rating_discovery.scope, "fips.peer.test");
 
         let raw = fs::read_to_string(&runtime.config_path).expect("read persisted config");
         assert!(raw.contains("rating_discovery"));
+        assert!(raw.contains("trusted_authors"));
         assert!(raw.contains("scope = \"fips.peer.test\""));
         assert!(raw.contains("wss://ratings-a.example"));
 
@@ -566,6 +575,8 @@ exit 0
             "wss://ratings-a.example".to_string(),
             "wss://ratings-b.example".to_string(),
         ];
+        runtime.config.paid_exit.rating_discovery.trusted_authors =
+            vec!["npub1author".to_string()];
         runtime.config.paid_exit.rating_discovery.scope = "fips.peer.test".to_string();
 
         runtime.dispatch(NativeAppAction::DiscoverPaidRouteOffers { duration_secs: 5 });
@@ -578,6 +589,7 @@ exit 0
         assert!(calls.contains(rating_path.to_string_lossy().as_ref()));
         assert!(calls.contains("--fips-peer-ratings-relay wss://ratings-a.example"));
         assert!(calls.contains("--fips-peer-ratings-relay wss://ratings-b.example"));
+        assert!(calls.contains("--trusted-rating-author npub1author"));
         assert!(calls.contains("--rating-scope fips.peer.test"));
 
         let _ = fs::remove_dir_all(&dir);

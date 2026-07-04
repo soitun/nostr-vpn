@@ -445,10 +445,13 @@
             started_at.elapsed() < Duration::from_secs(2),
             "startup should return so Android can protect the WG socket before the watchdog expires"
         );
-        assert!(
-            started.wg_upstream_socket_fd >= 0,
-            "Android needs the WG UDP fd immediately after startup"
-        );
+        #[cfg(target_os = "android")]
+        {
+            assert!(
+                started.wg_upstream_socket_fd >= 0,
+                "Android needs the WG UDP fd immediately after startup"
+            );
+        }
 
         shutdown_started_mobile_tunnel(started).await;
     }

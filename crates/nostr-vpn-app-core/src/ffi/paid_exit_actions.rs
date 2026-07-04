@@ -695,6 +695,10 @@ impl NativeAppRuntime {
             args.push("--fips-peer-ratings-relay".to_string());
             args.push(relay.clone());
         }
+        for author in &rating_discovery.trusted_authors {
+            args.push("--trusted-rating-author".to_string());
+            args.push(author.clone());
+        }
         if rating_discovery.configured() {
             args.push("--rating-scope".to_string());
             args.push(rating_discovery.scope.clone());

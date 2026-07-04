@@ -354,6 +354,7 @@ async fn paid_exit_buyer_payment_roundtrips_through_local_relay() {
         since_secs: 0,
         fips_peer_ratings: None,
         fips_peer_ratings_relays: Vec::new(),
+        trusted_rating_authors: Vec::new(),
         rating_scope: DEFAULT_FIPS_PEER_RATING_SCOPE.to_string(),
         json: false,
     })

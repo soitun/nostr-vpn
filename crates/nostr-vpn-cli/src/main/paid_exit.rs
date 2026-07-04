@@ -188,6 +188,9 @@ struct PaidExitDiscoverArgs {
     /// Relay to query signed FIPS peer rating fact events from.
     #[arg(long = "fips-peer-ratings-relay", value_name = "URL")]
     fips_peer_ratings_relays: Vec<String>,
+    /// Trusted Nostr pubkey/npub allowed to publish rating facts. Repeat or comma-separate.
+    #[arg(long = "trusted-rating-author", value_name = "NPUB_OR_HEX")]
+    trusted_rating_authors: Vec<String>,
     /// Rating scope to read from the ratings file.
     #[arg(long = "rating-scope", default_value = DEFAULT_FIPS_PEER_RATING_SCOPE)]
     rating_scope: String,
@@ -2332,10 +2335,12 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let app = load_or_default_config(&config_path)?;
     let relays = paid_exit_relay_urls(&app, &args.relays);
+    let trusted_rating_authors =
+        paid_exit_trusted_rating_author_set(&args.trusted_rating_authors)?;
     let mut rating_scores = args
         .fips_peer_ratings
         .as_deref()
-        .map(|path| load_paid_exit_rating_scores(path, &args.rating_scope))
+        .map(|path| load_paid_exit_rating_scores(path, &args.rating_scope, &trusted_rating_authors))
         .transpose()?;
     let since_unix = if args.since_secs == 0 {
         None
@@ -2352,13 +2357,18 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
             PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT,
             since_unix,
             &args.rating_scope,
+            &trusted_rating_authors,
         )
         .await?;
         rating_relay_event_count = rating_events
             .get("events")
             .and_then(|events| events.as_array())
             .map_or(0, Vec::len);
-        let relay_scores = paid_exit_rating_scores_from_value(&rating_events, &args.rating_scope)?;
+        let relay_scores = paid_exit_rating_scores_from_value(
+            &rating_events,
+            &args.rating_scope,
+            &trusted_rating_authors,
+        )?;
         merge_paid_exit_rating_scores(&mut rating_scores, relay_scores);
     }
     let mut offers = discover_paid_exit_offers_from_relays(
@@ -2386,6 +2396,7 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
                 "relay_count": rating_relays.len(),
                 "relay_event_count": rating_relay_event_count,
                 "relays": rating_relays,
+                "trusted_author_count": trusted_rating_authors.len(),
             }))
         } else {
             None
@@ -2412,12 +2423,13 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "ratings: file={} scope={} subjects={} relay_events={} relays={}",
+                "ratings: file={} scope={} subjects={} relay_events={} relays={} trusted_authors={}",
                 file,
                 args.rating_scope,
                 subject_count,
                 rating_relay_event_count,
-                rating_relays.len()
+                rating_relays.len(),
+                trusted_rating_authors.len()
             );
         }
         for signed in &offers {
@@ -5660,20 +5672,22 @@ struct PaidExitRatingScore {
 fn load_paid_exit_rating_scores(
     path: &Path,
     scope: &str,
+    trusted_authors: &HashSet<String>,
 ) -> Result<HashMap<String, PaidExitRatingScore>> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("failed to read paid exit ratings {}", path.display()))?;
     let value: serde_json::Value = serde_json::from_str(&content)
         .with_context(|| format!("failed to parse paid exit ratings {}", path.display()))?;
-    paid_exit_rating_scores_from_value(&value, scope)
+    paid_exit_rating_scores_from_value(&value, scope, trusted_authors)
 }
 
 fn paid_exit_rating_scores_from_value(
     value: &serde_json::Value,
     scope: &str,
+    trusted_authors: &HashSet<String>,
 ) -> Result<HashMap<String, PaidExitRatingScore>> {
     let mut scores: HashMap<String, PaidExitRatingScore> = HashMap::new();
-    for rating in paid_exit_rating_records(value)? {
+    for rating in paid_exit_rating_records(value, trusted_authors)? {
         if !paid_exit_rating_matches_scope(&rating, scope) {
             continue;
         }
@@ -5716,20 +5730,31 @@ fn merge_paid_exit_rating_scores(
     }
 }
 
-fn paid_exit_rating_records(value: &serde_json::Value) -> Result<Vec<serde_json::Value>> {
+fn paid_exit_rating_records(
+    value: &serde_json::Value,
+    trusted_authors: &HashSet<String>,
+) -> Result<Vec<serde_json::Value>> {
     if let Some(records) = value.as_array() {
-        return Ok(records.clone());
+        return Ok(records
+            .iter()
+            .filter(|record| paid_exit_rating_record_author_is_trusted(record, trusted_authors))
+            .cloned()
+            .collect());
     }
 
     if let Some(records) = value
         .get("ratings")
         .and_then(|ratings| ratings.as_array())
     {
-        return Ok(records.clone());
+        return Ok(records
+            .iter()
+            .filter(|record| paid_exit_rating_record_author_is_trusted(record, trusted_authors))
+            .cloned()
+            .collect());
     }
 
     if let Some(events) = value.get("events").and_then(|events| events.as_array()) {
-        return paid_exit_rating_records_from_events(events);
+        return paid_exit_rating_records_from_events(events, trusted_authors);
     }
 
     Err(anyhow!(
@@ -5739,11 +5764,59 @@ fn paid_exit_rating_records(value: &serde_json::Value) -> Result<Vec<serde_json:
 
 fn paid_exit_rating_records_from_events(
     events: &[serde_json::Value],
+    trusted_authors: &HashSet<String>,
 ) -> Result<Vec<serde_json::Value>> {
     events
         .iter()
+        .filter(|event| paid_exit_rating_event_author_is_trusted(event, trusted_authors))
         .map(paid_exit_rating_record_from_fact_event)
         .collect()
+}
+
+fn paid_exit_trusted_rating_author_set(authors: &[String]) -> Result<HashSet<String>> {
+    let mut normalized = HashSet::new();
+    for author in authors.iter().flat_map(|value| value.split(',')) {
+        let author = author.trim();
+        if author.is_empty() {
+            continue;
+        }
+        normalized.insert(paid_exit_normalize_rating_author(author)?);
+    }
+    Ok(normalized)
+}
+
+fn paid_exit_normalize_rating_author(author: &str) -> Result<String> {
+    PublicKey::parse(author.trim())
+        .map(|public_key| public_key.to_hex())
+        .map_err(|error| anyhow!("invalid trusted rating author {author}: {error}"))
+}
+
+fn paid_exit_rating_event_author_is_trusted(
+    event_value: &serde_json::Value,
+    trusted_authors: &HashSet<String>,
+) -> bool {
+    if trusted_authors.is_empty() {
+        return true;
+    }
+    event_value
+        .get("pubkey")
+        .and_then(|value| value.as_str())
+        .and_then(|pubkey| paid_exit_normalize_rating_author(pubkey).ok())
+        .is_some_and(|author| trusted_authors.contains(&author))
+}
+
+fn paid_exit_rating_record_author_is_trusted(
+    record: &serde_json::Value,
+    trusted_authors: &HashSet<String>,
+) -> bool {
+    if trusted_authors.is_empty() {
+        return true;
+    }
+    record
+        .get("rater")
+        .and_then(|value| value.as_str())
+        .and_then(|rater| paid_exit_normalize_rating_author(rater).ok())
+        .is_some_and(|author| trusted_authors.contains(&author))
 }
 
 fn paid_exit_rating_record_from_fact_event(event_value: &serde_json::Value) -> Result<serde_json::Value> {
@@ -5981,6 +6054,7 @@ async fn discover_paid_exit_rating_events_from_relays(
     limit: usize,
     since_unix: Option<u64>,
     scope: &str,
+    trusted_authors: &HashSet<String>,
 ) -> Result<serde_json::Value> {
     if relays.is_empty() {
         return Err(anyhow!(
@@ -6021,6 +6095,11 @@ async fn discover_paid_exit_rating_events_from_relays(
                             continue;
                         }
                         if event.verify().is_err() {
+                            continue;
+                        }
+                        if !trusted_authors.is_empty()
+                            && !trusted_authors.contains(&event.pubkey.to_hex())
+                        {
                             continue;
                         }
                         let value = serde_json::to_value(&event)
@@ -6181,7 +6260,8 @@ mod paid_exit_rating_tests {
             ]
         });
 
-        let scores = paid_exit_rating_scores_from_value(&ratings, "fips.peer").unwrap();
+        let scores =
+            paid_exit_rating_scores_from_value(&ratings, "fips.peer", &HashSet::new()).unwrap();
 
         assert_eq!(
             scores.get("npub1peer"),
@@ -6273,7 +6353,8 @@ mod paid_exit_rating_tests {
         let event = sample_rating_fact_event("npub1crawler", "npub1peer", "fips.peer", 85, 20);
         let ratings = json!({"events": [event]});
 
-        let scores = paid_exit_rating_scores_from_value(&ratings, "fips.peer").unwrap();
+        let scores =
+            paid_exit_rating_scores_from_value(&ratings, "fips.peer", &HashSet::new()).unwrap();
 
         assert_eq!(
             scores.get("npub1peer"),
@@ -6301,7 +6382,8 @@ mod paid_exit_rating_tests {
         assert_ne!(signed_event.pubkey, rater.public_key());
         let ratings = json!({"events": [event]});
 
-        let scores = paid_exit_rating_scores_from_value(&ratings, "fips.peer").unwrap();
+        let scores =
+            paid_exit_rating_scores_from_value(&ratings, "fips.peer", &HashSet::new()).unwrap();
 
         assert_eq!(
             scores.get("npub1peer"),
@@ -6313,6 +6395,97 @@ mod paid_exit_rating_tests {
     }
 
     #[test]
+    fn trusted_rating_authors_filter_signed_fact_event_publishers() {
+        let trusted_crawler = Keys::generate();
+        let untrusted_crawler = Keys::generate();
+        let rater = Keys::generate();
+        let rater_npub = rater.public_key().to_bech32().unwrap();
+        let trusted = sample_rating_fact_event_signed_by(
+            &trusted_crawler,
+            &rater_npub,
+            "npub1trustedpeer",
+            "fips.peer",
+            95,
+            30,
+        );
+        let spam = sample_rating_fact_event_signed_by(
+            &untrusted_crawler,
+            &rater_npub,
+            "npub1spampeer",
+            "fips.peer",
+            100,
+            31,
+        );
+        let trusted_authors = paid_exit_trusted_rating_author_set(&[trusted_crawler
+            .public_key()
+            .to_bech32()
+            .unwrap()])
+        .unwrap();
+
+        let scores = paid_exit_rating_scores_from_value(
+            &json!({"events": [spam, trusted]}),
+            "fips.peer",
+            &trusted_authors,
+        )
+        .unwrap();
+
+        assert_eq!(
+            scores.get("npub1trustedpeer"),
+            Some(&PaidExitRatingScore {
+                score: 90,
+                created_at: 30,
+            })
+        );
+        assert!(!scores.contains_key("npub1spampeer"));
+    }
+
+    #[test]
+    fn trusted_rating_authors_filter_record_raters() {
+        let trusted = Keys::generate();
+        let untrusted = Keys::generate();
+        let trusted_npub = trusted.public_key().to_bech32().unwrap();
+        let untrusted_npub = untrusted.public_key().to_bech32().unwrap();
+        let ratings = json!({
+            "ratings": [
+                {
+                    "id": "trusted",
+                    "rater": trusted_npub,
+                    "subject": "npub1trustedpeer",
+                    "scope": "fips.peer",
+                    "rating": 90,
+                    "min_rating": 0,
+                    "max_rating": 100,
+                    "created_at": 30
+                },
+                {
+                    "id": "untrusted",
+                    "rater": untrusted_npub,
+                    "subject": "npub1spampeer",
+                    "scope": "fips.peer",
+                    "rating": 100,
+                    "min_rating": 0,
+                    "max_rating": 100,
+                    "created_at": 31
+                }
+            ]
+        });
+        let trusted_authors =
+            paid_exit_trusted_rating_author_set(&[trusted.public_key().to_hex()]).unwrap();
+
+        let scores =
+            paid_exit_rating_scores_from_value(&ratings, "fips.peer", &trusted_authors).unwrap();
+
+        assert_eq!(
+            scores.get("npub1trustedpeer"),
+            Some(&PaidExitRatingScore {
+                score: 80,
+                created_at: 30,
+            })
+        );
+        assert!(!scores.contains_key("npub1spampeer"));
+    }
+
+    #[test]
     fn rating_scores_accept_hashtree_query_output_from_fips_fact_events() {
         let event = sample_rating_fact_event("npub1crawler", "npub1peer", "fips.peer", 15, 40);
         let ratings = json!({
@@ -6321,7 +6494,8 @@ mod paid_exit_rating_tests {
             "events": [event],
         });
 
-        let scores = paid_exit_rating_scores_from_value(&ratings, "fips.peer").unwrap();
+        let scores =
+            paid_exit_rating_scores_from_value(&ratings, "fips.peer", &HashSet::new()).unwrap();
 
         assert_eq!(
             scores.get("npub1peer"),
@@ -6565,7 +6739,12 @@ mod paid_exit_rating_tests {
         }));
 
         let scores =
-            paid_exit_rating_scores_from_value(&json!({"events": [value]}), "fips.peer").unwrap();
+            paid_exit_rating_scores_from_value(
+                &json!({"events": [value]}),
+                "fips.peer",
+                &HashSet::new(),
+            )
+            .unwrap();
         assert_eq!(
             scores.get(&seller_npub),
             Some(&PaidExitRatingScore {
@@ -6623,8 +6802,12 @@ mod paid_exit_rating_tests {
         ));
 
         let scores =
-            paid_exit_rating_scores_from_value(&json!({"events": [event_value]}), "fips.peer")
-                .unwrap();
+            paid_exit_rating_scores_from_value(
+                &json!({"events": [event_value]}),
+                "fips.peer",
+                &HashSet::new(),
+            )
+            .unwrap();
         assert_eq!(
             scores.get(&degraded_offer.seller_npub),
             Some(&PaidExitRatingScore {

@@ -278,6 +278,8 @@ pub struct PaidExitRatingDiscoveryConfig {
     pub file: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub relays: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_authors: Vec<String>,
     #[serde(
         default = "default_fips_peer_rating_scope",
         skip_serializing_if = "fips_peer_rating_scope_is_default"
@@ -290,6 +292,7 @@ impl Default for PaidExitRatingDiscoveryConfig {
         Self {
             file: String::new(),
             relays: Vec::new(),
+            trusted_authors: Vec::new(),
             scope: default_fips_peer_rating_scope(),
         }
     }
@@ -303,6 +306,7 @@ impl PaidExitRatingDiscoveryConfig {
     pub fn normalize(&mut self) {
         self.file = self.file.trim().to_string();
         self.relays = normalize_string_list(&self.relays);
+        self.trusted_authors = normalize_string_list(&self.trusted_authors);
         self.scope = self.scope.trim().to_string();
         if self.scope.is_empty() {
             self.scope = default_fips_peer_rating_scope();
@@ -1621,6 +1625,10 @@ mod tests {
                     " wss://ratings-b.example ".to_string(),
                     "wss://ratings-a.example,wss://ratings-b.example".to_string(),
                 ],
+                trusted_authors: vec![
+                    " npub1authorb ".to_string(),
+                    "npub1authora,npub1authorb".to_string(),
+                ],
                 scope: " ".to_string(),
             },
         };
@@ -1644,6 +1652,10 @@ mod tests {
         assert_eq!(
             config.rating_discovery.relays,
             vec!["wss://ratings-a.example", "wss://ratings-b.example"]
+        );
+        assert_eq!(
+            config.rating_discovery.trusted_authors,
+            vec!["npub1authora", "npub1authorb"]
         );
         assert_eq!(
             config.rating_discovery.scope,
