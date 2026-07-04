@@ -2,14 +2,14 @@
 const LINUX_CAP_NET_ADMIN_BIT: u32 = 12;
 #[cfg(target_os = "linux")]
 fn ensure_linux_tun_permissions(iface: &str) -> Result<()> {
-    if fs::metadata("/dev/net/tun").is_err() {
+    if std::fs::metadata("/dev/net/tun").is_err() {
         return Err(anyhow!(linux_tun_setup_error(
             iface,
             "missing /dev/net/tun device"
         )));
     }
 
-    if let Ok(status) = fs::read_to_string("/proc/self/status")
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status")
         && linux_cap_eff_has_net_admin(&status) == Some(false)
     {
         return Err(anyhow!(linux_tun_setup_error(
