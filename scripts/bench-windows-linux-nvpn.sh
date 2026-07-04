@@ -54,6 +54,7 @@ MESH_UNDERLAY_UDP_MTU="${NVPN_WINLIN_MESH_UNDERLAY_UDP_MTU:-}"
 MESH_TUNNEL_MTU="${NVPN_WINLIN_MESH_TUNNEL_MTU:-}"
 STATIC_DIRECT_HINTS="${NVPN_WINLIN_STATIC_DIRECT_HINTS:-0}"
 STATIC_DIRECT_ONLY="${NVPN_WINLIN_STATIC_DIRECT_ONLY:-0}"
+DEDICATED_TWO_NODE="${NVPN_WINLIN_DEDICATED_TWO_NODE:-0}"
 
 if [[ -z "$CURRENT_FIPS_REPO" && -d "$ROOT_DIR/../fips/.git" ]]; then
   CURRENT_FIPS_REPO="$(cd "$ROOT_DIR/../fips" && pwd)"
@@ -164,6 +165,8 @@ Important options:
   NVPN_WINLIN_RESTORE_LINUX_INSTALLED=1   restore Linux /usr/local/bin/nvpn from backup at exit
   NVPN_WINLIN_STATIC_DIRECT_HINTS=1       temporarily seed reciprocal Windows/Linux FIPS endpoint hints
   NVPN_WINLIN_STATIC_DIRECT_ONLY=1        with static hints, temporarily disable Nostr/bootstrap discovery
+  NVPN_WINLIN_DEDICATED_TWO_NODE=1        temporarily replace both configs with a fresh two-node
+                                           static FIPS bench network, then restore configs at exit
   NVPN_WINLIN_DIRECT_FIPS_CAPTURE=1       capture Linux UDP/51820 during nvpn rows
   NVPN_WINLIN_LINUX_CAPTURE_IFACE=enp1s0  optional capture interface override
   NVPN_WINLIN_WINDOWS_PIPELINE_TRACE=1    enable nvpn pipeline trace on the measured Windows service
@@ -961,6 +964,172 @@ sudo -n systemctl restart nvpn.service"
   wait_for_linux_hash "$linux_installed_hash" "static-direct-hints"
 }
 
+apply_dedicated_two_node_config() {
+  if ! is_true "$DEDICATED_TWO_NODE"; then
+    return 0
+  fi
+  [[ -n "$WINDOWS_CONFIG" ]] || die "NVPN_WINLIN_DEDICATED_TWO_NODE requires a resolved Windows config path"
+  [[ -n "$LINUX_CONFIG" ]] || die "NVPN_WINLIN_DEDICATED_TWO_NODE requires a resolved Linux config path"
+  [[ -n "$WINDOWS_CONFIG_BACKUP" ]] || die "NVPN_WINLIN_DEDICATED_TWO_NODE requires NVPN_WINLIN_RESTORE_INSTALLED=1 for Windows config backup"
+  [[ -n "$LINUX_CONFIG_BACKUP" ]] || die "NVPN_WINLIN_DEDICATED_TWO_NODE requires NVPN_WINLIN_RESTORE_LINUX_INSTALLED=1 for Linux config backup"
+
+  local tmpdir
+  tmpdir="$(mktemp -d)"
+  capture_windows_snapshot "$tmpdir/windows-before.json"
+  capture_linux_snapshot "$tmpdir/linux-before.json"
+  jq '.daemon_status' "$tmpdir/windows-before.json" >"$tmpdir/windows-status-before.json"
+  jq '.daemon_status' "$tmpdir/linux-before.json" >"$tmpdir/linux-status-before.json"
+
+  local windows_underlay linux_underlay network_id
+  windows_underlay="$(jq -r '.daemon.state.network.primaryIpv4 // empty' "$tmpdir/windows-status-before.json")"
+  linux_underlay="$(jq -r '.daemon.state.network.primaryIpv4 // empty' "$tmpdir/linux-status-before.json")"
+  [[ -n "$windows_underlay" ]] || die "Windows status missing primary underlay IP for dedicated two-node config"
+  [[ -n "$linux_underlay" ]] || die "Linux status missing primary underlay IP for dedicated two-node config"
+  [[ "$windows_underlay" != "$linux_underlay" ]] || die "Windows/Linux underlay IPs are not distinct for dedicated two-node config"
+  network_id="winlin-perf-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+
+  local windows_pub linux_pub windows_json linux_json
+  printf 'creating dedicated two-node FIPS config: Windows endpoint=%s:51820; Linux endpoint=%s:51820\n' \
+    "$windows_underlay" "$linux_underlay" >&2
+
+  windows_json="$(run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Stop'
+\$nvpn = $(ps_sq "$WINDOWS_INSTALLED_NVPN")
+\$config = $(ps_sq "$WINDOWS_CONFIG")
+\$clean = [string]\$nvpn
+if (\$clean.StartsWith('\\\\?\\')) { \$clean = \$clean.Substring(4) }
+if (!(Test-Path -LiteralPath \$clean)) { throw \"nvpn.exe not found for dedicated two-node config: \$clean\" }
+if ((Get-Service NvpnService -ErrorAction SilentlyContinue).Status -eq 'Running') {
+  Stop-Service NvpnService -Force -ErrorAction Stop
+}
+& \$clean init --config \$config --force | Out-Null
+if (\$LASTEXITCODE -ne 0) { throw \"nvpn init failed while creating Windows dedicated two-node config\" }
+\$publicKey = ''
+\$inNostr = \$false
+foreach (\$line in (Get-Content -LiteralPath \$config -ErrorAction Stop)) {
+  if (\$line -match '^\\s*\\[nostr\\]\\s*$') { \$inNostr = \$true; continue }
+  if (\$line -match '^\\s*\\[') { \$inNostr = \$false }
+  if (\$inNostr -and \$line -match '^\\s*public_key\\s*=\\s*\"?([^\"\\s]+)\"?') {
+    \$publicKey = \$Matches[1]
+    break
+  }
+}
+if (!\$publicKey) { throw \"could not read Windows public_key from \$config\" }
+[pscustomobject]@{ public_key = \$publicKey; config = \$config } | ConvertTo-Json -Compress")"
+
+  linux_json="$(run_linux_sh "set -euo pipefail
+nvpn=$(sh_q "$LINUX_INSTALLED_NVPN")
+config=$(sh_q "$LINUX_CONFIG")
+[[ -x \"\$nvpn\" ]] || { echo \"nvpn binary not executable for dedicated two-node config: \$nvpn\" >&2; exit 1; }
+if systemctl is-active --quiet nvpn.service; then
+  sudo -n systemctl stop nvpn.service
+fi
+\"\$nvpn\" init --config \"\$config\" --force >/dev/null
+public_key=\$(awk '
+  /^\\[nostr\\]\$/ { in_nostr = 1; next }
+  /^\\[/ { in_nostr = 0 }
+  in_nostr && /^public_key[[:space:]]*=/ {
+    print \$3
+    exit
+  }
+' \"\$config\" | tr -d '\r\"')
+[[ -n \"\$public_key\" ]] || { echo \"could not read Linux public_key from \$config\" >&2; exit 1; }
+jq -n --arg public_key \"\$public_key\" --arg config \"\$config\" '{public_key:\$public_key,config:\$config}'")"
+
+  windows_pub="$(jq -r '.public_key // empty' <<<"$windows_json")"
+  linux_pub="$(jq -r '.public_key // empty' <<<"$linux_json")"
+  [[ -n "$windows_pub" ]] || die "dedicated two-node Windows public key is empty"
+  [[ -n "$linux_pub" ]] || die "dedicated two-node Linux public key is empty"
+
+  run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Stop'
+\$nvpn = $(ps_sq "$WINDOWS_INSTALLED_NVPN")
+\$config = $(ps_sq "$WINDOWS_CONFIG")
+\$clean = [string]\$nvpn
+if (\$clean.StartsWith('\\\\?\\')) { \$clean = \$clean.Substring(4) }
+\$bootstrap = @(
+  'set',
+  '--config', \$config,
+  '--participant', $(ps_sq "$windows_pub"),
+  '--participant', $(ps_sq "$linux_pub")
+)
+& \$clean @bootstrap | Out-Null
+if (\$LASTEXITCODE -ne 0) { throw \"nvpn set failed while enabling Windows dedicated two-node network\" }
+\$argv = @(
+  'set',
+  '--config', \$config,
+  '--network-id', $(ps_sq "$network_id"),
+  '--participant', $(ps_sq "$windows_pub"),
+  '--participant', $(ps_sq "$linux_pub"),
+  '--endpoint', $(ps_sq "${windows_underlay}:51820"),
+  '--listen-port', '51820',
+  '--fips-advertise-endpoint', 'true',
+  '--fips-nostr-discovery-enabled', 'false',
+  '--fips-bootstrap-enabled', 'false',
+  '--fips-peer-endpoint', $(ps_sq "${linux_pub}=${linux_underlay}:51820")
+)
+& \$clean @argv | Out-Null
+if (\$LASTEXITCODE -ne 0) { throw \"nvpn set failed while creating Windows dedicated two-node config\" }"
+
+  run_linux_sh "set -euo pipefail
+nvpn=$(sh_q "$LINUX_INSTALLED_NVPN")
+config=$(sh_q "$LINUX_CONFIG")
+\"\$nvpn\" set \
+  --config \"\$config\" \
+  --participant $(sh_q "$windows_pub") \
+  --participant $(sh_q "$linux_pub") >/dev/null
+\"\$nvpn\" set \
+  --config \"\$config\" \
+  --network-id $(sh_q "$network_id") \
+  --participant $(sh_q "$windows_pub") \
+  --participant $(sh_q "$linux_pub") \
+  --endpoint $(sh_q "${linux_underlay}:51820") \
+  --listen-port 51820 \
+  --fips-advertise-endpoint true \
+  --fips-nostr-discovery-enabled false \
+  --fips-bootstrap-enabled false \
+  --fips-peer-endpoint $(sh_q "${windows_pub}=${windows_underlay}:51820") >/dev/null"
+
+  jq -n \
+    --arg applied_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg network_id "$network_id" \
+    --arg windows_config "$WINDOWS_CONFIG" \
+    --arg linux_config "$LINUX_CONFIG" \
+    --arg windows_underlay "$windows_underlay" \
+    --arg linux_underlay "$linux_underlay" \
+    --arg windows_public_key "$windows_pub" \
+    --arg linux_public_key "$linux_pub" \
+    --arg windows_endpoint "${windows_underlay}:51820" \
+    --arg linux_endpoint "${linux_underlay}:51820" \
+    --arg windows_config_hint "${linux_pub}=${linux_underlay}:51820" \
+    --arg linux_config_hint "${windows_pub}=${windows_underlay}:51820" \
+    '{
+      applied_at:$applied_at,
+      network_id:$network_id,
+      windows_config:$windows_config,
+      linux_config:$linux_config,
+      windows_underlay:$windows_underlay,
+      linux_underlay:$linux_underlay,
+      windows_public_key:$windows_public_key,
+      linux_public_key:$linux_public_key,
+      windows_endpoint:$windows_endpoint,
+      linux_endpoint:$linux_endpoint,
+      windows_config_hint:$windows_config_hint,
+      linux_config_hint:$linux_config_hint,
+      fips_nostr_discovery_enabled:false,
+      fips_bootstrap_enabled:false
+    }' >"$OUTPUT_DIR/dedicated-two-node.json"
+
+  local windows_installed_hash linux_installed_hash
+  windows_installed_hash="$(windows_hash "$WINDOWS_INSTALLED_NVPN" | tr -d '\r\n')"
+  linux_installed_hash="$(linux_hash "$LINUX_INSTALLED_NVPN" | tr -d '\r\n')"
+  ensure_windows_service_running
+  wait_for_windows_hash "$windows_installed_hash" "dedicated-two-node"
+  run_linux_sh "sudo -n systemctl restart nvpn.service"
+  wait_for_linux_hash "$linux_installed_hash" "dedicated-two-node"
+  rm -rf "$tmpdir"
+}
+
 windows_hash() {
   local path="$1"
   run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
@@ -1313,7 +1482,7 @@ validate_service_env() {
   if [[ -n "$MESH_TUNNEL_MTU" && ! "$MESH_TUNNEL_MTU" =~ ^[0-9]+$ ]]; then
     die "NVPN_WINLIN_MESH_TUNNEL_MTU must be numeric"
   fi
-  if is_true "$STATIC_DIRECT_ONLY" && ! is_true "$STATIC_DIRECT_HINTS"; then
+  if is_true "$STATIC_DIRECT_ONLY" && ! is_true "$STATIC_DIRECT_HINTS" && ! is_true "$DEDICATED_TWO_NODE"; then
     die "NVPN_WINLIN_STATIC_DIRECT_ONLY requires NVPN_WINLIN_STATIC_DIRECT_HINTS=1"
   fi
 }
@@ -1391,20 +1560,75 @@ write_selected_pair_json() {
     --slurpfile lin "$lin_status" \
     --arg windows_underlay "$win_underlay" \
     --arg linux_underlay "$linux_underlay" \
+    --argjson accept_configured_static "$(
+      if (is_true "$STATIC_DIRECT_HINTS" || is_true "$DEDICATED_TWO_NODE") && is_true "$DIRECT_FIPS_CAPTURE"; then
+        printf true
+      else
+        printf false
+      fi
+    )" \
     '
     def tunnel_addr($peer): (($peer.tunnel_ip // "") | split("/")[0]);
-    def direct_peer($peer; $underlay):
+    def configured_transport($state; $peer; $underlay):
+      if $peer == null then "" else
+        ($peer.fips_endpoint_npub // "") as $npub |
+        if $npub == "" then "" else
+          ([($state.daemon.state.fips_endpoint_peers // [])[]?
+            | select((.npub // "") == $npub)
+            | .addresses[]?
+            | select((.addr // "") | startswith($underlay + ":"))
+            | .addr] | first // "")
+        end
+      end;
+    def live_transport($peer; $underlay):
+      if (($peer.fips_transport_addr // "") | startswith($underlay + ":")) then
+        ($peer.fips_transport_addr // "")
+      else
+        ""
+      end;
+    def effective_transport($state; $peer; $underlay):
+      (live_transport($peer; $underlay)) as $live |
+      if $live != "" then
+        $live
+      elif $accept_configured_static then
+        configured_transport($state; $peer; $underlay)
+      else
+        ""
+      end;
+    def transport_source($state; $peer; $underlay):
+      (live_transport($peer; $underlay)) as $live |
+      if $live != "" then
+        "status"
+      elif $accept_configured_static and configured_transport($state; $peer; $underlay) != "" then
+        "configured_static"
+      else
+        ""
+      end;
+    def direct_peer($state; $peer; $underlay):
+      (effective_transport($state; $peer; $underlay)) as $transport |
+      (transport_source($state; $peer; $underlay)) as $source |
       ($peer != null)
       and (($peer.endpoint // "") == "fips")
       and (($peer.reachable // false) == true)
       and (($peer.error // null) == null)
-      and (($peer.fips_transport_type // "") == "udp")
-      and (($peer.fips_transport_addr // "") | startswith($underlay + ":"))
-      and (($peer.runtime_endpoint // "") == ($peer.fips_transport_addr // ""))
+      and ($transport != "")
+      and (
+        if $source == "status" then
+          (($peer.fips_transport_type // "") == "udp")
+          and (($peer.fips_transport_addr // "") == $transport)
+          and (($peer.runtime_endpoint // "") == ($peer.fips_transport_addr // ""))
+        elif $source == "configured_static" then
+          $accept_configured_static
+          and (configured_transport($state; $peer; $underlay) == $transport)
+          and ((($peer.runtime_endpoint // "") == "fips") or (($peer.runtime_endpoint // "") == $transport))
+        else
+          false
+        end
+      )
       and (($peer.last_fips_seen_at // null) != null)
       and (($peer.last_handshake_at // null) != null)
       and ((($peer.fips_last_outbound_route // "") == "") or (($peer.fips_last_outbound_route // "") == "direct"));
-    def peer_summary($peer):
+    def peer_summary($state; $peer; $underlay):
       if $peer == null then null else
         {
           participant_pubkey: ($peer.participant_pubkey // ""),
@@ -1414,6 +1638,9 @@ write_selected_pair_json() {
           fips_endpoint_npub: ($peer.fips_endpoint_npub // ""),
           fips_transport_addr: ($peer.fips_transport_addr // ""),
           fips_transport_type: ($peer.fips_transport_type // ""),
+          configured_fips_transport_addr: configured_transport($state; $peer; $underlay),
+          effective_fips_transport_addr: effective_transport($state; $peer; $underlay),
+          effective_fips_transport_source: transport_source($state; $peer; $underlay),
           runtime_endpoint: ($peer.runtime_endpoint // ""),
           reachable: ($peer.reachable // false),
           error: ($peer.error // null),
@@ -1432,8 +1659,8 @@ write_selected_pair_json() {
     def reason($ok; $message): if $ok then empty else $message end;
     ($win[0]) as $w |
     ($lin[0]) as $l |
-    ([$w.daemon.state.peers[]? | select((.fips_transport_addr // "") | startswith($linux_underlay + ":"))]) as $win_matches |
-    ([$l.daemon.state.peers[]? | select((.fips_transport_addr // "") | startswith($windows_underlay + ":"))]) as $lin_matches |
+    ([$w.daemon.state.peers[]? | select(effective_transport($w; .; $linux_underlay) != "")]) as $win_matches |
+    ([$l.daemon.state.peers[]? | select(effective_transport($l; .; $windows_underlay) != "")]) as $lin_matches |
     ($win_matches[0] // null) as $windows_view_peer |
     ($lin_matches[0] // null) as $linux_view_peer |
     (tunnel_addr($windows_view_peer)) as $linux_tunnel |
@@ -1442,10 +1669,10 @@ write_selected_pair_json() {
       reason(($windows_underlay != "" and $linux_underlay != "" and $windows_underlay != $linux_underlay); "Windows/Linux underlay IPs must be present and distinct"),
       reason((($w.daemon.state.local_endpoint // "") | startswith($windows_underlay + ":")); "Windows local FIPS endpoint is not on the selected Windows underlay"),
       reason((($l.daemon.state.local_endpoint // "") | startswith($linux_underlay + ":")); "Linux local FIPS endpoint is not on the selected Linux underlay"),
-      reason(($win_matches | length) == 1; "Windows status must have exactly one peer whose FIPS transport is the Linux underlay"),
-      reason(($lin_matches | length) == 1; "Linux status must have exactly one peer whose FIPS transport is the Windows underlay"),
-      reason(direct_peer($windows_view_peer; $linux_underlay); "Windows-selected Linux peer is not an authenticated direct FIPS UDP link to the Linux underlay"),
-      reason(direct_peer($linux_view_peer; $windows_underlay); "Linux-selected Windows peer is not an authenticated direct FIPS UDP link to the Windows underlay"),
+      reason(($win_matches | length) == 1; "Windows status/configured static endpoints must identify exactly one peer for the Linux underlay"),
+      reason(($lin_matches | length) == 1; "Linux status/configured static endpoints must identify exactly one peer for the Windows underlay"),
+      reason(direct_peer($w; $windows_view_peer; $linux_underlay); "Windows-selected Linux peer is not an authenticated direct FIPS UDP link to the Linux underlay"),
+      reason(direct_peer($l; $linux_view_peer; $windows_underlay); "Linux-selected Windows peer is not an authenticated direct FIPS UDP link to the Windows underlay"),
       reason(($linux_tunnel != "" and $windows_tunnel != "" and $linux_tunnel != $windows_tunnel); "selected peer tunnel IPs must be present and distinct")
     ]) as $reasons |
     {
@@ -1453,13 +1680,20 @@ write_selected_pair_json() {
       linux_underlay: $linux_underlay,
       windows_tunnel: $windows_tunnel,
       linux_tunnel: $linux_tunnel,
-      windows_view_transport: ($windows_view_peer.fips_transport_addr // ""),
-      linux_view_transport: ($linux_view_peer.fips_transport_addr // ""),
-      windows_view_peer: peer_summary($windows_view_peer),
-      linux_view_peer: peer_summary($linux_view_peer),
+      windows_view_transport: effective_transport($w; $windows_view_peer; $linux_underlay),
+      linux_view_transport: effective_transport($l; $linux_view_peer; $windows_underlay),
+      windows_view_transport_source: transport_source($w; $windows_view_peer; $linux_underlay),
+      linux_view_transport_source: transport_source($l; $linux_view_peer; $windows_underlay),
+      windows_view_peer: peer_summary($w; $windows_view_peer; $linux_underlay),
+      linux_view_peer: peer_summary($l; $linux_view_peer; $windows_underlay),
       direct_pair: {
         ok: (($reasons | length) == 0),
         reasons: $reasons,
+        accept_configured_static_transport: $accept_configured_static,
+        configured_static_transport_used: (
+          (transport_source($w; $windows_view_peer; $linux_underlay) == "configured_static")
+          or (transport_source($l; $linux_view_peer; $windows_underlay) == "configured_static")
+        ),
         windows_local_endpoint: ($w.daemon.state.local_endpoint // ""),
         linux_local_endpoint: ($l.daemon.state.local_endpoint // ""),
         windows_status_peer_match_count: ($win_matches | length),
@@ -1514,33 +1748,14 @@ wait_for_direct_pair() {
       capture_linux_snapshot "$tmpdir/linux.json" >/dev/null 2>&1; then
       jq '.daemon_status' "$tmpdir/windows.json" >"$tmpdir/windows-status.json"
       jq '.daemon_status' "$tmpdir/linux.json" >"$tmpdir/linux-status.json"
-      local win_underlay linux_underlay linux_tunnel windows_tunnel
+      local win_underlay linux_underlay
       win_underlay="$(jq -r '.daemon.state.network.primaryIpv4 // empty' "$tmpdir/windows-status.json")"
       linux_underlay="$(jq -r '.daemon.state.network.primaryIpv4 // empty' "$tmpdir/linux-status.json")"
       wait_reason="missing primary underlay IP in daemon status"
       if [[ -n "$win_underlay" && -n "$linux_underlay" ]]; then
-        linux_tunnel="$(jq -r --arg ip "$linux_underlay" \
-          '[.daemon.state.peers[]? | select(((.fips_transport_addr // "") | startswith($ip + ":")))] | first | .tunnel_ip // empty | split("/")[0]' \
-          "$tmpdir/windows-status.json")"
-        windows_tunnel="$(jq -r --arg ip "$win_underlay" \
-          '[.daemon.state.peers[]? | select(((.fips_transport_addr // "") | startswith($ip + ":")))] | first | .tunnel_ip // empty | split("/")[0]' \
-          "$tmpdir/linux-status.json")"
-        wait_reason="missing reciprocal peer with matching FIPS transport"
-        if [[ -n "$linux_tunnel" && -n "$windows_tunnel" ]]; then
-          write_selected_pair_json "$tmpdir/windows-status.json" "$tmpdir/linux-status.json" "$win_underlay" "$linux_underlay" "$tmpdir/selected-pair.json"
-          if [[ "$(jq -r '.direct_pair.ok // false' "$tmpdir/selected-pair.json")" != "true" ]]; then
-            wait_reason="$(jq -r '.direct_pair.reasons | join("; ")' "$tmpdir/selected-pair.json")"
-            printf 'waiting for %s reciprocal direct FIPS peer pair: %s\n' "$row" "$wait_reason" >&2
-            jq -n \
-              --arg row "$row" \
-              --arg attempt "$attempt" \
-              --arg attempts "45" \
-              --arg reason "$wait_reason" \
-              '{row:$row,attempt:($attempt|tonumber),attempts:($attempts|tonumber),reason:$reason}' \
-              >"$tmpdir/wait-state.json"
-            sleep 2
-            continue
-          fi
+        write_selected_pair_json "$tmpdir/windows-status.json" "$tmpdir/linux-status.json" "$win_underlay" "$linux_underlay" "$tmpdir/selected-pair.json"
+        wait_reason="$(jq -r '(.direct_pair.reasons // ["selected pair check failed"]) | join("; ")' "$tmpdir/selected-pair.json")"
+        if [[ "$(jq -r '.direct_pair.ok // false' "$tmpdir/selected-pair.json")" == "true" ]]; then
           rm -rf "$tmpdir"
           return 0
         fi
@@ -2372,6 +2587,7 @@ write_run_metadata() {
     --arg allow_current_linux_as_installed "$(is_true "$ALLOW_CURRENT_LINUX_AS_INSTALLED" && printf true || printf false)" \
     --arg static_direct_hints "$(is_true "$STATIC_DIRECT_HINTS" && printf true || printf false)" \
     --arg static_direct_only "$(is_true "$STATIC_DIRECT_ONLY" && printf true || printf false)" \
+    --arg dedicated_two_node "$(is_true "$DEDICATED_TWO_NODE" && printf true || printf false)" \
     --arg windows_ssh_proxy_command "$([[ -n "$WINDOWS_SSH_PROXY_COMMAND" ]] && printf true || printf false)" \
     --arg linux_ssh_proxy_command "$([[ -n "$LINUX_SSH_PROXY_COMMAND" ]] && printf true || printf false)" \
     --arg windows_ssh_jump "$([[ -n "$WINDOWS_SSH_JUMP" ]] && printf true || printf false)" \
@@ -2411,6 +2627,7 @@ write_run_metadata() {
       allow_current_linux_as_installed:($allow_current_linux_as_installed == "true"),
       static_direct_hints:($static_direct_hints == "true"),
       static_direct_only:($static_direct_only == "true"),
+      dedicated_two_node:($dedicated_two_node == "true"),
       windows_ssh_proxy_command:($windows_ssh_proxy_command == "true"),
       linux_ssh_proxy_command:($linux_ssh_proxy_command == "true"),
       windows_ssh_jump:($windows_ssh_jump == "true"),
@@ -2443,8 +2660,12 @@ main() {
   trap cleanup EXIT
   backup_windows_config
   backup_linux_config
-  apply_static_direct_hints
-  restart_static_direct_hint_services
+  if is_true "$DEDICATED_TWO_NODE"; then
+    apply_dedicated_two_node_config
+  else
+    apply_static_direct_hints
+    restart_static_direct_hint_services
+  fi
   ensure_probe_binaries
   if row_contains_current && [[ -n "$CURRENT_LINUX_NVPN" ]]; then
     backup_linux_installed_binary
