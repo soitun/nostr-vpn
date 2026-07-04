@@ -53,6 +53,8 @@ RUN_JSON="$OUTPUT_DIR/run.json"
 NEXT_PORT="$PROBE_PORT_BASE"
 WINDOWS_FIREWALL_RULE_NAME="nvpn-winlin-perf-$RANDOM-$$"
 WINDOWS_NVPN_FIREWALL_RULE_PREFIX="nvpn-winlin-nvpn-$RANDOM-$$"
+WINDOWS_CONFIG_BACKUP=""
+WINDOWS_CONFIG_BACKUP_HASH=""
 LINUX_INSTALLED_BACKUP=""
 LINUX_INSTALLED_BACKUP_HASH=""
 
@@ -426,13 +428,22 @@ New-NetFirewallRule -DisplayName $(ps_sq "$WINDOWS_FIREWALL_RULE_NAME") -Directi
 }
 
 cleanup() {
+  local windows_installed_hash=""
   if is_true "$RESTORE_INSTALLED" && [[ -n "${WINDOWS_INSTALLED_NVPN:-}" ]]; then
+    windows_installed_hash="$(windows_hash "$WINDOWS_INSTALLED_NVPN" 2>/dev/null | tr -d '\r\n' || true)"
     if switch_windows_service "$WINDOWS_INSTALLED_NVPN" "restore-installed" >/dev/null 2>&1; then
-      local windows_installed_hash
-      windows_installed_hash="$(windows_hash "$WINDOWS_INSTALLED_NVPN" 2>/dev/null | tr -d '\r\n' || true)"
       if [[ -n "$windows_installed_hash" ]]; then
         wait_for_windows_hash "$windows_installed_hash" "restore-installed" >/dev/null 2>&1 || true
       fi
+    fi
+  fi
+  if is_true "$RESTORE_INSTALLED" && [[ -n "${WINDOWS_CONFIG_BACKUP:-}" ]]; then
+    restore_windows_config >/dev/null 2>&1 || true
+  fi
+  if is_true "$RESTORE_INSTALLED" && [[ -n "${WINDOWS_INSTALLED_NVPN:-}" ]]; then
+    ensure_windows_service_running >/dev/null 2>&1 || true
+    if [[ -n "$windows_installed_hash" ]]; then
+      wait_for_windows_hash "$windows_installed_hash" "restore-installed-final" >/dev/null 2>&1 || true
     fi
   fi
   if is_true "$RESTORE_LINUX_INSTALLED" && [[ -n "${LINUX_INSTALLED_BACKUP:-}" ]]; then
@@ -455,6 +466,77 @@ Get-NetFirewallRule -DisplayName $(ps_sq "${WINDOWS_NVPN_FIREWALL_RULE_PREFIX}*"
 Remove-NetFirewallRule -DisplayName $(ps_sq "$WINDOWS_FIREWALL_RULE_NAME") -ErrorAction SilentlyContinue | Out-Null" \
       >/dev/null 2>&1 || true
   fi
+  if is_true "$RESTORE_INSTALLED" && [[ -n "${WINDOWS_INSTALLED_NVPN:-}" ]]; then
+    ensure_windows_service_running >/dev/null 2>&1 || true
+    if [[ -n "$windows_installed_hash" ]]; then
+      wait_for_windows_hash "$windows_installed_hash" "restore-installed-exit" >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+backup_windows_config() {
+  if ! is_true "$RESTORE_INSTALLED" || [[ -z "$WINDOWS_CONFIG" || -n "$WINDOWS_CONFIG_BACKUP" ]]; then
+    return 0
+  fi
+  local backup_json="$OUTPUT_DIR/windows-config-backup.json"
+  local config_ps
+  config_ps="$(ps_sq "$WINDOWS_CONFIG")"
+  printf 'backing up Windows config %s\n' "$WINDOWS_CONFIG" >&2
+  run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Stop'
+\$config = $config_ps
+\$backup = Join-Path \$env:TEMP ('nvpn-winlin-config-' + [guid]::NewGuid().ToString('N') + '.toml')
+if (!(Test-Path -LiteralPath \$config)) { throw \"Windows nvpn config not found: \$config\" }
+Copy-Item -LiteralPath \$config -Destination \$backup -Force
+\$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath \$backup).Hash.ToLowerInvariant()
+[pscustomobject]@{ config = \$config; backup = \$backup; sha256 = \$hash } | ConvertTo-Json -Compress" \
+    >"$backup_json"
+  WINDOWS_CONFIG_BACKUP="$(jq -r '.backup // empty' "$backup_json")"
+  WINDOWS_CONFIG_BACKUP_HASH="$(jq -r '.sha256 // empty' "$backup_json")"
+  [[ -n "$WINDOWS_CONFIG_BACKUP" ]] || die "failed to back up Windows config"
+}
+
+restore_windows_config() {
+  [[ -n "$WINDOWS_CONFIG_BACKUP" && -n "$WINDOWS_CONFIG" ]] || return 0
+  local config_ps backup_ps expected_hash_ps
+  config_ps="$(ps_sq "$WINDOWS_CONFIG")"
+  backup_ps="$(ps_sq "$WINDOWS_CONFIG_BACKUP")"
+  expected_hash_ps="$(ps_sq "$WINDOWS_CONFIG_BACKUP_HASH")"
+  run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Stop'
+\$config = $config_ps
+\$backup = $backup_ps
+\$expectedHash = $expected_hash_ps
+if (!(Test-Path -LiteralPath \$backup)) { throw \"Windows nvpn config backup not found: \$backup\" }
+if (\$expectedHash) {
+  \$actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath \$backup).Hash.ToLowerInvariant()
+  if (\$actualHash -ne \$expectedHash) {
+    throw \"Windows nvpn config backup hash mismatch expected=\$expectedHash actual=\$actualHash\"
+  }
+}
+Copy-Item -LiteralPath \$backup -Destination \$config -Force
+\$service = Get-Service NvpnService
+if (\$service.Status -eq 'Running') {
+  Restart-Service NvpnService -Force
+} else {
+  Start-Service NvpnService
+}"
+}
+
+ensure_windows_service_running() {
+  run_windows_ps "\$ProgressPreference = 'SilentlyContinue'
+\$ErrorActionPreference = 'Stop'
+\$service = Get-Service NvpnService
+if (\$service.Status -ne 'Running') {
+  Start-Service NvpnService
+}
+\$deadline = (Get-Date).AddSeconds(20)
+do {
+  \$service = Get-Service NvpnService
+  if (\$service.Status -eq 'Running') { exit 0 }
+  Start-Sleep -Milliseconds 500
+} while ((Get-Date) -lt \$deadline)
+throw \"NvpnService did not reach Running after cleanup restore\""
 }
 
 windows_snapshot_script() {
@@ -1104,9 +1186,11 @@ select_pair() {
 
 wait_for_direct_pair() {
   local row="$1"
+  local row_dir="$OUTPUT_DIR/$row"
   local tmpdir
   tmpdir="$(mktemp -d)"
   for attempt in $(seq 1 45); do
+    local wait_reason="status snapshot failed"
     if capture_windows_snapshot "$tmpdir/windows.json" >/dev/null 2>&1 &&
       capture_linux_snapshot "$tmpdir/linux.json" >/dev/null 2>&1; then
       jq '.daemon_status' "$tmpdir/windows.json" >"$tmpdir/windows-status.json"
@@ -1114,6 +1198,7 @@ wait_for_direct_pair() {
       local win_underlay linux_underlay linux_tunnel windows_tunnel
       win_underlay="$(jq -r '.daemon.state.network.primaryIpv4 // empty' "$tmpdir/windows-status.json")"
       linux_underlay="$(jq -r '.daemon.state.network.primaryIpv4 // empty' "$tmpdir/linux-status.json")"
+      wait_reason="missing primary underlay IP in daemon status"
       if [[ -n "$win_underlay" && -n "$linux_underlay" ]]; then
         linux_tunnel="$(jq -r --arg ip "$linux_underlay" \
           '[.daemon.state.peers[]? | select(((.fips_transport_addr // "") | startswith($ip + ":")))] | first | .tunnel_ip // empty | split("/")[0]' \
@@ -1121,10 +1206,19 @@ wait_for_direct_pair() {
         windows_tunnel="$(jq -r --arg ip "$win_underlay" \
           '[.daemon.state.peers[]? | select(((.fips_transport_addr // "") | startswith($ip + ":")))] | first | .tunnel_ip // empty | split("/")[0]' \
           "$tmpdir/linux-status.json")"
+        wait_reason="missing reciprocal peer with matching FIPS transport"
         if [[ -n "$linux_tunnel" && -n "$windows_tunnel" ]]; then
           write_selected_pair_json "$tmpdir/windows-status.json" "$tmpdir/linux-status.json" "$win_underlay" "$linux_underlay" "$tmpdir/selected-pair.json"
           if [[ "$(jq -r '.direct_pair.ok // false' "$tmpdir/selected-pair.json")" != "true" ]]; then
-            printf 'waiting for %s reciprocal direct FIPS peer pair: %s\n' "$row" "$(jq -r '.direct_pair.reasons | join("; ")' "$tmpdir/selected-pair.json")" >&2
+            wait_reason="$(jq -r '.direct_pair.reasons | join("; ")' "$tmpdir/selected-pair.json")"
+            printf 'waiting for %s reciprocal direct FIPS peer pair: %s\n' "$row" "$wait_reason" >&2
+            jq -n \
+              --arg row "$row" \
+              --arg attempt "$attempt" \
+              --arg attempts "45" \
+              --arg reason "$wait_reason" \
+              '{row:$row,attempt:($attempt|tonumber),attempts:($attempts|tonumber),reason:$reason}' \
+              >"$tmpdir/wait-state.json"
             sleep 2
             continue
           fi
@@ -1133,9 +1227,20 @@ wait_for_direct_pair() {
         fi
       fi
     fi
+    jq -n \
+      --arg row "$row" \
+      --arg attempt "$attempt" \
+      --arg attempts "45" \
+      --arg reason "$wait_reason" \
+      '{row:$row,attempt:($attempt|tonumber),attempts:($attempts|tonumber),reason:$reason}' \
+      >"$tmpdir/wait-state.json"
     printf 'waiting for %s direct Windows/Linux peer pair (%s/45)\n' "$row" "$attempt" >&2
     sleep 2
   done
+  local failure_dir="$row_dir/direct-pair-timeout"
+  rm -rf "$failure_dir"
+  mkdir -p "$failure_dir"
+  cp -f "$tmpdir"/* "$failure_dir"/ 2>/dev/null || true
   rm -rf "$tmpdir"
   die "timed out waiting for $row direct Windows/Linux peer pair"
 }
@@ -1932,6 +2037,7 @@ main() {
   resolve_installed_windows_nvpn
   resolve_installed_linux_nvpn
   trap cleanup EXIT
+  backup_windows_config
   ensure_probe_binaries
   if row_contains_current && [[ -n "$CURRENT_LINUX_NVPN" ]]; then
     backup_linux_installed_binary
