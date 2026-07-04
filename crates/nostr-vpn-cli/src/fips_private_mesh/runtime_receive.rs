@@ -536,11 +536,11 @@ impl FipsPrivateMeshRuntime {
         events: &mut Vec<FipsPrivateMeshEvent>,
     ) -> Result<()> {
         for run in runs {
-            let source_peer = run.source_peer().clone();
+            let source_peer = *run.source_peer();
             let enqueued_at_ms = run.enqueued_at_ms();
             for packet in run.packet_slices() {
                 let message = FipsEndpointMessage {
-                    source_peer: source_peer.clone(),
+                    source_peer,
                     data: FipsEndpointData::from(packet.to_vec()),
                     enqueued_at_ms,
                 };
@@ -597,14 +597,14 @@ impl FipsPrivateMeshRuntime {
     ) -> Result<()> {
         let now = Some(unix_timestamp());
         for run in runs {
-            let source_peer = run.source_peer().clone();
+            let source_peer = *run.source_peer();
             let enqueued_at_ms = run.enqueued_at_ms();
             for packet in run.packet_slices() {
                 if decode_fips_control_frame(packet)?.is_none() {
                     continue;
                 }
                 let message = FipsEndpointMessage {
-                    source_peer: source_peer.clone(),
+                    source_peer,
                     data: FipsEndpointData::from(packet.to_vec()),
                     enqueued_at_ms,
                 };

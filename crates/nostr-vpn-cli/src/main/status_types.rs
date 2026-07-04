@@ -333,7 +333,6 @@ impl ConnectMagicDnsRuntime {
     /// NXDOMAIN until the daemon is restarted.
     fn refresh_records(&self, app: &AppConfig) {
         let records = build_magic_dns_records(app);
-        self.server.update_records(records.clone());
         #[cfg(target_os = "linux")]
         if !self.suffix.is_empty()
             && let Err(error) = nostr_vpn_core::magic_dns::refresh_linux_hosts_fallback_if_active(
@@ -343,7 +342,7 @@ impl ConnectMagicDnsRuntime {
         {
             eprintln!("magicdns: failed to refresh hosts fallback: {error}");
         }
-        let _ = records; // suppress unused-binding on non-Linux
+        self.server.update_records(records);
     }
 }
 

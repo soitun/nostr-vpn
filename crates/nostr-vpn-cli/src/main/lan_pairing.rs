@@ -22,7 +22,7 @@ fn run_invite_broadcast(args: InviteBroadcastArgs) -> Result<()> {
 
     let mut worker = spawn_lan_pairing_worker(LanPairingAnnouncement {
         npub: own_npub.clone(),
-        node_name: node_name.clone(),
+        node_name,
         endpoint: endpoint.clone(),
         invite: invite.clone(),
     })?;
@@ -70,7 +70,7 @@ fn run_discover(args: DiscoverArgs) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("discover duration overflows SystemTime"))?;
 
     let mut worker = spawn_lan_pairing_worker(LanPairingAnnouncement {
-        npub: own_npub.clone(),
+        npub: own_npub,
         node_name,
         endpoint,
         invite: local_invite,

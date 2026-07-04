@@ -105,8 +105,7 @@ async fn start_wg_upstream_self_test_server() -> Result<(
     let server_addr = socket
         .local_addr()
         .context("read self-test responder addr")?;
-    let socket = std::sync::Arc::new(socket);
-    let server_socket = socket.clone();
+    let server_socket = std::sync::Arc::new(socket);
     let handle = tokio::spawn(async move {
         let mut server_tunn = Tunn::new(server_private, client_public, None, Some(25), 2, None);
         let mut udp_buf = vec![0u8; MAX_WG_PACKET];

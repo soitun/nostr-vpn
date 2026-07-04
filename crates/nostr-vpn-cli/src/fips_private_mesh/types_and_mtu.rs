@@ -112,7 +112,7 @@ impl DirectTunWriteBatch {
         self.bytes = self.bytes.saturating_add(run.packet_bytes());
         self.push_packet_end(packet_count);
         self.packet_sources
-            .extend(std::iter::repeat(source).take(packet_count));
+            .extend(std::iter::repeat_n(source, packet_count));
         self.runs.push(run);
     }
 
