@@ -56,8 +56,10 @@ mkdir -p "$TARGET_DIR"
 
 if [[ -n "$FIPS_REPO_PATH" ]]; then
   FIPS_PATCH_DIR="$WORK_DIR/.fips-patch"
-  mkdir -p "$FIPS_PATCH_DIR"
-  git -C "$FIPS_REPO_PATH" archive --format=tar HEAD | tar -x -C "$FIPS_PATCH_DIR"
+  fips_head="$(git -C "$FIPS_REPO_PATH" rev-parse HEAD)"
+  git clone --no-hardlinks --quiet "$FIPS_REPO_PATH" "$FIPS_PATCH_DIR"
+  git -C "$FIPS_PATCH_DIR" checkout --detach --quiet "$fips_head"
+  git -C "$FIPS_PATCH_DIR" clean -ffd >/dev/null
 
   if [[ -f "$FIPS_PATCH_DIR/crates/fips-endpoint/Cargo.toml" ]]; then
     DOCKER_ENV+=(-e NVPN_FIPS_ENDPOINT_PATCH_PATH=/home/rust/src/.fips-patch/crates/fips-endpoint)
