@@ -4,10 +4,14 @@ use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
 use fips_endpoint::{
-    Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointDirectDeliveryError,
-    FipsEndpointDirectPacketBatch, FipsEndpointDirectPacketRun, FipsEndpointDirectSink,
-    FipsEndpointError, FipsEndpointMessage, FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress,
-    PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
+    Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointError, FipsEndpointMessage,
+    FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
+    PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
+};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use fips_endpoint::{
+    FipsEndpointDirectDeliveryError, FipsEndpointDirectPacketBatch, FipsEndpointDirectPacketRun,
+    FipsEndpointDirectSink,
 };
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
