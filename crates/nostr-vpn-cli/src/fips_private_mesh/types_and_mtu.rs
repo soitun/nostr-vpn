@@ -98,17 +98,14 @@ impl DirectTunWriteBatch {
         &mut self.data_rx_notes
     }
 
-    fn reserve(&mut self, additional: usize) {
-        self.runs.reserve(additional);
-        self.packet_ends.reserve(additional);
-        self.packet_sources.reserve(additional);
-    }
-
     fn push_run(&mut self, run: FipsEndpointDirectPacketRun, source: FipsPacketSource) {
         if run.is_empty() {
             return;
         }
         let packet_count = run.len();
+        self.runs.reserve(1);
+        self.packet_ends.reserve(1);
+        self.packet_sources.reserve(packet_count);
         self.bytes = self.bytes.saturating_add(run.packet_bytes());
         self.push_packet_end(packet_count);
         self.packet_sources

@@ -627,7 +627,6 @@ fn admit_direct_endpoint_packet_runs_with_mesh(
             continue;
         };
 
-        batch_outputs.reserve(run_packets);
         let (accepted_count, endpoint_bytes) =
             admit_direct_endpoint_packet_run_with_admitter(&admitter, run, batch_outputs);
         if accepted_count == 0 {
