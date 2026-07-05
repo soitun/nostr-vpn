@@ -273,7 +273,6 @@ struct LinuxVnetWritePreparer {
     packet_refs: Vec<LinuxVnetPacketRef>,
     write_iov: Vec<libc::iovec>,
     open_tcp4_flows: Vec<(LinuxVnetTcp4GroFlow, usize)>,
-    tcp4_gro_enabled: bool,
 }
 
 // The scratch iovec and packet-ref vectors are owned by one TUN writer task/thread
@@ -332,10 +331,6 @@ impl LinuxVnetPacketBatch for DirectTunWriteBatch {
 
 impl LinuxVnetWritePreparer {
     fn new() -> Self {
-        Self::with_tcp4_gro(linux_vnet_tcp4_gro_write_enabled())
-    }
-
-    fn with_tcp4_gro(tcp4_gro_enabled: bool) -> Self {
         Self {
             frames: Vec::new(),
             vectored_frames: Vec::new(),
@@ -343,7 +338,6 @@ impl LinuxVnetWritePreparer {
             packet_refs: Vec::new(),
             write_iov: Vec::new(),
             open_tcp4_flows: Vec::new(),
-            tcp4_gro_enabled,
         }
     }
 
@@ -356,18 +350,11 @@ impl LinuxVnetWritePreparer {
         debug_assert_eq!(self.packet_refs.len(), packets.packet_count());
         let packet_count = self.packet_refs.len();
 
-        if !self.tcp4_gro_enabled {
-            self.frames
-                .extend((0..packet_count).map(LinuxVnetPreparedWriteFrame::RawPacket));
-            return;
-        }
-
         self.frames.reserve(packet_count);
         self.open_tcp4_flows.reserve(packet_count);
         for packet_index in 0..packet_count {
-            if self.tcp4_gro_enabled
-                && let Some(candidate) = self.packet_refs[packet_index]
-                    .with_slice(linux_vnet_tcp4_gro_candidate)
+            if let Some(candidate) =
+                self.packet_refs[packet_index].with_slice(linux_vnet_tcp4_gro_candidate)
             {
                 if let Some((_, owned_index)) = self
                     .open_tcp4_flows
@@ -462,16 +449,8 @@ impl LinuxVnetWritePreparer {
 fn linux_vnet_prepare_write_frames<P: AsRef<[u8]> + Clone>(
     packets: &[P],
 ) -> Vec<(LinuxVnetPreparedWriteFrame, Vec<u8>)> {
-    linux_vnet_prepare_write_frames_with_gro(packets, linux_vnet_tcp4_gro_write_enabled())
-}
-
-#[cfg(test)]
-fn linux_vnet_prepare_write_frames_with_gro<P: AsRef<[u8]> + Clone>(
-    packets: &[P],
-    tcp4_gro_enabled: bool,
-) -> Vec<(LinuxVnetPreparedWriteFrame, Vec<u8>)> {
     let packets = packets.to_vec();
-    let mut preparer = LinuxVnetWritePreparer::with_tcp4_gro(tcp4_gro_enabled);
+    let mut preparer = LinuxVnetWritePreparer::new();
     linux_vnet_collect_prepared_write_frames(&mut preparer, packets)
 }
 
@@ -711,27 +690,6 @@ fn linux_vnet_tun_enabled() -> bool {
 }
 
 fn linux_vnet_tun_enabled_from_env(value: Option<&str>) -> bool {
-    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
-        return true;
-    };
-    !(value == "0"
-        || value.eq_ignore_ascii_case("false")
-        || value.eq_ignore_ascii_case("no")
-        || value.eq_ignore_ascii_case("off"))
-}
-
-fn linux_vnet_tcp4_gro_write_enabled() -> bool {
-    static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *VALUE.get_or_init(|| {
-        linux_vnet_tcp4_gro_write_enabled_from_env(
-            std::env::var("NVPN_FIPS_LINUX_TUN_VNET_TCP4_GRO_WRITE")
-                .ok()
-                .as_deref(),
-        )
-    })
-}
-
-fn linux_vnet_tcp4_gro_write_enabled_from_env(value: Option<&str>) -> bool {
     let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
         return true;
     };

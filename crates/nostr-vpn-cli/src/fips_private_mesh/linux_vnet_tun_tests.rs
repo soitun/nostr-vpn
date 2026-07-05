@@ -14,16 +14,6 @@ mod linux_vnet_tun_tests {
     }
 
     #[test]
-    fn linux_vnet_tcp4_gro_write_env_parser_defaults_on() {
-        assert!(linux_vnet_tcp4_gro_write_enabled_from_env(None));
-        assert!(linux_vnet_tcp4_gro_write_enabled_from_env(Some("")));
-        assert!(linux_vnet_tcp4_gro_write_enabled_from_env(Some("1")));
-        assert!(linux_vnet_tcp4_gro_write_enabled_from_env(Some("true")));
-        assert!(!linux_vnet_tcp4_gro_write_enabled_from_env(Some("0")));
-        assert!(!linux_vnet_tcp4_gro_write_enabled_from_env(Some("off")));
-    }
-
-    #[test]
     fn linux_vnet_plain_read_strips_virtio_header() {
         let packet = ipv4_tcp_gso_packet(16, 16, 0x10);
         let mut frame = vec![0_u8; LINUX_VIRTIO_NET_HDR_LEN + packet.len()];
@@ -310,27 +300,6 @@ mod linux_vnet_tun_tests {
             let hdr = LinuxVirtioNetHdr::decode(&frame).expect("virtio header");
             assert_eq!(hdr.gso_type, LINUX_VIRTIO_NET_HDR_GSO_NONE);
             assert_eq!(hdr.gso_size, 0);
-        }
-    }
-
-    #[test]
-    fn linux_vnet_tcp4_gro_write_can_be_disabled() {
-        let mut first = ipv4_tcp_packet(1000, 800, LINUX_TCP_FLAG_ACK);
-        let mut second = ipv4_tcp_packet(1800, 600, LINUX_TCP_FLAG_ACK | LINUX_TCP_FLAG_PSH);
-        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut first);
-        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut second);
-
-        let packets = vec![first.clone(), second.clone()];
-        let frames = linux_vnet_prepare_write_frames_with_gro(&packets, false);
-        assert_eq!(frames.len(), 2);
-
-        for (frame, packet) in frames.iter().zip([first, second]) {
-            assert!(matches!(frame.0, LinuxVnetPreparedWriteFrame::RawPacket(_)));
-            let frame = prepared_write_frame_bytes(frame);
-            let hdr = LinuxVirtioNetHdr::decode(&frame).expect("virtio header");
-            assert_eq!(hdr.gso_type, LINUX_VIRTIO_NET_HDR_GSO_NONE);
-            assert_eq!(hdr.gso_size, 0);
-            assert_eq!(&frame[LINUX_VIRTIO_NET_HDR_LEN..], packet.as_slice());
         }
     }
 
