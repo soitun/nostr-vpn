@@ -132,7 +132,8 @@ fn spawn_windows_fips_mesh_recv_task(
     tokio::spawn(async move {
         let mut messages = Vec::with_capacity(WINDOWS_FIPS_TUN_WRITE_BURST);
         let mut events = Vec::with_capacity(WINDOWS_FIPS_TUN_WRITE_BURST);
-        let mut packets = Vec::with_capacity(WINDOWS_FIPS_TUN_WRITE_BURST);
+        let mut packets: Vec<FipsEndpointData> =
+            Vec::with_capacity(WINDOWS_FIPS_TUN_WRITE_BURST);
         let pipeline_profile_enabled = crate::pipeline_profile::enabled();
         loop {
             let recv_result = {
@@ -153,7 +154,6 @@ fn spawn_windows_fips_mesh_recv_task(
                     for event in events.drain(..) {
                         match event {
                             FipsPrivateMeshEvent::Packet(packet) => {
-                                let packet = packet.into_vec();
                                 packet_count = packet_count.saturating_add(1);
                                 packet_bytes = packet_bytes.saturating_add(packet.len());
                                 packets.push(packet);
@@ -187,7 +187,7 @@ fn spawn_windows_fips_mesh_recv_task(
 }
 
 #[cfg(target_os = "windows")]
-fn write_windows_fips_packet_batch(session: &Arc<Session>, packets: &mut Vec<Vec<u8>>) {
+fn write_windows_fips_packet_batch(session: &Arc<Session>, packets: &mut Vec<FipsEndpointData>) {
     if packets.is_empty() {
         return;
     }
@@ -202,7 +202,7 @@ fn write_windows_fips_packet_batch(session: &Arc<Session>, packets: &mut Vec<Vec
         }
     }
     if crate::pipeline_profile::enabled() {
-        let packet_bytes = packets.iter().map(Vec::len).sum();
+        let packet_bytes = packets.iter().map(FipsEndpointData::len).sum();
         crate::pipeline_profile::record_tun_write_packets(packets.len(), packet_bytes);
         for packet in packets.iter() {
             crate::pipeline_profile::record_tun_write_frame(packet.len());
@@ -210,7 +210,10 @@ fn write_windows_fips_packet_batch(session: &Arc<Session>, packets: &mut Vec<Vec
     }
     let write_result = {
         let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWrite);
-        crate::windows_tunnel::write_tunnel_packets(session, packets)
+        crate::windows_tunnel::write_tunnel_packet_slices(
+            session,
+            packets.iter().map(FipsEndpointData::as_slice),
+        )
     };
     if let Err(error) = write_result {
         eprintln!("fips: failed to write Windows tunnel packet: {error}");

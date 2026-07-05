@@ -88,7 +88,10 @@ use std::sync::Arc;
 use wintun::Session;
 
 #[cfg(target_os = "windows")]
-pub(crate) fn write_tunnel_packets(session: &Arc<Session>, packets: &[Vec<u8>]) -> Result<()> {
+pub(crate) fn write_tunnel_packet_slices<'a, I>(session: &Arc<Session>, packets: I) -> Result<()>
+where
+    I: IntoIterator<Item = &'a [u8]>,
+{
     for packet in packets {
         let size = u16::try_from(packet.len())
             .map_err(|_| anyhow!("tunnel packet too large for wintun: {}", packet.len()))?;
