@@ -1,11 +1,7 @@
 use crate::*;
-#[cfg(feature = "embedded-fips")]
 use fips_core::discovery::nostr::{OverlayEndpointAdvert, OverlayTransportKind};
-#[cfg(feature = "embedded-fips")]
 use nostr_sdk::prelude::{Keys, ToBech32};
-#[cfg(feature = "embedded-fips")]
 use std::collections::HashSet;
-#[cfg(feature = "embedded-fips")]
 use std::net::Ipv4Addr;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -110,7 +106,7 @@ fn paid_exit_run_settings_prepare_public_fips_discovery() {
     assert!(app.fips_advertise_public_endpoint);
 }
 
-#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+#[cfg(feature = "paid-exit")]
 #[test]
 fn selected_public_paid_exit_counts_as_private_fips_peer_without_active_network() {
     let seller = Keys::generate();
@@ -153,8 +149,6 @@ fn selected_public_paid_exit_counts_as_private_fips_peer_without_active_network(
             .any(|route| route == "0.0.0.0/0")
     );
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_roster_publish_attempts_disconnected_recipients() {
     let recipients = vec!["alice".to_string(), "bob".to_string()];
@@ -164,8 +158,6 @@ fn fips_roster_publish_attempts_disconnected_recipients() {
     assert_eq!(ready, recipients);
     assert!(pending.is_empty());
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn local_fips_endpoint_hints_share_public_configured_endpoint_with_roster() {
     let mut app = AppConfig::generated();
@@ -185,8 +177,6 @@ fn local_fips_endpoint_hints_share_public_configured_endpoint_with_roster() {
         ]
     );
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn local_fips_endpoint_hints_share_fips_advertised_udp_endpoint_with_roster() {
     let mut app = AppConfig::generated();
@@ -214,8 +204,6 @@ fn local_fips_endpoint_hints_share_fips_advertised_udp_endpoint_with_roster() {
 
     assert_eq!(addrs, vec!["8.8.8.8:51820"]);
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn local_fips_endpoint_hints_do_not_share_lan_when_disabled() {
     let mut app = AppConfig::generated();
@@ -228,8 +216,6 @@ fn local_fips_endpoint_hints_do_not_share_lan_when_disabled() {
 
     assert!(hints.is_empty());
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn local_fips_endpoint_hints_keep_configured_lan_when_lan_discovery_disabled() {
     let mut app = AppConfig::generated();
@@ -243,8 +229,6 @@ fn local_fips_endpoint_hints_keep_configured_lan_when_lan_discovery_disabled() {
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0].addr, "192.168.50.22:51820");
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn local_fips_endpoint_hints_do_not_share_cgnat_candidates() {
     let mut app = AppConfig::generated();
@@ -257,8 +241,6 @@ fn local_fips_endpoint_hints_do_not_share_cgnat_candidates() {
 
     assert!(hints.is_empty());
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn local_fips_endpoint_hints_do_not_share_loopback_when_lan_enabled() {
     let mut app = AppConfig::generated();
@@ -271,8 +253,6 @@ fn local_fips_endpoint_hints_do_not_share_loopback_when_lan_enabled() {
 
     assert!(hints.is_empty());
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn local_fips_endpoint_hints_do_not_share_tunnel_endpoint() {
     let mut app = AppConfig::generated();
@@ -285,8 +265,6 @@ fn local_fips_endpoint_hints_do_not_share_tunnel_endpoint() {
 
     assert!(hints.is_empty());
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn local_fips_endpoint_hints_keep_dns_endpoint_and_listen_port() {
     let mut app = AppConfig::generated();
@@ -300,8 +278,6 @@ fn local_fips_endpoint_hints_keep_dns_endpoint_and_listen_port() {
     assert_eq!(hints.len(), 1);
     assert_eq!(hints[0].addr, "peer.example.com:51820");
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn runtime_signal_ipv4_candidates_keep_local_non_tunnel_addresses() {
     let candidates =
@@ -311,8 +287,6 @@ fn runtime_signal_ipv4_candidates_keep_local_non_tunnel_addresses() {
     assert!(!candidates.contains(&Ipv4Addr::new(10, 44, 1, 1)));
     assert!(!candidates.contains(&Ipv4Addr::new(100, 120, 94, 10)));
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn runtime_signal_ipv4_candidates_drop_detected_cgnat_address() {
     let candidates =
@@ -320,8 +294,6 @@ fn runtime_signal_ipv4_candidates_drop_detected_cgnat_address() {
 
     assert!(!candidates.contains(&Ipv4Addr::new(100, 120, 94, 10)));
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn endpoint_hint_recipients_are_active_participants_only() {
     let own = Keys::generate();
@@ -345,8 +317,6 @@ fn endpoint_hint_recipients_are_active_participants_only() {
     assert!(!recipients.contains(&own_pubkey));
     assert!(!recipients.contains(&admin_pubkey));
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn endpoint_hint_capability_refreshes_only_matching_roster_peer() {
     use nostr_vpn_core::fips_control::{PeerCapabilities, PeerEndpointHint};
@@ -401,7 +371,7 @@ fn endpoint_hint_capability_refreshes_only_matching_roster_peer() {
     );
 }
 
-#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+#[cfg(feature = "paid-exit")]
 #[test]
 fn fips_tunnel_config_carries_paid_route_payment_streaming_inputs() {
     let own = Keys::generate();
@@ -560,8 +530,6 @@ fn macos_underlay_route_repair_defers_only_for_confirmed_captive_portal() {
     assert!(macos_underlay_route_repair_allowed(Some(false)));
     assert!(macos_underlay_route_repair_allowed(None));
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_link_events_refresh_paths_for_major_link_changes() {
     assert_eq!(
@@ -573,8 +541,6 @@ fn fips_link_events_refresh_paths_for_major_link_changes() {
         FipsLinkEventRefresh::RefreshPaths
     );
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_link_events_refresh_paths_for_endpoint_only_changes() {
     assert_eq!(
@@ -586,8 +552,6 @@ fn fips_link_events_refresh_paths_for_endpoint_only_changes() {
         FipsLinkEventRefresh::None
     );
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_link_events_skip_route_maintenance_only_refreshes() {
     assert_eq!(
@@ -599,8 +563,6 @@ fn fips_link_events_skip_route_maintenance_only_refreshes() {
         FipsLinkEventRefresh::None
     );
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_stale_participant_recovery_is_cooldown_gated() {
     let mut last_restart_at = None;
@@ -623,8 +585,6 @@ fn fips_stale_participant_recovery_is_cooldown_gated() {
         900
     ));
 }
-
-#[cfg(feature = "embedded-fips")]
 fn pending_fips_peer(pubkey: &str) -> MeshPeerStatus {
     MeshPeerStatus {
         pubkey: pubkey.to_string(),
@@ -659,21 +619,15 @@ fn pending_fips_peer(pubkey: &str) -> MeshPeerStatus {
         error: Some("fips link pending".to_string()),
     }
 }
-
-#[cfg(feature = "embedded-fips")]
 fn connected_relay() -> DaemonRelayState {
     DaemonRelayState {
         url: "wss://relay.example".to_string(),
         status: "connected".to_string(),
     }
 }
-
-#[cfg(feature = "embedded-fips")]
 fn roster_pubkeys(values: &[&str]) -> HashSet<String> {
     values.iter().map(|value| (*value).to_string()).collect()
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_pending_roster_recovery_waits_for_grace_and_cooldown() {
     let peers = vec![pending_fips_peer("a"), pending_fips_peer("b")];
@@ -710,8 +664,6 @@ fn fips_pending_roster_recovery_waits_for_grace_and_cooldown() {
         start + FIPS_PENDING_ROSTER_RESTART_GRACE_SECS + 1
     ));
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_pending_roster_recovery_requires_connected_relay_and_all_pending() {
     let mut state = FipsPendingRosterRestartState::default();
@@ -753,8 +705,6 @@ fn fips_pending_roster_recovery_requires_connected_relay_and_all_pending() {
         30_000 + FIPS_PENDING_ROSTER_RESTART_GRACE_SECS
     ));
 }
-
-#[cfg(feature = "embedded-fips")]
 #[test]
 fn fips_pending_roster_recovery_ignores_connected_non_roster_transit() {
     let mut peers = vec![pending_fips_peer("a"), pending_fips_peer("b")];

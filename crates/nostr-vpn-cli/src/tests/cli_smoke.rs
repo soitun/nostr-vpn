@@ -30,7 +30,6 @@ fn clap_supports_root_version_flag() {
 fn build_reports_fips_core_component_version() {
     let version = crate::fips_core_build_version();
     assert!(!version.trim().is_empty());
-    #[cfg(feature = "embedded-fips")]
     assert!(version.starts_with(fips_core::version::VERSION));
 }
 

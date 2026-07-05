@@ -157,7 +157,6 @@ prepare_cargo_config() {
   fi
   if bool_is_true "${NVPN_MACOS_NO_DEFAULT_FEATURES:-false}"; then
     cargo_app_core_feature_args+=(--no-default-features)
-    cargo_nvpn_feature_args+=(--no-default-features)
   fi
   cargo_app_core_package_args=()
   local app_core_packages=()
@@ -216,7 +215,7 @@ development env:
   NVPN_MACOS_APP_CORE_CARGO_PACKAGES
                                 packages built for app-core artifacts
   NVPN_MACOS_CARGO_LOCKED=1 passes --locked with local crate patches
-  NVPN_MACOS_NO_DEFAULT_FEATURES=1 disables default Rust features
+  NVPN_MACOS_NO_DEFAULT_FEATURES=1 disables default Rust features for app-core artifacts
 EOF
 }
 

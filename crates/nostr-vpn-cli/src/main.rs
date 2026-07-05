@@ -1,12 +1,8 @@
 mod config_bootstrap;
 mod daemon_runtime;
 mod diagnostics;
-#[cfg(all(
-    feature = "embedded-fips",
-    any(target_os = "linux", target_os = "macos")
-))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 mod fips_host_tunnel;
-#[cfg(feature = "embedded-fips")]
 mod fips_private_mesh;
 #[cfg(target_os = "linux")]
 mod linux_network;
@@ -15,13 +11,9 @@ mod macos_network;
 #[cfg(any(target_os = "macos", test))]
 mod macos_service;
 mod network_signaling;
-#[cfg(all(
-    feature = "embedded-fips",
-    any(target_os = "linux", target_os = "macos", target_os = "windows")
-))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod pipeline_profile;
 mod platform_routing;
-#[cfg(feature = "embedded-fips")]
 mod recent_peers_store;
 mod service_management;
 mod session_runtime;
@@ -34,8 +26,6 @@ mod windows_network;
 mod windows_tunnel;
 #[cfg(target_os = "linux")]
 mod wireguard_exit;
-
-#[cfg(feature = "embedded-fips")]
 use fips_core::discovery::nostr::{OverlayEndpointAdvert, OverlayTransportKind};
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "windows")]
@@ -98,9 +88,8 @@ use nostr_vpn_core::diagnostics::{
 use nostr_vpn_core::fips_control::{
     NetworkRoster, PeerCapabilities, PeerEndpointHint, SignedRoster, local_fips_dataplane_features,
 };
-#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+#[cfg(feature = "paid-exit")]
 use nostr_vpn_core::fips_mesh::FipsPaidRouteAdmission;
-#[cfg(feature = "embedded-fips")]
 use nostr_vpn_core::join_requests::{FIPS_JOIN_REQUEST_RETRY_SECS, MeshJoinRequest};
 use nostr_vpn_core::magic_dns::{
     MagicDnsResolverConfig, MagicDnsServer, build_magic_dns_records, install_system_resolver,
@@ -215,14 +204,8 @@ const MAJOR_LINK_CHANGE_TIME_JUMP_SECS: u64 = 30;
 const WAITING_FOR_PARTICIPANTS_STATUS: &str = "Waiting for participants";
 const LISTENING_FOR_JOIN_REQUESTS_STATUS: &str = "Listening for join requests";
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
-#[cfg(feature = "embedded-fips")]
 pub(crate) fn fips_core_build_version() -> String {
     fips_core::version::short_version().to_string()
-}
-
-#[cfg(not(feature = "embedded-fips"))]
-pub(crate) fn fips_core_build_version() -> String {
-    "disabled".to_string()
 }
 
 #[cfg(target_os = "windows")]

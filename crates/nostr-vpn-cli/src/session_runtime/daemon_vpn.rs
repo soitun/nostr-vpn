@@ -53,17 +53,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     )?;
     let mut own_pubkey = app.own_nostr_pubkey_hex().ok();
     let mut expected_peers = expected_peer_count(&app);
-    #[cfg(not(feature = "embedded-fips"))]
-    {
-        return Err(anyhow!(
-            "embedded FIPS private mesh requires building nvpn with the embedded-fips feature"
-        ));
-    }
     let state_file = daemon_state_file_path(&config_path);
     let _ = fs::remove_file(daemon_control_file_path(&config_path));
-    #[cfg(feature = "embedded-fips")]
     let recent_peers_path = crate::recent_peers_store::recent_peers_file_path(&config_path);
-    #[cfg(feature = "embedded-fips")]
     let mut recent_peers =
         match crate::recent_peers_store::load_recent_peers(&recent_peers_path, unix_timestamp()) {
             Ok(state) => state,
@@ -75,15 +67,10 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 nostr_vpn_core::recent_peers::RecentPeerEndpoints::default()
             }
         };
-    #[cfg(feature = "embedded-fips")]
     let mut fips_join_request_sends: HashMap<String, u64> = HashMap::new();
-    #[cfg(feature = "embedded-fips")]
     let mut pending_fips_roster_recipients: HashSet<String> = HashSet::new();
-    #[cfg(feature = "embedded-fips")]
     let mut fips_roster_sync_state = FipsRosterSyncState::default();
-    #[cfg(feature = "embedded-fips")]
     let mut last_fips_stale_participant_restart_at: Option<u64> = None;
-    #[cfg(feature = "embedded-fips")]
     let mut fips_pending_roster_restart_state = FipsPendingRosterRestartState::default();
     let iface = args.iface.clone();
     let mut tunnel_runtime = CliTunnelRuntime::new(iface.clone());
@@ -123,7 +110,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         )
         .await;
     }
-    #[cfg(feature = "embedded-fips")]
     let (mut fips_tunnel_runtime, mut last_fips_endpoint_peer_signature) =
         if fips_private_runtime_active(&app, vpn_enabled, expected_peers) {
             let config = match fips_tunnel_config_from_app(
@@ -205,9 +191,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     recent_peer_refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut state_interval = tokio::time::interval(Duration::from_secs(1));
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    #[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+    #[cfg(feature = "paid-exit")]
     let mut last_paid_exit_usage_flush_at = Instant::now();
-    #[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+    #[cfg(feature = "paid-exit")]
     let mut last_paid_exit_payment_receive_at = Instant::now()
         .checked_sub(Duration::from_secs(
             PAID_EXIT_DAEMON_RECEIVE_PAYMENT_INTERVAL_SECS,
@@ -239,13 +225,10 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     };
     let mut last_network_check_at = WallTimeJumpObserver::new(unix_timestamp());
     let mut last_log_compact_check = Instant::now();
-    #[cfg(feature = "embedded-fips")]
     let fips_peer_statuses = fips_tunnel_runtime
         .as_ref()
         .map(|runtime| runtime.peer_statuses())
         .unwrap_or_default();
-    #[cfg(not(feature = "embedded-fips"))]
-    let fips_peer_statuses = Vec::new();
     let fips_relay_statuses = current_fips_relay_statuses!(&fips_tunnel_runtime).await;
     let fips_endpoint_peer_states =
         current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature);
@@ -293,7 +276,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 break;
             }
             _ = announce_interval.tick() => {
-                #[cfg(feature = "embedded-fips")]
                 if let Some(runtime) = fips_tunnel_runtime.as_ref() {
                     if let Err(error) = publish_fips_active_network_roster(
                         runtime,
@@ -309,7 +291,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 }
             }
             _ = recent_peer_refresh_interval.tick() => {
-                #[cfg(feature = "embedded-fips")]
                 if let Some(runtime) = fips_tunnel_runtime.as_ref() {
                     update_recent_peers_from_runtime(
                         runtime,
@@ -328,7 +309,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             }
             _ = tunnel_heartbeat_interval.tick() => {
                 if !daemon_vpn_active(vpn_enabled, expected_peers) {
-                    #[cfg(feature = "embedded-fips")]
                     if fips_private_runtime_active(&app, vpn_enabled, expected_peers) {
                         let now = unix_timestamp();
                         if let Some(runtime) = fips_tunnel_runtime.as_ref() {
@@ -420,8 +400,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     }
                     continue;
                 }
-
-                #[cfg(feature = "embedded-fips")]
                 if fips_tunnel_runtime.is_some() {
                     let now = unix_timestamp();
                     if let Some(runtime) = fips_tunnel_runtime.as_ref() {
@@ -620,8 +598,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 {
                     continue;
                 }
-
-                #[cfg(feature = "embedded-fips")]
                 let fips_refresh = fips_link_event_refresh(
                     platform_network_event,
                     network_changed,
@@ -629,7 +605,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     underlay_repaired,
                     resumed_after_sleep,
                 );
-                #[cfg(feature = "embedded-fips")]
                 let seed_recent_fips_peers =
                     fips_link_event_should_seed_recent_peers(fips_refresh);
 
@@ -671,7 +646,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if underlay_repaired {
                         reset_tunnel_runtime_after_macos_underlay_repair(&mut tunnel_runtime);
                     }
-                    #[cfg(feature = "embedded-fips")]
                     let fips_result = match fips_refresh {
                         FipsLinkEventRefresh::RefreshPaths => {
                             if fips_tunnel_runtime.is_some()
@@ -704,7 +678,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         }
                         FipsLinkEventRefresh::None => Ok(()),
                     };
-                    #[cfg(feature = "embedded-fips")]
                     if let Err(error) = fips_result {
                         vpn_status = format!("Network route refresh failed ({error})");
                     } else {
@@ -712,7 +685,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             platform_network_event_suppressed_until =
                                 Some(Instant::now() + Duration::from_secs(5));
                         }
-                        #[cfg(feature = "embedded-fips")]
                         if let Some(runtime) = fips_tunnel_runtime.as_ref() {
                             if let Err(error) = runtime.ping_peers(&network_id, now).await {
                                 eprintln!("fips: peer ping failed after network refresh: {error}");
@@ -748,7 +720,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             .to_string()
                         };
                     }
-                    #[cfg(feature = "embedded-fips")]
                     if let Some(runtime) = fips_tunnel_runtime.as_ref()
                         && let Err(error) = broadcast_local_fips_capabilities(runtime, &app).await
                     {
@@ -762,7 +733,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 {
                     eprintln!("daemon: failed to compact service log: {error}");
                 }
-                #[cfg(feature = "embedded-fips")]
                 if let Some(runtime) = fips_tunnel_runtime.as_mut() {
                     match drain_fips_mesh_events(
                         runtime,
@@ -1074,7 +1044,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         }
                     };
                     let _ = write_daemon_control_result(&config_path, request, control_result);
-                    #[cfg(feature = "embedded-fips")]
                     let pre_sync_fips_roster_recipients = if publish_fips_roster_after_control {
                         fips_tunnel_runtime
                             .as_ref()
@@ -1083,7 +1052,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     } else {
                         Vec::new()
                     };
-                    #[cfg(feature = "embedded-fips")]
                     if publish_fips_roster_after_control
                         && let Some(runtime) = fips_tunnel_runtime.as_ref()
                         && let Err(error) = publish_fips_active_network_roster_to(
@@ -1099,7 +1067,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             "fips: roster publish failed before peer-set refresh: {error}"
                         );
                     }
-                    #[cfg(feature = "embedded-fips")]
                     if let Err(error) = sync_fips_private_runtime(
                         &mut fips_tunnel_runtime,
                         SyncFipsPrivateRuntimeContext {
@@ -1117,7 +1084,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     {
                         vpn_status = format!("FIPS private mesh update failed ({error})");
                     }
-                    #[cfg(feature = "embedded-fips")]
                     if publish_fips_roster_after_control
                         && let Some(runtime) = fips_tunnel_runtime.as_ref()
                     {
@@ -1207,7 +1173,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     }
 
     port_mapping_runtime.stop().await;
-    #[cfg(feature = "embedded-fips")]
     if let Some(runtime) = fips_tunnel_runtime
         && let Err(error) = runtime.stop().await
     {
@@ -1226,7 +1191,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     Ok(())
 }
 
-#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+#[cfg(feature = "paid-exit")]
 fn flush_fips_paid_route_usage(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
@@ -1298,7 +1263,7 @@ fn flush_fips_paid_route_usage(
     Ok(seller_admission_routing_after != seller_admission_routing_before)
 }
 
-#[cfg(all(feature = "embedded-fips", feature = "paid-exit"))]
+#[cfg(feature = "paid-exit")]
 fn paid_route_seller_admission_routing_signature(
     admissions: &[nostr_vpn_core::paid_route_store::PaidRouteSellerAdmission],
 ) -> Vec<(String, String, bool)> {

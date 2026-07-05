@@ -177,23 +177,15 @@ fn signed_roster_is_current_for_app(
                 .is_ok_and(|value| value == signed_by)
     })
 }
-
-#[cfg(feature = "embedded-fips")]
 const FIPS_ROSTER_RESEND_SECS: u64 = 10;
-
-#[cfg(feature = "embedded-fips")]
 #[derive(Default)]
 struct FipsRosterSyncState {
     sent_by_peer: HashMap<String, FipsRosterSentState>,
 }
-
-#[cfg(feature = "embedded-fips")]
 struct FipsRosterSentState {
     hash: String,
     sent_at: u64,
 }
-
-#[cfg(feature = "embedded-fips")]
 async fn sync_fips_roster_with_connected_peers(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,

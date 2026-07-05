@@ -35,13 +35,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
             "at least one participant must be configured before running connect"
         ));
     }
-    #[cfg(not(feature = "embedded-fips"))]
-    {
-        return Err(anyhow!(
-            "embedded FIPS private mesh requires building nvpn with the embedded-fips feature"
-        ));
-    }
-
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
     let mut expected_peers = expected_peer_count(&app);
     let iface = args.iface.clone();
@@ -54,7 +47,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
         &mut port_mapping_runtime,
     )
     .await;
-    #[cfg(feature = "embedded-fips")]
     let (mut fips_tunnel_runtime, mut last_fips_endpoint_peer_signature) = {
         let config = fips_tunnel_config_from_app(
             &app,
@@ -82,11 +74,8 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
     tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    #[cfg(feature = "embedded-fips")]
     let mut pending_fips_roster_recipients: HashSet<String> = HashSet::new();
-    #[cfg(feature = "embedded-fips")]
     let mut fips_roster_sync_state = FipsRosterSyncState::default();
-    #[cfg(feature = "embedded-fips")]
     let mut connect_status = String::new();
 
     let mut last_mesh_count = 0_usize;
@@ -96,7 +85,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                 break;
             }
             _ = tunnel_heartbeat_interval.tick() => {
-                #[cfg(feature = "embedded-fips")]
                 if let Some(runtime) = fips_tunnel_runtime.as_mut() {
                     let now = unix_timestamp();
                     if let Err(error) = runtime.ping_peers(&network_id, now).await {
@@ -190,7 +178,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                 }
             }
             _ = announce_interval.tick() => {
-                #[cfg(feature = "embedded-fips")]
                 if let Some(runtime) = fips_tunnel_runtime.as_ref() {
                     if let Err(error) = publish_fips_active_network_roster(
                         runtime,
@@ -209,7 +196,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     }
 
     port_mapping_runtime.stop().await;
-    #[cfg(feature = "embedded-fips")]
     if let Some(runtime) = fips_tunnel_runtime
         && let Err(error) = runtime.stop().await
     {

@@ -1,4 +1,3 @@
-#[cfg(feature = "embedded-fips")]
 async fn fips_relay_statuses_from_runtime(
     runtime: &Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
 ) -> Vec<DaemonRelayState> {
@@ -19,27 +18,13 @@ async fn fips_relay_statuses_from_runtime(
         }
     }
 }
-
-#[cfg(feature = "embedded-fips")]
 macro_rules! current_fips_relay_statuses {
     ($runtime:expr) => {
         fips_relay_statuses_from_runtime($runtime)
     };
 }
-
-#[cfg(not(feature = "embedded-fips"))]
-macro_rules! current_fips_relay_statuses {
-    ($runtime:expr) => {
-        std::future::ready(Vec::<DaemonRelayState>::new())
-    };
-}
-
-#[cfg(feature = "embedded-fips")]
 pub(crate) const FIPS_STALE_PARTICIPANT_RESTART_COOLDOWN_SECS: u64 = 60;
-#[cfg(feature = "embedded-fips")]
 pub(crate) const FIPS_PENDING_ROSTER_RESTART_GRACE_SECS: u64 = 45;
-
-#[cfg(feature = "embedded-fips")]
 macro_rules! current_fips_advertised_routes {
     ($runtime:expr, $app:expr) => {
         $runtime
@@ -57,15 +42,6 @@ macro_rules! current_fips_advertised_routes {
             .unwrap_or_default()
     };
 }
-
-#[cfg(not(feature = "embedded-fips"))]
-macro_rules! current_fips_advertised_routes {
-    ($runtime:expr, $app:expr) => {
-        std::collections::HashMap::<String, Vec<String>>::new()
-    };
-}
-
-#[cfg(feature = "embedded-fips")]
 fn fips_peer_count(
     app: &AppConfig,
     own_pubkey: Option<&str>,
@@ -83,8 +59,6 @@ fn fips_peer_count(
         .filter(|status| status.connected)
         .count()
 }
-
-#[cfg(feature = "embedded-fips")]
 fn maybe_log_fips_mesh_count(
     app: &AppConfig,
     own_pubkey: Option<&str>,
@@ -106,8 +80,6 @@ fn credible_daemon_peer_timestamp(now: u64, timestamp: Option<u64>) -> Option<u6
     }
     Some(timestamp)
 }
-
-#[cfg(feature = "embedded-fips")]
 async fn flush_pending_fips_roster_recipients(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
@@ -122,19 +94,13 @@ async fn flush_pending_fips_roster_recipients(
         Err(error) => eprintln!("fips: queued roster publish failed: {error}"),
     }
 }
-
-#[cfg(feature = "embedded-fips")]
 pub(crate) type EndpointPeerSignature =
     Vec<(String, bool, bool, Vec<(String, Option<u64>, u8)>)>;
-
-#[cfg(feature = "embedded-fips")]
 struct RecentPeerRefresh<'a> {
     recent_peers: &'a mut nostr_vpn_core::recent_peers::RecentPeerEndpoints,
     recent_peers_path: &'a std::path::Path,
     last_endpoint_peer_signature: &'a mut EndpointPeerSignature,
 }
-
-#[cfg(feature = "embedded-fips")]
 struct FipsRestartContext<'a> {
     app: &'a nostr_vpn_core::config::AppConfig,
     config_path: &'a std::path::Path,
@@ -145,22 +111,16 @@ struct FipsRestartContext<'a> {
     recent_peers: Option<&'a nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
     last_endpoint_peer_signature: &'a mut EndpointPeerSignature,
 }
-
-#[cfg(feature = "embedded-fips")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FipsLinkEventRefresh {
     None,
     RefreshPaths,
 }
-
-#[cfg(feature = "embedded-fips")]
 #[derive(Debug, Default)]
 pub(crate) struct FipsPendingRosterRestartState {
     pending_since: Option<u64>,
     last_restart_at: Option<u64>,
 }
-
-#[cfg(feature = "embedded-fips")]
 pub(crate) fn fips_link_event_refresh(
     platform_network_event: bool,
     network_changed: bool,
@@ -175,15 +135,11 @@ pub(crate) fn fips_link_event_refresh(
         FipsLinkEventRefresh::None
     }
 }
-
-#[cfg(feature = "embedded-fips")]
 pub(crate) fn fips_link_event_should_seed_recent_peers(
     _refresh: FipsLinkEventRefresh,
 ) -> bool {
     true
 }
-
-#[cfg(feature = "embedded-fips")]
 pub(crate) fn fips_stale_participant_restart_due(
     last_restart_at: &mut Option<u64>,
     now: u64,
@@ -198,8 +154,6 @@ pub(crate) fn fips_stale_participant_restart_due(
     }
     due
 }
-
-#[cfg(feature = "embedded-fips")]
 fn fips_pending_roster_links_detected(
     peer_statuses: &[MeshPeerStatus],
     relay_statuses: &[DaemonRelayState],
@@ -231,8 +185,6 @@ fn fips_pending_roster_links_detected(
         .count();
     pending >= expected_peers
 }
-
-#[cfg(feature = "embedded-fips")]
 pub(crate) fn fips_pending_roster_restart_due(
     peer_statuses: &[MeshPeerStatus],
     relay_statuses: &[DaemonRelayState],
@@ -266,8 +218,6 @@ pub(crate) fn fips_pending_roster_restart_due(
     state.pending_since = None;
     true
 }
-
-#[cfg(feature = "embedded-fips")]
 fn endpoint_peer_signature(
     endpoint_peers: &[crate::fips_private_mesh::FipsEndpointPeerTransportConfig],
 ) -> EndpointPeerSignature {
@@ -290,8 +240,6 @@ fn endpoint_peer_signature(
         })
         .collect()
 }
-
-#[cfg(feature = "embedded-fips")]
 pub(crate) fn daemon_endpoint_peer_states_from_signature(
     signature: &EndpointPeerSignature,
 ) -> Vec<DaemonFipsEndpointPeerState> {
@@ -316,8 +264,6 @@ pub(crate) fn daemon_endpoint_peer_states_from_signature(
         )
         .collect()
 }
-
-#[cfg(feature = "embedded-fips")]
 fn endpoint_peers_for_participant_refresh(
     endpoint_peers: &[crate::fips_private_mesh::FipsEndpointPeerTransportConfig],
     participants: &[String],
@@ -356,7 +302,6 @@ fn endpoint_peers_for_participant_refresh(
 /// endpoints get rotated into the cache, including authenticated non-roster
 /// transit peers; mesh-carried live hints can include LAN endpoints but stay
 /// in memory only.
-#[cfg(feature = "embedded-fips")]
 async fn update_recent_peers_from_runtime(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &nostr_vpn_core::config::AppConfig,
@@ -434,8 +379,6 @@ async fn update_recent_peers_from_runtime(
         }
     }
 }
-
-#[cfg(feature = "embedded-fips")]
 async fn refresh_fips_tunnel_runtime_after_link_event(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
     context: FipsRestartContext<'_>,
@@ -488,8 +431,6 @@ async fn refresh_fips_tunnel_runtime_after_link_event(
     *context.last_endpoint_peer_signature = endpoint_peer_signature;
     Ok(())
 }
-
-#[cfg(feature = "embedded-fips")]
 async fn restart_fips_tunnel_runtime_after_stale_participants(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
     context: FipsRestartContext<'_>,
@@ -512,8 +453,6 @@ async fn restart_fips_tunnel_runtime_after_stale_participants(
     );
     refresh_fips_tunnel_runtime_peer_paths(runtime, context, &stale_participants).await
 }
-
-#[cfg(feature = "embedded-fips")]
 async fn refresh_fips_tunnel_runtime_peer_paths(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
     context: FipsRestartContext<'_>,
@@ -531,8 +470,6 @@ async fn refresh_fips_tunnel_runtime_peer_paths(
     .await?;
     Ok(false)
 }
-
-#[cfg(feature = "embedded-fips")]
 async fn refresh_fips_tunnel_runtime_peer_paths_in_place(
     current: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     context: FipsRestartContext<'_>,
@@ -576,8 +513,6 @@ async fn refresh_fips_tunnel_runtime_peer_paths_in_place(
     );
     Ok(())
 }
-
-#[cfg(feature = "embedded-fips")]
 async fn restart_fips_tunnel_runtime_after_pending_roster_links(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
     context: FipsRestartContext<'_>,
@@ -623,8 +558,6 @@ async fn restart_fips_tunnel_runtime_after_pending_roster_links(
     .await?;
     Ok(true)
 }
-
-#[cfg(feature = "embedded-fips")]
 fn fips_roster_pubkeys(app: &AppConfig, own_pubkey: Option<&str>) -> HashSet<String> {
     app.participant_pubkeys_hex()
         .into_iter()

@@ -55,8 +55,6 @@ mod tests {
         assert_eq!(preferred.gateway_ipv4, Some(Ipv4Addr::new(192, 168, 64, 1)));
         assert!(preferred.primary_ipv6.is_none());
     }
-
-    #[cfg(feature = "embedded-fips")]
     #[test]
     fn endpoint_peer_signature_tracks_address_hint_metadata() {
         let static_config = vec![crate::fips_private_mesh::FipsEndpointPeerTransportConfig {
@@ -89,8 +87,6 @@ mod tests {
             endpoint_peer_signature(&reconnect_config)
         );
     }
-
-    #[cfg(feature = "embedded-fips")]
     #[test]
     fn link_event_refresh_keeps_recent_endpoint_hints_available() {
         let idle = fips_link_event_refresh(false, false, false, false, false);
@@ -114,8 +110,6 @@ mod tests {
             assert!(fips_link_event_should_seed_recent_peers(refresh));
         }
     }
-
-    #[cfg(feature = "embedded-fips")]
     #[test]
     fn stale_participant_path_refresh_targets_only_matching_endpoint_peers() {
         use nostr_sdk::prelude::{Keys, ToBech32};

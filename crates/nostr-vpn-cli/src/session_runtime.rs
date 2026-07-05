@@ -9,8 +9,6 @@ pub(crate) const DAEMON_NETWORK_REFRESH_INTERVAL_SECS: u64 = 1;
 pub(crate) const DAEMON_NETWORK_EVENT_DEBOUNCE_MILLIS: u64 = 250;
 #[cfg(any(target_os = "macos", test))]
 pub(crate) const MACOS_UNDERLAY_ROUTE_CHECK_INTERVAL_SECS: u64 = 5;
-
-#[cfg(feature = "embedded-fips")]
 macro_rules! current_fips_peer_statuses {
     ($runtime:expr) => {
         $runtime
@@ -19,25 +17,9 @@ macro_rules! current_fips_peer_statuses {
             .unwrap_or_default()
     };
 }
-
-#[cfg(not(feature = "embedded-fips"))]
-macro_rules! current_fips_peer_statuses {
-    ($runtime:expr) => {
-        Vec::<MeshPeerStatus>::new()
-    };
-}
-
-#[cfg(feature = "embedded-fips")]
 macro_rules! current_fips_endpoint_peer_states {
     ($signature:expr) => {
         daemon_endpoint_peer_states_from_signature($signature)
-    };
-}
-
-#[cfg(not(feature = "embedded-fips"))]
-macro_rules! current_fips_endpoint_peer_states {
-    ($signature:expr) => {
-        Vec::<DaemonFipsEndpointPeerState>::new()
     };
 }
 

@@ -9,8 +9,7 @@ repository.workspace = true
 readme = "README.md"
 
 [features]
-default = ["embedded-fips"]
-embedded-fips = ["dep:fips-endpoint", "dep:fips-core"]
+default = []
 paid-exit = [
   "dep:cashu-service",
   "nostr-vpn-core/paid-exit",
@@ -22,8 +21,8 @@ arc-swap.workspace = true
 base64.workspace = true
 clap.workspace = true
 dirs.workspace = true
-fips-core = { workspace = true, optional = true }
-fips-endpoint = { workspace = true, optional = true }
+fips-core.workspace = true
+fips-endpoint.workspace = true
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true
