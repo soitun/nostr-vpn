@@ -932,6 +932,7 @@ fn linux_vnet_gso_split(
     }
     let src = &packet[src_addr_offset..src_addr_offset + addr_len];
     let dst = &packet[src_addr_offset + addr_len..src_addr_offset + addr_len * 2];
+    let pseudo_header_base_sum = linux_vnet_pseudo_header_base_sum(protocol, src, dst);
     let destination = if is_v6 {
         let mut octets = [0_u8; 16];
         octets.copy_from_slice(dst);
@@ -988,7 +989,7 @@ fn linux_vnet_gso_split(
         }
 
         let transport_len = total_len - csum_start;
-        let pseudo_sum = linux_vnet_pseudo_header_sum(protocol, src, dst, transport_len as u16);
+        let pseudo_sum = pseudo_header_base_sum + transport_len as u64;
         let transport_checksum = !linux_vnet_checksum(&out[csum_start..], pseudo_sum);
         let out_csum_at = csum_start + usize::from(hdr.csum_offset);
         out[out_csum_at..out_csum_at + 2].copy_from_slice(&transport_checksum.to_be_bytes());
@@ -1011,10 +1012,13 @@ fn linux_vnet_gso_split(
 }
 
 fn linux_vnet_pseudo_header_sum(protocol: u8, src: &[u8], dst: &[u8], total_len: u16) -> u64 {
+    linux_vnet_pseudo_header_base_sum(protocol, src, dst) + u64::from(total_len)
+}
+
+fn linux_vnet_pseudo_header_base_sum(protocol: u8, src: &[u8], dst: &[u8]) -> u64 {
     let mut sum = linux_vnet_add_words(0, src);
     sum = linux_vnet_add_words(sum, dst);
     sum += u64::from(protocol);
-    sum += u64::from(total_len);
     sum
 }
 
