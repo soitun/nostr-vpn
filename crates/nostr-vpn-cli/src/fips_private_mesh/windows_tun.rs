@@ -32,11 +32,12 @@ fn start_windows_fips_wintun(
 fn spawn_windows_fips_tun_read_thread(
     stop: Arc<AtomicBool>,
     session: Arc<Session>,
-    packet_tx: mpsc::Sender<Vec<Vec<u8>>>,
+    mesh: Arc<FipsPrivateMeshRuntime>,
 ) -> ThreadJoinHandle<()> {
     thread::spawn(move || {
         let pipeline_profile_enabled = crate::pipeline_profile::enabled();
         let packet_debug = windows_fips_packet_debug_enabled();
+        let mut send_runs = Vec::new();
         while !stop.load(Ordering::Relaxed) {
             let packet = match session.receive_blocking() {
                 Ok(packet) => packet,
@@ -95,8 +96,28 @@ fn spawn_windows_fips_tun_read_thread(
                     WINDOWS_FIPS_TUN_READ_BURST,
                 );
             }
-            if packet_tx.blocking_send(batch).is_err() {
-                break;
+            let packet_count = batch.len();
+            crate::pipeline_profile::record_mesh_send_bulk_turn(0, packet_count);
+            let send_result = {
+                let _t = crate::pipeline_profile::Timer::start(
+                    crate::pipeline_profile::Stage::MeshSend,
+                );
+                mesh.blocking_send_tunnel_packet_batch_owned_with_capacity(
+                    batch,
+                    WINDOWS_FIPS_TUN_READ_BURST,
+                    &mut send_runs,
+                )
+            };
+            match send_result {
+                Ok(sent) if sent == packet_count => {}
+                Ok(_sent) if packet_debug => {
+                    eprintln!("fips: Windows mesh route miss");
+                }
+                Ok(_sent) => {}
+                Err(error) => {
+                    eprintln!("fips: failed to send Windows tunnel packet: {error}");
+                    thread::sleep(Duration::from_millis(100));
+                }
             }
         }
     })

@@ -40,50 +40,12 @@ impl FipsPrivateTunnelRuntime {
             crate::windows_tunnel::apply_windows_routes(interface_index, &config.route_targets)?;
 
         let stop = Arc::new(AtomicBool::new(false));
-        let (packet_tx, mut packet_rx) = mpsc::channel::<Vec<Vec<u8>>>(1024);
         let (event_tx, event_rx) = mpsc::channel::<FipsPrivateMeshEvent>(1024);
-        let tun_read_thread =
-            spawn_windows_fips_tun_read_thread(stop.clone(), session.clone(), packet_tx);
-        let mesh_send_task = {
-            let mesh = Arc::clone(&mesh);
-            tokio::spawn(async move {
-                while let Some(packets) = packet_rx.recv().await {
-                    let debug = windows_fips_packet_debug_enabled();
-                    if debug {
-                        for packet in &packets {
-                            eprintln!(
-                                "fips: Windows Wintun -> mesh {} bytes {}",
-                                packet.len(),
-                                describe_ip_packet(packet)
-                            );
-                        }
-                    }
-
-                    let packet_count = packets.len();
-                    crate::pipeline_profile::record_mesh_send_bulk_turn(0, packet_count);
-                    let send_result = {
-                        let _t = crate::pipeline_profile::Timer::start(
-                            crate::pipeline_profile::Stage::MeshSend,
-                        );
-                        mesh.send_tunnel_packet_batch_owned_with_capacity(
-                            packets,
-                            WINDOWS_FIPS_TUN_READ_BURST,
-                        )
-                        .await
-                    };
-                    match send_result {
-                        Ok(sent) if sent == packet_count => {}
-                        Ok(_sent) if debug => {
-                            eprintln!("fips: Windows mesh route miss");
-                        }
-                        Ok(_sent) => {}
-                        Err(error) => {
-                            eprintln!("fips: failed to send Windows tunnel packet: {error}");
-                        }
-                    }
-                }
-            })
-        };
+        let tun_read_thread = spawn_windows_fips_tun_read_thread(
+            stop.clone(),
+            session.clone(),
+            Arc::clone(&mesh),
+        );
         let mesh_recv_task =
             spawn_windows_fips_mesh_recv_task(Arc::clone(&mesh), session.clone(), event_tx);
 
@@ -94,7 +56,6 @@ impl FipsPrivateTunnelRuntime {
             session,
             stop,
             tun_read_thread,
-            mesh_send_task,
             mesh_recv_task,
             event_rx,
             interface_index,
@@ -323,9 +284,7 @@ impl FipsPrivateTunnelRuntime {
             eprintln!("fips: failed to remove Windows FIPS routes: {error}");
         }
         let _ = runtime.tun_read_thread.join();
-        runtime.mesh_send_task.abort();
         runtime.mesh_recv_task.abort();
-        let _ = runtime.mesh_send_task.await;
         let _ = runtime.mesh_recv_task.await;
         if let Ok(mesh) = Arc::try_unwrap(runtime.mesh) {
             mesh.shutdown()

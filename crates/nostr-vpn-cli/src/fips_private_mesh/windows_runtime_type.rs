@@ -6,7 +6,6 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     session: Arc<Session>,
     stop: Arc<AtomicBool>,
     tun_read_thread: ThreadJoinHandle<()>,
-    mesh_send_task: JoinHandle<()>,
     mesh_recv_task: JoinHandle<()>,
     event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,
     interface_index: u32,
