@@ -1,7 +1,7 @@
 impl FipsPrivateMeshRuntime {
     pub(crate) async fn recv_mesh_event(&self) -> Result<Option<FipsPrivateMeshEvent>> {
         loop {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             {
                 self.drain_direct_endpoint_mesh_events(1).await?;
                 if let Some(event) = self.pop_direct_endpoint_mesh_event()? {
@@ -21,7 +21,7 @@ impl FipsPrivateMeshRuntime {
                 }
             }
 
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
             {
                 let Some(message) = self.endpoint.recv().await else {
                     return Ok(None);
@@ -62,7 +62,7 @@ impl FipsPrivateMeshRuntime {
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
         events.clear();
         loop {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             {
                 self.drain_direct_endpoint_mesh_events(limit).await?;
                 if self.pop_direct_endpoint_mesh_events_into(events, limit)? > 0 {
@@ -83,7 +83,7 @@ impl FipsPrivateMeshRuntime {
                     return Ok(None);
                 };
             }
-            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
             {
                 let Some(_) = self.endpoint.recv_batch_into(messages, limit).await else {
                     return Ok(None);
@@ -102,7 +102,7 @@ impl FipsPrivateMeshRuntime {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn recv_direct_endpoint_tun_batch_blocking(
         &self,
         limit: usize,
@@ -175,13 +175,13 @@ impl FipsPrivateMeshRuntime {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn wake_blocking_mesh_recv(&self) {
         let npub = self.endpoint.npub().to_string();
         let _ = self.endpoint.blocking_send(npub, Vec::new());
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn finalize_direct_endpoint_tun_batch_blocking(
         &self,
         packet_outputs: &mut DirectTunWriteBatch,
@@ -218,7 +218,7 @@ impl FipsPrivateMeshRuntime {
         now: Option<u64>,
     ) -> Result<Option<FipsPrivateMeshEvent>> {
         loop {
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             {
                 self.drain_direct_endpoint_mesh_events(1).await?;
                 if let Some(event) = self.pop_direct_endpoint_mesh_event()? {
@@ -368,7 +368,7 @@ impl FipsPrivateMeshRuntime {
         Ok(FipsEndpointMessageOutcome::none())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn note_data_rx_batch(
         &self,
         notes: &mut FipsDataRxBatchNotes,
@@ -453,7 +453,7 @@ impl FipsPrivateMeshRuntime {
         decode_fips_control_frame(&reassembled)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     async fn drain_direct_endpoint_mesh_events(&self, limit: usize) -> Result<usize> {
         let mut events = Vec::new();
         while events.len() < limit {
@@ -480,7 +480,7 @@ impl FipsPrivateMeshRuntime {
         Ok(drained)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     async fn direct_endpoint_packet_runs_to_mesh_events(
         &self,
         runs: Vec<FipsEndpointDirectPacketRun>,
@@ -504,7 +504,7 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn pop_direct_endpoint_mesh_event(&self) -> Result<Option<FipsPrivateMeshEvent>> {
         Ok(self
             .direct_endpoint_pending_events
@@ -513,7 +513,7 @@ impl FipsPrivateMeshRuntime {
             .pop_front())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn pop_direct_endpoint_mesh_events_into(
         &self,
         events: &mut Vec<FipsPrivateMeshEvent>,
@@ -532,7 +532,7 @@ impl FipsPrivateMeshRuntime {
         Ok(events.len())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn push_direct_endpoint_mesh_event(&self, event: FipsPrivateMeshEvent) -> Result<()> {
         self.direct_endpoint_pending_events
             .lock()
@@ -541,7 +541,7 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn forward_direct_endpoint_control_events_blocking(
         &self,
         runs: &[FipsEndpointDirectPacketRun],
@@ -593,14 +593,14 @@ impl FipsPrivateMeshRuntime {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct DirectEndpointPacketRunAdmission {
     received: usize,
     accepted: usize,
     data_rx_notes: FipsDataRxBatchNotes,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn admit_direct_endpoint_packet_runs_with_mesh(
     mesh: &FipsMeshRuntime,
     runs: Vec<FipsEndpointDirectPacketRun>,
@@ -647,7 +647,7 @@ fn admit_direct_endpoint_packet_runs_with_mesh(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn revalidate_direct_endpoint_tun_batch_with_mesh(
     mesh: &FipsMeshRuntime,
     mesh_generation: u64,
@@ -661,6 +661,16 @@ fn revalidate_direct_endpoint_tun_batch_with_mesh(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+fn fips_tun_packet_debug_enabled() -> bool {
+    fips_unix_packet_debug_enabled()
+}
+
+#[cfg(target_os = "windows")]
+fn fips_tun_packet_debug_enabled() -> bool {
+    windows_fips_packet_debug_enabled()
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn admit_direct_endpoint_packet_run_with_admitter(
     admitter: &FipsEndpointSourceAdmitter<'_>,
     mut run: FipsEndpointDirectPacketRun,
@@ -681,7 +691,7 @@ fn admit_direct_endpoint_packet_run_with_admitter(
         return (0, 0);
     }
 
-    if fips_unix_packet_debug_enabled() {
+    if fips_tun_packet_debug_enabled() {
         for packet in run.packet_slices() {
             eprintln!(
                 "fips: mesh -> TUN {} bytes {}",

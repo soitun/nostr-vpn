@@ -367,7 +367,7 @@ pub(crate) fn record_tun_write_would_block() {
     increment_counter_by(Counter::TunWriteWouldBlock, 1);
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn record_direct_endpoint_sink_batch(runs: usize, packets: usize, queue_depth: usize) {
     if packets == 0 || !enabled() {
         return;
@@ -378,7 +378,7 @@ pub(crate) fn record_direct_endpoint_sink_batch(runs: usize, packets: usize, que
     max_counter(Counter::DirectEndpointSinkMaxQueueDepth, queue_depth as u64);
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn record_direct_endpoint_rx_batch(
     runs: usize,
     packets: usize,

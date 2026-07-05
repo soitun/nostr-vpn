@@ -54,7 +54,7 @@ impl FipsPrivateMeshRuntime {
         local_tunnel_ips: Vec<IpAddr>,
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) -> Result<Self> {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         let (direct_endpoint_sink, direct_endpoint_rx) = fips_direct_endpoint_queue_pair();
 
         let mut endpoint_builder = FipsEndpoint::builder()
@@ -65,12 +65,12 @@ impl FipsPrivateMeshRuntime {
         {
             endpoint_builder = endpoint_builder.discovery_scope(scope);
         }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         let endpoint = endpoint_builder
             .bind_with_direct_sink(direct_endpoint_sink)
             .await
             .context("failed to bind embedded FIPS endpoint")?;
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         let endpoint = endpoint_builder
             .bind()
             .await
@@ -86,9 +86,9 @@ impl FipsPrivateMeshRuntime {
 
         Ok(Self {
             endpoint,
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             direct_endpoint_rx,
-            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             direct_endpoint_pending_events: Mutex::new(VecDeque::new()),
             local_tunnel_ips,
             mesh: ArcSwap::from_pointee(mesh),

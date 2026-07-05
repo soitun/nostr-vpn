@@ -324,7 +324,10 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
-    #[cfg(all(feature = "paid-exit", any(target_os = "linux", target_os = "macos")))]
+    #[cfg(all(
+        feature = "paid-exit",
+        any(target_os = "linux", target_os = "macos", target_os = "windows")
+    ))]
     fn note_paid_route_inbound_batch(&self, packets: &DirectTunWriteBatch) -> Result<()> {
         if packets.is_empty() {
             return Ok(());

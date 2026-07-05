@@ -46,8 +46,12 @@ impl FipsPrivateTunnelRuntime {
             session.clone(),
             Arc::clone(&mesh),
         );
-        let mesh_recv_task =
-            spawn_windows_fips_mesh_recv_task(Arc::clone(&mesh), session.clone(), event_tx);
+        let mesh_recv_task = spawn_windows_fips_mesh_recv_task(
+            stop.clone(),
+            Arc::clone(&mesh),
+            session.clone(),
+            event_tx,
+        );
 
         let mut runtime = Self {
             iface,

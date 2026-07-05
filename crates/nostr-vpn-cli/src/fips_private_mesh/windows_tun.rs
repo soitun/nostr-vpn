@@ -125,61 +125,61 @@ fn spawn_windows_fips_tun_read_thread(
 
 #[cfg(target_os = "windows")]
 fn spawn_windows_fips_mesh_recv_task(
+    stop: Arc<AtomicBool>,
     mesh: Arc<FipsPrivateMeshRuntime>,
     session: Arc<Session>,
     event_tx: mpsc::Sender<FipsPrivateMeshEvent>,
 ) -> JoinHandle<()> {
-    tokio::spawn(async move {
-        let mut messages = Vec::with_capacity(WINDOWS_FIPS_TUN_WRITE_BURST);
-        let mut events = Vec::with_capacity(WINDOWS_FIPS_TUN_WRITE_BURST);
-        let mut packets: Vec<FipsEndpointData> =
-            Vec::with_capacity(WINDOWS_FIPS_TUN_WRITE_BURST);
+    tokio::task::spawn_blocking(move || {
+        let recv_burst = WINDOWS_FIPS_TUN_WRITE_BURST;
+        let mut packet_batch = DirectTunWriteBatch::with_capacity(recv_burst);
         let pipeline_profile_enabled = crate::pipeline_profile::enabled();
-        loop {
-            let recv_result = {
-                let _t =
-                    crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRecv);
-                mesh.recv_mesh_event_batch_into(
-                    &mut messages,
-                    &mut events,
-                    WINDOWS_FIPS_TUN_WRITE_BURST,
-                )
-                .await
-            };
-            match recv_result {
-                Ok(Some(_)) => {
-                    let event_count = events.len();
-                    let mut packet_count = 0usize;
-                    let mut packet_bytes = 0usize;
-                    for event in events.drain(..) {
-                        match event {
-                            FipsPrivateMeshEvent::Packet(packet) => {
-                                packet_count = packet_count.saturating_add(1);
-                                packet_bytes = packet_bytes.saturating_add(packet.len());
-                                packets.push(packet);
-                            }
-                            event => {
-                                write_windows_fips_packet_batch(&session, &mut packets);
-                                if event_tx.send(event).await.is_err() {
-                                    return;
-                                }
-                            }
-                        }
+        while !stop.load(Ordering::Acquire) {
+            packet_batch.clear();
+            let received = mesh.recv_direct_endpoint_tun_batch_blocking(
+                recv_burst,
+                &stop,
+                &mut packet_batch,
+                Some(&event_tx),
+            );
+            match received {
+                Ok(Some(drained)) => {
+                    if let Err(error) =
+                        mesh.finalize_direct_endpoint_tun_batch_blocking(&mut packet_batch)
+                    {
+                        packet_batch.clear();
+                        eprintln!("fips: failed to finalize Windows tunnel packet batch: {error}");
+                        std::thread::sleep(Duration::from_millis(100));
+                        continue;
                     }
                     if pipeline_profile_enabled {
+                        let packet_count = packet_batch.len();
+                        let packet_bytes = packet_batch.bytes();
                         crate::pipeline_profile::record_mesh_recv_batch(
-                            event_count,
+                            drained,
                             packet_count,
                             packet_bytes,
-                            WINDOWS_FIPS_TUN_WRITE_BURST,
+                            recv_burst,
                         );
                     }
-                    write_windows_fips_packet_batch(&session, &mut packets);
+                    write_windows_direct_endpoint_packet_batch(&session, &mut packet_batch);
+                    if drained >= recv_burst {
+                        std::thread::yield_now();
+                    }
                 }
-                Ok(None) => break,
+                Ok(None) => {
+                    if let Err(error) =
+                        mesh.finalize_direct_endpoint_tun_batch_blocking(&mut packet_batch)
+                    {
+                        packet_batch.clear();
+                        eprintln!("fips: failed to finalize Windows tunnel packet batch: {error}");
+                    }
+                    write_windows_direct_endpoint_packet_batch(&session, &mut packet_batch);
+                    break;
+                }
                 Err(error) => {
-                    eprintln!("fips: failed to receive tunnel packet: {error}");
-                    sleep(Duration::from_millis(100)).await;
+                    eprintln!("fips: failed to receive Windows tunnel packet: {error}");
+                    std::thread::sleep(Duration::from_millis(100));
                 }
             }
         }
@@ -187,13 +187,18 @@ fn spawn_windows_fips_mesh_recv_task(
 }
 
 #[cfg(target_os = "windows")]
-fn write_windows_fips_packet_batch(session: &Arc<Session>, packets: &mut Vec<FipsEndpointData>) {
-    if packets.is_empty() {
+fn write_windows_direct_endpoint_packet_batch(
+    session: &Arc<Session>,
+    packet_batch: &mut DirectTunWriteBatch,
+) {
+    if packet_batch.is_empty() {
         return;
     }
+    let _batch_timer =
+        crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWriteBatch);
     let packet_debug = windows_fips_packet_debug_enabled();
     if packet_debug {
-        for packet in packets.iter() {
+        for packet in packet_batch.run_slices() {
             eprintln!(
                 "fips: Windows mesh -> Wintun {} bytes {}",
                 packet.len(),
@@ -202,23 +207,22 @@ fn write_windows_fips_packet_batch(session: &Arc<Session>, packets: &mut Vec<Fip
         }
     }
     if crate::pipeline_profile::enabled() {
-        let packet_bytes = packets.iter().map(FipsEndpointData::len).sum();
-        crate::pipeline_profile::record_tun_write_packets(packets.len(), packet_bytes);
-        for packet in packets.iter() {
+        crate::pipeline_profile::record_tun_write_packets(
+            packet_batch.len(),
+            packet_batch.bytes(),
+        );
+        for packet in packet_batch.run_slices() {
             crate::pipeline_profile::record_tun_write_frame(packet.len());
         }
     }
     let write_result = {
         let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWrite);
-        crate::windows_tunnel::write_tunnel_packet_slices(
-            session,
-            packets.iter().map(FipsEndpointData::as_slice),
-        )
+        crate::windows_tunnel::write_tunnel_packet_slices(session, packet_batch.run_slices())
     };
     if let Err(error) = write_result {
         eprintln!("fips: failed to write Windows tunnel packet: {error}");
     }
-    packets.clear();
+    packet_batch.clear();
 }
 
 #[cfg(target_os = "windows")]

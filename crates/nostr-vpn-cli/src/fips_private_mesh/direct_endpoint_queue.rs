@@ -1,27 +1,27 @@
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct FipsDirectEndpointDataSink {
     queue: Arc<FipsDirectEndpointQueue>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct FipsDirectEndpointDataRx {
     queue: Arc<FipsDirectEndpointQueue>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct FipsDirectEndpointQueue {
     state: Mutex<FipsDirectEndpointQueueState>,
     ready: Condvar,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Default)]
 struct FipsDirectEndpointQueueState {
     batches: VecDeque<FipsDirectEndpointQueuedRuns>,
     waiting_consumer: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct FipsDirectEndpointQueuedRuns {
     runs: Vec<FipsEndpointDirectPacketRun>,
     packets: usize,
@@ -30,7 +30,7 @@ struct FipsDirectEndpointQueuedRuns {
     enqueued_while_waiting: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn fips_direct_endpoint_queue_pair() -> (FipsDirectEndpointDataSink, FipsDirectEndpointDataRx) {
     let queue = Arc::new(FipsDirectEndpointQueue::new());
     (
@@ -41,7 +41,7 @@ fn fips_direct_endpoint_queue_pair() -> (FipsDirectEndpointDataSink, FipsDirectE
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl FipsDirectEndpointQueuedRuns {
     fn new(runs: Vec<FipsEndpointDirectPacketRun>) -> Self {
         Self::with_enqueued_at(runs, crate::pipeline_profile::stamp())
@@ -63,7 +63,7 @@ impl FipsDirectEndpointQueuedRuns {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl FipsEndpointDirectSink for FipsDirectEndpointDataSink {
     fn deliver_endpoint_packet_batch(
         &self,
@@ -73,7 +73,7 @@ impl FipsEndpointDirectSink for FipsDirectEndpointDataSink {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl FipsDirectEndpointDataSink {
     fn deliver_batch(
         &self,
@@ -83,7 +83,7 @@ impl FipsDirectEndpointDataSink {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl FipsDirectEndpointDataRx {
     fn recv_source_batch_timeout(
         &self,
@@ -105,7 +105,7 @@ impl FipsDirectEndpointDataRx {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl FipsDirectEndpointQueue {
     fn new() -> Self {
         Self {
@@ -243,12 +243,12 @@ impl FipsDirectEndpointQueue {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn direct_packet_runs_len(runs: &[FipsEndpointDirectPacketRun]) -> usize {
     runs.iter().map(FipsEndpointDirectPacketRun::len).sum()
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn limit_queued_direct_endpoint_runs_to_remaining(
     queued: &mut FipsDirectEndpointQueuedRuns,
     remaining: usize,
@@ -272,7 +272,7 @@ fn limit_queued_direct_endpoint_runs_to_remaining(
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn record_direct_endpoint_queue_residence(queued: &FipsDirectEndpointQueuedRuns) {
     crate::pipeline_profile::record_since(
         crate::pipeline_profile::Stage::DirectEndpointQueue,
@@ -286,7 +286,7 @@ fn record_direct_endpoint_queue_residence(queued: &FipsDirectEndpointQueuedRuns)
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn split_direct_packet_runs_at_packet_limit(
     runs: Vec<FipsEndpointDirectPacketRun>,
     limit: usize,
@@ -328,7 +328,7 @@ fn split_direct_packet_runs_at_packet_limit(
     (head, tail)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn direct_packet_runs_single_source_node_addr(
     runs: &[FipsEndpointDirectPacketRun],
 ) -> Option<[u8; 16]> {

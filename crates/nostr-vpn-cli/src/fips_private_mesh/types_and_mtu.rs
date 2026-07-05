@@ -38,7 +38,7 @@ const FIPS_ENDPOINT_PACKET_HEADROOM: usize = 128;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 type TunPipelineBatch = Vec<TunPipelinePacket>;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct DirectTunWriteBatch {
     runs: Vec<FipsEndpointDirectPacketRun>,
     packet_ends: Vec<usize>,
@@ -48,7 +48,7 @@ struct DirectTunWriteBatch {
     data_rx_notes: FipsDataRxBatchNotes,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl DirectTunWriteBatch {
     fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -149,13 +149,13 @@ impl DirectTunWriteBatch {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Copy, Debug)]
 struct FipsPacketSource {
     participant_key: Option<ParticipantPubkeyBytes>,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl FipsPacketSource {
     fn new(participant_key: Option<&ParticipantPubkeyBytes>) -> Self {
         Self {

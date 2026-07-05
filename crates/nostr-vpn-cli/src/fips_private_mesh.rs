@@ -8,7 +8,7 @@ use fips_endpoint::{
     FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
     PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
 };
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use fips_endpoint::{
     FipsEndpointDirectDeliveryError, FipsEndpointDirectPacketBatch, FipsEndpointDirectPacketRun,
     FipsEndpointDirectSink,
@@ -25,9 +25,9 @@ use nostr_vpn_core::fips_control::{
     encode_fips_control_messages,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use nostr_vpn_core::fips_mesh::{
-    FipsEndpointAdmissionCache, FipsEndpointSourceAdmitter, packet_destination,
-};
+use nostr_vpn_core::fips_mesh::packet_destination;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+use nostr_vpn_core::fips_mesh::{FipsEndpointAdmissionCache, FipsEndpointSourceAdmitter};
 use nostr_vpn_core::fips_mesh::{
     FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission, RoutedFipsPeer,
 };
@@ -40,7 +40,7 @@ use nostr_vpn_core::paid_routes::PaidExitConfig;
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_routes::PaidRouteUsage;
 use sha2::{Digest, Sha256};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -51,7 +51,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use std::sync::Condvar;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -200,8 +200,6 @@ use nostr_vpn_wintun::load_wintun;
 #[cfg(target_os = "windows")]
 use tokio::task::JoinHandle;
 #[cfg(target_os = "windows")]
-use tokio::time::sleep;
-#[cfg(target_os = "windows")]
 use wintun::{Adapter, MAX_RING_CAPACITY, Session};
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -209,9 +207,9 @@ use crate::fips_host_tunnel::FipsHostTunnelConfig;
 
 pub(crate) struct FipsPrivateMeshRuntime {
     endpoint: FipsEndpoint,
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     direct_endpoint_rx: FipsDirectEndpointDataRx,
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     direct_endpoint_pending_events: Mutex<VecDeque<FipsPrivateMeshEvent>>,
     local_tunnel_ips: HashSet<IpAddr>,
     mesh: ArcSwap<FipsMeshRuntime>,
