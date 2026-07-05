@@ -460,7 +460,8 @@ impl FipsPrivateMeshRuntime {
     async fn drain_direct_endpoint_mesh_events(&self, limit: usize) -> Result<usize> {
         let mut events = Vec::new();
         while events.len() < limit {
-            let runs = match self.direct_endpoint_rx.try_recv() {
+            let remaining = limit - events.len();
+            let runs = match self.direct_endpoint_rx.try_recv_limited(remaining) {
                 Ok(runs) => runs,
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(0),

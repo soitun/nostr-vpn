@@ -93,10 +93,6 @@ impl FipsDirectEndpointDataRx {
         self.queue.recv_source_batch_timeout(timeout, limit)
     }
 
-    fn try_recv(&self) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
-        self.queue.try_recv()
-    }
-
     fn try_recv_limited(
         &self,
         limit: usize,
@@ -224,23 +220,6 @@ impl FipsDirectEndpointQueue {
         Ok(queued.runs)
     }
 
-    fn try_recv(&self) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| std::sync::mpsc::TryRecvError::Disconnected)?;
-        let queued = state
-            .batches
-            .pop_front()
-            .ok_or(std::sync::mpsc::TryRecvError::Empty)?;
-        record_direct_endpoint_queue_residence(&queued);
-        crate::pipeline_profile::record_direct_endpoint_rx_batch(
-            queued.runs.len(),
-            queued.packets,
-            1,
-        );
-        Ok(queued.runs)
-    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
