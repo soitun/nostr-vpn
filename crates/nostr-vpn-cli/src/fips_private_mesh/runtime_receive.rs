@@ -160,6 +160,9 @@ impl FipsPrivateMeshRuntime {
                 if admitted.accepted > 0 {
                     emitted = emitted.saturating_add(admitted.accepted);
                 }
+                if should_flush_direct_endpoint_tun_batch_early(packet_outputs) {
+                    break;
+                }
             }
 
             if stop.load(Ordering::Acquire) {
@@ -591,6 +594,20 @@ impl FipsPrivateMeshRuntime {
             }
         }
     }
+}
+
+#[cfg(target_os = "windows")]
+fn should_flush_direct_endpoint_tun_batch_early(packet_outputs: &DirectTunWriteBatch) -> bool {
+    const LATENCY_BATCH_PACKETS: usize = 16;
+    const LATENCY_PACKET_BYTES: usize = 256;
+
+    packet_outputs.len() >= LATENCY_BATCH_PACKETS
+        && packet_outputs.bytes() <= packet_outputs.len().saturating_mul(LATENCY_PACKET_BYTES)
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn should_flush_direct_endpoint_tun_batch_early(_packet_outputs: &DirectTunWriteBatch) -> bool {
+    false
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
