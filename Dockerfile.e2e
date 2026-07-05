@@ -16,6 +16,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY --from=cashu-service . /app/cashu-service
 COPY --from=cashu-spilman-channels . /app/cashu_spilman_channels
+COPY --from=nostr-pubsub . /app/nostr-pubsub
 COPY --from=fips . /app/fips
 
 ARG NVPN_PATCH_LOCAL_FIPS=0
