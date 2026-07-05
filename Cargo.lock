@@ -1686,6 +1686,7 @@ dependencies = [
  "libc",
  "mdns-sd",
  "nostr",
+ "nostr-pubsub",
  "nostr-sdk",
  "portable-atomic",
  "procfs",
@@ -3223,6 +3224,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nostr-pubsub"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nostr",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nostr-relay-pool"
 version = "0.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3458,6 +3468,7 @@ dependencies = [
  "igd-next",
  "libc",
  "netdev",
+ "nostr-pubsub",
  "nostr-sdk",
  "nostr-vpn-core",
  "nostr-vpn-wintun",

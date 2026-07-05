@@ -9,6 +9,8 @@ const RATING_FACT_KIND: u64 = 7368;
 const RATING_FACT_TYPE: &str = "rating";
 const RATING_FACT_SCHEMA: &str = "1";
 const PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT: usize = 500;
+const PAID_EXIT_OFFER_EVENT_CACHE_LIMIT: usize = 512;
+const PAID_EXIT_PAYMENT_EVENT_CACHE_LIMIT: usize = 512;
 
 #[derive(Debug, Subcommand)]
 enum PaidExitCommand {
@@ -4428,6 +4430,11 @@ async fn paid_exit_receive_payments(
         ));
     }
 
+    let pubsub_sources = paid_exit_pubsub_relay_sources(&relays);
+    let relays = paid_exit_pubsub_relay_urls(&pubsub_sources);
+    let retention_policy = paid_exit_payment_retention_policy(keys.public_key(), limit, since_unix);
+    let retention_filter = paid_exit_retention_filter(&retention_policy, "payment")?;
+    let effective_limit = retention_policy.max_events;
     let client = Client::new(keys.clone());
     for relay in &relays {
         client
@@ -4438,11 +4445,7 @@ async fn paid_exit_receive_payments(
     client.connect().await;
     let mut notifications = client.notifications();
     client
-        .subscribe_to(
-            relays.clone(),
-            paid_route_payment_filter(keys.public_key(), limit, since_unix),
-            None,
-        )
+        .subscribe_to(relays.clone(), retention_filter, None)
         .await
         .map_err(|error| anyhow!("failed to subscribe paid exit payments: {error}"))?;
 
@@ -4457,6 +4460,12 @@ async fn paid_exit_receive_payments(
                         let event = (*event).clone();
                         let event_id = event.id.to_string();
                         if !seen_events.insert(event_id.clone()) {
+                            continue;
+                        }
+                        let Ok(verified_event) = nostr_pubsub::VerifiedEvent::try_from(event.clone()) else {
+                            continue;
+                        };
+                        if !retention_policy.accepts(&verified_event) {
                             continue;
                         }
                         match unwrap_paid_route_payment(&event, &keys).await {
@@ -4487,7 +4496,7 @@ async fn paid_exit_receive_payments(
                                 "error": error.to_string(),
                             })),
                         }
-                        if limit > 0 && seen_events.len() >= limit {
+                        if seen_events.len() >= effective_limit {
                             break;
                         }
                     }
@@ -5476,6 +5485,75 @@ fn paid_exit_relay_urls(app: &AppConfig, overrides: &[String]) -> Vec<String> {
         .collect()
 }
 
+fn paid_exit_pubsub_relay_sources(relays: &[String]) -> Vec<nostr_pubsub::SourceRoute> {
+    relays
+        .iter()
+        .map(|relay| {
+            nostr_pubsub::SourceRoute::relay(relay.clone())
+                .with_reason("nostr-vpn app relay config")
+        })
+        .collect()
+}
+
+fn paid_exit_pubsub_relay_urls(routes: &[nostr_pubsub::SourceRoute]) -> Vec<String> {
+    routes
+        .iter()
+        .filter(|route| route.source.kind == nostr_pubsub::EventSourceKind::Relay)
+        .filter_map(|route| route.source.url.clone())
+        .collect()
+}
+
+fn paid_exit_retention_event_limit(requested_limit: usize, fallback_limit: usize) -> usize {
+    if requested_limit == 0 {
+        fallback_limit
+    } else {
+        requested_limit
+    }
+}
+
+fn paid_exit_offer_retention_policy(
+    limit: usize,
+    since_unix: Option<u64>,
+) -> nostr_pubsub::EventRetentionPolicy {
+    nostr_pubsub::EventRetentionPolicy::new(
+        paid_exit_retention_event_limit(limit, PAID_EXIT_OFFER_EVENT_CACHE_LIMIT),
+        vec![paid_route_offer_filter(limit, since_unix)],
+    )
+}
+
+fn paid_exit_payment_retention_policy(
+    recipient: PublicKey,
+    limit: usize,
+    since_unix: Option<u64>,
+) -> nostr_pubsub::EventRetentionPolicy {
+    nostr_pubsub::EventRetentionPolicy::new(
+        paid_exit_retention_event_limit(limit, PAID_EXIT_PAYMENT_EVENT_CACHE_LIMIT),
+        vec![paid_route_payment_filter(recipient, limit, since_unix)],
+    )
+}
+
+fn paid_exit_rating_retention_policy(
+    limit: usize,
+    since_unix: Option<u64>,
+    scope: &str,
+) -> nostr_pubsub::EventRetentionPolicy {
+    nostr_pubsub::EventRetentionPolicy::new(
+        paid_exit_retention_event_limit(limit, PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT),
+        vec![paid_exit_rating_fact_filter(limit, since_unix, scope)],
+    )
+}
+
+fn paid_exit_retention_filter(
+    policy: &nostr_pubsub::EventRetentionPolicy,
+    label: &str,
+) -> Result<Filter> {
+    policy
+        .filters
+        .first()
+        .cloned()
+        .ok_or_else(|| anyhow!("paid exit {label} pubsub retention policy has no filters"))
+}
+
 fn persist_paid_exit_offer_snapshot(
     store_path: &Path,
     signed: &SignedPaidRouteOffer,
@@ -5528,6 +5606,8 @@ async fn publish_paid_exit_offer_to_relays(
     signed: &SignedPaidRouteOffer,
     relays: &[String],
 ) -> Result<serde_json::Value> {
+    let pubsub_sources = paid_exit_pubsub_relay_sources(relays);
+    let relays = paid_exit_pubsub_relay_urls(&pubsub_sources);
     if relays.is_empty() {
         return Err(anyhow!(
             "no Nostr relays configured for paid exit publishing"
@@ -5535,7 +5615,7 @@ async fn publish_paid_exit_offer_to_relays(
     }
 
     let client = Client::new(app.nostr_keys()?);
-    for relay in relays {
+    for relay in &relays {
         client
             .add_relay(relay)
             .await
@@ -5543,7 +5623,7 @@ async fn publish_paid_exit_offer_to_relays(
     }
     client.connect().await;
     let output = client
-        .send_event_to(relays.to_vec(), &signed.event)
+        .send_event_to(relays.clone(), &signed.event)
         .await
         .map_err(|error| anyhow!("failed to publish paid exit offer: {error}"))?;
     client.disconnect().await;
@@ -5580,6 +5660,8 @@ pub(crate) async fn publish_paid_exit_payment_event_to_relays(
     event: &Event,
     relays: &[String],
 ) -> Result<serde_json::Value> {
+    let pubsub_sources = paid_exit_pubsub_relay_sources(relays);
+    let relays = paid_exit_pubsub_relay_urls(&pubsub_sources);
     if relays.is_empty() {
         return Err(anyhow!(
             "no Nostr relays configured for paid exit payment publishing"
@@ -5587,7 +5669,7 @@ pub(crate) async fn publish_paid_exit_payment_event_to_relays(
     }
 
     let client = Client::new(keys.clone());
-    for relay in relays {
+    for relay in &relays {
         client
             .add_relay(relay)
             .await
@@ -5595,7 +5677,7 @@ pub(crate) async fn publish_paid_exit_payment_event_to_relays(
     }
     client.connect().await;
     let output = client
-        .send_event_to(relays.to_vec(), event)
+        .send_event_to(relays.clone(), event)
         .await
         .map_err(|error| anyhow!("failed to publish paid exit payment: {error}"))?;
     client.disconnect().await;
@@ -5624,6 +5706,8 @@ async fn publish_paid_exit_rating_event_to_relays(
     event: &Event,
     relays: &[String],
 ) -> Result<serde_json::Value> {
+    let pubsub_sources = paid_exit_pubsub_relay_sources(relays);
+    let relays = paid_exit_pubsub_relay_urls(&pubsub_sources);
     if relays.is_empty() {
         return Err(anyhow!(
             "no Nostr relays configured for paid exit rating publishing"
@@ -5631,7 +5715,7 @@ async fn publish_paid_exit_rating_event_to_relays(
     }
 
     let client = Client::new(keys.clone());
-    for relay in relays {
+    for relay in &relays {
         client
             .add_relay(relay)
             .await
@@ -5639,7 +5723,7 @@ async fn publish_paid_exit_rating_event_to_relays(
     }
     client.connect().await;
     let output = client
-        .send_event_to(relays.to_vec(), event)
+        .send_event_to(relays.clone(), event)
         .await
         .map_err(|error| anyhow!("failed to publish paid exit rating: {error}"))?;
     client.disconnect().await;
@@ -6068,8 +6152,13 @@ async fn discover_paid_exit_rating_events_from_relays(
         ));
     }
 
+    let pubsub_sources = paid_exit_pubsub_relay_sources(relays);
+    let relays = paid_exit_pubsub_relay_urls(&pubsub_sources);
+    let retention_policy = paid_exit_rating_retention_policy(limit, since_unix, scope);
+    let retention_filter = paid_exit_retention_filter(&retention_policy, "rating")?;
+    let effective_limit = retention_policy.max_events;
     let client = Client::new(app.nostr_keys()?);
-    for relay in relays {
+    for relay in &relays {
         client
             .add_relay(relay)
             .await
@@ -6078,11 +6167,7 @@ async fn discover_paid_exit_rating_events_from_relays(
     client.connect().await;
     let mut notifications = client.notifications();
     client
-        .subscribe_to(
-            relays.to_vec(),
-            paid_exit_rating_fact_filter(limit, since_unix, scope),
-            None,
-        )
+        .subscribe_to(relays.clone(), retention_filter, None)
         .await
         .map_err(|error| anyhow!("failed to subscribe paid exit rating facts: {error}"))?;
 
@@ -6103,6 +6188,12 @@ async fn discover_paid_exit_rating_events_from_relays(
                         if event.verify().is_err() {
                             continue;
                         }
+                        let Ok(verified_event) = nostr_pubsub::VerifiedEvent::try_from(event.clone()) else {
+                            continue;
+                        };
+                        if !retention_policy.accepts(&verified_event) {
+                            continue;
+                        }
                         if !trusted_authors.is_empty()
                             && !trusted_authors.contains(&event.pubkey.to_hex())
                         {
@@ -6119,7 +6210,7 @@ async fn discover_paid_exit_rating_events_from_relays(
                             continue;
                         }
                         events.push(value);
-                        if limit > 0 && events.len() >= limit {
+                        if events.len() >= effective_limit {
                             break;
                         }
                     }
@@ -6147,8 +6238,13 @@ async fn discover_paid_exit_offers_from_relays(
         ));
     }
 
+    let pubsub_sources = paid_exit_pubsub_relay_sources(relays);
+    let relays = paid_exit_pubsub_relay_urls(&pubsub_sources);
+    let retention_policy = paid_exit_offer_retention_policy(limit, since_unix);
+    let retention_filter = paid_exit_retention_filter(&retention_policy, "offer")?;
+    let effective_limit = retention_policy.max_events;
     let client = Client::new(app.nostr_keys()?);
-    for relay in relays {
+    for relay in &relays {
         client
             .add_relay(relay)
             .await
@@ -6157,11 +6253,7 @@ async fn discover_paid_exit_offers_from_relays(
     client.connect().await;
     let mut notifications = client.notifications();
     client
-        .subscribe_to(
-            relays.to_vec(),
-            paid_route_offer_filter(limit, since_unix),
-            None,
-        )
+        .subscribe_to(relays.clone(), retention_filter, None)
         .await
         .map_err(|error| anyhow!("failed to subscribe paid exit offers: {error}"))?;
 
@@ -6179,9 +6271,15 @@ async fn discover_paid_exit_offers_from_relays(
                         if !seen_events.insert(event.id.to_string()) {
                             continue;
                         }
+                        let Ok(verified_event) = nostr_pubsub::VerifiedEvent::try_from(event.clone()) else {
+                            continue;
+                        };
+                        if !retention_policy.accepts(&verified_event) {
+                            continue;
+                        }
                         if let Ok(signed) = SignedPaidRouteOffer::from_event(event) {
                             offers.push(signed);
-                            if limit > 0 && offers.len() >= limit {
+                            if offers.len() >= effective_limit {
                                 break;
                             }
                         }
@@ -6714,6 +6812,81 @@ mod paid_exit_rating_tests {
         assert_eq!(value["limit"], 25);
         assert_eq!(value["since"], 100);
         assert_eq!(value["#i"], json!(["fips.peer"]));
+    }
+
+    #[test]
+    fn app_relay_config_feeds_pubsub_relay_sources() {
+        let mut app = AppConfig::generated();
+        app.nostr.relays = vec![
+            "wss://relay-a.example".to_string(),
+            "wss://relay-disabled.example".to_string(),
+        ];
+        app.nostr.disabled_relays = vec!["wss://relay-disabled.example".to_string()];
+        let relays = paid_exit_relay_urls(&app, &[]);
+
+        let routes = paid_exit_pubsub_relay_sources(&relays);
+        let route_urls = paid_exit_pubsub_relay_urls(&routes);
+
+        assert_eq!(relays, vec!["wss://relay-a.example".to_string()]);
+        assert_eq!(route_urls, relays);
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].source.kind, nostr_pubsub::EventSourceKind::Relay);
+        assert_eq!(routes[0].priority, nostr_pubsub::SOURCE_PRIORITY_RELAY);
+        assert_eq!(routes[0].source.url.as_deref(), Some("wss://relay-a.example"));
+    }
+
+    #[test]
+    fn offer_retention_policy_accepts_paid_exit_offer_events() {
+        let signed = sample_signed_offer("retained", 100);
+        let verified = nostr_pubsub::VerifiedEvent::try_from(signed.event.clone()).unwrap();
+
+        let accepted = paid_exit_offer_retention_policy(25, Some(90));
+        let rejected = paid_exit_offer_retention_policy(25, Some(110));
+
+        assert_eq!(accepted.max_events, 25);
+        assert!(accepted.accepts(&verified));
+        assert!(!rejected.accepts(&verified));
+    }
+
+    #[test]
+    fn unbounded_offer_requests_still_get_bounded_pubsub_retention() {
+        let policy = paid_exit_offer_retention_policy(0, None);
+
+        assert_eq!(policy.max_events, PAID_EXIT_OFFER_EVENT_CACHE_LIMIT);
+    }
+
+    #[test]
+    fn rating_retention_policy_matches_scope_and_uses_lookup_cap() {
+        let event_value = sample_rating_fact_event("npub1crawler", "npub1peer", "fips.peer", 85, 20);
+        let event: Event = serde_json::from_value(event_value).unwrap();
+        let verified = nostr_pubsub::VerifiedEvent::try_from(event).unwrap();
+
+        let accepted = paid_exit_rating_retention_policy(0, None, "fips.peer");
+        let rejected = paid_exit_rating_retention_policy(0, None, "other.scope");
+
+        assert_eq!(accepted.max_events, PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT);
+        assert!(accepted.accepts(&verified));
+        assert!(!rejected.accepts(&verified));
+    }
+
+    #[test]
+    fn payment_retention_policy_targets_gift_wrap_recipient() {
+        let seller = Keys::generate();
+        let sender = Keys::generate();
+        let seller_hex = seller.public_key().to_hex();
+        let event = EventBuilder::new(Kind::GiftWrap, "")
+            .tags([sample_rating_fact_tag(["p", seller_hex.as_str()])])
+            .custom_created_at(Timestamp::from(200))
+            .sign_with_keys(&sender)
+            .unwrap();
+        let verified = nostr_pubsub::VerifiedEvent::try_from(event).unwrap();
+
+        let accepted = paid_exit_payment_retention_policy(seller.public_key(), 0, Some(100));
+        let rejected = paid_exit_payment_retention_policy(Keys::generate().public_key(), 0, Some(100));
+
+        assert_eq!(accepted.max_events, PAID_EXIT_PAYMENT_EVENT_CACHE_LIMIT);
+        assert!(accepted.accepts(&verified));
+        assert!(!rejected.accepts(&verified));
     }
 
     #[test]
