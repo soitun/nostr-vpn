@@ -99,7 +99,7 @@ if [[ -n "$CASHU_SERVICE_REPO_PATH" ]]; then
   fi
   NVPN_LOCAL_CASHU_SERVICE_PATH=".cashu-service-patch/crates/cashu-service" \
     perl -0pi -e '
-      s#cashu-service = \{ version = "([^"]+)", path = "[^"]*"(, [^}]*)? \}#cashu-service = { version = "$1", path = "$ENV{NVPN_LOCAL_CASHU_SERVICE_PATH}"$2 }#;
+      s#cashu-service = \{ version = "([^"]+)"(?:, path = "[^"]*")?([^}]*) \}#cashu-service = { version = "$1", path = "$ENV{NVPN_LOCAL_CASHU_SERVICE_PATH}"$2 }#;
     ' "$WORK_DIR/Cargo.toml"
 fi
 
