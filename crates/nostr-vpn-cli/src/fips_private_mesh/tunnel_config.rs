@@ -198,8 +198,13 @@ impl FipsPrivateTunnelConfig {
                 }),
             );
         }
-        let endpoint_peers =
+        let mut endpoint_peers =
             fips_endpoint_peers_from_mesh(&peers, operator_static, recent_peer_endpoints);
+        if !stamped_endpoint_hints_enabled {
+            for peer in &mut endpoint_peers {
+                peer.discovery_fallback_transit = false;
+            }
+        }
         route_targets.sort();
         route_targets.dedup();
         #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -3,9 +3,9 @@ struct FipsEndpointTransportConfig {
     listen_port: u16,
     advertised_endpoint: String,
     advertise_public_endpoint: bool,
-    /// Find/advertise peers over Nostr relays. When false, the endpoint still
-    /// dials static/bootstrap peers and does LAN discovery, but does not use
-    /// relays for endpoint discovery or advertising.
+    /// Find/advertise peers over Nostr relays. When false, the endpoint dials
+    /// only configured static/bootstrap peers and does not enable ambient
+    /// relay, LAN, or same-host endpoint discovery.
     nostr_discovery_enabled: bool,
     stun_servers: Vec<String>,
     nostr_relays: Vec<String>,
@@ -148,8 +148,9 @@ fn fips_endpoint_config_with_open_discovery_limit(
         .map(|transport| transport.advertise_public_endpoint)
         .unwrap_or(false);
     // The "find peers over Nostr relays" toggle. When off we neither advertise
-    // nor stream adverts/DMs, but static + bootstrap peers (config.peers below)
-    // are still dialed directly and LAN discovery still runs.
+    // nor stream adverts/DMs, and we keep the endpoint surface deterministic:
+    // static/bootstrap peers below are dialed directly without ambient LAN or
+    // same-host discovery side paths.
     let nostr_discovery_enabled = transport
         .map(|transport| transport.nostr_discovery_enabled)
         .unwrap_or(true);
@@ -175,12 +176,14 @@ fn fips_endpoint_config_with_open_discovery_limit(
     config.node.discovery.nostr.failure_streak_threshold = FIPS_NOSTR_FAILURE_STREAK_THRESHOLD;
     config.node.discovery.nostr.extended_cooldown_secs = FIPS_NOSTR_EXTENDED_COOLDOWN_SECS;
     config.node.discovery.nostr.startup_sweep_max_age_secs = FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS;
-    config.node.discovery.nostr.share_local_candidates = transport
-        .map(|transport| transport.share_local_candidates)
-        .unwrap_or(false);
-    config.node.discovery.lan.enabled = transport
-        .map(|transport| transport.share_local_candidates)
-        .unwrap_or(false);
+    config.node.discovery.nostr.share_local_candidates = nostr_discovery_enabled
+        && transport
+            .map(|transport| transport.share_local_candidates)
+            .unwrap_or(false);
+    config.node.discovery.lan.enabled = nostr_discovery_enabled
+        && transport
+            .map(|transport| transport.share_local_candidates)
+            .unwrap_or(false);
     // Leave the relay-side `app` at fips-core's default ("fips-overlay-v1").
     // We deliberately do NOT bake the per-network mesh id into it: the relay
     // `protocol` tag is publicly visible, so per-network apps would let any

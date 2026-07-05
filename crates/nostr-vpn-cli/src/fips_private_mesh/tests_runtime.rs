@@ -530,6 +530,45 @@
     }
 
     #[test]
+    fn endpoint_config_disables_lan_discovery_in_static_only_mode() {
+        let keys = Keys::generate();
+        let participant_pubkey = keys.public_key().to_hex();
+        let peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &participant_pubkey,
+            vec!["10.44.1.2/32".to_string()],
+        )
+        .expect("peer config");
+        let transport = FipsEndpointTransportConfig {
+            listen_port: 51820,
+            advertised_endpoint: "192.168.50.20:51820".to_string(),
+            advertise_public_endpoint: false,
+            nostr_discovery_enabled: false,
+            stun_servers: Vec::new(),
+            nostr_relays: Vec::new(),
+            share_local_candidates: true,
+        };
+        let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
+        let config = fips_endpoint_config(
+            &endpoint_peers,
+            Some(&transport),
+            super::resolve_private_mesh_mtu(None, None, None),
+            NostrDiscoveryPolicy::ConfiguredOnly,
+        );
+
+        assert!(!config.node.discovery.nostr.enabled);
+        assert!(!config.node.discovery.nostr.advertise);
+        assert!(!config.node.discovery.nostr.share_local_candidates);
+        assert!(!config.node.discovery.lan.enabled);
+        let udp = match config.transports.udp {
+            fips_endpoint::TransportInstances::Single(udp) => udp,
+            _ => panic!("expected one UDP transport"),
+        };
+        assert!(!udp.outbound_only());
+        assert!(!udp.advertise_on_nostr());
+        assert!(udp.accept_connections());
+    }
+
+    #[test]
     fn lan_discovery_scope_is_hashed_from_network_id() {
         let scope = fips_lan_discovery_scope(" private-network-id ");
         assert!(scope.starts_with(&format!("{FIPS_LAN_DISCOVERY_SCOPE_PREFIX}:")));
