@@ -246,7 +246,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         .unwrap_or_default();
     #[cfg(not(feature = "embedded-fips"))]
     let fips_peer_statuses = Vec::new();
-    let fips_relay_statuses = current_fips_relay_statuses(&fips_tunnel_runtime).await;
+    let fips_relay_statuses = current_fips_relay_statuses!(&fips_tunnel_runtime).await;
     let fips_endpoint_peer_states =
         current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature);
     let fips_advertised_routes = current_fips_advertised_routes!(fips_tunnel_runtime, &app);
@@ -1147,7 +1147,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         expected_peers,
                         &tunnel_runtime,
                         &current_fips_peer_statuses!(fips_tunnel_runtime),
-                        &current_fips_relay_statuses(&fips_tunnel_runtime).await,
+                        &current_fips_relay_statuses!(&fips_tunnel_runtime).await,
                         &current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature),
                         &current_fips_advertised_routes!(fips_tunnel_runtime, &app),
                         &vpn_status,
@@ -1191,7 +1191,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         expected_peers,
                         &tunnel_runtime,
                         &current_fips_peer_statuses!(fips_tunnel_runtime),
-                        &current_fips_relay_statuses(&fips_tunnel_runtime).await,
+                        &current_fips_relay_statuses!(&fips_tunnel_runtime).await,
                         &current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature),
                         &current_fips_advertised_routes!(fips_tunnel_runtime, &app),
                         &vpn_status,

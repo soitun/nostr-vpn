@@ -1,5 +1,5 @@
 #[cfg(feature = "embedded-fips")]
-async fn current_fips_relay_statuses(
+async fn fips_relay_statuses_from_runtime(
     runtime: &Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
 ) -> Vec<DaemonRelayState> {
     let Some(runtime) = runtime.as_ref() else {
@@ -20,9 +20,18 @@ async fn current_fips_relay_statuses(
     }
 }
 
+#[cfg(feature = "embedded-fips")]
+macro_rules! current_fips_relay_statuses {
+    ($runtime:expr) => {
+        fips_relay_statuses_from_runtime($runtime)
+    };
+}
+
 #[cfg(not(feature = "embedded-fips"))]
-async fn current_fips_relay_statuses<T>(_runtime: &Option<T>) -> Vec<DaemonRelayState> {
-    Vec::new()
+macro_rules! current_fips_relay_statuses {
+    ($runtime:expr) => {
+        std::future::ready(Vec::<DaemonRelayState>::new())
+    };
 }
 
 #[cfg(feature = "embedded-fips")]
