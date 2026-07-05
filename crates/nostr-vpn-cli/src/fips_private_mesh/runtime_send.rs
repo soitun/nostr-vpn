@@ -33,15 +33,38 @@ impl FipsPrivateMeshRuntime {
         local_tunnel_ips: Vec<IpAddr>,
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) -> Result<Self> {
-        let scope = scope.into();
+        Self::bind_with_config_scoped(
+            identity_nsec,
+            Some(scope.into()),
+            peers,
+            config,
+            local_allowed_ips,
+            local_tunnel_ips,
+            paid_route_admissions,
+        )
+        .await
+    }
+
+    async fn bind_with_config_scoped(
+        identity_nsec: impl Into<String>,
+        scope: Option<String>,
+        peers: Vec<FipsMeshPeerConfig>,
+        config: Config,
+        local_allowed_ips: Vec<String>,
+        local_tunnel_ips: Vec<IpAddr>,
+        paid_route_admissions: Vec<FipsPaidRouteAdmission>,
+    ) -> Result<Self> {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let (direct_endpoint_sink, direct_endpoint_rx) = fips_direct_endpoint_queue_pair();
 
-        let endpoint_builder = FipsEndpoint::builder()
+        let mut endpoint_builder = FipsEndpoint::builder()
             .config(config)
             .identity_nsec(identity_nsec)
-            .discovery_scope(scope)
             .without_system_tun();
+        if let Some(scope) = scope.map(|scope| scope.trim().to_string()).filter(|s| !s.is_empty())
+        {
+            endpoint_builder = endpoint_builder.discovery_scope(scope);
+        }
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let endpoint = endpoint_builder
             .bind_with_direct_sink(direct_endpoint_sink)

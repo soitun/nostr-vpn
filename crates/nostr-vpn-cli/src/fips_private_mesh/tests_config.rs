@@ -406,6 +406,10 @@
         assert_eq!(bob.addresses.len(), 1);
         assert_eq!(bob.addresses[0].addr, "192.168.64.5:52528");
         assert_eq!(bob.addresses[0].seen_at_ms, None);
+        assert!(
+            !bob.discovery_fallback_transit,
+            "static-only peers must not become lookup transit"
+        );
     }
 
     #[test]

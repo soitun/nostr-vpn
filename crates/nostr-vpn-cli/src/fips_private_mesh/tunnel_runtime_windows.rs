@@ -2,7 +2,9 @@
 impl FipsPrivateTunnelRuntime {
     pub(crate) async fn start(config: FipsPrivateTunnelConfig) -> Result<Self> {
         crate::pipeline_profile::maybe_spawn_reporter();
-        let scope = fips_lan_discovery_scope(&config.network_id);
+        let scope = config
+            .nostr_discovery_enabled
+            .then(|| fips_lan_discovery_scope(&config.network_id));
         let transport = FipsEndpointTransportConfig {
             listen_port: config.listen_port,
             advertised_endpoint: config.advertised_endpoint.clone(),
@@ -20,7 +22,7 @@ impl FipsPrivateTunnelRuntime {
             config.open_discovery_max_pending,
         );
         let mesh = Arc::new(
-            FipsPrivateMeshRuntime::bind_with_config(
+            FipsPrivateMeshRuntime::bind_with_config_scoped(
                 config.identity_nsec.clone(),
                 scope,
                 config.peers.clone(),
