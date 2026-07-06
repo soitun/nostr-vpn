@@ -6,8 +6,7 @@ fn linux_ip_forward_path(family: LinuxExitNodeIpFamily) -> &'static str {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
-#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn linux_exit_node_source_cidr(tunnel_ip: &str) -> Option<String> {
     let octets = strip_cidr(tunnel_ip).parse::<Ipv4Addr>().ok()?.octets();
     if octets[0] == 10 && octets[1] == 44 {
@@ -24,16 +23,14 @@ pub(crate) enum LinuxExitNodeIpFamily {
     V6,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
 pub(crate) struct LinuxExitNodeDefaultRouteFamilies {
     pub(crate) ipv4: bool,
     pub(crate) ipv6: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
-#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn linux_exit_node_default_route_families(
     routes: &[String],
 ) -> LinuxExitNodeDefaultRouteFamilies {
@@ -336,8 +333,7 @@ pub(crate) fn linux_iptables_delete_rule(
     run_checked(&mut command)
 }
 
-#[cfg(any(test, not(target_os = "windows")))]
-#[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
     iface: &str,
     addresses: &[String],
