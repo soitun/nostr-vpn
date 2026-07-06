@@ -57,8 +57,7 @@ impl FipsDirectEndpointQueuedRuns {
         runs: Vec<FipsEndpointDirectPacketRun>,
         enqueued_at: Option<Instant>,
     ) -> Self {
-        let packets = direct_packet_runs_len(&runs);
-        let source_node_addr = direct_packet_runs_single_source_node_addr(&runs);
+        let (packets, source_node_addr) = direct_packet_runs_summary(&runs);
         Self {
             runs,
             packets,
@@ -213,11 +212,6 @@ fn coalesce_limited_direct_endpoint_runs(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn direct_packet_runs_len(runs: &[FipsEndpointDirectPacketRun]) -> usize {
-    runs.iter().map(FipsEndpointDirectPacketRun::len).sum()
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 fn limit_queued_direct_endpoint_runs_to_remaining(
     queued: &mut FipsDirectEndpointQueuedRuns,
     remaining: usize,
@@ -230,12 +224,10 @@ fn limit_queued_direct_endpoint_runs_to_remaining(
     let runs = std::mem::take(&mut queued.runs);
     let (head, tail) = split_direct_packet_runs_at_packet_limit(runs, remaining);
     queued.runs = head;
-    queued.packets = direct_packet_runs_len(&queued.runs);
-    queued.source_node_addr = direct_packet_runs_single_source_node_addr(&queued.runs);
+    (queued.packets, queued.source_node_addr) = direct_packet_runs_summary(&queued.runs);
     if !tail.is_empty() {
-        let tail_packets = direct_packet_runs_len(&tail);
-        crate::pipeline_profile::record_direct_endpoint_rx_limit_split(tail_packets);
         let mut tail_queued = FipsDirectEndpointQueuedRuns::with_enqueued_at(tail, enqueued_at);
+        crate::pipeline_profile::record_direct_endpoint_rx_limit_split(tail_queued.packets);
         tail_queued.arrival = DirectEndpointQueueArrival::Backlog;
         state
             .batches
@@ -307,11 +299,20 @@ fn split_direct_packet_runs_at_packet_limit(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn direct_packet_runs_single_source_node_addr(
-    runs: &[FipsEndpointDirectPacketRun],
-) -> Option<[u8; 16]> {
-    let first = *runs.first()?.source_node_addr().as_bytes();
-    runs.iter()
-        .all(|run| run.source_node_addr().as_bytes() == &first)
-        .then_some(first)
+fn direct_packet_runs_summary(runs: &[FipsEndpointDirectPacketRun]) -> (usize, Option<[u8; 16]>) {
+    let Some((first, rest)) = runs.split_first() else {
+        return (0, None);
+    };
+
+    let first_source = *first.source_node_addr().as_bytes();
+    let mut packets = first.len();
+    let mut source_node_addr = Some(first_source);
+    for run in rest {
+        packets += run.len();
+        if source_node_addr.is_some() && run.source_node_addr().as_bytes() != &first_source {
+            source_node_addr = None;
+        }
+    }
+
+    (packets, source_node_addr)
 }

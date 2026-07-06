@@ -518,8 +518,7 @@ fn linux_vnet_try_tcp4_gro_append_with_candidate(
     if state.psh_set || state.payload_len % state.gso_size != 0 {
         return false;
     }
-    if candidate.flow != state.flow
-        || candidate.ip_header_len != state.ip_header_len
+    if candidate.ip_header_len != state.ip_header_len
         || candidate.tcp_header_len != state.tcp_header_len
         || candidate.seq != state.next_seq
         || candidate.payload_len > state.gso_size
