@@ -5,7 +5,7 @@ use std::sync::atomic::{
 };
 use std::time::Instant;
 
-const N_STAGES: usize = 11;
+const N_STAGES: usize = 13;
 const N_COUNTERS: usize = 39;
 const HIST_BUCKETS: usize = 48;
 
@@ -23,6 +23,8 @@ pub(crate) enum Stage {
     DirectEndpointWake = 8,
     DirectEndpointRecv = 9,
     DirectEndpointFinalize = 10,
+    DirectEndpointBacklog = 11,
+    DirectEndpointConsumerBusy = 12,
 }
 
 impl Stage {
@@ -39,6 +41,8 @@ impl Stage {
             Stage::DirectEndpointWake => "nvpn_direct_endpoint_wake",
             Stage::DirectEndpointRecv => "nvpn_direct_endpoint_recv",
             Stage::DirectEndpointFinalize => "nvpn_direct_endpoint_finalize",
+            Stage::DirectEndpointBacklog => "nvpn_direct_endpoint_backlog",
+            Stage::DirectEndpointConsumerBusy => "nvpn_direct_endpoint_consumer_busy",
         }
     }
 }
@@ -199,6 +203,8 @@ fn stage_from_index(idx: usize) -> Stage {
         8 => Stage::DirectEndpointWake,
         9 => Stage::DirectEndpointRecv,
         10 => Stage::DirectEndpointFinalize,
+        11 => Stage::DirectEndpointBacklog,
+        12 => Stage::DirectEndpointConsumerBusy,
         _ => unreachable!(),
     }
 }
@@ -603,6 +609,14 @@ mod tests {
         assert_eq!(
             Stage::DirectEndpointWake.name(),
             "nvpn_direct_endpoint_wake"
+        );
+        assert_eq!(
+            Stage::DirectEndpointBacklog.name(),
+            "nvpn_direct_endpoint_backlog"
+        );
+        assert_eq!(
+            Stage::DirectEndpointConsumerBusy.name(),
+            "nvpn_direct_endpoint_consumer_busy"
         );
         assert_eq!(
             Stage::DirectEndpointRecv.name(),

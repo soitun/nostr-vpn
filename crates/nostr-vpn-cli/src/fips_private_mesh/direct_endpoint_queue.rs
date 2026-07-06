@@ -25,7 +25,15 @@ struct FipsDirectEndpointQueuedRuns {
     packets: usize,
     source_node_addr: Option<[u8; 16]>,
     enqueued_at: Option<Instant>,
-    enqueued_while_waiting: bool,
+    arrival: DirectEndpointQueueArrival,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Copy)]
+enum DirectEndpointQueueArrival {
+    ConsumerBusy,
+    Backlog,
+    Wake,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -56,7 +64,7 @@ impl FipsDirectEndpointQueuedRuns {
             packets,
             source_node_addr,
             enqueued_at,
-            enqueued_while_waiting: false,
+            arrival: DirectEndpointQueueArrival::ConsumerBusy,
         }
     }
 }
@@ -92,13 +100,19 @@ impl FipsDirectEndpointQueue {
             .state
             .lock()
             .map_err(|_| FipsEndpointDirectDeliveryError::Unavailable)?;
+        queued.arrival = if state.waiting_consumer {
+            DirectEndpointQueueArrival::Wake
+        } else if state.batches.is_empty() {
+            DirectEndpointQueueArrival::ConsumerBusy
+        } else {
+            DirectEndpointQueueArrival::Backlog
+        };
         let queue_depth = state.batches.len().saturating_add(1);
-        queued.enqueued_while_waiting = state.waiting_consumer;
         crate::pipeline_profile::record_direct_endpoint_sink_batch(
             queued.runs.len(),
             queued.packets,
             queue_depth,
-            queued.enqueued_while_waiting,
+            matches!(queued.arrival, DirectEndpointQueueArrival::Wake),
         );
         state.batches.push_back(queued);
         self.ready.notify_one();
@@ -220,7 +234,7 @@ fn limit_queued_direct_endpoint_runs_to_remaining(
     queued.source_node_addr = direct_packet_runs_single_source_node_addr(&queued.runs);
     if !tail.is_empty() {
         let mut tail_queued = FipsDirectEndpointQueuedRuns::with_enqueued_at(tail, enqueued_at);
-        tail_queued.enqueued_while_waiting = false;
+        tail_queued.arrival = DirectEndpointQueueArrival::Backlog;
         state
             .batches
             .push_front(tail_queued);
@@ -233,12 +247,19 @@ fn record_direct_endpoint_queue_residence(queued: &FipsDirectEndpointQueuedRuns)
         crate::pipeline_profile::Stage::DirectEndpointQueue,
         queued.enqueued_at,
     );
-    if queued.enqueued_while_waiting {
-        crate::pipeline_profile::record_since(
-            crate::pipeline_profile::Stage::DirectEndpointWake,
-            queued.enqueued_at,
-        );
-    }
+    let stage = match queued.arrival {
+        DirectEndpointQueueArrival::Wake => crate::pipeline_profile::Stage::DirectEndpointWake,
+        DirectEndpointQueueArrival::Backlog => {
+            crate::pipeline_profile::Stage::DirectEndpointBacklog
+        }
+        DirectEndpointQueueArrival::ConsumerBusy => {
+            crate::pipeline_profile::Stage::DirectEndpointConsumerBusy
+        }
+    };
+    crate::pipeline_profile::record_since(
+        stage,
+        queued.enqueued_at,
+    );
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
