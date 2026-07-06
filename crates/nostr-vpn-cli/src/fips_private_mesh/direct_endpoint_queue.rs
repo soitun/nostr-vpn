@@ -98,6 +98,7 @@ impl FipsDirectEndpointQueue {
             queued.runs.len(),
             queued.packets,
             queue_depth,
+            queued.enqueued_while_waiting,
         );
         state.batches.push_back(queued);
         self.ready.notify_one();

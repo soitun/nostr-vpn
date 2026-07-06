@@ -6,7 +6,7 @@ use std::sync::atomic::{
 use std::time::Instant;
 
 const N_STAGES: usize = 11;
-const N_COUNTERS: usize = 37;
+const N_COUNTERS: usize = 39;
 const HIST_BUCKETS: usize = 48;
 
 #[derive(Copy, Clone)]
@@ -79,10 +79,12 @@ pub(crate) enum Counter {
     DirectEndpointSinkRuns = 30,
     DirectEndpointSinkPackets = 31,
     DirectEndpointSinkMaxQueueDepth = 32,
-    DirectEndpointRxBatches = 33,
-    DirectEndpointRxRuns = 34,
-    DirectEndpointRxPackets = 35,
-    DirectEndpointRxCoalescedBatches = 36,
+    DirectEndpointSinkWaitingBatches = 33,
+    DirectEndpointSinkWaitingPackets = 34,
+    DirectEndpointRxBatches = 35,
+    DirectEndpointRxRuns = 36,
+    DirectEndpointRxPackets = 37,
+    DirectEndpointRxCoalescedBatches = 38,
 }
 
 impl Counter {
@@ -123,6 +125,12 @@ impl Counter {
             Counter::DirectEndpointSinkRuns => "nvpn_direct_endpoint_sink_runs",
             Counter::DirectEndpointSinkPackets => "nvpn_direct_endpoint_sink_packets",
             Counter::DirectEndpointSinkMaxQueueDepth => "nvpn_direct_endpoint_sink_max_queue_depth",
+            Counter::DirectEndpointSinkWaitingBatches => {
+                "nvpn_direct_endpoint_sink_waiting_batches"
+            }
+            Counter::DirectEndpointSinkWaitingPackets => {
+                "nvpn_direct_endpoint_sink_waiting_packets"
+            }
             Counter::DirectEndpointRxBatches => "nvpn_direct_endpoint_rx_batches",
             Counter::DirectEndpointRxRuns => "nvpn_direct_endpoint_rx_runs",
             Counter::DirectEndpointRxPackets => "nvpn_direct_endpoint_rx_packets",
@@ -168,10 +176,12 @@ fn counter_from_index(idx: usize) -> Counter {
         30 => Counter::DirectEndpointSinkRuns,
         31 => Counter::DirectEndpointSinkPackets,
         32 => Counter::DirectEndpointSinkMaxQueueDepth,
-        33 => Counter::DirectEndpointRxBatches,
-        34 => Counter::DirectEndpointRxRuns,
-        35 => Counter::DirectEndpointRxPackets,
-        36 => Counter::DirectEndpointRxCoalescedBatches,
+        33 => Counter::DirectEndpointSinkWaitingBatches,
+        34 => Counter::DirectEndpointSinkWaitingPackets,
+        35 => Counter::DirectEndpointRxBatches,
+        36 => Counter::DirectEndpointRxRuns,
+        37 => Counter::DirectEndpointRxPackets,
+        38 => Counter::DirectEndpointRxCoalescedBatches,
         _ => unreachable!(),
     }
 }
@@ -368,7 +378,12 @@ pub(crate) fn record_tun_write_would_block() {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-pub(crate) fn record_direct_endpoint_sink_batch(runs: usize, packets: usize, queue_depth: usize) {
+pub(crate) fn record_direct_endpoint_sink_batch(
+    runs: usize,
+    packets: usize,
+    queue_depth: usize,
+    waiting_consumer: bool,
+) {
     if packets == 0 || !enabled() {
         return;
     }
@@ -376,6 +391,10 @@ pub(crate) fn record_direct_endpoint_sink_batch(runs: usize, packets: usize, que
     increment_counter_by(Counter::DirectEndpointSinkRuns, runs as u64);
     increment_counter_by(Counter::DirectEndpointSinkPackets, packets as u64);
     max_counter(Counter::DirectEndpointSinkMaxQueueDepth, queue_depth as u64);
+    if waiting_consumer {
+        increment_counter_by(Counter::DirectEndpointSinkWaitingBatches, 1);
+        increment_counter_by(Counter::DirectEndpointSinkWaitingPackets, packets as u64);
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -571,7 +590,7 @@ mod tests {
 
     #[test]
     fn mesh_send_pipeline_names_are_stable() {
-        assert_eq!(N_COUNTERS, 37);
+        assert_eq!(N_COUNTERS, 39);
         assert_eq!(Stage::TunRead.name(), "nvpn_tun_read");
         assert_eq!(Stage::MeshRecv.name(), "nvpn_mesh_recv");
         assert_eq!(Stage::MeshRoute.name(), "nvpn_mesh_route");
@@ -616,6 +635,14 @@ mod tests {
         assert_eq!(
             Counter::DirectEndpointSinkMaxQueueDepth.name(),
             "nvpn_direct_endpoint_sink_max_queue_depth"
+        );
+        assert_eq!(
+            Counter::DirectEndpointSinkWaitingBatches.name(),
+            "nvpn_direct_endpoint_sink_waiting_batches"
+        );
+        assert_eq!(
+            Counter::DirectEndpointSinkWaitingPackets.name(),
+            "nvpn_direct_endpoint_sink_waiting_packets"
         );
         assert_eq!(
             Counter::DirectEndpointRxCoalescedBatches.name(),
