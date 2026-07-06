@@ -105,10 +105,6 @@ impl DirectTunWriteBatch {
             return;
         }
         let packet_count = run.len();
-        self.runs.reserve(1);
-        self.packet_ends.reserve(1);
-        #[cfg(feature = "paid-exit")]
-        self.packet_sources.reserve(packet_count);
         self.bytes = self.bytes.saturating_add(run.packet_bytes());
         self.push_packet_end(packet_count);
         #[cfg(feature = "paid-exit")]

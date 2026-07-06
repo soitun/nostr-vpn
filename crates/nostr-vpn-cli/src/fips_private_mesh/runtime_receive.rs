@@ -506,6 +506,7 @@ fn admit_direct_endpoint_packet_runs_with_mesh(
 ) -> DirectEndpointPacketRunAdmission {
     let mut current_source_node_addr = None;
     let mut current_admitter = None;
+    let mut current_admission_cache = FipsEndpointAdmissionCache::default();
     let mut received = 0usize;
     let mut accepted = 0usize;
     let mut data_rx_notes = FipsDataRxBatchNotes::default();
@@ -520,13 +521,18 @@ fn admit_direct_endpoint_packet_runs_with_mesh(
         if current_source_node_addr != Some(source_node_addr) {
             current_source_node_addr = Some(source_node_addr);
             current_admitter = mesh.endpoint_source_admitter(&source_node_addr);
+            current_admission_cache = FipsEndpointAdmissionCache::default();
         }
         let Some(admitter) = current_admitter else {
             continue;
         };
 
-        let (accepted_count, endpoint_bytes) =
-            admit_direct_endpoint_packet_run_with_admitter(&admitter, run, batch_outputs);
+        let (accepted_count, endpoint_bytes) = admit_direct_endpoint_packet_run_with_admitter(
+            &admitter,
+            run,
+            &mut current_admission_cache,
+            batch_outputs,
+        );
         if accepted_count == 0 {
             continue;
         }
@@ -572,13 +578,13 @@ fn fips_tun_packet_debug_enabled() -> bool {
 fn admit_direct_endpoint_packet_run_with_admitter(
     admitter: &FipsEndpointSourceAdmitter<'_>,
     mut run: FipsEndpointDirectPacketRun,
+    admission_cache: &mut FipsEndpointAdmissionCache,
     batch_outputs: &mut DirectTunWriteBatch,
 ) -> (usize, usize) {
-    let mut admission_cache = FipsEndpointAdmissionCache::default();
     let mut accepted_count = 0usize;
     let mut endpoint_bytes = 0usize;
     run.retain_packets(|_index, packet| {
-        if !admitter.admit_packet_cached(packet, &mut admission_cache) {
+        if !admitter.admit_packet_cached(packet, admission_cache) {
             return false;
         }
         accepted_count = accepted_count.saturating_add(1);

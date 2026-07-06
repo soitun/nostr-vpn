@@ -115,9 +115,7 @@ const fn macos_default_udp_send_buf_size() -> usize {
 // whether the sender should yield between batches. FIPS's raw
 // `FIPS_MACOS_SEND_PACE_MBPS` rate knob remains opt-in for lab A/Bs; the default
 // path shapes backlog instead of sleeping to a fixed bandwidth number.
-#[cfg(target_os = "linux")]
-const FIPS_MESH_RECV_BURST: usize = 128;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const FIPS_MESH_RECV_BURST: usize = 128;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_EVENT_DRAIN_LIMIT: usize = 256;
