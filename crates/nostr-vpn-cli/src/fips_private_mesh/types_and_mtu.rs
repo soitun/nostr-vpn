@@ -135,7 +135,7 @@ impl DirectTunWriteBatch {
             .push(previous.saturating_add(packet_count));
     }
 
-    #[cfg(any(feature = "paid-exit", test, target_os = "linux"))]
+    #[cfg(any(feature = "paid-exit", target_os = "linux"))]
     fn packet_slice(&self, index: usize) -> Option<&[u8]> {
         if index >= self.len() {
             return None;
@@ -157,13 +157,6 @@ impl DirectTunWriteBatch {
 
     fn run_slices(&self) -> impl Iterator<Item = &[u8]> {
         self.runs.iter().flat_map(|run| run.packet_slices())
-    }
-
-    #[cfg(test)]
-    fn packet_slices_for_test(&self) -> Vec<&[u8]> {
-        (0..self.len())
-            .filter_map(|index| self.packet_slice(index))
-            .collect()
     }
 }
 

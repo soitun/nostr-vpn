@@ -280,7 +280,10 @@
                 .expect("warmup packet should be admitted");
             assert_eq!(emitted, 1);
             assert_eq!(packets.len(), 1);
-            assert_eq!(packets.packet_slices_for_test()[0], warmup_packet.as_slice());
+            assert_eq!(
+                packets.run_slices().next(),
+                Some(warmup_packet.as_slice())
+            );
             bob_runtime.finalize_direct_endpoint_tun_batch_blocking(&mut packets)?;
 
             Ok(bob_runtime)
@@ -318,7 +321,7 @@
                 .expect("new-config packet should be admitted");
             assert!(emitted >= 1);
             assert_eq!(packets.len(), emitted);
-            for packet in packets.packet_slices_for_test() {
+            for packet in packets.run_slices() {
                 assert_eq!(packet, expected_new_packet.as_slice());
             }
             bob_runtime.finalize_direct_endpoint_tun_batch_blocking(&mut packets)?;
@@ -439,7 +442,7 @@
                 .expect("warmup packet should be admitted");
             assert_eq!(received, 1);
             assert_eq!(packets.len(), 1);
-            assert_eq!(packets.packet_slices_for_test()[0], warmup.as_slice());
+            assert_eq!(packets.run_slices().next(), Some(warmup.as_slice()));
             bob_runtime.finalize_direct_endpoint_tun_batch_blocking(&mut packets)?;
 
             Ok(bob_runtime)
@@ -464,7 +467,7 @@
             assert_eq!(received, 2);
 
             assert_eq!(packets.len(), 2);
-            let packet_slices = packets.packet_slices_for_test();
+            let packet_slices: Vec<_> = packets.run_slices().collect();
             assert_eq!(packet_slices[0], first.as_slice());
             assert_eq!(packet_slices[1], second.as_slice());
             packets.clear();
@@ -475,7 +478,7 @@
             assert_eq!(received, 1);
 
             assert_eq!(packets.len(), 1);
-            assert_eq!(packets.packet_slices_for_test()[0], third.as_slice());
+            assert_eq!(packets.run_slices().next(), Some(third.as_slice()));
             bob_runtime.finalize_direct_endpoint_tun_batch_blocking(&mut packets)?;
 
             Ok(bob_runtime)
