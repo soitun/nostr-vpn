@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# Replace /usr/local/bin/nvpn in a Docker image, refusing architecture mismatch.
+set -euo pipefail
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") <base-image> <target-image> <nvpn-binary>
+
+Copies <nvpn-binary> to /usr/local/bin/nvpn in a new image tagged
+<target-image>. The binary ELF architecture must match the Docker image
+architecture, so Docker Desktop cannot silently run a benchmark through
+Rosetta/QEMU.
+EOF
+}
+
+fail() {
+  printf 'docker nvpn binary replacement failed: %s\n' "$*" >&2
+  exit 1
+}
+
+arch_from_docker_image_arch() {
+  case "$1" in
+    amd64|x86_64)
+      printf '%s\n' x86_64
+      ;;
+    arm64|aarch64)
+      printf '%s\n' aarch64
+      ;;
+    arm|armv6|armv7|arm/v6|arm/v7)
+      printf '%s\n' arm
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+arch_from_file_output() {
+  case "$1" in
+    *"x86-64"*)
+      printf '%s\n' x86_64
+      ;;
+    *"ARM aarch64"*|*"ARM64"*)
+      printf '%s\n' aarch64
+      ;;
+    *"ARM,"*|*"ARM;"*)
+      printf '%s\n' arm
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+assert_arch_match() {
+  local image_arch="$1"
+  local file_output="$2"
+  local expected actual
+
+  expected="$(arch_from_docker_image_arch "$image_arch")" \
+    || fail "unsupported Docker image architecture '$image_arch'"
+  actual="$(arch_from_file_output "$file_output")" \
+    || fail "could not parse nvpn binary architecture from: $file_output"
+
+  if [[ "$actual" != "$expected" ]]; then
+    fail "refusing to install $actual nvpn into $image_arch Docker image; rebuild nvpn for $expected or rebuild the Docker image for $actual"
+  fi
+}
+
+self_test() {
+  local got
+  got="$(arch_from_docker_image_arch arm64)"
+  [[ "$got" == aarch64 ]] || fail "arm64 maps to $got"
+  got="$(arch_from_docker_image_arch amd64)"
+  [[ "$got" == x86_64 ]] || fail "amd64 maps to $got"
+  got="$(arch_from_file_output 'ELF 64-bit LSB executable, ARM aarch64, statically linked')"
+  [[ "$got" == aarch64 ]] || fail "aarch64 ELF maps to $got"
+  got="$(arch_from_file_output 'ELF 64-bit LSB executable, x86-64, statically linked')"
+  [[ "$got" == x86_64 ]] || fail "x86_64 ELF maps to $got"
+  assert_arch_match arm64 'ELF 64-bit LSB executable, ARM aarch64, statically linked'
+  assert_arch_match amd64 'ELF 64-bit LSB executable, x86-64, statically linked'
+  if (assert_arch_match arm64 'ELF 64-bit LSB executable, x86-64, statically linked') 2>/dev/null; then
+    fail "x86_64 binary unexpectedly matched arm64 image"
+  fi
+  printf 'docker-replace-nvpn-binary self-test passed\n'
+}
+
+if [[ "${1:-}" == "--self-test" ]]; then
+  self_test
+  exit 0
+fi
+
+if [[ $# -ne 3 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage >&2
+  exit 2
+fi
+
+base_image="$1"
+target_image="$2"
+binary="$3"
+
+command -v docker >/dev/null 2>&1 || fail "docker is not on PATH"
+command -v file >/dev/null 2>&1 || fail "file is not on PATH"
+[[ -f "$binary" ]] || fail "nvpn binary does not exist: $binary"
+[[ -x "$binary" ]] || fail "nvpn binary is not executable: $binary"
+
+image_arch="$(docker image inspect "$base_image" --format '{{.Architecture}}')"
+file_output="$(file -b "$binary")"
+assert_arch_match "$image_arch" "$file_output"
+
+container_id=""
+cleanup() {
+  if [[ -n "$container_id" ]]; then
+    docker rm -f "$container_id" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+container_id="$(docker create "$base_image" true)"
+docker cp "$binary" "$container_id:/usr/local/bin/nvpn"
+commit_id="$(docker commit "$container_id" "$target_image")"
+docker rm "$container_id" >/dev/null
+container_id=""
+
+printf 'target_image=%s\n' "$target_image"
+printf 'image_arch=%s\n' "$image_arch"
+printf 'binary_arch=%s\n' "$(arch_from_file_output "$file_output")"
+printf 'binary_file=%s\n' "$file_output"
+printf 'commit_id=%s\n' "$commit_id"

@@ -270,6 +270,28 @@ wait_for_mesh() {
   return 1
 }
 
+nvpn_process_uses_translation() {
+  local process_lines="$1"
+  grep -Eq '(^|[[:space:]])/run/rosetta/rosetta([[:space:]]|$)|(^|[[:space:]])([^[:space:]]*/)?qemu-[^[:space:]]*([[:space:]]|$)' \
+    <<<"$process_lines"
+}
+
+assert_native_nvpn_processes() {
+  local service="$1"
+  local process_lines
+  process_lines="$("${COMPOSE[@]}" exec -T "$service" sh -lc "pgrep -a nvpn || ps -ef | grep '[n]vpn' || true")"
+  if nvpn_process_uses_translation "$process_lines"; then
+    printf 'nvpn+FIPS perf regression e2e failed: %s nvpn is running through Rosetta/QEMU; rebuild the Docker image for the native architecture\n' "$service" >&2
+    printf '%s\n' "$process_lines" >&2
+    exit 1
+  fi
+}
+
+assert_native_nvpn_pair() {
+  assert_native_nvpn_processes node-a
+  assert_native_nvpn_processes node-b
+}
+
 install_direct_underlay_counter() {
   local service="$1"
   local peer_ip="$2"
@@ -2151,6 +2173,7 @@ run_rx_maintenance_fault_phase() {
   stop_connects
   start_connects "$RX_MAINT_FAULT_MS"
   wait_for_mesh
+  assert_native_nvpn_pair
   local saved_max_priority_queue_wait_ms="$MAX_PRIORITY_QUEUE_WAIT_MS"
   MAX_PRIORITY_QUEUE_WAIT_MS="$RX_MAINT_MAX_PRIORITY_QUEUE_WAIT_MS"
   run_perf_phase \
@@ -2265,6 +2288,7 @@ install_direct_underlay_counter node-a 10.203.0.11
 install_direct_underlay_counter node-b 10.203.0.10
 
 wait_for_mesh
+assert_native_nvpn_pair
 
 baseline_direct_a="$(direct_underlay_bytes node-a)"
 baseline_direct_b="$(direct_underlay_bytes node-b)"

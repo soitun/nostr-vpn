@@ -16,6 +16,7 @@
 - macOS daemon: `scripts/install-nvpn-test-daemon`; manual release path: `scripts/build-output-path --raw nvpn --release`; clear xattrs; ad-hoc sign.
 - launchd env/plist/codesign: `bootout` + `bootstrap`; `kickstart` can keep old env.
 - Linux remote: `scripts/build-nvpn-linux-musl <target>`; native glibc only same distro/glibc; never ARMv7 on ARMv6.
+- Docker image binary swaps: use `scripts/docker-replace-nvpn-binary`; it rejects image/binary architecture mismatches that would run through Rosetta/QEMU and poison perf rows.
 - Bench both directions: `iperf3 -R`; LAN MTU only with `mesh_mtu_profile = "lan"` / `NVPN_MESH_MTU_PROFILE=lan`.
 - Remote bench: load SSH keys first (`ssh-add --apple-use-keychain <key>`).
 - Avoid unittests unless very good reason, prefer integration test coverage

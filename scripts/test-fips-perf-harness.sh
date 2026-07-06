@@ -461,6 +461,23 @@ test_direct_underlay_policy() {
     bash "$PERF_SCRIPT"
 }
 
+test_translated_nvpn_process_guard() {
+  local native translated qemu
+  native='30 /usr/local/bin/nvpn connect'
+  translated='30 /run/rosetta/rosetta /usr/local/bin/nvpn /usr/local/bin/nvpn daemon --config /cfg/container.toml'
+  qemu='30 /usr/bin/qemu-x86_64 /usr/local/bin/nvpn daemon --config /cfg/container.toml'
+
+  if nvpn_process_uses_translation "$native"; then
+    fail "native nvpn process was classified as translated"
+  fi
+  if ! nvpn_process_uses_translation "$translated"; then
+    fail "Rosetta nvpn process was not classified as translated"
+  fi
+  if ! nvpn_process_uses_translation "$qemu"; then
+    fail "QEMU nvpn process was not classified as translated"
+  fi
+}
+
 test_pipeline_summary_collects_fips_and_nvpn_lines() {
   local got
 
@@ -1449,6 +1466,7 @@ test_iperf_timeout_configuration
 test_iperf_probes_use_container_timeout
 test_concurrent_iperf_timeout_is_reported
 test_direct_underlay_policy
+test_translated_nvpn_process_guard
 test_pipeline_summary_collects_fips_and_nvpn_lines
 test_pipeline_summary_prefers_peak_wait_lines
 test_pipeline_summary_prefers_load_bearing_lines
