@@ -99,24 +99,6 @@ pub struct AcceptedFipsPacket<'a, B = Vec<u8>> {
     pub bytes: B,
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct AcceptedFipsPacketSourceRun<'a> {
-    pub source_pubkey: &'a str,
-    pub source_pubkey_bytes: Option<&'a [u8; 32]>,
-    pub endpoint_bytes: usize,
-    accepted_packets: usize,
-}
-
-impl AcceptedFipsPacketSourceRun<'_> {
-    pub fn len(&self) -> usize {
-        self.accepted_packets
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.accepted_packets == 0
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub struct FipsEndpointSourceAdmitter<'a> {
     runtime: &'a FipsMeshRuntime,
@@ -534,10 +516,6 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
         self.peer.participant_pubkey.as_ref()
     }
 
-    pub fn admit_packet(&self, data: &[u8]) -> bool {
-        self.admit(data).is_some()
-    }
-
     pub fn admit_packet_cached(&self, data: &[u8], cache: &mut FipsEndpointAdmissionCache) -> bool {
         self.admit_with_cache(data, Some(cache)).is_some()
     }
@@ -551,38 +529,6 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
             source_pubkey: &self.peer.participant_pubkey_hex,
             source_pubkey_bytes: self.peer.participant_pubkey.as_ref(),
             bytes: data,
-        })
-    }
-
-    pub fn receive_owned_source_run_into<I, B, F>(
-        &self,
-        packets: I,
-        mut accept: F,
-    ) -> Option<AcceptedFipsPacketSourceRun<'a>>
-    where
-        I: IntoIterator<Item = B>,
-        B: AsRef<[u8]>,
-        F: FnMut(B),
-    {
-        let mut cache = FipsEndpointAdmissionCache::default();
-        let mut accepted_packets = 0usize;
-        let mut endpoint_bytes = 0usize;
-        for packet in packets {
-            let bytes = packet.as_ref();
-            if self.admit_with_cache(bytes, Some(&mut cache)).is_some() {
-                endpoint_bytes = endpoint_bytes.saturating_add(bytes.len());
-                accepted_packets = accepted_packets.saturating_add(1);
-                accept(packet);
-            }
-        }
-        if accepted_packets == 0 {
-            return None;
-        }
-        Some(AcceptedFipsPacketSourceRun {
-            source_pubkey: &self.peer.participant_pubkey_hex,
-            source_pubkey_bytes: self.peer.participant_pubkey.as_ref(),
-            endpoint_bytes,
-            accepted_packets,
         })
     }
 

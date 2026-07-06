@@ -1,6 +1,6 @@
 mod tests {
     use super::{
-        FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission,
+        FipsEndpointAdmissionCache, FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission,
         endpoint_node_addr_from_pubkey_bytes,
     };
     use crate::paid_routes::PaidRouteAccessState;
@@ -257,7 +257,7 @@ mod tests {
             .endpoint_source_admitter(&buyer.endpoint_node_addr)
             .expect("paid buyer source should be admitted to the seller exit route");
         assert_eq!(admitter.source_pubkey(), buyer.participant_pubkey);
-        assert!(admitter.admit_packet(&packet));
+        assert!(admitter.receive_owned(packet.clone()).is_some());
 
         let routed = runtime
             .route_outbound_packet_owned_with_peer(reply.clone())
@@ -288,11 +288,11 @@ mod tests {
             .endpoint_source_admitter(&buyer.endpoint_node_addr)
             .expect("paid buyer should have a FIPS source identity");
         assert!(
-            admitter.admit_packet(&packet),
+            admitter.receive_owned(packet.clone()).is_some(),
             "paid destination routes should admit exit traffic without advertising a free default route",
         );
         assert!(
-            !admitter.admit_packet(&spoofed),
+            admitter.receive_owned(spoofed.clone()).is_none(),
             "paid destination routes must not loosen the buyer source-IP gate",
         );
     }
@@ -316,7 +316,7 @@ mod tests {
             .endpoint_source_admitter(&buyer.endpoint_node_addr)
             .expect("unpaid buyer still has a FIPS source identity");
         assert_eq!(admitter.source_pubkey(), buyer.participant_pubkey);
-        assert!(!admitter.admit_packet(&packet));
+        assert!(admitter.receive_owned(packet.clone()).is_none());
         assert!(
             runtime.route_outbound_packet_owned_with_peer(reply.clone()).is_none(),
             "allow_routing=false must not install a raw route to the paid buyer"
@@ -515,7 +515,7 @@ mod tests {
             .expect("source endpoint should be configured");
         assert_eq!(admitter.source_pubkey(), peer.participant_pubkey);
         assert_eq!(admitter.source_pubkey_bytes(), Some(&peer.endpoint_pubkey));
-        assert!(admitter.admit_packet(&packet));
+        assert!(admitter.receive_owned(packet.clone()).is_some());
 
         let received = runtime
             .receive_endpoint_data_owned_with_source_node_addr(
@@ -539,19 +539,23 @@ mod tests {
             allowed_ips: vec!["10.44.22.44/32".to_string()],
         }]);
 
+        let mut admission_cache = FipsEndpointAdmissionCache::default();
         let mut accepted = Vec::new();
-        let source_run = runtime
+        let mut endpoint_bytes = 0usize;
+        let admitter = runtime
             .endpoint_source_admitter(&peer.endpoint_node_addr)
-            .expect("source endpoint should be configured")
-            .receive_owned_source_run_into(vec![admitted.clone(), rejected], |packet| {
-                accepted.push(packet)
-            })
-            .expect("at least one packet in source-run should be admitted");
+            .expect("source endpoint should be configured");
+        for packet in [admitted.clone(), rejected] {
+            if admitter.admit_packet_cached(&packet, &mut admission_cache) {
+                endpoint_bytes = endpoint_bytes.saturating_add(packet.len());
+                accepted.push(packet);
+            }
+        }
 
-        assert_eq!(source_run.source_pubkey, peer.participant_pubkey);
-        assert_eq!(source_run.source_pubkey_bytes, Some(&peer.endpoint_pubkey));
-        assert_eq!(source_run.endpoint_bytes, admitted.len());
-        assert_eq!(source_run.len(), 1);
+        assert_eq!(admitter.source_pubkey(), peer.participant_pubkey);
+        assert_eq!(admitter.source_pubkey_bytes(), Some(&peer.endpoint_pubkey));
+        assert_eq!(endpoint_bytes, admitted.len());
+        assert_eq!(accepted.len(), 1);
         assert_eq!(accepted, vec![admitted]);
     }
 
@@ -573,7 +577,7 @@ mod tests {
         let admitter = runtime
             .endpoint_source_admitter(&peer.endpoint_node_addr)
             .expect("source endpoint should be configured");
-        assert!(!admitter.admit_packet(&packet));
+        assert!(admitter.receive_owned(packet.clone()).is_none());
     }
 
     #[test]
@@ -597,7 +601,7 @@ mod tests {
         let admitter = runtime
             .endpoint_source_admitter(&general.endpoint_node_addr)
             .expect("general endpoint should be configured");
-        assert!(!admitter.admit_packet(&packet));
+        assert!(admitter.receive_owned(packet.clone()).is_none());
     }
 
     #[test]
@@ -661,8 +665,8 @@ mod tests {
         let admitter = runtime
             .endpoint_source_admitter(&peer.endpoint_node_addr)
             .expect("source endpoint should be configured");
-        assert!(admitter.admit_packet(&admitted));
-        assert!(!admitter.admit_packet(&rejected));
+        assert!(admitter.receive_owned(admitted.clone()).is_some());
+        assert!(admitter.receive_owned(rejected.clone()).is_none());
     }
 
     #[test]
@@ -684,7 +688,7 @@ mod tests {
         let admitter = runtime
             .endpoint_source_admitter(&peer.endpoint_node_addr)
             .expect("source endpoint should be configured");
-        assert!(admitter.admit_packet(&packet));
+        assert!(admitter.receive_owned(packet.clone()).is_some());
     }
 
     #[test]

@@ -1096,8 +1096,11 @@ destination: 192.168.178.57
         packet[12..16].copy_from_slice(&[10, 44, 1, 2]);
         packet[16..20].copy_from_slice(&[10, 44, 1, 1]);
         assert!(
-            mesh.endpoint_source_admitter(&roster_node_addr)
-                .is_some_and(|admitter| admitter.admit_packet(&packet)),
+            mesh.receive_endpoint_data_owned_with_source_node_addr(
+                &roster_node_addr,
+                packet.clone()
+            )
+            .is_some(),
             "roster peer's owned source IP must be admitted",
         );
 
@@ -1112,8 +1115,8 @@ destination: 192.168.178.57
         let mut spoofed = packet.clone();
         spoofed[12..16].copy_from_slice(&[203, 0, 113, 9]);
         assert!(
-            mesh.endpoint_source_admitter(&stranger_node_addr)
-                .is_none_or(|admitter| !admitter.admit_packet(&spoofed)),
+            mesh.receive_endpoint_data_owned_with_source_node_addr(&stranger_node_addr, spoofed)
+                .is_none(),
             "non-roster peer must not inject packets onto the tun (spoofed source)",
         );
     }
