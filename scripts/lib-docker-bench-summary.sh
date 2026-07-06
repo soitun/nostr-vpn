@@ -1021,24 +1021,36 @@ docker_bench_parse_ping_loss_avg() {
 docker_bench_parse_ping_tail_stats() {
   local file="$1"
   local mdev max count p95 p99 gt1 gt2 gt10
-  mdev="$(awk -F'= ' '/round-trip|rtt min/ {split($2,a,"/"); split(a[4], b, " "); print b[1]}' "$file" | tail -n1)"
-  max="$(awk -F'= ' '/round-trip|rtt min/ {split($2,a,"/"); print a[3]}' "$file" | tail -n1)"
-  count="$(sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" | wc -l | tr -d '[:space:]')"
-  p95="$(
+  read -r max mdev <<<"$(
+    awk -F'= ' '/round-trip|rtt min/ {split($2,a,"/"); split(a[4], b, " "); print a[3], b[1]}' "$file" \
+      | tail -n1
+  )"
+  read -r count p95 p99 gt1 gt2 gt10 <<<"$(
     sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" \
       | sort -n \
-      | awk 'NF{v[++n]=$1} END{if(!n){print "null"} else {i=int((n*95+99)/100); if(i<1)i=1; if(i>n)i=n; printf "%.3f", v[i]}}'
+      | awk '
+        NF {
+          v[++n] = $1
+          if ($1 > 1) gt1 += 1
+          if ($1 > 2) gt2 += 1
+          if ($1 > 10) gt10 += 1
+        }
+        END {
+          if (!n) {
+            print "0 null null 0 0 0"
+          } else {
+            p95_idx = int((n * 95 + 99) / 100)
+            p99_idx = int((n * 99 + 99) / 100)
+            if (p95_idx < 1) p95_idx = 1
+            if (p99_idx < 1) p99_idx = 1
+            if (p95_idx > n) p95_idx = n
+            if (p99_idx > n) p99_idx = n
+            printf "%d %.3f %.3f %d %d %d\n", n, v[p95_idx], v[p99_idx], gt1 + 0, gt2 + 0, gt10 + 0
+          }
+        }'
   )"
-  p99="$(
-    sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" \
-      | sort -n \
-      | awk 'NF{v[++n]=$1} END{if(!n){print "null"} else {i=int((n*99+99)/100); if(i<1)i=1; if(i>n)i=n; printf "%.3f", v[i]}}'
-  )"
-  gt1="$(sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" | awk '$1 > 1 {c++} END{print c+0}')"
-  gt2="$(sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" | awk '$1 > 2 {c++} END{print c+0}')"
-  gt10="$(sed -nE 's/.*time[=<][[:space:]]*([0-9.]+).*/\1/p' "$file" | awk '$1 > 10 {c++} END{print c+0}')"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-    "${mdev:-null}" "$p95" "$p99" "${max:-null}" "${count:-0}" "$gt1" "$gt2" "$gt10"
+    "${mdev:-null}" "${p95:-null}" "${p99:-null}" "${max:-null}" "${count:-0}" "${gt1:-0}" "${gt2:-0}" "${gt10:-0}"
 }
 
 docker_bench_append_summary_row() {

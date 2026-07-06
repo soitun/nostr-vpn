@@ -99,7 +99,8 @@ impl FipsDirectEndpointQueue {
             .state
             .lock()
             .map_err(|_| FipsEndpointDirectDeliveryError::Unavailable)?;
-        queued.arrival = if state.waiting_consumer {
+        let wake_consumer = state.waiting_consumer;
+        queued.arrival = if wake_consumer {
             DirectEndpointQueueArrival::Wake
         } else if state.batches.is_empty() {
             DirectEndpointQueueArrival::ConsumerBusy
@@ -114,7 +115,9 @@ impl FipsDirectEndpointQueue {
             matches!(queued.arrival, DirectEndpointQueueArrival::Wake),
         );
         state.batches.push_back(queued);
-        self.ready.notify_one();
+        if wake_consumer {
+            self.ready.notify_one();
+        }
         Ok(())
     }
 
