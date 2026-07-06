@@ -127,6 +127,57 @@ tsv_value() {
     }' "$file"
 }
 
+cpu_phase_file() {
+  local summary="$1"
+  local backend="$2"
+  local threads="$3"
+  local raw_dir file
+  raw_dir="$(tsv_value "$summary" raw_dir "$backend" "$threads" 2>/dev/null || true)"
+  [[ -n "$raw_dir" ]] || return 0
+  for file in \
+    "$raw_dir/${backend}-cpu-phases.tsv" \
+    "$raw_dir/${backend}-daemon-cpu-phases.tsv" \
+    "$raw_dir/nvpn-daemon-cpu-phases.tsv" \
+    "$raw_dir"/*cpu-phases.tsv \
+    "$raw_dir"/*daemon-cpu-phases.tsv; do
+    if [[ -f "$file" ]]; then
+      printf '%s\n' "$file"
+      return 0
+    fi
+  done
+}
+
+cpu_phase_value() {
+  local summary="$1"
+  local backend="$2"
+  local threads="$3"
+  local phase="$4"
+  local field="$5"
+  local file
+  file="$(cpu_phase_file "$summary" "$backend" "$threads")"
+  [[ -n "$file" ]] || {
+    printf '\n'
+    return 0
+  }
+  awk -v phase="$phase" -v service="both" -v want="$field" -F '\t' '
+    NR == 1 {
+      for (i = 1; i <= NF; i++) {
+        if ($i == want) field_idx = i
+        if ($i == "phase") phase_idx = i
+        if ($i == "service") service_idx = i
+      }
+      next
+    }
+    field_idx && phase_idx && service_idx && $phase_idx == phase && $service_idx == service {
+      print $field_idx
+      found = 1
+      exit
+    }
+    END {
+      if (!field_idx || !found) print ""
+    }' "$file"
+}
+
 ratio_percent() {
   local actual="$1"
   local reference="$2"
@@ -263,6 +314,11 @@ write_normalized_summary_row() {
     "$(tsv_value "$source" udp_1000_loss_pct "$backend" "$threads")" \
     "$(tsv_value "$source" ping_loss_pct "$backend" "$threads")" \
     "$(tsv_value "$source" ping_avg_ms "$backend" "$threads")" \
+    "$(cpu_phase_value "$source" "$backend" "$threads" tcp-single cpu_seconds_per_gbyte)" \
+    "$(cpu_phase_value "$source" "$backend" "$threads" tcp-4 cpu_seconds_per_gbyte)" \
+    "$(cpu_phase_value "$source" "$backend" "$threads" tcp-8 cpu_seconds_per_gbyte)" \
+    "$(cpu_phase_value "$source" "$backend" "$threads" udp-200 cpu_seconds_per_gbyte)" \
+    "$(cpu_phase_value "$source" "$backend" "$threads" udp-1000 cpu_seconds_per_gbyte)" \
     "$(tsv_value "$source" raw_dir "$backend" "$threads")"
 }
 
@@ -279,6 +335,24 @@ write_metric_ratio() {
     "$metric" \
     "$unit" \
     "$better_when" \
+    "$nvpn_value" \
+    "$reference_value" \
+    "$(ratio_percent "$nvpn_value" "$reference_value")" \
+    "$(delta_value "$nvpn_value" "$reference_value")"
+}
+
+write_cpu_metric_ratio() {
+  local metric="$1"
+  local phase="$2"
+  local nvpn_summary="$3"
+  local reference_summary="$4"
+  local nvpn_value reference_value
+  nvpn_value="$(cpu_phase_value "$nvpn_summary" "$NVPN_BACKEND" "$NVPN_THREADS" "$phase" cpu_seconds_per_gbyte)"
+  reference_value="$(cpu_phase_value "$reference_summary" "$REFERENCE_BACKEND" "$REFERENCE_THREADS" "$phase" cpu_seconds_per_gbyte)"
+  write_row \
+    "$metric" \
+    sec_per_gb \
+    lower \
     "$nvpn_value" \
     "$reference_value" \
     "$(ratio_percent "$nvpn_value" "$reference_value")" \
@@ -463,7 +537,9 @@ main() {
     pipeline_trace_enabled pipeline_trace_interval_secs \
     tcp_single_mbps tcp_single_retrans tcp_4_mbps tcp_4_retrans \
     tcp_8_mbps tcp_8_retrans udp_200_mbps udp_200_loss_pct \
-    udp_1000_mbps udp_1000_loss_pct ping_loss_pct ping_avg_ms raw_dir \
+    udp_1000_mbps udp_1000_loss_pct ping_loss_pct ping_avg_ms \
+    tcp_single_cpu_sec_per_gb tcp_4_cpu_sec_per_gb tcp_8_cpu_sec_per_gb \
+    udp_200_cpu_sec_per_gb udp_1000_cpu_sec_per_gb raw_dir \
     >"$comparison_tsv"
   write_normalized_summary_row "$NVPN_LABEL" "$nvpn_summary" "$NVPN_BACKEND" "$NVPN_THREADS" "$NVPN_INPUT" >>"$comparison_tsv"
   write_normalized_summary_row "$REFERENCE_LABEL" "$reference_summary" "$REFERENCE_BACKEND" "$REFERENCE_THREADS" "$REFERENCE_INPUT" >>"$comparison_tsv"
@@ -481,6 +557,11 @@ main() {
   write_metric_ratio udp_1000_loss_pct pct lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
   write_metric_ratio ping_loss_pct pct lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
   write_metric_ratio ping_avg_ms ms lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+  write_cpu_metric_ratio tcp_single_cpu_sec_per_gb tcp-single "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+  write_cpu_metric_ratio tcp_4_cpu_sec_per_gb tcp-4 "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+  write_cpu_metric_ratio tcp_8_cpu_sec_per_gb tcp-8 "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+  write_cpu_metric_ratio udp_200_cpu_sec_per_gb udp-200 "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+  write_cpu_metric_ratio udp_1000_cpu_sec_per_gb udp-1000 "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
 
   write_row check metric status nvpn reference threshold comparison >"$thresholds_tsv"
   write_threshold_higher_pct tcp_single_throughput tcp_single_mbps "$MIN_THROUGHPUT_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
