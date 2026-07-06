@@ -159,42 +159,7 @@ impl FipsDirectEndpointQueue {
             .batches
             .pop_front()
             .ok_or(std::sync::mpsc::RecvTimeoutError::Timeout)?;
-        record_direct_endpoint_queue_residence(&queued);
-        limit_queued_direct_endpoint_runs_to_remaining(&mut queued, limit.max(1), &mut state);
-        let Some(source_node_addr) = queued.source_node_addr else {
-            crate::pipeline_profile::record_direct_endpoint_rx_batch(1, queued.packets, 1);
-            return Ok(queued.runs);
-        };
-
-        let mut packet_count = queued.packets;
-        let mut coalesced_batches = 1usize;
-        while packet_count < limit {
-            let Some(next) = state.batches.front() else {
-                break;
-            };
-            if next.source_node_addr != Some(source_node_addr) {
-                break;
-            }
-            let mut next = state
-                .batches
-                .pop_front()
-                .expect("front batch must remain present while queue lock is held");
-            record_direct_endpoint_queue_residence(&next);
-            limit_queued_direct_endpoint_runs_to_remaining(
-                &mut next,
-                limit.saturating_sub(packet_count),
-                &mut state,
-            );
-            packet_count = packet_count.saturating_add(next.packets);
-            coalesced_batches = coalesced_batches.saturating_add(1);
-            queued.runs.append(&mut next.runs);
-        }
-
-        crate::pipeline_profile::record_direct_endpoint_rx_batch(
-            queued.runs.len(),
-            packet_count,
-            coalesced_batches,
-        );
+        coalesce_limited_direct_endpoint_runs(&mut queued, limit, &mut state);
         Ok(queued.runs)
     }
 
@@ -210,16 +175,56 @@ impl FipsDirectEndpointQueue {
             .batches
             .pop_front()
             .ok_or(std::sync::mpsc::TryRecvError::Empty)?;
-        record_direct_endpoint_queue_residence(&queued);
-        limit_queued_direct_endpoint_runs_to_remaining(&mut queued, limit.max(1), &mut state);
-        crate::pipeline_profile::record_direct_endpoint_rx_batch(
-            queued.runs.len(),
-            queued.packets,
-            1,
-        );
+        coalesce_limited_direct_endpoint_runs(&mut queued, limit, &mut state);
         Ok(queued.runs)
     }
 
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn coalesce_limited_direct_endpoint_runs(
+    queued: &mut FipsDirectEndpointQueuedRuns,
+    limit: usize,
+    state: &mut FipsDirectEndpointQueueState,
+) {
+    let limit = limit.max(1);
+    record_direct_endpoint_queue_residence(queued);
+    limit_queued_direct_endpoint_runs_to_remaining(queued, limit, state);
+    let Some(source_node_addr) = queued.source_node_addr else {
+        crate::pipeline_profile::record_direct_endpoint_rx_batch(1, queued.packets, 1);
+        return;
+    };
+
+    let mut packet_count = queued.packets;
+    let mut coalesced_batches = 1usize;
+    while packet_count < limit {
+        let Some(next) = state.batches.front() else {
+            break;
+        };
+        if next.source_node_addr != Some(source_node_addr) {
+            break;
+        }
+        let mut next = state
+            .batches
+            .pop_front()
+            .expect("front batch must remain present while queue lock is held");
+        record_direct_endpoint_queue_residence(&next);
+        limit_queued_direct_endpoint_runs_to_remaining(
+            &mut next,
+            limit.saturating_sub(packet_count),
+            state,
+        );
+        packet_count = packet_count.saturating_add(next.packets);
+        coalesced_batches = coalesced_batches.saturating_add(1);
+        queued.runs.append(&mut next.runs);
+    }
+    queued.packets = packet_count;
+
+    crate::pipeline_profile::record_direct_endpoint_rx_batch(
+        queued.runs.len(),
+        packet_count,
+        coalesced_batches,
+    );
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
