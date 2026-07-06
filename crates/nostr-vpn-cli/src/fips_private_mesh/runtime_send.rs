@@ -111,7 +111,7 @@ impl FipsPrivateMeshRuntime {
     }
 
     #[cfg(test)]
-    pub(crate) async fn send_tunnel_packet_batch_owned_with_capacity(
+    pub(crate) fn send_tunnel_packet_batch_owned_with_capacity(
         &self,
         packets: Vec<Vec<u8>>,
         turn_capacity: usize,
@@ -163,7 +163,7 @@ impl FipsPrivateMeshRuntime {
 
         let _t =
             crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
-        self.send_endpoint_send_runs(runs).await
+        self.blocking_send_endpoint_send_runs(runs)
     }
 
     #[cfg(target_os = "windows")]
@@ -220,23 +220,6 @@ impl FipsPrivateMeshRuntime {
         let _t =
             crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
         self.blocking_send_endpoint_send_runs(runs.drain(..))
-    }
-
-    #[cfg(all(any(target_os = "linux", target_os = "macos"), test))]
-    async fn send_tun_pipeline_packet_turn<I>(
-        &self,
-        packets: I,
-        input_packets: usize,
-        turn_capacity: usize,
-        runs: &mut Vec<FipsEndpointSendRun>,
-    ) -> Result<usize>
-    where
-        I: IntoIterator<Item = TunPipelinePacket>,
-    {
-        self.build_tun_pipeline_send_runs(packets, input_packets, turn_capacity, runs)?;
-        let _t =
-            crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
-        self.send_endpoint_send_runs(runs.drain(..)).await
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -375,44 +358,6 @@ impl FipsPrivateMeshRuntime {
             );
             runs.push(FipsEndpointSendRun::Identity(run));
         }
-    }
-
-    #[cfg(test)]
-    async fn send_endpoint_send_runs<I>(&self, runs: I) -> Result<usize>
-    where
-        I: IntoIterator<Item = FipsEndpointSendRun>,
-    {
-        let mut sent = 0usize;
-        for run in runs {
-            match run {
-                FipsEndpointSendRun::Identity(run) => {
-                    let (
-                        participant_fallback,
-                        participant_key,
-                        identity,
-                        payloads,
-                        packet_count,
-                        bytes_len,
-                    ) = run.into_send_parts();
-                    self.endpoint
-                        .send_batch_to_peer(identity, payloads)
-                        .await
-                        .with_context(|| {
-                            format!(
-                                "failed to send {packet_count} private packets over FIPS endpoint data"
-                            )
-                        })?;
-                    self.note_tx(
-                        participant_fallback.as_deref(),
-                        participant_key.as_ref(),
-                        bytes_len,
-                    )?;
-                    sent += packet_count;
-                }
-            }
-        }
-
-        Ok(sent)
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

@@ -20,7 +20,6 @@
 
         let sent = runtime
             .send_tunnel_packet_batch_owned_with_capacity(vec![first.clone(), second.clone()], 2)
-            .await
             .expect("send packet batch");
         assert_eq!(sent, 2);
 
@@ -116,13 +115,12 @@
         let input_packets = batch.len();
         let mut send_runs = Vec::new();
         let sent = runtime
-            .send_tun_pipeline_packet_turn(
+            .blocking_send_tun_pipeline_packet_turn(
                 batch.drain(..),
                 input_packets,
                 input_packets,
                 &mut send_runs,
             )
-            .await
             .expect("send TUN pipeline packet batch");
         assert_eq!(sent, 2);
         assert!(batch.is_empty());
@@ -175,7 +173,6 @@
                 vec![first.clone(), second.clone(), third.clone()],
                 3,
             )
-            .await
             .expect("send packet batch");
         assert_eq!(sent, 3);
 
