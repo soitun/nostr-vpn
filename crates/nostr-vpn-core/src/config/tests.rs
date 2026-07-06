@@ -155,6 +155,37 @@ mod tests {
         );
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn load_rejects_mismatched_nostr_secret_sidecar() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-mismatched-nostr-secret-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("config.toml");
+        let sidecar = dir.join(".config.toml.nostr-secret-key.secret");
+        let config = AppConfig::generated();
+        let (wrong_secret, _) = generate_nostr_identity();
+
+        config.save_plaintext(&path).expect("save protected config");
+        std::fs::write(&sidecar, wrong_secret).expect("replace sidecar secret");
+
+        let error = AppConfig::load(&path).expect_err("mismatched sidecar should fail");
+
+        assert!(
+            error
+                .to_string()
+                .contains("mismatched Nostr identity"),
+            "{error}"
+        );
+        let _ = AppConfig::delete_persisted_secrets_for_path(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn save_rejects_unsupported_secret_markers() {
         let nonce = std::time::SystemTime::now()

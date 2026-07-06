@@ -2,6 +2,7 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, anyhow};
+use nostr_sdk::prelude::Keys;
 #[cfg(any(target_os = "ios", target_os = "android"))]
 use sha2::{Digest as _, Sha256};
 
@@ -132,6 +133,32 @@ fn hydrate_config_secret_fields(path: &Path, config: &mut AppConfig) -> Result<(
         ));
     }
 
+    validate_nostr_secret_matches_public_key(path, config)?;
+    Ok(())
+}
+
+fn validate_nostr_secret_matches_public_key(path: &Path, config: &AppConfig) -> Result<()> {
+    let public_key = match normalize_nostr_pubkey(&config.nostr.public_key) {
+        Ok(public_key) => public_key,
+        Err(_) => return Ok(()),
+    };
+    let secret_key = config.nostr.secret_key.trim();
+    if secret_key.is_empty() || is_redacted_secret(secret_key) {
+        return Ok(());
+    }
+    let keys = Keys::parse(secret_key).with_context(|| {
+        format!(
+            "config {} has a Nostr public key but its secret key is invalid",
+            path.display()
+        )
+    })?;
+    let derived_public_key = keys.public_key().to_hex();
+    if derived_public_key != public_key {
+        return Err(anyhow!(
+            "config {} has mismatched Nostr identity: secret key derives to a different public key than nostr.public_key; refusing to run with split identity",
+            path.display()
+        ));
+    }
     Ok(())
 }
 
