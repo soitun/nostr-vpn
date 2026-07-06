@@ -328,20 +328,14 @@
         );
         assert!(
             exit_runtime
-                .receive_endpoint_data_from_node_addr(
-                    message.source_peer.node_addr().as_bytes(),
-                    &message.data,
-                )
-                .is_some(),
+                .endpoint_source_admitter(message.source_peer.node_addr().as_bytes())
+                .is_some_and(|admitter| admitter.admit_packet(&message.data)),
             "a FIPS exit node with a local default route should admit the first forwarded packet"
         );
         assert!(
             exit_runtime
-                .receive_endpoint_data_from_node_addr(
-                    message_two.source_peer.node_addr().as_bytes(),
-                    &message_two.data,
-                )
-                .is_some(),
+                .endpoint_source_admitter(message_two.source_peer.node_addr().as_bytes())
+                .is_some_and(|admitter| admitter.admit_packet(&message_two.data)),
             "a FIPS exit node with a local default route should admit the second forwarded packet"
         );
         let reply = test_ipv4_packet(Ipv4Addr::new(203, 0, 113, 45), client_tunnel_ip);

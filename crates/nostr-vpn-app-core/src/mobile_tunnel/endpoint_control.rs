@@ -98,19 +98,19 @@ async fn handle_mobile_endpoint_message(
     let source_node_addr = *message.source_peer.node_addr();
     let message_len = message.data.len();
     let packet = mesh.read().ok().and_then(|mesh| {
-        mesh.receive_endpoint_data_owned_from_node_addr(
+        mesh.receive_endpoint_data_owned_with_source_node_addr(
             source_node_addr.as_bytes(),
-            message.data.into(),
+            Vec::<u8>::from(message.data),
         )
+        .map(|packet| (packet.source_pubkey.to_string(), packet.bytes))
     });
-    if let Some(packet) = packet {
+    if let Some((source_pubkey, mut bytes)) = packet {
         note_mobile_peer_rx(
             presence,
-            &packet.source_pubkey,
+            &source_pubkey,
             message_len,
             MobilePeerRxKind::Data,
         );
-        let mut bytes = packet.bytes;
         nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(&mut bytes);
         inbound_packets.push(bytes);
     }

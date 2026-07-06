@@ -1056,6 +1056,14 @@ destination: 192.168.178.57
         let roster_pubkey = roster_peer.public_key().to_hex();
         let roster_npub = roster_peer.public_key().to_bech32().expect("roster npub");
         let stranger_npub = stranger.public_key().to_bech32().expect("stranger npub");
+        let roster_node_addr = *PeerIdentity::from_npub(&roster_npub)
+            .expect("roster endpoint identity")
+            .node_addr()
+            .as_bytes();
+        let stranger_node_addr = *PeerIdentity::from_npub(&stranger_npub)
+            .expect("stranger endpoint identity")
+            .node_addr()
+            .as_bytes();
 
         let mesh_peer = FipsMeshPeerConfig::from_participant_pubkey(
             &roster_pubkey,
@@ -1088,8 +1096,8 @@ destination: 192.168.178.57
         packet[12..16].copy_from_slice(&[10, 44, 1, 2]);
         packet[16..20].copy_from_slice(&[10, 44, 1, 1]);
         assert!(
-            mesh.receive_endpoint_data(Some(&roster_npub), &packet)
-                .is_some(),
+            mesh.endpoint_source_admitter(&roster_node_addr)
+                .is_some_and(|admitter| admitter.admit_packet(&packet)),
             "roster peer's owned source IP must be admitted",
         );
 
@@ -1097,16 +1105,15 @@ destination: 192.168.178.57
         // still cannot inject anything onto our tun, regardless of inner
         // source IP.
         assert!(
-            mesh.receive_endpoint_data(Some(&stranger_npub), &packet)
-                .is_none(),
+            mesh.endpoint_source_admitter(&stranger_node_addr).is_none(),
             "non-roster peer must not inject packets onto the tun",
         );
 
         let mut spoofed = packet.clone();
         spoofed[12..16].copy_from_slice(&[203, 0, 113, 9]);
         assert!(
-            mesh.receive_endpoint_data(Some(&stranger_npub), &spoofed)
-                .is_none(),
+            mesh.endpoint_source_admitter(&stranger_node_addr)
+                .is_none_or(|admitter| !admitter.admit_packet(&spoofed)),
             "non-roster peer must not inject packets onto the tun (spoofed source)",
         );
     }

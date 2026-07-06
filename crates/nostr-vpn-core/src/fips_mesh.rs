@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::config::normalize_nostr_pubkey;
-use crate::data_plane::{MeshPeerStatus, PrivatePacket};
+use crate::data_plane::MeshPeerStatus;
 #[cfg(feature = "paid-exit")]
 use crate::paid_route_store::PaidRouteSellerAdmission;
 use crate::paid_routes::PaidRouteAccessState;
@@ -39,13 +39,6 @@ impl FipsMeshPeerConfig {
             .iter()
             .any(|route| matches!(route.trim(), "0.0.0.0/0" | "::/0"))
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutgoingFipsPacket {
-    pub participant_pubkey: String,
-    pub endpoint_npub: String,
-    pub bytes: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,7 +140,6 @@ pub struct FipsMeshRuntime {
     paid_route_peers: Vec<FipsMeshPeerRuntime>,
     paid_route_routing_peers: Vec<FipsMeshPeerRuntime>,
     participant_peer_index: HashMap<[u8; 32], usize>,
-    endpoint_pubkey_peer_index: HashMap<[u8; 32], usize>,
     endpoint_node_addr_peer_index: HashMap<[u8; 16], usize>,
     exact_route_peer_index: HashMap<IpAddr, ExactRouteMatch>,
     prefix_v4_route_peer_index: Vec<IndexedIpRoute>,
@@ -234,8 +226,7 @@ impl FipsMeshRuntime {
             })
             .collect::<Vec<_>>();
         let participant_peer_index = participant_peer_index(&peers);
-        let (endpoint_pubkey_peer_index, endpoint_node_addr_peer_index) =
-            endpoint_peer_indexes(&peers);
+        let endpoint_node_addr_peer_index = endpoint_node_addr_peer_index(&peers);
         let exact_route_peer_index = exact_route_peer_index(&peers);
         let (prefix_v4_route_peer_index, prefix_v6_route_peer_index) =
             prefix_route_peer_indexes(&peers);
@@ -259,7 +250,6 @@ impl FipsMeshRuntime {
             paid_route_peers,
             paid_route_routing_peers,
             participant_peer_index,
-            endpoint_pubkey_peer_index,
             endpoint_node_addr_peer_index,
             exact_route_peer_index,
             prefix_v4_route_peer_index,
@@ -278,28 +268,6 @@ impl FipsMeshRuntime {
             paid_route_peers_from_admissions(&self.paid_route_admissions, false);
         self.paid_route_routing_peers =
             paid_route_peers_from_admissions(&self.paid_route_admissions, true);
-    }
-
-    pub fn route_outbound_packet(&self, packet: &[u8]) -> Option<OutgoingFipsPacket> {
-        let peer = self.route_outbound_peer(packet)?;
-        let endpoint_npub = peer.endpoint_npub.clone()?;
-
-        Some(OutgoingFipsPacket {
-            participant_pubkey: peer.participant_pubkey_hex.clone(),
-            endpoint_npub,
-            bytes: packet.to_vec(),
-        })
-    }
-
-    pub fn route_outbound_packet_owned(&self, packet: Vec<u8>) -> Option<OutgoingFipsPacket> {
-        let peer = self.route_outbound_peer(&packet)?;
-        let endpoint_npub = peer.endpoint_npub.clone()?;
-
-        Some(OutgoingFipsPacket {
-            participant_pubkey: peer.participant_pubkey_hex.clone(),
-            endpoint_npub,
-            bytes: packet,
-        })
     }
 
     pub fn route_outbound_packet_peer<'a>(&'a self, packet: &[u8]) -> Option<RoutedFipsPeer<'a>> {
@@ -349,72 +317,6 @@ impl FipsMeshRuntime {
         self.select_peer_for_ip(destination)
     }
 
-    pub fn receive_endpoint_data(
-        &self,
-        source_npub: Option<&str>,
-        data: &[u8],
-    ) -> Option<PrivatePacket> {
-        let peer = self.admit_endpoint_data(source_npub, data)?;
-
-        Some(PrivatePacket {
-            source_pubkey: peer.participant_pubkey_hex.clone(),
-            bytes: data.to_vec(),
-        })
-    }
-
-    pub fn receive_endpoint_data_owned(
-        &self,
-        source_npub: Option<&str>,
-        data: Vec<u8>,
-    ) -> Option<PrivatePacket> {
-        let peer = self.admit_endpoint_data(source_npub, &data)?;
-
-        Some(PrivatePacket {
-            source_pubkey: peer.participant_pubkey_hex.clone(),
-            bytes: data,
-        })
-    }
-
-    pub fn receive_endpoint_data_owned_with_source<'a>(
-        &'a self,
-        source_npub: Option<&str>,
-        data: Vec<u8>,
-    ) -> Option<AcceptedFipsPacket<'a>> {
-        let peer = self.admit_endpoint_data(source_npub, &data)?;
-
-        Some(AcceptedFipsPacket {
-            source_pubkey: &peer.participant_pubkey_hex,
-            source_pubkey_bytes: peer.participant_pubkey.as_ref(),
-            bytes: data,
-        })
-    }
-
-    pub fn receive_endpoint_data_from_node_addr(
-        &self,
-        source_node_addr: &[u8; 16],
-        data: &[u8],
-    ) -> Option<PrivatePacket> {
-        let peer = self.admit_endpoint_data_from_node_addr(source_node_addr, data)?;
-
-        Some(PrivatePacket {
-            source_pubkey: peer.participant_pubkey_hex.clone(),
-            bytes: data.to_vec(),
-        })
-    }
-
-    pub fn receive_endpoint_data_owned_from_node_addr(
-        &self,
-        source_node_addr: &[u8; 16],
-        data: Vec<u8>,
-    ) -> Option<PrivatePacket> {
-        let peer = self.admit_endpoint_data_from_node_addr(source_node_addr, &data)?;
-
-        Some(PrivatePacket {
-            source_pubkey: peer.participant_pubkey_hex.clone(),
-            bytes: data,
-        })
-    }
-
     pub fn receive_endpoint_data_owned_with_source_node_addr<'a, B>(
         &'a self,
         source_node_addr: &[u8; 16],
@@ -436,32 +338,6 @@ impl FipsMeshRuntime {
             runtime: self,
             peer,
         })
-    }
-
-    fn admit_endpoint_data(
-        &self,
-        source_npub: Option<&str>,
-        data: &[u8],
-    ) -> Option<&FipsMeshPeerRuntime> {
-        let source_pubkey = parse_nostr_pubkey_bytes(source_npub?)?;
-        let packet_source = packet_source(data)?;
-        let peer = self.select_peer_for_ip(packet_source)?;
-        if peer.endpoint_pubkey.as_ref()? != &source_pubkey {
-            return None;
-        }
-        let packet_destination = packet_destination(data)?;
-        if !self.peer_allows_inbound_destination(peer, packet_destination) {
-            return None;
-        }
-        Some(peer)
-    }
-
-    fn admit_endpoint_data_from_node_addr(
-        &self,
-        source_node_addr: &[u8; 16],
-        data: &[u8],
-    ) -> Option<&FipsMeshPeerRuntime> {
-        self.endpoint_source_admitter(source_node_addr)?.admit(data)
     }
 
     pub fn peer_statuses(&self) -> Vec<MeshPeerStatus> {
@@ -502,12 +378,6 @@ impl FipsMeshRuntime {
             .collect()
     }
 
-    pub fn participant_for_endpoint_npub(&self, endpoint_npub: &str) -> Option<String> {
-        let source_pubkey = parse_nostr_pubkey_bytes(endpoint_npub)?;
-        self.peer_for_endpoint_pubkey(&source_pubkey)
-            .map(|peer| peer.participant_pubkey_hex.clone())
-    }
-
     pub fn participant_for_endpoint_node_addr(
         &self,
         endpoint_node_addr: &[u8; 16],
@@ -522,14 +392,6 @@ impl FipsMeshRuntime {
     ) -> Option<[u8; 32]> {
         self.peer_for_endpoint_node_addr(endpoint_node_addr)
             .and_then(|peer| peer.participant_pubkey)
-    }
-
-    pub fn peer_endpoint_npub(&self, participant_pubkey: &str) -> Option<String> {
-        let participant_pubkey = parse_nostr_pubkey_bytes(participant_pubkey)?;
-        let peer_index = *self.participant_peer_index.get(&participant_pubkey)?;
-        self.peers
-            .get(peer_index)
-            .and_then(|peer| peer.endpoint_npub.clone())
     }
 
     pub fn peer_endpoint_node_addr(&self, participant_pubkey: &str) -> Option<[u8; 16]> {
@@ -556,17 +418,6 @@ impl FipsMeshRuntime {
             }
         }
         pubkeys
-    }
-
-    fn peer_for_endpoint_pubkey(&self, endpoint_pubkey: &[u8; 32]) -> Option<&FipsMeshPeerRuntime> {
-        self.endpoint_pubkey_peer_index
-            .get(endpoint_pubkey)
-            .and_then(|peer_index| self.peers.get(*peer_index))
-            .or_else(|| {
-                self.paid_route_peers
-                    .iter()
-                    .find(|peer| peer.endpoint_pubkey.as_ref() == Some(endpoint_pubkey))
-            })
     }
 
     fn peer_for_endpoint_node_addr(
@@ -804,7 +655,9 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
     }
 
     fn peer_allows_inbound_source(&self, source: IpAddr) -> bool {
-        self.peer.routes.iter().any(|route| route.matches(source))
+        self.runtime
+            .select_peer_for_ip(source)
+            .is_some_and(|peer| same_participant(peer, self.peer))
     }
 }
 

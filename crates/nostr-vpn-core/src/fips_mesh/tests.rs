@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    fn runtime_caches_canonical_endpoint_npub_for_edge_apis() {
+    fn runtime_caches_canonical_endpoint_npub_for_status_and_routes() {
         let peer = TestPeer::generate();
         let packet = ipv4_packet(Ipv4Addr::new(10, 44, 10, 1), Ipv4Addr::new(10, 44, 22, 44));
         let runtime = FipsMeshRuntime::new(vec![FipsMeshPeerConfig {
@@ -134,22 +134,15 @@ mod tests {
             allowed_ips: vec!["10.44.22.44/32".to_string()],
         }]);
 
+        let routed = runtime
+            .route_outbound_packet_peer(&packet)
+            .expect("packet should route");
         assert_eq!(
-            runtime.peer_endpoint_npub(&peer.participant_pubkey),
-            Some(peer.endpoint_npub.clone())
-        );
-        assert_eq!(
-            runtime.participant_for_endpoint_npub(&peer.endpoint_npub),
-            Some(peer.participant_pubkey.clone())
-        );
-        assert_eq!(runtime.peer_statuses()[0].endpoint_npub, peer.endpoint_npub);
-        assert_eq!(
-            runtime
-                .route_outbound_packet(&packet)
-                .expect("packet should route")
-                .endpoint_npub,
+            runtime.peer_statuses()[0].endpoint_npub,
             peer.endpoint_npub
         );
+        assert_eq!(routed.endpoint_pubkey, &peer.endpoint_pubkey);
+        assert_eq!(routed.endpoint_node_addr, &peer.endpoint_node_addr);
     }
 
     #[test]
@@ -231,16 +224,8 @@ mod tests {
         ]);
 
         assert_eq!(
-            runtime.peer_endpoint_npub(&first.participant_pubkey),
-            Some(first.endpoint_npub.clone())
-        );
-        assert_eq!(
             runtime.peer_endpoint_node_addr(&first.participant_pubkey),
             Some(first.endpoint_node_addr)
-        );
-        assert_eq!(
-            runtime.participant_for_endpoint_npub(&first.endpoint_npub),
-            Some(first.participant_pubkey.clone())
         );
         assert_eq!(
             runtime.participant_for_endpoint_node_addr(&first.endpoint_node_addr),
@@ -265,10 +250,6 @@ mod tests {
 
         assert_eq!(runtime.peer_pubkeys(), vec![buyer.participant_pubkey.clone()]);
         assert_eq!(
-            runtime.participant_for_endpoint_npub(&buyer.endpoint_npub),
-            Some(buyer.participant_pubkey.clone())
-        );
-        assert_eq!(
             runtime.participant_for_endpoint_node_addr(&buyer.endpoint_node_addr),
             Some(buyer.participant_pubkey.clone())
         );
@@ -281,10 +262,11 @@ mod tests {
             Some(buyer.endpoint_node_addr)
         );
 
-        let received = runtime
-            .receive_endpoint_data_from_node_addr(&buyer.endpoint_node_addr, &packet)
+        let admitter = runtime
+            .endpoint_source_admitter(&buyer.endpoint_node_addr)
             .expect("paid buyer source should be admitted to the seller exit route");
-        assert_eq!(received.source_pubkey, buyer.participant_pubkey);
+        assert_eq!(admitter.source_pubkey(), buyer.participant_pubkey);
+        assert!(admitter.admit_packet(&packet));
 
         let routed = runtime
             .route_outbound_packet_with_peer(&reply)
@@ -311,16 +293,15 @@ mod tests {
             )],
         );
 
+        let admitter = runtime
+            .endpoint_source_admitter(&buyer.endpoint_node_addr)
+            .expect("paid buyer should have a FIPS source identity");
         assert!(
-            runtime
-                .receive_endpoint_data_from_node_addr(&buyer.endpoint_node_addr, &packet)
-                .is_some(),
+            admitter.admit_packet(&packet),
             "paid destination routes should admit exit traffic without advertising a free default route",
         );
         assert!(
-            runtime
-                .receive_endpoint_data_from_node_addr(&buyer.endpoint_node_addr, &spoofed)
-                .is_none(),
+            !admitter.admit_packet(&spoofed),
             "paid destination routes must not loosen the buyer source-IP gate",
         );
     }
@@ -345,11 +326,6 @@ mod tests {
             .expect("unpaid buyer still has a FIPS source identity");
         assert_eq!(admitter.source_pubkey(), buyer.participant_pubkey);
         assert!(!admitter.admit_packet(&packet));
-        assert!(
-            runtime
-                .receive_endpoint_data_from_node_addr(&buyer.endpoint_node_addr, &packet)
-                .is_none()
-        );
         assert!(
             runtime.route_outbound_packet_with_peer(&reply).is_none(),
             "allow_routing=false must not install a raw route to the paid buyer"
@@ -404,28 +380,12 @@ mod tests {
 
         assert_eq!(runtime.exact_route_peer_index.len(), 1);
         let outgoing = runtime
-            .route_outbound_packet(&packet)
-            .expect("packet should route");
-
-        assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
-        assert_eq!(outgoing.endpoint_npub, specific.endpoint_npub);
-        assert_eq!(outgoing.bytes, packet);
-
-        let outgoing = runtime
             .route_outbound_packet_with_peer(&packet)
             .expect("borrowed-peer packet should route");
 
         assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
         assert_eq!(outgoing.endpoint_pubkey, &specific.endpoint_pubkey);
         assert_eq!(outgoing.endpoint_node_addr, &specific.endpoint_node_addr);
-        assert_eq!(outgoing.bytes, packet);
-
-        let outgoing = runtime
-            .route_outbound_packet_owned(packet.clone())
-            .expect("owned packet should route");
-
-        assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
-        assert_eq!(outgoing.endpoint_npub, specific.endpoint_npub);
         assert_eq!(outgoing.bytes, packet);
 
         let outgoing = runtime
@@ -547,18 +507,17 @@ mod tests {
         }]);
 
         let outgoing = runtime
-            .route_outbound_packet(&packet)
+            .route_outbound_packet_with_peer(&packet)
             .expect("duplicate same-peer route should still route");
 
         assert_eq!(outgoing.participant_pubkey, peer.participant_pubkey);
-        assert_eq!(outgoing.endpoint_npub, peer.endpoint_npub);
+        assert_eq!(outgoing.endpoint_node_addr, &peer.endpoint_node_addr);
     }
 
     #[test]
     fn outbound_packet_without_route_is_dropped() {
         let packet = ipv4_packet(Ipv4Addr::new(10, 44, 10, 1), Ipv4Addr::new(192, 0, 2, 10));
 
-        assert!(runtime().route_outbound_packet(&packet).is_none());
         assert!(runtime().route_outbound_packet_peer(&packet).is_none());
     }
 
@@ -572,40 +531,12 @@ mod tests {
             allowed_ips: vec!["10.44.22.44/32".to_string()],
         }]);
 
-        let received = runtime
-            .receive_endpoint_data(Some(&peer.endpoint_npub), &packet)
-            .expect("source npub and packet source should be admitted");
-
-        assert_eq!(received.source_pubkey, peer.participant_pubkey);
-        assert_eq!(received.bytes, packet);
-
-        let received = runtime
-            .receive_endpoint_data_owned(Some(&peer.endpoint_npub), packet.clone())
-            .expect("owned source npub and packet source should be admitted");
-
-        assert_eq!(received.source_pubkey, peer.participant_pubkey);
-        assert_eq!(received.bytes, packet);
-
-        let received = runtime
-            .receive_endpoint_data_owned_with_source(Some(&peer.endpoint_npub), packet.clone())
-            .expect("borrowed-source npub and packet source should be admitted");
-
-        assert_eq!(received.source_pubkey, peer.participant_pubkey);
-        assert_eq!(received.bytes, packet);
-
-        let received = runtime
-            .receive_endpoint_data_from_node_addr(&peer.endpoint_node_addr, &packet)
-            .expect("source node addr and packet source should be admitted");
-
-        assert_eq!(received.source_pubkey, peer.participant_pubkey);
-        assert_eq!(received.bytes, packet);
-
-        let received = runtime
-            .receive_endpoint_data_owned_from_node_addr(&peer.endpoint_node_addr, packet.clone())
-            .expect("owned source node addr and packet source should be admitted");
-
-        assert_eq!(received.source_pubkey, peer.participant_pubkey);
-        assert_eq!(received.bytes, packet);
+        let admitter = runtime
+            .endpoint_source_admitter(&peer.endpoint_node_addr)
+            .expect("source endpoint should be configured");
+        assert_eq!(admitter.source_pubkey(), peer.participant_pubkey);
+        assert_eq!(admitter.source_pubkey_bytes(), Some(&peer.endpoint_pubkey));
+        assert!(admitter.admit_packet(&packet));
 
         let received = runtime
             .receive_endpoint_data_owned_with_source_node_addr(
@@ -646,29 +577,12 @@ mod tests {
     }
 
     #[test]
-    fn inbound_endpoint_data_drops_unknown_source_npub() {
-        let packet = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(10, 44, 10, 1));
-
-        assert!(
-            runtime()
-                .receive_endpoint_data(Some("npub1unknown"), &packet)
-                .is_none()
-        );
-    }
-
-    #[test]
     fn inbound_endpoint_data_drops_unknown_source_node_addr() {
-        let packet = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(10, 44, 10, 1));
-
-        assert!(
-            runtime()
-                .receive_endpoint_data_from_node_addr(&[7_u8; 16], &packet)
-                .is_none()
-        );
+        assert!(runtime().endpoint_source_admitter(&[7_u8; 16]).is_none());
     }
 
     #[test]
-    fn inbound_endpoint_data_drops_known_npub_with_unowned_packet_source() {
+    fn inbound_endpoint_data_drops_known_source_with_unowned_packet_source() {
         let peer = TestPeer::generate();
         let packet = ipv4_packet(Ipv4Addr::new(192, 0, 2, 10), Ipv4Addr::new(10, 44, 10, 1));
         let runtime = FipsMeshRuntime::new(vec![FipsMeshPeerConfig {
@@ -677,11 +591,10 @@ mod tests {
             allowed_ips: vec!["10.44.22.44/32".to_string()],
         }]);
 
-        assert!(
-            runtime
-                .receive_endpoint_data(Some(&peer.endpoint_npub), &packet)
-                .is_none()
-        );
+        let admitter = runtime
+            .endpoint_source_admitter(&peer.endpoint_node_addr)
+            .expect("source endpoint should be configured");
+        assert!(!admitter.admit_packet(&packet));
     }
 
     #[test]
@@ -702,11 +615,10 @@ mod tests {
             },
         ]);
 
-        assert!(
-            runtime
-                .receive_endpoint_data(Some(&general.endpoint_npub), &packet)
-                .is_none()
-        );
+        let admitter = runtime
+            .endpoint_source_admitter(&general.endpoint_node_addr)
+            .expect("general endpoint should be configured");
+        assert!(!admitter.admit_packet(&packet));
     }
 
     #[test]
@@ -727,12 +639,7 @@ mod tests {
             },
         ]);
 
-        assert!(runtime.route_outbound_packet(&packet).is_none());
-        assert!(
-            runtime
-                .receive_endpoint_data(Some(&first.endpoint_npub), &packet)
-                .is_none()
-        );
+        assert!(runtime.route_outbound_packet_peer(&packet).is_none());
     }
 
     #[test]
@@ -755,12 +662,7 @@ mod tests {
             },
         ]);
 
-        assert!(runtime.route_outbound_packet(&packet).is_none());
-        assert!(
-            runtime
-                .receive_endpoint_data(Some(&first.endpoint_npub), &packet)
-                .is_none()
-        );
+        assert!(runtime.route_outbound_packet_peer(&packet).is_none());
     }
 
     #[test]
@@ -777,16 +679,11 @@ mod tests {
         let admitted = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(10, 44, 10, 1));
         let rejected = ipv4_packet(Ipv4Addr::new(10, 44, 22, 44), Ipv4Addr::new(10, 44, 10, 2));
 
-        assert!(
-            runtime
-                .receive_endpoint_data(Some(&peer.endpoint_npub), &admitted)
-                .is_some()
-        );
-        assert!(
-            runtime
-                .receive_endpoint_data(Some(&peer.endpoint_npub), &rejected)
-                .is_none()
-        );
+        let admitter = runtime
+            .endpoint_source_admitter(&peer.endpoint_node_addr)
+            .expect("source endpoint should be configured");
+        assert!(admitter.admit_packet(&admitted));
+        assert!(!admitter.admit_packet(&rejected));
     }
 
     #[test]
@@ -805,11 +702,10 @@ mod tests {
             Ipv4Addr::new(203, 0, 113, 10),
         );
 
-        assert!(
-            runtime
-                .receive_endpoint_data(Some(&peer.endpoint_npub), &packet)
-                .is_some()
-        );
+        let admitter = runtime
+            .endpoint_source_admitter(&peer.endpoint_node_addr)
+            .expect("source endpoint should be configured");
+        assert!(admitter.admit_packet(&packet));
     }
 
     #[test]
@@ -831,24 +727,28 @@ mod tests {
 
         let alice_to_bob = ipv4_packet(alice_ip, bob_ip);
         let outgoing = alice_runtime
-            .route_outbound_packet(&alice_to_bob)
+            .route_outbound_packet_with_peer(&alice_to_bob)
             .expect("Alice should route packet to Bob");
         assert_eq!(outgoing.participant_pubkey, bob.participant_pubkey);
-        assert_eq!(outgoing.endpoint_npub, bob.endpoint_npub);
         let received = bob_runtime
-            .receive_endpoint_data(Some(&alice.endpoint_npub), &outgoing.bytes)
+            .receive_endpoint_data_owned_with_source_node_addr(
+                &alice.endpoint_node_addr,
+                outgoing.bytes,
+            )
             .expect("Bob should admit Alice's owned source IP");
         assert_eq!(received.source_pubkey, alice.participant_pubkey);
         assert_eq!(received.bytes, alice_to_bob);
 
         let bob_to_alice = ipv4_packet(bob_ip, alice_ip);
         let outgoing = bob_runtime
-            .route_outbound_packet(&bob_to_alice)
+            .route_outbound_packet_with_peer(&bob_to_alice)
             .expect("Bob should route packet to Alice");
         assert_eq!(outgoing.participant_pubkey, alice.participant_pubkey);
-        assert_eq!(outgoing.endpoint_npub, alice.endpoint_npub);
         let received = alice_runtime
-            .receive_endpoint_data(Some(&bob.endpoint_npub), &outgoing.bytes)
+            .receive_endpoint_data_owned_with_source_node_addr(
+                &bob.endpoint_node_addr,
+                outgoing.bytes,
+            )
             .expect("Alice should admit Bob's owned source IP");
         assert_eq!(received.source_pubkey, bob.participant_pubkey);
         assert_eq!(received.bytes, bob_to_alice);
@@ -868,14 +768,13 @@ mod tests {
         );
 
         let outgoing = runtime
-            .route_outbound_packet(&packet)
+            .route_outbound_packet_with_peer(&packet)
             .expect("IPv6 packet should route");
         let received = runtime
-            .receive_endpoint_data(Some(&peer.endpoint_npub), &packet)
+            .receive_endpoint_data_owned_with_source_node_addr(&peer.endpoint_node_addr, packet)
             .expect("IPv6 source should be admitted");
 
-        assert_eq!(outgoing.endpoint_npub, peer.endpoint_npub);
-        assert_eq!(outgoing.bytes, packet);
+        assert_eq!(outgoing.endpoint_node_addr, &peer.endpoint_node_addr);
         assert_eq!(received.source_pubkey, peer.participant_pubkey);
     }
 }

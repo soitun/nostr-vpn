@@ -152,20 +152,14 @@ fn participant_peer_index(peers: &[FipsMeshPeerRuntime]) -> HashMap<[u8; 32], us
     index
 }
 
-fn endpoint_peer_indexes(
-    peers: &[FipsMeshPeerRuntime],
-) -> (HashMap<[u8; 32], usize>, HashMap<[u8; 16], usize>) {
-    let mut pubkeys = HashMap::new();
+fn endpoint_node_addr_peer_index(peers: &[FipsMeshPeerRuntime]) -> HashMap<[u8; 16], usize> {
     let mut node_addrs = HashMap::new();
     for (peer_index, peer) in peers.iter().enumerate() {
-        if let Some(endpoint_pubkey) = peer.endpoint_pubkey {
-            pubkeys.entry(endpoint_pubkey).or_insert(peer_index);
-        }
         if let Some(endpoint_node_addr) = peer.endpoint_node_addr {
             node_addrs.entry(endpoint_node_addr).or_insert(peer_index);
         }
     }
-    (pubkeys, node_addrs)
+    node_addrs
 }
 
 fn exact_route_peer_index(peers: &[FipsMeshPeerRuntime]) -> HashMap<IpAddr, ExactRouteMatch> {
