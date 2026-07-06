@@ -403,17 +403,28 @@
                 .send_control_frame(&carol_pubkey, &frame)
                 .await;
 
-            let _ = tokio::time::timeout(Duration::from_millis(50), carol_runtime.recv_mesh_event())
-                .await;
+            let _ = tokio::time::timeout(
+                Duration::from_millis(50),
+                carol_runtime.recv_mesh_event_batch(1),
+            )
+            .await;
 
-            let alice_event =
-                tokio::time::timeout(Duration::from_millis(50), alice_runtime.recv_mesh_event())
-                    .await;
+            let alice_event = tokio::time::timeout(
+                Duration::from_millis(50),
+                alice_runtime.recv_mesh_event_batch(1),
+            )
+            .await;
 
-            if let Ok(Ok(Some(FipsPrivateMeshEvent::Presence {
-                participant_pubkey, ..
-            }))) = alice_event
-                && participant_pubkey == carol_pubkey
+            if let Ok(Ok(Some(events))) = alice_event
+                && events.into_iter().any(|event| {
+                    matches!(
+                        event,
+                        FipsPrivateMeshEvent::Presence {
+                            participant_pubkey,
+                            ..
+                        } if participant_pubkey == carol_pubkey
+                    )
+                })
             {
                 alice_saw_carol = true;
                 break;

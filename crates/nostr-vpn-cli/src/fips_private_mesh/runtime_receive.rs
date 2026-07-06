@@ -1,40 +1,4 @@
 impl FipsPrivateMeshRuntime {
-    #[cfg(test)]
-    pub(crate) async fn recv_mesh_event(&self) -> Result<Option<FipsPrivateMeshEvent>> {
-        loop {
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            {
-                self.drain_direct_endpoint_mesh_events(1).await?;
-                if let Some(event) = self.pop_direct_endpoint_mesh_event()? {
-                    return Ok(Some(event));
-                }
-
-                match tokio::time::timeout(Duration::from_millis(10), self.endpoint.recv()).await {
-                    Ok(Some(message)) => {
-                        if let Some(event) =
-                            self.endpoint_message_to_mesh_event(message, None).await?
-                        {
-                            return Ok(Some(event));
-                        }
-                    }
-                    Ok(None) => return Ok(None),
-                    Err(_) => continue,
-                }
-            }
-
-            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            {
-                let Some(message) = self.endpoint.recv().await else {
-                    return Ok(None);
-                };
-
-                if let Some(event) = self.endpoint_message_to_mesh_event(message, None).await? {
-                    return Ok(Some(event));
-                }
-            }
-        }
-    }
-
     #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
     pub(crate) async fn recv_mesh_event_batch(
         &self,
@@ -477,15 +441,6 @@ impl FipsPrivateMeshRuntime {
             }
         }
         Ok(())
-    }
-
-    #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
-    fn pop_direct_endpoint_mesh_event(&self) -> Result<Option<FipsPrivateMeshEvent>> {
-        Ok(self
-            .direct_endpoint_pending_events
-            .lock()
-            .map_err(|_| anyhow!("FIPS direct endpoint event queue lock poisoned"))?
-            .pop_front())
     }
 
     #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
