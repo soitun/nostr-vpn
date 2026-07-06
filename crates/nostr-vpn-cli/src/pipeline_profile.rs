@@ -6,7 +6,7 @@ use std::sync::atomic::{
 use std::time::Instant;
 
 const N_STAGES: usize = 13;
-const N_COUNTERS: usize = 39;
+const N_COUNTERS: usize = 41;
 const HIST_BUCKETS: usize = 48;
 
 #[derive(Copy, Clone)]
@@ -89,6 +89,8 @@ pub(crate) enum Counter {
     DirectEndpointRxRuns = 36,
     DirectEndpointRxPackets = 37,
     DirectEndpointRxCoalescedBatches = 38,
+    DirectEndpointRxLimitSplits = 39,
+    DirectEndpointRxLimitTailPackets = 40,
 }
 
 impl Counter {
@@ -141,6 +143,10 @@ impl Counter {
             Counter::DirectEndpointRxCoalescedBatches => {
                 "nvpn_direct_endpoint_rx_coalesced_batches"
             }
+            Counter::DirectEndpointRxLimitSplits => "nvpn_direct_endpoint_rx_limit_splits",
+            Counter::DirectEndpointRxLimitTailPackets => {
+                "nvpn_direct_endpoint_rx_limit_tail_packets"
+            }
         }
     }
 }
@@ -186,6 +192,8 @@ fn counter_from_index(idx: usize) -> Counter {
         36 => Counter::DirectEndpointRxRuns,
         37 => Counter::DirectEndpointRxPackets,
         38 => Counter::DirectEndpointRxCoalescedBatches,
+        39 => Counter::DirectEndpointRxLimitSplits,
+        40 => Counter::DirectEndpointRxLimitTailPackets,
         _ => unreachable!(),
     }
 }
@@ -421,6 +429,18 @@ pub(crate) fn record_direct_endpoint_rx_batch(
     );
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+pub(crate) fn record_direct_endpoint_rx_limit_split(tail_packets: usize) {
+    if tail_packets == 0 || !enabled() {
+        return;
+    }
+    increment_counter_by(Counter::DirectEndpointRxLimitSplits, 1);
+    increment_counter_by(
+        Counter::DirectEndpointRxLimitTailPackets,
+        tail_packets as u64,
+    );
+}
+
 pub(crate) struct Timer {
     stage: Stage,
     start: Option<Instant>,
@@ -596,7 +616,7 @@ mod tests {
 
     #[test]
     fn mesh_send_pipeline_names_are_stable() {
-        assert_eq!(N_COUNTERS, 39);
+        assert_eq!(N_COUNTERS, 41);
         assert_eq!(Stage::TunRead.name(), "nvpn_tun_read");
         assert_eq!(Stage::MeshRecv.name(), "nvpn_mesh_recv");
         assert_eq!(Stage::MeshRoute.name(), "nvpn_mesh_route");
@@ -661,6 +681,14 @@ mod tests {
         assert_eq!(
             Counter::DirectEndpointRxCoalescedBatches.name(),
             "nvpn_direct_endpoint_rx_coalesced_batches"
+        );
+        assert_eq!(
+            Counter::DirectEndpointRxLimitSplits.name(),
+            "nvpn_direct_endpoint_rx_limit_splits"
+        );
+        assert_eq!(
+            Counter::DirectEndpointRxLimitTailPackets.name(),
+            "nvpn_direct_endpoint_rx_limit_tail_packets"
         );
         assert_eq!(
             stage_from_index(Stage::MeshRoute as usize).name(),

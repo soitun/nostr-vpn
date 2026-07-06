@@ -233,6 +233,8 @@ fn limit_queued_direct_endpoint_runs_to_remaining(
     queued.packets = direct_packet_runs_len(&queued.runs);
     queued.source_node_addr = direct_packet_runs_single_source_node_addr(&queued.runs);
     if !tail.is_empty() {
+        let tail_packets = direct_packet_runs_len(&tail);
+        crate::pipeline_profile::record_direct_endpoint_rx_limit_split(tail_packets);
         let mut tail_queued = FipsDirectEndpointQueuedRuns::with_enqueued_at(tail, enqueued_at);
         tail_queued.arrival = DirectEndpointQueueArrival::Backlog;
         state

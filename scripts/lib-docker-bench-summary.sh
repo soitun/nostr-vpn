@@ -2997,6 +2997,20 @@ docker_bench_pipeline_nvpn_direct_endpoint_summary() {
       append(prefix "_max_ms", duration_ms(max_raw))
       append(prefix "_allmax_ms", duration_ms(allmax_raw))
     }
+    function parse_counter(line, metric, prefix, start, rest, parts, rate_raw, total_raw) {
+      start = index(line, metric "=")
+      if (start == 0) return
+      rest = substr(line, start)
+      split(rest, parts, " ")
+      if (parts[2] !~ /^total=/) return
+      rate_raw = parts[1]
+      total_raw = parts[2]
+      sub(/^[^=]+=/, "", rate_raw)
+      sub(/\/s$/, "", rate_raw)
+      sub(/^total=/, "", total_raw)
+      append(prefix "_per_sec", rate_raw + 0)
+      append(prefix "_total", total_raw + 0)
+    }
     {
       parse_stage($0, "nvpn_direct_endpoint_queue", "queue")
       parse_stage($0, "nvpn_direct_endpoint_wake", "wake")
@@ -3005,6 +3019,8 @@ docker_bench_pipeline_nvpn_direct_endpoint_summary() {
       parse_stage($0, "nvpn_direct_endpoint_recv", "recv")
       parse_stage($0, "nvpn_direct_endpoint_finalize", "finalize")
       parse_stage($0, "nvpn_tun_write_batch", "tun_batch")
+      parse_counter($0, "nvpn_direct_endpoint_rx_limit_splits", "limit_splits")
+      parse_counter($0, "nvpn_direct_endpoint_rx_limit_tail_packets", "limit_tail_packets")
     }
     END {
       if (summary != "") print summary
