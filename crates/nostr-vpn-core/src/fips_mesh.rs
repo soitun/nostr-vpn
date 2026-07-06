@@ -281,15 +281,6 @@ impl FipsMeshRuntime {
         routed_fips_peer(peer)
     }
 
-    pub fn route_outbound_packet_with_peer<'a>(
-        &'a self,
-        packet: &[u8],
-    ) -> Option<RoutedFipsPacket<'a>> {
-        let peer = self.route_outbound_peer(packet)?;
-
-        routed_fips_packet(peer, packet.to_vec())
-    }
-
     pub fn route_outbound_packet_owned_with_peer<'a>(
         &'a self,
         packet: Vec<u8>,

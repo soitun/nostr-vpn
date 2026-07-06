@@ -175,7 +175,7 @@ mod tests {
         );
         assert_eq!(
             runtime
-                .route_outbound_packet_with_peer(&packet)
+                .route_outbound_packet_owned_with_peer(packet.clone())
                 .expect("packet should route")
                 .participant_pubkey,
             peer.participant_pubkey
@@ -268,7 +268,7 @@ mod tests {
         assert!(admitter.admit_packet(&packet));
 
         let routed = runtime
-            .route_outbound_packet_with_peer(&reply)
+            .route_outbound_packet_owned_with_peer(reply.clone())
             .expect("seller reply should route to the paid buyer tunnel address");
         assert_eq!(routed.participant_pubkey, buyer.participant_pubkey);
     }
@@ -326,7 +326,7 @@ mod tests {
         assert_eq!(admitter.source_pubkey(), buyer.participant_pubkey);
         assert!(!admitter.admit_packet(&packet));
         assert!(
-            runtime.route_outbound_packet_with_peer(&reply).is_none(),
+            runtime.route_outbound_packet_owned_with_peer(reply.clone()).is_none(),
             "allow_routing=false must not install a raw route to the paid buyer"
         );
     }
@@ -379,8 +379,8 @@ mod tests {
 
         assert_eq!(runtime.exact_route_peer_index.len(), 1);
         let outgoing = runtime
-            .route_outbound_packet_with_peer(&packet)
-            .expect("borrowed-peer packet should route");
+            .route_outbound_packet_owned_with_peer(packet.clone())
+            .expect("owned packet should route");
 
         assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
         assert_eq!(outgoing.endpoint_node_addr, &specific.endpoint_node_addr);
@@ -392,14 +392,6 @@ mod tests {
 
         assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
         assert_eq!(outgoing.endpoint_node_addr, &specific.endpoint_node_addr);
-
-        let outgoing = runtime
-            .route_outbound_packet_owned_with_peer(packet.clone())
-            .expect("borrowed-peer owned packet should route");
-
-        assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
-        assert_eq!(outgoing.endpoint_node_addr, &specific.endpoint_node_addr);
-        assert_eq!(outgoing.bytes, packet);
 
         let cached_destination = IpAddr::V4(Ipv4Addr::new(10, 44, 22, 44));
         let outgoing = runtime
@@ -471,13 +463,13 @@ mod tests {
 
         let exact_packet = ipv4_packet(Ipv4Addr::new(10, 44, 10, 1), Ipv4Addr::new(10, 44, 22, 44));
         let exact_outgoing = runtime
-            .route_outbound_packet_with_peer(&exact_packet)
+            .route_outbound_packet_owned_with_peer(exact_packet.clone())
             .expect("exact route should use exact index");
         assert_eq!(exact_outgoing.participant_pubkey, exact.participant_pubkey);
 
         let subnet_packet = ipv4_packet(Ipv4Addr::new(10, 44, 10, 1), Ipv4Addr::new(10, 44, 5, 9));
         let subnet_outgoing = runtime
-            .route_outbound_packet_with_peer(&subnet_packet)
+            .route_outbound_packet_owned_with_peer(subnet_packet.clone())
             .expect("subnet route should win over default route");
         assert_eq!(
             subnet_outgoing.participant_pubkey,
@@ -486,7 +478,7 @@ mod tests {
 
         let exit_packet = ipv4_packet(Ipv4Addr::new(10, 44, 10, 1), Ipv4Addr::new(8, 8, 8, 8));
         let exit_outgoing = runtime
-            .route_outbound_packet_with_peer(&exit_packet)
+            .route_outbound_packet_owned_with_peer(exit_packet.clone())
             .expect("default route should handle non-peer destination");
         assert_eq!(exit_outgoing.participant_pubkey, exit.participant_pubkey);
     }
@@ -502,7 +494,7 @@ mod tests {
         }]);
 
         let outgoing = runtime
-            .route_outbound_packet_with_peer(&packet)
+            .route_outbound_packet_owned_with_peer(packet.clone())
             .expect("duplicate same-peer route should still route");
 
         assert_eq!(outgoing.participant_pubkey, peer.participant_pubkey);
@@ -722,7 +714,7 @@ mod tests {
 
         let alice_to_bob = ipv4_packet(alice_ip, bob_ip);
         let outgoing = alice_runtime
-            .route_outbound_packet_with_peer(&alice_to_bob)
+            .route_outbound_packet_owned_with_peer(alice_to_bob.clone())
             .expect("Alice should route packet to Bob");
         assert_eq!(outgoing.participant_pubkey, bob.participant_pubkey);
         let received = bob_runtime
@@ -736,7 +728,7 @@ mod tests {
 
         let bob_to_alice = ipv4_packet(bob_ip, alice_ip);
         let outgoing = bob_runtime
-            .route_outbound_packet_with_peer(&bob_to_alice)
+            .route_outbound_packet_owned_with_peer(bob_to_alice.clone())
             .expect("Bob should route packet to Alice");
         assert_eq!(outgoing.participant_pubkey, alice.participant_pubkey);
         let received = alice_runtime
@@ -763,7 +755,7 @@ mod tests {
         );
 
         let outgoing = runtime
-            .route_outbound_packet_with_peer(&packet)
+            .route_outbound_packet_owned_with_peer(packet.clone())
             .expect("IPv6 packet should route");
         let received = runtime
             .receive_endpoint_data_owned_with_source_node_addr(&peer.endpoint_node_addr, packet)

@@ -113,7 +113,7 @@ impl FipsPrivateMeshRuntime {
     #[cfg(test)]
     pub(crate) async fn send_tunnel_packet(&self, packet: &[u8]) -> Result<bool> {
         let mesh = self.mesh.load();
-        let Some(outgoing) = mesh.route_outbound_packet_with_peer(packet) else {
+        let Some(outgoing) = mesh.route_outbound_packet_owned_with_peer(packet.to_vec()) else {
             return Ok(false);
         };
         let bytes_len = outgoing.bytes.len();
