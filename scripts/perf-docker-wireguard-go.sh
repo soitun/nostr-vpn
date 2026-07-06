@@ -10,6 +10,10 @@
 #   NVPN_DOCKER_CPU_STRESS=1
 #   NVPN_DOCKER_CPU_STRESS_SIDES=local|remote|both
 #   NVPN_DOCKER_CPU_STRESS_{LOCAL,REMOTE}_WORKERS=N
+#
+# Optional host perf sampling:
+#   NVPN_DOCKER_PERF_PHASES=tcp-8
+#     records host perf samples for selected phases into raw/perf/.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,6 +31,8 @@ IPERF_SOCKET_BUFFER="${NVPN_DOCKER_IPERF_SOCKET_BUFFER:-}"
 UDP1000_PARALLEL="${NVPN_DOCKER_UDP1000_PARALLEL:-}"
 UDP1000_BANDWIDTH="${NVPN_DOCKER_UDP1000_BANDWIDTH:-1G}"
 SKIP_BUILD="${NVPN_DOCKER_SKIP_BUILD:-0}"
+PERF_PHASES="${NVPN_DOCKER_PERF_PHASES:-}"
+PERF_FREQ="${NVPN_DOCKER_PERF_FREQ:-19}"
 WIREGUARD_GO_REPO_PATH="${NVPN_WIREGUARD_GO_REPO_PATH:-$ROOT_DIR/../wireguard-go}"
 OUTPUT_DIR="${NVPN_WIREGUARD_GO_DOCKER_OUTPUT_DIR:-$ROOT_DIR/artifacts/wireguard-go-docker/$(date -u +%Y%m%dT%H%M%SZ)}"
 RAW_DIR="$OUTPUT_DIR/raw"
@@ -227,15 +233,21 @@ run_test_json() {
     iperf_cmd+=("${IPERF_SOCKET_BUFFER_ARGS[@]}")
   fi
   iperf_cmd+=("$@")
+  local perf_pid=""
+  docker_bench_start_phase_perf \
+    wireguard-go wireguard-go "$phase" "$DURATION" "$RAW_DIR" "$PERF_PHASES" "$PERF_FREQ"
+  perf_pid="$DOCKER_BENCH_PHASE_PERF_PID"
   cpu_start_node_a="$(wireguard_go_cpu_sample node-a)"
   cpu_start_node_b="$(wireguard_go_cpu_sample node-b)"
   if ! "${COMPOSE[@]}" exec -T node-a "${iperf_cmd[@]}" >"$json_path" 2>"$err_path"; then
+    docker_bench_finish_phase_perf wireguard-go "$phase" "$RAW_DIR" "$perf_pid"
     cat "$err_path" >&2
     cat "$json_path" >&2
     return 1
   fi
   cpu_end_node_a="$(wireguard_go_cpu_sample node-a)"
   cpu_end_node_b="$(wireguard_go_cpu_sample node-b)"
+  docker_bench_finish_phase_perf wireguard-go "$phase" "$RAW_DIR" "$perf_pid"
   if jq -e 'has("error")' "$json_path" >/dev/null; then
     cat "$err_path" >&2
     cat "$json_path" >&2

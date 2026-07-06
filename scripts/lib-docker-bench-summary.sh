@@ -504,6 +504,79 @@ docker_bench_stop_cpu_stress() {
   done
 }
 
+docker_bench_phase_list_contains() {
+  local list="$1"
+  local phase="$2"
+  [[ -n "$list" ]] || return 1
+  local token
+  for token in ${list//,/ }; do
+    [[ "$token" == "all" || "$token" == "$phase" ]] && return 0
+  done
+  return 1
+}
+
+docker_bench_host_pids_for_service_process() {
+  local service="$1"
+  local process_name="$2"
+  local cid
+  cid="$("${COMPOSE[@]}" ps -q "$service" 2>/dev/null || true)"
+  [[ -n "$cid" ]] || return 0
+  docker top "$cid" -eo pid,comm 2>/dev/null \
+    | awk -v name="$process_name" 'NR > 1 && $2 == name { print $1 }'
+}
+
+docker_bench_start_phase_perf() {
+  DOCKER_BENCH_PHASE_PERF_PID=""
+  local artifact_prefix="$1"
+  local process_name="$2"
+  local phase="$3"
+  local duration="$4"
+  local raw_dir="$5"
+  local perf_phases="$6"
+  local perf_freq="$7"
+  docker_bench_phase_list_contains "$perf_phases" "$phase" || return 0
+  mkdir -p "$raw_dir/perf"
+
+  local pids=()
+  local service pid
+  for service in node-a node-b; do
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] && pids+=("$pid")
+    done < <(docker_bench_host_pids_for_service_process "$service" "$process_name")
+  done
+  if [[ "${#pids[@]}" == "0" ]]; then
+    printf 'perf: no %s host PIDs found for phase %s\n' "$process_name" "$phase" \
+      >"$raw_dir/perf/$artifact_prefix-$phase.log"
+    return 0
+  fi
+
+  local pid_csv data_path log_path
+  pid_csv="$(IFS=,; printf '%s' "${pids[*]}")"
+  data_path="$raw_dir/perf/$artifact_prefix-$phase.data"
+  log_path="$raw_dir/perf/$artifact_prefix-$phase.log"
+  printf 'phase=%s\nprocess=%s\npids=%s\nfreq=%s\n' \
+    "$phase" "$process_name" "$pid_csv" "$perf_freq" >"$log_path"
+  sudo -n perf record -F "$perf_freq" -g -p "$pid_csv" -o "$data_path" \
+    -- sleep "$((duration + 1))" >>"$log_path" 2>&1 &
+  DOCKER_BENCH_PHASE_PERF_PID="$!"
+}
+
+docker_bench_finish_phase_perf() {
+  local artifact_prefix="$1"
+  local phase="$2"
+  local raw_dir="$3"
+  local perf_pid="$4"
+  [[ -n "$perf_pid" ]] || return 0
+  wait "$perf_pid" || true
+
+  local data_path="$raw_dir/perf/$artifact_prefix-$phase.data"
+  local report_path="$raw_dir/perf/$artifact_prefix-$phase-report.txt"
+  local log_path="$raw_dir/perf/$artifact_prefix-$phase.log"
+  [[ -s "$data_path" ]] || return 0
+  sudo -n perf report --stdio --no-children --sort comm,dso,symbol \
+    -i "$data_path" >"$report_path" 2>>"$log_path" || true
+}
+
 docker_bench_write_metadata() {
   local backend="$1"
   local duration="$2"
@@ -515,6 +588,8 @@ docker_bench_write_metadata() {
   local pipeline_trace_interval_secs=""
   local iperf_interval_secs="${NVPN_DOCKER_IPERF_INTERVAL_SECS:-0}"
   local iperf_timeout_secs="${NVPN_DOCKER_IPERF_TIMEOUT_SECS:-}"
+  local perf_phases="${NVPN_DOCKER_PERF_PHASES:-}"
+  local perf_freq="${NVPN_DOCKER_PERF_FREQ:-}"
   local iperf_udp1000_per_stream_bandwidth
   local dataplane_profile="${NVPN_DOCKER_DATAPLANE_PROFILE:-}"
   local placement_profile="${NVPN_DOCKER_PLACEMENT_PROFILE:-}"
@@ -640,6 +715,8 @@ docker_bench_write_metadata() {
     --arg pipeline_trace_interval_secs "$pipeline_trace_interval_secs" \
     --arg iperf_interval_secs "$iperf_interval_secs" \
     --arg iperf_timeout_secs "$iperf_timeout_secs" \
+    --arg perf_phases "$perf_phases" \
+    --arg perf_freq "$perf_freq" \
     --arg iperf_socket_buffer "${NVPN_DOCKER_IPERF_SOCKET_BUFFER:-}" \
     --arg iperf_udp1000_parallel "${NVPN_DOCKER_UDP1000_PARALLEL:-}" \
     --arg iperf_udp1000_bandwidth "${NVPN_DOCKER_UDP1000_BANDWIDTH:-1G}" \
@@ -788,6 +865,14 @@ docker_bench_write_metadata() {
         interval_secs: (
           if $pipeline_trace_interval_secs == "" then null
           else ($pipeline_trace_interval_secs | tonumber)
+          end
+        )
+      },
+      perf: {
+        phases: string_or_null($perf_phases),
+        freq: (
+          if $perf_freq == "" then null
+          else ($perf_freq | tonumber)
           end
         )
       },
