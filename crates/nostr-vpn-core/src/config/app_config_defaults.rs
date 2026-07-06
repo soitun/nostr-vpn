@@ -26,6 +26,7 @@ impl AppConfig {
         self.nostr.relays = normalize_relay_urls(std::mem::take(&mut self.nostr.relays));
         self.nostr.disabled_relays =
             normalize_relay_urls(std::mem::take(&mut self.nostr.disabled_relays));
+        self.nostr.pubsub.normalize();
         let enabled_relays = self.nostr.relays.iter().cloned().collect::<HashSet<_>>();
         self.nostr
             .disabled_relays

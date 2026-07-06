@@ -95,6 +95,101 @@ pub fn normalize_relay_urls(values: Vec<String>) -> Vec<String> {
     relays
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum NostrPubsubMode {
+    Off,
+    #[default]
+    Client,
+    Relay,
+}
+
+impl NostrPubsubMode {
+    pub fn enabled(self) -> bool {
+        self != Self::Off
+    }
+
+    pub fn forwarding(self) -> bool {
+        self == Self::Relay
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Client => "client",
+            Self::Relay => "relay",
+        }
+    }
+}
+
+impl std::str::FromStr for NostrPubsubMode {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" | "disabled" => Ok(Self::Off),
+            "client" | "local" => Ok(Self::Client),
+            "relay" | "forward" | "forwarding" => Ok(Self::Relay),
+            _ => Err("expected one of: off, client, relay"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NostrPubsubConfig {
+    #[serde(default)]
+    pub mode: NostrPubsubMode,
+    #[serde(default = "default_nostr_pubsub_fanout")]
+    pub fanout: usize,
+    #[serde(default = "default_nostr_pubsub_max_hops")]
+    pub max_hops: u8,
+    #[serde(default = "default_nostr_pubsub_max_event_bytes")]
+    pub max_event_bytes: usize,
+}
+
+impl NostrPubsubConfig {
+    pub fn is_default(&self) -> bool {
+        self == &Self::default()
+    }
+
+    pub fn normalize(&mut self) {
+        self.fanout = self.fanout.clamp(1, 32);
+        self.max_hops = self.max_hops.clamp(1, 10);
+        self.max_event_bytes = self.max_event_bytes.clamp(1024, 256 * 1024);
+    }
+
+    pub fn enabled(&self) -> bool {
+        self.mode.enabled()
+    }
+
+    pub fn forwarding(&self) -> bool {
+        self.mode.forwarding()
+    }
+}
+
+impl Default for NostrPubsubConfig {
+    fn default() -> Self {
+        Self {
+            mode: NostrPubsubMode::Client,
+            fanout: default_nostr_pubsub_fanout(),
+            max_hops: default_nostr_pubsub_max_hops(),
+            max_event_bytes: default_nostr_pubsub_max_event_bytes(),
+        }
+    }
+}
+
+fn default_nostr_pubsub_fanout() -> usize {
+    4
+}
+
+fn default_nostr_pubsub_max_hops() -> u8 {
+    2
+}
+
+fn default_nostr_pubsub_max_event_bytes() -> usize {
+    64 * 1024
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NostrConfig {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -107,6 +202,8 @@ pub struct NostrConfig {
     /// Nostr public identity key in `npub` or hex format.
     #[serde(default)]
     pub public_key: String,
+    #[serde(default, skip_serializing_if = "NostrPubsubConfig::is_default")]
+    pub pubsub: NostrPubsubConfig,
 }
 
 impl Default for NostrConfig {
@@ -117,6 +214,7 @@ impl Default for NostrConfig {
             disabled_relays: Vec::new(),
             secret_key,
             public_key,
+            pubsub: NostrPubsubConfig::default(),
         }
     }
 }

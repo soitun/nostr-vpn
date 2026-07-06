@@ -20,6 +20,19 @@ impl NativeAppRuntime {
             self.config.node.listen_port = value;
         }
         self.apply_relay_settings_patch(patch.relays, patch.disabled_relays);
+        if let Some(value) = patch.nostr_pubsub_mode {
+            self.config.nostr.pubsub.mode =
+                value.parse::<NostrPubsubMode>().map_err(|error| anyhow!(error))?;
+        }
+        if let Some(value) = patch.nostr_pubsub_fanout {
+            self.config.nostr.pubsub.fanout = value as usize;
+        }
+        if let Some(value) = patch.nostr_pubsub_max_hops {
+            self.config.nostr.pubsub.max_hops = value;
+        }
+        if let Some(value) = patch.nostr_pubsub_max_event_bytes {
+            self.config.nostr.pubsub.max_event_bytes = value as usize;
+        }
         // Exit-node selection is mutually exclusive: at most one of
         // (peer exit_node, WireGuard upstream) can be active at a
         // time. The daemon enforces this so every UI / CLI client
@@ -194,6 +207,7 @@ impl NativeAppRuntime {
         if let Some(value) = patch.close_to_tray_on_close {
             self.config.close_to_tray_on_close = value;
         }
+        self.config.nostr.pubsub.normalize();
         Ok(())
     }
 

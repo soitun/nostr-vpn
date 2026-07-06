@@ -273,6 +273,26 @@ impl NativeAppRuntime {
             } else {
                 self.relay_views()
             },
+            nostr_pubsub_mode: if config_unavailable {
+                "off".to_string()
+            } else {
+                self.config.nostr.pubsub.mode.as_str().to_string()
+            },
+            nostr_pubsub_fanout: if config_unavailable {
+                0
+            } else {
+                self.config.nostr.pubsub.fanout as u32
+            },
+            nostr_pubsub_max_hops: if config_unavailable {
+                0
+            } else {
+                self.config.nostr.pubsub.max_hops
+            },
+            nostr_pubsub_max_event_bytes: if config_unavailable {
+                0
+            } else {
+                self.config.nostr.pubsub.max_event_bytes as u32
+            },
             network_id: if config_unavailable || network_setup_required {
                 String::new()
             } else {

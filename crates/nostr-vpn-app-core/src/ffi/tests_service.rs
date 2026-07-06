@@ -439,6 +439,47 @@ exit 0
     }
 
     #[test]
+    fn settings_patch_persists_nostr_pubsub_config() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-pubsub-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+
+        runtime.dispatch(NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                nostr_pubsub_mode: Some("relay".to_string()),
+                nostr_pubsub_fanout: Some(3),
+                nostr_pubsub_max_hops: Some(2),
+                nostr_pubsub_max_event_bytes: Some(32 * 1024),
+                ..SettingsPatch::default()
+            },
+        });
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
+        assert_eq!(saved.nostr.pubsub.mode.as_str(), "relay");
+        assert_eq!(saved.nostr.pubsub.fanout, 3);
+        assert_eq!(saved.nostr.pubsub.max_hops, 2);
+        assert_eq!(saved.nostr.pubsub.max_event_bytes, 32 * 1024);
+
+        let state = runtime.state();
+        assert_eq!(state.nostr_pubsub_mode, "relay");
+        assert_eq!(state.nostr_pubsub_fanout, 3);
+        assert_eq!(state.nostr_pubsub_max_hops, 2);
+        assert_eq!(state.nostr_pubsub_max_event_bytes, 32 * 1024);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn settings_patch_persists_paid_exit_seller_config() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
