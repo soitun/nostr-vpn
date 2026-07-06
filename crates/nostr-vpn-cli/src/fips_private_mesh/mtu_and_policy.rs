@@ -76,6 +76,7 @@ fn parse_mtu_env(name: &str) -> Option<u16> {
     std::env::var(name).ok()?.trim().parse::<u16>().ok()
 }
 
+#[cfg(test)]
 fn fips_nostr_discovery_policy_from_env() -> NostrDiscoveryPolicy {
     std::env::var("NVPN_FIPS_NOSTR_DISCOVERY_POLICY")
         .ok()

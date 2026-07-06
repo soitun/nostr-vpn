@@ -7,13 +7,22 @@ type FipsPeerActivityMap = HashMap<ParticipantPubkeyBytes, Arc<FipsPeerActivity>
 #[derive(Clone, Copy)]
 struct BorrowedTunFd {
     fd: RawFd,
+    #[cfg(target_os = "linux")]
     vnet_hdr: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl BorrowedTunFd {
     fn new(fd: RawFd, vnet_hdr: bool) -> Self {
-        Self { fd, vnet_hdr }
+        #[cfg(target_os = "linux")]
+        {
+            return Self { fd, vnet_hdr };
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let _ = vnet_hdr;
+            Self { fd }
+        }
     }
 }
 
@@ -42,6 +51,7 @@ type TunPipelineBatch = Vec<TunPipelinePacket>;
 struct DirectTunWriteBatch {
     runs: Vec<FipsEndpointDirectPacketRun>,
     packet_ends: Vec<usize>,
+    #[cfg(feature = "paid-exit")]
     packet_sources: Vec<FipsPacketSource>,
     bytes: usize,
     mesh_generation: u64,
@@ -54,6 +64,7 @@ impl DirectTunWriteBatch {
         Self {
             runs: Vec::with_capacity(capacity),
             packet_ends: Vec::with_capacity(capacity),
+            #[cfg(feature = "paid-exit")]
             packet_sources: Vec::with_capacity(capacity),
             bytes: 0,
             mesh_generation: 0,
@@ -64,6 +75,7 @@ impl DirectTunWriteBatch {
     fn clear(&mut self) {
         self.runs.clear();
         self.packet_ends.clear();
+        #[cfg(feature = "paid-exit")]
         self.packet_sources.clear();
         self.bytes = 0;
         self.mesh_generation = 0;
@@ -105,11 +117,15 @@ impl DirectTunWriteBatch {
         let packet_count = run.len();
         self.runs.reserve(1);
         self.packet_ends.reserve(1);
+        #[cfg(feature = "paid-exit")]
         self.packet_sources.reserve(packet_count);
         self.bytes = self.bytes.saturating_add(run.packet_bytes());
         self.push_packet_end(packet_count);
+        #[cfg(feature = "paid-exit")]
         self.packet_sources
             .extend(std::iter::repeat_n(source, packet_count));
+        #[cfg(not(feature = "paid-exit"))]
+        let _ = source;
         self.runs.push(run);
     }
 
@@ -119,6 +135,7 @@ impl DirectTunWriteBatch {
             .push(previous.saturating_add(packet_count));
     }
 
+    #[cfg(any(feature = "paid-exit", test, target_os = "linux"))]
     fn packet_slice(&self, index: usize) -> Option<&[u8]> {
         if index >= self.len() {
             return None;
@@ -133,6 +150,7 @@ impl DirectTunWriteBatch {
             .and_then(|run| run.packet_slice(index - previous_end))
     }
 
+    #[cfg(feature = "paid-exit")]
     fn packet_source(&self, index: usize) -> Option<FipsPacketSource> {
         self.packet_sources.get(index).copied()
     }
@@ -151,15 +169,29 @@ impl DirectTunWriteBatch {
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Clone, Copy, Debug)]
+#[cfg(feature = "paid-exit")]
 struct FipsPacketSource {
     participant_key: Option<ParticipantPubkeyBytes>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+#[derive(Clone, Copy, Debug)]
+#[cfg(not(feature = "paid-exit"))]
+struct FipsPacketSource;
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl FipsPacketSource {
     fn new(participant_key: Option<&ParticipantPubkeyBytes>) -> Self {
-        Self {
-            participant_key: participant_key.copied(),
+        #[cfg(feature = "paid-exit")]
+        {
+            return Self {
+                participant_key: participant_key.copied(),
+            };
+        }
+        #[cfg(not(feature = "paid-exit"))]
+        {
+            let _ = participant_key;
+            Self
         }
     }
 }

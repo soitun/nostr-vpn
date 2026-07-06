@@ -1,4 +1,5 @@
 impl FipsPrivateMeshRuntime {
+    #[cfg(test)]
     pub(crate) async fn bind(
         identity_nsec: impl Into<String>,
         network_id: impl AsRef<str>,
@@ -24,6 +25,7 @@ impl FipsPrivateMeshRuntime {
         .await
     }
 
+    #[cfg(test)]
     async fn bind_with_config(
         identity_nsec: impl Into<String>,
         scope: impl Into<String>,
@@ -105,6 +107,7 @@ impl FipsPrivateMeshRuntime {
         })
     }
 
+    #[cfg(test)]
     pub(crate) async fn send_tunnel_packet(&self, packet: &[u8]) -> Result<bool> {
         let mesh = self.mesh.load();
         let Some(outgoing) = mesh.route_outbound_packet_with_peer(packet) else {
@@ -134,6 +137,7 @@ impl FipsPrivateMeshRuntime {
         Ok(true)
     }
 
+    #[cfg(test)]
     pub(crate) async fn send_tunnel_packet_batch_owned(
         &self,
         packets: Vec<Vec<u8>>,
@@ -143,6 +147,7 @@ impl FipsPrivateMeshRuntime {
             .await
     }
 
+    #[cfg(test)]
     pub(crate) async fn send_tunnel_packet_batch_owned_with_capacity(
         &self,
         packets: Vec<Vec<u8>>,
@@ -254,7 +259,7 @@ impl FipsPrivateMeshRuntime {
         self.blocking_send_endpoint_send_runs(runs.drain(..))
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(all(any(target_os = "linux", target_os = "macos"), test))]
     async fn send_tun_pipeline_packet_batch(
         &self,
         packets: &mut Vec<TunPipelinePacket>,
@@ -270,7 +275,7 @@ impl FipsPrivateMeshRuntime {
         .await
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[cfg(all(any(target_os = "linux", target_os = "macos"), test))]
     async fn send_tun_pipeline_packet_turn<I>(
         &self,
         packets: I,
@@ -425,6 +430,7 @@ impl FipsPrivateMeshRuntime {
         }
     }
 
+    #[cfg(test)]
     async fn send_endpoint_send_runs<I>(&self, runs: I) -> Result<usize>
     where
         I: IntoIterator<Item = FipsEndpointSendRun>,

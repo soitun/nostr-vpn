@@ -65,29 +65,6 @@ impl FipsPrivateMeshRuntime {
         .await
     }
 
-    pub(crate) async fn broadcast_capabilities(
-        &self,
-        network_id: &str,
-        capabilities: PeerCapabilities,
-    ) -> Result<usize> {
-        let frame = FipsControlFrame::Capabilities {
-            network_id: network_id.to_string(),
-            capabilities,
-        };
-        self.broadcast_control_frame(&frame).await
-    }
-
-    async fn broadcast_control_frame(&self, frame: &FipsControlFrame) -> Result<usize> {
-        let participants = self.mesh.load().peer_pubkeys();
-        let mut sent = 0usize;
-        for participant in participants {
-            if self.send_control_frame(&participant, frame).await.is_ok() {
-                sent += 1;
-            }
-        }
-        Ok(sent)
-    }
-
     async fn send_control_frame(&self, participant: &str, frame: &FipsControlFrame) -> Result<()> {
         let participant_key = participant_pubkey_bytes(participant);
         let destination = {
@@ -108,6 +85,7 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
+    #[cfg(test)]
     async fn send_endpoint_data(
         &self,
         participant: &str,

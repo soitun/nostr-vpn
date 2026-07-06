@@ -244,11 +244,16 @@ impl FipsPrivateTunnelConfig {
                 })
                 .into_iter()
                 .collect(),
+            #[cfg(feature = "paid-exit")]
             paid_exit: app.paid_exit.clone(),
+            #[cfg(feature = "paid-exit")]
             paid_route_store_path: PathBuf::new(),
+            #[cfg(feature = "paid-exit")]
             paid_route_wallet_data_dir: PathBuf::new(),
+            #[cfg(feature = "paid-exit")]
             paid_route_payment_relays: Vec::new(),
             wireguard_exit: app.wireguard_exit.clone(),
+            #[cfg(target_os = "linux")]
             exit_node_leak_protection: app.exit_node_leak_protection,
             nostr_discovery_enabled: app.fips_nostr_discovery_enabled,
             nostr_discovery_policy,

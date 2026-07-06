@@ -17,9 +17,8 @@
         control_frame_source_pubkey, drain_event_batch, endpoint_identity_for_send,
         filter_stamped_tunnel_endpoints, filter_static_tunnel_endpoints_with_policy,
         filter_static_tunnel_endpoints_with_policy_and_route_check, fips_endpoint_config,
-        fips_endpoint_peers_from_mesh, fips_endpoint_peers_with_paid_route_admissions,
-        fips_lan_discovery_scope, fips_peer_address_from_hint, fips_tunnel_requires_endpoint_restart,
-        linux_cap_eff_has_net_admin,
+        fips_endpoint_peers_from_mesh, fips_lan_discovery_scope, fips_peer_address_from_hint,
+        fips_tunnel_requires_endpoint_restart, linux_cap_eff_has_net_admin,
         linux_private_ipv4_route_subnets_from_ip_route,
         linux_route_get_has_direct_private_endpoint_route, linux_tun_setup_error,
         macos_private_ipv4_route_subnets_from_netstat,
@@ -29,7 +28,6 @@
         static_endpoint_allowed_on_current_underlay_with_route_check, strip_cidr,
         tag_authenticated_transport_addr, unix_timestamp,
     };
-    use nostr_vpn_core::fips_mesh::FipsPaidRouteAdmission;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
         BorrowedTunFd, DirectTunWriteBatch, TunPipelinePacket, raw_write_packet_to_tun,
@@ -43,7 +41,6 @@
     };
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::config::{AppConfig, PendingOutboundJoinRequest, derive_mesh_tunnel_ip};
-    use nostr_vpn_core::data_plane::MeshPeerStatus;
     use nostr_vpn_core::fips_control::{
         FipsControlFrame, NetworkRoster, PeerEndpointHint, decode_fips_control_frame,
         encode_fips_control_messages,

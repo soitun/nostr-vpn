@@ -101,6 +101,7 @@ fn ipv4_is_benchmark_addr(addr: Ipv4Addr) -> bool {
     octets[0] == 198 && (18..=19).contains(&octets[1])
 }
 
+#[cfg(test)]
 fn fips_endpoint_config(
     peers: &[FipsEndpointPeerTransportConfig],
     transport: Option<&FipsEndpointTransportConfig>,
@@ -351,6 +352,7 @@ fn fips_endpoint_peers_from_mesh(
     peers
 }
 
+#[cfg(feature = "paid-exit")]
 pub(crate) fn fips_endpoint_peers_with_paid_route_admissions(
     endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
     admissions: &[FipsPaidRouteAdmission],
@@ -450,11 +452,16 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     #[cfg(feature = "paid-exit")]
     pub(crate) paid_route_accounting_peers: Vec<FipsPaidRouteAccountingPeer>,
+    #[cfg(feature = "paid-exit")]
     pub(crate) paid_exit: PaidExitConfig,
+    #[cfg(feature = "paid-exit")]
     pub(crate) paid_route_store_path: PathBuf,
+    #[cfg(feature = "paid-exit")]
     pub(crate) paid_route_wallet_data_dir: PathBuf,
+    #[cfg(feature = "paid-exit")]
     pub(crate) paid_route_payment_relays: Vec<String>,
     pub(crate) wireguard_exit: WireGuardExitConfig,
+    #[cfg(target_os = "linux")]
     pub(crate) exit_node_leak_protection: bool,
     nostr_discovery_enabled: bool,
     nostr_discovery_policy: NostrDiscoveryPolicy,

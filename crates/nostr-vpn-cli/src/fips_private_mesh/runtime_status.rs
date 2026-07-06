@@ -391,38 +391,6 @@ impl FipsPrivateMeshRuntime {
         out
     }
 
-    fn peer_supports_dataplane_feature(&self, participant: &str, feature: &str) -> bool {
-        let normalized = match normalize_nostr_pubkey(participant) {
-            Ok(value) => value,
-            Err(_) => return false,
-        };
-        let now = unix_timestamp();
-        let caps = match self.peer_capabilities.read() {
-            Ok(guard) => guard,
-            Err(_) => return false,
-        };
-        caps.get(&normalized)
-            .filter(|entry| {
-                fips_timestamp_within_grace(now, entry.received_at, FIPS_PEER_CAPS_GRACE_SECS)
-            })
-            .is_some_and(|entry| entry.capabilities.supports_dataplane_feature(feature))
-    }
-
-    fn peers_supporting_dataplane_feature(&self, feature: &str) -> HashSet<String> {
-        let now = unix_timestamp();
-        let caps = match self.peer_capabilities.read() {
-            Ok(guard) => guard,
-            Err(_) => return HashSet::new(),
-        };
-        caps.iter()
-            .filter(|(_, entry)| {
-                fips_timestamp_within_grace(now, entry.received_at, FIPS_PEER_CAPS_GRACE_SECS)
-                    && entry.capabilities.supports_dataplane_feature(feature)
-            })
-            .map(|(participant, _)| participant.clone())
-            .collect()
-    }
-
     fn record_peer_capabilities(
         &self,
         participant: &str,

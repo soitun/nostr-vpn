@@ -60,10 +60,6 @@ impl FipsPrivateTunnelRuntime {
         Ok(0)
     }
 
-    pub(crate) async fn update_relays(&self, _relays: &[String]) -> Result<()> {
-        Ok(())
-    }
-
     pub(crate) fn requires_endpoint_restart(&self, _config: &FipsPrivateTunnelConfig) -> bool {
         false
     }
@@ -108,14 +104,6 @@ impl FipsPrivateTunnelRuntime {
         _capabilities: PeerCapabilities,
     ) -> Result<()> {
         Ok(())
-    }
-
-    pub(crate) async fn broadcast_capabilities(
-        &self,
-        _network_id: &str,
-        _capabilities: PeerCapabilities,
-    ) -> Result<usize> {
-        Ok(0)
     }
 
     pub(crate) fn peer_advertised_routes(&self, _participant: &str) -> Vec<String> {

@@ -1,4 +1,5 @@
 impl FipsPrivateMeshRuntime {
+    #[cfg(test)]
     pub(crate) async fn recv_mesh_event(&self) -> Result<Option<FipsPrivateMeshEvent>> {
         loop {
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -34,7 +35,7 @@ impl FipsPrivateMeshRuntime {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
     pub(crate) async fn recv_mesh_event_batch(
         &self,
         limit: usize,
@@ -52,7 +53,7 @@ impl FipsPrivateMeshRuntime {
         Ok(Some(events))
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
     pub(crate) async fn recv_mesh_event_batch_into(
         &self,
         messages: &mut Vec<FipsEndpointMessage>,
@@ -210,35 +211,7 @@ impl FipsPrivateMeshRuntime {
         self.note_data_rx_batch(packet_outputs.data_rx_notes_mut(), None)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    pub(crate) async fn try_recv_mesh_event(&self) -> Result<Option<FipsPrivateMeshEvent>> {
-        self.try_recv_mesh_event_with_timestamp(None).await
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    async fn try_recv_mesh_event_with_timestamp(
-        &self,
-        now: Option<u64>,
-    ) -> Result<Option<FipsPrivateMeshEvent>> {
-        loop {
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-            {
-                self.drain_direct_endpoint_mesh_events(1).await?;
-                if let Some(event) = self.pop_direct_endpoint_mesh_event()? {
-                    return Ok(Some(event));
-                }
-            }
-
-            let Some(message) = self.endpoint.try_recv() else {
-                return Ok(None);
-            };
-
-            if let Some(event) = self.endpoint_message_to_mesh_event(message, now).await? {
-                return Ok(Some(event));
-            }
-        }
-    }
-
+    #[cfg(test)]
     async fn endpoint_message_to_mesh_event(
         &self,
         message: FipsEndpointMessage,
@@ -317,15 +290,13 @@ impl FipsPrivateMeshRuntime {
                     ));
                 }
                 FipsControlFrame::Roster {
-                    network_id,
-                    roster,
+                    network_id: _,
+                    roster: _,
                     signed_roster,
                 } => {
                     return Ok(FipsEndpointMessageOutcome::event(
                         FipsPrivateMeshEvent::Roster {
                             sender_pubkey: source_pubkey,
-                            network_id,
-                            roster,
                             signed_roster,
                         },
                     ));
@@ -456,7 +427,7 @@ impl FipsPrivateMeshRuntime {
         decode_fips_control_frame(&reassembled)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
     async fn drain_direct_endpoint_mesh_events(&self, limit: usize) -> Result<usize> {
         let mut events = Vec::new();
         while events.len() < limit {
@@ -484,7 +455,7 @@ impl FipsPrivateMeshRuntime {
         Ok(drained)
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
     async fn direct_endpoint_packet_runs_to_mesh_events(
         &self,
         runs: Vec<FipsEndpointDirectPacketRun>,
@@ -508,7 +479,7 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
     fn pop_direct_endpoint_mesh_event(&self) -> Result<Option<FipsPrivateMeshEvent>> {
         Ok(self
             .direct_endpoint_pending_events
@@ -517,7 +488,7 @@ impl FipsPrivateMeshRuntime {
             .pop_front())
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
     fn pop_direct_endpoint_mesh_events_into(
         &self,
         events: &mut Vec<FipsPrivateMeshEvent>,

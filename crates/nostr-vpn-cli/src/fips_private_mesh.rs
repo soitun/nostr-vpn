@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
@@ -20,9 +18,8 @@ use nostr_vpn_core::config::{
 };
 use nostr_vpn_core::data_plane::MeshPeerStatus;
 use nostr_vpn_core::fips_control::{
-    FipsControlFragmentBuffer, FipsControlFrame, NetworkRoster, PeerCapabilities, PeerEndpointHint,
-    SignedRoster, decode_fips_control_frame, encode_fips_control_frame,
-    encode_fips_control_messages,
+    FipsControlFragmentBuffer, FipsControlFrame, PeerCapabilities, PeerEndpointHint, SignedRoster,
+    decode_fips_control_frame, encode_fips_control_frame, encode_fips_control_messages,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nostr_vpn_core::fips_mesh::packet_destination;
@@ -36,6 +33,7 @@ use nostr_vpn_core::join_requests::MeshJoinRequest;
 use nostr_vpn_core::paid_route_accounting::PaidRouteTrafficAccountant;
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_route_store::PaidRouteSellerAdmission;
+#[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_routes::PaidExitConfig;
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_routes::PaidRouteUsage;
@@ -48,6 +46,7 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::io::{AsRawFd, RawFd};
+#[cfg(feature = "paid-exit")]
 use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;

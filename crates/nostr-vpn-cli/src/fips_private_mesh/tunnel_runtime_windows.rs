@@ -131,10 +131,6 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.refresh_peer_paths(endpoint_peers).await
     }
 
-    pub(crate) async fn update_relays(&self, relays: &[String]) -> Result<()> {
-        self.mesh.update_relays(relays).await
-    }
-
     pub(crate) fn requires_endpoint_restart(&self, config: &FipsPrivateTunnelConfig) -> bool {
         self.config.iface != config.iface
             || self.config.local_address != config.local_address
@@ -251,16 +247,6 @@ impl FipsPrivateTunnelRuntime {
     ) -> Result<()> {
         self.mesh
             .send_capabilities(participant, network_id, capabilities)
-            .await
-    }
-
-    pub(crate) async fn broadcast_capabilities(
-        &self,
-        network_id: &str,
-        capabilities: PeerCapabilities,
-    ) -> Result<usize> {
-        self.mesh
-            .broadcast_capabilities(network_id, capabilities)
             .await
     }
 

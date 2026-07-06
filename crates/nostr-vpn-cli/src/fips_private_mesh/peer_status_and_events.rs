@@ -707,8 +707,6 @@ pub(crate) enum FipsPrivateMeshEvent {
     },
     Roster {
         sender_pubkey: String,
-        network_id: String,
-        roster: NetworkRoster,
         signed_roster: Option<Box<SignedRoster>>,
     },
     Capabilities {
