@@ -4,9 +4,7 @@ struct FipsDirectEndpointDataSink {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-struct FipsDirectEndpointDataRx {
-    queue: Arc<FipsDirectEndpointQueue>,
-}
+type FipsDirectEndpointDataRx = Arc<FipsDirectEndpointQueue>;
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct FipsDirectEndpointQueue {
@@ -37,7 +35,7 @@ fn fips_direct_endpoint_queue_pair() -> (FipsDirectEndpointDataSink, FipsDirectE
         FipsDirectEndpointDataSink {
             queue: Arc::clone(&queue),
         },
-        FipsDirectEndpointDataRx { queue },
+        queue,
     )
 }
 
@@ -69,35 +67,7 @@ impl FipsEndpointDirectSink for FipsDirectEndpointDataSink {
         &self,
         batch: FipsEndpointDirectPacketBatch,
     ) -> Result<(), FipsEndpointDirectDeliveryError> {
-        self.deliver_batch(batch)
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-impl FipsDirectEndpointDataSink {
-    fn deliver_batch(
-        &self,
-        batch: FipsEndpointDirectPacketBatch,
-    ) -> Result<(), FipsEndpointDirectDeliveryError> {
         self.queue.push(batch.into_packet_runs())
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-impl FipsDirectEndpointDataRx {
-    fn recv_source_batch_timeout(
-        &self,
-        timeout: Duration,
-        limit: usize,
-    ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::RecvTimeoutError> {
-        self.queue.recv_source_batch_timeout(timeout, limit)
-    }
-
-    fn try_recv_limited(
-        &self,
-        limit: usize,
-    ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
-        self.queue.try_recv_limited(limit)
     }
 }
 
