@@ -154,7 +154,7 @@
         let mut last_error = None;
         for _ in 0..50 {
             match runtime
-                .send_tunnel_packet_batch_owned(vec![packet.to_vec()])
+                .send_tunnel_packet_batch_owned_with_capacity(vec![packet.to_vec()], 1)
                 .await
             {
                 Ok(1) => return,

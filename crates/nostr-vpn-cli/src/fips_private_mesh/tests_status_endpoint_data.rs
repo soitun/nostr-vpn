@@ -19,7 +19,7 @@
         let expected_endpoint_data_bytes = (first.len() + second.len()) as u64;
 
         let sent = runtime
-            .send_tunnel_packet_batch_owned(vec![first.clone(), second.clone()])
+            .send_tunnel_packet_batch_owned_with_capacity(vec![first.clone(), second.clone()], 2)
             .await
             .expect("send packet batch");
         assert_eq!(sent, 2);
@@ -144,7 +144,10 @@
         third[20] = 3;
 
         let sent = runtime
-            .send_tunnel_packet_batch_owned(vec![first.clone(), second.clone(), third.clone()])
+            .send_tunnel_packet_batch_owned_with_capacity(
+                vec![first.clone(), second.clone(), third.clone()],
+                3,
+            )
             .await
             .expect("send packet batch");
         assert_eq!(sent, 3);

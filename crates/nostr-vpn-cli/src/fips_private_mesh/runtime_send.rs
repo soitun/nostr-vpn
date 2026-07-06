@@ -111,16 +111,6 @@ impl FipsPrivateMeshRuntime {
     }
 
     #[cfg(test)]
-    pub(crate) async fn send_tunnel_packet_batch_owned(
-        &self,
-        packets: Vec<Vec<u8>>,
-    ) -> Result<usize> {
-        let turn_capacity = packets.len();
-        self.send_tunnel_packet_batch_owned_with_capacity(packets, turn_capacity)
-            .await
-    }
-
-    #[cfg(test)]
     pub(crate) async fn send_tunnel_packet_batch_owned_with_capacity(
         &self,
         packets: Vec<Vec<u8>>,
