@@ -170,10 +170,6 @@ mod tests {
             Some(peer.endpoint_node_addr)
         );
         assert_eq!(
-            runtime.participant_pubkey_bytes_for_endpoint_node_addr(&peer.endpoint_node_addr),
-            Some(peer.endpoint_pubkey)
-        );
-        assert_eq!(
             runtime
                 .route_outbound_packet_owned_with_peer(packet.clone())
                 .expect("packet should route")
@@ -251,10 +247,6 @@ mod tests {
         assert_eq!(
             runtime.participant_for_endpoint_node_addr(&buyer.endpoint_node_addr),
             Some(buyer.participant_pubkey.clone())
-        );
-        assert_eq!(
-            runtime.participant_pubkey_bytes_for_endpoint_node_addr(&buyer.endpoint_node_addr),
-            Some(buyer.endpoint_pubkey)
         );
         assert_eq!(
             runtime.peer_endpoint_node_addr_for_participant_pubkey_bytes(&buyer.endpoint_pubkey),

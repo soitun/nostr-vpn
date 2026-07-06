@@ -373,14 +373,6 @@ impl FipsMeshRuntime {
             .map(|peer| peer.participant_pubkey_hex.clone())
     }
 
-    pub fn participant_pubkey_bytes_for_endpoint_node_addr(
-        &self,
-        endpoint_node_addr: &[u8; 16],
-    ) -> Option<[u8; 32]> {
-        self.peer_for_endpoint_node_addr(endpoint_node_addr)
-            .and_then(|peer| peer.participant_pubkey)
-    }
-
     pub fn peer_endpoint_node_addr(&self, participant_pubkey: &str) -> Option<[u8; 16]> {
         let participant_pubkey = parse_nostr_pubkey_bytes(participant_pubkey)?;
         self.peer_endpoint_node_addr_for_participant_pubkey_bytes(&participant_pubkey)
