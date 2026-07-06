@@ -429,6 +429,7 @@ impl MobileTunnel {
             app_config,
             app_config_dirty,
             tun_counters,
+            #[cfg(any(test, target_os = "android", target_os = "ios"))]
             outbound_tx,
             inbound_rx,
             tasks,
@@ -588,10 +589,7 @@ struct MobileTunnelStarted {
     app_config: Arc<RwLock<AppConfig>>,
     app_config_dirty: Arc<AtomicBool>,
     tun_counters: Arc<MobileTunAtomicCounters>,
-    #[cfg_attr(
-        not(any(test, target_os = "android", target_os = "ios")),
-        allow(dead_code)
-    )]
+    #[cfg(any(test, target_os = "android", target_os = "ios"))]
     outbound_tx: tokio_mpsc::Sender<Vec<Vec<u8>>>,
     inbound_rx: tokio_mpsc::Receiver<Vec<Vec<u8>>>,
     tasks: Vec<JoinHandle<()>>,
