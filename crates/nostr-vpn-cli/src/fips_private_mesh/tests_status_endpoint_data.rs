@@ -93,8 +93,15 @@
         batch.push(TunPipelinePacket::new(first.clone()));
         batch.push(TunPipelinePacket::new(second.clone()));
 
+        let input_packets = batch.len();
+        let mut send_runs = Vec::new();
         let sent = runtime
-            .send_tun_pipeline_packet_batch(&mut batch)
+            .send_tun_pipeline_packet_turn(
+                batch.drain(..),
+                input_packets,
+                input_packets,
+                &mut send_runs,
+            )
             .await
             .expect("send TUN pipeline packet batch");
         assert_eq!(sent, 2);

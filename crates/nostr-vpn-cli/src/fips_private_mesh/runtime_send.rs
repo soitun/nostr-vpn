@@ -223,22 +223,6 @@ impl FipsPrivateMeshRuntime {
     }
 
     #[cfg(all(any(target_os = "linux", target_os = "macos"), test))]
-    async fn send_tun_pipeline_packet_batch(
-        &self,
-        packets: &mut Vec<TunPipelinePacket>,
-    ) -> Result<usize> {
-        let input_packets = packets.len();
-        let mut runs = Vec::new();
-        self.send_tun_pipeline_packet_turn(
-            packets.drain(..),
-            input_packets,
-            input_packets,
-            &mut runs,
-        )
-        .await
-    }
-
-    #[cfg(all(any(target_os = "linux", target_os = "macos"), test))]
     async fn send_tun_pipeline_packet_turn<I>(
         &self,
         packets: I,
