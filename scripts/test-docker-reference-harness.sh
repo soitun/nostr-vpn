@@ -1607,6 +1607,29 @@ test_docker_perf_scripts_share_iperf_socket_buffer_limit_helper() {
   assert_file_contains "$ROOT_DIR/scripts/perf-docker-boringtun.sh" "docker_bench_configure_iperf_socket_buffer_limits perf-boringtun" "boringtun Docker perf uses shared socket-buffer helper"
 }
 
+test_docker_perf_scripts_reject_translated_processes() {
+  local helper="$ROOT_DIR/scripts/lib-docker-bench-summary.sh"
+  local native rosetta qemu
+  native='30 /usr/local/bin/nvpn connect'
+  rosetta='30 /run/rosetta/rosetta /usr/local/bin/nvpn daemon --config /cfg/container.toml'
+  qemu='30 /usr/bin/qemu-x86_64 /usr/local/bin/wireguard-go --foreground wg0'
+
+  if docker_bench_process_uses_translation "$native"; then
+    fail "native process was classified as translated"
+  fi
+  if ! docker_bench_process_uses_translation "$rosetta"; then
+    fail "Rosetta process was not classified as translated"
+  fi
+  if ! docker_bench_process_uses_translation "$qemu"; then
+    fail "QEMU process was not classified as translated"
+  fi
+
+  assert_file_contains "$helper" "docker_bench_assert_native_processes" "Docker perf shared native-process guard"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker.sh" "docker_bench_assert_native_processes perf nvpn node-a node-b" "nvpn Docker perf rejects translated nvpn"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker-wireguard-go.sh" "docker_bench_assert_native_processes perf-wireguard-go wireguard-go node-a node-b" "wireguard-go Docker perf rejects translated wireguard-go"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker-boringtun.sh" "docker_bench_assert_native_processes perf-boringtun boringtun-cli node-a node-b" "boringtun Docker perf rejects translated boringtun"
+}
+
 test_json_and_ping_parsers
 test_cpu_accounting_helpers
 test_udp1000_parallel_bandwidth_helpers_preserve_total_target
@@ -1646,5 +1669,6 @@ test_docker_comparison_labels_same_backend_profiles
 test_nvpn_perf_docker_records_daemon_cpu_phase_artifact
 test_wireguard_go_perf_docker_records_cpu_phase_artifact
 test_docker_perf_scripts_share_iperf_socket_buffer_limit_helper
+test_docker_perf_scripts_reject_translated_processes
 
 printf 'docker benchmark summary self-test passed\n'

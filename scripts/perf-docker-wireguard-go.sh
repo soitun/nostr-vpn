@@ -327,6 +327,7 @@ run_wireguard_go_pass() {
 
   reset_wg
   setup_wg
+  docker_bench_assert_native_processes perf-wireguard-go wireguard-go node-a node-b
 
   printf '\n=========================================\n'
   printf '  wireguard-go\n'

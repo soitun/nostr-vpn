@@ -1006,6 +1006,7 @@ if ! "${COMPOSE[@]}" exec -T node-a ping -c 3 -W 2 "$BOB_TUNNEL_IP" >/dev/null; 
   echo "perf: ping a->b over mesh failed" >&2
   exit 1
 fi
+docker_bench_assert_native_processes perf nvpn node-a node-b
 
 echo "alice tunnel ip: $ALICE_TUNNEL_IP"
 echo "bob   tunnel ip: $BOB_TUNNEL_IP"

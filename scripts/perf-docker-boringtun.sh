@@ -319,6 +319,7 @@ run_boringtun_pass() {
 
   reset_wg
   setup_wg "$threads"
+  docker_bench_assert_native_processes perf-boringtun boringtun-cli node-a node-b
   docker_bench_write_cpu_phase_header "$cpu_phases"
 
   printf '\n=========================================\n'

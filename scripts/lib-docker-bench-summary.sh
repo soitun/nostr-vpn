@@ -85,6 +85,47 @@ docker_bench_configure_iperf_socket_buffer_limits() {
   done
 }
 
+docker_bench_process_uses_translation() {
+  local process_lines="$1"
+  grep -Eq '(^|[[:space:]])/run/rosetta/rosetta([[:space:]]|$)|(^|[[:space:]])([^[:space:]]*/)?qemu-[^[:space:]]*([[:space:]]|$)' \
+    <<<"$process_lines"
+}
+
+docker_bench_process_lines() {
+  local service="$1"
+  local process_name="$2"
+  "${COMPOSE[@]}" exec -T "$service" sh -s -- "$process_name" <<'SH'
+set -eu
+process_name="$1"
+ps -eo pid=,comm=,args= | awk -v name="$process_name" '
+  $2 ~ /^(sh|bash|dash|grep|awk|ps)$/ { next }
+  $2 == name || index($0, "/" name) || index($0, " " name " ") { print }
+'
+SH
+}
+
+docker_bench_assert_native_processes() {
+  local log_prefix="$1"
+  local process_name="$2"
+  shift 2
+
+  local service process_lines
+  for service in "$@"; do
+    process_lines="$(docker_bench_process_lines "$service" "$process_name")"
+    if [[ -z "$process_lines" ]]; then
+      printf '%s: no %s process found in %s after tunnel setup\n' \
+        "$log_prefix" "$process_name" "$service" >&2
+      return 1
+    fi
+    if docker_bench_process_uses_translation "$process_lines"; then
+      printf '%s: %s %s is running through Rosetta/QEMU; rebuild the Docker image for native architecture\n' \
+        "$log_prefix" "$service" "$process_name" >&2
+      printf '%s\n' "$process_lines" >&2
+      return 1
+    fi
+  done
+}
+
 docker_bench_local_fips_patch_enabled() {
   if [[ -n "${NVPN_PATCH_LOCAL_FIPS+x}" ]]; then
     docker_bench_bool_enabled "$NVPN_PATCH_LOCAL_FIPS"

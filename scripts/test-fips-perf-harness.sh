@@ -467,13 +467,13 @@ test_translated_nvpn_process_guard() {
   translated='30 /run/rosetta/rosetta /usr/local/bin/nvpn /usr/local/bin/nvpn daemon --config /cfg/container.toml'
   qemu='30 /usr/bin/qemu-x86_64 /usr/local/bin/nvpn daemon --config /cfg/container.toml'
 
-  if nvpn_process_uses_translation "$native"; then
+  if docker_bench_process_uses_translation "$native"; then
     fail "native nvpn process was classified as translated"
   fi
-  if ! nvpn_process_uses_translation "$translated"; then
+  if ! docker_bench_process_uses_translation "$translated"; then
     fail "Rosetta nvpn process was not classified as translated"
   fi
-  if ! nvpn_process_uses_translation "$qemu"; then
+  if ! docker_bench_process_uses_translation "$qemu"; then
     fail "QEMU nvpn process was not classified as translated"
   fi
 }

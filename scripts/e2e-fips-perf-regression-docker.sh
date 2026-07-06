@@ -270,26 +270,8 @@ wait_for_mesh() {
   return 1
 }
 
-nvpn_process_uses_translation() {
-  local process_lines="$1"
-  grep -Eq '(^|[[:space:]])/run/rosetta/rosetta([[:space:]]|$)|(^|[[:space:]])([^[:space:]]*/)?qemu-[^[:space:]]*([[:space:]]|$)' \
-    <<<"$process_lines"
-}
-
-assert_native_nvpn_processes() {
-  local service="$1"
-  local process_lines
-  process_lines="$("${COMPOSE[@]}" exec -T "$service" sh -lc "pgrep -a nvpn || ps -ef | grep '[n]vpn' || true")"
-  if nvpn_process_uses_translation "$process_lines"; then
-    printf 'nvpn+FIPS perf regression e2e failed: %s nvpn is running through Rosetta/QEMU; rebuild the Docker image for the native architecture\n' "$service" >&2
-    printf '%s\n' "$process_lines" >&2
-    exit 1
-  fi
-}
-
 assert_native_nvpn_pair() {
-  assert_native_nvpn_processes node-a
-  assert_native_nvpn_processes node-b
+  docker_bench_assert_native_processes "nvpn+FIPS perf regression e2e" nvpn node-a node-b
 }
 
 install_direct_underlay_counter() {
