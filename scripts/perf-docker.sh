@@ -28,6 +28,11 @@
 #   NVPN_DOCKER_DATAPLANE_PROFILE=linux-vnet-lan
 #     expands to the LAN MTU daemon env used for peak Linux Docker dataplane
 #     measurements. Linux vnet TUN is the canonical FIPS TUN path.
+#   NVPN_DOCKER_PERF_PHASES=tcp-8
+#     records a host `perf record` sample for named phases into raw/perf/.
+#     Requires passwordless sudo for perf on hosts with restrictive
+#     perf_event_paranoid settings. Perf sampling can perturb throughput, so
+#     keep profiled rows out of scorecard comparisons.
 #   NVPN_DOCKER_PLACEMENT_PROFILE=worker-open
 #     pins the protocol-neutral direct-peer same-owner FSP local-open expectation
 #     by defaulting NVPN_DOCKER_EXPECT_FSP_OWNER_PLACEMENT=worker-open and
@@ -63,6 +68,8 @@ PIPELINE_PHASE_SUMMARY="$RAW_DIR/nvpn-pipeline-phase-summary.tsv"
 DAEMON_CPU_PHASES="$RAW_DIR/nvpn-daemon-cpu-phases.tsv"
 PIPELINE_TRACE="${NVPN_DOCKER_PIPELINE_TRACE:-0}"
 PIPELINE_INTERVAL_SECS="${NVPN_DOCKER_PIPELINE_INTERVAL_SECS:-5}"
+PERF_PHASES="${NVPN_DOCKER_PERF_PHASES:-}"
+PERF_FREQ="${NVPN_DOCKER_PERF_FREQ:-19}"
 EXTRA_CONNECT_ENV=""
 REQUIRE_NO_DIRECT_FMP="${NVPN_DOCKER_REQUIRE_NO_DIRECT_FMP:-0}"
 REQUIRE_NO_FSP_AEAD_HELPERS="${NVPN_DOCKER_REQUIRE_NO_FSP_AEAD_HELPERS:-0}"
@@ -330,6 +337,69 @@ wait_for_service() {
   done
   echo "perf: service '$service' did not start" >&2
   exit 1
+}
+
+perf_phase_enabled() {
+  local phase="$1"
+  [[ -n "$PERF_PHASES" ]] || return 1
+  local token
+  for token in ${PERF_PHASES//,/ }; do
+    [[ "$token" == "all" || "$token" == "$phase" ]] && return 0
+  done
+  return 1
+}
+
+host_pids_for_service_process() {
+  local service="$1"
+  local process_name="$2"
+  local cid
+  cid="$("${COMPOSE[@]}" ps -q "$service" 2>/dev/null || true)"
+  [[ -n "$cid" ]] || return 0
+  docker top "$cid" -eo pid,comm 2>/dev/null \
+    | awk -v name="$process_name" 'NR > 1 && $2 == name { print $1 }'
+}
+
+start_phase_perf() {
+  PHASE_PERF_PID=""
+  local phase="$1"
+  perf_phase_enabled "$phase" || return 0
+  mkdir -p "$RAW_DIR/perf"
+
+  local pids=()
+  local service pid
+  for service in node-a node-b; do
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] && pids+=("$pid")
+    done < <(host_pids_for_service_process "$service" nvpn)
+  done
+  if [[ "${#pids[@]}" == "0" ]]; then
+    printf 'perf: no nvpn host PIDs found for phase %s\n' "$phase" \
+      >"$RAW_DIR/perf/nvpn-$phase.log"
+    return 0
+  fi
+
+  local pid_csv data_path log_path
+  pid_csv="$(IFS=,; printf '%s' "${pids[*]}")"
+  data_path="$RAW_DIR/perf/nvpn-$phase.data"
+  log_path="$RAW_DIR/perf/nvpn-$phase.log"
+  printf 'phase=%s\npids=%s\nfreq=%s\n' "$phase" "$pid_csv" "$PERF_FREQ" >"$log_path"
+  sudo -n perf record -F "$PERF_FREQ" -g -p "$pid_csv" -o "$data_path" \
+    -- sleep "$((DURATION + 1))" >>"$log_path" 2>&1 &
+  PHASE_PERF_PID="$!"
+}
+
+finish_phase_perf() {
+  local phase="$1"
+  local perf_pid="$2"
+  [[ -n "$perf_pid" ]] || return 0
+  wait "$perf_pid" || true
+
+  local data_path="$RAW_DIR/perf/nvpn-$phase.data"
+  local report_path="$RAW_DIR/perf/nvpn-$phase-report.txt"
+  local log_path="$RAW_DIR/perf/nvpn-$phase.log"
+  [[ -s "$data_path" ]] || return 0
+  sudo -n perf report --stdio --no-children --sort comm,dso,symbol \
+    -i "$data_path" >"$report_path" 2>>"$log_path" || true
 }
 
 nostr_pubkey_from_config() {
@@ -1043,11 +1113,16 @@ run_test_json() {
   phase_start_node_b="$(pipeline_line_count node-b)"
   cpu_start_node_a="$(daemon_cpu_sample node-a)"
   cpu_start_node_b="$(daemon_cpu_sample node-b)"
+  local phase_perf_pid
+  start_phase_perf "$phase"
+  phase_perf_pid="$PHASE_PERF_PID"
   if ! "${COMPOSE[@]}" exec -T node-a "${iperf_cmd[@]}" >"$json_path" 2>"$err_path"; then
+    finish_phase_perf "$phase" "$phase_perf_pid"
     cat "$err_path" >&2
     cat "$json_path" >&2
     return 1
   fi
+  finish_phase_perf "$phase" "$phase_perf_pid"
   cpu_end_node_a="$(daemon_cpu_sample node-a)"
   cpu_end_node_b="$(daemon_cpu_sample node-b)"
   if jq -e 'has("error")' "$json_path" >/dev/null; then
