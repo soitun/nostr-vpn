@@ -289,7 +289,7 @@ impl FipsMeshRuntime {
         self.route_outbound_packet_owned_with_peer_to_destination(packet, destination)
     }
 
-    pub fn route_outbound_packet_owned_with_peer_to_destination<'a>(
+    fn route_outbound_packet_owned_with_peer_to_destination<'a>(
         &'a self,
         packet: Vec<u8>,
         destination: IpAddr,
