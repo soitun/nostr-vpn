@@ -163,9 +163,6 @@ fn spawn_windows_fips_mesh_recv_task(
                         );
                     }
                     write_windows_direct_endpoint_packet_batch(&session, &mut packet_batch);
-                    if drained >= recv_burst {
-                        std::thread::yield_now();
-                    }
                 }
                 Ok(None) => {
                     if let Err(error) =
