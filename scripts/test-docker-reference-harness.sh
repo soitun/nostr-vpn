@@ -1087,7 +1087,7 @@ test_docker_comparison_outputs() {
 
 test_docker_benchmark_table_outputs() {
   local dir out fields current_status current_events current_socket published_status published_events legacy_status wg_status
-  local current_receiver published_receiver current_provenance markdown_row
+  local current_receiver published_receiver current_provenance current_pipeline_shape markdown_row
   dir="$(mktemp -d)"
   write_summary_fixture \
     "$dir/current/summary.tsv" \
@@ -1105,6 +1105,11 @@ test_docker_benchmark_table_outputs() {
     printf 'event\tmax_rate_per_sec\ttotal\n'
     printf 'rx_loop_slow_maintenance_skipped\t1\t7\n'
   } >"$dir/current/raw/nvpn-pipeline-hard-event-totals.tsv"
+  {
+    printf 'phase\tservice\tload_top_queue_wait\tpeak_top_queue_wait\tnvpn_tun_read_batch\tnvpn_mesh_send_batch\tnvpn_mesh_recv_batch\tnvpn_tun_write\tnvpn_direct_endpoint\thard_events\n'
+    printf 'tcp-8\tnode-a\tnvpn_direct_endpoint_queue:rate_per_sec=11,p95_ms=0.2,p99_ms=0.5,max_ms=1,allmax_ms=2\tnvpn_direct_endpoint_queue:rate_per_sec=12,p95_ms=0.2,p99_ms=1,max_ms=2,allmax_ms=3\tavg_packets=120.0,flush_per_sec=10,packets_per_sec=1200\tavg_input_packets=120.0,avg_routed_packets=120.0,avg_runs=1.0\tavg_events=1.0,avg_packets=1.0\tpackets_per_sec=1\tqueue_rate_per_sec=1\t\n'
+    printf 'tcp-8\tnode-b\tnvpn_direct_endpoint_queue:rate_per_sec=21,p95_ms=1,p99_ms=2,max_ms=4,allmax_ms=8\tnvpn_direct_endpoint_queue:rate_per_sec=22,p95_ms=2,p99_ms=4,max_ms=8,allmax_ms=16\tavg_packets=1.0\tavg_input_packets=1.0\tavg_events=100.0,avg_packets=100.0,flush_per_sec=8\tpackets_per_sec=1000,frames_per_sec=30,avg_packets_per_frame=33.3\tqueue_rate_per_sec=21,queue_p95_ms=1,queue_p99_ms=2,tun_batch_p99_ms=1\t\n'
+  } >"$dir/current/raw/nvpn-pipeline-phase-summary.tsv"
   {
     printf 'service\tpeer_addr\trequested_recv_buf\tactual_recv_buf\trequested_send_buf\tactual_send_buf\n'
     printf 'node-a\t10.0.0.2:51820\t16777216\t33554432\t8388608\t16777216\n'
@@ -1200,6 +1205,7 @@ test_docker_benchmark_table_outputs() {
   current_events="$(table_values "$out/stress-table.tsv" current udp_kernel_dropped_total udp_namespace_rcvbuf_errors_total connected_udp_kernel_dropped_total connected_udp_peer_kernel_dropped_total connected_udp_drain_bulk_dropped_total connected_udp_direct_decrypt_bulk_shed_total)"
   current_socket="$(table_values "$out/stress-table.tsv" current connected_udp_recv_buf connected_udp_send_buf)"
   current_receiver="$(table_values "$out/stress-table.tsv" current iperf_udp200_sockbuf iperf_udp1000_sockbuf udp_receiver_rmem udp_receiver_wmem node_b_udp_rcvbuf_errors udp_loss_attribution)"
+  current_pipeline_shape="$(table_values "$out/stress-table.tsv" current tcp8_node_a_top_queue_wait tcp8_node_b_top_queue_wait tcp8_node_a_nvpn_tun_read_batch tcp8_node_a_nvpn_mesh_send_batch tcp8_node_b_nvpn_mesh_recv_batch tcp8_node_b_nvpn_tun_write tcp8_node_b_nvpn_direct_endpoint)"
   published_status="$(table_values "$out/stress-table.tsv" published udp_ping_zero hard_events_total hard_events candidate)"
   published_receiver="$(table_values "$out/stress-table.tsv" published node_b_udp_rcvbuf_errors udp_loss_attribution)"
   published_events="$(table_values "$out/stress-table.tsv" published udp_kernel_dropped_total udp_namespace_rcvbuf_errors_total connected_udp_kernel_dropped_total connected_udp_peer_kernel_dropped_total connected_udp_drain_bulk_dropped_total connected_udp_direct_decrypt_bulk_shed_total)"
@@ -1208,11 +1214,12 @@ test_docker_benchmark_table_outputs() {
   current_provenance="$(table_values "$out/stress-table.tsv" current git_head fips_head dirty stress)"
   markdown_row="$(grep -F '| current | nvpn |' "$out/stress-table.md")"
 
-  assert_eq "$fields" "43" "Docker benchmark table field count"
+  assert_eq "$fields" "50" "Docker benchmark table field count"
   assert_eq "$current_status" $'true\t7\trx_loop_slow_maintenance_skipped:7\tpass' "Docker benchmark table current status"
   assert_eq "$current_events" $'0\t0\t0\t0\t0\t0' "Docker benchmark table current event split"
   assert_eq "$current_socket" $'16777216/33554432\t8388608/16777216' "Docker benchmark table connected UDP buffer summary"
   assert_eq "$current_receiver" $'1:0/212992/212992\t4:4194304/8388608/8388608\t212992/212992\t212992/212992\t0\tnone' "Docker benchmark table receiver buffer summary"
+  assert_eq "$current_pipeline_shape" $'nvpn_direct_endpoint_queue:rate_per_sec=11,p95_ms=0.2,p99_ms=0.5,max_ms=1,allmax_ms=2\tnvpn_direct_endpoint_queue:rate_per_sec=21,p95_ms=1,p99_ms=2,max_ms=4,allmax_ms=8\tavg_packets=120.0,flush_per_sec=10,packets_per_sec=1200\tavg_input_packets=120.0,avg_routed_packets=120.0,avg_runs=1.0\tavg_events=100.0,avg_packets=100.0,flush_per_sec=8\tpackets_per_sec=1000,frames_per_sec=30,avg_packets_per_frame=33.3\tqueue_rate_per_sec=21,queue_p95_ms=1,queue_p99_ms=2,tun_batch_p99_ms=1' "Docker benchmark table TCP8 pipeline shape"
   assert_eq "$published_status" $'false\t10\tudp_namespace_rcvbuf_errors:5;connected_udp_kernel_dropped:3;connected_udp_peer_kernel_dropped:2\tfail' "Docker benchmark table published status"
   assert_eq "$published_receiver" $'5\tmixed-hard+receiver-rcvbuf' "Docker benchmark table UDP loss attribution"
   assert_eq "$published_events" $'0\t5\t3\t2\t0\t0' "Docker benchmark table published event split"

@@ -485,6 +485,50 @@ connected_udp_socket_buffer_summary() {
   printf 'n/a\tn/a\n'
 }
 
+pipeline_phase_file() {
+  local artifact_dir="$1"
+  local summary="$2"
+  local raw_dir candidate
+  raw_dir="$(tsv_value "$summary" raw_dir 2>/dev/null || true)"
+  for candidate in \
+    "$raw_dir/nvpn-pipeline-phase-summary.tsv" \
+    "$artifact_dir/raw/nvpn-pipeline-phase-summary.tsv"; do
+    [[ -n "$candidate" && -f "$candidate" ]] || continue
+    printf '%s\n' "$candidate"
+    return
+  done
+  return 0
+}
+
+pipeline_phase_value() {
+  local artifact_dir="$1"
+  local summary="$2"
+  local phase="$3"
+  local service="$4"
+  local field="$5"
+  local phase_file
+  phase_file="$(pipeline_phase_file "$artifact_dir" "$summary")"
+  if [[ -z "$phase_file" ]]; then
+    printf 'n/a\n'
+    return
+  fi
+  awk -F '\t' -v want_phase="$phase" -v want_service="$service" -v want_field="$field" '
+    NR == 1 {
+      for (i = 1; i <= NF; i++) idx[$i] = i
+      next
+    }
+    idx["phase"] && idx["service"] && idx[want_field] &&
+      $(idx["phase"]) == want_phase && $(idx["service"]) == want_service {
+        value = $(idx[want_field])
+        print (value == "" ? "n/a" : value)
+        found = 1
+        exit
+      }
+    END {
+      if (!found) print "n/a"
+    }' "$phase_file"
+}
+
 cpu_phase_file() {
   local artifact_dir="$1"
   local summary="$2"
@@ -635,6 +679,9 @@ write_header() {
     udp_kernel_dropped_total udp_namespace_rcvbuf_errors_total connected_udp_kernel_dropped_total \
     connected_udp_peer_kernel_dropped_total connected_udp_drain_bulk_dropped_total \
     connected_udp_direct_decrypt_bulk_shed_total connected_udp_recv_buf connected_udp_send_buf \
+    tcp8_node_a_top_queue_wait tcp8_node_b_top_queue_wait \
+    tcp8_node_a_nvpn_tun_read_batch tcp8_node_a_nvpn_mesh_send_batch \
+    tcp8_node_b_nvpn_mesh_recv_batch tcp8_node_b_nvpn_tun_write tcp8_node_b_nvpn_direct_endpoint \
     candidate artifact
 }
 
@@ -654,6 +701,8 @@ write_row() {
   local udp_kernel_dropped udp_namespace_rcvbuf_errors connected_udp_kernel_dropped
   local connected_udp_peer_kernel_dropped connected_udp_drain_bulk_dropped connected_udp_direct_decrypt_bulk_shed
   local connected_udp_recv_buf connected_udp_send_buf
+  local tcp8_node_a_top_queue_wait tcp8_node_b_top_queue_wait
+  local tcp8_node_a_tun_read tcp8_node_a_mesh_send tcp8_node_b_mesh_recv tcp8_node_b_tun_write tcp8_node_b_direct_endpoint
 
   if [[ -n "$summary_override" ]]; then
     summary="$summary_override"
@@ -717,6 +766,13 @@ write_row() {
   connected_udp_drain_bulk_dropped="$(hard_event_total_from_summary "$hard_total" "$hard_events" connected_udp_drain_bulk_dropped)"
   connected_udp_direct_decrypt_bulk_shed="$(hard_event_total_from_summary "$hard_total" "$hard_events" connected_udp_direct_decrypt_bulk_shed)"
   IFS=$'\t' read -r connected_udp_recv_buf connected_udp_send_buf < <(connected_udp_socket_buffer_summary "$artifact_dir" "$summary")
+  tcp8_node_a_top_queue_wait="$(pipeline_phase_value "$artifact_dir" "$summary" tcp-8 node-a load_top_queue_wait)"
+  tcp8_node_b_top_queue_wait="$(pipeline_phase_value "$artifact_dir" "$summary" tcp-8 node-b load_top_queue_wait)"
+  tcp8_node_a_tun_read="$(pipeline_phase_value "$artifact_dir" "$summary" tcp-8 node-a nvpn_tun_read_batch)"
+  tcp8_node_a_mesh_send="$(pipeline_phase_value "$artifact_dir" "$summary" tcp-8 node-a nvpn_mesh_send_batch)"
+  tcp8_node_b_mesh_recv="$(pipeline_phase_value "$artifact_dir" "$summary" tcp-8 node-b nvpn_mesh_recv_batch)"
+  tcp8_node_b_tun_write="$(pipeline_phase_value "$artifact_dir" "$summary" tcp-8 node-b nvpn_tun_write)"
+  tcp8_node_b_direct_endpoint="$(pipeline_phase_value "$artifact_dir" "$summary" tcp-8 node-b nvpn_direct_endpoint)"
   zero_status="$(loss_zero_status "$udp_200_loss" "$udp_1000_loss" "$ping_loss")"
   attribution="$(udp_loss_attribution \
     "$zero_status" \
@@ -775,6 +831,13 @@ write_row() {
     "$(tsv_escape "$connected_udp_direct_decrypt_bulk_shed")" \
     "$(tsv_escape "$connected_udp_recv_buf")" \
     "$(tsv_escape "$connected_udp_send_buf")" \
+    "$(tsv_escape "$tcp8_node_a_top_queue_wait")" \
+    "$(tsv_escape "$tcp8_node_b_top_queue_wait")" \
+    "$(tsv_escape "$tcp8_node_a_tun_read")" \
+    "$(tsv_escape "$tcp8_node_a_mesh_send")" \
+    "$(tsv_escape "$tcp8_node_b_mesh_recv")" \
+    "$(tsv_escape "$tcp8_node_b_tun_write")" \
+    "$(tsv_escape "$tcp8_node_b_direct_endpoint")" \
     "$(tsv_escape "$candidate")" \
     "$(tsv_escape "$artifact_dir")"
 }
