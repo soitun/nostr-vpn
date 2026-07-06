@@ -23,14 +23,14 @@ pub(crate) enum LinuxExitNodeIpFamily {
     V6,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct LinuxExitNodeDefaultRouteFamilies {
     pub(crate) ipv4: bool,
     pub(crate) ipv6: bool,
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 pub(crate) fn linux_exit_node_default_route_families(
     routes: &[String],
 ) -> LinuxExitNodeDefaultRouteFamilies {
