@@ -129,6 +129,10 @@ export type UiState = {
   tunnelIp: string;
   listenPort: number;
   relays: RelayView[];
+  nostrPubsubMode: string;
+  nostrPubsubFanout: number;
+  nostrPubsubMaxHops: number;
+  nostrPubsubMaxEventBytes: number;
   exitNode: string;
   exitNodeLeakProtection: boolean;
   exitNodeActive: boolean;

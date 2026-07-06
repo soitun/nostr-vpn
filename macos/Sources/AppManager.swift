@@ -431,6 +431,26 @@ final class AppManager: ObservableObject {
         )
     }
 
+    func saveNostrPubsubSettings(
+        mode: String,
+        fanout: String,
+        maxHops: String,
+        maxEventBytes: String
+    ) {
+        let parsedFanout = UInt32(fanout.trimmingCharacters(in: .whitespacesAndNewlines))
+        let parsedMaxHops = UInt8(maxHops.trimmingCharacters(in: .whitespacesAndNewlines))
+        let parsedMaxEventBytes = UInt32(maxEventBytes.trimmingCharacters(in: .whitespacesAndNewlines))
+        dispatch(
+            .updateSettings(patch: settingsPatch(
+                nostrPubsubMode: mode,
+                nostrPubsubFanout: parsedFanout,
+                nostrPubsubMaxHops: parsedMaxHops,
+                nostrPubsubMaxEventBytes: parsedMaxEventBytes
+            )),
+            status: "Saving pubsub"
+        )
+    }
+
     @discardableResult
     func addRelay(_ value: String) -> Bool {
         guard let url = Self.normalizedRelayUrl(value) else {
@@ -1674,6 +1694,10 @@ final class AppManager: ObservableObject {
                 NativeRelayState(url: "wss://relay.damus.io", status: "connected", enabled: true),
                 NativeRelayState(url: "wss://relay.nostr.band", status: "unknown", enabled: true)
             ],
+            nostrPubsubMode: "client",
+            nostrPubsubFanout: 4,
+            nostrPubsubMaxHops: 2,
+            nostrPubsubMaxEventBytes: 65_536,
             networkId: networkId,
             activeNetworkInvite: "nvpn://invite/demo-mesh",
             exitNode: sellerScreenshot ? "" : "npub1paidexitfinlanddemo",
@@ -2643,6 +2667,10 @@ func settingsPatch(
     listenPort: UInt16? = nil,
     relays: [String]? = nil,
     disabledRelays: [String]? = nil,
+    nostrPubsubMode: String? = nil,
+    nostrPubsubFanout: UInt32? = nil,
+    nostrPubsubMaxHops: UInt8? = nil,
+    nostrPubsubMaxEventBytes: UInt32? = nil,
     exitNode: String? = nil,
     exitNodeLeakProtection: Bool? = nil,
     advertiseExitNode: Bool? = nil,
@@ -2677,6 +2705,7 @@ func settingsPatch(
     paidExitIpv6: Bool? = nil,
     paidExitRatingFile: String? = nil,
     paidExitRatingRelays: [String]? = nil,
+    paidExitTrustedRatingAuthors: [String]? = nil,
     paidExitRatingScope: String? = nil,
     fipsHostTunnelEnabled: Bool? = nil,
     connectToNonRosterFipsPeers: Bool? = nil,
@@ -2695,6 +2724,10 @@ func settingsPatch(
         listenPort: listenPort,
         relays: relays,
         disabledRelays: disabledRelays,
+        nostrPubsubMode: nostrPubsubMode,
+        nostrPubsubFanout: nostrPubsubFanout,
+        nostrPubsubMaxHops: nostrPubsubMaxHops,
+        nostrPubsubMaxEventBytes: nostrPubsubMaxEventBytes,
         exitNode: exitNode,
         exitNodeLeakProtection: exitNodeLeakProtection,
         advertiseExitNode: advertiseExitNode,
@@ -2729,6 +2762,7 @@ func settingsPatch(
         paidExitIpv6: paidExitIpv6,
         paidExitRatingFile: paidExitRatingFile,
         paidExitRatingRelays: paidExitRatingRelays,
+        paidExitTrustedRatingAuthors: paidExitTrustedRatingAuthors,
         paidExitRatingScope: paidExitRatingScope,
         fipsHostTunnelEnabled: fipsHostTunnelEnabled,
         connectToNonRosterFipsPeers: connectToNonRosterFipsPeers,

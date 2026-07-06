@@ -36,6 +36,10 @@ struct RootView: View {
     @State private var listenPort = ""
     @State private var relayInput = ""
     @State private var fipsHostInboundTcpPorts = ""
+    @State private var nostrPubsubMode = "client"
+    @State private var nostrPubsubFanout = ""
+    @State private var nostrPubsubMaxHops = ""
+    @State private var nostrPubsubMaxEventBytes = ""
     @State private var wireguardExitConfig = ""
     @State private var paidExitMeter = "bytes"
     @State private var paidExitPriceMsat = ""
@@ -86,6 +90,10 @@ struct RootView: View {
     @State private var lastSyncedTunnelIp = ""
     @State private var lastSyncedListenPort: UInt32 = 0
     @State private var lastSyncedFipsHostInboundTcpPorts = ""
+    @State private var lastSyncedNostrPubsubMode = ""
+    @State private var lastSyncedNostrPubsubFanout: UInt32 = 0
+    @State private var lastSyncedNostrPubsubMaxHops: UInt8 = 0
+    @State private var lastSyncedNostrPubsubMaxEventBytes: UInt32 = 0
     @State private var lastSyncedWireguardExitConfig: String? = nil
     @State private var lastSyncedPaidExitSeller: NativePaidExitSellerState? = nil
 
@@ -3007,6 +3015,7 @@ struct RootView: View {
             generalSettings
             fipsSettings
             publicFipsSettings
+            pubsubSettings
             relaySettings
             networkSettings
             systemSettings
@@ -3180,6 +3189,46 @@ struct RootView: View {
                 ))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var pubsubSettings: some View {
+        surface {
+            sectionHeader("Nostr Pubsub", systemImage: "point.3.connected.trianglepath.dotted")
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 10) {
+                GridRow {
+                    label("Mode")
+                    Picker("", selection: $nostrPubsubMode) {
+                        Text("Off").tag("off")
+                        Text("Client").tag("client")
+                        Text("Relay").tag("relay")
+                    }
+                    .pickerStyle(.segmented)
+                }
+                GridRow {
+                    label("Fanout")
+                    TextField("4", text: $nostrPubsubFanout)
+                }
+                GridRow {
+                    label("Hops")
+                    TextField("2", text: $nostrPubsubMaxHops)
+                }
+                GridRow {
+                    label("Max event bytes")
+                    TextField("65536", text: $nostrPubsubMaxEventBytes)
+                }
+            }
+            Button {
+                manager.saveNostrPubsubSettings(
+                    mode: nostrPubsubMode,
+                    fanout: nostrPubsubFanout,
+                    maxHops: nostrPubsubMaxHops,
+                    maxEventBytes: nostrPubsubMaxEventBytes
+                )
+            } label: {
+                Label("Save", systemImage: "checkmark")
+            }
+            .disabled(manager.actionInFlight)
         }
     }
 
@@ -3647,6 +3696,22 @@ struct RootView: View {
         if state.fipsHostInboundTcpPorts != lastSyncedFipsHostInboundTcpPorts {
             fipsHostInboundTcpPorts = state.fipsHostInboundTcpPorts
             lastSyncedFipsHostInboundTcpPorts = state.fipsHostInboundTcpPorts
+        }
+        if state.nostrPubsubMode != lastSyncedNostrPubsubMode {
+            nostrPubsubMode = state.nostrPubsubMode
+            lastSyncedNostrPubsubMode = state.nostrPubsubMode
+        }
+        if state.nostrPubsubFanout != lastSyncedNostrPubsubFanout {
+            nostrPubsubFanout = String(state.nostrPubsubFanout)
+            lastSyncedNostrPubsubFanout = state.nostrPubsubFanout
+        }
+        if state.nostrPubsubMaxHops != lastSyncedNostrPubsubMaxHops {
+            nostrPubsubMaxHops = String(state.nostrPubsubMaxHops)
+            lastSyncedNostrPubsubMaxHops = state.nostrPubsubMaxHops
+        }
+        if state.nostrPubsubMaxEventBytes != lastSyncedNostrPubsubMaxEventBytes {
+            nostrPubsubMaxEventBytes = String(state.nostrPubsubMaxEventBytes)
+            lastSyncedNostrPubsubMaxEventBytes = state.nostrPubsubMaxEventBytes
         }
         if lastSyncedWireguardExitConfig != state.wireguardExitConfig {
             wireguardExitConfig = state.wireguardExitConfig

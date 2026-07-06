@@ -65,6 +65,10 @@
     tunnelIp: '',
     listenPort: '',
     relays: '',
+    nostrPubsubMode: 'client',
+    nostrPubsubFanout: '4',
+    nostrPubsubMaxHops: '2',
+    nostrPubsubMaxEventBytes: '65536',
     advertisedRoutes: '',
     fipsHostTunnelEnabled: false,
     connectToNonRosterFipsPeers: true,
@@ -209,6 +213,10 @@
       tunnelIp: next.tunnelIp,
       listenPort: String(next.listenPort || ''),
       relays: relays.map((relay) => relay.url).join('\n'),
+      nostrPubsubMode: next.nostrPubsubMode || 'client',
+      nostrPubsubFanout: String(next.nostrPubsubFanout || 4),
+      nostrPubsubMaxHops: String(next.nostrPubsubMaxHops || 2),
+      nostrPubsubMaxEventBytes: String(next.nostrPubsubMaxEventBytes || 65536),
       advertisedRoutes: next.advertisedRoutes.join(', '),
       fipsHostTunnelEnabled: next.fipsHostTunnelEnabled,
       connectToNonRosterFipsPeers: next.connectToNonRosterFipsPeers,
@@ -870,6 +878,21 @@
       error = 'Listen port must be between 1 and 65535';
       return;
     }
+    const nostrPubsubFanout = Number(settingsDraft.nostrPubsubFanout);
+    const nostrPubsubMaxHops = Number(settingsDraft.nostrPubsubMaxHops);
+    const nostrPubsubMaxEventBytes = Number(settingsDraft.nostrPubsubMaxEventBytes);
+    if (!Number.isInteger(nostrPubsubFanout) || nostrPubsubFanout <= 0) {
+      error = 'Pubsub fanout must be a positive whole number';
+      return;
+    }
+    if (!Number.isInteger(nostrPubsubMaxHops) || nostrPubsubMaxHops <= 0) {
+      error = 'Pubsub hops must be a positive whole number';
+      return;
+    }
+    if (!Number.isInteger(nostrPubsubMaxEventBytes) || nostrPubsubMaxEventBytes <= 0) {
+      error = 'Pubsub event bytes must be a positive whole number';
+      return;
+    }
     const ok = await run(
       '/api/update_settings',
       {
@@ -881,6 +904,10 @@
           .split(/[\s,]+/)
           .map((relay) => relay.trim())
           .filter(Boolean),
+        nostrPubsubMode: settingsDraft.nostrPubsubMode,
+        nostrPubsubFanout,
+        nostrPubsubMaxHops,
+        nostrPubsubMaxEventBytes,
         advertisedRoutes: settingsDraft.advertisedRoutes,
         fipsHostTunnelEnabled: settingsDraft.fipsHostTunnelEnabled,
         connectToNonRosterFipsPeers: settingsDraft.connectToNonRosterFipsPeers,
@@ -1865,6 +1892,44 @@
                 <span>Relays</span>
                 <textarea bind:value={settingsDraft.relays} on:input={() => (settingsDirty = true)} rows="4"></textarea>
               </label>
+
+              <div class="settings-grid">
+                <label>
+                  <span>Pubsub mode</span>
+                  <select bind:value={settingsDraft.nostrPubsubMode} on:change={() => (settingsDirty = true)}>
+                    <option value="off">Off</option>
+                    <option value="client">Client</option>
+                    <option value="relay">Relay</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Pubsub fanout</span>
+                  <input
+                    type="number"
+                    min="1"
+                    bind:value={settingsDraft.nostrPubsubFanout}
+                    on:input={() => (settingsDirty = true)}
+                  />
+                </label>
+                <label>
+                  <span>Pubsub hops</span>
+                  <input
+                    type="number"
+                    min="1"
+                    bind:value={settingsDraft.nostrPubsubMaxHops}
+                    on:input={() => (settingsDirty = true)}
+                  />
+                </label>
+                <label>
+                  <span>Pubsub event bytes</span>
+                  <input
+                    type="number"
+                    min="1"
+                    bind:value={settingsDraft.nostrPubsubMaxEventBytes}
+                    on:input={() => (settingsDirty = true)}
+                  />
+                </label>
+              </div>
             </div>
 
             <div class="panel wide">

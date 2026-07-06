@@ -1725,6 +1725,7 @@ private struct SettingsPage: View {
                 DeviceSettingsCard(model: model)
                 GeneralSettingsCard(model: model)
                 FipsSettingsCard(model: model)
+                PubsubSettingsCard(model: model)
                 RelaySettingsCard(model: model)
                 DiagnosticsCard(state: model.state)
             }
@@ -2228,6 +2229,59 @@ private struct FipsSettingsCard: View {
                 }
             ))
         }
+    }
+}
+
+private struct PubsubSettingsCard: View {
+    @ObservedObject var model: AppModel
+    @State private var mode = "client"
+    @State private var fanout = ""
+    @State private var maxHops = ""
+    @State private var maxEventBytes = ""
+
+    var body: some View {
+        AppCard {
+            Text("Nostr Pubsub")
+                .font(.headline)
+            Picker("Mode", selection: $mode) {
+                Text("Off").tag("off")
+                Text("Client").tag("client")
+                Text("Relay").tag("relay")
+            }
+            .pickerStyle(.segmented)
+            TextField("Fanout", text: $fanout)
+                .keyboardType(.numberPad)
+                .textFieldStyle(.roundedBorder)
+            TextField("Hops", text: $maxHops)
+                .keyboardType(.numberPad)
+                .textFieldStyle(.roundedBorder)
+            TextField("Max event bytes", text: $maxEventBytes)
+                .keyboardType(.numberPad)
+                .textFieldStyle(.roundedBorder)
+            Button("Save") {
+                var patch: [String: Any] = ["nostrPubsubMode": mode]
+                if let fanout = Int(fanout) {
+                    patch["nostrPubsubFanout"] = fanout
+                }
+                if let maxHops = Int(maxHops) {
+                    patch["nostrPubsubMaxHops"] = maxHops
+                }
+                if let maxEventBytes = Int(maxEventBytes) {
+                    patch["nostrPubsubMaxEventBytes"] = maxEventBytes
+                }
+                model.dispatch(NativeActions.updateSettings(patch), status: "Saving")
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .onAppear { sync() }
+        .onChange(of: model.state.rev) { _, _ in sync() }
+    }
+
+    private func sync() {
+        mode = model.state.nostrPubsubMode
+        fanout = String(model.state.nostrPubsubFanout)
+        maxHops = String(model.state.nostrPubsubMaxHops)
+        maxEventBytes = String(model.state.nostrPubsubMaxEventBytes)
     }
 }
 

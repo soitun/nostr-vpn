@@ -19,6 +19,10 @@ struct AppState: Decodable {
     var endpoint = ""
     var listenPort: Int = 0
     var relays: [RelayState] = []
+    var nostrPubsubMode = "client"
+    var nostrPubsubFanout: UInt32 = 4
+    var nostrPubsubMaxHops: UInt8 = 2
+    var nostrPubsubMaxEventBytes: UInt32 = 65_536
     var activeNetworkInvite = ""
     var connectedPeerCount: UInt64 = 0
     var expectedPeerCount: UInt64 = 0
@@ -70,7 +74,9 @@ struct AppState: Decodable {
     enum CodingKeys: String, CodingKey {
         case rev, error, appVersion, platform, mobile, vpnControlSupported
         case runtimeStatusDetail, vpnEnabled, vpnActive, vpnStatus, daemonRunning
-        case ownNpub, nodeName, selfMagicDnsName, tunnelIp, endpoint, listenPort, relays, activeNetworkInvite
+        case ownNpub, nodeName, selfMagicDnsName, tunnelIp, endpoint, listenPort, relays
+        case nostrPubsubMode, nostrPubsubFanout, nostrPubsubMaxHops, nostrPubsubMaxEventBytes
+        case activeNetworkInvite
         case connectedPeerCount, expectedPeerCount
         case fipsConnectedPeerCount, fipsRosterPeerCount, nonFipsRosterPeerCount
         case meshReady, exitNode, exitNodeLeakProtection
@@ -111,6 +117,10 @@ struct AppState: Decodable {
         endpoint = container.string(.endpoint)
         listenPort = container.int(.listenPort)
         relays = container.array(.relays)
+        nostrPubsubMode = container.string(.nostrPubsubMode, default: "client")
+        nostrPubsubFanout = UInt32(container.int(.nostrPubsubFanout, default: 4))
+        nostrPubsubMaxHops = UInt8(container.int(.nostrPubsubMaxHops, default: 2))
+        nostrPubsubMaxEventBytes = UInt32(container.int(.nostrPubsubMaxEventBytes, default: 65_536))
         activeNetworkInvite = container.string(.activeNetworkInvite)
         connectedPeerCount = container.uint64(.connectedPeerCount)
         expectedPeerCount = container.uint64(.expectedPeerCount)
