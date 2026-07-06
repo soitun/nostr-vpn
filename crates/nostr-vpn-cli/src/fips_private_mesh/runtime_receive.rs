@@ -109,7 +109,7 @@ impl FipsPrivateMeshRuntime {
         limit: usize,
         stop: &AtomicBool,
         packet_outputs: &mut DirectTunWriteBatch,
-        event_tx: Option<&mpsc::Sender<FipsPrivateMeshEvent>>,
+        event_tx: &mpsc::Sender<FipsPrivateMeshEvent>,
     ) -> Result<Option<usize>> {
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
         let rx = &self.direct_endpoint_rx;
@@ -508,19 +508,10 @@ impl FipsPrivateMeshRuntime {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    fn push_direct_endpoint_mesh_event(&self, event: FipsPrivateMeshEvent) -> Result<()> {
-        self.direct_endpoint_pending_events
-            .lock()
-            .map_err(|_| anyhow!("FIPS direct endpoint event queue lock poisoned"))?
-            .push_back(event);
-        Ok(())
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn forward_direct_endpoint_control_events_blocking(
         &self,
         runs: &[FipsEndpointDirectPacketRun],
-        event_tx: Option<&mpsc::Sender<FipsPrivateMeshEvent>>,
+        event_tx: &mpsc::Sender<FipsPrivateMeshEvent>,
     ) -> Result<()> {
         let now = Some(unix_timestamp());
         for run in runs {
@@ -544,12 +535,8 @@ impl FipsPrivateMeshRuntime {
                 let Some(event) = outcome.event else {
                     continue;
                 };
-                if let Some(event_tx) = event_tx {
-                    if event_tx.blocking_send(event).is_err() {
-                        return Ok(());
-                    }
-                } else {
-                    self.push_direct_endpoint_mesh_event(event)?;
+                if event_tx.blocking_send(event).is_err() {
+                    return Ok(());
                 }
             }
         }

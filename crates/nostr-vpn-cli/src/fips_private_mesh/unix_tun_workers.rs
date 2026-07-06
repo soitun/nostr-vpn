@@ -212,7 +212,7 @@ fn spawn_blocking_mesh_recv_worker(
                     recv_burst,
                     &thread_stop,
                     &mut packet_batch,
-                    Some(&event_tx),
+                    &event_tx,
                 );
                 match received {
                     Ok(Some(drained)) => {

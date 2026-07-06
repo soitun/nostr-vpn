@@ -140,7 +140,7 @@ fn spawn_windows_fips_mesh_recv_task(
                 recv_burst,
                 &stop,
                 &mut packet_batch,
-                Some(&event_tx),
+                &event_tx,
             );
             match received {
                 Ok(Some(drained)) => {

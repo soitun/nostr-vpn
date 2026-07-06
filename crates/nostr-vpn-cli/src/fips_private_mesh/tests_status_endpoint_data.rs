@@ -299,10 +299,11 @@
         send_with_retry(&alice_runtime, &warmup_packet).await;
         let bob_runtime = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let stop = AtomicBool::new(false);
+            let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
             let mut packets = DirectTunWriteBatch::with_capacity(1);
 
             let emitted = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(1, &stop, &mut packets, None)?
+                .recv_direct_endpoint_tun_batch_blocking(1, &stop, &mut packets, &event_tx)?
                 .expect("warmup packet should be admitted");
             assert_eq!(emitted, 1);
             assert_eq!(packets.len(), 1);
@@ -336,10 +337,11 @@
         let old_len = old_packet.len() as u64;
         let new_len = new_packet.len() as u64;
         let receiver = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
             let mut packets = DirectTunWriteBatch::with_capacity(4);
 
             let emitted = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(8, &thread_stop, &mut packets, None)?
+                .recv_direct_endpoint_tun_batch_blocking(8, &thread_stop, &mut packets, &event_tx)?
                 .expect("new-config packet should be admitted");
             assert!(emitted >= 1);
             assert_eq!(packets.len(), emitted);
@@ -456,10 +458,11 @@
         send_with_retry(&alice_runtime, &warmup).await;
         let bob_runtime = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let stop = AtomicBool::new(false);
+            let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
             let mut packets = DirectTunWriteBatch::with_capacity(1);
 
             let received = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(1, &stop, &mut packets, None)?
+                .recv_direct_endpoint_tun_batch_blocking(1, &stop, &mut packets, &event_tx)?
                 .expect("warmup packet should be admitted");
             assert_eq!(received, 1);
             assert_eq!(packets.len(), 1);
@@ -479,10 +482,11 @@
 
         let bob_runtime = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let stop = AtomicBool::new(false);
+            let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
             let mut packets = DirectTunWriteBatch::with_capacity(8);
 
             let received = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(2, &stop, &mut packets, None)?
+                .recv_direct_endpoint_tun_batch_blocking(2, &stop, &mut packets, &event_tx)?
                 .expect("batch should contain admitted packets");
             assert_eq!(received, 2);
 
@@ -493,7 +497,7 @@
             packets.clear();
 
             let received = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(8, &stop, &mut packets, None)?
+                .recv_direct_endpoint_tun_batch_blocking(8, &stop, &mut packets, &event_tx)?
                 .expect("batch should contain admitted packets");
             assert_eq!(received, 1);
 
