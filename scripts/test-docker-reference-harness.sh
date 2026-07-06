@@ -571,6 +571,8 @@ test_placement_profile_expands_worker_open_connect_env() {
   assert_eq "$(jq -r '.run_env.placement_preflight_mode' "$metadata")" "tcp" "metadata placement preflight mode"
   assert_eq "$(jq -r '.run_env.placement_preflight_duration_secs' "$metadata")" "3" "metadata placement preflight duration"
   assert_eq "$(jq -r '.run_env.placement_preflight_streams' "$metadata")" "4" "metadata placement preflight streams"
+  assert_eq "$(jq -r '.run_env.setup_ping_attempts' "$metadata")" "8" "metadata setup ping attempts"
+  assert_eq "$(jq -r '.run_env.setup_ping_wait_secs' "$metadata")" "1" "metadata setup ping wait"
   assert_eq "$(jq -r '.guard_thresholds.max_fsp_owner_placement_other_path_rate' "$metadata")" "0" "metadata max alternate placement path rate"
   assert_eq "$(jq -r '.run_env.extra_connect_env' "$metadata")" "$effective" "metadata placement effective env"
 

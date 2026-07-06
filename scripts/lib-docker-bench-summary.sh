@@ -536,6 +536,8 @@ docker_bench_write_metadata() {
   local placement_preflight_mode="${NVPN_DOCKER_PLACEMENT_PREFLIGHT_MODE:-tcp}"
   local placement_preflight_duration="${NVPN_DOCKER_PLACEMENT_PREFLIGHT_DURATION:-3}"
   local placement_preflight_streams="${NVPN_DOCKER_PLACEMENT_PREFLIGHT_STREAMS:-4}"
+  local setup_ping_attempts="${NVPN_DOCKER_SETUP_PING_ATTEMPTS:-8}"
+  local setup_ping_wait_secs="${NVPN_DOCKER_SETUP_PING_WAIT_SECS:-1}"
   local soak_max_ping_loss_pct=""
   local soak_max_ping_avg_ms=""
   local soak_max_ping_p95_ms=""
@@ -651,6 +653,8 @@ docker_bench_write_metadata() {
     --arg placement_preflight_mode "$placement_preflight_mode" \
     --arg placement_preflight_duration "$placement_preflight_duration" \
     --arg placement_preflight_streams "$placement_preflight_streams" \
+    --arg setup_ping_attempts "$setup_ping_attempts" \
+    --arg setup_ping_wait_secs "$setup_ping_wait_secs" \
     --arg require_no_direct_fmp "$require_no_direct_fmp" \
     --arg require_no_fsp_aead_helpers "$require_no_fsp_aead_helpers" \
     --arg require_no_pipeline_hard_events "$require_no_pipeline_hard_events" \
@@ -755,6 +759,16 @@ docker_bench_write_metadata() {
         placement_preflight_streams: (
           if $placement_preflight_streams == "" then null
           else ($placement_preflight_streams | tonumber)
+          end
+        ),
+        setup_ping_attempts: (
+          if $setup_ping_attempts == "" then null
+          else ($setup_ping_attempts | tonumber)
+          end
+        ),
+        setup_ping_wait_secs: (
+          if $setup_ping_wait_secs == "" then null
+          else ($setup_ping_wait_secs | tonumber)
           end
         ),
         require_no_direct_fmp: ($require_no_direct_fmp == "1"),

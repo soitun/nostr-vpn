@@ -36,6 +36,10 @@
 #   NVPN_DOCKER_LOADED_PING_PHASES=tcp-8
 #     records ping latency while selected iperf phases are running, writing
 #     raw/nvpn-loaded-ping-*.txt and raw/nvpn-loaded-ping-summary.tsv.
+#   NVPN_DOCKER_SETUP_PING_ATTEMPTS=N
+#   NVPN_DOCKER_SETUP_PING_WAIT_SECS=N
+#     retries the initial tunnel ping readiness check while recording every
+#     attempt in raw/nvpn-setup-ping-attempts.log.
 #   NVPN_DOCKER_PLACEMENT_PROFILE=worker-open
 #     pins the protocol-neutral direct-peer same-owner FSP local-open expectation
 #     by defaulting NVPN_DOCKER_EXPECT_FSP_OWNER_PLACEMENT=worker-open and
@@ -76,6 +80,8 @@ PERF_PHASES="${NVPN_DOCKER_PERF_PHASES:-}"
 PERF_FREQ="${NVPN_DOCKER_PERF_FREQ:-19}"
 LOADED_PING_PHASES="${NVPN_DOCKER_LOADED_PING_PHASES:-}"
 LOADED_PING_INTERVAL_SECS="${NVPN_DOCKER_LOADED_PING_INTERVAL_SECS:-0.01}"
+SETUP_PING_ATTEMPTS="${NVPN_DOCKER_SETUP_PING_ATTEMPTS:-8}"
+SETUP_PING_WAIT_SECS="${NVPN_DOCKER_SETUP_PING_WAIT_SECS:-1}"
 EXTRA_CONNECT_ENV=""
 REQUIRE_NO_DIRECT_FMP="${NVPN_DOCKER_REQUIRE_NO_DIRECT_FMP:-0}"
 REQUIRE_NO_FSP_AEAD_HELPERS="${NVPN_DOCKER_REQUIRE_NO_FSP_AEAD_HELPERS:-0}"
@@ -145,6 +151,15 @@ if [[ -n "$LOADED_PING_PHASES" ]]; then
     echo "perf: invalid NVPN_DOCKER_LOADED_PING_INTERVAL_SECS=$LOADED_PING_INTERVAL_SECS (expected positive seconds)" >&2
     exit 2
   fi
+fi
+if [[ ! "$SETUP_PING_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "perf: invalid NVPN_DOCKER_SETUP_PING_ATTEMPTS=$SETUP_PING_ATTEMPTS (expected positive integer)" >&2
+  exit 2
+fi
+if [[ ! "$SETUP_PING_WAIT_SECS" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  || ! awk -v wait_secs="$SETUP_PING_WAIT_SECS" 'BEGIN { exit(wait_secs >= 0 ? 0 : 1) }'; then
+  echo "perf: invalid NVPN_DOCKER_SETUP_PING_WAIT_SECS=$SETUP_PING_WAIT_SECS (expected non-negative seconds)" >&2
+  exit 2
 fi
 UDP1000_PER_STREAM_BANDWIDTH="$(docker_bench_udp1000_per_stream_bandwidth)"
 IPERF_SOCKET_BUFFER_ARGS=()
@@ -873,6 +888,75 @@ capture_nvpn_diagnostics() {
   write_linux_tun_netdev_summary
 }
 
+latest_mesh_line() {
+  awk '
+    /mesh: [0-9]+\/[0-9]+ peers connected/ { latest = $0 }
+    END {
+      gsub(/\r/, "", latest)
+      print latest
+    }
+  '
+}
+
+wait_for_mesh_ready() {
+  local attempts="$1"
+  local log_path="$RAW_DIR/nvpn-setup-mesh-readiness.tsv"
+  local attempt node_a_log node_b_log node_a_latest node_b_latest
+
+  mkdir -p "$RAW_DIR"
+  printf 'attempt\tnode_a_latest\tnode_b_latest\n' >"$log_path"
+  for attempt in $(seq 1 "$attempts"); do
+    node_a_log="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
+    node_b_log="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
+    node_a_latest="$(latest_mesh_line <<<"$node_a_log")"
+    node_b_latest="$(latest_mesh_line <<<"$node_b_log")"
+    printf '%s\t%s\t%s\n' \
+      "$attempt" \
+      "$(docker_bench_tsv_field "$node_a_latest")" \
+      "$(docker_bench_tsv_field "$node_b_latest")" >>"$log_path"
+    if [[ "$node_a_latest" == "mesh: 1/1 peers connected" \
+      && "$node_b_latest" == "mesh: 1/1 peers connected" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+wait_for_setup_ping() {
+  local attempts="$1"
+  local wait_secs="$2"
+  local target_ip="$3"
+  local log_path="$RAW_DIR/nvpn-setup-ping-attempts.log"
+  local summary_path="$RAW_DIR/nvpn-setup-ping-summary.tsv"
+  local attempt output status
+
+  mkdir -p "$RAW_DIR"
+  printf 'attempt\tstatus\n' >"$summary_path"
+  : >"$log_path"
+
+  for attempt in $(seq 1 "$attempts"); do
+    {
+      printf '## attempt %s %s\n' "$attempt" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      set +e
+      output="$("${COMPOSE[@]}" exec -T node-a ping -c 3 -W 2 "$target_ip" 2>&1)"
+      status=$?
+      set -e
+      printf '%s\n' "$output"
+      printf '\n'
+    } >>"$log_path"
+    printf '%s\t%s\n' "$attempt" "$status" >>"$summary_path"
+    if [[ "$status" == "0" ]]; then
+      return 0
+    fi
+    if [[ "$attempt" != "$attempts" ]] && awk -v wait_secs="$wait_secs" 'BEGIN { exit(wait_secs > 0 ? 0 : 1) }'; then
+      sleep "$wait_secs"
+    fi
+  done
+
+  return 1
+}
+
 write_iperf_socket_buffer_summary() {
   local output_path="$RAW_DIR/nvpn-iperf-socket-buffers.tsv"
   printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
@@ -1159,17 +1243,12 @@ fi
 "${COMPOSE[@]}" exec -d node-b sh -lc "$connect_env $EXTRA_CONNECT_ENV nvpn connect > /tmp/connect.log 2>&1"
 DIAGNOSTICS_READY=1
 
-for _ in $(seq 1 30); do
-  a="$("${COMPOSE[@]}" exec -T node-a sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
-  b="$("${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/connect.log 2>/dev/null || true')"
-  if grep -q "mesh: 1/1 peers connected" <<<"$a" \
-    && grep -q "mesh: 1/1 peers connected" <<<"$b"; then
-    break
-  fi
-  sleep 1
-done
+if ! wait_for_mesh_ready 30; then
+  echo "perf: mesh did not converge to latest 1/1 state" >&2
+  exit 1
+fi
 
-if ! "${COMPOSE[@]}" exec -T node-a ping -c 3 -W 2 "$BOB_TUNNEL_IP" >/dev/null; then
+if ! wait_for_setup_ping "$SETUP_PING_ATTEMPTS" "$SETUP_PING_WAIT_SECS" "$BOB_TUNNEL_IP"; then
   echo "perf: ping a->b over mesh failed" >&2
   exit 1
 fi
