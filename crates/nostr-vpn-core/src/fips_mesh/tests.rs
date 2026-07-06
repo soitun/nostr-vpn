@@ -141,7 +141,6 @@ mod tests {
             runtime.peer_statuses()[0].endpoint_npub,
             peer.endpoint_npub
         );
-        assert_eq!(routed.endpoint_pubkey, &peer.endpoint_pubkey);
         assert_eq!(routed.endpoint_node_addr, &peer.endpoint_node_addr);
     }
 
@@ -384,7 +383,6 @@ mod tests {
             .expect("borrowed-peer packet should route");
 
         assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
-        assert_eq!(outgoing.endpoint_pubkey, &specific.endpoint_pubkey);
         assert_eq!(outgoing.endpoint_node_addr, &specific.endpoint_node_addr);
         assert_eq!(outgoing.bytes, packet);
 
@@ -393,7 +391,6 @@ mod tests {
             .expect("metadata-only packet should route");
 
         assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
-        assert_eq!(outgoing.endpoint_pubkey, &specific.endpoint_pubkey);
         assert_eq!(outgoing.endpoint_node_addr, &specific.endpoint_node_addr);
 
         let outgoing = runtime
@@ -401,7 +398,6 @@ mod tests {
             .expect("borrowed-peer owned packet should route");
 
         assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
-        assert_eq!(outgoing.endpoint_pubkey, &specific.endpoint_pubkey);
         assert_eq!(outgoing.endpoint_node_addr, &specific.endpoint_node_addr);
         assert_eq!(outgoing.bytes, packet);
 
@@ -414,7 +410,6 @@ mod tests {
             .expect("cached destination should route through current table");
 
         assert_eq!(outgoing.participant_pubkey, specific.participant_pubkey);
-        assert_eq!(outgoing.endpoint_pubkey, &specific.endpoint_pubkey);
         assert_eq!(outgoing.endpoint_node_addr, &specific.endpoint_node_addr);
         assert_eq!(outgoing.bytes, packet);
 

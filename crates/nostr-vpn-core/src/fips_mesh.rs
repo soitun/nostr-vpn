@@ -81,7 +81,6 @@ impl From<PaidRouteSellerAdmission> for FipsPaidRouteAdmission {
 pub struct RoutedFipsPacket<'a> {
     pub participant_pubkey: &'a str,
     pub participant_pubkey_bytes: Option<&'a [u8; 32]>,
-    pub endpoint_pubkey: &'a [u8; 32],
     pub endpoint_node_addr: &'a [u8; 16],
     pub bytes: Vec<u8>,
 }
@@ -90,7 +89,6 @@ pub struct RoutedFipsPacket<'a> {
 pub struct RoutedFipsPeer<'a> {
     pub participant_pubkey: &'a str,
     pub participant_pubkey_bytes: Option<&'a [u8; 32]>,
-    pub endpoint_pubkey: &'a [u8; 32],
     pub endpoint_node_addr: &'a [u8; 16],
 }
 
@@ -151,7 +149,6 @@ struct FipsMeshPeerRuntime {
     participant_pubkey: Option<[u8; 32]>,
     participant_pubkey_hex: String,
     endpoint_npub: Option<String>,
-    endpoint_pubkey: Option<[u8; 32]>,
     endpoint_node_addr: Option<[u8; 16]>,
     routes: Vec<IpRoute>,
 }
@@ -219,7 +216,6 @@ impl FipsMeshRuntime {
                     participant_pubkey,
                     participant_pubkey_hex,
                     endpoint_npub,
-                    endpoint_pubkey,
                     endpoint_node_addr,
                     routes,
                 }

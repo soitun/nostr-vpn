@@ -2,7 +2,6 @@ fn routed_fips_peer(peer: &FipsMeshPeerRuntime) -> Option<RoutedFipsPeer<'_>> {
     Some(RoutedFipsPeer {
         participant_pubkey: &peer.participant_pubkey_hex,
         participant_pubkey_bytes: peer.participant_pubkey.as_ref(),
-        endpoint_pubkey: peer.endpoint_pubkey.as_ref()?,
         endpoint_node_addr: peer.endpoint_node_addr.as_ref()?,
     })
 }
@@ -12,7 +11,6 @@ fn routed_fips_packet(peer: &FipsMeshPeerRuntime, bytes: Vec<u8>) -> Option<Rout
     Some(RoutedFipsPacket {
         participant_pubkey: peer.participant_pubkey,
         participant_pubkey_bytes: peer.participant_pubkey_bytes,
-        endpoint_pubkey: peer.endpoint_pubkey,
         endpoint_node_addr: peer.endpoint_node_addr,
         bytes,
     })
@@ -74,7 +72,6 @@ fn paid_route_peers_from_admissions(
                 participant_pubkey: Some(participant_pubkey),
                 participant_pubkey_hex: hex::encode(participant_pubkey),
                 endpoint_npub: Some(endpoint_npub),
-                endpoint_pubkey: Some(participant_pubkey),
                 endpoint_node_addr: Some(endpoint_node_addr),
                 routes,
             })
