@@ -9,7 +9,6 @@ const LINUX_TCP_FLAGS_OFFSET: usize = 13;
 const LINUX_TCP_FLAG_FIN: u8 = 0x01;
 const LINUX_TCP_FLAG_PSH: u8 = 0x08;
 const LINUX_TCP_FLAG_ACK: u8 = 0x10;
-const LINUX_UDP_HEADER_LEN: usize = 8;
 const LINUX_IPPROTO_TCP: u8 = 6;
 const LINUX_IPPROTO_UDP: u8 = 17;
 const LINUX_IPV4_SRC_ADDR_OFFSET: usize = 12;
@@ -395,10 +394,6 @@ impl LinuxVnetWritePreparer {
         self.packet_refs[index]
     }
 
-    fn vectored_frame(&self, index: usize) -> &LinuxVnetWriteFrame {
-        &self.vectored_frames[index]
-    }
-
     fn write_vectored_frame_to_tun(
         &mut self,
         tun_fd: &BorrowedTunFd,
@@ -470,7 +465,7 @@ fn linux_vnet_collect_prepared_write_frames<P: AsRef<[u8]> + Clone>(
                 (*frame, bytes)
             }
             LinuxVnetPreparedWriteFrame::Vectored(owned_index) => {
-                let vectored = preparer.vectored_frame(*owned_index);
+                let vectored = &preparer.vectored_frames[*owned_index];
                 let mut bytes = Vec::new();
                 bytes.extend_from_slice(&vectored.virtio_header);
                 let first_packet = packets[vectored.first_packet_index].as_ref();
