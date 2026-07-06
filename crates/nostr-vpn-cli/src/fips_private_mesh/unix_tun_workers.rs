@@ -99,6 +99,9 @@ fn spawn_tun_send_worker(
                     std::thread::sleep(Duration::from_millis(100));
                 }
 
+                if drained >= FIPS_TUN_READ_BURST {
+                    std::thread::yield_now();
+                }
             }
         })
         .expect("failed to spawn FIPS TUN send worker");
@@ -319,6 +322,9 @@ fn spawn_blocking_mesh_recv_worker(
                                 #[cfg(target_os = "linux")]
                                 &mut vnet_write_preparer,
                             );
+                        }
+                        if drained >= recv_burst {
+                            std::thread::yield_now();
                         }
                     }
                     Ok(None) => {
