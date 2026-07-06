@@ -185,6 +185,7 @@ pub fn apply_full_default_route(
     install_default_via_iface(iface, &address_ip)?;
 
     Ok(FullDefaultRoute {
+        #[cfg(target_os = "macos")]
         iface: iface.to_string(),
         bypass_target: upstream_ip,
         original_default,
@@ -193,9 +194,7 @@ pub fn apply_full_default_route(
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub struct FullDefaultRoute {
-    // Read only on macOS (route delete -interface ...); Linux uses the raw
-    // `ip route show default` line for restore and never touches iface.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    #[cfg(target_os = "macos")]
     iface: String,
     bypass_target: IpAddr,
     original_default: CapturedDefaultRoute,
