@@ -18,6 +18,9 @@ MAX_RETRANS_PCT="${NVPN_DOCKER_COMPARISON_MAX_RETRANS_PCT:-150}"
 MAX_LOSS_DELTA_PCT="${NVPN_DOCKER_COMPARISON_MAX_LOSS_DELTA_PCT:-1}"
 MAX_STRESS_UDP_LOSS_DELTA_PCT="${NVPN_DOCKER_COMPARISON_STRESS_UDP_LOSS_DELTA_PCT:-5}"
 MAX_PING_AVG_DELTA_MS="${NVPN_DOCKER_COMPARISON_MAX_PING_AVG_DELTA_MS:-1}"
+MAX_PING_P95_DELTA_MS="${NVPN_DOCKER_COMPARISON_MAX_PING_P95_DELTA_MS:-$MAX_PING_AVG_DELTA_MS}"
+MAX_PING_P99_DELTA_MS="${NVPN_DOCKER_COMPARISON_MAX_PING_P99_DELTA_MS:-2}"
+MAX_PING_MAX_DELTA_MS="${NVPN_DOCKER_COMPARISON_MAX_PING_MAX_DELTA_MS:-5}"
 REQUIRE_NVPN_UDP_ZERO_LOSS="${NVPN_DOCKER_COMPARISON_REQUIRE_NVPN_UDP_ZERO_LOSS:-1}"
 REQUIRE_NVPN_PING_ZERO_LOSS="${NVPN_DOCKER_COMPARISON_REQUIRE_NVPN_PING_ZERO_LOSS:-1}"
 ENFORCE_THRESHOLDS="${NVPN_DOCKER_COMPARISON_ENFORCE_THRESHOLDS:-0}"
@@ -45,6 +48,9 @@ Env alternatives:
   NVPN_DOCKER_COMPARISON_MAX_LOSS_DELTA_PCT=1
   NVPN_DOCKER_COMPARISON_STRESS_UDP_LOSS_DELTA_PCT=5
   NVPN_DOCKER_COMPARISON_MAX_PING_AVG_DELTA_MS=1
+  NVPN_DOCKER_COMPARISON_MAX_PING_P95_DELTA_MS=1
+  NVPN_DOCKER_COMPARISON_MAX_PING_P99_DELTA_MS=2
+  NVPN_DOCKER_COMPARISON_MAX_PING_MAX_DELTA_MS=5
   NVPN_DOCKER_COMPARISON_REQUIRE_NVPN_UDP_ZERO_LOSS=1
   NVPN_DOCKER_COMPARISON_REQUIRE_NVPN_PING_ZERO_LOSS=1
   NVPN_DOCKER_COMPARISON_ENFORCE_THRESHOLDS=0
@@ -125,6 +131,10 @@ tsv_value() {
       if (!field_idx) exit 2
       if (!found) exit 3
     }' "$file"
+}
+
+optional_tsv_value() {
+  tsv_value "$@" 2>/dev/null || true
 }
 
 cpu_phase_file() {
@@ -314,6 +324,10 @@ write_normalized_summary_row() {
     "$(tsv_value "$source" udp_1000_loss_pct "$backend" "$threads")" \
     "$(tsv_value "$source" ping_loss_pct "$backend" "$threads")" \
     "$(tsv_value "$source" ping_avg_ms "$backend" "$threads")" \
+    "$(optional_tsv_value "$source" ping_mdev_ms "$backend" "$threads")" \
+    "$(optional_tsv_value "$source" ping_p95_ms "$backend" "$threads")" \
+    "$(optional_tsv_value "$source" ping_p99_ms "$backend" "$threads")" \
+    "$(optional_tsv_value "$source" ping_max_ms "$backend" "$threads")" \
     "$(cpu_phase_value "$source" "$backend" "$threads" tcp-single cpu_seconds_per_gbyte)" \
     "$(cpu_phase_value "$source" "$backend" "$threads" tcp-4 cpu_seconds_per_gbyte)" \
     "$(cpu_phase_value "$source" "$backend" "$threads" tcp-8 cpu_seconds_per_gbyte)" \
@@ -331,6 +345,25 @@ write_metric_ratio() {
   local nvpn_value reference_value
   nvpn_value="$(tsv_value "$nvpn_summary" "$metric" "$NVPN_BACKEND" "$NVPN_THREADS")"
   reference_value="$(tsv_value "$reference_summary" "$metric" "$REFERENCE_BACKEND" "$REFERENCE_THREADS")"
+  write_row \
+    "$metric" \
+    "$unit" \
+    "$better_when" \
+    "$nvpn_value" \
+    "$reference_value" \
+    "$(ratio_percent "$nvpn_value" "$reference_value")" \
+    "$(delta_value "$nvpn_value" "$reference_value")"
+}
+
+write_optional_metric_ratio() {
+  local metric="$1"
+  local unit="$2"
+  local better_when="$3"
+  local nvpn_summary="$4"
+  local reference_summary="$5"
+  local nvpn_value reference_value
+  nvpn_value="$(optional_tsv_value "$nvpn_summary" "$metric" "$NVPN_BACKEND" "$NVPN_THREADS")"
+  reference_value="$(optional_tsv_value "$reference_summary" "$metric" "$REFERENCE_BACKEND" "$REFERENCE_THREADS")"
   write_row \
     "$metric" \
     "$unit" \
@@ -411,6 +444,28 @@ write_threshold_lower_delta() {
   local nvpn_value reference_value delta status
   nvpn_value="$(tsv_value "$nvpn_summary" "$metric" "$NVPN_BACKEND" "$NVPN_THREADS")"
   reference_value="$(tsv_value "$reference_summary" "$metric" "$REFERENCE_BACKEND" "$REFERENCE_THREADS")"
+  delta="$(delta_value "$nvpn_value" "$reference_value")"
+  status="$(threshold_lower_delta_status "$nvpn_value" "$reference_value" "$max_delta")"
+  write_row \
+    "$check" \
+    "$metric" \
+    "$status" \
+    "$nvpn_value" \
+    "$reference_value" \
+    "<=reference+$max_delta$unit" \
+    "${delta:+$delta$unit}"
+}
+
+write_optional_threshold_lower_delta() {
+  local check="$1"
+  local metric="$2"
+  local max_delta="$3"
+  local unit="$4"
+  local nvpn_summary="$5"
+  local reference_summary="$6"
+  local nvpn_value reference_value delta status
+  nvpn_value="$(optional_tsv_value "$nvpn_summary" "$metric" "$NVPN_BACKEND" "$NVPN_THREADS")"
+  reference_value="$(optional_tsv_value "$reference_summary" "$metric" "$REFERENCE_BACKEND" "$REFERENCE_THREADS")"
   delta="$(delta_value "$nvpn_value" "$reference_value")"
   status="$(threshold_lower_delta_status "$nvpn_value" "$reference_value" "$max_delta")"
   write_row \
@@ -538,6 +593,7 @@ main() {
     tcp_single_mbps tcp_single_retrans tcp_4_mbps tcp_4_retrans \
     tcp_8_mbps tcp_8_retrans udp_200_mbps udp_200_loss_pct \
     udp_1000_mbps udp_1000_loss_pct ping_loss_pct ping_avg_ms \
+    ping_mdev_ms ping_p95_ms ping_p99_ms ping_max_ms \
     tcp_single_cpu_sec_per_gb tcp_4_cpu_sec_per_gb tcp_8_cpu_sec_per_gb \
     udp_200_cpu_sec_per_gb udp_1000_cpu_sec_per_gb raw_dir \
     >"$comparison_tsv"
@@ -557,6 +613,10 @@ main() {
   write_metric_ratio udp_1000_loss_pct pct lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
   write_metric_ratio ping_loss_pct pct lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
   write_metric_ratio ping_avg_ms ms lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+  write_optional_metric_ratio ping_mdev_ms ms lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+  write_optional_metric_ratio ping_p95_ms ms lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+  write_optional_metric_ratio ping_p99_ms ms lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+  write_optional_metric_ratio ping_max_ms ms lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
   write_cpu_metric_ratio tcp_single_cpu_sec_per_gb tcp-single "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
   write_cpu_metric_ratio tcp_4_cpu_sec_per_gb tcp-4 "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
   write_cpu_metric_ratio tcp_8_cpu_sec_per_gb tcp-8 "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
@@ -576,6 +636,9 @@ main() {
   write_threshold_lower_delta udp_1000_loss udp_1000_loss_pct "$effective_udp_loss_delta_pct" pp "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
   write_threshold_lower_delta ping_loss ping_loss_pct "$MAX_LOSS_DELTA_PCT" pp "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
   write_threshold_lower_delta ping_avg ping_avg_ms "$MAX_PING_AVG_DELTA_MS" ms "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
+  write_optional_threshold_lower_delta ping_p95 ping_p95_ms "$MAX_PING_P95_DELTA_MS" ms "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
+  write_optional_threshold_lower_delta ping_p99 ping_p99_ms "$MAX_PING_P99_DELTA_MS" ms "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
+  write_optional_threshold_lower_delta ping_max ping_max_ms "$MAX_PING_MAX_DELTA_MS" ms "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
   if [[ "$REQUIRE_NVPN_UDP_ZERO_LOSS" == "1" ]]; then
     write_threshold_zero nvpn_udp_200_zero_loss udp_200_loss_pct "$nvpn_summary" >>"$thresholds_tsv"
     write_threshold_zero nvpn_udp_1000_zero_loss udp_1000_loss_pct "$nvpn_summary" >>"$thresholds_tsv"
@@ -647,6 +710,9 @@ main() {
     --arg max_stress_udp_loss_delta_pct "$MAX_STRESS_UDP_LOSS_DELTA_PCT" \
     --arg effective_udp_loss_delta_pct "$effective_udp_loss_delta_pct" \
     --arg max_ping_avg_delta_ms "$MAX_PING_AVG_DELTA_MS" \
+    --arg max_ping_p95_delta_ms "$MAX_PING_P95_DELTA_MS" \
+    --arg max_ping_p99_delta_ms "$MAX_PING_P99_DELTA_MS" \
+    --arg max_ping_max_delta_ms "$MAX_PING_MAX_DELTA_MS" \
     --arg require_nvpn_udp_zero_loss "$REQUIRE_NVPN_UDP_ZERO_LOSS" \
     --arg require_nvpn_ping_zero_loss "$REQUIRE_NVPN_PING_ZERO_LOSS" \
     --arg threshold_status "$threshold_status" \
@@ -751,6 +817,9 @@ main() {
         max_stress_udp_loss_delta_pct: num($max_stress_udp_loss_delta_pct),
         effective_udp_loss_delta_pct: num($effective_udp_loss_delta_pct),
         max_ping_avg_delta_ms: num($max_ping_avg_delta_ms),
+        max_ping_p95_delta_ms: num($max_ping_p95_delta_ms),
+        max_ping_p99_delta_ms: num($max_ping_p99_delta_ms),
+        max_ping_max_delta_ms: num($max_ping_max_delta_ms),
         require_nvpn_udp_zero_loss: bool($require_nvpn_udp_zero_loss),
         require_nvpn_ping_zero_loss: bool($require_nvpn_ping_zero_loss)
       },

@@ -868,24 +868,30 @@ write_summary_fixture() {
   local ping_loss="${14}"
   local ping_avg="${15}"
   local raw_dir="${16}"
+  local ping_mdev="${17:-0.1}"
+  local ping_p95="${18:-0.9}"
+  local ping_p99="${19:-1.2}"
+  local ping_max="${20:-1.5}"
 
   mkdir -p "$(dirname "$path")"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     backend threads duration_secs \
     tcp_single_mbps tcp_single_retrans \
     tcp_4_mbps tcp_4_retrans \
     tcp_8_mbps tcp_8_retrans \
     udp_200_mbps udp_200_loss_pct \
     udp_1000_mbps udp_1000_loss_pct \
-    ping_loss_pct ping_avg_ms raw_dir >"$path"
-  printf '%s\t%s\t3\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    ping_loss_pct ping_avg_ms \
+    ping_mdev_ms ping_p95_ms ping_p99_ms ping_max_ms raw_dir >"$path"
+  printf '%s\t%s\t3\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$backend" "$threads" \
     "$tcp_single" "$tcp_single_retrans" \
     "$tcp_4" "$tcp_4_retrans" \
     "$tcp_8" "$tcp_8_retrans" \
     "$udp_200" "$udp_200_loss" \
     "$udp_1000" "$udp_1000_loss" \
-    "$ping_loss" "$ping_avg" "$raw_dir" >>"$path"
+    "$ping_loss" "$ping_avg" \
+    "$ping_mdev" "$ping_p95" "$ping_p99" "$ping_max" "$raw_dir" >>"$path"
 }
 
 write_cpu_phases_fixture() {
@@ -989,8 +995,8 @@ write_metadata_fixture() {
 }
 
 test_docker_comparison_outputs() {
-  local dir out comparison_fields ratio_fields threshold_fields tcp_ratio ping_delta json_metric
-  local threshold_tcp_4 threshold_udp1000_zero threshold_status threshold_failures effective_udp_delta enforce_output stress_fields stress_json
+  local dir out comparison_fields ratio_fields threshold_fields tcp_ratio ping_delta ping_p99_delta json_metric
+  local threshold_tcp_4 threshold_udp1000_zero threshold_ping_p99 threshold_status threshold_failures effective_udp_delta enforce_output stress_fields stress_json
   local pipeline_fields pipeline_json provenance_json iperf_json cpu_fields cpu_ratio cpu_json_metric
   dir="$(mktemp -d)"
   write_summary_fixture \
@@ -1026,12 +1032,14 @@ test_docker_comparison_outputs() {
   threshold_fields="$(awk -F '\t' 'NR == 2 { print NF }' "$out/thresholds.tsv")"
   tcp_ratio="$(awk -F '\t' '$1 == "tcp_single_mbps" { print $6 "\t" $7 }' "$out/ratios.tsv")"
   ping_delta="$(awk -F '\t' '$1 == "ping_avg_ms" { print $6 "\t" $7 }' "$out/ratios.tsv")"
-  cpu_fields="$(awk -F '\t' '$1 == "nvpn" { print $24 "\t" $25 "\t" $26 "\t" $27 "\t" $28 }' "$out/comparison.tsv")"
+  ping_p99_delta="$(awk -F '\t' '$1 == "ping_p99_ms" { print $3 "\t" $6 "\t" $7 }' "$out/ratios.tsv")"
+  cpu_fields="$(awk -F '\t' '$1 == "nvpn" { print $28 "\t" $29 "\t" $30 "\t" $31 "\t" $32 }' "$out/comparison.tsv")"
   cpu_ratio="$(awk -F '\t' '$1 == "tcp_8_cpu_sec_per_gb" { print $3 "\t" $6 "\t" $7 }' "$out/ratios.tsv")"
   json_metric="$(jq -r '.ratios[] | select(.metric == "udp_1000_loss_pct") | .better_when + "\t" + .nvpn_minus_reference' "$out/comparison.json")"
   cpu_json_metric="$(jq -r '.ratios[] | select(.metric == "udp_1000_cpu_sec_per_gb") | .better_when + "\t" + .nvpn_percent_of_reference + "\t" + .nvpn_minus_reference' "$out/comparison.json")"
   threshold_tcp_4="$(awk -F '\t' '$1 == "tcp_4_throughput" { print $3 "\t" $6 "\t" $7 }' "$out/thresholds.tsv")"
   threshold_udp1000_zero="$(awk -F '\t' '$1 == "nvpn_udp_1000_zero_loss" { print $3 "\t" $4 "\t" $6 }' "$out/thresholds.tsv")"
+  threshold_ping_p99="$(awk -F '\t' '$1 == "ping_p99" { print $3 "\t" $6 "\t" $7 }' "$out/thresholds.tsv")"
   threshold_status="$(jq -r '.threshold_status.status' "$out/comparison.json")"
   threshold_failures="$(jq -r '.threshold_status.failures' "$out/comparison.json")"
   effective_udp_delta="$(jq -r '.threshold_policy.effective_udp_loss_delta_pct' "$out/comparison.json")"
@@ -1042,17 +1050,19 @@ test_docker_comparison_outputs() {
   provenance_json="$(jq -r '.provenance.nvpn.run_env.extra_connect_env, .provenance.nvpn.local_fips_patch.enabled, .provenance.nvpn.local_fips_patch.git_head, .provenance.nvpn.local_fips_patch.dirty' "$out/comparison.json" | paste -sd ':' -)"
   iperf_json="$(jq -r '.iperf.mismatch, .iperf.nvpn.socket_buffer, .iperf.reference.socket_buffer, .iperf.nvpn.udp1000_bandwidth, .iperf.nvpn.udp1000_per_stream_bandwidth' "$out/comparison.json" | paste -sd ':' -)"
 
-  assert_eq "$comparison_fields" "29" "Docker comparison field count"
+  assert_eq "$comparison_fields" "33" "Docker comparison field count"
   assert_eq "$ratio_fields" "7" "Docker ratio field count"
   assert_eq "$threshold_fields" "7" "Docker threshold field count"
   assert_eq "$tcp_ratio" $'120.0\t50.000' "Docker TCP single ratio"
   assert_eq "$ping_delta" $'200.0\t0.400' "Docker ping avg delta"
+  assert_eq "$ping_p99_delta" $'lower\t100.0\t0.000' "Docker ping p99 ratio"
   assert_eq "$cpu_fields" $'6\t7\t8\t40\t50' "Docker comparison CPU columns"
   assert_eq "$cpu_ratio" $'lower\t160.0\t3.000' "Docker TCP8 CPU ratio"
   assert_eq "$json_metric" $'lower\t-1.000' "Docker comparison JSON ratio"
   assert_eq "$cpu_json_metric" $'lower\t50.0\t-50.000' "Docker comparison JSON CPU ratio"
   assert_eq "$threshold_tcp_4" $'fail\t>=90%\t80.0%' "Docker throughput threshold"
   assert_eq "$threshold_udp1000_zero" $'fail\t1\t==0' "Docker UDP1000 zero-loss candidate threshold"
+  assert_eq "$threshold_ping_p99" $'pass\t<=reference+2ms\t0.000ms' "Docker ping p99 threshold"
   assert_eq "$threshold_status" "fail" "Docker threshold JSON status"
   assert_eq "$threshold_failures" "4" "Docker threshold JSON failure count"
   assert_eq "$effective_udp_delta" "1" "Docker clean/default UDP loss threshold"
