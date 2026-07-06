@@ -84,39 +84,6 @@ impl FipsPrivateTunnelRuntime {
         Ok(runtime)
     }
 
-    pub(crate) fn iface(&self) -> &str {
-        &self.iface
-    }
-
-    pub(crate) fn peer_statuses(&self) -> Vec<MeshPeerStatus> {
-        self.mesh.peer_statuses()
-    }
-
-    #[cfg(feature = "paid-exit")]
-    pub(crate) fn drain_paid_route_usage(&self, participant: &str) -> Result<PaidRouteUsage> {
-        self.mesh.drain_paid_route_usage(participant)
-    }
-
-    pub(crate) fn stale_participants_needing_path_refresh(&self, now: u64) -> Vec<String> {
-        self.mesh.stale_participants_needing_path_refresh(now)
-    }
-
-    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
-        self.mesh.relay_statuses().await
-    }
-
-    pub(crate) async fn local_advertised_endpoints(&self) -> Result<Vec<OverlayEndpointAdvert>> {
-        self.mesh.local_advertised_endpoints().await
-    }
-
-    pub(crate) fn peer_pubkeys(&self) -> Vec<String> {
-        self.mesh.peer_pubkeys()
-    }
-
-    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
-        self.mesh.authenticated_peer_transport_addrs().await
-    }
-
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     async fn endpoint_bypass_ipv4_hosts(
         &self,
@@ -133,28 +100,6 @@ impl FipsPrivateTunnelRuntime {
         hosts.sort_unstable();
         hosts.dedup();
         Ok(hosts)
-    }
-
-    pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
-        self.mesh.peer_endpoint_hints()
-    }
-
-    /// Forward a refreshed peer roster + address hints to fips without
-    /// restarting the endpoint. Daemon heartbeat path: when the
-    /// recent-peers cache or active-network roster changes, build the
-    /// merged hint list and call this so fips can diff + apply.
-    pub(crate) async fn update_peers(
-        &self,
-        endpoint_peers: &[FipsEndpointPeerTransportConfig],
-    ) -> Result<fips_endpoint::UpdatePeersOutcome> {
-        self.mesh.update_peers(endpoint_peers).await
-    }
-
-    pub(crate) async fn refresh_peer_paths(
-        &self,
-        endpoint_peers: &[FipsEndpointPeerTransportConfig],
-    ) -> Result<usize> {
-        self.mesh.refresh_peer_paths(endpoint_peers).await
     }
 
     pub(crate) fn requires_endpoint_restart(&self, config: &FipsPrivateTunnelConfig) -> bool {
@@ -204,52 +149,6 @@ impl FipsPrivateTunnelRuntime {
             let config = self.config.clone();
             return self.apply_interface_config(&config).await;
         }
-    }
-
-    pub(crate) async fn ping_peers(&self, network_id: &str, now: u64) -> Result<usize> {
-        self.mesh.ping_peers(network_id, now).await
-    }
-
-    pub(crate) async fn refresh_link_statuses(&self) -> Result<()> {
-        self.mesh.refresh_link_statuses().await
-    }
-
-    pub(crate) async fn send_join_request(
-        &self,
-        participant: &str,
-        requested_at: u64,
-        request: MeshJoinRequest,
-    ) -> Result<()> {
-        self.mesh
-            .send_join_request(participant, requested_at, request)
-            .await
-    }
-
-    pub(crate) async fn send_roster(
-        &self,
-        participant: &str,
-        signed_roster: SignedRoster,
-    ) -> Result<()> {
-        self.mesh.send_roster(participant, signed_roster).await
-    }
-
-    pub(crate) async fn send_capabilities(
-        &self,
-        participant: &str,
-        network_id: &str,
-        capabilities: PeerCapabilities,
-    ) -> Result<()> {
-        self.mesh
-            .send_capabilities(participant, network_id, capabilities)
-            .await
-    }
-
-    pub(crate) fn peer_advertised_routes(&self, participant: &str) -> Vec<String> {
-        self.mesh.peer_advertised_routes(participant)
-    }
-
-    pub(crate) fn drain_events(&mut self) -> Vec<FipsPrivateMeshEvent> {
-        drain_event_batch(&mut self.event_rx, FIPS_MESH_EVENT_DRAIN_LIMIT)
     }
 
     pub(crate) async fn stop(self) -> Result<()> {
@@ -609,4 +508,108 @@ impl FipsPrivateTunnelRuntime {
         self.exit_node_runtime = crate::MacosExitNodeRuntime::default();
     }
 
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl FipsPrivateTunnelRuntime {
+    pub(crate) fn iface(&self) -> &str {
+        &self.iface
+    }
+
+    pub(crate) fn peer_statuses(&self) -> Vec<MeshPeerStatus> {
+        self.mesh.peer_statuses()
+    }
+
+    #[cfg(feature = "paid-exit")]
+    pub(crate) fn drain_paid_route_usage(&self, participant: &str) -> Result<PaidRouteUsage> {
+        self.mesh.drain_paid_route_usage(participant)
+    }
+
+    pub(crate) fn stale_participants_needing_path_refresh(&self, now: u64) -> Vec<String> {
+        self.mesh.stale_participants_needing_path_refresh(now)
+    }
+
+    pub(crate) async fn relay_statuses(&self) -> Result<Vec<FipsRelayStatus>> {
+        self.mesh.relay_statuses().await
+    }
+
+    pub(crate) async fn local_advertised_endpoints(&self) -> Result<Vec<OverlayEndpointAdvert>> {
+        self.mesh.local_advertised_endpoints().await
+    }
+
+    pub(crate) fn peer_pubkeys(&self) -> Vec<String> {
+        self.mesh.peer_pubkeys()
+    }
+
+    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
+        self.mesh.authenticated_peer_transport_addrs().await
+    }
+
+    pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
+        self.mesh.peer_endpoint_hints()
+    }
+
+    /// Forward a refreshed peer roster + address hints to fips without
+    /// restarting the endpoint. Daemon heartbeat path: when the
+    /// recent-peers cache or active-network roster changes, build the
+    /// merged hint list and call this so fips can diff + apply.
+    pub(crate) async fn update_peers(
+        &self,
+        endpoint_peers: &[FipsEndpointPeerTransportConfig],
+    ) -> Result<fips_endpoint::UpdatePeersOutcome> {
+        self.mesh.update_peers(endpoint_peers).await
+    }
+
+    pub(crate) async fn refresh_peer_paths(
+        &self,
+        endpoint_peers: &[FipsEndpointPeerTransportConfig],
+    ) -> Result<usize> {
+        self.mesh.refresh_peer_paths(endpoint_peers).await
+    }
+
+    pub(crate) async fn ping_peers(&self, network_id: &str, now: u64) -> Result<usize> {
+        self.mesh.ping_peers(network_id, now).await
+    }
+
+    pub(crate) async fn refresh_link_statuses(&self) -> Result<()> {
+        self.mesh.refresh_link_statuses().await
+    }
+
+    pub(crate) async fn send_join_request(
+        &self,
+        participant: &str,
+        requested_at: u64,
+        request: MeshJoinRequest,
+    ) -> Result<()> {
+        self.mesh
+            .send_join_request(participant, requested_at, request)
+            .await
+    }
+
+    pub(crate) async fn send_roster(
+        &self,
+        participant: &str,
+        signed_roster: SignedRoster,
+    ) -> Result<()> {
+        self.mesh.send_roster(participant, signed_roster).await
+    }
+
+    pub(crate) async fn send_capabilities(
+        &self,
+        participant: &str,
+        network_id: &str,
+        capabilities: PeerCapabilities,
+    ) -> Result<()> {
+        self.mesh
+            .send_capabilities(participant, network_id, capabilities)
+            .await
+    }
+
+    pub(crate) fn peer_advertised_routes(&self, participant: &str) -> Vec<String> {
+        self.mesh.peer_advertised_routes(participant)
+    }
+
+    pub(crate) fn drain_events(&mut self) -> Vec<FipsPrivateMeshEvent> {
+        drain_event_batch(&mut self.event_rx, FIPS_MESH_EVENT_DRAIN_LIMIT)
+    }
 }
