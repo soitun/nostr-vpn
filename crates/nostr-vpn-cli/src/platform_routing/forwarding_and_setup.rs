@@ -337,22 +337,6 @@ pub(crate) fn linux_iptables_delete_rule(
 }
 
 #[cfg(any(test, not(target_os = "windows")))]
-#[allow(dead_code)]
-pub(crate) fn apply_local_interface_network_with_mtu(
-    iface: &str,
-    address: &str,
-    route_targets: &[String],
-    mtu: u16,
-) -> Result<()> {
-    apply_local_interface_network_with_mtu_and_addresses(
-        iface,
-        &[address.to_string()],
-        route_targets,
-        mtu,
-    )
-}
-
-#[cfg(any(test, not(target_os = "windows")))]
 #[cfg_attr(all(test, target_os = "windows"), allow(dead_code))]
 pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
     iface: &str,
