@@ -969,11 +969,20 @@ fn linux_vnet_checksum(bytes: &[u8], initial: u64) -> u16 {
 }
 
 fn linux_vnet_add_words(mut sum: u64, bytes: &[u8]) -> u64 {
-    let mut chunks = bytes.chunks_exact(2);
+    let mut chunks = bytes.chunks_exact(8);
     for chunk in &mut chunks {
+        let word = u64::from_be_bytes(chunk.try_into().expect("chunk is 8 bytes"));
+        sum += (word >> 48)
+            + ((word >> 32) & 0xffff)
+            + ((word >> 16) & 0xffff)
+            + (word & 0xffff);
+    }
+
+    let mut tail = chunks.remainder().chunks_exact(2);
+    for chunk in &mut tail {
         sum += u64::from(u16::from_be_bytes([chunk[0], chunk[1]]));
     }
-    if let Some(&byte) = chunks.remainder().first() {
+    if let Some(&byte) = tail.remainder().first() {
         sum += u64::from(byte) << 8;
     }
     sum
