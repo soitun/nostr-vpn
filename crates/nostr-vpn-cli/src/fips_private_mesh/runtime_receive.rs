@@ -1,23 +1,5 @@
 impl FipsPrivateMeshRuntime {
     #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
-    pub(crate) async fn recv_mesh_event_batch(
-        &self,
-        limit: usize,
-    ) -> Result<Option<Vec<FipsPrivateMeshEvent>>> {
-        let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
-        let mut messages = Vec::with_capacity(limit);
-        let mut events = Vec::with_capacity(limit);
-        if self
-            .recv_mesh_event_batch_into(&mut messages, &mut events, limit)
-            .await?
-            .is_none()
-        {
-            return Ok(None);
-        }
-        Ok(Some(events))
-    }
-
-    #[cfg(all(any(target_os = "linux", target_os = "macos", target_os = "windows"), test))]
     pub(crate) async fn recv_mesh_event_batch_into(
         &self,
         messages: &mut Vec<FipsEndpointMessage>,

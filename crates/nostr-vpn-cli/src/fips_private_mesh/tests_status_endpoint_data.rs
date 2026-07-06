@@ -23,11 +23,15 @@
             .expect("send packet batch");
         assert_eq!(sent, 2);
 
-        let events = tokio::time::timeout(Duration::from_secs(2), runtime.recv_mesh_event_batch(4))
-            .await
-            .expect("packet batch should arrive")
-            .expect("receive packet batch")
-            .expect("batch should contain admitted packets");
+        let (mut messages, mut events) = (Vec::with_capacity(4), Vec::with_capacity(4));
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            runtime.recv_mesh_event_batch_into(&mut messages, &mut events, 4),
+        )
+        .await
+        .expect("packet batch should arrive")
+        .expect("receive packet batch")
+        .expect("batch should contain admitted packets");
         assert_eq!(events.len(), 2);
 
         let mut packets = events.into_iter().map(|event| match event {
@@ -126,11 +130,15 @@
         assert!(batch.is_empty());
         assert_eq!(batch.capacity(), batch_capacity);
 
-        let events = tokio::time::timeout(Duration::from_secs(2), runtime.recv_mesh_event_batch(4))
-            .await
-            .expect("packet batch should arrive")
-            .expect("receive packet batch")
-            .expect("batch should contain admitted packets");
+        let (mut messages, mut events) = (Vec::with_capacity(4), Vec::with_capacity(4));
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            runtime.recv_mesh_event_batch_into(&mut messages, &mut events, 4),
+        )
+        .await
+        .expect("packet batch should arrive")
+        .expect("receive packet batch")
+        .expect("batch should contain admitted packets");
         assert_eq!(events.len(), 2);
 
         let packets: Vec<_> = events
