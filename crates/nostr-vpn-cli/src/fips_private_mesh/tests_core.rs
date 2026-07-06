@@ -124,7 +124,7 @@
         let write_fd = pipe_fds[1];
 
         let packet = [0x45, 0, 0, 20, 1, 2, 3, 4];
-        let tun_fd = BorrowedTunFd::new(write_fd, false);
+        let tun_fd = BorrowedTunFd::new(write_fd);
         raw_write_packet_to_tun(&tun_fd, &packet, 2).expect("write packet frame");
         raw_write_packet_to_tun(&tun_fd, &packet, 2).expect("fd should remain writable");
 
@@ -137,7 +137,9 @@
             }
             #[cfg(target_os = "linux")]
             {
-                packet.to_vec()
+                let mut frame = vec![0; LINUX_VIRTIO_NET_HDR_LEN];
+                frame.extend_from_slice(&packet);
+                frame
             }
         };
         let mut expected = expected_frame.clone();
@@ -171,7 +173,7 @@
 
         let stop = std::sync::atomic::AtomicBool::new(false);
         let packet = [0x45, 0, 0, 20, 1, 2, 3, 4];
-        let tun_fd = BorrowedTunFd::new(write_fd, false);
+        let tun_fd = BorrowedTunFd::new(write_fd);
         super::write_packet_to_tun_blocking(tun_fd, &packet, &stop);
         super::write_packet_to_tun_blocking(tun_fd, &packet, &stop);
 
@@ -184,7 +186,9 @@
             }
             #[cfg(target_os = "linux")]
             {
-                packet.to_vec()
+                let mut frame = vec![0; LINUX_VIRTIO_NET_HDR_LEN];
+                frame.extend_from_slice(&packet);
+                frame
             }
         };
         let mut expected = expected_frame.clone();
@@ -207,40 +211,6 @@
         assert_eq!(read as usize, expected.len());
         assert_eq!(read_buf, expected);
     }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn linux_vnet_tun_write_prepends_virtio_header() {
-        let mut pipe_fds = [0; 2];
-        let pipe_result = unsafe { libc::pipe(pipe_fds.as_mut_ptr()) };
-        assert_eq!(pipe_result, 0, "pipe should open");
-        let read_fd = pipe_fds[0];
-        let write_fd = pipe_fds[1];
-
-        let packet = [0x45, 0, 0, 20, 1, 2, 3, 4];
-        let tun_fd = BorrowedTunFd::new(write_fd, true);
-        raw_write_packet_to_tun(&tun_fd, &packet, 0).expect("write vnet packet frame");
-
-        let mut expected = vec![0_u8; LINUX_VIRTIO_NET_HDR_LEN];
-        expected.extend_from_slice(&packet);
-        let mut read_buf = vec![0_u8; expected.len()];
-        let read = unsafe {
-            libc::read(
-                read_fd,
-                read_buf.as_mut_ptr().cast::<libc::c_void>(),
-                read_buf.len(),
-            )
-        };
-
-        unsafe {
-            libc::close(read_fd);
-            libc::close(write_fd);
-        }
-
-        assert_eq!(read as usize, expected.len());
-        assert_eq!(read_buf, expected);
-    }
-
     #[test]
     fn fips_peer_address_hint_splits_transport_tags_for_live_updates() {
         let tcp = fips_peer_address_from_hint(&FipsPeerAddressHint {

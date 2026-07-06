@@ -47,7 +47,7 @@ impl LinuxVnetTun {
     fn new(name: &str) -> Result<Self> {
         if name.parse::<i32>().is_ok() {
             return Err(anyhow!(
-                "NVPN_FIPS_LINUX_TUN_VNET=1 cannot adopt a pre-opened fd; pass an interface name"
+                "Linux vnet TUN cannot adopt a pre-opened fd; pass an interface name"
             ));
         }
         if name.len() >= libc::IFNAMSIZ {
@@ -677,21 +677,6 @@ fn linux_vnet_finalize_ipv4_header_checksum(header: &mut [u8]) {
     header[11] = 0;
     let checksum = !linux_vnet_checksum(header, 0);
     header[10..12].copy_from_slice(&checksum.to_be_bytes());
-}
-
-fn linux_vnet_tun_enabled() -> bool {
-    static VALUE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *VALUE.get_or_init(|| linux_vnet_tun_enabled_from_env(std::env::var("NVPN_FIPS_LINUX_TUN_VNET").ok().as_deref()))
-}
-
-fn linux_vnet_tun_enabled_from_env(value: Option<&str>) -> bool {
-    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
-        return true;
-    };
-    !(value == "0"
-        || value.eq_ignore_ascii_case("false")
-        || value.eq_ignore_ascii_case("no")
-        || value.eq_ignore_ascii_case("off"))
 }
 
 fn handle_linux_vnet_read(frame: &mut [u8], batch: &mut TunPipelineBatch) -> io::Result<usize> {

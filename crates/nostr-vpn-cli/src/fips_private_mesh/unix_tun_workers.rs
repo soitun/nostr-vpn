@@ -7,7 +7,7 @@ fn spawn_tun_send_worker(
     let thread = std::thread::Builder::new()
         .name("nvpn-fips-tun-send".to_string())
         .spawn(move || {
-            let tun_fd = BorrowedTunFd::new(tun.as_raw_fd(), tun.vnet_hdr());
+            let tun_fd = BorrowedTunFd::new(tun.as_raw_fd());
             let mut buf = vec![0_u8; tun.read_buffer_len()];
             let mut batch = Vec::with_capacity(FIPS_TUN_READ_BURST);
             let mut local_packets = Vec::new();

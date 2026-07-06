@@ -47,45 +47,25 @@ fn fips_tun_create_context(iface: &str) -> String {
 }
 
 #[cfg(target_os = "linux")]
-enum SystemTun {
-    Plain(TunSocket),
-    Vnet(LinuxVnetTun),
-}
+struct SystemTun(LinuxVnetTun);
 #[cfg(target_os = "macos")]
 struct SystemTun(TunSocket);
 #[cfg(target_os = "linux")]
 impl SystemTun {
     fn new(iface: &str) -> Result<Self> {
-        if linux_vnet_tun_enabled() {
-            LinuxVnetTun::new(iface).map(Self::Vnet)
-        } else {
-            TunSocket::new(iface).map(Self::Plain).map_err(Into::into)
-        }
+        LinuxVnetTun::new(iface).map(Self)
     }
 
     fn set_non_blocking(self) -> Result<Self> {
-        match self {
-            Self::Plain(tun) => tun.set_non_blocking().map(Self::Plain).map_err(Into::into),
-            Self::Vnet(tun) => tun.set_non_blocking().map(Self::Vnet),
-        }
+        self.0.set_non_blocking().map(Self)
     }
 
     fn name(&self) -> Result<String> {
-        match self {
-            Self::Plain(tun) => tun.name().map_err(Into::into),
-            Self::Vnet(tun) => Ok(tun.name().to_string()),
-        }
-    }
-
-    fn vnet_hdr(&self) -> bool {
-        matches!(self, Self::Vnet(_))
+        Ok(self.0.name().to_string())
     }
 
     fn read_buffer_len(&self) -> usize {
-        match self {
-            Self::Plain(_) => 65_535,
-            Self::Vnet(_) => LINUX_VIRTIO_NET_HDR_LEN + 65_535,
-        }
+        LINUX_VIRTIO_NET_HDR_LEN + 65_535
     }
 
     fn read_packets_into(
@@ -93,20 +73,14 @@ impl SystemTun {
         scratch: &mut [u8],
         batch: &mut TunPipelineBatch,
     ) -> io::Result<usize> {
-        match self {
-            Self::Plain(tun) => read_plain_tun_packets_into(tun, scratch, batch),
-            Self::Vnet(tun) => tun.read_packets_into(scratch, batch),
-        }
+        self.0.read_packets_into(scratch, batch)
     }
 }
 
 #[cfg(target_os = "linux")]
 impl AsRawFd for SystemTun {
     fn as_raw_fd(&self) -> RawFd {
-        match self {
-            Self::Plain(tun) => tun.as_raw_fd(),
-            Self::Vnet(tun) => tun.as_raw_fd(),
-        }
+        self.0.as_raw_fd()
     }
 }
 
@@ -122,10 +96,6 @@ impl SystemTun {
 
     fn name(&self) -> Result<String> {
         self.0.name().map_err(Into::into)
-    }
-
-    fn vnet_hdr(&self) -> bool {
-        false
     }
 
     fn read_buffer_len(&self) -> usize {
@@ -148,7 +118,7 @@ impl AsRawFd for SystemTun {
     }
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn read_plain_tun_packets_into(
     tun: &TunSocket,
     scratch: &mut [u8],
@@ -187,7 +157,7 @@ fn push_tun_pipeline_packet_owned_finalized(batch: &mut TunPipelineBatch, bytes:
     batch.push(TunPipelinePacket::new(bytes));
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 fn tun_error_to_io(error: boringtun::device::Error) -> io::Error {
     match error {
         boringtun::device::Error::IfaceRead(source) => source,

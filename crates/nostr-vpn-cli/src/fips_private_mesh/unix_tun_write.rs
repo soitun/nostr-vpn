@@ -11,7 +11,7 @@ fn flush_direct_endpoint_packet_batch_to_tun_blocking(
     let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::TunWriteBatch);
 
     #[cfg(target_os = "linux")]
-    if tun_fd.vnet_hdr {
+    {
         let packet_count = packet_batch.len();
         let packet_bytes = packet_batch.bytes();
         write_linux_vnet_packet_batch_to_tun_blocking(
@@ -26,10 +26,13 @@ fn flush_direct_endpoint_packet_batch_to_tun_blocking(
         return;
     }
 
-    for packet in packet_batch.run_slices() {
-        write_packet_to_tun_blocking(tun_fd, packet, stop);
+    #[cfg(target_os = "macos")]
+    {
+        for packet in packet_batch.run_slices() {
+            write_packet_to_tun_blocking(tun_fd, packet, stop);
+        }
+        packet_batch.clear();
     }
-    packet_batch.clear();
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -249,36 +252,25 @@ fn raw_write_packet_to_tun(
     packet: &[u8],
     _address_family: u8,
 ) -> io::Result<()> {
-    if tun_fd.vnet_hdr {
-        let header = [0_u8; LINUX_VIRTIO_NET_HDR_LEN];
-        let iov = [
-            libc::iovec {
-                iov_base: header.as_ptr() as *mut libc::c_void,
-                iov_len: header.len(),
-            },
-            libc::iovec {
-                iov_base: packet.as_ptr() as *mut libc::c_void,
-                iov_len: packet.len(),
-            },
-        ];
-        let written = unsafe {
-            libc::writev(
-                tun_fd.as_raw_fd(),
-                iov.as_ptr(),
-                iov.len() as libc::c_int,
-            )
-        };
-        raw_tun_write_result(written, header.len() + packet.len())
-    } else {
-        let written = unsafe {
-            libc::write(
-                tun_fd.as_raw_fd(),
-                packet.as_ptr().cast::<libc::c_void>(),
-                packet.len(),
-            )
-        };
-        raw_tun_write_result(written, packet.len())
-    }
+    let header = [0_u8; LINUX_VIRTIO_NET_HDR_LEN];
+    let iov = [
+        libc::iovec {
+            iov_base: header.as_ptr() as *mut libc::c_void,
+            iov_len: header.len(),
+        },
+        libc::iovec {
+            iov_base: packet.as_ptr() as *mut libc::c_void,
+            iov_len: packet.len(),
+        },
+    ];
+    let written = unsafe {
+        libc::writev(
+            tun_fd.as_raw_fd(),
+            iov.as_ptr(),
+            iov.len() as libc::c_int,
+        )
+    };
+    raw_tun_write_result(written, header.len() + packet.len())
 }
 
 #[cfg(target_os = "linux")]

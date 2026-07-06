@@ -211,10 +211,10 @@ docker_bench_dataplane_profile_env() {
       return 0
       ;;
     linux-vnet)
-      printf '%s\n' "NVPN_FIPS_LINUX_TUN_VNET=1"
+      return 0
       ;;
     linux-vnet-lan)
-      printf '%s\n' "NVPN_FIPS_LINUX_TUN_VNET=1 NVPN_MESH_UNDERLAY_UDP_MTU=1472"
+      printf '%s\n' "NVPN_MESH_UNDERLAY_UDP_MTU=1472"
       ;;
     *)
       printf 'perf: unknown NVPN_DOCKER_DATAPLANE_PROFILE=%s (known: plain, linux-vnet, linux-vnet-lan)\n' \
@@ -268,14 +268,14 @@ docker_bench_validate_connect_env_scope() {
   for name in \
     FIPS_DECRYPT_FMP_SOURCE_AFFINE_SESSION_OWNER \
     FIPS_DECRYPT_FSP_LOCAL_BULK_OPEN_WORKER \
-    FIPS_DECRYPT_FSP_REMOTE_BULK_OPEN_WORKER; do
+    FIPS_DECRYPT_FSP_REMOTE_BULK_OPEN_WORKER \
+    NVPN_FIPS_LINUX_TUN_VNET; do
     value="${!name:-}"
     [[ -n "$value" ]] || continue
     printf 'perf: %s\n' "$(docker_bench_extra_env_stale_assignment_message "$name")" >&2
     failed=1
   done
   for name in \
-    NVPN_FIPS_LINUX_TUN_VNET \
     NVPN_FIPS_LINUX_TUN_TX_QUEUE_LEN \
     NVPN_MESH_UNDERLAY_UDP_MTU \
     NVPN_MESH_MTU_PROFILE \
@@ -353,6 +353,10 @@ docker_bench_extra_env_stale_assignment_message() {
     FIPS_ENCRYPT_WORKERS|FIPS_DECRYPT_WORKERS)
       printf '%s\n' \
         "$name is retired; current FIPS sizes dataplane workers from available parallelism"
+      ;;
+    NVPN_FIPS_LINUX_TUN_VNET)
+      printf '%s\n' \
+        "NVPN_FIPS_LINUX_TUN_VNET is retired; Linux FIPS TUN always uses vnet headers"
       ;;
     FIPS_WORKER_CHANNEL_CAP|FIPS_DECRYPT_WORKER_CHANNEL_CAP|FIPS_DECRYPT_WORKER_PRIORITY_CHANNEL_CAP)
       printf '%s\n' \

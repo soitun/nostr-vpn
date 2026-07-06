@@ -47,7 +47,7 @@ impl FipsPrivateTunnelRuntime {
                 .context("failed to set FIPS tunnel nonblocking")?,
         );
         let iface = tun.name().context("failed to read FIPS tunnel name")?;
-        let tun_fd = BorrowedTunFd::new(tun.as_raw_fd(), tun.vnet_hdr());
+        let tun_fd = BorrowedTunFd::new(tun.as_raw_fd());
 
         let (event_tx, event_rx) = mpsc::channel::<FipsPrivateMeshEvent>(1024);
         let tun_send_worker = spawn_tun_send_worker(Arc::clone(&tun), Arc::clone(&mesh));

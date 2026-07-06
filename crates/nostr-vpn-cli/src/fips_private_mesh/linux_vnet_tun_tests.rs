@@ -4,16 +4,6 @@ mod linux_vnet_tun_tests {
     use std::net::Ipv4Addr;
 
     #[test]
-    fn linux_vnet_tun_env_parser_defaults_on() {
-        assert!(linux_vnet_tun_enabled_from_env(None));
-        assert!(linux_vnet_tun_enabled_from_env(Some("")));
-        assert!(!linux_vnet_tun_enabled_from_env(Some("off")));
-        assert!(!linux_vnet_tun_enabled_from_env(Some("0")));
-        assert!(linux_vnet_tun_enabled_from_env(Some("1")));
-        assert!(linux_vnet_tun_enabled_from_env(Some("true")));
-    }
-
-    #[test]
     fn linux_vnet_plain_read_strips_virtio_header() {
         let packet = ipv4_tcp_gso_packet(16, 16, 0x10);
         let mut frame = vec![0_u8; LINUX_VIRTIO_NET_HDR_LEN + packet.len()];

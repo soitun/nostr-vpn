@@ -503,12 +503,12 @@ test_metadata_writer_records_run_provenance() {
   mkdir -p "$OUTPUT_DIR"
 
   (
-    export NVPN_DOCKER_EXTRA_ENV="FIPS_LINUX_BULK_CONTAINERS=1 NVPN_FIPS_LINUX_TUN_VNET=1"
+    export NVPN_DOCKER_EXTRA_ENV="FIPS_LINUX_BULK_CONTAINERS=1"
     export NVPN_PATCH_LOCAL_FIPS=1
     docker_bench_write_metadata nvpn 3
   )
 
-  assert_eq "$(jq -r '.run_env.extra_connect_env' "$metadata")" "FIPS_LINUX_BULK_CONTAINERS=1 NVPN_FIPS_LINUX_TUN_VNET=1" "metadata extra env"
+  assert_eq "$(jq -r '.run_env.extra_connect_env' "$metadata")" "FIPS_LINUX_BULK_CONTAINERS=1" "metadata extra env"
   assert_eq "$(jq -r '.run_env.dataplane_profile' "$metadata")" "null" "metadata dataplane profile default"
   assert_eq "$(jq -r '.run_env.direct_fmp_forced' "$metadata")" "false" "metadata direct-FMP forced default"
   assert_eq "$(jq -r '.run_env.require_no_direct_fmp' "$metadata")" "false" "metadata no-direct requirement default"
@@ -536,7 +536,7 @@ test_dataplane_profile_expands_connect_env() {
   )
 
   effective="$(cat "$dir/effective-env")"
-  assert_eq "$effective" "NVPN_FIPS_LINUX_TUN_VNET=1 NVPN_MESH_UNDERLAY_UDP_MTU=1472" "profile effective connect env"
+  assert_eq "$effective" "NVPN_MESH_UNDERLAY_UDP_MTU=1472" "profile effective connect env"
   assert_eq "$(jq -r '.run_env.dataplane_profile' "$metadata")" "linux-vnet-lan" "metadata dataplane profile"
   assert_eq "$(jq -r '.run_env.extra_connect_env' "$metadata")" "$effective" "metadata effective extra env"
 
@@ -616,7 +616,6 @@ test_connect_env_scope_rejects_stranded_outer_env() {
   local output status
   set +e
   output="$(
-    NVPN_FIPS_LINUX_TUN_VNET=1 \
     NVPN_FIPS_LINUX_TUN_TX_QUEUE_LEN=500 \
       docker_bench_validate_connect_env_scope "" 2>&1
   )"
@@ -624,10 +623,6 @@ test_connect_env_scope_rejects_stranded_outer_env() {
   set -e
 
   [[ "$status" != "0" ]] || fail "stranded outer connect env was accepted"
-  case "$output" in
-    *"NVPN_FIPS_LINUX_TUN_VNET=1 is set outside the daemon connect env"*) ;;
-    *) fail "stranded connect env diagnostic missing: $output" ;;
-  esac
   case "$output" in
     *"NVPN_FIPS_LINUX_TUN_TX_QUEUE_LEN=500 is set outside the daemon connect env"*) ;;
     *) fail "stranded qlen connect env diagnostic missing: $output" ;;
@@ -642,7 +637,7 @@ test_metadata_writer_records_direct_fmp_guard() {
   mkdir -p "$OUTPUT_DIR"
 
   (
-    export NVPN_DOCKER_EXTRA_ENV="FIPS_LINUX_BULK_CONTAINERS=1 FIPS_DIRECT_ENDPOINT_FMP_ONLY=1 NVPN_FIPS_LINUX_TUN_VNET=1"
+    export NVPN_DOCKER_EXTRA_ENV="FIPS_LINUX_BULK_CONTAINERS=1 FIPS_DIRECT_ENDPOINT_FMP_ONLY=1"
     export NVPN_DOCKER_REQUIRE_NO_DIRECT_FMP=1
     if docker_bench_direct_fmp_forced_enabled; then
       printf 'yes'
@@ -739,6 +734,10 @@ test_extra_env_validation_rejects_retired_dataplane_knob_names() {
   case "$output" in
     *"FIPS_MACOS_ORDERED_SENDER is retired"*) ;;
     *) fail "retired macOS ordered sender diagnostic missing: $output" ;;
+  esac
+  case "$output" in
+    *"NVPN_FIPS_LINUX_TUN_VNET is retired"*) ;;
+    *) fail "retired Linux vnet diagnostic missing: $output" ;;
   esac
 }
 

@@ -192,7 +192,7 @@ fn fips_lan_discovery_scope(network_id: &str) -> String {
     )
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(target_os = "macos")]
 use boringtun::device::tun::TunSocket;
 #[cfg(target_os = "windows")]
 use nostr_vpn_wintun::load_wintun;

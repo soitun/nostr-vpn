@@ -26,8 +26,8 @@
 #
 # Dataplane profiles:
 #   NVPN_DOCKER_DATAPLANE_PROFILE=linux-vnet-lan
-#     expands to the Linux vnet TUN + LAN MTU daemon env used for peak Linux
-#     Docker dataplane measurements.
+#     expands to the LAN MTU daemon env used for peak Linux Docker dataplane
+#     measurements. Linux vnet TUN is the canonical FIPS TUN path.
 #   NVPN_DOCKER_PLACEMENT_PROFILE=worker-open
 #     pins the protocol-neutral direct-peer same-owner FSP local-open expectation
 #     by defaulting NVPN_DOCKER_EXPECT_FSP_OWNER_PLACEMENT=worker-open and

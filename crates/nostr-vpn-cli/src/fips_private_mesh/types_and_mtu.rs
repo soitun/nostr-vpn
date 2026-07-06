@@ -7,22 +7,12 @@ type FipsPeerActivityMap = HashMap<ParticipantPubkeyBytes, Arc<FipsPeerActivity>
 #[derive(Clone, Copy)]
 struct BorrowedTunFd {
     fd: RawFd,
-    #[cfg(target_os = "linux")]
-    vnet_hdr: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl BorrowedTunFd {
-    fn new(fd: RawFd, vnet_hdr: bool) -> Self {
-        #[cfg(target_os = "linux")]
-        {
-            return Self { fd, vnet_hdr };
-        }
-        #[cfg(target_os = "macos")]
-        {
-            let _ = vnet_hdr;
-            Self { fd }
-        }
+    fn new(fd: RawFd) -> Self {
+        Self { fd }
     }
 }
 
