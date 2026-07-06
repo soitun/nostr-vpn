@@ -19,10 +19,10 @@
         let packet = ipv4_packet(source, destination);
 
         let sent = runtime
-            .send_tunnel_packet(&packet)
+            .send_tunnel_packet_batch_owned(vec![packet.clone()])
             .await
             .expect("send packet");
-        assert!(sent);
+        assert_eq!(sent, 1);
 
         let received = tokio::time::timeout(Duration::from_secs(2), runtime.recv_tunnel_packet())
             .await

@@ -153,9 +153,13 @@
     async fn send_with_retry(runtime: &FipsPrivateMeshRuntime, packet: &[u8]) {
         let mut last_error = None;
         for _ in 0..50 {
-            match runtime.send_tunnel_packet(packet).await {
-                Ok(true) => return,
-                Ok(false) => panic!("packet had no FIPS route"),
+            match runtime
+                .send_tunnel_packet_batch_owned(vec![packet.to_vec()])
+                .await
+            {
+                Ok(1) => return,
+                Ok(0) => panic!("packet had no FIPS route"),
+                Ok(sent) => panic!("single packet send produced {sent} sends"),
                 Err(error) => {
                     last_error = Some(error);
                     tokio::time::sleep(Duration::from_millis(100)).await;

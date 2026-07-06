@@ -85,30 +85,6 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
-    #[cfg(test)]
-    async fn send_endpoint_data(
-        &self,
-        participant: &str,
-        participant_key: Option<&ParticipantPubkeyBytes>,
-        endpoint_node_addr: &[u8; 16],
-        data: Vec<u8>,
-    ) -> Result<()> {
-        let peer_identities = self.peer_identities.load();
-        let identity =
-            endpoint_identity_for_send(&peer_identities, participant_key, endpoint_node_addr);
-        drop(peer_identities);
-        let identity = identity.ok_or_else(|| {
-            anyhow!(
-                "missing FIPS endpoint identity for participant {participant} node_addr {}",
-                hex::encode(endpoint_node_addr)
-            )
-        })?;
-        self.endpoint
-            .send_batch_to_peer(identity, vec![data])
-            .await
-            .context("failed to send private packet over FIPS endpoint data")
-    }
-
     fn note_tx(
         &self,
         participant: Option<&str>,
