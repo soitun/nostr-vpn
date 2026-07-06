@@ -33,6 +33,9 @@
 #     Requires passwordless sudo for perf on hosts with restrictive
 #     perf_event_paranoid settings. Perf sampling can perturb throughput, so
 #     keep profiled rows out of scorecard comparisons.
+#   NVPN_DOCKER_LOADED_PING_PHASES=tcp-8
+#     records ping latency while selected iperf phases are running, writing
+#     raw/nvpn-loaded-ping-*.txt and raw/nvpn-loaded-ping-summary.tsv.
 #   NVPN_DOCKER_PLACEMENT_PROFILE=worker-open
 #     pins the protocol-neutral direct-peer same-owner FSP local-open expectation
 #     by defaulting NVPN_DOCKER_EXPECT_FSP_OWNER_PLACEMENT=worker-open and
@@ -66,10 +69,13 @@ SUMMARY_TSV="$OUTPUT_DIR/summary.tsv"
 PIPELINE_PHASE_RANGES="$RAW_DIR/nvpn-pipeline-phase-ranges.tsv"
 PIPELINE_PHASE_SUMMARY="$RAW_DIR/nvpn-pipeline-phase-summary.tsv"
 DAEMON_CPU_PHASES="$RAW_DIR/nvpn-daemon-cpu-phases.tsv"
+LOADED_PING_SUMMARY="$RAW_DIR/nvpn-loaded-ping-summary.tsv"
 PIPELINE_TRACE="${NVPN_DOCKER_PIPELINE_TRACE:-0}"
 PIPELINE_INTERVAL_SECS="${NVPN_DOCKER_PIPELINE_INTERVAL_SECS:-5}"
 PERF_PHASES="${NVPN_DOCKER_PERF_PHASES:-}"
 PERF_FREQ="${NVPN_DOCKER_PERF_FREQ:-19}"
+LOADED_PING_PHASES="${NVPN_DOCKER_LOADED_PING_PHASES:-}"
+LOADED_PING_INTERVAL_SECS="${NVPN_DOCKER_LOADED_PING_INTERVAL_SECS:-0.01}"
 EXTRA_CONNECT_ENV=""
 REQUIRE_NO_DIRECT_FMP="${NVPN_DOCKER_REQUIRE_NO_DIRECT_FMP:-0}"
 REQUIRE_NO_FSP_AEAD_HELPERS="${NVPN_DOCKER_REQUIRE_NO_FSP_AEAD_HELPERS:-0}"
@@ -132,6 +138,13 @@ fi
 if [[ ! "$UDP1000_BANDWIDTH" =~ ^[0-9]+([KMG])?$ ]]; then
   echo "perf: invalid NVPN_DOCKER_UDP1000_BANDWIDTH=$UDP1000_BANDWIDTH (expected bits/sec or K/M/G suffix)" >&2
   exit 2
+fi
+if [[ -n "$LOADED_PING_PHASES" ]]; then
+  if [[ ! "$LOADED_PING_INTERVAL_SECS" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+    || ! awk -v interval="$LOADED_PING_INTERVAL_SECS" 'BEGIN { exit(interval > 0 ? 0 : 1) }'; then
+    echo "perf: invalid NVPN_DOCKER_LOADED_PING_INTERVAL_SECS=$LOADED_PING_INTERVAL_SECS (expected positive seconds)" >&2
+    exit 2
+  fi
 fi
 UDP1000_PER_STREAM_BANDWIDTH="$(docker_bench_udp1000_per_stream_bandwidth)"
 IPERF_SOCKET_BUFFER_ARGS=()
@@ -339,14 +352,97 @@ wait_for_service() {
   exit 1
 }
 
-perf_phase_enabled() {
-  local phase="$1"
-  [[ -n "$PERF_PHASES" ]] || return 1
+phase_list_contains() {
+  local list="$1"
+  local phase="$2"
+  [[ -n "$list" ]] || return 1
   local token
-  for token in ${PERF_PHASES//,/ }; do
+  for token in ${list//,/ }; do
     [[ "$token" == "all" || "$token" == "$phase" ]] && return 0
   done
   return 1
+}
+
+perf_phase_enabled() {
+  phase_list_contains "$PERF_PHASES" "$1"
+}
+
+loaded_ping_phase_enabled() {
+  phase_list_contains "$LOADED_PING_PHASES" "$1"
+}
+
+loaded_ping_count_for_duration() {
+  awk -v duration="$DURATION" -v interval="$LOADED_PING_INTERVAL_SECS" '
+    BEGIN {
+      if (interval <= 0) interval = 1;
+      count = int((duration / interval) + 0.999);
+      if (count < 1) count = 1;
+      print count;
+    }'
+}
+
+write_loaded_ping_summary_header() {
+  [[ -n "$LOADED_PING_PHASES" ]] || return 0
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    phase \
+    samples \
+    loss_pct \
+    avg_ms \
+    mdev_ms \
+    p95_ms \
+    p99_ms \
+    max_ms \
+    gt1ms \
+    gt2ms \
+    gt10ms >"$LOADED_PING_SUMMARY"
+}
+
+append_loaded_ping_summary() {
+  local phase="$1"
+  local ping_output="$2"
+  [[ -s "$ping_output" ]] || return 0
+
+  local ping_loss ping_avg ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10
+  read -r ping_loss ping_avg <<<"$(docker_bench_parse_ping_loss_avg "$ping_output")"
+  IFS=$'\t' read -r ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10 \
+    <<<"$(docker_bench_parse_ping_tail_stats "$ping_output")"
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$phase" \
+    "$ping_samples" \
+    "${ping_loss:-100}" \
+    "${ping_avg:-null}" \
+    "$ping_mdev" \
+    "$ping_p95" \
+    "$ping_p99" \
+    "$ping_max" \
+    "$ping_gt1" \
+    "$ping_gt2" \
+    "$ping_gt10" >>"$LOADED_PING_SUMMARY"
+}
+
+start_loaded_phase_ping() {
+  LOADED_PHASE_PING_PID=""
+  local phase="$1"
+  local ping_output="$2"
+  loaded_ping_phase_enabled "$phase" || return 0
+
+  local ping_count timeout_secs
+  ping_count="$(loaded_ping_count_for_duration)"
+  timeout_secs="$((DURATION + 5))"
+  timeout --kill-after=2s "$timeout_secs" \
+    "${COMPOSE[@]}" exec -T node-a \
+      ping -c "$ping_count" -i "$LOADED_PING_INTERVAL_SECS" "$BOB_TUNNEL_IP" \
+    >"$ping_output" 2>&1 &
+  LOADED_PHASE_PING_PID="$!"
+}
+
+finish_loaded_phase_ping() {
+  local phase="$1"
+  local ping_pid="$2"
+  local ping_output="$3"
+  [[ -n "$ping_pid" ]] || return 0
+  wait "$ping_pid" || true
+  append_loaded_ping_summary "$phase" "$ping_output"
 }
 
 host_pids_for_service_process() {
@@ -1003,6 +1099,7 @@ cleanup
 docker_bench_init_summary
 write_pipeline_phase_range_header "$PIPELINE_PHASE_RANGES"
 write_daemon_cpu_phase_header
+write_loaded_ping_summary_header
 docker_bench_write_metadata nvpn "$DURATION"
 start_compose_services
 for service in node-a node-b; do
@@ -1093,6 +1190,7 @@ run_test_json() {
   shift 3
   local phase_start_node_a phase_start_node_b phase_end_node_a phase_end_node_b
   local cpu_start_node_a cpu_start_node_b cpu_end_node_a cpu_end_node_b transfer_bytes
+  local loaded_ping_pid="" loaded_ping_output="$RAW_DIR/nvpn-loaded-ping-$phase.txt"
   local is_udp=0
   [[ "${1:-}" == "-u" ]] && is_udp=1
   printf '## %s\n' "$label"
@@ -1116,13 +1214,17 @@ run_test_json() {
   local phase_perf_pid
   start_phase_perf "$phase"
   phase_perf_pid="$PHASE_PERF_PID"
+  start_loaded_phase_ping "$phase" "$loaded_ping_output"
+  loaded_ping_pid="$LOADED_PHASE_PING_PID"
   if ! "${COMPOSE[@]}" exec -T node-a "${iperf_cmd[@]}" >"$json_path" 2>"$err_path"; then
     finish_phase_perf "$phase" "$phase_perf_pid"
+    finish_loaded_phase_ping "$phase" "$loaded_ping_pid" "$loaded_ping_output"
     cat "$err_path" >&2
     cat "$json_path" >&2
     return 1
   fi
   finish_phase_perf "$phase" "$phase_perf_pid"
+  finish_loaded_phase_ping "$phase" "$loaded_ping_pid" "$loaded_ping_output"
   cpu_end_node_a="$(daemon_cpu_sample node-a)"
   cpu_end_node_b="$(daemon_cpu_sample node-b)"
   if jq -e 'has("error")' "$json_path" >/dev/null; then
