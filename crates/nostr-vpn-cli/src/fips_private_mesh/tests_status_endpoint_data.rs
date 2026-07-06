@@ -1,41 +1,4 @@
     #[tokio::test]
-    async fn endpoint_data_runtime_sends_and_receives_raw_packets() {
-        let keys = Keys::generate();
-        let nsec = keys.secret_key().to_bech32().expect("nsec");
-        let participant_pubkey = keys.public_key().to_hex();
-        let source = Ipv4Addr::new(10, 44, 10, 1);
-        let destination = Ipv4Addr::new(10, 44, 22, 44);
-
-        // The FIPS endpoint self-loop is used only to exercise send/recv
-        // without external discovery. Real peers should not own both routes.
-        let peer = FipsMeshPeerConfig::from_participant_pubkey(
-            &participant_pubkey,
-            vec![format!("{source}/32"), format!("{destination}/32")],
-        )
-        .expect("peer config");
-        let runtime = FipsPrivateMeshRuntime::bind(nsec, "test-network", vec![peer])
-            .await
-            .expect("runtime should bind");
-        let packet = ipv4_packet(source, destination);
-
-        let sent = runtime
-            .send_tunnel_packet_batch_owned(vec![packet.clone()])
-            .await
-            .expect("send packet");
-        assert_eq!(sent, 1);
-
-        let received = tokio::time::timeout(Duration::from_secs(2), runtime.recv_tunnel_packet())
-            .await
-            .expect("packet should arrive")
-            .expect("receive packet")
-            .expect("packet should pass admission");
-
-        assert_eq!(received, packet);
-        assert_peer_data_activity(&runtime, &participant_pubkey, packet.len() as u64);
-        runtime.shutdown().await.expect("shutdown");
-    }
-
-    #[tokio::test]
     async fn endpoint_data_runtime_sends_and_receives_raw_packet_batch() {
         let keys = Keys::generate();
         let nsec = keys.secret_key().to_bech32().expect("nsec");

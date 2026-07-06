@@ -252,22 +252,32 @@
 
         let alice_to_bob = ipv4_packet(alice_ip, bob_ip);
         send_with_retry(&alice_runtime, &alice_to_bob).await;
-        let received =
-            tokio::time::timeout(Duration::from_secs(5), bob_runtime.recv_tunnel_packet())
+        let events =
+            tokio::time::timeout(Duration::from_secs(5), bob_runtime.recv_mesh_event_batch(1))
                 .await
                 .expect("Bob should receive Alice packet")
-                .expect("receive packet")
+                .expect("receive Bob event batch")
                 .expect("packet should pass Bob admission");
+        assert_eq!(events.len(), 1);
+        let received = match events.into_iter().next().expect("one Bob event") {
+            FipsPrivateMeshEvent::Packet(packet) => Vec::from(packet),
+            event => panic!("expected packet event, got {event:?}"),
+        };
         assert_eq!(received, alice_to_bob);
 
         let bob_to_alice = ipv4_packet(bob_ip, alice_ip);
         send_with_retry(&bob_runtime, &bob_to_alice).await;
-        let received =
-            tokio::time::timeout(Duration::from_secs(5), alice_runtime.recv_tunnel_packet())
+        let events =
+            tokio::time::timeout(Duration::from_secs(5), alice_runtime.recv_mesh_event_batch(1))
                 .await
                 .expect("Alice should receive Bob packet")
-                .expect("receive packet")
+                .expect("receive Alice event batch")
                 .expect("packet should pass Alice admission");
+        assert_eq!(events.len(), 1);
+        let received = match events.into_iter().next().expect("one Alice event") {
+            FipsPrivateMeshEvent::Packet(packet) => Vec::from(packet),
+            event => panic!("expected packet event, got {event:?}"),
+        };
         assert_eq!(received, bob_to_alice);
 
         alice_runtime.shutdown().await.expect("shutdown alice");

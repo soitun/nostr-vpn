@@ -543,16 +543,6 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(crate) async fn recv_tunnel_packet(&self) -> Result<Option<Vec<u8>>> {
-        loop {
-            match self.recv_mesh_event().await? {
-                Some(FipsPrivateMeshEvent::Packet(packet)) => return Ok(Some(packet.into_vec())),
-                Some(_) => {}
-                None => return Ok(None),
-            }
-        }
-    }
 }
 
 #[cfg(target_os = "windows")]
