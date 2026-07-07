@@ -372,6 +372,19 @@ struct SellerPaymentApplyContext<'a> {
     now_unix: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BuyerPaymentApplyContext<'a> {
+    session_id: &'a str,
+    channel_id: &'a str,
+    lease_id: &'a str,
+    meter: PaidRouteMeter,
+    kind: BuildPaidRouteBuyerPaymentEnvelopeKind,
+    delivered_units: u64,
+    paid_msat: u64,
+    unit: &'a str,
+    now_unix: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordPaidRouteSellerUsageRequest {
     pub buyer_pubkey: String,
@@ -1530,16 +1543,18 @@ impl PaidRouteStore {
         let payload_type = request.kind.as_str().to_string();
 
         self.apply_buyer_payment_state(
-            &session_id,
-            &channel_id,
-            &lease_record.lease.lease_id,
-            config.pricing.meter,
-            request.kind,
-            delivered_units,
-            paid_msat,
-            &unit,
+            &BuyerPaymentApplyContext {
+                session_id: &session_id,
+                channel_id: &channel_id,
+                lease_id: &lease_record.lease.lease_id,
+                meter: config.pricing.meter,
+                kind: request.kind,
+                delivered_units,
+                paid_msat,
+                unit: &unit,
+                now_unix: request.now_unix,
+            },
             request.payment.clone(),
-            request.now_unix,
         )?;
 
         let session = self
@@ -1719,48 +1734,43 @@ impl PaidRouteStore {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn apply_buyer_payment_state(
         &mut self,
-        session_id: &str,
-        channel_id: &str,
-        lease_id: &str,
-        meter: PaidRouteMeter,
-        kind: BuildPaidRouteBuyerPaymentEnvelopeKind,
-        delivered_units: u64,
-        paid_msat: u64,
-        unit: &str,
+        context: &BuyerPaymentApplyContext<'_>,
         payment: CashuSpilmanPayment,
-        now_unix: u64,
     ) -> Result<()> {
-        if let Some(channel) = self.channels.get_mut(channel_id) {
-            channel.payment.cashu_unit = unit.to_string();
-            channel.payment.paid_msat = paid_msat;
-            channel.payment.updated_at_unix = now_unix;
+        if let Some(channel) = self.channels.get_mut(context.channel_id) {
+            channel.payment.cashu_unit = context.unit.to_string();
+            channel.payment.paid_msat = context.paid_msat;
+            channel.payment.updated_at_unix = context.now_unix;
             channel.payment.cashu_spilman_payment = Some(payment.clone());
             channel.payment.cashu_token_lease = None;
-            channel.updated_at_unix = now_unix;
-            if kind == BuildPaidRouteBuyerPaymentEnvelopeKind::CooperativeClose {
+            channel.updated_at_unix = context.now_unix;
+            if context.kind == BuildPaidRouteBuyerPaymentEnvelopeKind::CooperativeClose {
                 channel.status = PaidRouteLifecycleStatus::Closed;
             }
         }
-        if kind == BuildPaidRouteBuyerPaymentEnvelopeKind::CooperativeClose
-            && let Some(lease) = self.leases.get_mut(lease_id)
+        if context.kind == BuildPaidRouteBuyerPaymentEnvelopeKind::CooperativeClose
+            && let Some(lease) = self.leases.get_mut(context.lease_id)
         {
             lease.status = PaidRouteLifecycleStatus::Closed;
-            lease.updated_at_unix = now_unix;
+            lease.updated_at_unix = context.now_unix;
         }
         let record = self
             .sessions
-            .get_mut(session_id)
-            .ok_or_else(|| anyhow!("paid route session {session_id} does not exist"))?;
-        apply_delivered_units_for_meter(&mut record.session.usage, meter, delivered_units);
-        record.session.payment.cashu_unit = unit.to_string();
-        record.session.payment.paid_msat = paid_msat;
-        record.session.payment.updated_at_unix = now_unix;
+            .get_mut(context.session_id)
+            .ok_or_else(|| anyhow!("paid route session {} does not exist", context.session_id))?;
+        apply_delivered_units_for_meter(
+            &mut record.session.usage,
+            context.meter,
+            context.delivered_units,
+        );
+        record.session.payment.cashu_unit = context.unit.to_string();
+        record.session.payment.paid_msat = context.paid_msat;
+        record.session.payment.updated_at_unix = context.now_unix;
         record.session.payment.cashu_spilman_payment = Some(payment);
         record.session.payment.cashu_token_lease = None;
-        record.updated_at_unix = now_unix;
+        record.updated_at_unix = context.now_unix;
         Ok(())
     }
 
@@ -5680,10 +5690,7 @@ mod tests {
             store.leases["lease-1"].status,
             PaidRouteLifecycleStatus::Closing
         );
-        assert_eq!(
-            store.seller_admissions(&config, 131)[0].allow_routing,
-            false
-        );
+        assert!(!store.seller_admissions(&config, 131)[0].allow_routing);
         let collection = store.seller_collection_states(&config, 131);
         assert_eq!(collection.len(), 1);
         assert!(collection[0].collectable);
