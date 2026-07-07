@@ -4,7 +4,7 @@
         FIPS_ENDPOINT_FAST_LINK_DEAD_TIMEOUT_SECS, FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS,
         FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS, FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST,
         FIPS_ENDPOINT_REKEY_AFTER_SECS, FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS,
-        FIPS_LAN_DISCOVERY_SCOPE_PREFIX, FIPS_MESH_EVENT_DRAIN_LIMIT, FIPS_NOSTR_DISCOVERY_APP,
+        FIPS_LAN_DISCOVERY_SCOPE_PREFIX, FIPS_MESH_EVENT_DRAIN_LIMIT,
         FIPS_NOSTR_EXTENDED_COOLDOWN_SECS, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
         FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
         FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS, FIPS_RECONNECT_BACKOFF_BASE_SECS,
@@ -36,9 +36,9 @@
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
     use fips_endpoint::{
-        Config, ConnectPolicy, FipsEndpointPeer, NodeAddr,
-        NostrDiscoveryPolicy, PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode,
-        TransportInstances, UdpConfig,
+        Config, ConnectPolicy, FipsEndpointData, FipsEndpointDirectPacketRun, FipsEndpointMessage,
+        FipsEndpointPeer, NodeAddr, NostrDiscoveryPolicy, PeerConfig as FipsPeerConfig,
+        PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
     };
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::config::{AppConfig, PendingOutboundJoinRequest, derive_mesh_tunnel_ip};
@@ -56,6 +56,8 @@
         atomic::{AtomicBool, Ordering},
     };
     use std::time::Duration;
+
+    const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 
     fn send_tunnel_packet_batch_owned_with_capacity(
         runtime: &FipsPrivateMeshRuntime,
@@ -109,6 +111,132 @@
         let _t =
             crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
         runtime.blocking_send_endpoint_send_runs(runs)
+    }
+
+    async fn recv_mesh_event_batch_into(
+        runtime: &FipsPrivateMeshRuntime,
+        messages: &mut Vec<FipsEndpointMessage>,
+        events: &mut Vec<FipsPrivateMeshEvent>,
+        limit: usize,
+    ) -> anyhow::Result<Option<usize>> {
+        let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
+        events.clear();
+        loop {
+            drain_direct_endpoint_mesh_events(runtime, limit).await?;
+            if pop_direct_endpoint_mesh_events_into(runtime, events, limit)? > 0 {
+                return Ok(Some(events.len()));
+            }
+
+            let Some(_) = (match tokio::time::timeout(
+                Duration::from_millis(10),
+                runtime.endpoint.recv_batch_into(messages, limit),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => continue,
+            }) else {
+                return Ok(None);
+            };
+
+            let now = Some(unix_timestamp());
+            events.reserve(messages.len());
+            for message in messages.drain(..) {
+                if let Some(event) = endpoint_message_to_mesh_event(runtime, message, now).await? {
+                    events.push(event);
+                }
+            }
+            if !events.is_empty() {
+                return Ok(Some(events.len()));
+            }
+        }
+    }
+
+    async fn endpoint_message_to_mesh_event(
+        runtime: &FipsPrivateMeshRuntime,
+        message: FipsEndpointMessage,
+        now: Option<u64>,
+    ) -> anyhow::Result<Option<FipsPrivateMeshEvent>> {
+        let outcome = runtime.endpoint_message_to_mesh_event_outcome(message, now)?;
+        if let Some(reply) = outcome.reply
+            && let Err(error) = runtime.endpoint.send_to_peer(reply.peer, reply.data).await
+        {
+            eprintln!("fips: failed to reply to peer ping: {error}");
+        }
+        Ok(outcome.event)
+    }
+
+    async fn drain_direct_endpoint_mesh_events(
+        runtime: &FipsPrivateMeshRuntime,
+        limit: usize,
+    ) -> anyhow::Result<usize> {
+        let mut events = Vec::new();
+        while events.len() < limit {
+            let remaining = limit - events.len();
+            let runs = match runtime.direct_endpoint_rx.try_recv_limited(remaining) {
+                Ok(runs) => runs,
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(0),
+            };
+            direct_endpoint_packet_runs_to_mesh_events(
+                runtime,
+                runs,
+                Some(unix_timestamp()),
+                &mut events,
+            )
+            .await?;
+        }
+
+        let drained = events.len();
+        if drained > 0 {
+            runtime
+                .direct_endpoint_pending_events
+                .lock()
+                .map_err(|_| anyhow::anyhow!("FIPS direct endpoint event queue lock poisoned"))?
+                .extend(events);
+        }
+        Ok(drained)
+    }
+
+    async fn direct_endpoint_packet_runs_to_mesh_events(
+        runtime: &FipsPrivateMeshRuntime,
+        runs: Vec<FipsEndpointDirectPacketRun>,
+        now: Option<u64>,
+        events: &mut Vec<FipsPrivateMeshEvent>,
+    ) -> anyhow::Result<()> {
+        for run in runs {
+            let source_peer = *run.source_peer();
+            let enqueued_at_ms = run.enqueued_at_ms();
+            for packet in run.packet_slices() {
+                let message = FipsEndpointMessage {
+                    source_peer,
+                    data: FipsEndpointData::from(packet.to_vec()),
+                    enqueued_at_ms,
+                };
+                if let Some(event) = endpoint_message_to_mesh_event(runtime, message, now).await? {
+                    events.push(event);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn pop_direct_endpoint_mesh_events_into(
+        runtime: &FipsPrivateMeshRuntime,
+        events: &mut Vec<FipsPrivateMeshEvent>,
+        limit: usize,
+    ) -> anyhow::Result<usize> {
+        let mut pending = runtime
+            .direct_endpoint_pending_events
+            .lock()
+            .map_err(|_| anyhow::anyhow!("FIPS direct endpoint event queue lock poisoned"))?;
+        while events.len() < limit {
+            let Some(event) = pending.pop_front() else {
+                break;
+            };
+            events.push(event);
+        }
+        Ok(events.len())
     }
 
     #[test]

@@ -252,7 +252,7 @@
         let (mut messages, mut events) = (Vec::with_capacity(1), Vec::with_capacity(1));
         tokio::time::timeout(
             Duration::from_secs(5),
-            bob_runtime.recv_mesh_event_batch_into(&mut messages, &mut events, 1),
+            recv_mesh_event_batch_into(&bob_runtime, &mut messages, &mut events, 1),
         )
         .await
         .expect("Bob should receive Alice packet")
@@ -269,7 +269,7 @@
         send_with_retry(&bob_runtime, &bob_to_alice).await;
         tokio::time::timeout(
             Duration::from_secs(5),
-            alice_runtime.recv_mesh_event_batch_into(&mut messages, &mut events, 1),
+            recv_mesh_event_batch_into(&alice_runtime, &mut messages, &mut events, 1),
         )
         .await
         .expect("Alice should receive Bob packet")
@@ -409,7 +409,8 @@
 
             let _ = tokio::time::timeout(
                 Duration::from_millis(50),
-                carol_runtime.recv_mesh_event_batch_into(
+                recv_mesh_event_batch_into(
+                    &carol_runtime,
                     &mut carol_messages,
                     &mut carol_events,
                     1,
@@ -419,7 +420,8 @@
 
             let alice_event = tokio::time::timeout(
                 Duration::from_millis(50),
-                alice_runtime.recv_mesh_event_batch_into(
+                recv_mesh_event_batch_into(
+                    &alice_runtime,
                     &mut alice_messages,
                     &mut alice_events,
                     1,

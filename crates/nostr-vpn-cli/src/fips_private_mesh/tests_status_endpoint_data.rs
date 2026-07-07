@@ -54,7 +54,7 @@
         let (mut messages, mut events) = (Vec::with_capacity(4), Vec::with_capacity(4));
         tokio::time::timeout(
             Duration::from_secs(2),
-            runtime.recv_mesh_event_batch_into(&mut messages, &mut events, 4),
+            recv_mesh_event_batch_into(&runtime, &mut messages, &mut events, 4),
         )
         .await
         .expect("packet batch should arrive")
@@ -159,7 +159,7 @@
         let (mut messages, mut events) = (Vec::with_capacity(4), Vec::with_capacity(4));
         tokio::time::timeout(
             Duration::from_secs(2),
-            runtime.recv_mesh_event_batch_into(&mut messages, &mut events, 4),
+            recv_mesh_event_batch_into(&runtime, &mut messages, &mut events, 4),
         )
         .await
         .expect("packet batch should arrive")
@@ -215,7 +215,7 @@
 
         let received = tokio::time::timeout(
             Duration::from_secs(2),
-            runtime.recv_mesh_event_batch_into(&mut messages, &mut events, 2),
+            recv_mesh_event_batch_into(&runtime, &mut messages, &mut events, 2),
         )
         .await
         .expect("packet batch should arrive")
@@ -237,7 +237,7 @@
 
         let received = tokio::time::timeout(
             Duration::from_secs(2),
-            runtime.recv_mesh_event_batch_into(&mut messages, &mut events, 8),
+            recv_mesh_event_batch_into(&runtime, &mut messages, &mut events, 8),
         )
         .await
         .expect("packet batch should arrive")

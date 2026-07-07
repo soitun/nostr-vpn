@@ -63,8 +63,6 @@ use tokio::sync::mpsc;
 
 const FIPS_PEER_ONLINE_GRACE_SECS: u64 = 20;
 const FIPS_PEER_MAX_FUTURE_SKEW_SECS: u64 = 2;
-#[cfg(test)]
-const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
 const FIPS_LAN_DISCOVERY_SCOPE_PREFIX: &str = "nostr-vpn";
 const FIPS_PEER_CAPS_GRACE_SECS: u64 = 600;
 const FIPS_RECONNECT_BACKOFF_BASE_SECS: u64 = 1;
