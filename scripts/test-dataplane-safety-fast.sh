@@ -277,7 +277,7 @@ run_nvpn_hotpath() {
   run cargo_test -p nvpn endpoint_data_runtime_recv_batch_into_reuses_buffers_and_respects_limit
   run cargo_test -p nvpn endpoint_data_runtime_blocking_recv_batch_into_reuses_buffers_and_respects_limit
   run cargo_test -p nvpn endpoint_data_runtime_blocking_recv_batch_into_stages_before_event_handling
-  run cargo_test -p nvpn endpoint_data_runtime_blocking_recv_batch_for_each_respects_limit
+  run cargo_test -p nvpn endpoint_data_runtime_direct_tun_batch_respects_limit
 }
 
 run_nvpn_reliability() {
@@ -331,8 +331,6 @@ run_fips() {
   run fips_cargo_test -p fips-core recv_batch_drains_ready_loopback_endpoint_data -- --nocapture
   run fips_cargo_test -p fips-core recv_batch_into_splits_internal_endpoint_batches_without_reordering -- --nocapture
   run fips_cargo_test -p fips-core recv_batch_into_preserves_pending_batch_tail_fifo -- --nocapture
-  run fips_cargo_test -p fips-core blocking_recv_batch_for_each_respects_limit_without_message_vec_staging -- --nocapture
-  run fips_cargo_test -p fips-core blocking_recv_batch_for_each_preserves_unhandled_internal_batch_tail -- --nocapture
   run fips_cargo_test -p fips-core endpoint_data_batch_enqueue_drops_when_full -- --nocapture
   run fips_cargo_test -p fips-core packet_channel_batch_send_amortizes_bulk_channel_items -- --nocapture
   run fips_cargo_test -p fips-core packet_channel_reuses_pooled_batch_container_after_rx_drain -- --nocapture

@@ -421,7 +421,7 @@
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
-    async fn endpoint_data_runtime_blocking_recv_batch_for_each_respects_limit() {
+    async fn endpoint_data_runtime_direct_tun_batch_respects_limit() {
         let _local_udp_guard = LOCAL_UDP_ENDPOINT_TEST_LOCK.lock().await;
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
