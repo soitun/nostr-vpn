@@ -283,23 +283,24 @@ fn observe_wall_time_jump(
     jumped
 }
 
-#[allow(clippy::too_many_arguments)]
+struct InboundJoinRequest<'a> {
+    sender_pubkey: &'a str,
+    requested_at: u64,
+    request: &'a MeshJoinRequest,
+}
+
 fn persist_inbound_join_request(
     app: &mut AppConfig,
     config_path: &Path,
-    sender_pubkey: &str,
-    requested_at: u64,
-    network_id: &str,
-    invite_secret: &str,
-    requester_node_name: &str,
+    inbound: InboundJoinRequest<'_>,
     vpn_status: &mut String,
 ) {
     match app.record_inbound_join_request(
-        network_id,
-        invite_secret,
-        sender_pubkey,
-        requester_node_name,
-        requested_at,
+        &inbound.request.network_id,
+        &inbound.request.invite_secret,
+        inbound.sender_pubkey,
+        &inbound.request.requester_node_name,
+        inbound.requested_at,
     ) {
         Ok(Some(network_name)) => {
             if let Err(error) = app.save(config_path) {
@@ -310,7 +311,10 @@ fn persist_inbound_join_request(
         }
         Ok(None) => {}
         Err(error) => {
-            eprintln!("daemon: ignoring invalid join request from {sender_pubkey}: {error}");
+            eprintln!(
+                "daemon: ignoring invalid join request from {}: {error}",
+                inbound.sender_pubkey
+            );
         }
     }
 }
@@ -398,11 +402,11 @@ fn drain_fips_mesh_events(
                 persist_inbound_join_request(
                     app,
                     config_path,
-                    &sender_pubkey,
-                    requested_at,
-                    &request.network_id,
-                    &request.invite_secret,
-                    &request.requester_node_name,
+                    InboundJoinRequest {
+                        sender_pubkey: &sender_pubkey,
+                        requested_at,
+                        request: &request,
+                    },
                     vpn_status,
                 );
             }
