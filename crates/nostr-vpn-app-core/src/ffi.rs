@@ -119,7 +119,14 @@ impl FfiApp {
 
     pub fn set_privileged_command_runner(&self, runner: Arc<dyn PrivilegedCommandRunner>) {
         self.with_runtime(|runtime| {
-            runtime.privileged_command_runner = Some(PrivilegedCommandRunnerHandle(runner));
+            #[cfg(target_os = "macos")]
+            {
+                runtime.privileged_command_runner = Some(PrivilegedCommandRunnerHandle(runner));
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let _ = runner;
+            }
             runtime.state()
         });
     }
@@ -188,14 +195,15 @@ struct NativeAppRuntime {
     paid_route_market_filter: NativePaidRouteMarketFilterState,
     paid_route_wallet_last_action: NativePaidRouteWalletActionState,
     paid_route_payment_last_action: NativePaidRoutePaymentActionState,
+    #[cfg(target_os = "macos")]
     privileged_command_runner: Option<PrivilegedCommandRunnerHandle>,
 }
 
+#[cfg(target_os = "macos")]
 #[derive(Clone)]
-struct PrivilegedCommandRunnerHandle(
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] Arc<dyn PrivilegedCommandRunner>,
-);
+struct PrivilegedCommandRunnerHandle(Arc<dyn PrivilegedCommandRunner>);
 
+#[cfg(target_os = "macos")]
 impl std::fmt::Debug for PrivilegedCommandRunnerHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("PrivilegedCommandRunnerHandle(<foreign>)")

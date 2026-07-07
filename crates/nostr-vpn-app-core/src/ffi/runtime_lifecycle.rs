@@ -61,6 +61,7 @@ impl NativeAppRuntime {
             paid_route_market_filter: NativePaidRouteMarketFilterState::default(),
             paid_route_wallet_last_action: NativePaidRouteWalletActionState::default(),
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
+            #[cfg(target_os = "macos")]
             privileged_command_runner: None,
         };
         runtime.refresh_expected_service_binary_version();
@@ -112,6 +113,7 @@ impl NativeAppRuntime {
             paid_route_market_filter: NativePaidRouteMarketFilterState::default(),
             paid_route_wallet_last_action: NativePaidRouteWalletActionState::default(),
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
+            #[cfg(target_os = "macos")]
             privileged_command_runner: None,
         }
     }
