@@ -302,16 +302,22 @@
         let recipient_peer =
             PeerIdentity::from_npub(&recipient_npub).expect("recipient endpoint identity");
         let encoded = encode_fips_control_frame(&frame).expect("encode join request");
+        let mut messages = Vec::with_capacity(1);
 
         for _ in 0..50 {
             requester_endpoint
                 .send_to_peer(recipient_peer, encoded.clone())
                 .await
                 .expect("send join request over FIPS");
-            if let Ok(Some(message)) =
-                tokio::time::timeout(Duration::from_millis(100), admin_endpoint.recv()).await
+            match tokio::time::timeout(
+                Duration::from_millis(100),
+                admin_endpoint.recv_batch_into(&mut messages, 1),
+            )
+            .await
             {
-                return message;
+                Ok(Some(received)) if received > 0 => return messages.remove(0),
+                Ok(Some(_)) => {}
+                Ok(None) | Err(_) => {}
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
@@ -327,24 +333,34 @@
             return Vec::new();
         }
         let mut messages = Vec::with_capacity(packets.len());
+        let receive_limit = packets.len().saturating_mul(2).max(1);
+        let mut received_batch = Vec::with_capacity(receive_limit);
         for _ in 0..50 {
             started
                 .outbound_tx
                 .send(packets.to_vec())
                 .await
                 .expect("send packet batch into mobile tunnel");
-            for _ in 0..packets.len().saturating_mul(2).max(1) {
-                match tokio::time::timeout(Duration::from_millis(100), recipient.recv()).await {
-                    Ok(Some(message)) => {
-                        if message.source_peer.npub() == started.endpoint.npub()
-                            && message.data == packets[messages.len()]
-                        {
-                            messages.push(message);
-                            if messages.len() == packets.len() {
-                                return messages;
+            for _ in 0..receive_limit {
+                match tokio::time::timeout(
+                    Duration::from_millis(100),
+                    recipient.recv_batch_into(&mut received_batch, receive_limit),
+                )
+                .await
+                {
+                    Ok(Some(received)) if received > 0 => {
+                        for message in received_batch.drain(..) {
+                            if message.source_peer.npub() == started.endpoint.npub()
+                                && message.data == packets[messages.len()]
+                            {
+                                messages.push(message);
+                                if messages.len() == packets.len() {
+                                    return messages;
+                                }
                             }
                         }
                     }
+                    Ok(Some(_)) => {}
                     Ok(None) | Err(_) => break,
                 }
             }
