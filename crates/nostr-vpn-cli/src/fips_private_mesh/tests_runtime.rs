@@ -467,11 +467,12 @@
         )
         .expect("peer config");
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
-        let config = fips_endpoint_config(
+        let config = fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
             None,
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         );
 
         assert!(!config.node.control.enabled);
@@ -524,11 +525,12 @@
             config.node.discovery.nostr.policy,
             fips_endpoint::NostrDiscoveryPolicy::Open
         );
-        let configured_only_config = fips_endpoint_config(
+        let configured_only_config = fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
             None,
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::ConfiguredOnly,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         );
         assert_eq!(
             configured_only_config.node.discovery.nostr.policy,
@@ -585,11 +587,12 @@
             share_local_candidates: true,
         };
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
-        let config = fips_endpoint_config(
+        let config = fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
             Some(&transport),
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::ConfiguredOnly,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         );
 
         assert!(!config.node.discovery.nostr.enabled);
@@ -633,11 +636,12 @@
         };
 
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
-        let config = fips_endpoint_config(
+        let config = fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
             Some(&transport),
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         );
 
         assert!(config.node.discovery.nostr.enabled);
@@ -698,11 +702,12 @@
             share_local_candidates: false,
         };
 
-        let config = fips_endpoint_config(
+        let config = fips_endpoint_config_with_open_discovery_limit(
             &[],
             Some(&transport),
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         );
         let udp = match config.transports.udp {
             fips_endpoint::TransportInstances::Single(udp) => udp,
@@ -734,11 +739,12 @@
         };
 
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
-        let config = fips_endpoint_config(
+        let config = fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
             Some(&transport),
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         );
 
         // Relay discovery + advertising are off, but the peer is still dialed
@@ -778,11 +784,12 @@
             share_local_candidates: false,
         };
 
-        let config = fips_endpoint_config(
+        let config = fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
             Some(&transport),
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         );
 
         assert!(config.node.discovery.nostr.enabled);

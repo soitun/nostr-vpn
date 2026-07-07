@@ -5,11 +5,12 @@
     ) -> FipsPrivateMeshRuntime {
         let scope = super::fips_lan_discovery_scope(network_id.as_ref());
         let endpoint_peers = super::fips_endpoint_peers_from_mesh(&peers, Vec::new(), Vec::new());
-        let config = super::fips_endpoint_config(
+        let config = super::fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
             None,
             super::private_mesh_mtu_from_app(None),
             fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly,
+            super::FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         );
         FipsPrivateMeshRuntime::bind_with_config_scoped(
             identity_nsec,

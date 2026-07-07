@@ -1072,11 +1072,12 @@ destination: 192.168.178.57
         .expect("roster peer config");
         let endpoint_peers =
             fips_endpoint_peers_from_mesh(std::slice::from_ref(&mesh_peer), Vec::new(), Vec::new());
-        let config = fips_endpoint_config(
+        let config = fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
             None,
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         );
 
         assert_eq!(

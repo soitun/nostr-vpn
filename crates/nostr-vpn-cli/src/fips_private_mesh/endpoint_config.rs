@@ -101,22 +101,6 @@ fn ipv4_is_benchmark_addr(addr: Ipv4Addr) -> bool {
     octets[0] == 198 && (18..=19).contains(&octets[1])
 }
 
-#[cfg(test)]
-fn fips_endpoint_config(
-    peers: &[FipsEndpointPeerTransportConfig],
-    transport: Option<&FipsEndpointTransportConfig>,
-    mesh_mtu: MeshMtu,
-    nostr_discovery_policy: NostrDiscoveryPolicy,
-) -> Config {
-    fips_endpoint_config_with_open_discovery_limit(
-        peers,
-        transport,
-        mesh_mtu,
-        nostr_discovery_policy,
-        FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-    )
-}
-
 fn fips_endpoint_config_with_open_discovery_limit(
     peers: &[FipsEndpointPeerTransportConfig],
     transport: Option<&FipsEndpointTransportConfig>,
