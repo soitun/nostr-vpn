@@ -307,12 +307,13 @@ fn direct_packet_runs_summary(runs: &[FipsEndpointDirectPacketRun]) -> (usize, O
         return (0, None);
     };
 
-    let first_source = *first.source_node_addr().as_bytes();
+    let first_source = *first.source_peer().node_addr().as_bytes();
     let mut packets = first.len();
     let mut source_node_addr = Some(first_source);
     for run in rest {
         packets += run.len();
-        if source_node_addr.is_some() && run.source_node_addr().as_bytes() != &first_source {
+        if source_node_addr.is_some() && run.source_peer().node_addr().as_bytes() != &first_source
+        {
             source_node_addr = None;
         }
     }

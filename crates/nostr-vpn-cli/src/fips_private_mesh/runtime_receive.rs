@@ -381,7 +381,7 @@ fn admit_direct_endpoint_packet_runs_with_mesh(
             continue;
         }
 
-        let source_node_addr = *run.source_node_addr().as_bytes();
+        let source_node_addr = *run.source_peer().node_addr().as_bytes();
         if current_source_node_addr != Some(source_node_addr) {
             current_source_node_addr = Some(source_node_addr);
             current_admitter = mesh.endpoint_source_admitter(&source_node_addr);
