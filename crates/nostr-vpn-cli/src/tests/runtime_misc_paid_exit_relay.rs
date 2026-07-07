@@ -326,8 +326,10 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
     app.save(&config_path).expect("save buyer config");
 
     let seller = Keys::generate();
-    let mut offer_config = PaidExitConfig::default();
-    offer_config.enabled = true;
+    let mut offer_config = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
     offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 1_000_000;
@@ -417,8 +419,10 @@ async fn paid_exit_create_payment_command_updates_buyer_session() {
     app.save(&config_path).expect("save buyer config");
 
     let seller = Keys::generate();
-    let mut offer_config = PaidExitConfig::default();
-    offer_config.enabled = true;
+    let mut offer_config = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
     offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 100;
@@ -520,8 +524,10 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
     let buyer_keys = app.nostr_keys().expect("buyer keys");
     let buyer_npub = buyer_keys.public_key().to_bech32().expect("buyer npub");
     let seller = Keys::generate();
-    let mut offer_config = PaidExitConfig::default();
-    offer_config.enabled = true;
+    let mut offer_config = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
     offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 100;
@@ -569,18 +575,19 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
     assert_eq!(due[0].delivered_units, 110);
     assert_eq!(due[0].target_paid_msat, 2_000);
 
-    let result = paid_exit_stream_payment_updates_with_signer(
-        &app,
-        &buyer_keys,
-        &mut store,
-        &RuntimeFakePaymentSigner,
-        &buyer_npub,
-        std::mem::take(&mut due),
-        &[],
-        false,
-        128,
-    )
-    .await;
+    let result =
+        paid_exit_stream_payment_updates_with_signer(PaidExitStreamPaymentUpdatesRequest {
+            app: &app,
+            keys: &buyer_keys,
+            store: &mut store,
+            signer: &RuntimeFakePaymentSigner,
+            buyer_npub: &buyer_npub,
+            due: std::mem::take(&mut due),
+            relays: &[],
+            publish: false,
+            now_unix: 128,
+        })
+        .await;
 
     assert!(result.changed);
     assert_eq!(result.signed.len(), 1);
@@ -663,8 +670,10 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
     let buyer_keys = app.nostr_keys().expect("buyer keys");
     let buyer_npub = buyer_keys.public_key().to_bech32().expect("buyer npub");
     let seller = Keys::generate();
-    let mut offer_config = PaidExitConfig::default();
-    offer_config.enabled = true;
+    let mut offer_config = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
     offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 100;
@@ -703,17 +712,18 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
         .expect("record buyer usage")
         .expect("matched buyer session");
 
-    let result = paid_exit_settle_with_signer(
-        &app,
-        &buyer_keys,
-        &mut store,
-        &RuntimeFakePaymentSigner,
-        &session.session_id,
-        &[],
-        false,
-        &dir.join("wallet"),
-        128,
-    )
+    let wallet_data_dir = dir.join("wallet");
+    let result = paid_exit_settle_with_signer(PaidExitSettleRequest {
+        app: &app,
+        keys: &buyer_keys,
+        store: &mut store,
+        signer: &RuntimeFakePaymentSigner,
+        session_id: &session.session_id,
+        relays: &[],
+        publish: false,
+        wallet_data_dir: &wallet_data_dir,
+        now_unix: 128,
+    })
     .await
     .expect("settle channel");
 

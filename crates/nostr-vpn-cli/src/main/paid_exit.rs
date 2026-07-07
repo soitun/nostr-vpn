@@ -2440,7 +2440,7 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
                 "{}",
                 paid_exit_offer_summary_line_with_rating(
                     &offer,
-                    &signed.event.id,
+                    signed.event.id,
                     rating_scores.as_ref()
                 )
             );
@@ -2758,16 +2758,16 @@ async fn paid_exit_probe_measurement(
         .rev()
         .find_map(|sample| sample.realized_exit_ip.as_deref());
     let (observed_country_code, observed_asn, geoip_error) =
-        if args.no_geoip || realized_ip.is_none() {
+        if args.no_geoip {
             (None, None, None)
-        } else {
+        } else if let Some(realized_ip) = realized_ip {
             let template = args
                 .geoip_url_template
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .unwrap_or(DEFAULT_PAID_ROUTE_GEOIP_URL_TEMPLATE);
-            let url = paid_route_geoip_url(template, realized_ip.expect("realized ip"));
+            let url = paid_route_geoip_url(template, realized_ip);
             match paid_exit_probe_fetch_text(&client, &url).await {
                 Ok(body) => {
                     let (country, asn) = parse_paid_route_geoip_response(&body);
@@ -2775,6 +2775,8 @@ async fn paid_exit_probe_measurement(
                 }
                 Err(error) => (None, None, Some(error.to_string())),
             }
+        } else {
+            (None, None, None)
         };
 
     let mut measurement =
@@ -3616,17 +3618,17 @@ async fn paid_exit_create_payment_command(args: PaidExitCreatePaymentArgs) -> Re
             }))?
         );
     } else {
-        if let Some(wallet_open) = wallet_open_json.as_ref() {
-            if let Some(wallet_send) = wallet_open.get("wallet_send") {
-                let amount_sat = wallet_send["amount_sat"].as_u64().unwrap_or_default();
-                let fee_sat = wallet_send["send_fee_sat"].as_u64().unwrap_or_default();
-                println!(
-                    "wallet_funding: amount={} fee={} operation={}",
-                    paid_exit_sat_text(amount_sat),
-                    paid_exit_sat_text(fee_sat),
-                    wallet_send["operation_id"].as_str().unwrap_or_default()
-                );
-            }
+        if let Some(wallet_open) = wallet_open_json.as_ref()
+            && let Some(wallet_send) = wallet_open.get("wallet_send")
+        {
+            let amount_sat = wallet_send["amount_sat"].as_u64().unwrap_or_default();
+            let fee_sat = wallet_send["send_fee_sat"].as_u64().unwrap_or_default();
+            println!(
+                "wallet_funding: amount={} fee={} operation={}",
+                paid_exit_sat_text(amount_sat),
+                paid_exit_sat_text(fee_sat),
+                wallet_send["operation_id"].as_str().unwrap_or_default()
+            );
         }
         if let Some(wallet_sign) = wallet_sign_json.as_ref() {
             println!(
@@ -3754,17 +3756,32 @@ pub(crate) struct PaidExitDaemonStreamPaymentsResult {
     pub(crate) changed: bool,
 }
 
-async fn paid_exit_stream_payment_updates_with_signer<S: CashuSpilmanPaymentSigner>(
-    app: &AppConfig,
-    keys: &Keys,
-    store: &mut PaidRouteStore,
-    signer: &S,
-    buyer_npub: &str,
+struct PaidExitStreamPaymentUpdatesRequest<'a, S: CashuSpilmanPaymentSigner> {
+    app: &'a AppConfig,
+    keys: &'a Keys,
+    store: &'a mut PaidRouteStore,
+    signer: &'a S,
+    buyer_npub: &'a str,
     due: Vec<PaidRouteBuyerPaymentUpdateDue>,
-    relays: &[String],
+    relays: &'a [String],
     publish: bool,
     now_unix: u64,
+}
+
+async fn paid_exit_stream_payment_updates_with_signer<S: CashuSpilmanPaymentSigner>(
+    request: PaidExitStreamPaymentUpdatesRequest<'_, S>,
 ) -> PaidExitStreamPaymentUpdatesResult {
+    let PaidExitStreamPaymentUpdatesRequest {
+        app,
+        keys,
+        store,
+        signer,
+        buyer_npub,
+        due,
+        relays,
+        publish,
+        now_unix,
+    } = request;
     let mut result = PaidExitStreamPaymentUpdatesResult::default();
 
     for update_due in due {
@@ -3891,15 +3908,17 @@ pub(crate) async fn paid_exit_stream_due_payments_for_daemon(
     let signer = FileSpilmanPaymentSigner::load(&paid_exit_wallet_data_dir(config_path))
         .map_err(|error| anyhow!("{error}"))?;
     let result = paid_exit_stream_payment_updates_with_signer(
-        app,
-        &keys,
-        &mut store,
-        &signer,
-        &buyer_npub,
-        due,
-        &relays,
-        true,
-        now_unix,
+        PaidExitStreamPaymentUpdatesRequest {
+            app,
+            keys: &keys,
+            store: &mut store,
+            signer: &signer,
+            buyer_npub: &buyer_npub,
+            due,
+            relays: &relays,
+            publish: true,
+            now_unix,
+        },
     )
     .await;
     if result.changed {
@@ -3954,15 +3973,17 @@ async fn paid_exit_stream_payments_command(args: PaidExitStreamPaymentsArgs) -> 
         let signer = FileSpilmanPaymentSigner::load(&paid_exit_wallet_data_dir(&config_path))
             .map_err(|error| anyhow!("{error}"))?;
         paid_exit_stream_payment_updates_with_signer(
-            &app,
-            &keys,
-            &mut store,
-            &signer,
-            &buyer_npub,
-            due,
-            &relays,
-            args.publish,
-            now_unix,
+            PaidExitStreamPaymentUpdatesRequest {
+                app: &app,
+                keys: &keys,
+                store: &mut store,
+                signer: &signer,
+                buyer_npub: &buyer_npub,
+                due,
+                relays: &relays,
+                publish: args.publish,
+                now_unix,
+            },
         )
         .await
     };
@@ -4053,17 +4074,32 @@ struct PaidExitSettleResult {
     persisted: bool,
 }
 
-async fn paid_exit_settle_with_signer<S: CashuSpilmanPaymentSigner>(
-    app: &AppConfig,
-    keys: &Keys,
-    store: &mut PaidRouteStore,
-    signer: &S,
-    session_id: &str,
-    relays: &[String],
+struct PaidExitSettleRequest<'a, S: CashuSpilmanPaymentSigner> {
+    app: &'a AppConfig,
+    keys: &'a Keys,
+    store: &'a mut PaidRouteStore,
+    signer: &'a S,
+    session_id: &'a str,
+    relays: &'a [String],
     publish: bool,
-    wallet_data_dir: &Path,
+    wallet_data_dir: &'a Path,
     now_unix: u64,
+}
+
+async fn paid_exit_settle_with_signer<S: CashuSpilmanPaymentSigner>(
+    request: PaidExitSettleRequest<'_, S>,
 ) -> Result<PaidExitSettleResult> {
+    let PaidExitSettleRequest {
+        app,
+        keys,
+        store,
+        signer,
+        session_id,
+        relays,
+        publish,
+        wallet_data_dir,
+        now_unix,
+    } = request;
     if publish && relays.is_empty() {
         return Err(anyhow!(
             "no Nostr relays configured for paid exit payment publishing"
@@ -4149,15 +4185,17 @@ async fn paid_exit_settle_command(args: PaidExitSettleArgs) -> Result<()> {
         FileSpilmanPaymentSigner::load(&wallet_data_dir).map_err(|error| anyhow!("{error}"))?;
     let mut store = load_paid_route_store(&store_path)?;
     let result = paid_exit_settle_with_signer(
-        &app,
-        &keys,
-        &mut store,
-        &signer,
-        &args.session,
-        &relays,
-        publish,
-        &wallet_data_dir,
-        unix_timestamp(),
+        PaidExitSettleRequest {
+            app: &app,
+            keys: &keys,
+            store: &mut store,
+            signer: &signer,
+            session_id: &args.session,
+            relays: &relays,
+            publish,
+            wallet_data_dir: &wallet_data_dir,
+            now_unix: unix_timestamp(),
+        },
     )
     .await?;
 
