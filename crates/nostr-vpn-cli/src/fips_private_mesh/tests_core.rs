@@ -205,7 +205,7 @@
             for packet in run.packet_slices() {
                 let message = FipsEndpointMessage {
                     source_peer,
-                    data: FipsEndpointData::from(packet.to_vec()),
+                    data: FipsEndpointData::new(packet.to_vec()),
                     enqueued_at_ms,
                 };
                 if let Some(event) = endpoint_message_to_mesh_event(runtime, message, now).await? {

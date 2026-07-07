@@ -286,7 +286,7 @@ impl FipsPrivateMeshRuntime {
         &self,
         message: &FipsEndpointMessage,
     ) -> Result<Option<FipsControlFrame>> {
-        let Some(frame) = decode_fips_control_frame(&message.data)? else {
+        let Some(frame) = decode_fips_control_frame(message.data.as_slice())? else {
             return Ok(None);
         };
         let FipsControlFrame::Fragment {
@@ -390,7 +390,7 @@ impl FipsPrivateMeshRuntime {
                     if *control_events_open {
                         let message = FipsEndpointMessage {
                             source_peer,
-                            data: FipsEndpointData::from(packet.to_vec()),
+                            data: FipsEndpointData::new(packet.to_vec()),
                             enqueued_at_ms,
                         };
                         match self.endpoint_message_to_mesh_event_outcome(message, now) {
