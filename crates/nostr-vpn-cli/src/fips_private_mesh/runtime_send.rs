@@ -1,31 +1,5 @@
 impl FipsPrivateMeshRuntime {
     #[cfg(test)]
-    pub(crate) async fn bind(
-        identity_nsec: impl Into<String>,
-        network_id: impl AsRef<str>,
-        peers: Vec<FipsMeshPeerConfig>,
-    ) -> Result<Self> {
-        let scope = fips_lan_discovery_scope(network_id.as_ref());
-        let endpoint_peers = fips_endpoint_peers_from_mesh(&peers, Vec::new(), Vec::new());
-        let config = fips_endpoint_config(
-            &endpoint_peers,
-            None,
-            private_mesh_mtu_from_app(None),
-            fips_nostr_discovery_policy_from_env(),
-        );
-        Self::bind_with_config(
-            identity_nsec,
-            scope,
-            peers,
-            config,
-            Vec::new(),
-            Vec::new(),
-            Vec::new(),
-        )
-        .await
-    }
-
-    #[cfg(test)]
     async fn bind_with_config(
         identity_nsec: impl Into<String>,
         scope: impl Into<String>,

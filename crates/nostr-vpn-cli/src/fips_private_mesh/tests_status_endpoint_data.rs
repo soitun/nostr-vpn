@@ -1,3 +1,29 @@
+    async fn bind_endpoint_data_test_runtime(
+        identity_nsec: impl Into<String>,
+        network_id: impl AsRef<str>,
+        peers: Vec<FipsMeshPeerConfig>,
+    ) -> FipsPrivateMeshRuntime {
+        let scope = super::fips_lan_discovery_scope(network_id.as_ref());
+        let endpoint_peers = super::fips_endpoint_peers_from_mesh(&peers, Vec::new(), Vec::new());
+        let config = super::fips_endpoint_config(
+            &endpoint_peers,
+            None,
+            super::private_mesh_mtu_from_app(None),
+            super::fips_nostr_discovery_policy_from_env(),
+        );
+        FipsPrivateMeshRuntime::bind_with_config(
+            identity_nsec,
+            scope,
+            peers,
+            config,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .await
+        .expect("runtime should bind")
+    }
+
     #[tokio::test]
     async fn endpoint_data_runtime_sends_and_receives_raw_packet_batch() {
         let keys = Keys::generate();
@@ -11,9 +37,7 @@
             vec![format!("{source}/32"), format!("{destination}/32")],
         )
         .expect("peer config");
-        let runtime = FipsPrivateMeshRuntime::bind(nsec, "test-network", vec![peer])
-            .await
-            .expect("runtime should bind");
+        let runtime = bind_endpoint_data_test_runtime(nsec, "test-network", vec![peer]).await;
         let first = ipv4_packet(source, destination);
         let second = ipv4_packet(source, destination);
         let expected_endpoint_data_bytes = (first.len() + second.len()) as u64;
@@ -102,9 +126,7 @@
             vec![format!("{source}/32"), format!("{destination}/32")],
         )
         .expect("peer config");
-        let runtime = FipsPrivateMeshRuntime::bind(nsec, "test-network", vec![peer])
-            .await
-            .expect("runtime should bind");
+        let runtime = bind_endpoint_data_test_runtime(nsec, "test-network", vec![peer]).await;
         let mut first = ipv4_packet(source, destination);
         let mut second = ipv4_packet(source, destination);
         first[20] = 1;
@@ -166,9 +188,7 @@
             vec![format!("{source}/32"), format!("{destination}/32")],
         )
         .expect("peer config");
-        let runtime = FipsPrivateMeshRuntime::bind(nsec, "test-network", vec![peer])
-            .await
-            .expect("runtime should bind");
+        let runtime = bind_endpoint_data_test_runtime(nsec, "test-network", vec![peer]).await;
         let mut first = ipv4_packet(source, destination);
         let mut second = ipv4_packet(source, destination);
         let mut third = ipv4_packet(source, destination);
