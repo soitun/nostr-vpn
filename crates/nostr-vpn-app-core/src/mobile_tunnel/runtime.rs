@@ -93,6 +93,8 @@ impl MobileTunnel {
         let tun_counters = Arc::new(MobileTunAtomicCounters::default());
         let (outbound_tx, mut outbound_rx) =
             tokio_mpsc::channel::<Vec<Vec<u8>>>(MOBILE_TUN_OUTBOUND_BATCH_CHANNEL_CAPACITY);
+        #[cfg(not(any(test, target_os = "android", target_os = "ios")))]
+        let _outbound_tx = outbound_tx;
         let (inbound_tx, inbound_rx) =
             tokio_mpsc::channel::<Vec<Vec<u8>>>(MOBILE_TUN_INBOUND_BATCH_CHANNEL_CAPACITY);
 
@@ -228,6 +230,8 @@ impl MobileTunnel {
 
         let join_request_active = Arc::new(AtomicBool::new(false));
         if let Some((recipient_npub, frame)) = pending_mobile_join_request_frame(&config)? {
+            let recipient_peer = PeerIdentity::from_npub(&recipient_npub)
+                .with_context(|| format!("invalid mobile join request endpoint npub {recipient_npub}"))?;
             let endpoint = Arc::clone(&endpoint);
             let join_request_active_for_task = Arc::clone(&join_request_active);
             join_request_active.store(true, Ordering::Relaxed);
@@ -240,7 +244,7 @@ impl MobileTunnel {
                     }
                 };
                 while join_request_active_for_task.load(Ordering::Relaxed) {
-                    let _ = endpoint.send(recipient_npub.clone(), encoded.clone()).await;
+                    let _ = endpoint.send_to_peer(recipient_peer, encoded.clone()).await;
                     tokio::time::sleep(Duration::from_secs(FIPS_JOIN_REQUEST_RETRY_SECS)).await;
                 }
             }));

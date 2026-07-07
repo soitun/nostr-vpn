@@ -299,11 +299,13 @@
         let (recipient_npub, frame) = pending_mobile_join_request_frame(requester_mobile)
             .expect("pending join request frame")
             .expect("pending join request should exist");
+        let recipient_peer =
+            PeerIdentity::from_npub(&recipient_npub).expect("recipient endpoint identity");
         let encoded = encode_fips_control_frame(&frame).expect("encode join request");
 
         for _ in 0..50 {
             requester_endpoint
-                .send(recipient_npub.clone(), encoded.clone())
+                .send_to_peer(recipient_peer, encoded.clone())
                 .await
                 .expect("send join request over FIPS");
             if let Ok(Some(message)) =
