@@ -118,7 +118,7 @@ fn apply_admin_signed_shared_roster_replaces_members_from_known_admin() {
     config.ensure_defaults();
 
     let changed = config
-        .apply_admin_signed_shared_roster(
+        .apply_admin_signed_shared_roster(admin_signed_roster_update(
             "mesh-home",
             "Home",
             vec![
@@ -130,7 +130,7 @@ fn apply_admin_signed_shared_roster_replaces_members_from_known_admin() {
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
-        )
+        ))
         .expect("apply shared roster");
 
     assert!(changed);
@@ -230,7 +230,7 @@ fn apply_admin_signed_shared_roster_clears_join_request_when_own_key_is_added() 
     config.ensure_defaults();
 
     let changed = config
-        .apply_admin_signed_shared_roster(
+        .apply_admin_signed_shared_roster(admin_signed_roster_update(
             "mesh-home",
             "Home",
             vec![current_admin_hex.clone(), own_hex],
@@ -238,7 +238,7 @@ fn apply_admin_signed_shared_roster_clears_join_request_when_own_key_is_added() 
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
-        )
+        ))
         .expect("apply accepted roster");
 
     assert!(changed);
@@ -263,7 +263,7 @@ fn apply_admin_signed_shared_roster_drops_network_when_own_key_is_evicted() {
     config.ensure_defaults();
 
     let changed = config
-        .apply_admin_signed_shared_roster(
+        .apply_admin_signed_shared_roster(admin_signed_roster_update(
             "mesh-home",
             "Home",
             vec![current_admin_hex.clone(), other_member_hex],
@@ -271,7 +271,7 @@ fn apply_admin_signed_shared_roster_drops_network_when_own_key_is_evicted() {
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
-        )
+        ))
         .expect("apply removal roster");
 
     assert!(changed);
@@ -302,7 +302,7 @@ fn apply_admin_signed_shared_roster_keeps_network_when_own_key_was_never_in_rost
     config.ensure_defaults();
 
     let changed = config
-        .apply_admin_signed_shared_roster(
+        .apply_admin_signed_shared_roster(admin_signed_roster_update(
             "mesh-home",
             "Home",
             vec![current_admin_hex.clone(), other_member_hex],
@@ -310,7 +310,7 @@ fn apply_admin_signed_shared_roster_keeps_network_when_own_key_was_never_in_rost
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
-        )
+        ))
         .expect("apply roster with own absent");
 
     assert!(changed);
@@ -333,7 +333,7 @@ fn apply_admin_signed_shared_roster_ignores_unknown_signer() {
     config.ensure_defaults();
 
     let changed = config
-        .apply_admin_signed_shared_roster(
+        .apply_admin_signed_shared_roster(admin_signed_roster_update(
             "mesh-home",
             "Home",
             vec![known_admin.public_key().to_hex()],
@@ -341,7 +341,7 @@ fn apply_admin_signed_shared_roster_ignores_unknown_signer() {
             std::collections::HashMap::new(),
             1_726_000_000,
             &unknown_admin.public_key().to_hex(),
-        )
+        ))
         .expect("ignore unknown signer");
 
     assert!(!changed);
@@ -432,7 +432,7 @@ fn apply_admin_signed_shared_roster_clears_data_peers_when_own_key_is_removed() 
     config.ensure_defaults();
 
     let changed = config
-        .apply_admin_signed_shared_roster(
+        .apply_admin_signed_shared_roster(admin_signed_roster_update(
             "mesh-home",
             "Home",
             vec![current_admin_hex.clone(), other_member_hex],
@@ -440,7 +440,7 @@ fn apply_admin_signed_shared_roster_clears_data_peers_when_own_key_is_removed() 
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
-        )
+        ))
         .expect("apply removal roster");
 
     assert!(changed);

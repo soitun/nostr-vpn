@@ -815,6 +815,17 @@ pub struct SharedNetworkRoster {
     pub signed_by: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminSignedSharedRosterUpdate {
+    pub network_id: String,
+    pub network_name: String,
+    pub devices: Vec<String>,
+    pub admins: Vec<String>,
+    pub aliases: HashMap<String, String>,
+    pub signed_at: u64,
+    pub signed_by: String,
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         let mut config = Self {

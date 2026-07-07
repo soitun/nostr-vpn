@@ -8,10 +8,10 @@ use nostr_vpn_core::identity_bridge::{
     CANONICAL_NETWORK_NAME_FACT, CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND,
     CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE, NostrIdentityCapabilities,
     NostrIdentityDeviceApprovalSidecarRequest, NostrIdentityId, NostrIdentityKeyPurpose,
-    NostrIdentityRosterOp, RosterAppKeyRole, RosterIdentityBridgeSource,
-    build_device_approval_for_link_request, build_device_approval_sidecar,
-    build_identity_link_request_from_manual_npub, build_roster_app_key_sidecar_event,
-    build_roster_app_key_sidecar_event_with_network_name,
+    NostrIdentityRosterOp, RosterAppKeyRole, RosterAppKeySidecarEventRequest,
+    RosterIdentityBridgeSource, build_device_approval_for_link_request,
+    build_device_approval_sidecar, build_identity_link_request_from_manual_npub,
+    build_roster_app_key_sidecar_event, build_roster_app_key_sidecar_event_with_network_name,
     parse_identity_link_request_event_for_invite_pubkey, parse_identity_roster_bridge_event,
     parse_nostr_identity_device_approval_receipt_event,
     parse_nostr_identity_device_approval_receipt_roster_op, parse_roster_app_key_sidecar_event,
@@ -219,13 +219,15 @@ fn bridge_builds_and_parses_canonical_roster_sidecar_facts() {
 
     let event = build_roster_app_key_sidecar_event_with_network_name(
         &admin,
-        profile_id,
-        &member.public_key().to_bech32().expect("member npub"),
-        RosterAppKeyRole::Member,
-        Vec::new(),
-        None,
-        created_at,
-        Some(" Home Mesh ".to_string()),
+        RosterAppKeySidecarEventRequest {
+            profile_id,
+            pubkey: member.public_key().to_bech32().expect("member npub"),
+            role: RosterAppKeyRole::Member,
+            parents: Vec::new(),
+            actor_seq: None,
+            created_at,
+            network_name: Some(" Home Mesh ".to_string()),
+        },
     )
     .expect("build sidecar");
 

@@ -56,7 +56,7 @@ fn apply_admin_signed_shared_roster_applies_aliases_for_members() {
     assert_eq!(config.self_magic_dns_label().as_deref(), Some("old-local"));
 
     let changed = config
-        .apply_admin_signed_shared_roster(
+        .apply_admin_signed_shared_roster(admin_signed_roster_update(
             "mesh-home",
             "Home",
             vec![
@@ -72,7 +72,7 @@ fn apply_admin_signed_shared_roster_applies_aliases_for_members() {
             ]),
             1_726_000_000,
             &current_admin_hex,
-        )
+        ))
         .expect("apply shared roster");
 
     assert!(changed);
@@ -106,7 +106,7 @@ fn apply_admin_signed_shared_roster_clears_removed_exit_node() {
     config.ensure_defaults();
 
     let changed = config
-        .apply_admin_signed_shared_roster(
+        .apply_admin_signed_shared_roster(admin_signed_roster_update(
             "mesh-home",
             "Home",
             vec![current_admin_hex.clone(), own_hex],
@@ -114,7 +114,7 @@ fn apply_admin_signed_shared_roster_clears_removed_exit_node() {
             std::collections::HashMap::new(),
             1_726_000_000,
             &current_admin_hex,
-        )
+        ))
         .expect("apply shared roster");
 
     assert!(changed);

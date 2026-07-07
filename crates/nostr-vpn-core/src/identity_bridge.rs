@@ -118,6 +118,17 @@ pub struct NostrIdentityDeviceApprovalSidecarRequest {
     pub approved_at: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RosterAppKeySidecarEventRequest {
+    pub profile_id: NostrIdentityId,
+    pub pubkey: String,
+    pub role: RosterAppKeyRole,
+    pub parents: Vec<String>,
+    pub actor_seq: Option<u64>,
+    pub created_at: u64,
+    pub network_name: Option<String>,
+}
+
 pub fn roster_app_key_identities(
     roster: &NetworkRoster,
     profile_ids_by_pubkey: &BTreeMap<String, NostrIdentityId>,
@@ -220,54 +231,49 @@ pub fn build_roster_app_key_sidecar_event(
 ) -> Result<Event> {
     build_roster_app_key_sidecar_event_with_network_name(
         signer_keys,
-        profile_id,
-        pubkey,
-        role,
-        parents,
-        actor_seq,
-        created_at,
-        None,
+        RosterAppKeySidecarEventRequest {
+            profile_id,
+            pubkey: pubkey.to_string(),
+            role,
+            parents,
+            actor_seq,
+            created_at,
+            network_name: None,
+        },
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn build_roster_app_key_sidecar_event_with_network_name(
     signer_keys: &Keys,
-    profile_id: NostrIdentityId,
-    pubkey: &str,
-    role: RosterAppKeyRole,
-    parents: Vec<String>,
-    actor_seq: Option<u64>,
-    created_at: u64,
-    network_name: Option<String>,
+    request: RosterAppKeySidecarEventRequest,
 ) -> Result<Event> {
-    let pubkey = normalize_pubkey(pubkey, "sidecar app key")?;
-    let capabilities = match role {
+    let pubkey = normalize_pubkey(&request.pubkey, "sidecar app key")?;
+    let capabilities = match request.role {
         RosterAppKeyRole::Admin => nostr_identity::IDENTITY_ADMIN_CAPABILITIES,
         RosterAppKeyRole::Member => nostr_identity::IDENTITY_APP_KEY_CAPABILITIES,
     };
     let key = nostr_identity::IdentityKey {
         pubkey,
-        subject: Some(profile_id.as_uuid()),
+        subject: Some(request.profile_id.as_uuid()),
         purposes: vec![nostr_identity::IDENTITY_PURPOSE_APP.to_string()],
         capabilities: capabilities
             .iter()
             .map(|capability| (*capability).to_string())
             .collect(),
-        added_at: created_at,
+        added_at: request.created_at,
         label: None,
     };
 
     nostr_identity::build_identity_roster_op_event_with_options(
         signer_keys,
-        profile_id.as_uuid(),
+        request.profile_id.as_uuid(),
         nostr_identity::IdentityRosterOp::AddKey { key },
         nostr_identity::BuildIdentityRosterOpEventOptions {
-            parents,
-            actor_seq,
+            parents: request.parents,
+            actor_seq: request.actor_seq,
             client_nonce: uuid::Uuid::new_v4().to_string(),
-            created_at,
-            extension_facts: network_name_extension_facts(network_name.as_deref()),
+            created_at: request.created_at,
+            extension_facts: network_name_extension_facts(request.network_name.as_deref()),
         },
     )
     .map_err(|error| anyhow!("failed to build NostrIdentity roster sidecar: {error}"))
@@ -336,13 +342,15 @@ pub fn build_device_approval_sidecar(
         i64::try_from(request.approved_at).context("approval approved_at overflows i64")?;
     let roster_op_event = build_roster_app_key_sidecar_event_with_network_name(
         signer_keys,
-        request.profile_id,
-        &device_app_key_pubkey,
-        RosterAppKeyRole::Member,
-        request.parents,
-        request.actor_seq,
-        request.approved_at,
-        network_name,
+        RosterAppKeySidecarEventRequest {
+            profile_id: request.profile_id,
+            pubkey: device_app_key_pubkey.clone(),
+            role: RosterAppKeyRole::Member,
+            parents: request.parents,
+            actor_seq: request.actor_seq,
+            created_at: request.approved_at,
+            network_name,
+        },
     )?;
     let receipt = NostrIdentityDeviceApprovalReceipt {
         schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,

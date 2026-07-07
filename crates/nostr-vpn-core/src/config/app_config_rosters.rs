@@ -43,23 +43,26 @@ impl AppConfig {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn apply_admin_signed_shared_roster(
         &mut self,
-        network_id: &str,
-        network_name: &str,
-        devices: Vec<String>,
-        admins: Vec<String>,
-        aliases: HashMap<String, String>,
-        signed_at: u64,
-        signed_by: &str,
+        update: AdminSignedSharedRosterUpdate,
     ) -> Result<bool> {
-        let normalized_network_id = normalize_runtime_network_id(network_id);
+        let AdminSignedSharedRosterUpdate {
+            network_id,
+            network_name,
+            devices,
+            admins,
+            aliases,
+            signed_at,
+            signed_by,
+        } = update;
+
+        let normalized_network_id = normalize_runtime_network_id(&network_id);
         if normalized_network_id.is_empty() {
             return Ok(false);
         }
 
-        let normalized_signed_by = normalize_nostr_pubkey(signed_by)?;
+        let normalized_signed_by = normalize_nostr_pubkey(&signed_by)?;
         let own_pubkey = self.own_nostr_pubkey_hex().ok();
         let now = current_unix_timestamp();
         if signed_at > now.saturating_add(MAX_SHARED_ROSTER_FUTURE_SECS) {
@@ -190,15 +193,15 @@ impl AppConfig {
         let network_id = signed_roster.network_id()?;
         let roster = signed_roster.roster()?;
         let signed_by = signed_roster.signer_pubkey_hex()?;
-        self.apply_admin_signed_shared_roster(
-            &network_id,
-            &roster.network_name,
-            roster.devices,
-            roster.admins,
-            roster.aliases,
-            roster.signed_at,
-            &signed_by,
-        )
+        self.apply_admin_signed_shared_roster(AdminSignedSharedRosterUpdate {
+            network_id,
+            network_name: roster.network_name,
+            devices: roster.devices,
+            admins: roster.admins,
+            aliases: roster.aliases,
+            signed_at: roster.signed_at,
+            signed_by,
+        })
     }
 
 }
