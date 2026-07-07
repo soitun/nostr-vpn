@@ -234,44 +234,6 @@ fn macos_route_delete_error_is_absent_matches_missing_route_output() {
 }
 
 #[test]
-fn macos_default_routes_from_netstat_finds_underlay_and_utun_routes() {
-    let routes = macos_default_routes_from_netstat(
-        "Routing tables\n\
-Internet:\n\
-Destination        Gateway            Flags               Netif Expire\n\
-default            192.168.64.1       UGScg                 en0\n\
-default            link#13            UCSIg               utun5\n\
-default            link#26            UCSIg           bridge100      !\n",
-    );
-
-    assert_eq!(
-        routes,
-        vec![
-            crate::MacosRouteSpec {
-                gateway: Some("192.168.64.1".to_string()),
-                interface: "en0".to_string(),
-            },
-            crate::MacosRouteSpec {
-                gateway: None,
-                interface: "utun5".to_string(),
-            },
-            crate::MacosRouteSpec {
-                gateway: None,
-                interface: "bridge100".to_string(),
-            },
-        ]
-    );
-
-    assert_eq!(
-        macos_underlay_default_route_from_routes(&routes),
-        Some(crate::MacosRouteSpec {
-            gateway: Some("192.168.64.1".to_string()),
-            interface: "en0".to_string(),
-        })
-    );
-}
-
-#[test]
 fn macos_split_defaults_are_detected_from_netstat() {
     assert!(crate::macos_network::macos_has_tunnel_split_default_routes(
         "Routing tables\n\
@@ -418,22 +380,6 @@ fn macos_ipconfig_router_from_output_parses_ip_and_ip_mult_formats() {
         ),
         Some("192.168.64.1".parse().unwrap())
     );
-}
-
-#[test]
-fn macos_ifconfig_has_ipv4_matches_exact_interface_address() {
-    let output = "utun5: flags=8051<UP,POINTOPOINT,RUNNING,MULTICAST> mtu 1380\n\
-\tinet 10.44.10.23 --> 10.44.10.23 netmask 0xffffffff\n\
-\tinet6 fe80::1%utun5 prefixlen 64 scopeid 0x8\n";
-
-    assert!(macos_ifconfig_has_ipv4(
-        output,
-        Ipv4Addr::new(10, 44, 10, 23)
-    ));
-    assert!(!macos_ifconfig_has_ipv4(
-        output,
-        Ipv4Addr::new(10, 44, 10, 24)
-    ));
 }
 
 #[test]

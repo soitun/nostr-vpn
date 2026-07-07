@@ -242,9 +242,6 @@ include!("main/doctor_and_parsing.rs");
 include!("main/lan_pairing.rs");
 
 #[cfg(test)]
-pub(crate) use tests::support::{macos_default_routes_from_netstat, macos_ifconfig_has_ipv4};
-
-#[cfg(test)]
 mod tests {
     #[path = "../tests/cli_smoke.rs"]
     mod cli_smoke;
@@ -259,6 +256,4 @@ mod tests {
     mod runtime_misc_paid_exit_relay;
     #[path = "../tests/service_cli.rs"]
     mod service_cli;
-    #[path = "../tests/support.rs"]
-    pub(crate) mod support;
 }
