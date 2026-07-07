@@ -20,6 +20,7 @@ use nostr_vpn_core::data_plane::MeshPeerStatus;
 use nostr_vpn_core::fips_control::{
     FipsControlFragmentBuffer, FipsControlFrame, PeerCapabilities, PeerEndpointHint, SignedRoster,
     decode_fips_control_frame, encode_fips_control_frame, encode_fips_control_messages,
+    is_fips_control_frame,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nostr_vpn_core::fips_mesh::packet_destination;

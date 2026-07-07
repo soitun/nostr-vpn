@@ -357,6 +357,12 @@ pub fn encode_fips_control_messages(frame: &FipsControlFrame) -> Result<Vec<Vec<
         .collect()
 }
 
+#[inline]
+pub fn is_fips_control_frame(data: &[u8]) -> bool {
+    data.starts_with(FIPS_CONTROL_MAGIC)
+}
+
+#[inline]
 pub fn decode_fips_control_frame(data: &[u8]) -> Result<Option<FipsControlFrame>> {
     let Some(payload) = data.strip_prefix(FIPS_CONTROL_MAGIC) else {
         return Ok(None);

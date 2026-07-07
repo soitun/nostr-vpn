@@ -385,47 +385,49 @@ impl FipsPrivateMeshRuntime {
             if control_error.is_some() {
                 return false;
             }
-            match decode_fips_control_frame(packet) {
-                Ok(Some(_frame)) => {
-                    if *control_events_open {
-                        let message = FipsEndpointMessage {
-                            source_peer,
-                            data: FipsEndpointData::new(packet.to_vec()),
-                            enqueued_at_ms,
-                        };
-                        match self.endpoint_message_to_mesh_event_outcome(message, now) {
-                            Ok(outcome) => {
-                                if let Some(reply) = outcome.reply
-                                    && let Err(error) = self
-                                        .endpoint
-                                        .blocking_send_batch_to_peer(reply.peer, vec![reply.data])
-                                {
-                                    eprintln!("fips: failed to reply to peer ping: {error}");
+            if is_fips_control_frame(packet) {
+                match decode_fips_control_frame(packet) {
+                    Ok(Some(_frame)) => {
+                        if *control_events_open {
+                            let message = FipsEndpointMessage {
+                                source_peer,
+                                data: FipsEndpointData::new(packet.to_vec()),
+                                enqueued_at_ms,
+                            };
+                            match self.endpoint_message_to_mesh_event_outcome(message, now) {
+                                Ok(outcome) => {
+                                    if let Some(reply) = outcome.reply
+                                        && let Err(error) = self
+                                            .endpoint
+                                            .blocking_send_batch_to_peer(reply.peer, vec![reply.data])
+                                    {
+                                        eprintln!("fips: failed to reply to peer ping: {error}");
+                                    }
+                                    if let Some(event) = outcome.event
+                                        && event_tx.blocking_send(event).is_err()
+                                    {
+                                        *control_events_open = false;
+                                    }
                                 }
-                                if let Some(event) = outcome.event
-                                    && event_tx.blocking_send(event).is_err()
-                                {
-                                    *control_events_open = false;
-                                }
+                                Err(error) => control_error = Some(error),
                             }
-                            Err(error) => control_error = Some(error),
                         }
-                    }
-                    false
-                }
-                Ok(None) => {
-                    if !admitter.admit_packet_cached(packet, admission_cache) {
                         return false;
                     }
-                    accepted_count = accepted_count.saturating_add(1);
-                    endpoint_bytes = endpoint_bytes.saturating_add(packet.len());
-                    true
-                }
-                Err(error) => {
-                    control_error = Some(error);
-                    false
+                    Ok(None) => {}
+                    Err(error) => {
+                        control_error = Some(error);
+                        return false;
+                    }
                 }
             }
+
+            if !admitter.admit_packet_cached(packet, admission_cache) {
+                return false;
+            }
+            accepted_count = accepted_count.saturating_add(1);
+            endpoint_bytes = endpoint_bytes.saturating_add(packet.len());
+            true
         });
         if let Some(error) = control_error {
             return Err(error);

@@ -239,7 +239,6 @@ struct LinuxVnetTcp4GroState {
     payload_len: usize,
     next_seq: u32,
     psh_set: bool,
-    flow: LinuxVnetTcp4GroFlow,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -503,7 +502,6 @@ fn linux_vnet_start_tcp4_write_frame_with_candidate(
         payload_len: candidate.payload_len,
         next_seq: candidate.seq.wrapping_add(candidate.payload_len as u32),
         psh_set: candidate.psh_set,
-        flow: candidate.flow,
     });
 }
 
