@@ -53,7 +53,9 @@ impl FipsPrivateMeshRuntime {
                 let mut admitted =
                     admit_direct_endpoint_packet_runs_with_mesh(&mesh, runs, packet_outputs);
                 received = received.saturating_add(admitted.received);
-                packet_outputs.append_data_rx_notes(&mut admitted.data_rx_notes);
+                packet_outputs
+                    .data_rx_notes
+                    .append(&mut admitted.data_rx_notes);
                 if admitted.accepted > 0 {
                     emitted = emitted.saturating_add(admitted.accepted);
                 }
@@ -105,7 +107,7 @@ impl FipsPrivateMeshRuntime {
         }
         #[cfg(feature = "paid-exit")]
         self.note_paid_route_inbound_batch(packet_outputs)?;
-        self.note_data_rx_batch(packet_outputs.data_rx_notes_mut(), None)
+        self.note_data_rx_batch(&mut packet_outputs.data_rx_notes, None)
     }
 
     fn endpoint_message_to_mesh_event_outcome(
@@ -428,7 +430,9 @@ fn revalidate_direct_endpoint_tun_batch_with_mesh(
     batch_outputs.clear();
     batch_outputs.set_mesh_generation(mesh_generation);
     let mut admitted = admit_direct_endpoint_packet_runs_with_mesh(mesh, runs, batch_outputs);
-    batch_outputs.append_data_rx_notes(&mut admitted.data_rx_notes);
+    batch_outputs
+        .data_rx_notes
+        .append(&mut admitted.data_rx_notes);
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

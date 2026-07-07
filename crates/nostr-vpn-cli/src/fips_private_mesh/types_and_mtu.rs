@@ -92,33 +92,21 @@ impl DirectTunWriteBatch {
         self.mesh_generation = generation;
     }
 
-    fn append_data_rx_notes(&mut self, notes: &mut FipsDataRxBatchNotes) {
-        self.data_rx_notes.append(notes);
-    }
-
-    fn data_rx_notes_mut(&mut self) -> &mut FipsDataRxBatchNotes {
-        &mut self.data_rx_notes
-    }
-
     fn push_run(&mut self, run: FipsEndpointDirectPacketRun, source: FipsPacketSource) {
         if run.is_empty() {
             return;
         }
         let packet_count = run.len();
         self.bytes = self.bytes.saturating_add(run.packet_bytes());
-        self.push_packet_end(packet_count);
+        let previous = self.len();
+        self.packet_ends
+            .push(previous.saturating_add(packet_count));
         #[cfg(feature = "paid-exit")]
         self.packet_sources
             .extend(std::iter::repeat_n(source, packet_count));
         #[cfg(not(feature = "paid-exit"))]
         let _ = source;
         self.runs.push(run);
-    }
-
-    fn push_packet_end(&mut self, packet_count: usize) {
-        let previous = self.len();
-        self.packet_ends
-            .push(previous.saturating_add(packet_count));
     }
 
     #[cfg(any(feature = "paid-exit", target_os = "linux"))]
