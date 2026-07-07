@@ -9,7 +9,7 @@
             &endpoint_peers,
             None,
             super::private_mesh_mtu_from_app(None),
-            super::fips_nostr_discovery_policy_from_env(),
+            fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly,
         );
         FipsPrivateMeshRuntime::bind_with_config(
             identity_nsec,
