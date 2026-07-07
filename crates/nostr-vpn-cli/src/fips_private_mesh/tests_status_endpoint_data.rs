@@ -42,9 +42,12 @@
         let second = ipv4_packet(source, destination);
         let expected_endpoint_data_bytes = (first.len() + second.len()) as u64;
 
-        let sent = runtime
-            .send_tunnel_packet_batch_owned_with_capacity(vec![first.clone(), second.clone()], 2)
-            .expect("send packet batch");
+        let sent = send_tunnel_packet_batch_owned_with_capacity(
+            &runtime,
+            vec![first.clone(), second.clone()],
+            2,
+        )
+        .expect("send packet batch");
         assert_eq!(sent, 2);
 
         let (mut messages, mut events) = (Vec::with_capacity(4), Vec::with_capacity(4));
@@ -196,12 +199,12 @@
         second[20] = 2;
         third[20] = 3;
 
-        let sent = runtime
-            .send_tunnel_packet_batch_owned_with_capacity(
-                vec![first.clone(), second.clone(), third.clone()],
-                3,
-            )
-            .expect("send packet batch");
+        let sent = send_tunnel_packet_batch_owned_with_capacity(
+            &runtime,
+            vec![first.clone(), second.clone(), third.clone()],
+            3,
+        )
+        .expect("send packet batch");
         assert_eq!(sent, 3);
 
         let mut messages = Vec::with_capacity(8);

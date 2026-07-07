@@ -84,62 +84,6 @@ impl FipsPrivateMeshRuntime {
         })
     }
 
-    #[cfg(test)]
-    pub(crate) fn send_tunnel_packet_batch_owned_with_capacity(
-        &self,
-        packets: Vec<Vec<u8>>,
-        turn_capacity: usize,
-    ) -> Result<usize> {
-        if packets.is_empty() {
-            return Ok(0);
-        }
-
-        let input_packets = packets.len();
-        let mesh = self.mesh.load();
-        let peer_identities = self.peer_identities.load();
-        let mut runs = Vec::new();
-        let mut routed_packets = 0usize;
-
-        {
-            let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRoute);
-            for packet in packets {
-                let Some(outgoing) = mesh.route_outbound_packet_owned_with_peer(packet) else {
-                    continue;
-                };
-                routed_packets += 1;
-                let participant_key = outgoing.participant_pubkey_bytes.copied();
-                #[cfg(feature = "paid-exit")]
-                self.note_paid_route_outbound_packet(
-                    Some(outgoing.participant_pubkey),
-                    outgoing.participant_pubkey_bytes,
-                    &outgoing.bytes,
-                )?;
-                Self::push_endpoint_send_run(
-                    &mut runs,
-                    &peer_identities,
-                    outgoing.participant_pubkey,
-                    participant_key,
-                    outgoing.endpoint_node_addr,
-                    outgoing.bytes,
-                );
-            }
-        }
-        drop(peer_identities);
-        drop(mesh);
-
-        let run_count = runs.len();
-        crate::pipeline_profile::record_mesh_send_batch(
-            input_packets,
-            routed_packets,
-            run_count,
-            turn_capacity,
-        );
-
-        let _t =
-            crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
-        self.blocking_send_endpoint_send_runs(runs)
-    }
-
     #[cfg(target_os = "windows")]
     fn blocking_send_tunnel_packet_batch_owned_with_capacity(
         &self,

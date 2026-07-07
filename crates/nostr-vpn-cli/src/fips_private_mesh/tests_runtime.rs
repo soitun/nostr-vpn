@@ -153,7 +153,7 @@
     async fn send_with_retry(runtime: &FipsPrivateMeshRuntime, packet: &[u8]) {
         let mut last_error = None;
         for _ in 0..50 {
-            match runtime.send_tunnel_packet_batch_owned_with_capacity(vec![packet.to_vec()], 1) {
+            match send_tunnel_packet_batch_owned_with_capacity(runtime, vec![packet.to_vec()], 1) {
                 Ok(1) => return,
                 Ok(0) => panic!("packet had no FIPS route"),
                 Ok(sent) => panic!("single packet send produced {sent} sends"),
