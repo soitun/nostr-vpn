@@ -13,6 +13,7 @@ export NVPN_IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-${NVPN_DEFAULT_IOS_BUNDLE_ID:-f
 export NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID="${NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID:-$NVPN_IOS_BUNDLE_ID.PacketTunnel}"
 export NVPN_IOS_APP_GROUP_IDENTIFIER="${NVPN_IOS_APP_GROUP_IDENTIFIER:-group.$NVPN_IOS_BUNDLE_ID}"
 BUNDLE_ID="$NVPN_IOS_BUNDLE_ID"
+SIMULATOR_NAME="${NVPN_IOS_SIMULATOR_NAME:-iPhone 17 Pro}"
 PROJECT="$ROOT/ios/NostrVpnIos.xcodeproj"
 SCHEME="${NVPN_IOS_SCHEME:-NostrVpnIos}"
 DEVICE_CONFIGURATION="${NVPN_IOS_DEVICE_CONFIGURATION:-Debug}"
@@ -26,6 +27,7 @@ VPN_START_WAIT_SECS="${NVPN_IOS_VPN_START_WAIT_SECS:-12}"
 VPN_RESULT_WAIT_SECS="${NVPN_IOS_VPN_RESULT_WAIT_SECS:-4}"
 VPN_RESULT_NAME="${NVPN_IOS_VPN_RESULT_NAME:-mobile-ios-smoke-vpn-$$.json}"
 VPN_RESULT_DIR="${NVPN_IOS_RESULT_DIR:-$ROOT/artifacts/mobile-ios}"
+IOS_IDLE_CPU_RESULT_NAME="${NVPN_IOS_IDLE_CPU_RESULT_NAME:-mobile-ios-idle-cpu-$$.json}"
 TUN_PACKET_PROBE_SUMMARY_NAME="${NVPN_IOS_TUN_PACKET_PROBE_SUMMARY_NAME:-mobile-ios-tun-probe-summary-$$.json}"
 TUN_PACKET_PROBE_TARGET="${NVPN_IOS_TUN_PACKET_PROBE_TARGET:-10.44.255.254}"
 TUN_PACKET_PROBE_PORT="${NVPN_IOS_TUN_PACKET_PROBE_PORT:-9}"
@@ -33,6 +35,11 @@ TUN_PACKET_PROBE_COUNT="${NVPN_IOS_TUN_PACKET_PROBE_COUNT:-4}"
 TUN_PACKET_PROBE_WAIT_SECS="${NVPN_IOS_TUN_PACKET_PROBE_WAIT_SECS:-6}"
 TUN_PACKET_PROBE_REQUIRE_REPLY="${NVPN_IOS_TUN_PACKET_PROBE_REQUIRE_REPLY:-0}"
 cleanup_after_vpn_cycle="${NVPN_IOS_CLEANUP_AFTER_VPN_CYCLE:-1}"
+IDLE_CPU_GATE="${NVPN_IOS_IDLE_CPU_GATE:-${NVPN_IDLE_CPU_GATE:-1}}"
+IDLE_CPU_MAX_PERCENT="${NVPN_IOS_IDLE_CPU_MAX_PERCENT:-${NVPN_IDLE_CPU_MAX_PERCENT:-5}}"
+IDLE_CPU_SAMPLE_SECONDS="${NVPN_IOS_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAMPLE_SECONDS:-10}}"
+IDLE_CPU_SETTLE_SECONDS="${NVPN_IOS_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-3}}"
+IOS_SIM_PROCESS_NAME="${NVPN_IOS_SIM_PROCESS_NAME:-Nostr VPN}"
 SCREENSHOT="$ROOT/artifacts/nostr-vpn-ios.png"
 
 usage() {
@@ -153,7 +160,57 @@ run_simulator() {
     echo "Expected simulator screenshot at $SCREENSHOT" >&2
     exit 1
   fi
+  run_ios_simulator_idle_cpu_gate
   echo "iOS simulator smoke passed: $SCREENSHOT"
+}
+
+ios_sim_device_id() {
+  if [[ -n "${NVPN_IOS_SIMULATOR_ID:-}" ]]; then
+    printf '%s\n' "$NVPN_IOS_SIMULATOR_ID"
+    return
+  fi
+  xcrun simctl list devices available \
+    | sed -n "s/.*$SIMULATOR_NAME (\([0-9A-F-]\{36\}\)).*/\1/p" \
+    | head -n 1
+}
+
+ios_simulator_app_pid() {
+  local device="$1"
+  ps -axo pid=,command= \
+    | awk -v device="$device" -v app="$IOS_SIM_PROCESS_NAME.app/$IOS_SIM_PROCESS_NAME" '
+        !pid && index($0, device) && index($0, app) { pid = $1 }
+        END { if (pid) print pid }
+      '
+}
+
+run_ios_simulator_idle_cpu_gate() {
+  case "$IDLE_CPU_GATE" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "Skipping iOS simulator idle CPU gate because NVPN_IOS_IDLE_CPU_GATE=$IDLE_CPU_GATE"
+      return
+      ;;
+  esac
+
+  local device pid result_path
+  device="$(ios_sim_device_id)"
+  if [[ -z "$device" ]]; then
+    echo "iOS simulator idle CPU gate failed: no simulator device id found" >&2
+    exit 1
+  fi
+  pid="$(ios_simulator_app_pid "$device" | head -n 1)"
+  if [[ -z "$pid" ]]; then
+    echo "iOS simulator idle CPU gate failed: process $IOS_SIM_PROCESS_NAME not found on simulator $device" >&2
+    exit 1
+  fi
+  mkdir -p "$VPN_RESULT_DIR"
+  result_path="$VPN_RESULT_DIR/mobile-ios-simulator-idle-cpu-$$.json"
+  "$ROOT/scripts/idle-cpu-gate.py" host-pid \
+    --pid "$pid" \
+    --label "iOS simulator app" \
+    --artifact "$result_path" \
+    --max-percent "$IDLE_CPU_MAX_PERCENT" \
+    --sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
+    --settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
 }
 
 auto_select_ios_device() {
@@ -252,6 +309,29 @@ copy_vpn_probe_result() {
   fi
   if [[ ! -s "$result_path" ]]; then
     echo "iOS VPN probe result not found at $result_path" >&2
+    return 1
+  fi
+  printf '%s\n' "$result_path"
+}
+
+copy_ios_idle_cpu_result() {
+  local device="$1"
+  local result_path="$VPN_RESULT_DIR/$IOS_IDLE_CPU_RESULT_NAME"
+  mkdir -p "$VPN_RESULT_DIR"
+  rm -f "$result_path"
+  if ! xcrun devicectl device copy from \
+    --device "$device" \
+    --domain-type appDataContainer \
+    --domain-identifier "$BUNDLE_ID" \
+    --source "Library/Application Support/Nostr VPN/$IOS_IDLE_CPU_RESULT_NAME" \
+    --destination "$result_path" \
+    --quiet
+  then
+    echo "Failed to copy iOS idle CPU result from app data container for $BUNDLE_ID" >&2
+    return 1
+  fi
+  if [[ ! -s "$result_path" ]]; then
+    echo "iOS idle CPU result not found at $result_path" >&2
     return 1
   fi
   printf '%s\n' "$result_path"
@@ -554,6 +634,77 @@ if result.get("tunPacketProbeReadIncreased") is True:
 PY
 }
 
+validate_ios_idle_cpu_result() {
+  local result_path="$1"
+  python3 - "$result_path" "$NVPN_BUILD_GIT_SHA" <<'PY'
+import json
+import sys
+
+path, expected_build_git_sha = sys.argv[1:3]
+with open(path, encoding="utf-8") as fh:
+    result = json.load(fh)
+
+errors = []
+actual_build_git_sha = result.get("appBuildGitSha")
+if expected_build_git_sha:
+    if not actual_build_git_sha:
+        errors.append(f"appBuildGitSha missing expected={expected_build_git_sha!r}")
+    elif actual_build_git_sha != expected_build_git_sha:
+        errors.append(
+            f"appBuildGitSha={actual_build_git_sha!r} expected={expected_build_git_sha!r}"
+        )
+if result.get("phase") != "finished":
+    errors.append(f"phase={result.get('phase')!r}")
+if result.get("ok") is not True:
+    errors.append(
+        "ok="
+        f"{result.get('ok')!r} cpuPercent={result.get('cpuPercent')!r} "
+        f"maxPercent={result.get('maxPercent')!r}"
+    )
+cpu = result.get("cpuPercent")
+max_percent = result.get("maxPercent")
+if not isinstance(cpu, (int, float)) or not isinstance(max_percent, (int, float)):
+    errors.append(f"invalid CPU fields cpuPercent={cpu!r} maxPercent={max_percent!r}")
+elif cpu > max_percent:
+    errors.append(f"cpuPercent={cpu:.3f} > maxPercent={max_percent:.3f}")
+
+if errors:
+    print("iOS idle CPU gate failed: " + ", ".join(errors), file=sys.stderr)
+    sys.exit(1)
+print(f"iOS idle CPU ok: {cpu:.3f}% <= {max_percent:.3f}%")
+print("Result: " + path)
+PY
+}
+
+run_ios_device_idle_cpu_gate() {
+  local device="$1"
+  case "$IDLE_CPU_GATE" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "Skipping iOS physical-device idle CPU gate because NVPN_IOS_IDLE_CPU_GATE=$IDLE_CPU_GATE"
+      return
+      ;;
+  esac
+  launch_device "$device" \
+    --nvpn-debug-idle-cpu-probe \
+    --nvpn-debug-idle-cpu-result "$IOS_IDLE_CPU_RESULT_NAME" \
+    --nvpn-debug-idle-cpu-max-percent "$IDLE_CPU_MAX_PERCENT" \
+    --nvpn-debug-idle-cpu-sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
+    --nvpn-debug-idle-cpu-settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
+
+  python3 - "$IDLE_CPU_SAMPLE_SECONDS" "$IDLE_CPU_SETTLE_SECONDS" <<'PY'
+import math
+import sys
+import time
+
+sample, settle = map(float, sys.argv[1:3])
+time.sleep(max(1, math.ceil(sample + settle + 1)))
+PY
+
+  local result_path
+  result_path="$(copy_ios_idle_cpu_result "$device")"
+  validate_ios_idle_cpu_result "$result_path"
+}
+
 run_vpn_cycle() {
   local device="$1"
   local args=(
@@ -617,6 +768,7 @@ run_device() {
   if bool_is_true "$INSTALL_DEVICE_APP"; then
     install_device_app "$device"
   fi
+  run_ios_device_idle_cpu_gate "$device"
   if [[ "$vpn_cycle" -eq 1 ]]; then
     run_vpn_cycle "$device"
   else

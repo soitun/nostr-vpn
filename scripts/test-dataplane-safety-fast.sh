@@ -165,6 +165,7 @@ run_harnesses() {
     scripts/test-host-pair-comparison-harness.sh
     scripts/test-host-pair-comparison-runner.sh
     scripts/test-host-pair-harness.sh
+    scripts/test-idle-cpu-gate-harness.sh
     scripts/test-install-nvpn-test-daemon.sh
     scripts/test-mobile-platform-tools.sh
     scripts/test-release-gate-timeout-harness.sh
@@ -181,6 +182,7 @@ run_harnesses() {
   run "$ROOT_DIR/scripts/test-host-pair-harness.sh"
   run "$ROOT_DIR/scripts/test-host-pair-comparison-harness.sh"
   run "$ROOT_DIR/scripts/test-host-pair-comparison-runner.sh"
+  run "$ROOT_DIR/scripts/test-idle-cpu-gate-harness.sh"
   run "$ROOT_DIR/scripts/test-mobile-platform-tools.sh"
   run "$ROOT_DIR/scripts/test-release-gate-timeout-harness.sh"
   run "$ROOT_DIR/scripts/test-install-nvpn-test-daemon.sh"

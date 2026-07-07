@@ -4,6 +4,9 @@ param(
   [string]$ArtifactRoot,
   [int]$StartupTimeoutSeconds = 30,
   [int]$AliveSeconds = 5,
+  [double]$IdleCpuMaxPercent = -1,
+  [double]$IdleCpuSampleSeconds = -1,
+  [double]$IdleCpuSettleSeconds = -1,
   [switch]$NoWindowRequired,
   [switch]$SkipCleanup
 )
@@ -17,6 +20,50 @@ if (!$ArtifactRoot) {
 $ArtifactRoot = [System.IO.Path]::GetFullPath($ArtifactRoot)
 $ResultPath = Join-Path $ArtifactRoot "windows-app-launch-smoke.json"
 $EventsPath = Join-Path $ArtifactRoot "windows-app-launch-events.json"
+$IdleCpuResultPath = Join-Path $ArtifactRoot "windows-app-idle-cpu.json"
+
+function Test-NvpnTruthy {
+  param([string]$Value)
+  return $Value -match '^(1|true|yes|on)$'
+}
+
+function Test-NvpnFalsey {
+  param([string]$Value)
+  return $Value -match '^(0|false|no|off)$'
+}
+
+function Get-NvpnNumberSetting {
+  param(
+    [double]$Explicit,
+    [string]$PlatformEnvName,
+    [string]$SharedEnvName,
+    [double]$Default
+  )
+  if ($Explicit -ge 0) {
+    return $Explicit
+  }
+  $platformValue = [Environment]::GetEnvironmentVariable($PlatformEnvName)
+  if (![string]::IsNullOrWhiteSpace($platformValue)) {
+    return [double]::Parse($platformValue, [Globalization.CultureInfo]::InvariantCulture)
+  }
+  $sharedValue = [Environment]::GetEnvironmentVariable($SharedEnvName)
+  if (![string]::IsNullOrWhiteSpace($sharedValue)) {
+    return [double]::Parse($sharedValue, [Globalization.CultureInfo]::InvariantCulture)
+  }
+  return $Default
+}
+
+$IdleCpuGateValue = [Environment]::GetEnvironmentVariable("NVPN_WINDOWS_APP_IDLE_CPU_GATE")
+if ([string]::IsNullOrWhiteSpace($IdleCpuGateValue)) {
+  $IdleCpuGateValue = [Environment]::GetEnvironmentVariable("NVPN_IDLE_CPU_GATE")
+}
+if ([string]::IsNullOrWhiteSpace($IdleCpuGateValue)) {
+  $IdleCpuGateValue = "1"
+}
+$IdleCpuGateEnabled = !(Test-NvpnFalsey $IdleCpuGateValue)
+$IdleCpuMaxPercent = Get-NvpnNumberSetting $IdleCpuMaxPercent "NVPN_WINDOWS_APP_IDLE_CPU_MAX_PERCENT" "NVPN_IDLE_CPU_MAX_PERCENT" 5
+$IdleCpuSampleSeconds = Get-NvpnNumberSetting $IdleCpuSampleSeconds "NVPN_WINDOWS_APP_IDLE_CPU_SAMPLE_SECONDS" "NVPN_IDLE_CPU_SAMPLE_SECONDS" 10
+$IdleCpuSettleSeconds = Get-NvpnNumberSetting $IdleCpuSettleSeconds "NVPN_WINDOWS_APP_IDLE_CPU_SETTLE_SECONDS" "NVPN_IDLE_CPU_SETTLE_SECONDS" 3
 
 function Stop-NostrVpnWindows {
   Get-Process -Name NostrVpn.Windows -ErrorAction SilentlyContinue |
@@ -50,19 +97,84 @@ function Write-SmokeResult {
     [string]$ErrorMessage = "",
     [int]$ProcessId = 0,
     [int]$ExitCode = 0,
-    [bool]$WindowSeen = $false
+    [bool]$WindowSeen = $false,
+    [Nullable[double]]$IdleCpuPercent = $null,
+    [string]$IdleCpuResult = ""
   )
 
   New-Item -ItemType Directory -Force -Path $ArtifactRoot | Out-Null
   [pscustomobject]@{
-    ok          = $Ok
-    appExe      = $AppExe
-    processId   = $ProcessId
-    exitCode    = $ExitCode
-    windowSeen  = $WindowSeen
-    error       = $ErrorMessage
-    generatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    ok                = $Ok
+    appExe            = $AppExe
+    processId         = $ProcessId
+    exitCode          = $ExitCode
+    windowSeen        = $WindowSeen
+    idleCpuPercent    = $IdleCpuPercent
+    idleCpuMaxPercent = $IdleCpuMaxPercent
+    idleCpuResult     = $IdleCpuResult
+    error             = $ErrorMessage
+    generatedAt       = (Get-Date).ToUniversalTime().ToString("o")
   } | ConvertTo-Json -Depth 4 | Out-File -Encoding utf8 $ResultPath
+}
+
+function Start-NvpnSleepSeconds {
+  param([double]$Seconds)
+  if ($Seconds -le 0) {
+    return
+  }
+  Start-Sleep -Milliseconds ([int][Math]::Max(1, [Math]::Round($Seconds * 1000)))
+}
+
+function Invoke-IdleCpuGate {
+  param([System.Diagnostics.Process]$Process)
+  if (!$IdleCpuGateEnabled) {
+    Write-Host "Skipping Windows app idle CPU gate because NVPN_WINDOWS_APP_IDLE_CPU_GATE=$IdleCpuGateValue"
+    return $null
+  }
+  if ($IdleCpuSampleSeconds -le 0) {
+    throw "IdleCpuSampleSeconds must be positive"
+  }
+  if ($IdleCpuSettleSeconds -lt 0) {
+    throw "IdleCpuSettleSeconds must be non-negative"
+  }
+
+  Start-NvpnSleepSeconds $IdleCpuSettleSeconds
+  $Process.Refresh()
+  if ($Process.HasExited) {
+    throw "NostrVpn.Windows exited before idle CPU sampling"
+  }
+  $startCpu = $Process.TotalProcessorTime.TotalSeconds
+  $watch = [System.Diagnostics.Stopwatch]::StartNew()
+  Start-NvpnSleepSeconds $IdleCpuSampleSeconds
+  $watch.Stop()
+  $Process.Refresh()
+  if ($Process.HasExited) {
+    throw "NostrVpn.Windows exited during idle CPU sampling"
+  }
+  $endCpu = $Process.TotalProcessorTime.TotalSeconds
+  $elapsed = [Math]::Max($watch.Elapsed.TotalSeconds, 0.001)
+  $cpuPercent = [Math]::Max(0, $endCpu - $startCpu) * 100.0 / $elapsed
+  $ok = $cpuPercent -le $IdleCpuMaxPercent
+  $result = [pscustomobject]@{
+    ok             = $ok
+    mode           = "windows-process"
+    label          = "Windows app"
+    pids           = @($Process.Id)
+    cpuPercent     = $cpuPercent
+    maxPercent     = $IdleCpuMaxPercent
+    sampleSeconds  = $IdleCpuSampleSeconds
+    settleSeconds  = $IdleCpuSettleSeconds
+    elapsedSeconds = $elapsed
+    generatedAt    = (Get-Date).ToUniversalTime().ToString("o")
+  }
+  New-Item -ItemType Directory -Force -Path $ArtifactRoot | Out-Null
+  $result | ConvertTo-Json -Depth 4 | Out-File -Encoding utf8 $IdleCpuResultPath
+  if (!$ok) {
+    throw ("Windows app idle CPU gate failed: {0:N3}% > {1:N3}%. Result: {2}" -f $cpuPercent, $IdleCpuMaxPercent, $IdleCpuResultPath)
+  }
+  Write-Host ("Windows app idle CPU ok: {0:N3}% <= {1:N3}%" -f $cpuPercent, $IdleCpuMaxPercent)
+  Write-Host "Result: $IdleCpuResultPath"
+  return $cpuPercent
 }
 
 if (!(Test-Path $AppExe)) {
@@ -117,7 +229,9 @@ try {
     }
   }
 
-  Write-SmokeResult -Ok $true -ProcessId $proc.Id -WindowSeen $windowSeen
+  $idleCpuPercent = Invoke-IdleCpuGate -Process $proc
+  $idleCpuResult = if ($IdleCpuGateEnabled) { $IdleCpuResultPath } else { "" }
+  Write-SmokeResult -Ok $true -ProcessId $proc.Id -WindowSeen $windowSeen -IdleCpuPercent $idleCpuPercent -IdleCpuResult $idleCpuResult
   Write-Host "WINDOWS_APP_LAUNCH_SMOKE_OK"
   Write-Host "Result: $ResultPath"
 } finally {

@@ -11,6 +11,11 @@ CONFIG_PATH="$DATA_HOME/nostr-vpn/config.toml"
 BOB_CONFIG="$E2E_ROOT/bob.toml"
 FAKE_NVPN="$E2E_ROOT/nvpn"
 SCREENSHOT="$ARTIFACT_DIR/nostr-vpn-linux-gui-e2e.png"
+IDLE_CPU_RESULT="$ARTIFACT_DIR/linux-gui-idle-cpu.json"
+IDLE_CPU_GATE="${NVPN_LINUX_GUI_IDLE_CPU_GATE:-${NVPN_IDLE_CPU_GATE:-1}}"
+IDLE_CPU_MAX_PERCENT="${NVPN_LINUX_GUI_IDLE_CPU_MAX_PERCENT:-${NVPN_IDLE_CPU_MAX_PERCENT:-5}}"
+IDLE_CPU_SAMPLE_SECONDS="${NVPN_LINUX_GUI_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAMPLE_SECONDS:-10}}"
+IDLE_CPU_SETTLE_SECONDS="${NVPN_LINUX_GUI_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-3}}"
 cargo_config_args=()
 
 if [[ -n "${NVPN_FIPS_REPO_PATH:-}" ]]; then
@@ -267,6 +272,21 @@ if ! awk -v width="$width" -v height="$height" 'BEGIN { exit !(width >= 900 && h
 fi
 
 awk -v mean="$mean" 'BEGIN { exit !(mean > 0.01 && mean < 0.99) }'
+
+case "$IDLE_CPU_GATE" in
+  0|false|FALSE|False|no|NO|No|off|OFF|Off)
+    echo "Skipping Linux GUI idle CPU gate because NVPN_LINUX_GUI_IDLE_CPU_GATE=$IDLE_CPU_GATE"
+    ;;
+  *)
+    "$ROOT_DIR/scripts/idle-cpu-gate.py" host-pid \
+      --pid "$app_pid" \
+      --label "Linux GTK app" \
+      --artifact "$IDLE_CPU_RESULT" \
+      --max-percent "$IDLE_CPU_MAX_PERCENT" \
+      --sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
+      --settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
+    ;;
+esac
 
 echo "--- Linux GUI app log ---"
 tail -n 80 "$ARTIFACT_DIR/app.log" || true

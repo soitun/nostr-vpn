@@ -8,7 +8,12 @@ APP_PATH="${NVPN_MACOS_APP_PATH:-${1:-}}"
 STARTUP_TIMEOUT_SECONDS="${NVPN_MACOS_APP_SMOKE_STARTUP_TIMEOUT_SECONDS:-30}"
 ALIVE_SECONDS="${NVPN_MACOS_APP_SMOKE_ALIVE_SECONDS:-5}"
 RESULT_PATH="$ARTIFACT_ROOT/macos-app-launch-smoke.json"
+IDLE_CPU_RESULT_PATH="$ARTIFACT_ROOT/macos-app-idle-cpu.json"
 LOG_PATH="$ARTIFACT_ROOT/macos-app-launch-smoke.log"
+IDLE_CPU_GATE="${NVPN_MACOS_APP_IDLE_CPU_GATE:-${NVPN_IDLE_CPU_GATE:-1}}"
+IDLE_CPU_MAX_PERCENT="${NVPN_MACOS_APP_IDLE_CPU_MAX_PERCENT:-${NVPN_IDLE_CPU_MAX_PERCENT:-5}}"
+IDLE_CPU_SAMPLE_SECONDS="${NVPN_MACOS_APP_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAMPLE_SECONDS:-10}}"
+IDLE_CPU_SETTLE_SECONDS="${NVPN_MACOS_APP_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-3}}"
 
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "macOS app launch smoke requires macOS." >&2
@@ -48,12 +53,21 @@ write_result() {
   local ok="$1"
   local error="${2:-}"
   local pid="${3:-}"
+  local idle_cpu_result=""
+  case "$IDLE_CPU_GATE" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      ;;
+    *)
+      idle_cpu_result="$IDLE_CPU_RESULT_PATH"
+      ;;
+  esac
   cat >"$RESULT_PATH" <<JSON
 {
   "ok": $ok,
   "appPath": "$APP_PATH",
   "executable": "$executable",
   "processId": "$pid",
+  "idleCpuResult": "$idle_cpu_result",
   "error": "$error",
   "generatedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 }
@@ -104,6 +118,21 @@ while (( SECONDS < alive_until )); do
   fi
   sleep 0.5
 done
+
+case "$IDLE_CPU_GATE" in
+  0|false|FALSE|False|no|NO|No|off|OFF|Off)
+    echo "Skipping macOS app idle CPU gate because NVPN_MACOS_APP_IDLE_CPU_GATE=$IDLE_CPU_GATE"
+    ;;
+  *)
+    "$ROOT/scripts/idle-cpu-gate.py" host-pid \
+      --pid "$pid" \
+      --label "macOS app" \
+      --artifact "$IDLE_CPU_RESULT_PATH" \
+      --max-percent "$IDLE_CPU_MAX_PERCENT" \
+      --sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
+      --settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
+    ;;
+esac
 
 write_result true "" "$pid"
 kill "$pid" >/dev/null 2>&1 || true

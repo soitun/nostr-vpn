@@ -183,6 +183,7 @@ release_cargo() {
 node scripts/sync-versions.mjs
 ./scripts/check-rust-file-lines.sh
 ./scripts/security-audit-rust.sh
+./scripts/test-idle-cpu-gate-harness.sh
 cargo fmt --check
 prepare_release_cargo_config
 run_local_fips_regression_tests

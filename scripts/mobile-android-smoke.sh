@@ -24,6 +24,7 @@ RUNTIME_STATE_MAX_AGE_SECS="${NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS:-60}"
 RUNTIME_STATE_RESULT_DIR="${NVPN_ANDROID_RESULT_DIR:-$ROOT/artifacts/mobile-android}"
 RUNTIME_STATE_RESULT_NAME="${NVPN_ANDROID_RUNTIME_STATE_RESULT_NAME:-mobile-android-runtime-state-$$.json}"
 ANDROID_BUILD_METADATA_RESULT_NAME="${NVPN_ANDROID_BUILD_METADATA_RESULT_NAME:-mobile-android-build-metadata-$$.json}"
+ANDROID_IDLE_CPU_RESULT_NAME="${NVPN_ANDROID_IDLE_CPU_RESULT_NAME:-mobile-android-idle-cpu-$$.json}"
 VPN_LINK_STATS_RESULT_NAME="mobile-android-vpn-link-stats-$$.txt"
 VPN_LINK_STATS_SUMMARY_RESULT_NAME="mobile-android-vpn-link-stats-summary-$$.tsv"
 PING_PROBE_RESULT_NAME="mobile-android-ping-probe-$$.txt"
@@ -42,6 +43,10 @@ DEBUG_WIREGUARD_CONFIG="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG:-}"
 DEBUG_WIREGUARD_CONFIG_FILE="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE:-}"
 DEBUG_NETWORK_NAME="${NVPN_ANDROID_DEBUG_NETWORK_NAME:-Android smoke}"
 cleanup_after_vpn_cycle="${NVPN_ANDROID_CLEANUP_AFTER_VPN_CYCLE:-1}"
+IDLE_CPU_GATE="${NVPN_ANDROID_IDLE_CPU_GATE:-${NVPN_IDLE_CPU_GATE:-1}}"
+IDLE_CPU_MAX_PERCENT="${NVPN_ANDROID_IDLE_CPU_MAX_PERCENT:-${NVPN_IDLE_CPU_MAX_PERCENT:-5}}"
+IDLE_CPU_SAMPLE_SECONDS="${NVPN_ANDROID_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAMPLE_SECONDS:-10}}"
+IDLE_CPU_SETTLE_SECONDS="${NVPN_ANDROID_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-3}}"
 
 build=1
 clear_state=0
@@ -269,6 +274,10 @@ android_runtime_state_path() {
 
 android_build_metadata_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$ANDROID_BUILD_METADATA_RESULT_NAME"
+}
+
+android_idle_cpu_path() {
+  printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$ANDROID_IDLE_CPU_RESULT_NAME"
 }
 
 android_vpn_link_stats_path() {
@@ -1278,6 +1287,23 @@ fi
 start_main_activity
 "$ADB" -s "$serial" shell pm path "$PACKAGE_NAME" >/dev/null
 wait_for_android_build_metadata
+
+case "$IDLE_CPU_GATE" in
+  0|false|FALSE|False|no|NO|No|off|OFF|Off)
+    echo "Skipping Android idle CPU gate because NVPN_ANDROID_IDLE_CPU_GATE=$IDLE_CPU_GATE"
+    ;;
+  *)
+    "$ROOT/scripts/idle-cpu-gate.py" android-package \
+      --adb "$ADB" \
+      --serial "$serial" \
+      --package "$PACKAGE_NAME" \
+      --label "Android app" \
+      --artifact "$(android_idle_cpu_path)" \
+      --max-percent "$IDLE_CPU_MAX_PERCENT" \
+      --sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
+      --settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
+    ;;
+esac
 
 if [[ "$vpn_cycle" -eq 1 ]]; then
   seed_debug_config

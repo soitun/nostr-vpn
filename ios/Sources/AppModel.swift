@@ -319,6 +319,12 @@ final class AppModel: ObservableObject {
         debugLog("launch automation args=\(Self.redactedDebugArguments(rawArguments))")
         let importedInvite = importDebugInviteIfPresent(arguments: rawArguments)
         let addedNetwork = addDebugNetworkIfPresent(arguments: rawArguments)
+        if arguments.contains("--nvpn-debug-idle-cpu-probe") {
+            Task {
+                await runDebugIdleCpuProbe(arguments: rawArguments)
+            }
+            return true
+        }
         if arguments.contains("--nvpn-debug-exit-probe") {
             Task {
                 await runDebugExitProbe(arguments: rawArguments)
@@ -362,6 +368,68 @@ final class AppModel: ObservableObject {
         return true
         #else
         return false
+        #endif
+    }
+
+    private func runDebugIdleCpuProbe(arguments: [String]) async {
+        #if DEBUG
+        let resultName = Self.argumentValue(after: "--nvpn-debug-idle-cpu-result", in: arguments)
+            ?? "debug-idle-cpu.json"
+        let sampleSeconds = Self.clampedDoubleArgument(
+            "--nvpn-debug-idle-cpu-sample-seconds",
+            in: arguments,
+            defaultValue: 10,
+            minValue: 0.1,
+            maxValue: 120
+        )
+        let settleSeconds = Self.clampedDoubleArgument(
+            "--nvpn-debug-idle-cpu-settle-seconds",
+            in: arguments,
+            defaultValue: 3,
+            minValue: 0,
+            maxValue: 120
+        )
+        let maxPercent = Self.clampedDoubleArgument(
+            "--nvpn-debug-idle-cpu-max-percent",
+            in: arguments,
+            defaultValue: 5,
+            minValue: 0,
+            maxValue: 100
+        )
+        let startedAt = Date()
+        var result: [String: Any] = [
+            "ok": false,
+            "phase": "settling",
+            "label": "iOS app",
+            "maxPercent": maxPercent,
+            "sampleSeconds": sampleSeconds,
+            "settleSeconds": settleSeconds,
+            "startedAt": ISO8601DateFormatter().string(from: startedAt),
+        ]
+        for (key, value) in Self.appBuildMetadata() {
+            result[key] = value
+        }
+        writeDebugProbeResult(result, name: resultName)
+        if settleSeconds > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(settleSeconds * 1_000_000_000))
+        }
+        let startCpu = Self.processCpuSeconds()
+        let sampleStartedAt = Date()
+        result["phase"] = "sampling"
+        result["sampleStartedAt"] = ISO8601DateFormatter().string(from: sampleStartedAt)
+        writeDebugProbeResult(result, name: resultName)
+        try? await Task.sleep(nanoseconds: UInt64(sampleSeconds * 1_000_000_000))
+        let elapsed = max(0.001, Date().timeIntervalSince(sampleStartedAt))
+        let endCpu = Self.processCpuSeconds()
+        let cpuPercent = max(0, endCpu - startCpu) * 100.0 / elapsed
+        result["phase"] = "finished"
+        result["ok"] = cpuPercent <= maxPercent
+        result["cpuPercent"] = cpuPercent
+        result["elapsedSeconds"] = elapsed
+        result["cpuSeconds"] = max(0, endCpu - startCpu)
+        result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
+        result["debugProbeElapsedMs"] = Self.elapsedMilliseconds(since: startedAt)
+        writeDebugProbeResult(result, name: resultName)
         #endif
     }
 
@@ -858,6 +926,17 @@ final class AppModel: ObservableObject {
         max(0, Int(Date().timeIntervalSince(start) * 1000))
     }
 
+    nonisolated private static func processCpuSeconds() -> Double {
+        var usage = rusage()
+        guard getrusage(RUSAGE_SELF, &usage) == 0 else {
+            return 0
+        }
+        return Double(usage.ru_utime.tv_sec)
+            + Double(usage.ru_utime.tv_usec) / 1_000_000
+            + Double(usage.ru_stime.tv_sec)
+            + Double(usage.ru_stime.tv_usec) / 1_000_000
+    }
+
     nonisolated private static func appBuildMetadata() -> [String: Any] {
         var metadata: [String: Any] = [:]
         if let bundleIdentifier = Bundle.main.bundleIdentifier,
@@ -943,6 +1022,7 @@ final class AppModel: ObservableObject {
             "--nvpn-debug-exit-node",
             "--nvpn-debug-fetch-url",
             "--nvpn-debug-result",
+            "--nvpn-debug-idle-cpu-result",
             "--nvpn-debug-tun-probe-target",
             "--nvpn-debug-wireguard-config-base64",
             "--nvpn-debug-wireguard-config-file",
