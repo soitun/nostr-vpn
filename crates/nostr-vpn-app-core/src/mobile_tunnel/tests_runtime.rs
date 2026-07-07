@@ -334,7 +334,7 @@
             for _ in 0..packets.len().saturating_mul(2).max(1) {
                 match tokio::time::timeout(Duration::from_millis(100), recipient.recv()).await {
                     Ok(Some(message)) => {
-                        if message.source_npub() == started.endpoint.npub()
+                        if message.source_peer.npub() == started.endpoint.npub()
                             && message.data == packets[messages.len()]
                         {
                             messages.push(message);
@@ -471,7 +471,7 @@
             &requester_mobile,
         )
         .await;
-        assert_eq!(message.source_npub(), requester_endpoint.npub());
+        assert_eq!(message.source_peer.npub(), requester_endpoint.npub());
         let (admin_app_config, app_config_dirty) = handle_admin_mobile_join_request(
             &admin_endpoint,
             admin_app,
