@@ -49,14 +49,16 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     .await;
     let (mut fips_tunnel_runtime, mut last_fips_endpoint_peer_signature) = {
         let config = fips_tunnel_config_from_app(
-            &app,
-            &config_path,
-            &network_id,
-            iface.clone(),
-            network_snapshot.default_interface_mtu,
-            own_pubkey.as_deref(),
-            None,
-            &[],
+            FipsTunnelConfigInput {
+                app: &app,
+                config_path: &config_path,
+                network_id: &network_id,
+                iface: iface.clone(),
+                underlay_interface_mtu: network_snapshot.default_interface_mtu,
+                own_pubkey: own_pubkey.as_deref(),
+                recent_peers: None,
+                live_peer_endpoints: &[],
+            },
         )?;
         let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
         let runtime = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;

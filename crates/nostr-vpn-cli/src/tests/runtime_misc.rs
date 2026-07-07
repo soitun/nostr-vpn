@@ -396,16 +396,16 @@ fn fips_tunnel_config_carries_paid_route_payment_streaming_inputs() {
     std::fs::create_dir_all(&dir).expect("create test dir");
     let config_path = dir.join("config.toml");
 
-    let config = fips_tunnel_config_from_app(
-        &app,
-        &config_path,
-        &network_id,
-        "utun-test",
-        None,
-        Some(&own_pubkey),
-        None,
-        &[],
-    )
+    let config = fips_tunnel_config_from_app(crate::FipsTunnelConfigInput {
+        app: &app,
+        config_path: &config_path,
+        network_id: &network_id,
+        iface: "utun-test".to_string(),
+        underlay_interface_mtu: None,
+        own_pubkey: Some(&own_pubkey),
+        recent_peers: None,
+        live_peer_endpoints: &[],
+    })
     .expect("build fips config");
 
     assert_eq!(

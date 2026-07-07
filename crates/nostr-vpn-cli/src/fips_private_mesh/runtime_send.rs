@@ -265,27 +265,21 @@ impl FipsPrivateMeshRuntime {
         for run in runs {
             match run {
                 FipsEndpointSendRun::Identity(run) => {
-                    let (
-                        participant_fallback,
-                        participant_key,
-                        identity,
-                        payloads,
-                        packet_count,
-                        bytes_len,
-                    ) = run.into_send_parts();
+                    let parts = run.into_send_parts();
                     self.endpoint
-                        .blocking_send_batch_to_peer(identity, payloads)
+                        .blocking_send_batch_to_peer(parts.identity, parts.payloads)
                         .with_context(|| {
                             format!(
-                                "failed to send {packet_count} private packets over FIPS endpoint data"
+                                "failed to send {} private packets over FIPS endpoint data",
+                                parts.packet_count
                             )
                         })?;
                     self.note_tx(
-                        participant_fallback.as_deref(),
-                        participant_key.as_ref(),
-                        bytes_len,
+                        parts.participant_fallback.as_deref(),
+                        parts.participant_key.as_ref(),
+                        parts.bytes_len,
                     )?;
-                    sent += packet_count;
+                    sent += parts.packet_count;
                 }
             }
         }

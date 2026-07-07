@@ -163,9 +163,9 @@ impl FipsPacketSource {
     fn new(participant_key: Option<&ParticipantPubkeyBytes>) -> Self {
         #[cfg(feature = "paid-exit")]
         {
-            return Self {
+            Self {
                 participant_key: participant_key.copied(),
-            };
+            }
         }
         #[cfg(not(feature = "paid-exit"))]
         {
@@ -451,6 +451,15 @@ struct FipsEndpointIdentitySendRun {
     bytes_len: usize,
 }
 
+struct FipsEndpointIdentitySendParts {
+    participant_fallback: Option<String>,
+    participant_key: Option<ParticipantPubkeyBytes>,
+    identity: PeerIdentity,
+    payloads: Vec<Vec<u8>>,
+    packet_count: usize,
+    bytes_len: usize,
+}
+
 impl FipsEndpointIdentitySendRun {
     fn new(
         participant_fallback: Option<String>,
@@ -477,24 +486,15 @@ impl FipsEndpointIdentitySendRun {
         self.bytes_len = self.bytes_len.saturating_add(bytes_len);
     }
 
-    fn into_send_parts(
-        self,
-    ) -> (
-        Option<String>,
-        Option<ParticipantPubkeyBytes>,
-        PeerIdentity,
-        Vec<Vec<u8>>,
-        usize,
-        usize,
-    ) {
-        (
-            self.participant_fallback,
-            self.participant_key,
-            self.identity,
-            self.payloads,
-            self.packet_count,
-            self.bytes_len,
-        )
+    fn into_send_parts(self) -> FipsEndpointIdentitySendParts {
+        FipsEndpointIdentitySendParts {
+            participant_fallback: self.participant_fallback,
+            participant_key: self.participant_key,
+            identity: self.identity,
+            payloads: self.payloads,
+            packet_count: self.packet_count,
+            bytes_len: self.bytes_len,
+        }
     }
 
     fn matches(

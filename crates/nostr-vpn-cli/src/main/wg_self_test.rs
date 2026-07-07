@@ -733,7 +733,7 @@ pub(crate) fn runtime_effective_advertised_routes(app: &AppConfig) -> Vec<String
 fn runtime_supported_advertised_routes(routes: Vec<String>) -> Vec<String> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        return routes.into_iter().filter(|route| route != "::/0").collect();
+        routes.into_iter().filter(|route| route != "::/0").collect()
     }
 
     #[cfg(target_os = "windows")]

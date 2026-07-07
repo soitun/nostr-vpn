@@ -113,31 +113,39 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let (mut fips_tunnel_runtime, mut last_fips_endpoint_peer_signature) =
         if fips_private_runtime_active(&app, vpn_enabled, expected_peers) {
             let config = match fips_tunnel_config_from_app(
-                &app,
-                &config_path,
-                &network_id,
-                iface.clone(),
-                network_snapshot.default_interface_mtu,
-                own_pubkey.as_deref(),
-                Some(&recent_peers),
-                &[],
+                FipsTunnelConfigInput {
+                    app: &app,
+                    config_path: &config_path,
+                    network_id: &network_id,
+                    iface: iface.clone(),
+                    underlay_interface_mtu: network_snapshot.default_interface_mtu,
+                    own_pubkey: own_pubkey.as_deref(),
+                    recent_peers: Some(&recent_peers),
+                    live_peer_endpoints: &[],
+                },
             ) {
                 Ok(config) => config,
                 Err(error) => {
                     let network = network_snapshot.summary(network_changed_at, captive_portal);
                     let port_mapping = port_mapping_runtime.status();
+                    let advertised_routes = HashMap::new();
+                    let vpn_status = format!("FIPS private mesh config failed ({error})");
                     persist_daemon_startup_failure_state(
                         &state_file,
-                        &app,
-                        vpn_enabled,
-                        expected_peers,
-                        &tunnel_runtime,
-                        &[],
-                        DaemonStartupFailureContext {
+                        DaemonRuntimeStateInput {
+                            app: &app,
+                            vpn_enabled,
+                            vpn_active: false,
+                            expected_peers,
+                            tunnel_runtime: &tunnel_runtime,
+                            fips_peer_statuses: &[],
+                            fips_relay_statuses: &[],
+                            fips_endpoint_peers: &[],
+                            advertised_routes_by_participant: &advertised_routes,
+                            vpn_status: &vpn_status,
                             network: &network,
                             port_mapping: &port_mapping,
                         },
-                        &format!("FIPS private mesh config failed ({error})"),
                     );
                     return Err(error);
                 }
@@ -157,18 +165,24 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     Err(error) => {
                         let network = network_snapshot.summary(network_changed_at, captive_portal);
                         let port_mapping = port_mapping_runtime.status();
+                        let advertised_routes = HashMap::new();
+                        let vpn_status = format!("FIPS private mesh startup failed ({error})");
                         persist_daemon_startup_failure_state(
                             &state_file,
-                            &app,
-                            vpn_enabled,
-                            expected_peers,
-                            &tunnel_runtime,
-                            &endpoint_peer_states,
-                            DaemonStartupFailureContext {
+                            DaemonRuntimeStateInput {
+                                app: &app,
+                                vpn_enabled,
+                                vpn_active: false,
+                                expected_peers,
+                                tunnel_runtime: &tunnel_runtime,
+                                fips_peer_statuses: &[],
+                                fips_relay_statuses: &[],
+                                fips_endpoint_peers: &endpoint_peer_states,
+                                advertised_routes_by_participant: &advertised_routes,
+                                vpn_status: &vpn_status,
                                 network: &network,
                                 port_mapping: &port_mapping,
                             },
-                            &format!("FIPS private mesh startup failed ({error})"),
                         );
                         return Err(error);
                     }
@@ -233,22 +247,24 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let fips_endpoint_peer_states =
         current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature);
     let fips_advertised_routes = current_fips_advertised_routes!(fips_tunnel_runtime, &app);
+    let network = network_snapshot.summary(network_changed_at, captive_portal);
+    let port_mapping = port_mapping_runtime.status();
     write_daemon_state(
         &state_file,
-        &build_daemon_runtime_state(
-            &app,
+        &build_daemon_runtime_state(DaemonRuntimeStateInput {
+            app: &app,
             vpn_enabled,
-            daemon_vpn_active(vpn_enabled, expected_peers),
+            vpn_active: daemon_vpn_active(vpn_enabled, expected_peers),
             expected_peers,
-            &tunnel_runtime,
-            &fips_peer_statuses,
-            &fips_relay_statuses,
-            &fips_endpoint_peer_states,
-            &fips_advertised_routes,
-            &vpn_status,
-            &network_snapshot.summary(network_changed_at, captive_portal),
-            &port_mapping_runtime.status(),
-        ),
+            tunnel_runtime: &tunnel_runtime,
+            fips_peer_statuses: &fips_peer_statuses,
+            fips_relay_statuses: &fips_relay_statuses,
+            fips_endpoint_peers: &fips_endpoint_peer_states,
+            advertised_routes_by_participant: &fips_advertised_routes,
+            vpn_status: &vpn_status,
+            network: &network,
+            port_mapping: &port_mapping,
+        }),
     )?;
     let mut last_state_persisted_at = Instant::now();
     let daemon_state_persist_interval = Duration::from_secs(DAEMON_STATE_PERSIST_INTERVAL_SECS);
@@ -1105,20 +1121,32 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             );
                         }
                     }
+                    let fips_peer_statuses = current_fips_peer_statuses!(fips_tunnel_runtime);
+                    let fips_relay_statuses =
+                        current_fips_relay_statuses!(&fips_tunnel_runtime).await;
+                    let fips_endpoint_peer_states =
+                        current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature);
+                    let fips_advertised_routes =
+                        current_fips_advertised_routes!(fips_tunnel_runtime, &app);
+                    let network = network_snapshot.summary(network_changed_at, captive_portal);
+                    let port_mapping = port_mapping_runtime.status();
                     if persist_daemon_runtime_and_cleanup_state_async(
                         &state_file,
                         &config_path,
-                        &app,
-                        vpn_enabled,
-                        expected_peers,
-                        &tunnel_runtime,
-                        &current_fips_peer_statuses!(fips_tunnel_runtime),
-                        &current_fips_relay_statuses!(&fips_tunnel_runtime).await,
-                        &current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature),
-                        &current_fips_advertised_routes!(fips_tunnel_runtime, &app),
-                        &vpn_status,
-                        &network_snapshot.summary(network_changed_at, captive_portal),
-                        &port_mapping_runtime.status(),
+                        DaemonRuntimeStateInput {
+                            app: &app,
+                            vpn_enabled,
+                            vpn_active: daemon_vpn_active(vpn_enabled, expected_peers),
+                            expected_peers,
+                            tunnel_runtime: &tunnel_runtime,
+                            fips_peer_statuses: &fips_peer_statuses,
+                            fips_relay_statuses: &fips_relay_statuses,
+                            fips_endpoint_peers: &fips_endpoint_peer_states,
+                            advertised_routes_by_participant: &fips_advertised_routes,
+                            vpn_status: &vpn_status,
+                            network: &network,
+                            port_mapping: &port_mapping,
+                        },
                     )
                     .await
                     {
@@ -1148,25 +1176,38 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 {
                     vpn_status = "VPN on".to_string();
                 }
-                if last_state_persisted_at.elapsed() >= daemon_state_persist_interval
-                    && persist_daemon_runtime_and_cleanup_state_async(
+                if last_state_persisted_at.elapsed() >= daemon_state_persist_interval {
+                    let fips_peer_statuses = current_fips_peer_statuses!(fips_tunnel_runtime);
+                    let fips_relay_statuses =
+                        current_fips_relay_statuses!(&fips_tunnel_runtime).await;
+                    let fips_endpoint_peer_states =
+                        current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature);
+                    let fips_advertised_routes =
+                        current_fips_advertised_routes!(fips_tunnel_runtime, &app);
+                    let network = network_snapshot.summary(network_changed_at, captive_portal);
+                    let port_mapping = port_mapping_runtime.status();
+                    if persist_daemon_runtime_and_cleanup_state_async(
                         &state_file,
                         &config_path,
-                        &app,
-                        vpn_enabled,
-                        expected_peers,
-                        &tunnel_runtime,
-                        &current_fips_peer_statuses!(fips_tunnel_runtime),
-                        &current_fips_relay_statuses!(&fips_tunnel_runtime).await,
-                        &current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature),
-                        &current_fips_advertised_routes!(fips_tunnel_runtime, &app),
-                        &vpn_status,
-                        &network_snapshot.summary(network_changed_at, captive_portal),
-                        &port_mapping_runtime.status(),
+                        DaemonRuntimeStateInput {
+                            app: &app,
+                            vpn_enabled,
+                            vpn_active: daemon_vpn_active(vpn_enabled, expected_peers),
+                            expected_peers,
+                            tunnel_runtime: &tunnel_runtime,
+                            fips_peer_statuses: &fips_peer_statuses,
+                            fips_relay_statuses: &fips_relay_statuses,
+                            fips_endpoint_peers: &fips_endpoint_peer_states,
+                            advertised_routes_by_participant: &fips_advertised_routes,
+                            vpn_status: &vpn_status,
+                            network: &network,
+                            port_mapping: &port_mapping,
+                        },
                     )
                     .await
-                {
-                    last_state_persisted_at = Instant::now();
+                    {
+                        last_state_persisted_at = Instant::now();
+                    }
                 }
             }
         }

@@ -4,20 +4,20 @@ fn daemon_runtime_state_tracks_live_endpoint_and_listen_port() {
     config.node.endpoint = "198.51.100.10:51820".to_string();
     let mut tunnel_runtime = crate::CliTunnelRuntime::new("utun100");
     tunnel_runtime.active_listen_port = Some(53083);
-    let state = crate::build_daemon_runtime_state(
-        &config,
-        true,
-        true,
-        0,
-        &tunnel_runtime,
-        &[],
-        &[],
-        &[],
-        &std::collections::HashMap::new(),
-        "Connected",
-        &nostr_vpn_core::diagnostics::NetworkSummary::default(),
-        &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
-    );
+    let state = crate::build_daemon_runtime_state(crate::DaemonRuntimeStateInput {
+        app: &config,
+        vpn_enabled: true,
+        vpn_active: true,
+        expected_peers: 0,
+        tunnel_runtime: &tunnel_runtime,
+        fips_peer_statuses: &[],
+        fips_relay_statuses: &[],
+        fips_endpoint_peers: &[],
+        advertised_routes_by_participant: &std::collections::HashMap::new(),
+        vpn_status: "Connected",
+        network: &nostr_vpn_core::diagnostics::NetworkSummary::default(),
+        port_mapping: &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
+    });
     let daemon = crate::DaemonStatus {
         running: true,
         pid: Some(1),

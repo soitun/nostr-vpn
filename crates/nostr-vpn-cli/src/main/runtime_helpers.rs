@@ -457,28 +457,46 @@ async fn refresh_fips_tunnel_config(
     own_pubkey: Option<&str>,
 ) -> Result<()> {
     let config = fips_tunnel_config_from_app_async(
-        app,
-        config_path,
-        network_id,
-        runtime.iface().to_string(),
-        underlay_interface_mtu,
-        own_pubkey,
-        None,
-        &runtime.peer_endpoint_hints(),
+        FipsTunnelConfigInput {
+            app,
+            config_path,
+            network_id,
+            iface: runtime.iface().to_string(),
+            underlay_interface_mtu,
+            own_pubkey,
+            recent_peers: None,
+            live_peer_endpoints: &runtime.peer_endpoint_hints(),
+        },
     )
     .await?;
     runtime.apply_config(config).await
 }
+
+pub(crate) struct FipsTunnelConfigInput<'a> {
+    pub(crate) app: &'a AppConfig,
+    pub(crate) config_path: &'a Path,
+    pub(crate) network_id: &'a str,
+    pub(crate) iface: String,
+    pub(crate) underlay_interface_mtu: Option<u32>,
+    pub(crate) own_pubkey: Option<&'a str>,
+    pub(crate) recent_peers: Option<&'a nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
+    pub(crate) live_peer_endpoints: &'a [(String, Vec<(String, u64)>)],
+}
+
 fn fips_tunnel_config_from_app(
-    app: &AppConfig,
-    config_path: &Path,
-    network_id: &str,
-    iface: impl Into<String>,
-    underlay_interface_mtu: Option<u32>,
-    own_pubkey: Option<&str>,
-    recent_peers: Option<&nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
-    live_peer_endpoints: &[(String, Vec<(String, u64)>)],
+    input: FipsTunnelConfigInput<'_>,
 ) -> Result<crate::fips_private_mesh::FipsPrivateTunnelConfig> {
+    let FipsTunnelConfigInput {
+        app,
+        config_path,
+        network_id,
+        iface,
+        underlay_interface_mtu,
+        own_pubkey,
+        recent_peers,
+        live_peer_endpoints,
+    } = input;
+
     let mut config = crate::fips_private_mesh::FipsPrivateTunnelConfig::from_app(
         app,
         network_id,
@@ -572,34 +590,28 @@ fn role_sort_key(role: crate::fips_private_mesh::FipsPaidRouteAccountingRole) ->
     }
 }
 async fn fips_tunnel_config_from_app_async(
-    app: &AppConfig,
-    config_path: &Path,
-    network_id: &str,
-    iface: impl Into<String>,
-    underlay_interface_mtu: Option<u32>,
-    own_pubkey: Option<&str>,
-    recent_peers: Option<&nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
-    live_peer_endpoints: &[(String, Vec<(String, u64)>)],
+    input: FipsTunnelConfigInput<'_>,
 ) -> Result<crate::fips_private_mesh::FipsPrivateTunnelConfig> {
-    let app = app.clone();
-    let config_path = config_path.to_path_buf();
-    let network_id = network_id.to_string();
-    let iface = iface.into();
-    let own_pubkey = own_pubkey.map(ToOwned::to_owned);
-    let recent_peers = recent_peers.cloned();
-    let live_peer_endpoints = live_peer_endpoints.to_vec();
+    let app = input.app.clone();
+    let config_path = input.config_path.to_path_buf();
+    let network_id = input.network_id.to_string();
+    let iface = input.iface;
+    let underlay_interface_mtu = input.underlay_interface_mtu;
+    let own_pubkey = input.own_pubkey.map(ToOwned::to_owned);
+    let recent_peers = input.recent_peers.cloned();
+    let live_peer_endpoints = input.live_peer_endpoints.to_vec();
 
     tokio::task::spawn_blocking(move || {
-        fips_tunnel_config_from_app(
-            &app,
-            &config_path,
-            &network_id,
+        fips_tunnel_config_from_app(FipsTunnelConfigInput {
+            app: &app,
+            config_path: &config_path,
+            network_id: &network_id,
             iface,
             underlay_interface_mtu,
-            own_pubkey.as_deref(),
-            recent_peers.as_ref(),
-            &live_peer_endpoints,
-        )
+            own_pubkey: own_pubkey.as_deref(),
+            recent_peers: recent_peers.as_ref(),
+            live_peer_endpoints: &live_peer_endpoints,
+        })
     })
     .await
     .context("FIPS tunnel config task failed")?
@@ -663,14 +675,16 @@ async fn sync_fips_private_runtime(
         .map(|runtime| runtime.peer_endpoint_hints())
         .unwrap_or_default();
     let config = fips_tunnel_config_from_app_async(
-        context.app,
-        context.config_path,
-        context.network_id,
-        config_iface,
-        context.underlay_interface_mtu,
-        context.own_pubkey,
-        None,
-        &live_peer_endpoints,
+        FipsTunnelConfigInput {
+            app: context.app,
+            config_path: context.config_path,
+            network_id: context.network_id,
+            iface: config_iface,
+            underlay_interface_mtu: context.underlay_interface_mtu,
+            own_pubkey: context.own_pubkey,
+            recent_peers: None,
+            live_peer_endpoints: &live_peer_endpoints,
+        },
     )
     .await?;
 

@@ -361,32 +361,37 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
     let mut config = AppConfig::generated();
     config.networks[0].devices = vec!["11".repeat(32)];
     let tunnel_runtime = crate::CliTunnelRuntime::new("utun100");
+    let relays = [crate::DaemonRelayState {
+        url: "wss://relay.example".to_string(),
+        status: "connected".to_string(),
+    }];
+    let fips_endpoint_peers = [crate::DaemonFipsEndpointPeerState {
+        npub: "npub1configured".to_string(),
+        addresses: vec![crate::DaemonFipsEndpointPeerAddressState {
+            addr: "192.0.2.10:51820".to_string(),
+            seen_at_ms: None,
+            priority: 100,
+        }],
+        auto_reconnect: true,
+        discovery_fallback_transit: false,
+    }];
 
     crate::persist_daemon_runtime_state(
         &state_path,
-        &config,
-        true,
-        1,
-        &tunnel_runtime,
-        &[],
-        &[crate::DaemonRelayState {
-            url: "wss://relay.example".to_string(),
-            status: "connected".to_string(),
-        }],
-        &[crate::DaemonFipsEndpointPeerState {
-            npub: "npub1configured".to_string(),
-            addresses: vec![crate::DaemonFipsEndpointPeerAddressState {
-                addr: "192.0.2.10:51820".to_string(),
-                seen_at_ms: None,
-                priority: 100,
-            }],
-            auto_reconnect: true,
-            discovery_fallback_transit: false,
-        }],
-        &std::collections::HashMap::new(),
-        "VPN on",
-        &nostr_vpn_core::diagnostics::NetworkSummary::default(),
-        &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
+        crate::DaemonRuntimeStateInput {
+            app: &config,
+            vpn_enabled: true,
+            vpn_active: true,
+            expected_peers: 1,
+            tunnel_runtime: &tunnel_runtime,
+            fips_peer_statuses: &[],
+            fips_relay_statuses: &relays,
+            fips_endpoint_peers: &fips_endpoint_peers,
+            advertised_routes_by_participant: &std::collections::HashMap::new(),
+            vpn_status: "VPN on",
+            network: &nostr_vpn_core::diagnostics::NetworkSummary::default(),
+            port_mapping: &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
+        },
     )
     .expect("persist daemon runtime state");
 
@@ -410,20 +415,20 @@ fn fips_runtime_state_is_ready_without_waiting_for_every_peer() {
     config.networks[0].devices = vec!["11".repeat(32), "22".repeat(32)];
     let tunnel_runtime = crate::CliTunnelRuntime::new("utun100");
 
-    let state = crate::build_daemon_runtime_state(
-        &config,
-        true,
-        true,
-        2,
-        &tunnel_runtime,
-        &[],
-        &[],
-        &[],
-        &std::collections::HashMap::new(),
-        "VPN on",
-        &nostr_vpn_core::diagnostics::NetworkSummary::default(),
-        &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
-    );
+    let state = crate::build_daemon_runtime_state(crate::DaemonRuntimeStateInput {
+        app: &config,
+        vpn_enabled: true,
+        vpn_active: true,
+        expected_peers: 2,
+        tunnel_runtime: &tunnel_runtime,
+        fips_peer_statuses: &[],
+        fips_relay_statuses: &[],
+        fips_endpoint_peers: &[],
+        advertised_routes_by_participant: &std::collections::HashMap::new(),
+        vpn_status: "VPN on",
+        network: &nostr_vpn_core::diagnostics::NetworkSummary::default(),
+        port_mapping: &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
+    });
 
     assert_eq!(state.connected_peer_count, 0);
     assert!(state.vpn_enabled);
@@ -443,13 +448,7 @@ fn fips_runtime_state_rejects_far_future_peer_timestamps() {
         .expect("clock is after epoch")
         .as_secs();
 
-    let state = crate::build_daemon_runtime_state(
-        &config,
-        true,
-        true,
-        1,
-        &tunnel_runtime,
-        &[MeshPeerStatus {
+    let fips_peer_statuses = [MeshPeerStatus {
             pubkey: peer_pubkey,
             connected: false,
             endpoint_npub: "npub1endpoint".to_string(),
@@ -480,14 +479,21 @@ fn fips_runtime_state_rejects_far_future_peer_timestamps() {
             tx_bytes: 0,
             rx_bytes: 0,
             error: Some("fips link pending".to_string()),
-        }],
-        &[],
-        &[],
-        &std::collections::HashMap::new(),
-        "VPN on",
-        &nostr_vpn_core::diagnostics::NetworkSummary::default(),
-        &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
-    );
+        }];
+    let state = crate::build_daemon_runtime_state(crate::DaemonRuntimeStateInput {
+        app: &config,
+        vpn_enabled: true,
+        vpn_active: true,
+        expected_peers: 1,
+        tunnel_runtime: &tunnel_runtime,
+        fips_peer_statuses: &fips_peer_statuses,
+        fips_relay_statuses: &[],
+        fips_endpoint_peers: &[],
+        advertised_routes_by_participant: &std::collections::HashMap::new(),
+        vpn_status: "VPN on",
+        network: &nostr_vpn_core::diagnostics::NetworkSummary::default(),
+        port_mapping: &nostr_vpn_core::diagnostics::PortMappingStatus::default(),
+    });
 
     assert_eq!(state.peers.len(), 1);
     assert_eq!(state.peers[0].last_mesh_seen_at, 0);

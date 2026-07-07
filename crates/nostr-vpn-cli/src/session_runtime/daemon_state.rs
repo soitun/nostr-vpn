@@ -1,33 +1,24 @@
-struct DaemonStartupFailureContext<'a> {
-    network: &'a NetworkSummary,
-    port_mapping: &'a PortMappingStatus,
+#[derive(Clone, Copy)]
+pub(crate) struct DaemonRuntimeStateInput<'a> {
+    pub(crate) app: &'a AppConfig,
+    pub(crate) vpn_enabled: bool,
+    pub(crate) vpn_active: bool,
+    pub(crate) expected_peers: usize,
+    pub(crate) tunnel_runtime: &'a CliTunnelRuntime,
+    pub(crate) fips_peer_statuses: &'a [MeshPeerStatus],
+    pub(crate) fips_relay_statuses: &'a [DaemonRelayState],
+    pub(crate) fips_endpoint_peers: &'a [DaemonFipsEndpointPeerState],
+    pub(crate) advertised_routes_by_participant: &'a HashMap<String, Vec<String>>,
+    pub(crate) vpn_status: &'a str,
+    pub(crate) network: &'a NetworkSummary,
+    pub(crate) port_mapping: &'a PortMappingStatus,
 }
 
 fn persist_daemon_startup_failure_state(
     state_file: &Path,
-    app: &AppConfig,
-    vpn_enabled: bool,
-    expected_peers: usize,
-    tunnel_runtime: &CliTunnelRuntime,
-    fips_endpoint_peers: &[DaemonFipsEndpointPeerState],
-    context: DaemonStartupFailureContext<'_>,
-    vpn_status: &str,
+    input: DaemonRuntimeStateInput<'_>,
 ) {
-    let advertised_routes = HashMap::<String, Vec<String>>::new();
-    let state = build_daemon_runtime_state(
-        app,
-        vpn_enabled,
-        false,
-        expected_peers,
-        tunnel_runtime,
-        &[],
-        &[],
-        fips_endpoint_peers,
-        &advertised_routes,
-        vpn_status,
-        context.network,
-        context.port_mapping,
-    );
+    let state = build_daemon_runtime_state(input);
     if let Err(error) = write_daemon_state(state_file, &state) {
         eprintln!("daemon: failed to persist startup failure state: {error}");
     }
@@ -141,21 +132,22 @@ pub(crate) fn set_windows_service_status(
         .with_context(|| format!("failed to update Windows service status to {state:?}"))
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn build_daemon_runtime_state(
-    app: &AppConfig,
-    vpn_enabled: bool,
-    vpn_active: bool,
-    expected_peers: usize,
-    tunnel_runtime: &CliTunnelRuntime,
-    fips_peer_statuses: &[MeshPeerStatus],
-    fips_relay_statuses: &[DaemonRelayState],
-    fips_endpoint_peers: &[DaemonFipsEndpointPeerState],
-    advertised_routes_by_participant: &HashMap<String, Vec<String>>,
-    vpn_status: &str,
-    network: &NetworkSummary,
-    port_mapping: &PortMappingStatus,
-) -> DaemonRuntimeState {
+pub(crate) fn build_daemon_runtime_state(input: DaemonRuntimeStateInput<'_>) -> DaemonRuntimeState {
+    let DaemonRuntimeStateInput {
+        app,
+        vpn_enabled,
+        vpn_active,
+        expected_peers,
+        tunnel_runtime,
+        fips_peer_statuses,
+        fips_relay_statuses,
+        fips_endpoint_peers,
+        advertised_routes_by_participant,
+        vpn_status,
+        network,
+        port_mapping,
+    } = input;
+
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
     let now = unix_timestamp();
     let listen_port = tunnel_runtime.listen_port(app.node.listen_port);
@@ -324,125 +316,69 @@ pub(crate) fn build_daemon_runtime_state(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn persist_daemon_runtime_state(
     path: &Path,
-    app: &AppConfig,
-    vpn_enabled: bool,
-    expected_peers: usize,
-    tunnel_runtime: &CliTunnelRuntime,
-    fips_peer_statuses: &[MeshPeerStatus],
-    fips_relay_statuses: &[DaemonRelayState],
-    fips_endpoint_peers: &[DaemonFipsEndpointPeerState],
-    advertised_routes_by_participant: &HashMap<String, Vec<String>>,
-    vpn_status: &str,
-    network: &NetworkSummary,
-    port_mapping: &PortMappingStatus,
+    input: DaemonRuntimeStateInput<'_>,
 ) -> Result<()> {
-    write_daemon_state(
-        path,
-        &build_daemon_runtime_state(
-            app,
-            vpn_enabled,
-            daemon_vpn_active(vpn_enabled, expected_peers),
-            expected_peers,
-            tunnel_runtime,
-            fips_peer_statuses,
-            fips_relay_statuses,
-            fips_endpoint_peers,
-            advertised_routes_by_participant,
-            vpn_status,
-            network,
-            port_mapping,
-        ),
-    )
+    write_daemon_state(path, &build_daemon_runtime_state(input))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn persist_daemon_runtime_and_cleanup_state(
     state_file: &Path,
     config_path: &Path,
-    app: &AppConfig,
-    vpn_enabled: bool,
-    expected_peers: usize,
-    tunnel_runtime: &CliTunnelRuntime,
-    fips_peer_statuses: &[MeshPeerStatus],
-    fips_relay_statuses: &[DaemonRelayState],
-    fips_endpoint_peers: &[DaemonFipsEndpointPeerState],
-    advertised_routes_by_participant: &HashMap<String, Vec<String>>,
-    vpn_status: &str,
-    network: &NetworkSummary,
-    port_mapping: &PortMappingStatus,
+    input: DaemonRuntimeStateInput<'_>,
 ) -> bool {
-    let persisted = match persist_daemon_runtime_state(
-        state_file,
-        app,
-        vpn_enabled,
-        expected_peers,
-        tunnel_runtime,
-        fips_peer_statuses,
-        fips_relay_statuses,
-        fips_endpoint_peers,
-        advertised_routes_by_participant,
-        vpn_status,
-        network,
-        port_mapping,
-    ) {
+    let persisted = match persist_daemon_runtime_state(state_file, input) {
         Ok(()) => true,
         Err(error) => {
             eprintln!("daemon: failed to persist runtime state: {error}");
             false
         }
     };
-    if let Err(error) = persist_daemon_network_cleanup_state(config_path, tunnel_runtime) {
+    if let Err(error) = persist_daemon_network_cleanup_state(config_path, input.tunnel_runtime) {
         eprintln!("daemon: failed to persist network cleanup state: {error}");
     }
     persisted
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn persist_daemon_runtime_and_cleanup_state_async(
     state_file: &Path,
     config_path: &Path,
-    app: &AppConfig,
-    vpn_enabled: bool,
-    expected_peers: usize,
-    tunnel_runtime: &CliTunnelRuntime,
-    fips_peer_statuses: &[MeshPeerStatus],
-    fips_relay_statuses: &[DaemonRelayState],
-    fips_endpoint_peers: &[DaemonFipsEndpointPeerState],
-    advertised_routes_by_participant: &HashMap<String, Vec<String>>,
-    vpn_status: &str,
-    network: &NetworkSummary,
-    port_mapping: &PortMappingStatus,
+    input: DaemonRuntimeStateInput<'_>,
 ) -> bool {
     let state_file = state_file.to_path_buf();
     let config_path = config_path.to_path_buf();
-    let app = app.clone();
-    let tunnel_runtime = tunnel_runtime.clone();
-    let fips_peer_statuses = fips_peer_statuses.to_vec();
-    let fips_relay_statuses = fips_relay_statuses.to_vec();
-    let fips_endpoint_peers = fips_endpoint_peers.to_vec();
-    let advertised_routes_by_participant = advertised_routes_by_participant.clone();
-    let vpn_status = vpn_status.to_string();
-    let network = network.clone();
-    let port_mapping = port_mapping.clone();
+    let app = input.app.clone();
+    let vpn_enabled = input.vpn_enabled;
+    let vpn_active = input.vpn_active;
+    let expected_peers = input.expected_peers;
+    let tunnel_runtime = input.tunnel_runtime.clone();
+    let fips_peer_statuses = input.fips_peer_statuses.to_vec();
+    let fips_relay_statuses = input.fips_relay_statuses.to_vec();
+    let fips_endpoint_peers = input.fips_endpoint_peers.to_vec();
+    let advertised_routes_by_participant = input.advertised_routes_by_participant.clone();
+    let vpn_status = input.vpn_status.to_string();
+    let network = input.network.clone();
+    let port_mapping = input.port_mapping.clone();
 
     match tokio::task::spawn_blocking(move || {
         persist_daemon_runtime_and_cleanup_state(
             &state_file,
             &config_path,
-            &app,
-            vpn_enabled,
-            expected_peers,
-            &tunnel_runtime,
-            &fips_peer_statuses,
-            &fips_relay_statuses,
-            &fips_endpoint_peers,
-            &advertised_routes_by_participant,
-            &vpn_status,
-            &network,
-            &port_mapping,
+            DaemonRuntimeStateInput {
+                app: &app,
+                vpn_enabled,
+                vpn_active,
+                expected_peers,
+                tunnel_runtime: &tunnel_runtime,
+                fips_peer_statuses: &fips_peer_statuses,
+                fips_relay_statuses: &fips_relay_statuses,
+                fips_endpoint_peers: &fips_endpoint_peers,
+                advertised_routes_by_participant: &advertised_routes_by_participant,
+                vpn_status: &vpn_status,
+                network: &network,
+                port_mapping: &port_mapping,
+            },
         )
     })
     .await

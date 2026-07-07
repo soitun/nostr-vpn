@@ -393,14 +393,16 @@ async fn refresh_fips_tunnel_runtime_after_link_event(
     // re-earn direct paths from configured hints and fresh discovery.
     let live_peer_endpoints = Vec::new();
     let config = fips_tunnel_config_from_app_async(
-        context.app,
-        context.config_path,
-        context.network_id,
-        config_iface,
-        context.underlay_interface_mtu,
-        context.own_pubkey,
-        context.recent_peers,
-        &live_peer_endpoints,
+        FipsTunnelConfigInput {
+            app: context.app,
+            config_path: context.config_path,
+            network_id: context.network_id,
+            iface: config_iface,
+            underlay_interface_mtu: context.underlay_interface_mtu,
+            own_pubkey: context.own_pubkey,
+            recent_peers: context.recent_peers,
+            live_peer_endpoints: &live_peer_endpoints,
+        },
     )
     .await?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
@@ -478,14 +480,16 @@ async fn refresh_fips_tunnel_runtime_peer_paths_in_place(
 ) -> Result<()> {
     let live_peer_endpoints = current.peer_endpoint_hints();
     let config = fips_tunnel_config_from_app_async(
-        context.app,
-        context.config_path,
-        context.network_id,
-        current.iface().to_string(),
-        context.underlay_interface_mtu,
-        context.own_pubkey,
-        context.recent_peers,
-        &live_peer_endpoints,
+        FipsTunnelConfigInput {
+            app: context.app,
+            config_path: context.config_path,
+            network_id: context.network_id,
+            iface: current.iface().to_string(),
+            underlay_interface_mtu: context.underlay_interface_mtu,
+            own_pubkey: context.own_pubkey,
+            recent_peers: context.recent_peers,
+            live_peer_endpoints: &live_peer_endpoints,
+        },
     )
     .await?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
