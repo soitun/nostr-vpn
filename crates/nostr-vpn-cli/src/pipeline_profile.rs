@@ -270,13 +270,6 @@ pub(crate) fn increment_counter_by(counter: Counter, amount: u64) {
     }
 }
 
-#[cfg_attr(target_os = "windows", allow(dead_code))]
-pub(crate) fn max_counter(counter: Counter, value: u64) {
-    if value > 0 && enabled() {
-        COUNTERS[counter as usize].fetch_max(value, Relaxed);
-    }
-}
-
 pub(crate) fn record_mesh_send_bulk_turn(backlog_batches: usize, current_batch_packets: usize) {
     if !enabled() {
         return;
@@ -307,7 +300,7 @@ pub(crate) fn record_tun_read_batch(packets: usize, bytes: usize, max_batch: usi
     }
 }
 
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg(target_os = "linux")]
 pub(crate) fn record_tun_read_vnet_gso_split(segments: usize, segment_bytes: usize) {
     if segments == 0 || !enabled() {
         return;
@@ -356,11 +349,6 @@ pub(crate) fn record_mesh_send_batch(
     }
 }
 
-#[cfg_attr(target_os = "windows", allow(dead_code))]
-pub(crate) fn record_tun_write_packet(bytes: usize) {
-    record_tun_write_packets(1, bytes);
-}
-
 pub(crate) fn record_tun_write_packets(packets: usize, bytes: usize) {
     if packets == 0 || !enabled() {
         return;
@@ -386,7 +374,7 @@ pub(crate) fn record_tun_write_vnet_gro_vectored_frame(segments: usize, bytes: u
     increment_counter_by(Counter::TunWriteVnetGroVectoredBytes, bytes as u64);
 }
 
-#[cfg_attr(target_os = "windows", allow(dead_code))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub(crate) fn record_tun_write_would_block() {
     increment_counter_by(Counter::TunWriteWouldBlock, 1);
 }
@@ -404,7 +392,10 @@ pub(crate) fn record_direct_endpoint_sink_batch(
     increment_counter_by(Counter::DirectEndpointSinkBatches, 1);
     increment_counter_by(Counter::DirectEndpointSinkRuns, runs as u64);
     increment_counter_by(Counter::DirectEndpointSinkPackets, packets as u64);
-    max_counter(Counter::DirectEndpointSinkMaxQueueDepth, queue_depth as u64);
+    if queue_depth > 0 {
+        COUNTERS[Counter::DirectEndpointSinkMaxQueueDepth as usize]
+            .fetch_max(queue_depth as u64, Relaxed);
+    }
     if waiting_consumer {
         increment_counter_by(Counter::DirectEndpointSinkWaitingBatches, 1);
         increment_counter_by(Counter::DirectEndpointSinkWaitingPackets, packets as u64);

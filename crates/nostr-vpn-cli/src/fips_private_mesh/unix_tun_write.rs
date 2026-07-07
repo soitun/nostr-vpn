@@ -52,7 +52,7 @@ fn write_packet_to_tun_blocking(
         }
         match raw_write_packet_to_tun(&fd, packet, address_family) {
             Ok(()) => {
-                crate::pipeline_profile::record_tun_write_packet(packet.len());
+                crate::pipeline_profile::record_tun_write_packets(1, packet.len());
                 crate::pipeline_profile::record_tun_write_frame(packet.len());
                 return;
             }
