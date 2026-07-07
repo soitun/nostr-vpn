@@ -122,8 +122,7 @@
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
         events.clear();
         loop {
-            drain_direct_endpoint_mesh_events(runtime, limit).await?;
-            if pop_direct_endpoint_mesh_events_into(runtime, events, limit)? > 0 {
+            if drain_direct_endpoint_mesh_events_into(runtime, events, limit).await? > 0 {
                 return Ok(Some(events.len()));
             }
 
@@ -169,11 +168,12 @@
         Ok(outcome.event)
     }
 
-    async fn drain_direct_endpoint_mesh_events(
+    async fn drain_direct_endpoint_mesh_events_into(
         runtime: &FipsPrivateMeshRuntime,
+        events: &mut Vec<FipsPrivateMeshEvent>,
         limit: usize,
     ) -> anyhow::Result<usize> {
-        let mut events = Vec::new();
+        let initial_len = events.len();
         while events.len() < limit {
             let remaining = limit - events.len();
             let runs = match runtime.direct_endpoint_rx.try_recv_limited(remaining) {
@@ -185,20 +185,12 @@
                 runtime,
                 runs,
                 Some(unix_timestamp()),
-                &mut events,
+                events,
             )
             .await?;
         }
 
-        let drained = events.len();
-        if drained > 0 {
-            runtime
-                .direct_endpoint_pending_events
-                .lock()
-                .map_err(|_| anyhow::anyhow!("FIPS direct endpoint event queue lock poisoned"))?
-                .extend(events);
-        }
-        Ok(drained)
+        Ok(events.len().saturating_sub(initial_len))
     }
 
     async fn direct_endpoint_packet_runs_to_mesh_events(
@@ -222,24 +214,6 @@
             }
         }
         Ok(())
-    }
-
-    fn pop_direct_endpoint_mesh_events_into(
-        runtime: &FipsPrivateMeshRuntime,
-        events: &mut Vec<FipsPrivateMeshEvent>,
-        limit: usize,
-    ) -> anyhow::Result<usize> {
-        let mut pending = runtime
-            .direct_endpoint_pending_events
-            .lock()
-            .map_err(|_| anyhow::anyhow!("FIPS direct endpoint event queue lock poisoned"))?;
-        while events.len() < limit {
-            let Some(event) = pending.pop_front() else {
-                break;
-            };
-            events.push(event);
-        }
-        Ok(events.len())
     }
 
     #[test]

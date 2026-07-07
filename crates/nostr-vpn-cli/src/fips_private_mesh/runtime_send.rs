@@ -42,11 +42,6 @@ impl FipsPrivateMeshRuntime {
             endpoint,
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             direct_endpoint_rx,
-            #[cfg(all(
-                any(target_os = "linux", target_os = "macos", target_os = "windows"),
-                test
-            ))]
-            direct_endpoint_pending_events: Mutex::new(VecDeque::new()),
             local_tunnel_ips,
             mesh: ArcSwap::from_pointee(mesh),
             mesh_generation: AtomicU64::new(0),
