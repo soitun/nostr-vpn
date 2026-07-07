@@ -410,12 +410,6 @@ impl FipsDataRxBatchNotes {
         self.entries.push(note);
     }
 
-    fn append(&mut self, other: &mut Self) {
-        for note in other.drain() {
-            self.push(note);
-        }
-    }
-
     fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
