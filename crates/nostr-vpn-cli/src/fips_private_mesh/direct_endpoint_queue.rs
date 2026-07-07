@@ -49,10 +49,6 @@ fn fips_direct_endpoint_queue_pair() -> (FipsDirectEndpointDataSink, FipsDirectE
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 impl FipsDirectEndpointQueuedRuns {
-    fn new(runs: Vec<FipsEndpointDirectPacketRun>) -> Self {
-        Self::with_enqueued_at(runs, crate::pipeline_profile::stamp())
-    }
-
     fn with_enqueued_at(
         runs: Vec<FipsEndpointDirectPacketRun>,
         enqueued_at: Option<Instant>,
@@ -91,7 +87,8 @@ impl FipsDirectEndpointQueue {
         &self,
         runs: Vec<FipsEndpointDirectPacketRun>,
     ) -> Result<(), FipsEndpointDirectDeliveryError> {
-        let mut queued = FipsDirectEndpointQueuedRuns::new(runs);
+        let mut queued =
+            FipsDirectEndpointQueuedRuns::with_enqueued_at(runs, crate::pipeline_profile::stamp());
         if queued.packets == 0 {
             return Ok(());
         }
