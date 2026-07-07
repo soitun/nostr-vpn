@@ -74,46 +74,29 @@
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
-    fn local_tun_pipeline_packets_are_partitioned_before_mesh_send() {
+    fn local_tun_pipeline_packets_are_detected_before_mesh_send() {
         let source = Ipv4Addr::new(10, 44, 10, 1);
         let local_destination = Ipv4Addr::new(10, 44, 10, 2);
         let mesh_destination = Ipv4Addr::new(10, 44, 22, 44);
-        let local_packet = ipv4_packet(source, local_destination);
-        let mesh_packet = ipv4_packet(source, mesh_destination);
         let mut local_tunnel_ips = HashSet::new();
         local_tunnel_ips.insert(IpAddr::V4(local_destination));
 
-        let mut packets = vec![
-            TunPipelinePacket::new(local_packet.clone()),
-            TunPipelinePacket::new(mesh_packet.clone()),
-        ];
-        let mut local_packets = Vec::new();
-        let mut mesh_packets = Vec::new();
-        super::partition_local_tun_pipeline_packets(
+        let local_packet = TunPipelinePacket::new(ipv4_packet(source, local_destination));
+        let mesh_packet = TunPipelinePacket::new(ipv4_packet(source, mesh_destination));
+
+        assert!(super::tun_pipeline_packet_targets_local_tunnel(
             &local_tunnel_ips,
-            &mut packets,
-            &mut local_packets,
-            &mut mesh_packets,
-        );
-
-        assert!(packets.is_empty());
-        assert_eq!(local_packets.len(), 1);
-        assert_eq!(mesh_packets.len(), 1);
-        assert_eq!(local_packets[0].bytes, local_packet);
-        assert_eq!(mesh_packets[0].bytes, mesh_packet);
-
+            &local_packet
+        ));
+        assert!(!super::tun_pipeline_packet_targets_local_tunnel(
+            &local_tunnel_ips,
+            &mesh_packet
+        ));
         local_tunnel_ips.clear();
-        packets.push(TunPipelinePacket::new(mesh_packet.clone()));
-        super::partition_local_tun_pipeline_packets(
+        assert!(!super::tun_pipeline_packet_targets_local_tunnel(
             &local_tunnel_ips,
-            &mut packets,
-            &mut local_packets,
-            &mut mesh_packets,
-        );
-        assert!(packets.is_empty());
-        assert!(local_packets.is_empty());
-        assert_eq!(mesh_packets.len(), 1);
-        assert_eq!(mesh_packets[0].bytes, mesh_packet);
+            &local_packet
+        ));
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

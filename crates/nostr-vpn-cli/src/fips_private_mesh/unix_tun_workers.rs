@@ -10,8 +10,6 @@ fn spawn_tun_send_worker(
             let tun_fd = BorrowedTunFd::new(tun.as_raw_fd());
             let mut buf = vec![0_u8; tun.read_buffer_len()];
             let mut batch = Vec::with_capacity(FIPS_TUN_READ_BURST);
-            let mut local_packets = Vec::new();
-            let mut mesh_packets = Vec::with_capacity(FIPS_TUN_READ_BURST);
             let mut send_runs = Vec::new();
             let pipeline_profile_enabled = crate::pipeline_profile::enabled();
             while !thread_stop.load(Ordering::Acquire) {
@@ -88,8 +86,6 @@ fn spawn_tun_send_worker(
                         &mesh,
                         tun_fd,
                         &mut batch,
-                        &mut local_packets,
-                        &mut mesh_packets,
                         &mut send_runs,
                         &thread_stop,
                     );
@@ -195,26 +191,28 @@ fn send_mesh_packet_batch_blocking_or_log(
     mesh: &FipsPrivateMeshRuntime,
     tun_fd: BorrowedTunFd,
     packets: &mut TunPipelineBatch,
-    local_packets: &mut TunPipelineBatch,
-    mesh_packets: &mut TunPipelineBatch,
     send_runs: &mut Vec<FipsEndpointSendRun>,
     stop: &AtomicBool,
 ) {
     let packet_count = packets.len();
     crate::pipeline_profile::record_mesh_send_bulk_turn(0, packet_count);
     let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshSend);
-    partition_local_tun_pipeline_packets(
-        &mesh.local_tunnel_ips,
-        packets,
-        local_packets,
-        mesh_packets,
-    );
-    for packet in local_packets.drain(..) {
-        write_packet_to_tun_blocking(tun_fd, &packet.bytes, stop);
+    if !mesh.local_tunnel_ips.is_empty() {
+        packets.retain(|packet| {
+            if tun_pipeline_packet_targets_local_tunnel(&mesh.local_tunnel_ips, packet) {
+                write_packet_to_tun_blocking(tun_fd, &packet.bytes, stop);
+                false
+            } else {
+                true
+            }
+        });
     }
-    let mesh_packet_count = mesh_packets.len();
+    if packets.is_empty() {
+        return;
+    }
+    let mesh_packet_count = packets.len();
     if let Err(error) = mesh.blocking_send_tun_pipeline_packet_turn(
-        mesh_packets.drain(..),
+        packets.drain(..),
         mesh_packet_count,
         send_runs,
     ) {
@@ -223,29 +221,13 @@ fn send_mesh_packet_batch_blocking_or_log(
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn partition_local_tun_pipeline_packets(
+fn tun_pipeline_packet_targets_local_tunnel(
     local_tunnel_ips: &HashSet<IpAddr>,
-    packets: &mut TunPipelineBatch,
-    local_packets: &mut TunPipelineBatch,
-    mesh_packets: &mut TunPipelineBatch,
-) {
-    local_packets.clear();
-    mesh_packets.clear();
-    if local_tunnel_ips.is_empty() {
-        mesh_packets.append(packets);
-        return;
-    }
-
-    for packet in packets.drain(..) {
-        if packet
-            .destination
-            .is_some_and(|destination| local_tunnel_ips.contains(&destination))
-        {
-            local_packets.push(packet);
-        } else {
-            mesh_packets.push(packet);
-        }
-    }
+    packet: &TunPipelinePacket,
+) -> bool {
+    packet
+        .destination
+        .is_some_and(|destination| local_tunnel_ips.contains(&destination))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
