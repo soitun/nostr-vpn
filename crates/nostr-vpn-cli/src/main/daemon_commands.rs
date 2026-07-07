@@ -34,9 +34,11 @@ pub(crate) fn ensure_macos_connect_privileges(config_path: &Path) -> Result<()> 
 
 #[cfg(test)]
 mod daemon_commands_tests {
+    use std::fs;
     use std::path::Path;
     use std::sync::Mutex;
     use std::sync::atomic::Ordering;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn macos_connect_privilege_preflight_requires_admin_when_euid_is_not_root() {
@@ -71,6 +73,33 @@ mod daemon_commands_tests {
 
         super::TEST_MACOS_EUID_OVERRIDE
             .store(super::TEST_MACOS_EUID_SENTINEL, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn daemon_status_does_not_repair_network_state_when_daemon_is_stopped() {
+        let _guard = super::TEST_REPAIR_SAVED_NETWORK_STATE_CALLS_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("repair call test lock");
+        super::TEST_REPAIR_SAVED_NETWORK_STATE_CALLS.store(0, Ordering::Relaxed);
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-daemon-status-pure-test-{nonce}"));
+        fs::create_dir_all(&dir).expect("create temp dir");
+        let config_path = dir.join("config.toml");
+        fs::write(&config_path, "").expect("write config placeholder");
+
+        let status = super::daemon_status(&config_path).expect("daemon status should succeed");
+        assert!(!status.running);
+        assert_eq!(
+            super::TEST_REPAIR_SAVED_NETWORK_STATE_CALLS.load(Ordering::Relaxed),
+            0
+        );
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
 

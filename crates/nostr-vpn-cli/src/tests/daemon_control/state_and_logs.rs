@@ -349,29 +349,6 @@ fn daemon_status_ignores_and_quarantines_corrupt_daemon_state() {
 }
 
 #[test]
-fn daemon_status_does_not_repair_network_state_when_daemon_is_stopped() {
-    let _guard = crate::repair_saved_network_state_call_lock_for_test()
-        .lock()
-        .expect("repair call test lock");
-    crate::reset_repair_saved_network_state_call_count_for_test();
-
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock is after epoch")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("nvpn-daemon-status-pure-test-{nonce}"));
-    fs::create_dir_all(&dir).expect("create temp dir");
-    let config_path = dir.join("config.toml");
-    fs::write(&config_path, "").expect("write config placeholder");
-
-    let status = crate::daemon_status(&config_path).expect("daemon status should succeed");
-    assert!(!status.running);
-    assert_eq!(crate::repair_saved_network_state_call_count_for_test(), 0);
-
-    let _ = fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
