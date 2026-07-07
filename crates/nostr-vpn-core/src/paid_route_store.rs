@@ -362,6 +362,16 @@ pub struct ApplyPaidRouteSellerPaymentResult {
     pub changed: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SellerPaymentApplyContext<'a> {
+    config: &'a PaidExitConfig,
+    service_id: &'a str,
+    lease_id: &'a str,
+    channel_id: &'a str,
+    buyer_npub: &'a str,
+    now_unix: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecordPaidRouteSellerUsageRequest {
     pub buyer_pubkey: String,
@@ -2015,43 +2025,29 @@ impl PaidRouteStore {
         let lease_id = trimmed_required(&envelope.lease_id, "paid route lease id")?;
         let channel_id = trimmed_required(envelope.channel_id(), "paid route channel id")?;
         let payload_type = paid_route_payment_payload_type(&envelope.payload).to_string();
+        let apply_context = SellerPaymentApplyContext {
+            config: &config,
+            service_id: &service_id,
+            lease_id: &lease_id,
+            channel_id: &channel_id,
+            buyer_npub: &buyer_npub,
+            now_unix: request.now_unix,
+        };
 
         match &envelope.payload {
             StreamingRoutePaymentPayload::ChannelOpen(open) => {
                 validate_seller_open_payment(&config, &seller_pubkey_hex, &channel_id, open)?;
                 let capacity_sat = paid_route_channel_capacity_sat(&open.unit, open.capacity)?;
-                self.apply_seller_channel_open(
-                    &config,
-                    &service_id,
-                    &lease_id,
-                    &channel_id,
-                    &buyer_npub,
-                    open,
-                    capacity_sat,
-                    request.now_unix,
-                )?;
+                self.apply_seller_channel_open(&apply_context, open, capacity_sat)?;
             }
             StreamingRoutePaymentPayload::BalanceUpdate(update) => {
-                self.apply_seller_balance_update(
-                    &config,
-                    &service_id,
-                    &lease_id,
-                    &channel_id,
-                    &buyer_npub,
-                    update,
-                    request.now_unix,
-                )?;
+                self.apply_seller_balance_update(&apply_context, update)?;
             }
             StreamingRoutePaymentPayload::CooperativeClose(close) => {
                 self.apply_seller_cooperative_close(
-                    &config,
-                    &service_id,
-                    &lease_id,
-                    &channel_id,
-                    &buyer_npub,
+                    &apply_context,
                     close.final_paid_msat,
                     &close.payment,
-                    request.now_unix,
                 )?;
             }
             StreamingRoutePaymentPayload::CashuTokenLease(token_lease) => {
@@ -2110,44 +2106,43 @@ impl PaidRouteStore {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn apply_seller_channel_open(
         &mut self,
-        config: &PaidExitConfig,
-        service_id: &str,
-        lease_id: &str,
-        channel_id: &str,
-        buyer_npub: &str,
+        context: &SellerPaymentApplyContext<'_>,
         open: &cashu_service::StreamingRouteChannelOpen,
         capacity_sat: u64,
-        now_unix: u64,
     ) -> Result<()> {
-        self.ensure_seller_lease_slot_available(service_id, lease_id, channel_id, buyer_npub)?;
+        self.ensure_seller_lease_slot_available(
+            context.service_id,
+            context.lease_id,
+            context.channel_id,
+            context.buyer_npub,
+        )?;
         let existing_channel_payment = self
             .channels
-            .get(channel_id)
+            .get(context.channel_id)
             .map(|channel| {
-                ensure_seller_channel_matches(channel, service_id, buyer_npub)?;
+                ensure_seller_channel_matches(channel, context.service_id, context.buyer_npub)?;
                 Ok::<u64, anyhow::Error>(channel.payment.paid_msat)
             })
             .transpose()?
             .unwrap_or(0);
         let paid_msat = existing_channel_payment.max(open.paid_msat);
-        let status = initial_seller_session_status(config, paid_msat);
+        let status = initial_seller_session_status(context.config, paid_msat);
         let expires_at_unix = seller_channel_open_expiry(
-            now_unix,
-            config.channel.channel_expiry_secs,
+            context.now_unix,
+            context.config.channel.channel_expiry_secs,
             open.expires_unix,
         )?;
-        let quote_id = seller_quote_id_for_lease(lease_id);
-        let session_id = seller_session_id_for_lease(lease_id);
+        let quote_id = seller_quote_id_for_lease(context.lease_id);
+        let session_id = seller_session_id_for_lease(context.lease_id);
         let payment = PaidRoutePaymentState {
             mode: PaidRoutePaymentMode::CashuSpilman,
-            channel_id: channel_id.to_string(),
+            channel_id: context.channel_id.to_string(),
             cashu_unit: open.unit.trim().to_string(),
             capacity_sat,
             paid_msat,
-            updated_at_unix: now_unix,
+            updated_at_unix: context.now_unix,
             cashu_spilman_payment: Some(open.payment.clone()),
             cashu_token_lease: None,
         };
@@ -2155,59 +2150,59 @@ impl PaidRouteStore {
         self.upsert_quote(
             PaidRouteQuote {
                 quote_id: quote_id.clone(),
-                offer_id: service_id.to_string(),
+                offer_id: context.service_id.to_string(),
                 payment_mode: PaidRoutePaymentMode::CashuSpilman,
                 channel_capacity_sat: capacity_sat,
                 expires_at_unix,
                 receiver_pubkey_hex: open.receiver_pubkey_hex.trim().to_string(),
             },
-            now_unix,
+            context.now_unix,
         );
         self.upsert_lease(
             PaidRouteLease {
-                lease_id: lease_id.to_string(),
-                offer_id: service_id.to_string(),
+                lease_id: context.lease_id.to_string(),
+                offer_id: context.service_id.to_string(),
                 quote_id: quote_id.clone(),
-                buyer_npub: buyer_npub.to_string(),
-                starts_at_unix: now_unix,
+                buyer_npub: context.buyer_npub.to_string(),
+                starts_at_unix: context.now_unix,
                 expires_at_unix,
             },
             status,
-            now_unix,
+            context.now_unix,
         );
 
         let created_at_unix = self
             .channels
-            .get(channel_id)
+            .get(context.channel_id)
             .map(|channel| channel.created_at_unix)
-            .unwrap_or(now_unix);
+            .unwrap_or(context.now_unix);
         let channel_status = self
             .channels
-            .get(channel_id)
+            .get(context.channel_id)
             .map(|channel| preserve_terminal_status(channel.status, status))
             .unwrap_or(status);
         self.upsert_channel(PaidRouteChannelRecord {
-            channel_id: channel_id.to_string(),
-            offer_id: service_id.to_string(),
+            channel_id: context.channel_id.to_string(),
+            offer_id: context.service_id.to_string(),
             role: PaidRouteChannelRole::Seller,
             status: channel_status,
             payment: payment.clone(),
             mint_url: open.mint_url.trim().to_string(),
-            counterparty_npub: buyer_npub.to_string(),
+            counterparty_npub: context.buyer_npub.to_string(),
             created_at_unix,
             expires_at_unix,
-            updated_at_unix: now_unix,
+            updated_at_unix: context.now_unix,
             error: String::new(),
         });
 
         if let Some(record) = self.sessions.get_mut(&session_id) {
             record.session.payment = payment;
-            record.updated_at_unix = now_unix;
+            record.updated_at_unix = context.now_unix;
         } else {
             self.upsert_session(
                 PaidRouteSession {
                     session_id,
-                    lease_id: lease_id.to_string(),
+                    lease_id: context.lease_id.to_string(),
                     usage: PaidRouteUsage::default(),
                     payment,
                     realized_exit_ip: None,
@@ -2215,7 +2210,7 @@ impl PaidRouteStore {
                     observed_asn: None,
                     quality: None,
                 },
-                now_unix,
+                context.now_unix,
             );
         }
 
@@ -2224,21 +2219,24 @@ impl PaidRouteStore {
 
     fn apply_seller_balance_update(
         &mut self,
-        config: &PaidExitConfig,
-        service_id: &str,
-        lease_id: &str,
-        channel_id: &str,
-        buyer_npub: &str,
+        context: &SellerPaymentApplyContext<'_>,
         update: &cashu_service::StreamingRouteBalanceUpdate,
-        now_unix: u64,
     ) -> Result<()> {
-        let session_id = seller_session_id_for_lease(lease_id);
-        self.ensure_existing_seller_session(service_id, lease_id, channel_id, buyer_npub)?;
+        let session_id = seller_session_id_for_lease(context.lease_id);
+        self.ensure_existing_seller_session(
+            context.service_id,
+            context.lease_id,
+            context.channel_id,
+            context.buyer_npub,
+        )?;
         if !self.sessions.contains_key(&session_id) {
             return Err(anyhow!("paid route session {session_id} does not exist"));
         }
         let (cashu_unit, capacity_sat) = {
-            let channel = self.channels.get(channel_id).expect("validated channel");
+            let channel = self
+                .channels
+                .get(context.channel_id)
+                .expect("validated channel");
             (
                 paid_route_payment_cashu_unit(&channel.payment),
                 channel.payment.capacity_sat,
@@ -2246,7 +2244,7 @@ impl PaidRouteStore {
         };
         validate_streaming_route_cashu_payment_claim(
             &update.payment,
-            channel_id,
+            context.channel_id,
             &cashu_unit,
             update.paid_msat,
             capacity_sat,
@@ -2256,7 +2254,7 @@ impl PaidRouteStore {
         let current_units = self.sessions[&session_id]
             .session
             .usage
-            .billable_units_for_meter(config.pricing.meter);
+            .billable_units_for_meter(context.config.pricing.meter);
         // Buyer and seller usage flushes are independent; keep seller-observed
         // usage authoritative. The buyer's delivered_units/amount_due_msat can
         // explain the signed balance update, but they must not inflate or gate
@@ -2271,23 +2269,23 @@ impl PaidRouteStore {
             capacity_sat,
         )?;
 
-        let status = initial_seller_session_status(config, update.paid_msat);
+        let status = initial_seller_session_status(context.config, update.paid_msat);
         {
             let channel = self
                 .channels
-                .get_mut(channel_id)
+                .get_mut(context.channel_id)
                 .expect("validated channel");
             channel.payment.mode = PaidRoutePaymentMode::CashuSpilman;
             channel.payment.paid_msat = update.paid_msat;
-            channel.payment.updated_at_unix = now_unix;
+            channel.payment.updated_at_unix = context.now_unix;
             channel.payment.cashu_spilman_payment = Some(update.payment.clone());
             channel.payment.cashu_token_lease = None;
             channel.status = preserve_terminal_status(channel.status, status);
-            channel.updated_at_unix = now_unix;
+            channel.updated_at_unix = context.now_unix;
         }
-        if let Some(lease) = self.leases.get_mut(lease_id) {
+        if let Some(lease) = self.leases.get_mut(context.lease_id) {
             lease.status = preserve_terminal_status(lease.status, status);
-            lease.updated_at_unix = now_unix;
+            lease.updated_at_unix = context.now_unix;
         }
         {
             let record = self
@@ -2296,15 +2294,15 @@ impl PaidRouteStore {
                 .expect("validated session");
             apply_delivered_units_for_meter(
                 &mut record.session.usage,
-                config.pricing.meter,
+                context.config.pricing.meter,
                 effective_delivered_units,
             );
             record.session.payment.mode = PaidRoutePaymentMode::CashuSpilman;
             record.session.payment.paid_msat = update.paid_msat;
-            record.session.payment.updated_at_unix = now_unix;
+            record.session.payment.updated_at_unix = context.now_unix;
             record.session.payment.cashu_spilman_payment = Some(update.payment.clone());
             record.session.payment.cashu_token_lease = None;
-            record.updated_at_unix = now_unix;
+            record.updated_at_unix = context.now_unix;
         }
 
         Ok(())
@@ -2312,19 +2310,22 @@ impl PaidRouteStore {
 
     fn apply_seller_cooperative_close(
         &mut self,
-        config: &PaidExitConfig,
-        service_id: &str,
-        lease_id: &str,
-        channel_id: &str,
-        buyer_npub: &str,
+        context: &SellerPaymentApplyContext<'_>,
         final_paid_msat: u64,
         payment: &CashuSpilmanPayment,
-        now_unix: u64,
     ) -> Result<()> {
-        let session_id = seller_session_id_for_lease(lease_id);
-        self.ensure_existing_seller_session(service_id, lease_id, channel_id, buyer_npub)?;
+        let session_id = seller_session_id_for_lease(context.lease_id);
+        self.ensure_existing_seller_session(
+            context.service_id,
+            context.lease_id,
+            context.channel_id,
+            context.buyer_npub,
+        )?;
         let (cashu_unit, capacity_sat) = {
-            let channel = self.channels.get(channel_id).expect("validated channel");
+            let channel = self
+                .channels
+                .get(context.channel_id)
+                .expect("validated channel");
             (
                 paid_route_payment_cashu_unit(&channel.payment),
                 channel.payment.capacity_sat,
@@ -2332,7 +2333,7 @@ impl PaidRouteStore {
         };
         validate_streaming_route_cashu_payment_claim(
             payment,
-            channel_id,
+            context.channel_id,
             &cashu_unit,
             final_paid_msat,
             capacity_sat,
@@ -2347,8 +2348,8 @@ impl PaidRouteStore {
             capacity_sat,
         )?;
         let session_usage = self.sessions[&session_id].session.usage.clone();
-        let computed_due = config.amount_due_msat(&session_usage);
-        let tolerated_due = config.amount_due_msat_with_connection_minimum_skew(
+        let computed_due = context.config.amount_due_msat(&session_usage);
+        let tolerated_due = context.config.amount_due_msat_with_connection_minimum_skew(
             &session_usage,
             SELLER_CONNECTION_MINIMUM_PAYMENT_SKEW_MILLIS,
         );
@@ -2363,19 +2364,19 @@ impl PaidRouteStore {
         {
             let channel = self
                 .channels
-                .get_mut(channel_id)
+                .get_mut(context.channel_id)
                 .expect("validated channel");
             channel.payment.mode = PaidRoutePaymentMode::CashuSpilman;
             channel.payment.paid_msat = final_paid_msat;
-            channel.payment.updated_at_unix = now_unix;
+            channel.payment.updated_at_unix = context.now_unix;
             channel.payment.cashu_spilman_payment = Some(payment.clone());
             channel.payment.cashu_token_lease = None;
             channel.status = PaidRouteLifecycleStatus::Closing;
-            channel.updated_at_unix = now_unix;
+            channel.updated_at_unix = context.now_unix;
         }
-        if let Some(lease) = self.leases.get_mut(lease_id) {
+        if let Some(lease) = self.leases.get_mut(context.lease_id) {
             lease.status = PaidRouteLifecycleStatus::Closing;
-            lease.updated_at_unix = now_unix;
+            lease.updated_at_unix = context.now_unix;
         }
         {
             let record = self
@@ -2384,10 +2385,10 @@ impl PaidRouteStore {
                 .expect("validated session");
             record.session.payment.mode = PaidRoutePaymentMode::CashuSpilman;
             record.session.payment.paid_msat = final_paid_msat;
-            record.session.payment.updated_at_unix = now_unix;
+            record.session.payment.updated_at_unix = context.now_unix;
             record.session.payment.cashu_spilman_payment = Some(payment.clone());
             record.session.payment.cashu_token_lease = None;
-            record.updated_at_unix = now_unix;
+            record.updated_at_unix = context.now_unix;
         }
 
         Ok(())

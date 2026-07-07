@@ -175,7 +175,7 @@ impl NativeAppRuntime {
         }
         if let Some(value) = patch.paid_exit_trusted_rating_authors {
             self.config.paid_exit.rating_discovery.trusted_authors =
-                Self::normalize_string_list(value);
+                Self::normalize_string_list(&value);
         }
         if let Some(value) = patch.paid_exit_rating_scope {
             self.config.paid_exit.rating_discovery.scope = value.trim().to_string();
@@ -246,7 +246,7 @@ impl NativeAppRuntime {
         }
     }
 
-    fn normalize_string_list(values: Vec<String>) -> Vec<String> {
+    fn normalize_string_list(values: &[String]) -> Vec<String> {
         let mut values = values
             .iter()
             .flat_map(|value| value.split(','))

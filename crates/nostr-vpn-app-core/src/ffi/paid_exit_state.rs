@@ -561,56 +561,6 @@ fn paid_route_offer_quality_order(
         .then_with(|| right.up_bps.cmp(&left.up_bps))
 }
 
-#[cfg(test)]
-mod paid_route_offer_order_tests {
-    use super::*;
-
-    #[test]
-    fn default_order_ranks_good_unknown_bad_ratings() {
-        let mut offers = vec![
-            offer("bad", Some(-80), 1),
-            offer("unknown", None, 1),
-            offer("good", Some(80), 1),
-        ];
-
-        offers.sort_by(|left, right| paid_route_offer_order(left, right, "quality"));
-
-        assert_eq!(
-            offers
-                .iter()
-                .map(|offer| offer.key.as_str())
-                .collect::<Vec<_>>(),
-            vec!["good", "unknown", "bad"]
-        );
-    }
-
-    #[test]
-    fn price_order_uses_rating_as_tie_breaker() {
-        let mut offers = vec![offer("bad", Some(-80), 10), offer("good", Some(80), 10)];
-
-        offers.sort_by(|left, right| paid_route_offer_order(left, right, "price"));
-
-        assert_eq!(
-            offers
-                .iter()
-                .map(|offer| offer.key.as_str())
-                .collect::<Vec<_>>(),
-            vec!["good", "bad"]
-        );
-    }
-
-    fn offer(key: &str, rating_score: Option<i64>, price_msat: u64) -> NativePaidRouteOfferState {
-        NativePaidRouteOfferState {
-            key: key.to_string(),
-            has_rating: rating_score.is_some(),
-            rating_score: rating_score.unwrap_or_default(),
-            price_msat,
-            per_units: 1,
-            ..NativePaidRouteOfferState::default()
-        }
-    }
-}
-
 fn paid_route_offer_country_options(offers: &[NativePaidRouteOfferState]) -> Vec<String> {
     let mut options = offers
         .iter()
@@ -1008,6 +958,6 @@ fn paid_exit_config_from_offer(offer: &PaidRouteOffer) -> PaidExitConfig {
         channel: offer.channel.clone(),
         location: offer.location.clone(),
         ip_support: offer.ip_support.clone(),
-        rating_discovery: Default::default(),
+        rating_discovery: nostr_vpn_core::paid_routes::PaidExitRatingDiscoveryConfig::default(),
     }
 }

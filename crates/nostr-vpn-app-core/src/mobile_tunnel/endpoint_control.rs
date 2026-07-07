@@ -486,24 +486,23 @@ async fn dispatch_mobile_outbound_packets(
         // Local MagicDNS responder. The well-known DNS address is owned by this
         // tunnel instance, so answer before mesh/WG routing and never treat it
         // as a remote nvpn node.
-        if let Some(magic_dns_server) = magic_dns_server {
-            if let Some(response) = mobile_magic_dns_response_packet(
+        if let Some(magic_dns_server) = magic_dns_server
+            && let Some(response) = mobile_magic_dns_response_packet(
                 &packet,
                 app_config_for_dns,
                 dns_forwarders,
                 magic_dns_server,
             )
             .await
-            {
-                if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
-                    return false;
-                }
-                if !flush_mobile_wg_packets(wg_send_tx, &mut pending_wg_packets).await {
-                    return false;
-                }
-                pending_dns_responses.push(response);
-                continue;
+        {
+            if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
+                return false;
             }
+            if !flush_mobile_wg_packets(wg_send_tx, &mut pending_wg_packets).await {
+                return false;
+            }
+            pending_dns_responses.push(response);
+            continue;
         }
 
         if !flush_mobile_inbound_packets(inbound_tx_for_dns, &mut pending_dns_responses).await {
@@ -532,10 +531,9 @@ async fn dispatch_mobile_outbound_packets(
                 participant_key,
                 endpoint_node_addr,
                 packet,
-            ) {
-                if !send_mobile_endpoint_run(endpoint, run).await {
-                    return false;
-                }
+            ) && !send_mobile_endpoint_run(endpoint, run).await
+            {
+                return false;
             }
             continue;
         }

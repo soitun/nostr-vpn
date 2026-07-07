@@ -29,7 +29,64 @@ mod paid_exit {
     include!("paid_exit_state.rs");
     include!("paid_exit_text.rs");
     include!("paid_exit_json.rs");
+
+    #[cfg(test)]
+    mod paid_route_offer_order_tests {
+        use super::*;
+
+        #[test]
+        fn default_order_ranks_good_unknown_bad_ratings() {
+            let mut offers = [
+                offer("bad", Some(-80), 1),
+                offer("unknown", None, 1),
+                offer("good", Some(80), 1),
+            ];
+
+            offers.sort_by(|left, right| paid_route_offer_order(left, right, "quality"));
+
+            assert_eq!(
+                offers
+                    .iter()
+                    .map(|offer| offer.key.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["good", "unknown", "bad"]
+            );
+        }
+
+        #[test]
+        fn price_order_uses_rating_as_tie_breaker() {
+            let mut offers = [offer("bad", Some(-80), 10), offer("good", Some(80), 10)];
+
+            offers.sort_by(|left, right| paid_route_offer_order(left, right, "price"));
+
+            assert_eq!(
+                offers
+                    .iter()
+                    .map(|offer| offer.key.as_str())
+                    .collect::<Vec<_>>(),
+                vec!["good", "bad"]
+            );
+        }
+
+        fn offer(
+            key: &str,
+            rating_score: Option<i64>,
+            price_msat: u64,
+        ) -> NativePaidRouteOfferState {
+            NativePaidRouteOfferState {
+                key: key.to_string(),
+                has_rating: rating_score.is_some(),
+                rating_score: rating_score.unwrap_or_default(),
+                price_msat,
+                per_units: 1,
+                ..NativePaidRouteOfferState::default()
+            }
+        }
+    }
 }
+
+#[cfg(not(feature = "paid-exit"))]
+const PAID_EXIT_NOT_BUILT_STATUS: &str = "Paid exit support was not built into this app";
 
 #[cfg(not(feature = "paid-exit"))]
 impl NativeAppRuntime {
@@ -41,7 +98,7 @@ impl NativeAppRuntime {
     ) -> NativePaidExitSellerState {
         NativePaidExitSellerState {
             supported: false,
-            status_text: "Paid exit support was not built into this app".to_string(),
+            status_text: self.paid_exit_not_built_status_text(),
             ..NativePaidExitSellerState::default()
         }
     }
@@ -49,7 +106,7 @@ impl NativeAppRuntime {
     fn paid_route_market_state(&self, _app: Option<&AppConfig>) -> NativePaidRouteMarketState {
         NativePaidRouteMarketState {
             supported: false,
-            status_text: "Paid exit support was not built into this app".to_string(),
+            status_text: self.paid_exit_not_built_status_text(),
             wallet: NativePaidRouteWalletState {
                 last_action: self.paid_route_wallet_last_action.clone(),
                 ..NativePaidRouteWalletState::default()
@@ -61,19 +118,19 @@ impl NativeAppRuntime {
     }
 
     fn add_paid_route_wallet_mint(&mut self, _url: &str, _label: Option<&str>) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn remove_paid_route_wallet_mint(&mut self, _url: &str) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn set_paid_route_default_mint(&mut self, _url: &str) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn refresh_paid_route_wallet(&mut self, _refresh: bool) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn top_up_paid_route_wallet(
@@ -81,11 +138,11 @@ impl NativeAppRuntime {
         _mint_url: Option<&str>,
         _amount_sat: u64,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn receive_paid_route_wallet_token(&mut self, _token: &str) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn send_paid_route_wallet_token(
@@ -93,7 +150,7 @@ impl NativeAppRuntime {
         _mint_url: Option<&str>,
         _amount_sat: u64,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn withdraw_paid_route_wallet_lightning(
@@ -101,7 +158,7 @@ impl NativeAppRuntime {
         _mint_url: Option<&str>,
         _invoice: &str,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn buy_paid_route_offer(
@@ -110,7 +167,7 @@ impl NativeAppRuntime {
         _mint_url: Option<&str>,
         _channel_capacity_sat: Option<u64>,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn buy_best_paid_route_offer(
@@ -118,15 +175,15 @@ impl NativeAppRuntime {
         _mint_url: Option<&str>,
         _channel_capacity_sat: Option<u64>,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn select_paid_route_session(&mut self, _session_id: &str, _connect: bool) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn probe_paid_route_session(&mut self, _session_id: &str, _timeout_secs: u64) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -144,7 +201,7 @@ impl NativeAppRuntime {
         _uptime_secs: Option<u64>,
         _last_seen_unix: Option<u64>,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn create_paid_route_payment_envelope(
@@ -155,7 +212,7 @@ impl NativeAppRuntime {
         _delivered_units: Option<u64>,
         _paid_msat: Option<u64>,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn open_paid_route_channel_from_wallet(
@@ -166,7 +223,7 @@ impl NativeAppRuntime {
         _max_amount_per_output: Option<u64>,
         _keyset_id: Option<&str>,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn sign_paid_route_payment_envelope_from_wallet(
@@ -176,7 +233,7 @@ impl NativeAppRuntime {
         _delivered_units: Option<u64>,
         _paid_msat: Option<u64>,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn close_paid_route_channel_from_wallet(
@@ -184,15 +241,15 @@ impl NativeAppRuntime {
         _session_id: &str,
         _publish: bool,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn apply_paid_route_payment_envelope(&mut self, _envelope_json: &str) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn send_paid_route_payment_envelope(&mut self, _envelope_json: &str) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn stream_paid_route_payments(
@@ -201,27 +258,50 @@ impl NativeAppRuntime {
         _min_increment_msat: u64,
         _limit: u64,
     ) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn receive_paid_route_payments(&mut self, _duration_secs: u64) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn collect_paid_exit_channel(&mut self, _channel_id: &str) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn collect_due_paid_exit_channels(&mut self) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn publish_paid_exit_offer(&mut self) -> Result<()> {
-        Err(paid_exit_not_built_error())
+        self.paid_exit_not_built()
     }
 
     fn discover_paid_route_offers(&mut self, _duration_secs: u64) -> Result<()> {
+        self.paid_exit_not_built()
+    }
+
+    fn paid_exit_not_built<T>(&mut self) -> Result<T> {
+        let status_text = self.paid_exit_not_built_status_text();
+        self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
+            kind: "unsupported".to_string(),
+            status_text: status_text.clone(),
+            ..NativePaidRouteWalletActionState::default()
+        };
+        self.paid_route_payment_last_action = NativePaidRoutePaymentActionState {
+            kind: "unsupported".to_string(),
+            status_text,
+            ..NativePaidRoutePaymentActionState::default()
+        };
         Err(paid_exit_not_built_error())
+    }
+
+    fn paid_exit_not_built_status_text(&self) -> String {
+        if self.startup_error.is_some() {
+            "Paid exit support is unavailable while app startup is incomplete".to_string()
+        } else {
+            PAID_EXIT_NOT_BUILT_STATUS.to_string()
+        }
     }
 }
 

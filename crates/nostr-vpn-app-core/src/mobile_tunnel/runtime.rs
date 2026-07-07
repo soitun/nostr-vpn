@@ -411,10 +411,10 @@ impl MobileTunnel {
                             }
                         }
                     }
-                    if !inbound_packets.is_empty() {
-                        if !flush_mobile_inbound_packets(&inbound_tx, &mut inbound_packets).await {
-                            break 'recv;
-                        }
+                    if !inbound_packets.is_empty()
+                        && !flush_mobile_inbound_packets(&inbound_tx, &mut inbound_packets).await
+                    {
+                        break 'recv;
                     }
                 }
             })

@@ -283,7 +283,7 @@ impl NativeAppRuntime {
             nostr_pubsub_fanout: if config_unavailable {
                 0
             } else {
-                self.config.nostr.pubsub.fanout as u32
+                usize_to_u32_saturating(self.config.nostr.pubsub.fanout)
             },
             nostr_pubsub_max_hops: if config_unavailable {
                 0
@@ -293,7 +293,7 @@ impl NativeAppRuntime {
             nostr_pubsub_max_event_bytes: if config_unavailable {
                 0
             } else {
-                self.config.nostr.pubsub.max_event_bytes as u32
+                usize_to_u32_saturating(self.config.nostr.pubsub.max_event_bytes)
             },
             network_id: if config_unavailable || network_setup_required {
                 String::new()
@@ -449,4 +449,8 @@ impl NativeAppRuntime {
         }
     }
 
+}
+
+fn usize_to_u32_saturating(value: usize) -> u32 {
+    u32::try_from(value).unwrap_or(u32::MAX)
 }
