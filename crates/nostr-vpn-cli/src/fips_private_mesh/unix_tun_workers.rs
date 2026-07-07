@@ -213,14 +213,11 @@ fn send_mesh_packet_batch_blocking_or_log(
         write_packet_to_tun_blocking(tun_fd, &packet.bytes, stop);
     }
     let mesh_packet_count = mesh_packets.len();
-    if let Err(error) =
-        mesh.blocking_send_tun_pipeline_packet_turn(
-            mesh_packets.drain(..),
-            mesh_packet_count,
-            mesh_packet_count,
-            send_runs,
-        )
-    {
+    if let Err(error) = mesh.blocking_send_tun_pipeline_packet_turn(
+        mesh_packets.drain(..),
+        mesh_packet_count,
+        send_runs,
+    ) {
         eprintln!("fips: failed to send tunnel packet: {error}");
     }
 }

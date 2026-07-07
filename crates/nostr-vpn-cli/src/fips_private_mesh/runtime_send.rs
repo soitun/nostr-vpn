@@ -122,14 +122,13 @@ impl FipsPrivateMeshRuntime {
     fn blocking_send_tun_pipeline_packet_turn<I>(
         &self,
         packets: I,
-        input_packets: usize,
         turn_capacity: usize,
         runs: &mut Vec<FipsEndpointSendRun>,
     ) -> Result<usize>
     where
         I: IntoIterator<Item = TunPipelinePacket>,
     {
-        self.build_tun_pipeline_send_runs(packets, input_packets, turn_capacity, runs)?;
+        self.build_tun_pipeline_send_runs(packets, turn_capacity, runs)?;
         let _t =
             crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshEndpointSend);
         self.blocking_send_endpoint_send_runs(runs.drain(..))
@@ -139,26 +138,28 @@ impl FipsPrivateMeshRuntime {
     fn build_tun_pipeline_send_runs<I>(
         &self,
         packets: I,
-        input_packets: usize,
         turn_capacity: usize,
         runs: &mut Vec<FipsEndpointSendRun>,
     ) -> Result<()>
     where
         I: IntoIterator<Item = TunPipelinePacket>,
     {
-        if input_packets == 0 {
+        let mut packets = packets.into_iter();
+        let Some(first_packet) = packets.next() else {
             return Ok(());
-        }
+        };
 
         debug_assert!(runs.is_empty());
         let mesh = self.mesh.load();
         let peer_identities = self.peer_identities.load();
+        let mut input_packets = 0usize;
         let mut routed_packets = 0usize;
         let mut cached_destination_peer = None;
 
         {
             let _t = crate::pipeline_profile::Timer::start(crate::pipeline_profile::Stage::MeshRoute);
-            for packet in packets {
+            for packet in std::iter::once(first_packet).chain(packets) {
+                input_packets = input_packets.saturating_add(1);
                 let destination = packet.destination;
                 let packet_debug = fips_unix_packet_debug_enabled();
                 let debug_description = packet_debug.then(|| describe_ip_packet(&packet.bytes));
