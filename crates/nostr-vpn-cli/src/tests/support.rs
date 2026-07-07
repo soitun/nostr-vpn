@@ -1,9 +1,4 @@
 use std::net::Ipv4Addr;
-use std::path::Path;
-
-pub(crate) fn control_daemon_request_for_test(config: &Path, request: crate::DaemonControlRequest) {
-    crate::write_daemon_control_request(config, request).expect("write control request");
-}
 
 pub(crate) fn macos_default_routes_from_netstat(output: &str) -> Vec<crate::MacosRouteSpec> {
     crate::macos_network::macos_default_routes_from_netstat(output)

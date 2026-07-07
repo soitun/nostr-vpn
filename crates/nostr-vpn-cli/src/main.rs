@@ -246,8 +246,6 @@ pub(crate) use tests::support::{macos_default_routes_from_netstat, macos_ifconfi
 
 #[cfg(test)]
 mod tests {
-    pub(super) use support::control_daemon_request_for_test;
-
     #[path = "../tests/cli_smoke.rs"]
     mod cli_smoke;
     #[path = "../tests/config_cache.rs"]

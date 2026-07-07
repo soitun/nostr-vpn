@@ -5,7 +5,6 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use nostr_sdk::prelude::Keys;
 
-use super::control_daemon_request_for_test;
 use crate::*;
 
 include!("daemon_control/state_and_logs.rs");

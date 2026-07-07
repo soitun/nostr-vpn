@@ -159,12 +159,14 @@ fn daemon_control_stop_request_roundtrip() {
         take_daemon_control_request(&config) == Some(crate::DaemonControlRequest::Reload),
         "daemon should read reload request"
     );
-    control_daemon_request_for_test(&config, crate::DaemonControlRequest::Pause);
+    write_daemon_control_request(&config, crate::DaemonControlRequest::Pause)
+        .expect("write pause control request");
     assert!(
         take_daemon_control_request(&config) == Some(crate::DaemonControlRequest::Pause),
         "daemon should read pause request"
     );
-    control_daemon_request_for_test(&config, crate::DaemonControlRequest::Resume);
+    write_daemon_control_request(&config, crate::DaemonControlRequest::Resume)
+        .expect("write resume control request");
     assert!(
         take_daemon_control_request(&config) == Some(crate::DaemonControlRequest::Resume),
         "daemon should read resume request"
