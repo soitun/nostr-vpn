@@ -306,7 +306,7 @@
 
         for _ in 0..50 {
             requester_endpoint
-                .send_to_peer(recipient_peer, encoded.clone())
+                .send_batch_to_peer(recipient_peer, vec![encoded.clone()])
                 .await
                 .expect("send join request over FIPS");
             match tokio::time::timeout(

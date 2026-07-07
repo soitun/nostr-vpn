@@ -159,7 +159,10 @@
     ) -> anyhow::Result<Option<FipsPrivateMeshEvent>> {
         let outcome = runtime.endpoint_message_to_mesh_event_outcome(message, now)?;
         if let Some(reply) = outcome.reply
-            && let Err(error) = runtime.endpoint.send_to_peer(reply.peer, reply.data).await
+            && let Err(error) = runtime
+                .endpoint
+                .send_batch_to_peer(reply.peer, vec![reply.data])
+                .await
         {
             eprintln!("fips: failed to reply to peer ping: {error}");
         }

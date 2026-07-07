@@ -78,7 +78,7 @@ impl FipsPrivateMeshRuntime {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn wake_blocking_mesh_recv(&self) {
         if let Ok(local) = PeerIdentity::from_npub(self.endpoint.npub()) {
-            let _ = self.endpoint.blocking_send_to_peer(local, Vec::new());
+            let _ = self.endpoint.blocking_send_batch_to_peer(local, vec![Vec::new()]);
         }
     }
 
@@ -330,7 +330,9 @@ impl FipsPrivateMeshRuntime {
                 };
                 let outcome = self.endpoint_message_to_mesh_event_outcome(message, now)?;
                 if let Some(reply) = outcome.reply
-                    && let Err(error) = self.endpoint.blocking_send_to_peer(reply.peer, reply.data)
+                    && let Err(error) = self
+                        .endpoint
+                        .blocking_send_batch_to_peer(reply.peer, vec![reply.data])
                 {
                     eprintln!("fips: failed to reply to peer ping: {error}");
                 }

@@ -73,14 +73,11 @@ impl FipsPrivateMeshRuntime {
             control_frame_destination_peer(&mesh, &peer_identities, participant)?
         };
         let messages = encode_fips_control_messages(frame)?;
-        let mut sent_len = 0usize;
-        for encoded in messages {
-            sent_len += encoded.len();
-            self.endpoint
-                .send_to_peer(destination, encoded)
-                .await
-                .with_context(|| format!("failed to send FIPS control frame to {participant}"))?;
-        }
+        let sent_len = messages.iter().map(Vec::len).sum();
+        self.endpoint
+            .send_batch_to_peer(destination, messages)
+            .await
+            .with_context(|| format!("failed to send FIPS control frame to {participant}"))?;
         self.note_tx(Some(participant), participant_key.as_ref(), sent_len)?;
         Ok(())
     }

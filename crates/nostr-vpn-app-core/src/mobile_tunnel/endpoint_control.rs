@@ -249,7 +249,7 @@ async fn reply_mobile_ping(
         replied_at: unix_timestamp(),
     };
     let encoded = encode_fips_control_frame(&reply)?;
-    if let Err(error) = endpoint.send_to_peer(source_peer, encoded).await {
+    if let Err(error) = endpoint.send_batch_to_peer(source_peer, vec![encoded]).await {
         tracing::warn!(?error, "mobile: failed to reply to FIPS peer ping");
     }
     Ok(())
@@ -653,7 +653,7 @@ async fn send_mobile_endpoint_data(
         anyhow!("missing mobile FIPS endpoint identity for participant {participant}")
     })?;
     endpoint
-        .send_to_peer(identity, data)
+        .send_batch_to_peer(identity, vec![data])
         .await
         .context("failed to send mobile FIPS endpoint data")
 }

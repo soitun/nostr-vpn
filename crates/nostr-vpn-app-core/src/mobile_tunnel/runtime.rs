@@ -244,7 +244,9 @@ impl MobileTunnel {
                     }
                 };
                 while join_request_active_for_task.load(Ordering::Relaxed) {
-                    let _ = endpoint.send_to_peer(recipient_peer, encoded.clone()).await;
+                    let _ = endpoint
+                        .send_batch_to_peer(recipient_peer, vec![encoded.clone()])
+                        .await;
                     tokio::time::sleep(Duration::from_secs(FIPS_JOIN_REQUEST_RETRY_SECS)).await;
                 }
             }));

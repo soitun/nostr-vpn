@@ -347,11 +347,11 @@
         let reply = test_ipv4_packet(Ipv4Addr::new(203, 0, 113, 45), client_tunnel_ip);
         let reply_two = test_ipv4_packet(Ipv4Addr::new(198, 51, 100, 7), client_tunnel_ip);
         exit_endpoint
-            .send_to_peer(message.source_peer, reply.clone())
+            .send_batch_to_peer(message.source_peer, vec![reply.clone()])
             .await
             .expect("send reply to mobile tunnel");
         exit_endpoint
-            .send_to_peer(message.source_peer, reply_two.clone())
+            .send_batch_to_peer(message.source_peer, vec![reply_two.clone()])
             .await
             .expect("send second reply to mobile tunnel");
         let mut expected_reply = reply;
