@@ -723,39 +723,35 @@ fn default_wg_test_tun_name() -> String {
 }
 
 pub(crate) fn runtime_exit_node_default_routes() -> Vec<String> {
-    #[allow(unused_mut)]
-    let mut routes = exit_node_default_routes();
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        routes.retain(|route| route != "::/0");
-    }
-    #[cfg(all(
-        not(target_os = "linux"),
-        not(target_os = "macos"),
-        not(target_os = "windows")
-    ))]
-    {
-        routes.retain(|route| !is_default_exit_node_route(route));
-    }
-    routes
+    runtime_supported_advertised_routes(exit_node_default_routes())
 }
 
 pub(crate) fn runtime_effective_advertised_routes(app: &AppConfig) -> Vec<String> {
-    #[allow(unused_mut)]
-    let mut routes = app.effective_advertised_routes();
+    runtime_supported_advertised_routes(app.effective_advertised_routes())
+}
+
+fn runtime_supported_advertised_routes(routes: Vec<String>) -> Vec<String> {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        routes.retain(|route| route != "::/0");
+        return routes.into_iter().filter(|route| route != "::/0").collect();
     }
+
+    #[cfg(target_os = "windows")]
+    {
+        routes
+    }
+
     #[cfg(all(
         not(target_os = "linux"),
         not(target_os = "macos"),
         not(target_os = "windows")
     ))]
     {
-        routes.retain(|route| !is_default_exit_node_route(route));
+        routes
+            .into_iter()
+            .filter(|route| !is_default_exit_node_route(route))
+            .collect()
     }
-    routes
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

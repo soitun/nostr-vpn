@@ -245,13 +245,13 @@ fn stop_daemon(args: StopArgs) -> Result<()> {
 }
 
 fn stop_daemon_remaining_hint(
-    #[allow(unused_variables)] config_path: &Path,
-    #[allow(unused_variables)] remaining: &[u32],
+    _config_path: &Path,
+    _remaining: &[u32],
     requested_control_stop: bool,
 ) -> String {
     #[cfg(target_os = "macos")]
-    if let Ok(service_status) = service_management::query_service_status(config_path)
-        && let Some(hint) = macos_stop_daemon_hint_from_service_status(&service_status, remaining)
+    if let Ok(service_status) = service_management::query_service_status(_config_path)
+        && let Some(hint) = macos_stop_daemon_hint_from_service_status(&service_status, _remaining)
     {
         return hint;
     }
