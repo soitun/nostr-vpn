@@ -131,6 +131,7 @@
 
     fn admin_join_request_app(admin_nsec: &str, admin_pubkey: &str, network_id: &str) -> AppConfig {
         let mut admin_app = AppConfig::generated();
+        admin_app.nostr.public_key = admin_pubkey.to_string();
         admin_app.nostr.secret_key = admin_nsec.to_string();
         admin_app.networks = vec![NetworkConfig {
             id: "test".to_string(),
@@ -404,25 +405,24 @@
         let config_state = Arc::new(RwLock::new(admin_mobile));
         let join_request_active = AtomicBool::new(false);
         let mut control_fragments = FipsControlFragmentBuffer::default();
-
-        let handled = handle_mobile_control_frame(
-            admin_endpoint,
-            &mesh,
-            &mesh_peers,
-            &peer_identities,
-            &peer_hints,
-            &presence,
-            &config_state,
-            &admin_app_config,
-            &app_config_dirty,
-            Some(config_path),
+        let control = MobileEndpointReceiveContext {
+            endpoint: admin_endpoint,
+            mesh: &mesh,
+            mesh_peers: &mesh_peers,
+            peer_identities: &peer_identities,
+            peer_hints: &peer_hints,
+            presence: &presence,
+            config_state: &config_state,
+            app_config: &admin_app_config,
+            app_config_dirty: &app_config_dirty,
+            config_path: Some(config_path),
             network_id,
-            &join_request_active,
-            &mut control_fragments,
-            message,
-        )
-        .await
-        .expect("handle mobile join request frame");
+            join_request_active: &join_request_active,
+        };
+
+        let handled = handle_mobile_control_frame(&control, &mut control_fragments, message)
+            .await
+            .expect("handle mobile join request frame");
 
         assert!(handled);
         (admin_app_config, app_config_dirty)

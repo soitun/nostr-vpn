@@ -370,6 +370,20 @@ impl MobileTunnel {
             let join_request_active = Arc::clone(&join_request_active);
             let network_id = config.network_id.clone();
             tokio::spawn(async move {
+                let control = MobileEndpointReceiveContext {
+                    endpoint: endpoint.as_ref(),
+                    mesh: &mesh,
+                    mesh_peers: &mesh_peers,
+                    peer_identities: &peer_identities,
+                    peer_hints: &peer_hints,
+                    presence: &presence,
+                    config_state: &config_state,
+                    app_config: &app_config,
+                    app_config_dirty: app_config_dirty.as_ref(),
+                    config_path: config_path.as_deref(),
+                    network_id: &network_id,
+                    join_request_active: join_request_active.as_ref(),
+                };
                 let mut control_fragments = FipsControlFragmentBuffer::default();
                 let mut messages = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
                 let mut inbound_packets = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
@@ -383,18 +397,7 @@ impl MobileTunnel {
                     inbound_packets.clear();
                     for message in messages.drain(..) {
                         match handle_mobile_endpoint_message(
-                            &endpoint,
-                            &mesh,
-                            &mesh_peers,
-                            &peer_identities,
-                            &peer_hints,
-                            &presence,
-                            &config_state,
-                            &app_config,
-                            &app_config_dirty,
-                            config_path.as_deref(),
-                            &network_id,
-                            &join_request_active,
+                            &control,
                             &mut control_fragments,
                             &mut inbound_packets,
                             message,

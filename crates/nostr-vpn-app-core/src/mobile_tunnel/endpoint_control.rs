@@ -34,6 +34,21 @@ enum MobilePeerRxKind {
     Data,
 }
 
+struct MobileEndpointReceiveContext<'a> {
+    endpoint: &'a FipsEndpoint,
+    mesh: &'a MobileMesh,
+    mesh_peers: &'a Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
+    peer_identities: &'a Arc<RwLock<MobilePeerIdentityMap>>,
+    peer_hints: &'a Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
+    presence: &'a Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+    config_state: &'a Arc<RwLock<MobileTunnelConfig>>,
+    app_config: &'a Arc<RwLock<AppConfig>>,
+    app_config_dirty: &'a AtomicBool,
+    config_path: Option<&'a Path>,
+    network_id: &'a str,
+    join_request_active: &'a AtomicBool,
+}
+
 fn mobile_timestamp_within_grace(now: u64, timestamp: u64, grace_secs: u64) -> bool {
     if timestamp > now {
         return timestamp - now <= MOBILE_PEER_MAX_FUTURE_SKEW_SECS;
@@ -56,48 +71,19 @@ fn mobile_elapsed_at_least(now: u64, timestamp: u64, interval_secs: u64) -> bool
     now - timestamp >= interval_secs
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn handle_mobile_endpoint_message(
-    endpoint: &FipsEndpoint,
-    mesh: &MobileMesh,
-    mesh_peers: &Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
-    peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
-    peer_hints: &Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
-    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
-    config_state: &Arc<RwLock<MobileTunnelConfig>>,
-    app_config: &Arc<RwLock<AppConfig>>,
-    app_config_dirty: &AtomicBool,
-    config_path: Option<&Path>,
-    network_id: &str,
-    join_request_active: &AtomicBool,
+    control: &MobileEndpointReceiveContext<'_>,
     control_fragments: &mut FipsControlFragmentBuffer,
     inbound_packets: &mut Vec<Vec<u8>>,
     message: FipsEndpointMessage,
 ) -> Result<bool> {
-    if handle_mobile_control_frame(
-        endpoint,
-        mesh,
-        mesh_peers,
-        peer_identities,
-        peer_hints,
-        presence,
-        config_state,
-        app_config,
-        app_config_dirty,
-        config_path,
-        network_id,
-        join_request_active,
-        control_fragments,
-        &message,
-    )
-    .await?
-    {
+    if handle_mobile_control_frame(control, control_fragments, &message).await? {
         return Ok(true);
     }
 
     let source_node_addr = *message.source_peer.node_addr();
     let message_len = message.data.len();
-    let packet = mesh.read().ok().and_then(|mesh| {
+    let packet = control.mesh.read().ok().and_then(|mesh| {
         mesh.receive_endpoint_data_owned_with_source_node_addr(
             source_node_addr.as_bytes(),
             Vec::<u8>::from(message.data),
@@ -106,7 +92,7 @@ async fn handle_mobile_endpoint_message(
     });
     if let Some((source_pubkey, mut bytes)) = packet {
         note_mobile_peer_rx(
-            presence,
+            control.presence,
             &source_pubkey,
             message_len,
             MobilePeerRxKind::Data,
@@ -117,35 +103,24 @@ async fn handle_mobile_endpoint_message(
     Ok(true)
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn handle_mobile_control_frame(
-    endpoint: &FipsEndpoint,
-    mesh: &MobileMesh,
-    mesh_peers: &Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
-    peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
-    peer_hints: &Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
-    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
-    config_state: &Arc<RwLock<MobileTunnelConfig>>,
-    app_config: &Arc<RwLock<AppConfig>>,
-    app_config_dirty: &AtomicBool,
-    config_path: Option<&Path>,
-    network_id: &str,
-    join_request_active: &AtomicBool,
+    control: &MobileEndpointReceiveContext<'_>,
     control_fragments: &mut FipsControlFragmentBuffer,
     message: &FipsEndpointMessage,
 ) -> Result<bool> {
     let Some(frame) = decode_mobile_control_frame(control_fragments, message)? else {
         return Ok(false);
     };
-    if !control_frame_network_matches(network_id, &frame) {
+    if !control_frame_network_matches(control.network_id, &frame) {
         return Ok(true);
     }
-    let Some(source_pubkey) = mobile_control_source_pubkey(mesh, message.source_peer, &frame)?
+    let Some(source_pubkey) =
+        mobile_control_source_pubkey(control.mesh, message.source_peer, &frame)?
     else {
         return Ok(true);
     };
     note_mobile_peer_rx(
-        presence,
+        control.presence,
         &source_pubkey,
         message.data.len(),
         MobilePeerRxKind::Control,
@@ -153,78 +128,64 @@ async fn handle_mobile_control_frame(
 
     match frame {
         FipsControlFrame::Roster { signed_roster, .. } => {
-            apply_mobile_roster_frame(
-                endpoint,
-                mesh,
-                mesh_peers,
-                peer_identities,
-                peer_hints,
-                config_state,
-                app_config,
-                app_config_dirty,
-                config_path,
-                join_request_active,
-                signed_roster.as_deref(),
-            )
-            .await?;
+            apply_mobile_roster_frame(control, signed_roster.as_deref()).await?;
         }
         FipsControlFrame::Capabilities { capabilities, .. } => {
-            if update_mobile_peer_hints(peer_hints, &source_pubkey, &capabilities)? {
-                sync_mobile_config_peer_hints(config_state, peer_hints)?;
+            if update_mobile_peer_hints(control.peer_hints, &source_pubkey, &capabilities)? {
+                sync_mobile_config_peer_hints(control.config_state, control.peer_hints)?;
                 persist_mobile_peer_hints(
-                    app_config,
-                    app_config_dirty,
-                    config_path,
+                    control.app_config,
+                    control.app_config_dirty,
+                    control.config_path,
                     &source_pubkey,
                     &capabilities,
                 )?;
-                refresh_mobile_endpoint_peers(endpoint, mesh_peers, peer_hints, config_state)
-                    .await?;
+                refresh_mobile_endpoint_peers(
+                    control.endpoint,
+                    control.mesh_peers,
+                    control.peer_hints,
+                    control.config_state,
+                )
+                .await?;
             }
         }
         FipsControlFrame::Ping {
             network_id,
             sent_at,
         } => {
-            reply_mobile_ping(endpoint, message.source_peer, network_id, sent_at).await?;
+            reply_mobile_ping(control.endpoint, message.source_peer, network_id, sent_at).await?;
         }
         FipsControlFrame::JoinRequest {
             requested_at,
             request,
         } => {
             record_mobile_join_request(
-                app_config,
-                app_config_dirty,
-                config_path,
+                control.app_config,
+                control.app_config_dirty,
+                control.config_path,
                 &source_pubkey,
                 requested_at,
                 &request,
             )?;
         }
         FipsControlFrame::Pong { sent_at, .. } => {
-            note_mobile_peer_pong(presence, &source_pubkey, sent_at);
+            note_mobile_peer_pong(control.presence, &source_pubkey, sent_at);
         }
         FipsControlFrame::Fragment { .. } => {}
     }
     Ok(true)
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn apply_mobile_roster_frame(
-    endpoint: &FipsEndpoint,
-    mesh: &MobileMesh,
-    mesh_peers: &Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
-    peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
-    peer_hints: &Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
-    config_state: &Arc<RwLock<MobileTunnelConfig>>,
-    app_config: &Arc<RwLock<AppConfig>>,
-    app_config_dirty: &AtomicBool,
-    config_path: Option<&Path>,
-    join_request_active: &AtomicBool,
+    control: &MobileEndpointReceiveContext<'_>,
     signed_roster: Option<&SignedRoster>,
 ) -> Result<()> {
-    let Some(updated) =
-        apply_mobile_roster(app_config, app_config_dirty, config_path, signed_roster)?
+    let Some(updated) = apply_mobile_roster(
+        control.app_config,
+        control.app_config_dirty,
+        control.config_path,
+        signed_roster,
+    )?
     else {
         return Ok(());
     };
@@ -233,37 +194,47 @@ async fn apply_mobile_roster_frame(
     let updated_peer_identities = mobile_peer_identity_map(&updated_peers);
     let updated_hints = updated.peer_hints.clone();
     replace_mobile_mesh(
-        mesh,
+        control.mesh,
         FipsMeshRuntime::with_local_routes(updated_peers.clone(), local_routes),
     )?;
     {
-        let mut peers = mesh_peers
+        let mut peers = control
+            .mesh_peers
             .write()
             .map_err(|_| anyhow!("mobile FIPS peer lock poisoned"))?;
         *peers = updated_peers;
     }
     {
-        let mut identities = peer_identities
+        let mut identities = control
+            .peer_identities
             .write()
             .map_err(|_| anyhow!("mobile FIPS peer identity lock poisoned"))?;
         *identities = updated_peer_identities;
     }
     {
-        let mut hints = peer_hints
+        let mut hints = control
+            .peer_hints
             .write()
             .map_err(|_| anyhow!("mobile FIPS peer hint lock poisoned"))?;
         *hints = updated_hints;
     }
     {
-        let mut config = config_state
+        let mut config = control
+            .config_state
             .write()
             .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
         *config = updated.clone();
     }
     if updated.pending_join_request_recipient.trim().is_empty() {
-        join_request_active.store(false, Ordering::Relaxed);
+        control.join_request_active.store(false, Ordering::Relaxed);
     }
-    refresh_mobile_endpoint_peers(endpoint, mesh_peers, peer_hints, config_state).await
+    refresh_mobile_endpoint_peers(
+        control.endpoint,
+        control.mesh_peers,
+        control.peer_hints,
+        control.config_state,
+    )
+    .await
 }
 
 async fn reply_mobile_ping(
