@@ -88,10 +88,9 @@ mod tests {
         );
     }
     #[test]
-    fn link_event_refresh_keeps_recent_endpoint_hints_available() {
+    fn link_event_refresh_classifies_path_refreshes() {
         let idle = fips_link_event_refresh(false, false, false, false, false);
         assert_eq!(idle, FipsLinkEventRefresh::None);
-        assert!(fips_link_event_should_seed_recent_peers(idle));
 
         for refresh in [
             fips_link_event_refresh(false, true, false, false, false),
@@ -99,7 +98,6 @@ mod tests {
             fips_link_event_refresh(false, false, false, false, true),
         ] {
             assert_eq!(refresh, FipsLinkEventRefresh::RefreshPaths);
-            assert!(fips_link_event_should_seed_recent_peers(refresh));
         }
 
         for refresh in [
@@ -107,7 +105,6 @@ mod tests {
             fips_link_event_refresh(false, false, false, true, false),
         ] {
             assert_eq!(refresh, FipsLinkEventRefresh::None);
-            assert!(fips_link_event_should_seed_recent_peers(refresh));
         }
     }
     #[test]

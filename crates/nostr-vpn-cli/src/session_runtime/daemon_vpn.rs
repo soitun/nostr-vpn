@@ -621,8 +621,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     underlay_repaired,
                     resumed_after_sleep,
                 );
-                let seed_recent_fips_peers =
-                    fips_link_event_should_seed_recent_peers(fips_refresh);
 
                 if platform_network_event
                     || network_changed
@@ -680,8 +678,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         // Recent endpoints are only dial hints; fips still has to
                                         // authenticate them. Keeping these hints lets mobile/link
                                         // churn recover quickly without trusting stale live paths.
-                                        recent_peers: seed_recent_fips_peers
-                                            .then_some(&recent_peers),
+                                        recent_peers: Some(&recent_peers),
                                         last_endpoint_peer_signature:
                                             &mut last_fips_endpoint_peer_signature,
                                     },

@@ -135,11 +135,6 @@ pub(crate) fn fips_link_event_refresh(
         FipsLinkEventRefresh::None
     }
 }
-pub(crate) fn fips_link_event_should_seed_recent_peers(
-    _refresh: FipsLinkEventRefresh,
-) -> bool {
-    true
-}
 pub(crate) fn fips_stale_participant_restart_due(
     last_restart_at: &mut Option<u64>,
     now: u64,
