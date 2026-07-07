@@ -414,15 +414,6 @@ fn macos_gateway_route_args(action: &str, target: &str, gateway: &str) -> Vec<St
     args
 }
 
-#[cfg(test)]
-pub(crate) fn macos_gateway_route_args_for_test(
-    action: &str,
-    target: &str,
-    gateway: &str,
-) -> Vec<String> {
-    macos_gateway_route_args(action, target, gateway)
-}
-
 #[cfg(target_os = "macos")]
 pub(super) fn apply_macos_default_route(
     gateway: Option<&str>,
@@ -674,4 +665,32 @@ pub(super) fn cleanup_macos_pf_nat() -> Result<()> {
     let mut command = ProcessCommand::new("pfctl");
     command.args(macos_pf_anchor_flush_args());
     run_checked(&mut command)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn macos_gateway_route_args_install_global_host_routes() {
+        assert_eq!(
+            macos_gateway_route_args("add", "65.109.48.91/32", "192.168.64.1"),
+            vec![
+                "-n".to_string(),
+                "add".to_string(),
+                "-host".to_string(),
+                "65.109.48.91".to_string(),
+                "192.168.64.1".to_string(),
+            ]
+        );
+        assert_eq!(
+            macos_gateway_route_args("change", "0.0.0.0/0", "192.168.64.1"),
+            vec![
+                "-n".to_string(),
+                "change".to_string(),
+                "default".to_string(),
+                "192.168.64.1".to_string(),
+            ]
+        );
+    }
 }

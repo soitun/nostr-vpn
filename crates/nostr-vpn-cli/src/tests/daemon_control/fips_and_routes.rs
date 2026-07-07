@@ -395,37 +395,6 @@ fn broad_fips_routes_require_endpoint_bypass() {
 }
 
 #[test]
-fn macos_gateway_route_args_install_global_host_routes() {
-    assert_eq!(
-        crate::macos_network::macos_gateway_route_args_for_test(
-            "add",
-            "65.109.48.91/32",
-            "192.168.64.1",
-        ),
-        vec![
-            "-n".to_string(),
-            "add".to_string(),
-            "-host".to_string(),
-            "65.109.48.91".to_string(),
-            "192.168.64.1".to_string(),
-        ]
-    );
-    assert_eq!(
-        crate::macos_network::macos_gateway_route_args_for_test(
-            "change",
-            "0.0.0.0/0",
-            "192.168.64.1",
-        ),
-        vec![
-            "-n".to_string(),
-            "change".to_string(),
-            "default".to_string(),
-            "192.168.64.1".to_string(),
-        ]
-    );
-}
-
-#[test]
 fn macos_interface_names_from_ifconfig_list_parses_interfaces() {
     assert_eq!(
         crate::macos_network::macos_interface_names_from_ifconfig_list(
