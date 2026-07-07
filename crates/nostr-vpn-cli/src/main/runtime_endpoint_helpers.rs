@@ -39,18 +39,8 @@ static TEST_REPAIR_SAVED_NETWORK_STATE_CALLS: AtomicU32 = AtomicU32::new(0);
 static TEST_REPAIR_SAVED_NETWORK_STATE_CALLS_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[cfg(test)]
-pub(crate) fn macos_euid_override_lock_for_test() -> &'static Mutex<()> {
-    TEST_MACOS_EUID_OVERRIDE_LOCK.get_or_init(|| Mutex::new(()))
-}
-
-#[cfg(test)]
 pub(crate) fn repair_saved_network_state_call_lock_for_test() -> &'static Mutex<()> {
     TEST_REPAIR_SAVED_NETWORK_STATE_CALLS_LOCK.get_or_init(|| Mutex::new(()))
-}
-
-#[cfg(test)]
-pub(crate) fn set_macos_euid_override_for_test(value: Option<u32>) {
-    TEST_MACOS_EUID_OVERRIDE.store(value.unwrap_or(TEST_MACOS_EUID_SENTINEL), Ordering::Relaxed);
 }
 
 #[cfg(test)]

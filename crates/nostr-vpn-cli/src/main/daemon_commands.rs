@@ -32,6 +32,48 @@ pub(crate) fn ensure_macos_connect_privileges(config_path: &Path) -> Result<()> 
     ))
 }
 
+#[cfg(test)]
+mod daemon_commands_tests {
+    use std::path::Path;
+    use std::sync::Mutex;
+    use std::sync::atomic::Ordering;
+
+    #[test]
+    fn macos_connect_privilege_preflight_requires_admin_when_euid_is_not_root() {
+        let _guard = super::TEST_MACOS_EUID_OVERRIDE_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("macos euid test lock");
+        super::TEST_MACOS_EUID_OVERRIDE.store(501, Ordering::Relaxed);
+
+        let error = super::ensure_macos_connect_privileges(Path::new("/tmp/nvpn.toml"))
+            .expect_err("non-root macOS preflight should fail");
+        let message = error.to_string();
+        assert!(message.contains("admin privileges"));
+        assert!(message.contains("did you run with sudo?"));
+        assert!(message.contains("sudo nvpn start --connect"));
+        assert!(message.contains("sudo nvpn service install"));
+
+        super::TEST_MACOS_EUID_OVERRIDE
+            .store(super::TEST_MACOS_EUID_SENTINEL, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn macos_connect_privilege_preflight_allows_root() {
+        let _guard = super::TEST_MACOS_EUID_OVERRIDE_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("macos euid test lock");
+        super::TEST_MACOS_EUID_OVERRIDE.store(0, Ordering::Relaxed);
+
+        super::ensure_macos_connect_privileges(Path::new("/tmp/nvpn.toml"))
+            .expect("root macOS preflight should pass");
+
+        super::TEST_MACOS_EUID_OVERRIDE
+            .store(super::TEST_MACOS_EUID_SENTINEL, Ordering::Relaxed);
+    }
+}
+
 async fn start_session(args: StartArgs) -> Result<()> {
     let config_path = args.config.clone().unwrap_or_else(default_config_path);
     let (app, _network_id) = load_config_with_overrides(
