@@ -1,26 +1,4 @@
 impl FipsPrivateMeshRuntime {
-    #[cfg(test)]
-    async fn bind_with_config(
-        identity_nsec: impl Into<String>,
-        scope: impl Into<String>,
-        peers: Vec<FipsMeshPeerConfig>,
-        config: Config,
-        local_allowed_ips: Vec<String>,
-        local_tunnel_ips: Vec<IpAddr>,
-        paid_route_admissions: Vec<FipsPaidRouteAdmission>,
-    ) -> Result<Self> {
-        Self::bind_with_config_scoped(
-            identity_nsec,
-            Some(scope.into()),
-            peers,
-            config,
-            local_allowed_ips,
-            local_tunnel_ips,
-            paid_route_admissions,
-        )
-        .await
-    }
-
     async fn bind_with_config_scoped(
         identity_nsec: impl Into<String>,
         scope: Option<String>,

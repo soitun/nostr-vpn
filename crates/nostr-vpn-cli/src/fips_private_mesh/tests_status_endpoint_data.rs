@@ -11,9 +11,9 @@
             super::private_mesh_mtu_from_app(None),
             fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly,
         );
-        FipsPrivateMeshRuntime::bind_with_config(
+        FipsPrivateMeshRuntime::bind_with_config_scoped(
             identity_nsec,
-            scope,
+            Some(scope),
             peers,
             config,
             Vec::new(),
@@ -276,9 +276,9 @@
         let destination = Ipv4Addr::new(10, 44, 22, 44);
         let scope = "nostr-vpn:direct-source-run-replace";
 
-        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config(
+        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
             alice_nsec,
-            scope,
+            Some(scope.to_string()),
             vec![FipsMeshPeerConfig {
                 participant_pubkey: bob_pubkey.clone(),
                 endpoint_npub: bob_npub.clone(),
@@ -291,9 +291,9 @@
         )
         .await
         .expect("alice endpoint should bind");
-        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config(
+        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
             bob_nsec,
-            scope,
+            Some(scope.to_string()),
             vec![FipsMeshPeerConfig {
                 participant_pubkey: alice_pubkey.clone(),
                 endpoint_npub: alice_npub.clone(),
@@ -436,9 +436,9 @@
         let destination = Ipv4Addr::new(10, 44, 30, 2);
         let scope = "nostr-vpn:direct-batch-limit";
 
-        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config(
+        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
             alice_nsec,
-            scope,
+            Some(scope.to_string()),
             vec![FipsMeshPeerConfig {
                 participant_pubkey: bob_pubkey,
                 endpoint_npub: bob_npub.clone(),
@@ -451,9 +451,9 @@
         )
         .await
         .expect("alice endpoint should bind");
-        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config(
+        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
             bob_nsec,
-            scope,
+            Some(scope.to_string()),
             vec![FipsMeshPeerConfig {
                 participant_pubkey: alice_pubkey,
                 endpoint_npub: alice_npub.clone(),

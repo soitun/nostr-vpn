@@ -213,9 +213,9 @@
         let bob_ip = Ipv4Addr::new(10, 44, 11, 2);
         let scope = "nostr-vpn:two-local-endpoints";
 
-        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config(
+        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
             alice_nsec,
-            scope,
+            Some(scope.to_string()),
             vec![FipsMeshPeerConfig {
                 participant_pubkey: bob_pubkey.clone(),
                 endpoint_npub: bob_npub.clone(),
@@ -228,9 +228,9 @@
         )
         .await
         .expect("alice endpoint should bind");
-        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config(
+        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
             bob_nsec,
-            scope,
+            Some(scope.to_string()),
             vec![FipsMeshPeerConfig {
                 participant_pubkey: alice_pubkey.clone(),
                 endpoint_npub: alice_npub.clone(),
@@ -322,9 +322,9 @@
             direct_udp_endpoint_config_many(carol_port, &[(&bob_npub, bob_port, true)]);
         add_addressless_manual_peer(&mut carol_fips_config, &alice_npub);
 
-        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config(
+        let alice_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
             alice_nsec,
-            scope,
+            Some(scope.to_string()),
             vec![
                 FipsMeshPeerConfig {
                     participant_pubkey: bob_pubkey.clone(),
@@ -344,9 +344,9 @@
         )
         .await
         .expect("alice endpoint should bind");
-        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config(
+        let bob_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
             bob_nsec,
-            scope,
+            Some(scope.to_string()),
             vec![
                 FipsMeshPeerConfig {
                     participant_pubkey: alice_pubkey.clone(),
@@ -366,9 +366,9 @@
         )
         .await
         .expect("bob endpoint should bind");
-        let carol_runtime = FipsPrivateMeshRuntime::bind_with_config(
+        let carol_runtime = FipsPrivateMeshRuntime::bind_with_config_scoped(
             carol_nsec,
-            scope,
+            Some(scope.to_string()),
             vec![
                 FipsMeshPeerConfig {
                     participant_pubkey: alice_pubkey.clone(),
