@@ -456,13 +456,13 @@ async fn run_pump(
                     if let TunnResult::Err(error) = &result {
                         log_android_warn(&format!("wg-upstream: encap err {error:?}"));
                     }
-                    if let TunnResult::WriteToNetwork(packet) = &result {
-                        if len == 0 {
-                            log_android_info(&format!(
-                                "wg-upstream: encap keepalive -> {}B net",
-                                packet.len()
-                            ));
-                        }
+                    if let TunnResult::WriteToNetwork(packet) = &result
+                        && len == 0
+                    {
+                        log_android_info(&format!(
+                            "wg-upstream: encap keepalive -> {}B net",
+                            packet.len()
+                        ));
                     }
                     handle_tunn_result(
                         &result,

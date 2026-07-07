@@ -224,7 +224,6 @@ struct NativeLanPairingWorker(LanPairingWorker);
 #[derive(Debug)]
 struct NativeLanPairingWorker;
 
-#[cfg_attr(test, allow(clippy::unnecessary_wraps, clippy::unused_self))]
 impl NativeLanPairingWorker {
     #[cfg(not(test))]
     fn spawn(announcement: LanPairingAnnouncement) -> Result<Self> {
@@ -232,7 +231,15 @@ impl NativeLanPairingWorker {
     }
 
     #[cfg(test)]
-    fn spawn(_announcement: LanPairingAnnouncement) -> Result<Self> {
+    fn spawn(announcement: LanPairingAnnouncement) -> Result<Self> {
+        let LanPairingAnnouncement {
+            npub,
+            node_name,
+            endpoint,
+            invite,
+        } = announcement;
+        anyhow::ensure!(!npub.trim().is_empty(), "LAN pairing npub is missing");
+        let _ = (node_name, endpoint, invite);
         Ok(Self)
     }
 
@@ -243,6 +250,7 @@ impl NativeLanPairingWorker {
 
     #[cfg(test)]
     fn drain(&mut self) -> Vec<LanPairingSignal> {
+        let _ = self;
         Vec::new()
     }
 
@@ -252,7 +260,9 @@ impl NativeLanPairingWorker {
     }
 
     #[cfg(test)]
-    fn set_broadcast_until(&self, _expires_at: SystemTime) {}
+    fn set_broadcast_until(&self, expires_at: SystemTime) {
+        let _ = (self, expires_at);
+    }
 
     #[cfg(not(test))]
     fn set_listen_until(&self, expires_at: SystemTime) {
@@ -260,7 +270,9 @@ impl NativeLanPairingWorker {
     }
 
     #[cfg(test)]
-    fn set_listen_until(&self, _expires_at: SystemTime) {}
+    fn set_listen_until(&self, expires_at: SystemTime) {
+        let _ = (self, expires_at);
+    }
 
     #[cfg(not(test))]
     fn clear_broadcast(&self) {
@@ -268,7 +280,9 @@ impl NativeLanPairingWorker {
     }
 
     #[cfg(test)]
-    fn clear_broadcast(&self) {}
+    fn clear_broadcast(&self) {
+        let _ = self;
+    }
 
     #[cfg(not(test))]
     fn clear_listen(&self) {
@@ -276,7 +290,9 @@ impl NativeLanPairingWorker {
     }
 
     #[cfg(test)]
-    fn clear_listen(&self) {}
+    fn clear_listen(&self) {
+        let _ = self;
+    }
 
     #[cfg(not(test))]
     fn update_announcement(&self, announcement: LanPairingAnnouncement) {
@@ -284,7 +300,9 @@ impl NativeLanPairingWorker {
     }
 
     #[cfg(test)]
-    fn update_announcement(&self, _announcement: LanPairingAnnouncement) {}
+    fn update_announcement(&self, announcement: LanPairingAnnouncement) {
+        let _ = (self, announcement);
+    }
 
     #[cfg(not(test))]
     fn stop(&mut self) {
@@ -292,7 +310,9 @@ impl NativeLanPairingWorker {
     }
 
     #[cfg(test)]
-    fn stop(&mut self) {}
+    fn stop(&mut self) {
+        let _ = self;
+    }
 }
 
 #[derive(Debug, Deserialize)]
