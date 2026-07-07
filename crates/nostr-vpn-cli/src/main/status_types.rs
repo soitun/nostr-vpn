@@ -109,8 +109,7 @@ struct DaemonRelayState {
     status: String,
 }
 
-#[cfg(any(target_os = "macos", test))]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 struct MacosNetworkCleanupState {
     #[serde(default)]
@@ -428,8 +427,7 @@ struct MacosRouteSpec {
     interface: String,
 }
 
-#[cfg(any(target_os = "macos", test))]
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, Hash)]
 struct MacosManagedRoute {
     target: String,
