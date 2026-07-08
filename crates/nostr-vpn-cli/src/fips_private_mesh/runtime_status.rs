@@ -324,11 +324,6 @@ impl FipsPrivateMeshRuntime {
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    fn mesh_generation(&self) -> u64 {
-        self.mesh_generation.load(Ordering::Acquire)
-    }
-
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn stable_mesh_snapshot(&self) -> (u64, Arc<FipsMeshRuntime>) {
         loop {
             let generation = self.mesh_generation.load(Ordering::Acquire);

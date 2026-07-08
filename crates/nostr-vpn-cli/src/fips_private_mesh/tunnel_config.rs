@@ -202,7 +202,9 @@ impl FipsPrivateTunnelConfig {
             fips_endpoint_peers_from_mesh(&peers, operator_static, recent_peer_endpoints);
         if !stamped_endpoint_hints_enabled {
             for peer in &mut endpoint_peers {
-                peer.discovery_fallback_transit = false;
+                if peer.auto_reconnect {
+                    peer.discovery_fallback_transit = false;
+                }
             }
         }
         route_targets.sort();

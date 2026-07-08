@@ -18,8 +18,7 @@ impl FipsPrivateMeshRuntime {
             let mut emitted = 0usize;
             let mut received = 0usize;
             let mut turn_start = None;
-            let (mesh_generation, mesh) = self.stable_mesh_snapshot();
-            packet_outputs.set_mesh_generation(mesh_generation);
+            let (_, mesh) = self.stable_mesh_snapshot();
             while received < limit {
                 let runs = if received == 0 {
                     loop {
@@ -95,15 +94,6 @@ impl FipsPrivateMeshRuntime {
         if packet_outputs.is_empty() {
             packet_outputs.clear();
             return Ok(());
-        }
-        let mesh_generation = self.mesh_generation();
-        if packet_outputs.mesh_generation() != mesh_generation || mesh_generation & 1 != 0 {
-            let (mesh_generation, mesh) = self.stable_mesh_snapshot();
-            revalidate_direct_endpoint_tun_batch_with_mesh(
-                &mesh,
-                mesh_generation,
-                packet_outputs,
-            );
         }
         #[cfg(feature = "paid-exit")]
         self.note_paid_route_inbound_batch(packet_outputs)?;
@@ -338,13 +328,9 @@ impl FipsPrivateMeshRuntime {
                 current_admitter = mesh.endpoint_source_admitter(&source_node_addr);
                 current_admission_cache = FipsEndpointAdmissionCache::default();
             }
-            let Some(admitter) = current_admitter else {
-                continue;
-            };
-
             let (accepted_count, endpoint_bytes) =
                 self.admit_direct_endpoint_packet_run_blocking(
-                    &admitter,
+                    current_admitter.as_ref(),
                     run,
                     &mut current_admission_cache,
                     batch_outputs,
@@ -355,12 +341,14 @@ impl FipsPrivateMeshRuntime {
                 continue;
             }
 
-            accepted = accepted.saturating_add(accepted_count);
-            batch_outputs.data_rx_notes.push(FipsDataRxNote::new(
-                admitter.source_pubkey(),
-                admitter.source_pubkey_bytes(),
-                endpoint_bytes,
-            ));
+            if let Some(admitter) = current_admitter.as_ref() {
+                accepted = accepted.saturating_add(accepted_count);
+                batch_outputs.data_rx_notes.push(FipsDataRxNote::new(
+                    admitter.source_pubkey(),
+                    admitter.source_pubkey_bytes(),
+                    endpoint_bytes,
+                ));
+            }
         }
         Ok((received, accepted))
     }
@@ -368,7 +356,7 @@ impl FipsPrivateMeshRuntime {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn admit_direct_endpoint_packet_run_blocking(
         &self,
-        admitter: &FipsEndpointSourceAdmitter<'_>,
+        admitter: Option<&FipsEndpointSourceAdmitter<'_>>,
         mut run: FipsEndpointDirectPacketRun,
         admission_cache: &mut FipsEndpointAdmissionCache,
         batch_outputs: &mut DirectTunWriteBatch,
@@ -422,6 +410,9 @@ impl FipsPrivateMeshRuntime {
                 }
             }
 
+            let Some(admitter) = admitter else {
+                return false;
+            };
             if !admitter.admit_packet_cached(packet, admission_cache) {
                 return false;
             }
@@ -435,6 +426,9 @@ impl FipsPrivateMeshRuntime {
         if accepted_count == 0 {
             return Ok((0, 0));
         }
+        let Some(admitter) = admitter else {
+            return Ok((0, 0));
+        };
 
         if fips_tun_packet_debug_enabled() {
             for packet in run.packet_slices() {
@@ -462,18 +456,6 @@ fn should_flush_direct_endpoint_tun_batch_early(packet_outputs: &DirectTunWriteB
         && packet_outputs.bytes() <= packet_outputs.len().saturating_mul(LATENCY_PACKET_BYTES)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn revalidate_direct_endpoint_tun_batch_with_mesh(
-    mesh: &FipsMeshRuntime,
-    mesh_generation: u64,
-    batch_outputs: &mut DirectTunWriteBatch,
-) {
-    let runs = std::mem::take(&mut batch_outputs.runs);
-    batch_outputs.clear();
-    batch_outputs.set_mesh_generation(mesh_generation);
-    admit_direct_endpoint_data_runs_with_mesh(mesh, runs, batch_outputs);
-}
-
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn fips_tun_packet_debug_enabled() -> bool {
     fips_unix_packet_debug_enabled()
@@ -482,89 +464,4 @@ fn fips_tun_packet_debug_enabled() -> bool {
 #[cfg(target_os = "windows")]
 fn fips_tun_packet_debug_enabled() -> bool {
     windows_fips_packet_debug_enabled()
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn admit_direct_endpoint_data_runs_with_mesh(
-    mesh: &FipsMeshRuntime,
-    runs: Vec<FipsEndpointDirectPacketRun>,
-    batch_outputs: &mut DirectTunWriteBatch,
-) -> (usize, usize) {
-    let mut current_source_node_addr = None;
-    let mut current_admitter = None;
-    let mut current_admission_cache = FipsEndpointAdmissionCache::default();
-    let mut received = 0usize;
-    let mut accepted = 0usize;
-    for run in runs {
-        let run_packets = run.len();
-        received = received.saturating_add(run_packets);
-        if run_packets == 0 {
-            continue;
-        }
-
-        let source_node_addr = *run.source_peer().node_addr().as_bytes();
-        if current_source_node_addr != Some(source_node_addr) {
-            current_source_node_addr = Some(source_node_addr);
-            current_admitter = mesh.endpoint_source_admitter(&source_node_addr);
-            current_admission_cache = FipsEndpointAdmissionCache::default();
-        }
-        let Some(admitter) = current_admitter else {
-            continue;
-        };
-
-        let (accepted_count, endpoint_bytes) = admit_direct_endpoint_packet_run_with_admitter(
-            &admitter,
-            run,
-            &mut current_admission_cache,
-            batch_outputs,
-        );
-        if accepted_count == 0 {
-            continue;
-        }
-
-        accepted = accepted.saturating_add(accepted_count);
-        batch_outputs.data_rx_notes.push(FipsDataRxNote::new(
-            admitter.source_pubkey(),
-            admitter.source_pubkey_bytes(),
-            endpoint_bytes,
-        ));
-    }
-    (received, accepted)
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn admit_direct_endpoint_packet_run_with_admitter(
-    admitter: &FipsEndpointSourceAdmitter<'_>,
-    mut run: FipsEndpointDirectPacketRun,
-    admission_cache: &mut FipsEndpointAdmissionCache,
-    batch_outputs: &mut DirectTunWriteBatch,
-) -> (usize, usize) {
-    let mut accepted_count = 0usize;
-    let mut endpoint_bytes = 0usize;
-    run.retain_packets(|_index, packet| {
-        if !admitter.admit_packet_cached(packet, admission_cache) {
-            return false;
-        }
-        accepted_count = accepted_count.saturating_add(1);
-        endpoint_bytes = endpoint_bytes.saturating_add(packet.len());
-        true
-    });
-    if accepted_count == 0 {
-        return (0, 0);
-    }
-
-    if fips_tun_packet_debug_enabled() {
-        for packet in run.packet_slices() {
-            eprintln!(
-                "fips: mesh -> TUN {} bytes {}",
-                packet.len(),
-                describe_ip_packet(packet)
-            );
-        }
-    }
-    batch_outputs.push_run(
-        run,
-        FipsPacketSource::new(admitter.source_pubkey_bytes()),
-    );
-    (accepted_count, endpoint_bytes)
 }

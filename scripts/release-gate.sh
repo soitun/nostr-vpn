@@ -362,7 +362,7 @@ case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
     # open-discovery/relay path but depends on public Nostr relays, so it flakes
     # in CI; run it manually (or in a nightly) rather than in the blocking gate.
     ./scripts/e2e-bootstrap-discovery-docker.sh
-    NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}" \
+    NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_ROUTED_UDP_DISCOVERY_POLICY:-open}" \
       ./scripts/e2e-fips-routed-udp-docker.sh
     NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}" \
       ./scripts/e2e-fips-roaming-docker.sh

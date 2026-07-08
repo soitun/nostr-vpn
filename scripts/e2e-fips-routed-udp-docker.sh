@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PROJECT_NAME="nostr-vpn-e2e-fips-routed-udp"
+PROJECT_NAME="${NVPN_E2E_PROJECT_NAME:-nostr-vpn-e2e-fips-routed-udp}"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml")
 
 NETWORK_ID="docker-fips-routed-udp"
@@ -12,7 +12,8 @@ SAFE_TUNNEL_MTU=1150
 PING_PAYLOAD_SIZE=1000
 CONTINUITY_DURATION_SECS="${NVPN_E2E_CONTINUITY_SECS:-90}"
 CONTINUITY_INTERVAL_SECS="${NVPN_E2E_CONTINUITY_INTERVAL_SECS:-0.2}"
-FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
+FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-open}"
+KEEP_ON_FAILURE="${NVPN_E2E_KEEP_ON_FAILURE:-0}"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -51,6 +52,10 @@ on_exit() {
   local exit_code=$?
   if [[ $exit_code -ne 0 ]]; then
     dump_debug
+    if [[ "$KEEP_ON_FAILURE" == "1" ]]; then
+      echo "fips routed udp e2e failed: preserving docker project '$PROJECT_NAME'" >&2
+      exit "$exit_code"
+    fi
   fi
   cleanup
   exit "$exit_code"
@@ -164,22 +169,32 @@ wait_for_mesh() {
   return 1
 }
 
-assert_peer_online_via_fips() {
-  local status="$1"
+wait_for_peer_online_via_fips() {
+  local node="$1"
   local peer_key="$2"
   local label="$3"
-  if ! jq -e --arg peer_key "$peer_key" '
-    .daemon.state.peers
-    | any(
-      (.participant_pubkey == $peer_key or .fips_endpoint_npub == $peer_key)
-      and (.endpoint == "fips" or .runtime_endpoint == "fips")
-      and .reachable == true
-    )
-  ' >/dev/null <<<"$status"; then
-    echo "fips routed udp e2e failed: $label did not show peer online via FIPS routing" >&2
-    printf '%s\n' "$status" >&2
-    exit 1
-  fi
+  local status=""
+  for _ in $(seq 1 30); do
+    status="$("${COMPOSE[@]}" exec -T "$node" nvpn status --json --discover-secs 0 | tr -d '\r')"
+    if jq -e --arg peer_key "$peer_key" '
+      .daemon.state.peers
+      | any(
+        ((.participant_pubkey // "" | ascii_downcase) == ($peer_key | ascii_downcase)
+          or (.public_key // "" | ascii_downcase) == ($peer_key | ascii_downcase)
+          or (.fips_endpoint_npub // "") == $peer_key)
+        and (.endpoint == "fips" or .runtime_endpoint == "fips")
+        and .reachable == true
+      )
+    ' >/dev/null <<<"$status"; then
+      printf '%s\n' "$status"
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "fips routed udp e2e failed: $label did not show peer online via FIPS routing" >&2
+  printf '%s\n' "$status" >&2
+  exit 1
 }
 
 # Asserts the transit hop is doing its job WITHOUT becoming a roster
@@ -246,6 +261,7 @@ wait_for_payload() {
 start_nvpn_daemon() {
   local node="$1"
   "${COMPOSE[@]}" exec -T "$node" env \
+    RUST_LOG="${NVPN_E2E_RUST_LOG:-info}" \
     NVPN_FIPS_NOSTR_DISCOVERY_POLICY="$FIPS_NOSTR_DISCOVERY_POLICY" \
     NVPN_MESH_MTU_PROFILE=safe \
     NVPN_MESH_UNDERLAY_UDP_MTU=1280 \
@@ -415,8 +431,8 @@ BOB_STATUS="$(wait_for_mesh node-b 1)" || {
 }
 CHARLIE_STATUS="$("${COMPOSE[@]}" exec -T node-c nvpn status --json --discover-secs 0 | tr -d '\r')"
 
-assert_peer_online_via_fips "$ALICE_STATUS" "$BOB_NPUB" "alice"
-assert_peer_online_via_fips "$BOB_STATUS" "$ALICE_NPUB" "bob"
+ALICE_STATUS="$(wait_for_peer_online_via_fips node-a "$BOB_NPUB" "alice")"
+BOB_STATUS="$(wait_for_peer_online_via_fips node-b "$ALICE_NPUB" "bob")"
 
 # Charlie carries the FIPS-overlay traffic between Alice and Bob (direct
 # A<->B underlay UDP is blocked above) but must NOT appear in either

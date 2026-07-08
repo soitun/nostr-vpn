@@ -248,7 +248,7 @@
     }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[tokio::test]
-    async fn direct_endpoint_source_run_admission_uses_current_mesh_after_replace() {
+    async fn direct_endpoint_finalize_preserves_admitted_batch_after_mesh_replace() {
         let _local_udp_guard = LOCAL_UDP_ENDPOINT_TEST_LOCK.lock().await;
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
@@ -336,25 +336,54 @@
         .expect("warmup receiver should join")
         .expect("warmup receive should succeed");
 
-        send_with_retry(&alice_runtime, &old_packet).await;
-        tokio::time::sleep(Duration::from_millis(100)).await;
         let new_peer = FipsMeshPeerConfig {
             participant_pubkey: alice_pubkey.clone(),
             endpoint_npub: alice_npub.clone(),
             allowed_ips: vec![format!("{new_source}/32")],
         };
-        bob_runtime
-            .replace_peers(
+
+        send_with_retry(&alice_runtime, &old_packet).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let expected_old_packet = old_packet.clone();
+        let old_len = old_packet.len() as u64;
+        let bob_runtime = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let stop = AtomicBool::new(false);
+            let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
+            let mut packets = DirectTunWriteBatch::with_capacity(1);
+            let mut direct_rx = bob_runtime.direct_endpoint_rx.cursor();
+
+            let emitted = bob_runtime
+                .recv_direct_endpoint_tun_batch_blocking(
+                    &mut direct_rx,
+                    1,
+                    &stop,
+                    &mut packets,
+                    &event_tx,
+                )?
+                .expect("old-config packet should be admitted");
+            assert_eq!(emitted, 1);
+            assert_eq!(packets.len(), 1);
+            assert_eq!(
+                packets.run_slices().next(),
+                Some(expected_old_packet.as_slice())
+            );
+
+            bob_runtime.replace_peers(
                 vec![new_peer],
                 vec![format!("{destination}/32")],
                 Vec::new(),
-            )
-            .expect("replace runtime mesh");
+            )?;
+            bob_runtime.finalize_direct_endpoint_tun_batch_blocking(&mut packets)?;
+
+            Ok(bob_runtime)
+        })
+        .await
+        .expect("old-config receiver should join")
+        .expect("old-config receive should succeed");
 
         let stop = Arc::new(AtomicBool::new(false));
         let thread_stop = Arc::clone(&stop);
         let expected_new_packet = new_packet.clone();
-        let old_len = old_packet.len() as u64;
         let new_len = new_packet.len() as u64;
         let receiver = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
@@ -402,7 +431,7 @@
 
         let warmup_len = old_len;
         let expected_tx_bytes = warmup_len + old_len + new_len * new_sends;
-        let expected_rx_bytes = warmup_len + new_len * emitted_new_packets;
+        let expected_rx_bytes = warmup_len + old_len + new_len * emitted_new_packets;
 
         let alice_status = alice_runtime
             .peer_statuses()

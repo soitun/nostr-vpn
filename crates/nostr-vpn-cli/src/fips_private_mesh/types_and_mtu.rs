@@ -44,7 +44,6 @@ struct DirectTunWriteBatch {
     #[cfg(feature = "paid-exit")]
     packet_sources: Vec<FipsPacketSource>,
     bytes: usize,
-    mesh_generation: u64,
     data_rx_notes: FipsDataRxBatchNotes,
 }
 
@@ -57,7 +56,6 @@ impl DirectTunWriteBatch {
             #[cfg(feature = "paid-exit")]
             packet_sources: Vec::with_capacity(capacity),
             bytes: 0,
-            mesh_generation: 0,
             data_rx_notes: FipsDataRxBatchNotes::default(),
         }
     }
@@ -68,7 +66,6 @@ impl DirectTunWriteBatch {
         #[cfg(feature = "paid-exit")]
         self.packet_sources.clear();
         self.bytes = 0;
-        self.mesh_generation = 0;
         self.data_rx_notes.clear();
     }
 
@@ -82,14 +79,6 @@ impl DirectTunWriteBatch {
 
     fn bytes(&self) -> usize {
         self.bytes
-    }
-
-    fn mesh_generation(&self) -> u64 {
-        self.mesh_generation
-    }
-
-    fn set_mesh_generation(&mut self, generation: u64) {
-        self.mesh_generation = generation;
     }
 
     fn push_run(&mut self, run: FipsEndpointDirectPacketRun, source: FipsPacketSource) {

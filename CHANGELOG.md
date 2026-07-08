@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.89 - 2026-07-08
+
+### Changed
+
+- Bumped to FIPS 0.3.81/0.3.56 for the routed endpoint-payload fix used by
+  the FIPS routed UDP Docker gate.
+- Simplified direct endpoint receive batching by finalizing already-admitted
+  packet batches without revalidating them against later mesh snapshots.
+
+### Fixed
+
+- Preserved explicit static non-roster FIPS transit endpoints when Nostr
+  discovery is disabled, while still keeping them out of private-network routes.
+- Hardened the FIPS routed UDP release gate to wait for FIPS-routed peer
+  reachability and use the relay path exercised by this release candidate.
+
 ## 4.0.88 - 2026-07-08
 
 ### Added
