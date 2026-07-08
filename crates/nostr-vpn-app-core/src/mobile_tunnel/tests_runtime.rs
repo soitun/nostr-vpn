@@ -316,8 +316,7 @@
             .await
             {
                 Ok(Some(received)) if received > 0 => return messages.remove(0),
-                Ok(Some(_)) => {}
-                Ok(None) | Err(_) => {}
+                Ok(Some(_) | None) | Err(_) => {}
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
