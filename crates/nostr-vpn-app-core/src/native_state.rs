@@ -446,6 +446,7 @@ pub struct NativeAppState {
     pub nostr_pubsub_max_event_bytes: u32,
     pub network_id: String,
     pub active_network_invite: String,
+    pub join_request_qr_code_or_link: String,
     pub exit_node: String,
     pub exit_node_leak_protection: bool,
     pub exit_node_active: bool,

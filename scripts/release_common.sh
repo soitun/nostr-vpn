@@ -4,7 +4,8 @@ release_root() {
   cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd
 }
 
-NVPN_BUILTIN_IOS_BUNDLE_ID="fi.siriusbusiness.nvpn"
+NVPN_BUILTIN_APP_ID="fi.siriusbusiness.nvpn"
+NVPN_BUILTIN_IOS_BUNDLE_ID="$NVPN_BUILTIN_APP_ID"
 
 expand_env_file_value() {
   local value="$1"
@@ -66,7 +67,8 @@ load_release_env() {
     load_env_file_defaults "$local_env_file"
   fi
 
-  export NVPN_DEFAULT_IOS_BUNDLE_ID="${NVPN_DEFAULT_IOS_BUNDLE_ID:-$NVPN_BUILTIN_IOS_BUNDLE_ID}"
+  export NVPN_DEFAULT_APP_ID="${NVPN_DEFAULT_APP_ID:-$NVPN_BUILTIN_APP_ID}"
+  export NVPN_DEFAULT_IOS_BUNDLE_ID="${NVPN_DEFAULT_IOS_BUNDLE_ID:-$NVPN_DEFAULT_APP_ID}"
 }
 
 bool_is_true() {

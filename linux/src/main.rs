@@ -13,16 +13,16 @@ use std::time::{Duration, Instant};
 
 use adw::prelude::*;
 use gtk::{gio, glib};
-use nostr_vpn_app_core::{
-    FfiApp, NativeAppAction, NativeAppState, NativeNetworkState, NativeParticipantState,
-    SettingsPatch, UpdateAutoCheckPolicy,
-};
 use nostr_vpn_app_core::native_state::{
     NativePaidExitSellerState, NativePaidRouteOfferState, NativePaidRouteSessionState,
     NativePaidRouteWalletMintState,
 };
+use nostr_vpn_app_core::{
+    FfiApp, NativeAppAction, NativeAppState, NativeNetworkState, NativeParticipantState,
+    SettingsPatch, UpdateAutoCheckPolicy,
+};
 
-const APP_ID: &str = "to.iris.nvpn";
+pub(crate) const APP_ID: &str = "fi.siriusbusiness.nvpn";
 const DEFAULT_UPDATE_POLL_INTERVAL_SECS: u32 = 6 * 60 * 60;
 const SEARCH_VISIBILITY_THRESHOLD: usize = 7;
 
@@ -46,6 +46,12 @@ enum Page {
     PaidRoutes,
     Wallet,
     Settings,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NetworkSetupMode {
+    Create,
+    Join,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -153,6 +159,7 @@ struct AppModel {
     update_sender: Sender<updater::UpdateEvent>,
     update_receiver: Receiver<updater::UpdateEvent>,
     add_network_join_status: String,
+    network_setup_mode: Option<NetworkSetupMode>,
     allow_close: bool,
     service_settling: bool,
     diagnostics_expanded: bool,
@@ -210,6 +217,7 @@ impl AppModel {
             update_sender,
             update_receiver,
             add_network_join_status: String::new(),
+            network_setup_mode: None,
             allow_close: false,
             service_settling: false,
             diagnostics_expanded,

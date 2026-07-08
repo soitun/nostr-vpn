@@ -87,6 +87,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _manualJoinMeshId = "";
     private bool _manualJoinExpanded;
     private string _addNetworkJoinStatus = "";
+    private string _networkSetupMode = "";
     private string _updateStatus = "";
     private Uri? _updateAssetUrl;
     private bool _updateUsesCoreDownload;
@@ -96,6 +97,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private bool _autoInstallUpdates;
     private string _updateVersion = "";
     private QrMatrix _inviteQr = new();
+    private QrMatrix _joinRequestQr = new();
     private static readonly TimeSpan UpdatePollInterval = LoadUpdatePollInterval();
     private static readonly Brush HeaderDangerBrush = new SolidColorBrush(Color.FromRgb(220, 38, 38));
     private static readonly Brush TextSecondaryBrush = new SolidColorBrush(Color.FromRgb(104, 113, 124));
@@ -117,6 +119,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         ShowAddNetworkCommand = new RelayCommand(_ =>
         {
             AddNetworkJoinStatus = "";
+            SetNetworkSetupMode("");
             Page = AppPage.AddNetwork;
         });
         ShowAddDeviceCommand = new RelayCommand(
@@ -135,7 +138,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         CopyPeerCommand = new RelayCommand(parameter => CopyText(parameter as string ?? ""));
         ImportInviteCommand = new AsyncRelayCommand(_ => ImportInviteAsync(InviteInput), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(InviteInput));
         PasteInviteCommand = new RelayCommand(_ => PasteInviteFromClipboard(), _ => !ActionInFlight);
-        ImportQrImageCommand = new AsyncRelayCommand(_ => ImportQrImageAsync(), _ => !ActionInFlight);
+        ImportJoinRequestQrImageCommand = new AsyncRelayCommand(_ => ImportJoinRequestQrImageAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true);
         ToggleInviteBroadcastCommand = new AsyncRelayCommand(_ => DispatchAsync(State.InviteBroadcastActive ? NativeActions.StopInviteBroadcast() : NativeActions.StartInviteBroadcast(), "Sharing nearby"));
         ToggleNearbyDiscoveryCommand = new AsyncRelayCommand(_ => DispatchAsync(State.NearbyDiscoveryActive ? NativeActions.StopNearbyDiscovery() : NativeActions.StartNearbyDiscovery(), "Finding nearby"));
         AddParticipantCommand = new AsyncRelayCommand(_ => AddParticipantAsync(), _ => !ActionInFlight && ActiveNetwork is { LocalIsAdmin: true, Enabled: true } && !string.IsNullOrWhiteSpace(ParticipantInput) && !ParticipantInputInvalid);
@@ -145,6 +148,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         ImportWireGuardExitCommand = new AsyncRelayCommand(_ => ImportWireGuardExitAsync(), _ => !ActionInFlight);
         SaveWireGuardExitCommand = new AsyncRelayCommand(_ => SaveWireGuardExitAsync(), _ => !ActionInFlight);
         CreateNetworkCommand = new AsyncRelayCommand(_ => CreateNetworkAsync(), _ => !ActionInFlight);
+        ShowCreateNetworkSetupCommand = new RelayCommand(_ => SetNetworkSetupMode("create"));
+        ShowJoinNetworkSetupCommand = new RelayCommand(_ => SetNetworkSetupMode("join"));
+        BackToNetworkSetupChoicesCommand = new RelayCommand(_ => SetNetworkSetupMode(""));
         AddNetworkCommand = new AsyncRelayCommand(_ => AddNetworkAsync(), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(NetworkNameInput));
         ManualAddNetworkCommand = new AsyncRelayCommand(
             _ => ManualAddNetworkAsync(),
@@ -688,6 +694,29 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         private set => SetField(ref _inviteQr, value);
     }
 
+    public QrMatrix JoinRequestQr
+    {
+        get => _joinRequestQr;
+        private set => SetField(ref _joinRequestQr, value);
+    }
+
+    public string JoinRequestQrCodeOrLink => State.JoinRequestQrCodeOrLink;
+    public bool ShowNetworkSetupChoices => string.IsNullOrWhiteSpace(_networkSetupMode);
+    public bool ShowNetworkSetupCreate => _networkSetupMode == "create";
+    public bool ShowNetworkSetupJoin => _networkSetupMode == "join";
+
+    private void SetNetworkSetupMode(string mode)
+    {
+        if (_networkSetupMode == mode)
+        {
+            return;
+        }
+        _networkSetupMode = mode;
+        OnPropertyChanged(nameof(ShowNetworkSetupChoices));
+        OnPropertyChanged(nameof(ShowNetworkSetupCreate));
+        OnPropertyChanged(nameof(ShowNetworkSetupJoin));
+    }
+
     private NativeNetworkState? RuntimeActiveNetwork => State.Networks.FirstOrDefault(network => network.Enabled);
     public NativeNetworkState? ActiveNetwork =>
         State.Networks.FirstOrDefault(network => network.Id == _shownNetworkId)
@@ -898,7 +927,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand CopyPeerCommand { get; }
     public ICommand ImportInviteCommand { get; }
     public ICommand PasteInviteCommand { get; }
-    public ICommand ImportQrImageCommand { get; }
+    public ICommand ImportJoinRequestQrImageCommand { get; }
     public ICommand ToggleInviteBroadcastCommand { get; }
     public ICommand ToggleNearbyDiscoveryCommand { get; }
     public ICommand AddParticipantCommand { get; }
@@ -908,6 +937,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand ImportWireGuardExitCommand { get; }
     public ICommand SaveWireGuardExitCommand { get; }
     public ICommand CreateNetworkCommand { get; }
+    public ICommand ShowCreateNetworkSetupCommand { get; }
+    public ICommand ShowJoinNetworkSetupCommand { get; }
+    public ICommand BackToNetworkSetupChoicesCommand { get; }
     public ICommand AddNetworkCommand { get; }
     public ICommand ManualAddNetworkCommand { get; }
     public ICommand ToggleManualJoinCommand { get; }
@@ -1538,7 +1570,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         return true;
     }
 
-    private async Task ImportQrImageAsync()
+    private async Task ImportJoinRequestQrImageAsync()
     {
         var dialog = new OpenFileDialog
         {
@@ -1555,7 +1587,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             Notice = result.Error;
             return;
         }
-        await ImportInviteAsync(result.Value);
+        await DispatchAsync(NativeActions.ImportJoinRequest(result.Value), "Importing request");
     }
 
     private async Task ImportWireGuardExitAsync()
@@ -1612,6 +1644,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         // been the active page (or we may have been showing the
         // pre-network setup card); either way, Devices is the next
         // meaningful destination.
+        SetNetworkSetupMode("");
         Page = AppPage.Devices;
     }
 
@@ -1758,6 +1791,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         NormalizeSelectedParticipant(state);
         State = state;
         InviteQr = _core.QrMatrix(state.ActiveNetworkInvite);
+        JoinRequestQr = _core.QrMatrix(state.JoinRequestQrCodeOrLink);
         if (syncDrafts)
         {
             SyncDrafts(state);
@@ -1859,6 +1893,10 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(HasIncomingJoinRequests));
         OnPropertyChanged(nameof(ActiveNetworkHasIncomingJoinRequests));
         OnPropertyChanged(nameof(ShowActiveNetworkInviteCard));
+        OnPropertyChanged(nameof(JoinRequestQrCodeOrLink));
+        OnPropertyChanged(nameof(ShowNetworkSetupChoices));
+        OnPropertyChanged(nameof(ShowNetworkSetupCreate));
+        OnPropertyChanged(nameof(ShowNetworkSetupJoin));
         OnPropertyChanged(nameof(ActiveNetworkDisplayNetworkId));
         OnPropertyChanged(nameof(HeroSubtitle));
         OnPropertyChanged(nameof(VpnButtonText));

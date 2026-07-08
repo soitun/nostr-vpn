@@ -277,9 +277,14 @@ private struct NetworkStatusDot: View {
     }
 }
 
+private enum AddNetworkMode {
+    case create
+    case join
+}
+
 /// First screen on a fresh install AND the screen reachable from the
 /// header switcher's "Add network" item. Same content in both contexts:
-/// create, link by QR/code, or pick up a nearby link.
+/// choose create or join first, then show only the selected path.
 private struct AddNetworkPage: View {
     @ObservedObject var model: AppModel
     /// Called once the user lands on a network — used by the sheet
@@ -288,6 +293,7 @@ private struct AddNetworkPage: View {
     /// the root view's `if activeNetwork == nil` flips on its own.
     var onCreated: (() -> Void)? = nil
     var onReviewVpnDisclosure: () -> Void = {}
+    @State private var mode: AddNetworkMode?
 
     var body: some View {
         ScrollView {
@@ -299,14 +305,66 @@ private struct AddNetworkPage: View {
                         action: onReviewVpnDisclosure
                     )
                 }
-                CreateNetworkCard(model: model, onCreated: onCreated)
-                JoinNetworkCard(model: model)
-                NearbyCard(model: model)
+                switch mode {
+                case nil:
+                    AddNetworkChoiceButtons(mode: $mode)
+                case .create:
+                    AddNetworkBackButton(mode: $mode)
+                    CreateNetworkCard(model: model, onCreated: onCreated)
+                case .join:
+                    AddNetworkBackButton(mode: $mode)
+                    JoinNetworkCard(model: model)
+                    NearbyCard(model: model)
+                }
             }
             .padding()
         }
         .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
+    }
+}
+
+private struct AddNetworkChoiceButtons: View {
+    @Binding var mode: AddNetworkMode?
+
+    var body: some View {
+        AppCard {
+            VStack(spacing: 10) {
+                Button {
+                    mode = .create
+                } label: {
+                    Label("Create Network", systemImage: "plus.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppColors.create)
+
+                Button {
+                    mode = .join
+                } label: {
+                    Label("Join Network", systemImage: "arrow.down.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(AppColors.join)
+            }
+        }
+    }
+}
+
+private struct AddNetworkBackButton: View {
+    @Binding var mode: AddNetworkMode?
+
+    var body: some View {
+        HStack {
+            Button {
+                mode = nil
+            } label: {
+                Label("Back", systemImage: "chevron.left")
+            }
+            .buttonStyle(.bordered)
+            Spacer()
+        }
     }
 }
 
@@ -531,7 +589,7 @@ private struct CreateNetworkCard: View {
 private struct JoinNetworkCard: View {
     @ObservedObject var model: AppModel
     @State private var inviteInput = ""
-    @State private var qrScannerPresented = false
+    @State private var inviteExpanded = false
     @State private var manualExpanded = false
     @State private var manualAdminId = ""
     @State private var manualNetworkId = ""
@@ -553,38 +611,83 @@ private struct JoinNetworkCard: View {
         }
     }
 
+    private var joinRequestQrCodeOrLink: String {
+        if !model.state.joinRequestQrCodeOrLink.isEmpty {
+            return model.state.joinRequestQrCodeOrLink
+        }
+        return requestNetwork?.joinRequestQrCodeOrLink ?? ""
+    }
+
     var body: some View {
-        SetupCard(title: "Link Network", systemImage: "arrow.down.circle.fill", tint: AppColors.join) {
-            TextField("nvpn://invite/…", text: $inviteInput)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .textFieldStyle(.roundedBorder)
-                .onChange(of: inviteInput) { _, newValue in
-                    let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if trimmed.lowercased().hasPrefix("nvpn://invite/") {
-                        model.linkNetwork(trimmed)
-                        inviteInput = ""
+        SetupCard(title: "Join Network", systemImage: "arrow.down.circle.fill", tint: AppColors.join) {
+            if !joinRequestQrCodeOrLink.isEmpty {
+                Pill("Approval request", tint: .orange)
+                VStack(alignment: .leading, spacing: 8) {
+                    QrCodeView(matrix: model.qrMatrix(for: joinRequestQrCodeOrLink))
+                        .frame(maxWidth: 190)
+                        .aspectRatio(1, contentMode: .fit)
+                    HStack(spacing: 10) {
+                        Button {
+                            model.copy(joinRequestQrCodeOrLink)
+                        } label: {
+                            Label("Copy Request", systemImage: model.copiedValue == joinRequestQrCodeOrLink ? "checkmark" : "doc.on.doc")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        if let requestUrl = URL(string: joinRequestQrCodeOrLink) {
+                            ShareLink(item: requestUrl) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                        }
                     }
                 }
-            HStack(spacing: 10) {
-                Button {
-                    if let text = UIPasteboard.general.string {
-                        inviteInput = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    }
-                } label: {
-                    Label("Paste", systemImage: "doc.on.clipboard")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                Button {
-                    qrScannerPresented = true
-                } label: {
-                    Label("Scan", systemImage: "camera.viewfinder")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
             }
-            .controlSize(.regular)
+
+            DisclosureGroup("Legacy invite link", isExpanded: $inviteExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    TextField("nvpn://invite/…", text: $inviteInput)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder)
+                        .onChange(of: inviteInput) { _, newValue in
+                            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                            if trimmed.lowercased().hasPrefix("nvpn://invite/") {
+                                model.linkNetwork(trimmed)
+                                inviteInput = ""
+                            }
+                        }
+                    Button {
+                        if let text = UIPasteboard.general.string {
+                            inviteInput = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    } label: {
+                        Label("Paste", systemImage: "doc.on.clipboard")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    if let network = requestNetwork {
+                        if network.outboundJoinRequest != nil {
+                            Pill("Approval requested", tint: .orange)
+                        } else if !network.inviteInviterNpub.isEmpty {
+                            Button {
+                                model.dispatch(
+                                    NativeActions.requestNetworkJoin(networkId: network.id),
+                                    status: "Requesting approval"
+                                )
+                            } label: {
+                                Label("Request Approval", systemImage: "person.badge.plus")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(model.actionInFlight)
+                        }
+                    }
+                }
+                .padding(.top, 6)
+            }
+            .font(.subheadline)
 
             DisclosureGroup("Legacy manual join", isExpanded: $manualExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
@@ -625,39 +728,6 @@ private struct JoinNetworkCard: View {
                 .padding(.top, 6)
             }
             .font(.subheadline)
-
-            if let network = requestNetwork {
-                if !network.joinRequestQrCodeOrLink.isEmpty {
-                    Pill("Approval request", tint: .orange)
-                    VStack(alignment: .leading, spacing: 8) {
-                        QrCodeView(matrix: model.qrMatrix(for: network.joinRequestQrCodeOrLink))
-                            .frame(maxWidth: 190)
-                            .aspectRatio(1, contentMode: .fit)
-                        HStack(spacing: 10) {
-                            Button {
-                                model.copy(network.joinRequestQrCodeOrLink)
-                            } label: {
-                                Label("Copy Request", systemImage: model.copiedValue == network.joinRequestQrCodeOrLink ? "checkmark" : "doc.on.doc")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                            if let requestUrl = URL(string: network.joinRequestQrCodeOrLink) {
-                                ShareLink(item: requestUrl) {
-                                    Label("Share", systemImage: "square.and.arrow.up")
-                                        .frame(maxWidth: .infinity)
-                                }
-                                .buttonStyle(.bordered)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .sheet(isPresented: $qrScannerPresented) {
-            QRCodeScannerSheet { code in
-                model.linkNetwork(code)
-                qrScannerPresented = false
-            }
         }
     }
 }

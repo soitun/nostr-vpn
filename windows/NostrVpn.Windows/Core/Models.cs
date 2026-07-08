@@ -51,6 +51,7 @@ public sealed class NativeAppState
     public List<NativeRelayState> Relays { get; set; } = [];
     public string NetworkId { get; set; } = "";
     public string ActiveNetworkInvite { get; set; } = "";
+    public string JoinRequestQrCodeOrLink { get; set; } = "";
     public string ExitNode { get; set; } = "";
     public bool ExitNodeLeakProtection { get; set; }
     public bool ExitNodeActive { get; set; }

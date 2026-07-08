@@ -71,7 +71,6 @@ class MainActivity : ComponentActivity() {
             var pendingVpnStart by remember { mutableStateOf(false) }
             var pendingLocalNetworkAction by remember { mutableStateOf<JSONObject?>(null) }
             var showQrScanner by remember { mutableStateOf(false) }
-            var qrScanPurpose by remember { mutableStateOf(QrScanPurpose.Invite) }
             var qrScanNetworkId by remember { mutableStateOf("") }
             fun showAndroidError(message: String, fallback: String = "Android action failed") {
                 androidError = message.trim().ifBlank { fallback }
@@ -252,15 +251,8 @@ class MainActivity : ComponentActivity() {
                     showAndroidError(error, "Could not open file picker")
                 }
             }
-            fun requestInviteQrScan() {
-                androidError = ""
-                qrScanPurpose = QrScanPurpose.Invite
-                qrScanNetworkId = ""
-                showQrScanner = true
-            }
             fun requestDeviceQrScan(networkId: String) {
                 androidError = ""
-                qrScanPurpose = QrScanPurpose.Device
                 qrScanNetworkId = networkId
                 showQrScanner = true
             }
@@ -385,7 +377,6 @@ class MainActivity : ComponentActivity() {
                 NostrVpnApp(
                     state = displayState,
                     qrJson = { invite -> core.qrMatrix(invite) },
-                    scanQr = { requestInviteQrScan() },
                     scanDeviceQr = { networkId -> requestDeviceQrScan(networkId) },
                     dispatch = dispatch,
                     selfUpdateState = selfUpdateState,
@@ -396,38 +387,24 @@ class MainActivity : ComponentActivity() {
                     QrScannerDialog(
                         onDismiss = { showQrScanner = false },
                         onScanned = { value ->
-                            when (qrScanPurpose) {
-                                QrScanPurpose.Invite -> {
-                                    val invite = value.trim()
-                                    if (!invite.startsWith("nvpn://invite/", ignoreCase = true)) {
-                                        "Not a Nostr VPN invite."
-                                    } else {
-                                        showQrScanner = false
-                                        dispatch(NativeActions.importInvite(invite))
-                                        null
-                                    }
-                                }
-                                QrScanPurpose.Device -> {
-                                    if (looksLikeJoinRequestQrOrLink(value)) {
-                                        showQrScanner = false
-                                        dispatch(NativeActions.importJoinRequest(value.trim()))
-                                        null
-                                    } else {
-                                        val scanned = parseScannedDeviceLinkQr(value)
-                                        if (scanned == null) {
-                                            "Not a Nostr VPN joiner QR."
-                                        } else {
-                                            showQrScanner = false
-                                            dispatch(
-                                                NativeActions.addParticipant(
-                                                    qrScanNetworkId,
-                                                    scanned.deviceId,
-                                                    scanned.alias,
-                                                ),
-                                            )
-                                            null
-                                        }
-                                    }
+                            if (looksLikeJoinRequestQrOrLink(value)) {
+                                showQrScanner = false
+                                dispatch(NativeActions.importJoinRequest(value.trim()))
+                                null
+                            } else {
+                                val scanned = parseScannedDeviceLinkQr(value)
+                                if (scanned == null) {
+                                    "Not a Nostr VPN joiner QR."
+                                } else {
+                                    showQrScanner = false
+                                    dispatch(
+                                        NativeActions.addParticipant(
+                                            qrScanNetworkId,
+                                            scanned.deviceId,
+                                            scanned.alias,
+                                        ),
+                                    )
+                                    null
                                 }
                             }
                         },
@@ -509,12 +486,12 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        const val EXTRA_DEBUG_ACTION = "org.nostrvpn.app.DEBUG_ACTION"
-        const val EXTRA_DEBUG_INVITE = "org.nostrvpn.app.DEBUG_INVITE"
-        const val EXTRA_DEBUG_EXIT_NODE = "org.nostrvpn.app.DEBUG_EXIT_NODE"
-        const val EXTRA_DEBUG_NETWORK_NAME = "org.nostrvpn.app.DEBUG_NETWORK_NAME"
-        const val EXTRA_DEBUG_WIREGUARD_CONFIG = "org.nostrvpn.app.DEBUG_WIREGUARD_CONFIG"
-        const val EXTRA_DEBUG_WIREGUARD_CONFIG_BASE64 = "org.nostrvpn.app.DEBUG_WIREGUARD_CONFIG_BASE64"
+        const val EXTRA_DEBUG_ACTION = "fi.siriusbusiness.nvpn.DEBUG_ACTION"
+        const val EXTRA_DEBUG_INVITE = "fi.siriusbusiness.nvpn.DEBUG_INVITE"
+        const val EXTRA_DEBUG_EXIT_NODE = "fi.siriusbusiness.nvpn.DEBUG_EXIT_NODE"
+        const val EXTRA_DEBUG_NETWORK_NAME = "fi.siriusbusiness.nvpn.DEBUG_NETWORK_NAME"
+        const val EXTRA_DEBUG_WIREGUARD_CONFIG = "fi.siriusbusiness.nvpn.DEBUG_WIREGUARD_CONFIG"
+        const val EXTRA_DEBUG_WIREGUARD_CONFIG_BASE64 = "fi.siriusbusiness.nvpn.DEBUG_WIREGUARD_CONFIG_BASE64"
         const val DEBUG_ACTION_CONNECT = "connect"
         const val DEBUG_ACTION_DISCONNECT = "disconnect"
         const val DEBUG_ACTION_SET_FIPS_EXIT = "set_fips_exit"
@@ -527,8 +504,4 @@ class MainActivity : ComponentActivity() {
         private const val ACCESS_LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
     }
 
-    private enum class QrScanPurpose {
-        Invite,
-        Device,
-    }
 }

@@ -1,8 +1,8 @@
 repository: https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn
 pubkey: npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm
 # Points to a stable filename rather than `dist/nostr-vpn-v*-android-arm64.apk`
-# because `dist/` accumulates APKs across releases (including legacy 0.3.x
-# builds with the old `to.iris.nvpn` package id), and zsp picks one match
+# because `dist/` accumulates APKs across releases (including builds with old
+# Android package ids), and zsp picks one match
 # from the glob without a clear "latest" rule. `scripts/local-release.mjs`
 # copies the current release's APK to this stable path before invoking zsp.
 release_source: dist/zapstore-current-android-arm64.apk

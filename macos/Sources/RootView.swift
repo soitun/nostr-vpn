@@ -27,6 +27,11 @@ private enum PaidInternetFeature {
     }
 }
 
+private enum AddNetworkMode {
+    case create
+    case join
+}
+
 struct RootView: View {
     @ObservedObject var manager: AppManager
 
@@ -77,11 +82,15 @@ struct RootView: View {
     @State private var addByDeviceIdAlias = ""
     @State private var diagnosticsExpanded = false
     @State private var showingQrScanner = false
+    @State private var scanningJoinRequest = false
     @State private var selectedSidebarItem: SidebarItem? = RootView.initialSidebarItem()
     @State private var shownNetworkId: String?
     @State private var addNetworkPresented = false
     @State private var addDevicePresented = false
+    @State private var addNetworkMode: AddNetworkMode?
     @State private var addNetworkJoinStatus = ""
+    @State private var legacyInviteExpanded = false
+    @State private var joinRequestInput = ""
     @State private var manualJoinExpanded = false
     @State private var manualJoinAdminId = ""
     @State private var manualJoinMeshId = ""
@@ -205,11 +214,15 @@ struct RootView: View {
         .onChange(of: addNetworkPresented) { _, presented in
             if !presented {
                 addNetworkJoinStatus = ""
+                addNetworkMode = nil
             }
         }
         .sheet(isPresented: $showingQrScanner) {
             QRCodeScannerSheet { code in
-                manager.linkNetwork(code)
+                if scanningJoinRequest {
+                    manager.importJoinRequest(code)
+                }
+                scanningJoinRequest = false
                 showingQrScanner = false
             }
         }
@@ -231,8 +244,16 @@ struct RootView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    createNetworkSection
-                    joinNetworkSection(activeNetwork)
+                    switch addNetworkMode {
+                    case nil:
+                        addNetworkChoiceSection
+                    case .create:
+                        addNetworkBackButton
+                        createNetworkSection
+                    case .join:
+                        addNetworkBackButton
+                        joinNetworkSection(activeNetwork)
+                    }
                 }
                 .padding(18)
             }
@@ -631,8 +652,49 @@ struct RootView: View {
     private var setupPane: some View {
         pageScroll {
             pageTitle("Add Network", "plus.circle")
-            createNetworkSection
-            joinNetworkSection(nil)
+            switch addNetworkMode {
+            case nil:
+                addNetworkChoiceSection
+            case .create:
+                addNetworkBackButton
+                createNetworkSection
+            case .join:
+                addNetworkBackButton
+                joinNetworkSection(nil)
+            }
+        }
+    }
+
+    private var addNetworkChoiceSection: some View {
+        surface {
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    addNetworkMode = .create
+                } label: {
+                    Label("Create Network", systemImage: "plus.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    addNetworkMode = .join
+                } label: {
+                    Label("Join Network", systemImage: "arrow.down.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private var addNetworkBackButton: some View {
+        HStack {
+            Button {
+                addNetworkMode = nil
+            } label: {
+                Label("Back", systemImage: "chevron.left")
+            }
+            Spacer()
         }
     }
 
@@ -1083,7 +1145,8 @@ struct RootView: View {
     }
 
     private func inviteControls(_ network: NativeNetworkState, invite: String) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        let trimmedJoinRequest = joinRequestInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        return VStack(alignment: .leading, spacing: 12) {
             sectionHeader("Link Devices", systemImage: "qrcode")
             HStack(spacing: 8) {
                 Button {
@@ -1127,6 +1190,30 @@ struct RootView: View {
                     )
                 }
                 .disabled(manager.actionInFlight || !network.enabled)
+            }
+            if network.localIsAdmin {
+                Divider()
+                VStack(alignment: .leading, spacing: 8) {
+                    sectionHeader("Add Approval Request", systemImage: "person.badge.plus")
+                    HStack(spacing: 8) {
+                        TextField("nvpn://join-request?app_key=…", text: $joinRequestInput)
+                            .textFieldStyle(.roundedBorder)
+                        Button {
+                            manager.importJoinRequest(trimmedJoinRequest)
+                            joinRequestInput = ""
+                        } label: {
+                            Label("Import", systemImage: "tray.and.arrow.down")
+                        }
+                        .disabled(trimmedJoinRequest.isEmpty || manager.actionInFlight)
+                        Button {
+                            scanningJoinRequest = true
+                            showingQrScanner = true
+                        } label: {
+                            Label("Scan QR", systemImage: "camera.viewfinder")
+                        }
+                        .disabled(manager.actionInFlight)
+                    }
+                }
             }
         }
     }
@@ -1197,55 +1284,72 @@ struct RootView: View {
 
     private func joinNetworkSection(_ network: NativeNetworkState?) -> some View {
         let requestNetwork = network ?? state.networks.first { candidate in
-            candidate.outboundJoinRequest != nil || !candidate.inviteInviterNpub.isEmpty
+            candidate.outboundJoinRequest != nil || !candidate.joinRequestQrCodeOrLink.isEmpty || !candidate.inviteInviterNpub.isEmpty
+        }
+        let joinRequestQrCodeOrLink: String
+        if state.joinRequestQrCodeOrLink.isEmpty {
+            joinRequestQrCodeOrLink = requestNetwork?.joinRequestQrCodeOrLink ?? ""
+        } else {
+            joinRequestQrCodeOrLink = state.joinRequestQrCodeOrLink
         }
         return surface {
-            sectionHeader("Link Network", systemImage: "arrow.down.circle")
-            Text("Paste or scan a link code")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                TextField("nvpn://invite/…", text: $manager.inviteInput)
-                    .onChange(of: manager.inviteInput) { _, newValue in
-                        // Auto-import when the field becomes a valid invite —
-                        // saves the user a click. importInvite clears the
-                        // field, which prevents re-firing.
-                        let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                        if trimmed.lowercased().hasPrefix("nvpn://invite/") {
-                            manager.linkNetwork(trimmed)
+            sectionHeader("Join Network", systemImage: "arrow.down.circle")
+            if !joinRequestQrCodeOrLink.isEmpty {
+                InviteQRCodeView(invite: joinRequestQrCodeOrLink)
+                    .frame(width: 220, height: 220)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                HStack(spacing: 8) {
+                    Button {
+                        manager.copy(joinRequestQrCodeOrLink)
+                    } label: {
+                        Label("Copy Request", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        manager.share(joinRequestQrCodeOrLink)
+                    } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                }
+                .disabled(manager.actionInFlight)
+            }
+
+            DisclosureGroup("Legacy invite link", isExpanded: $legacyInviteExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        TextField("nvpn://invite/…", text: $manager.inviteInput)
+                            .onChange(of: manager.inviteInput) { _, newValue in
+                                // Auto-import when the field becomes a valid invite —
+                                // saves the user a click. importInvite clears the
+                                // field, which prevents re-firing.
+                                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if trimmed.lowercased().hasPrefix("nvpn://invite/") {
+                                    manager.linkNetwork(trimmed)
+                                }
+                            }
+                            .onSubmit {
+                                manager.linkNetwork(manager.inviteInput)
+                            }
+                        Button {
+                            pasteInviteFromClipboard()
+                        } label: {
+                            Label("Paste", systemImage: "doc.on.clipboard")
                         }
                     }
-                    .onSubmit {
-                        manager.linkNetwork(manager.inviteInput)
+                    if let network = requestNetwork {
+                        if !addNetworkJoinStatus.isEmpty || network.outboundJoinRequest != nil {
+                            badge("Approval requested", style: .warn)
+                        } else if !network.inviteInviterNpub.isEmpty {
+                            Button {
+                                manager.requestDeviceApproval(networkId: network.id)
+                                addNetworkJoinStatus = "Approval requested"
+                            } label: {
+                                Label("Request Approval", systemImage: "person.badge.plus")
+                            }
+                            .disabled(manager.actionInFlight)
+                        }
                     }
-                Button {
-                    pasteInviteFromClipboard()
-                } label: {
-                    Label("Paste", systemImage: "doc.on.clipboard")
                 }
-                Button {
-                    showingQrScanner = true
-                } label: {
-                    Label("Scan", systemImage: "camera.viewfinder")
-                }
-                Button {
-                    manager.chooseInviteQrImage()
-                } label: {
-                    Label("From file", systemImage: "qrcode.viewfinder")
-                }
-            }
-            if let network = requestNetwork {
-                if !addNetworkJoinStatus.isEmpty || network.outboundJoinRequest != nil {
-                    badge("Approval requested", style: .warn)
-                } else if !network.inviteInviterNpub.isEmpty {
-                    Button {
-                        manager.requestDeviceApproval(networkId: network.id)
-                        addNetworkJoinStatus = "Approval requested"
-                    } label: {
-                        Label("Request Approval", systemImage: "person.badge.plus")
-                    }
-                    .disabled(manager.actionInFlight)
-                }
+                .padding(.top, 6)
             }
 
             manualJoinDisclosure

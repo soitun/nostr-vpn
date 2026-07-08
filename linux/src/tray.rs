@@ -7,6 +7,8 @@ use glib::variant::ToVariant;
 use image::{GenericImageView, Rgba, RgbaImage};
 use nostr_vpn_app_core::{NativeAppState, NativeNetworkState, NativeParticipantState};
 
+use crate::APP_ID;
+
 const SNI_BUS_NAME_PREFIX: &str = "org.kde.StatusNotifierItem";
 const SNI_OBJECT_PATH: &str = "/StatusNotifierItem";
 const MENU_OBJECT_PATH: &str = "/StatusNotifierItem/Menu";
@@ -323,7 +325,7 @@ fn register_sni_object(
                 let icon = tray_icon(state.exit_node_blocked);
                 match property {
                     "Category" => "ApplicationStatus".to_variant(),
-                    "Id" => "to.iris.nvpn".to_variant(),
+                    "Id" => APP_ID.to_variant(),
                     "Title" => "Nostr VPN".to_variant(),
                     "Status" => sni_status(&state).to_variant(),
                     "WindowId" => 0u32.to_variant(),

@@ -101,6 +101,13 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
         input_row.append(&add);
         body.append(&input_row);
 
+        let scan_request = icon_text_button("Scan approval request", "camera-photo-symbolic");
+        {
+            let app = app.clone();
+            scan_request.connect_clicked(move |button| scan_join_request_qr(&app, button));
+        }
+        body.append(&scan_request);
+
         for participant in &network.participants {
             let participant_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
             participant_row.set_valign(gtk::Align::Center);
@@ -198,6 +205,21 @@ fn build_devices_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     page.append(&split);
 
     append_join_requests(app, page, &network);
+}
+
+fn scan_join_request_qr(app: &AppRef, button: &gtk::Button) {
+    let parent = button
+        .root()
+        .and_then(|root| root.downcast::<gtk::Window>().ok());
+    let app_for_result = app.clone();
+    let app_for_error = app.clone();
+    qr_scan::open_scanner(
+        parent.as_ref(),
+        move |request| {
+            dispatch(&app_for_result, NativeAppAction::ImportJoinRequest { request });
+        },
+        move |error| set_notice(&app_for_error, error),
+    );
 }
 
 fn append_join_requests(app: &AppRef, parent: &gtk::Box, network: &NativeNetworkState) {

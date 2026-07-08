@@ -35,6 +35,7 @@
   let error = '';
   let notice = '';
   let qrInvite = '';
+  let joinRequestQr = '';
   let settingsDirty = false;
   let participantNpub = '';
   let participantAlias = '';
@@ -43,6 +44,7 @@
   let manualNetworkId = '';
   let newNetworkName = '';
   let addNetworkOpen = false;
+  let addNetworkMode: 'choice' | 'create' | 'join' = 'choice';
   let addNetworkJoinStatus = '';
   let addDeviceOpen = false;
   let diagnosticsOpen = false;
@@ -170,6 +172,7 @@
     );
   });
   $: qrInvite = state?.activeNetworkInvite ?? '';
+  $: joinRequestQr = state?.joinRequestQrCodeOrLink ?? '';
   $: if (addDeviceOpen && !shownNetwork?.enabled) {
     addDeviceOpen = false;
   }
@@ -316,11 +319,13 @@
 
   function openAddNetwork() {
     addNetworkJoinStatus = '';
+    addNetworkMode = 'choice';
     addNetworkOpen = true;
   }
 
   function closeAddNetwork() {
     addNetworkOpen = false;
+    addNetworkMode = 'choice';
     addNetworkJoinStatus = '';
   }
 
@@ -1246,127 +1251,170 @@
 
       {#if addNetworkOpen}
         <Modal title="Add Network" titleId="add-network-title" on:close={closeAddNetwork}>
-          <form class="modal-section" on:submit|preventDefault={addNetwork}>
-            <div class="section-heading">
-              <div>
-                <h3>Create Network</h3>
-                <p>New local roster</p>
+          {#if addNetworkMode === 'choice'}
+            <div class="modal-section">
+              <div class="button-row">
+                <button class="secondary-button" type="button" on:click={() => (addNetworkMode = 'create')}>
+                  Create Network
+                </button>
+                <button class="secondary-button" type="button" on:click={() => (addNetworkMode = 'join')}>
+                  Join Network
+                </button>
               </div>
             </div>
-            <div class="inline-form">
-              <input bind:value={newNetworkName} autocomplete="off" aria-label="Network name" placeholder="Network name" />
-              <button type="submit" class="small-button" disabled={Boolean(busyAction) || !newNetworkName.trim()}>
-                Create
-              </button>
-            </div>
-          </form>
+          {:else}
+            <button class="small-button" type="button" on:click={() => (addNetworkMode = 'choice')}>Back</button>
+          {/if}
 
-          <form class="modal-section" on:submit|preventDefault={importInvite}>
-            <div class="section-heading">
-              <div>
-                <h3>Join Network</h3>
-                <p>Paste an invite</p>
+          {#if addNetworkMode === 'create'}
+            <form class="modal-section" on:submit|preventDefault={addNetwork}>
+              <div class="section-heading">
+                <div>
+                  <h3>Create Network</h3>
+                  <p>New local roster</p>
+                </div>
               </div>
-            </div>
-            <label>
-              <span>Invite</span>
-              <textarea bind:value={inviteDraft} rows="6"></textarea>
-            </label>
-            <div class="button-row">
-              <button class="secondary-button" type="submit" disabled={Boolean(busyAction) || !inviteDraft.trim()}>
-                Join
-              </button>
-              <button class="small-button" type="button" on:click={pasteInviteFromClipboard}>
-                Paste
-              </button>
-            </div>
-            {#if addNetworkRequestNetwork}
-              <div class="badge-row">
-                {#if addNetworkJoinRequestSent}
-                  <span class="badge warn">Join request sent</span>
-                {:else if addNetworkRequestNetwork.inviteInviterNpub}
-                  <button
-                    class="secondary-button"
-                    type="button"
-                    disabled={Boolean(busyAction)}
-                    on:click={requestNetworkJoin}
-                  >
-                    Request Access
-                  </button>
+              <div class="inline-form">
+                <input bind:value={newNetworkName} autocomplete="off" aria-label="Network name" placeholder="Network name" />
+                <button type="submit" class="small-button" disabled={Boolean(busyAction) || !newNetworkName.trim()}>
+                  Create
+                </button>
+              </div>
+            </form>
+          {/if}
+
+          {#if addNetworkMode === 'join'}
+            <div class="modal-section">
+              <div class="section-heading">
+                <div>
+                  <h3>Join Network</h3>
+                  <p>Approval request</p>
+                </div>
+              </div>
+              <div class="qr-frame compact">
+                {#if joinRequestQr}
+                  <QRCode data={joinRequestQr} size={320} />
+                {:else}
+                  <div class="qr-empty">QR</div>
                 {/if}
               </div>
-            {/if}
-          </form>
-
-          <form class="modal-section" on:submit|preventDefault={manualAddNetwork}>
-            <div class="section-heading">
-              <div>
-                <h3>Add manually</h3>
-                <p>Admin Device ID + Network ID</p>
-              </div>
+              <CopyButton
+                variant="secondary"
+                value={joinRequestQr}
+                label="Approval request"
+                text="Copy Request"
+                disabled={!joinRequestQr}
+                on:copied={handleCopied}
+              />
             </div>
-            <div class="form-grid">
-              <label>
-                <span>Admin Device ID</span>
-                <input
-                  bind:value={manualAdminNpub}
-                  class:invalid={manualAdminInvalid}
-                  autocomplete="off"
-                />
-              </label>
-              <label>
-                <span>Network ID</span>
-                <input bind:value={manualNetworkId} autocomplete="off" />
-              </label>
-            </div>
-            {#if manualAdminInvalid}
-              <div class="field-error">Not a valid device ID</div>
-            {/if}
-            <button
-              class="secondary-button"
-              type="submit"
-              disabled={Boolean(busyAction) || !canManualAddNetwork}
-            >
-              Add
-            </button>
-          </form>
 
-          <div class="modal-section">
-            <div class="section-heading">
-              <div>
-                <h3>Nearby Invites</h3>
-                <p>{state.lanPeers.length}</p>
+            <form class="modal-section" on:submit|preventDefault={importInvite}>
+              <div class="section-heading">
+                <div>
+                  <h3>Legacy Invite Link</h3>
+                  <p>Paste an invite</p>
+                </div>
               </div>
+              <label>
+                <span>Invite</span>
+                <textarea bind:value={inviteDraft} rows="6"></textarea>
+              </label>
+              <div class="button-row">
+                <button class="secondary-button" type="submit" disabled={Boolean(busyAction) || !inviteDraft.trim()}>
+                  Join
+                </button>
+                <button class="small-button" type="button" on:click={pasteInviteFromClipboard}>
+                  Paste
+                </button>
+              </div>
+              {#if addNetworkRequestNetwork}
+                <div class="badge-row">
+                  {#if addNetworkJoinRequestSent}
+                    <span class="badge warn">Join request sent</span>
+                  {:else if addNetworkRequestNetwork.inviteInviterNpub}
+                    <button
+                      class="secondary-button"
+                      type="button"
+                      disabled={Boolean(busyAction)}
+                      on:click={requestNetworkJoin}
+                    >
+                      Request Access
+                    </button>
+                  {/if}
+                </div>
+              {/if}
+            </form>
+
+            <form class="modal-section" on:submit|preventDefault={manualAddNetwork}>
+              <div class="section-heading">
+                <div>
+                  <h3>Add manually</h3>
+                  <p>Admin Device ID + Network ID</p>
+                </div>
+              </div>
+              <div class="form-grid">
+                <label>
+                  <span>Admin Device ID</span>
+                  <input
+                    bind:value={manualAdminNpub}
+                    class:invalid={manualAdminInvalid}
+                    autocomplete="off"
+                  />
+                </label>
+                <label>
+                  <span>Network ID</span>
+                  <input bind:value={manualNetworkId} autocomplete="off" />
+                </label>
+              </div>
+              {#if manualAdminInvalid}
+                <div class="field-error">Not a valid device ID</div>
+              {/if}
               <button
-                type="button"
-                class="small-button"
-                on:click={toggleNearbyDiscovery}
+                class="secondary-button"
+                type="submit"
+                disabled={Boolean(busyAction) || !canManualAddNetwork}
               >
-                {state.nearbyDiscoveryActive
-                  ? `Finding nearby · ${remainingText(state.nearbyDiscoveryRemainingSecs)}`
-                  : 'Find nearby'}
+                Add
               </button>
-            </div>
-            {#if state.lanPeers.length === 0}
-              <div class="empty-state">No nearby invites yet</div>
-            {:else}
-              <div class="stack">
-                {#each state.lanPeers as peer, index (index)}
-                  <div class="request-row">
-                    <div>
-                      <strong>{peer.nodeName || peer.networkName || 'Nearby device'}</strong>
-                      <span>{peer.lastSeenText ?? ''}</span>
-                    </div>
-                    {#if peer.invite}
-                      <button type="button" class="small-button" on:click={() => importNetworkInvite(peer.invite ?? '', 'Joining')}>
-                        Join
-                      </button>
-                    {/if}
-                  </div>
-                {/each}
+            </form>
+
+            <div class="modal-section">
+              <div class="section-heading">
+                <div>
+                  <h3>Nearby Invites</h3>
+                  <p>{state.lanPeers.length}</p>
+                </div>
+                <button
+                  type="button"
+                  class="small-button"
+                  on:click={toggleNearbyDiscovery}
+                >
+                  {state.nearbyDiscoveryActive
+                    ? `Finding nearby · ${remainingText(state.nearbyDiscoveryRemainingSecs)}`
+                    : 'Find nearby'}
+                </button>
               </div>
-            {/if}
-          </div>
+              {#if state.lanPeers.length === 0}
+                <div class="empty-state">No nearby invites yet</div>
+              {:else}
+                <div class="stack">
+                  {#each state.lanPeers as peer, index (index)}
+                    <div class="request-row">
+                      <div>
+                        <strong>{peer.nodeName || peer.networkName || 'Nearby device'}</strong>
+                        <span>{peer.lastSeenText ?? ''}</span>
+                      </div>
+                      {#if peer.invite}
+                        <button type="button" class="small-button" on:click={() => importNetworkInvite(peer.invite ?? '', 'Joining')}>
+                          Join
+                        </button>
+                      {/if}
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
         </Modal>
       {/if}
 

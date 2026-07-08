@@ -309,6 +309,11 @@ impl NativeAppRuntime {
                 )
                 .unwrap_or_default()
             },
+            join_request_qr_code_or_link: if config_unavailable {
+                String::new()
+            } else {
+                own_join_request_qr_code_or_link(&self.config).unwrap_or_default()
+            },
             exit_node: if self.config.exit_node.trim().is_empty() {
                 String::new()
             } else {

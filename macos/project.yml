@@ -1,13 +1,13 @@
 name: NostrVpnMac
 options:
-  bundleIdPrefix: to.iris.nvpn
+  bundleIdPrefix: fi.siriusbusiness.nvpn
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
 
 settings:
   base:
-    PRODUCT_BUNDLE_IDENTIFIER: to.iris.nvpn.macos
+    PRODUCT_BUNDLE_IDENTIFIER: fi.siriusbusiness.nvpn
     MARKETING_VERSION: ${NVPN_APP_VERSION_NAME}
     # Resolved by scripts/macos-build via release_common.sh's
     # resolve_shared_build_metadata before xcodegen runs. Mirrors the iOS

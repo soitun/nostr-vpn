@@ -960,6 +960,7 @@ public struct NativeAppState {
     public var nostrPubsubMaxEventBytes: UInt32
     public var networkId: String
     public var activeNetworkInvite: String
+    public var joinRequestQrCodeOrLink: String
     public var exitNode: String
     public var exitNodeLeakProtection: Bool
     public var exitNodeActive: Bool
@@ -1019,7 +1020,7 @@ public struct NativeAppState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(rev: UInt64, platform: String, mobile: Bool, vpnControlSupported: Bool, cliInstallSupported: Bool, startupSettingsSupported: Bool, trayBehaviorSupported: Bool, runtimeStatusDetail: String, appVersion: String, configPath: String, error: String, cliInstalled: Bool, serviceSupported: Bool, serviceEnablementSupported: Bool, serviceInstalled: Bool, serviceDisabled: Bool, serviceRunning: Bool, serviceStatusDetail: String, daemonRunning: Bool, vpnEnabled: Bool, vpnActive: Bool, vpnStatus: String, daemonBinaryVersion: String, serviceBinaryVersion: String, expectedServiceBinaryVersion: String, ownNpub: String, ownPubkeyHex: String, nodeId: String, nodeName: String, selfMagicDnsName: String, endpoint: String, tunnelIp: String, listenPort: UInt32, relays: [NativeRelayState], nostrPubsubMode: String, nostrPubsubFanout: UInt32, nostrPubsubMaxHops: UInt8, nostrPubsubMaxEventBytes: UInt32, networkId: String, activeNetworkInvite: String, exitNode: String, exitNodeLeakProtection: Bool, exitNodeActive: Bool, exitNodeBlocked: Bool, exitNodeStatusText: String, advertiseExitNode: Bool, advertisedRoutes: [String], effectiveAdvertisedRoutes: [String], wireguardExitEnabled: Bool, wireguardExitConfigured: Bool, wireguardExitInterface: String, wireguardExitAddress: String, wireguardExitPrivateKey: String, wireguardExitPeerPublicKey: String, wireguardExitPeerPresharedKey: String, wireguardExitEndpoint: String, wireguardExitAllowedIps: String, wireguardExitDns: String, wireguardExitMtu: UInt16, wireguardExitPersistentKeepaliveSecs: UInt16, wireguardExitConfig: String, paidExitSeller: NativePaidExitSellerState, paidRouteMarket: NativePaidRouteMarketState, fipsHostTunnelEnabled: Bool, connectToNonRosterFipsPeers: Bool, fipsNostrDiscoveryEnabled: Bool, fipsBootstrapEnabled: Bool,
+    public init(rev: UInt64, platform: String, mobile: Bool, vpnControlSupported: Bool, cliInstallSupported: Bool, startupSettingsSupported: Bool, trayBehaviorSupported: Bool, runtimeStatusDetail: String, appVersion: String, configPath: String, error: String, cliInstalled: Bool, serviceSupported: Bool, serviceEnablementSupported: Bool, serviceInstalled: Bool, serviceDisabled: Bool, serviceRunning: Bool, serviceStatusDetail: String, daemonRunning: Bool, vpnEnabled: Bool, vpnActive: Bool, vpnStatus: String, daemonBinaryVersion: String, serviceBinaryVersion: String, expectedServiceBinaryVersion: String, ownNpub: String, ownPubkeyHex: String, nodeId: String, nodeName: String, selfMagicDnsName: String, endpoint: String, tunnelIp: String, listenPort: UInt32, relays: [NativeRelayState], nostrPubsubMode: String, nostrPubsubFanout: UInt32, nostrPubsubMaxHops: UInt8, nostrPubsubMaxEventBytes: UInt32, networkId: String, activeNetworkInvite: String, joinRequestQrCodeOrLink: String, exitNode: String, exitNodeLeakProtection: Bool, exitNodeActive: Bool, exitNodeBlocked: Bool, exitNodeStatusText: String, advertiseExitNode: Bool, advertisedRoutes: [String], effectiveAdvertisedRoutes: [String], wireguardExitEnabled: Bool, wireguardExitConfigured: Bool, wireguardExitInterface: String, wireguardExitAddress: String, wireguardExitPrivateKey: String, wireguardExitPeerPublicKey: String, wireguardExitPeerPresharedKey: String, wireguardExitEndpoint: String, wireguardExitAllowedIps: String, wireguardExitDns: String, wireguardExitMtu: UInt16, wireguardExitPersistentKeepaliveSecs: UInt16, wireguardExitConfig: String, paidExitSeller: NativePaidExitSellerState, paidRouteMarket: NativePaidRouteMarketState, fipsHostTunnelEnabled: Bool, connectToNonRosterFipsPeers: Bool, fipsNostrDiscoveryEnabled: Bool, fipsBootstrapEnabled: Bool,
         /**
          * Editable bootstrap/transit peers (npub -> transport-tagged addresses).
          */fipsBootstrapPeers: [String: [String]],
@@ -1066,6 +1067,7 @@ public struct NativeAppState {
         self.nostrPubsubMaxEventBytes = nostrPubsubMaxEventBytes
         self.networkId = networkId
         self.activeNetworkInvite = activeNetworkInvite
+        self.joinRequestQrCodeOrLink = joinRequestQrCodeOrLink
         self.exitNode = exitNode
         self.exitNodeLeakProtection = exitNodeLeakProtection
         self.exitNodeActive = exitNodeActive
@@ -1244,6 +1246,9 @@ extension NativeAppState: Equatable, Hashable {
             return false
         }
         if lhs.activeNetworkInvite != rhs.activeNetworkInvite {
+            return false
+        }
+        if lhs.joinRequestQrCodeOrLink != rhs.joinRequestQrCodeOrLink {
             return false
         }
         if lhs.exitNode != rhs.exitNode {
@@ -1440,6 +1445,7 @@ extension NativeAppState: Equatable, Hashable {
         hasher.combine(nostrPubsubMaxEventBytes)
         hasher.combine(networkId)
         hasher.combine(activeNetworkInvite)
+        hasher.combine(joinRequestQrCodeOrLink)
         hasher.combine(exitNode)
         hasher.combine(exitNodeLeakProtection)
         hasher.combine(exitNodeActive)
@@ -1542,6 +1548,7 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
                 nostrPubsubMaxEventBytes: FfiConverterUInt32.read(from: &buf),
                 networkId: FfiConverterString.read(from: &buf),
                 activeNetworkInvite: FfiConverterString.read(from: &buf),
+                joinRequestQrCodeOrLink: FfiConverterString.read(from: &buf),
                 exitNode: FfiConverterString.read(from: &buf),
                 exitNodeLeakProtection: FfiConverterBool.read(from: &buf),
                 exitNodeActive: FfiConverterBool.read(from: &buf),
@@ -1636,6 +1643,7 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.nostrPubsubMaxEventBytes, into: &buf)
         FfiConverterString.write(value.networkId, into: &buf)
         FfiConverterString.write(value.activeNetworkInvite, into: &buf)
+        FfiConverterString.write(value.joinRequestQrCodeOrLink, into: &buf)
         FfiConverterString.write(value.exitNode, into: &buf)
         FfiConverterBool.write(value.exitNodeLeakProtection, into: &buf)
         FfiConverterBool.write(value.exitNodeActive, into: &buf)

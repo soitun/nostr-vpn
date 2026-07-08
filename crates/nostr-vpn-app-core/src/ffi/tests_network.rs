@@ -639,7 +639,7 @@ STARTED="{started_literal}"
 printf '%s\n' "$*" >> "$CALLS"
 if [ "$1" = "service" ] && [ "$2" = "status" ]; then
   cat <<'JSON'
-{{"supported":true,"installed":true,"disabled":false,"loaded":true,"running":true,"pid":123,"label":"to.iris.nvpn.test","binary_version":"test"}}
+{{"supported":true,"installed":true,"disabled":false,"loaded":true,"running":true,"pid":123,"label":"fi.siriusbusiness.nvpn.test","binary_version":"test"}}
 JSON
   exit 0
 fi
@@ -762,7 +762,7 @@ exit 0
         let script = r#"#!/bin/sh
 if [ "$1" = "service" ] && [ "$2" = "status" ]; then
   cat <<'JSON'
-{"supported":true,"installed":true,"disabled":false,"loaded":true,"running":true,"pid":123,"label":"to.iris.nvpn.test","binary_version":"test"}
+{"supported":true,"installed":true,"disabled":false,"loaded":true,"running":true,"pid":123,"label":"fi.siriusbusiness.nvpn.test","binary_version":"test"}
 JSON
   exit 0
 fi

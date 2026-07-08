@@ -24,6 +24,7 @@ struct AppState: Decodable {
     var nostrPubsubMaxHops: UInt8 = 2
     var nostrPubsubMaxEventBytes: UInt32 = 65_536
     var activeNetworkInvite = ""
+    var joinRequestQrCodeOrLink = ""
     var connectedPeerCount: UInt64 = 0
     var expectedPeerCount: UInt64 = 0
     var fipsConnectedPeerCount: UInt64 = 0
@@ -76,7 +77,7 @@ struct AppState: Decodable {
         case runtimeStatusDetail, vpnEnabled, vpnActive, vpnStatus, daemonRunning
         case ownNpub, nodeName, selfMagicDnsName, tunnelIp, endpoint, listenPort, relays
         case nostrPubsubMode, nostrPubsubFanout, nostrPubsubMaxHops, nostrPubsubMaxEventBytes
-        case activeNetworkInvite
+        case activeNetworkInvite, joinRequestQrCodeOrLink
         case connectedPeerCount, expectedPeerCount
         case fipsConnectedPeerCount, fipsRosterPeerCount, nonFipsRosterPeerCount
         case meshReady, exitNode, exitNodeLeakProtection
@@ -122,6 +123,7 @@ struct AppState: Decodable {
         nostrPubsubMaxHops = UInt8(container.int(.nostrPubsubMaxHops, default: 2))
         nostrPubsubMaxEventBytes = UInt32(container.int(.nostrPubsubMaxEventBytes, default: 65_536))
         activeNetworkInvite = container.string(.activeNetworkInvite)
+        joinRequestQrCodeOrLink = container.string(.joinRequestQrCodeOrLink)
         connectedPeerCount = container.uint64(.connectedPeerCount)
         expectedPeerCount = container.uint64(.expectedPeerCount)
         fipsConnectedPeerCount = container.uint64(.fipsConnectedPeerCount)

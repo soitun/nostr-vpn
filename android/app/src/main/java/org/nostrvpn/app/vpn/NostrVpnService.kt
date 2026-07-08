@@ -550,9 +550,9 @@ class NostrVpnService : VpnService() {
     private data class Cidr(val address: String, val prefix: Int)
 
     companion object {
-        const val ACTION_CONNECT = "org.nostrvpn.app.vpn.CONNECT"
-        const val ACTION_DISCONNECT = "org.nostrvpn.app.vpn.DISCONNECT"
-        const val ACTION_RESTORE = "org.nostrvpn.app.vpn.RESTORE"
+        const val ACTION_CONNECT = "fi.siriusbusiness.nvpn.vpn.CONNECT"
+        const val ACTION_DISCONNECT = "fi.siriusbusiness.nvpn.vpn.DISCONNECT"
+        const val ACTION_RESTORE = "fi.siriusbusiness.nvpn.vpn.RESTORE"
         const val EXTRA_CONFIG_JSON = "configJson"
         private const val NOTIFICATION_CHANNEL_ID = "vpn"
         private const val NOTIFICATION_ID = 7001

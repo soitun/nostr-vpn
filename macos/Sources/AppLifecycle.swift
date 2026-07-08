@@ -143,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 }
 
 final class SingleInstanceCoordinator: NSObject {
-    private let notificationName = Notification.Name("to.iris.nvpn.macos.open")
+    private let notificationName = Notification.Name("fi.siriusbusiness.nvpn.open")
     private var lockFds: [Int32] = []
     var onOpen: (([URL], Bool) -> Void)?
 
@@ -208,7 +208,7 @@ final class SingleInstanceCoordinator: NSObject {
     }
 
     private static func lockFilePaths() -> [String] {
-        var paths = ["/tmp/to.iris.nvpn.macos.gui.\(getuid()).lock"]
+        var paths = ["/tmp/fi.siriusbusiness.nvpn.gui.\(getuid()).lock"]
         if let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)
             .first?
@@ -231,7 +231,7 @@ final class SingleInstanceCoordinator: NSObject {
         guard let app = NSWorkspace.shared.runningApplications.first(where: { app in
             app.processIdentifier != currentPid
                 && app.activationPolicy == .regular
-                && app.bundleIdentifier == "to.iris.nvpn.macos"
+                && app.bundleIdentifier == "fi.siriusbusiness.nvpn"
         }) else {
             return false
         }

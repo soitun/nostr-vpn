@@ -27,6 +27,7 @@ enum ScreenshotFixtures {
         state.endpoint = "local network"
         state.listenPort = 51820
         state.activeNetworkInvite = "nvpn://invite/demo-home-mesh"
+        state.joinRequestQrCodeOrLink = "nvpn://join-request?app_key=demo"
         state.connectedPeerCount = 3
         state.expectedPeerCount = 4
         state.fipsConnectedPeerCount = 3

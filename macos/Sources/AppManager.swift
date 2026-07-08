@@ -1,9 +1,7 @@
 import AppKit
-import CoreImage
 import Darwin
 import Foundation
 import SwiftUI
-import UniformTypeIdentifiers
 
 private let githubUpdateManifestUrl = URL(string: "https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest")!
 private let defaultUpdateManifestUrl = URL(string: "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json")!
@@ -351,28 +349,12 @@ final class AppManager: ObservableObject {
         importInvite(link)
     }
 
-    func chooseInviteQrImage() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.image]
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = false
-        panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url else {
-                return
-            }
-            Task { @MainActor in
-                self?.importInviteFromQrImage(url)
-            }
+    func importJoinRequest(_ request: String) {
+        let trimmed = request.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return
         }
-    }
-
-    func importInviteFromQrImage(_ url: URL) {
-        do {
-            let invite = try decodeQrCode(from: url)
-            importInvite(invite)
-        } catch {
-            actionStatus = error.localizedDescription
-        }
+        dispatch(.importJoinRequest(request: trimmed), status: "Importing request")
     }
 
     func chooseWireGuardConfigFile() {
@@ -1290,26 +1272,6 @@ final class AppManager: ObservableObject {
         return try moveDownloadedUpdate(downloadedUrl, from: assetUrl)
     }
 
-    private func decodeQrCode(from url: URL) throws -> String {
-        guard let image = CIImage(contentsOf: url) else {
-            throw QrImportError.unreadableImage
-        }
-        let detector = CIDetector(
-            ofType: CIDetectorTypeQRCode,
-            context: nil,
-            options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]
-        )
-        let features = detector?.features(in: image) ?? []
-        for feature in features {
-            if let qr = feature as? CIQRCodeFeature,
-               let message = qr.messageString?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !message.isEmpty {
-                return message
-            }
-        }
-        throw QrImportError.noQrCode
-    }
-
     private func drainStartupUrls() {
         guard !startupUrlsDrained else {
             return
@@ -1337,7 +1299,7 @@ final class AppManager: ObservableObject {
         let manager = FileManager.default
         let agentsDir = manager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
-        let plistUrl = agentsDir.appendingPathComponent("to.iris.nvpn.macos.plist")
+        let plistUrl = agentsDir.appendingPathComponent("fi.siriusbusiness.nvpn.plist")
         if enabled {
             guard let executable = Bundle.main.executableURL?.path else {
                 throw LaunchAgentError.missingExecutable
@@ -1700,6 +1662,7 @@ final class AppManager: ObservableObject {
             nostrPubsubMaxEventBytes: 65_536,
             networkId: networkId,
             activeNetworkInvite: "nvpn://invite/demo-mesh",
+            joinRequestQrCodeOrLink: "nvpn://join-request?app_key=demo",
             exitNode: sellerScreenshot ? "" : "npub1paidexitfinlanddemo",
             exitNodeLeakProtection: true,
             exitNodeActive: !sellerScreenshot,
@@ -2217,20 +2180,6 @@ enum CopyValue {
     case paymentEnvelope
 }
 
-enum QrImportError: LocalizedError {
-    case unreadableImage
-    case noQrCode
-
-    var errorDescription: String? {
-        switch self {
-        case .unreadableImage:
-            return "Could not read the selected image."
-        case .noQrCode:
-            return "No link QR code was found in the selected image."
-        }
-    }
-}
-
 enum LaunchAgentError: LocalizedError {
     case missingExecutable
 
@@ -2448,7 +2397,7 @@ private func launchAgentPlist(executable: String) -> String {
     <plist version="1.0">
     <dict>
         <key>Label</key>
-        <string>to.iris.nvpn.macos</string>
+        <string>fi.siriusbusiness.nvpn</string>
         <key>ProgramArguments</key>
         <array>
             <string>\(xmlEscaped(executable))</string>

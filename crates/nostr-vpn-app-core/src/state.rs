@@ -251,6 +251,7 @@ pub struct UiState {
     pub own_pubkey_hex: String,
     pub network_id: String,
     pub active_network_invite: String,
+    pub join_request_qr_code_or_link: String,
     pub node_id: String,
     pub node_name: String,
     pub self_magic_dns_name: String,

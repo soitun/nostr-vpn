@@ -28,7 +28,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "org.nostrvpn.app"
+        applicationId = "fi.siriusbusiness.nvpn"
         minSdk = 26
         targetSdk = 36
         versionCode = 40089

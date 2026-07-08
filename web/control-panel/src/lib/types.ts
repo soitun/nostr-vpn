@@ -122,6 +122,7 @@ export type UiState = {
   ownPubkeyHex: string;
   networkId: string;
   activeNetworkInvite: string;
+  joinRequestQrCodeOrLink: string;
   nodeId: string;
   nodeName: string;
   selfMagicDnsName: string;
