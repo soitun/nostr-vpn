@@ -7,6 +7,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/release_common.sh"
 
 load_release_env "$ROOT"
+if [[ -n "${NVPN_IOS_ASC_ROOT:-}" && -z "${NVPN_ASC_ROOT:-}" ]]; then
+  export NVPN_ASC_ROOT="$NVPN_IOS_ASC_ROOT"
+fi
 load_appstoreconnect_defaults
 resolve_shared_build_metadata "$ROOT"
 
