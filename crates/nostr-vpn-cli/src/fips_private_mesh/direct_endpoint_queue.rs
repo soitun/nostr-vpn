@@ -139,12 +139,16 @@ impl FipsDirectEndpointRxCursor {
         timeout: Duration,
         limit: usize,
     ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::RecvTimeoutError> {
+        if let Some(runs) = self.take_pending_limited(limit) {
+            return Ok(runs);
+        }
+
         let mut state = self
             .queue
             .state
             .lock()
             .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)?;
-        if self.pending.is_none() && state.batches.is_empty() {
+        if state.batches.is_empty() {
             state.waiting_consumer = true;
             let (next_state, wait) = self
                 .queue
@@ -157,10 +161,9 @@ impl FipsDirectEndpointRxCursor {
                 return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
             }
         }
-        let mut queued = self
-            .pending
-            .take()
-            .or_else(|| state.batches.pop_front())
+        let mut queued = state
+            .batches
+            .pop_front()
             .ok_or(std::sync::mpsc::RecvTimeoutError::Timeout)?;
         coalesce_limited_direct_endpoint_runs(&mut queued, limit, &mut state, &mut self.pending);
         Ok(queued.runs)
@@ -170,18 +173,32 @@ impl FipsDirectEndpointRxCursor {
         &mut self,
         limit: usize,
     ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
+        if let Some(runs) = self.take_pending_limited(limit) {
+            return Ok(runs);
+        }
+
         let mut state = self
             .queue
             .state
             .lock()
             .map_err(|_| std::sync::mpsc::TryRecvError::Disconnected)?;
-        let mut queued = self
-            .pending
-            .take()
-            .or_else(|| state.batches.pop_front())
+        let mut queued = state
+            .batches
+            .pop_front()
             .ok_or(std::sync::mpsc::TryRecvError::Empty)?;
         coalesce_limited_direct_endpoint_runs(&mut queued, limit, &mut state, &mut self.pending);
         Ok(queued.runs)
+    }
+
+    fn take_pending_limited(&mut self, limit: usize) -> Option<Vec<FipsEndpointDirectPacketRun>> {
+        let mut queued = self.pending.take()?;
+        self.pending = limit_queued_direct_endpoint_runs_to_remaining(&mut queued, limit.max(1));
+        crate::pipeline_profile::record_direct_endpoint_rx_batch(
+            queued.runs.len(),
+            queued.packets,
+            1,
+        );
+        Some(queued.runs)
     }
 }
 
