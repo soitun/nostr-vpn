@@ -1014,7 +1014,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.78"
+version = "0.3.79"
 dependencies = [
  "bluer",
  "crossbeam-channel",
@@ -1026,6 +1026,7 @@ dependencies = [
  "libc",
  "mdns-sd",
  "nostr",
+ "nostr-pubsub",
  "nostr-sdk",
  "portable-atomic",
  "procfs",
@@ -1045,12 +1046,13 @@ dependencies = [
  "tokio-socks",
  "tracing",
  "tun",
+ "uuid",
  "wintun",
 ]
 
 [[package]]
 name = "fips-endpoint"
-version = "0.3.53"
+version = "0.3.54"
 dependencies = [
  "fips-core",
 ]
@@ -2576,6 +2578,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "nostr-pubsub"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "756f09ce6a9963cc0654f6feaea8b640ba693d260ff965f8d7b78b1b293bb4d0"
+dependencies = [
+ "async-trait",
+ "nostr",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nostr-relay-pool"
 version = "0.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2618,6 +2631,7 @@ dependencies = [
  "fips-endpoint",
  "image",
  "jni 0.21.1",
+ "libc",
  "ndk-context",
  "netdev",
  "nostr-sdk",

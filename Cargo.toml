@@ -27,8 +27,8 @@ boringtun = "0.7"
 cashu-service = { version = "0.2.57", default-features = false }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = { version = "0.3.53", path = "../fips/crates/fips-endpoint" }
-fips-core = { version = "0.3.78", path = "../fips/crates/fips-core" }
+fips-endpoint = { version = "0.3.54", path = "../fips/crates/fips-endpoint" }
+fips-core = { version = "0.3.79", path = "../fips/crates/fips-core" }
 futures = "0.3"
 hashtree-updater = "0.2.72"
 hex = "0.4"
