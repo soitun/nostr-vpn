@@ -174,9 +174,10 @@
         limit: usize,
     ) -> anyhow::Result<usize> {
         let initial_len = events.len();
+        let mut direct_rx = runtime.direct_endpoint_rx.cursor();
         while events.len() < limit {
             let remaining = limit - events.len();
-            let runs = match runtime.direct_endpoint_rx.try_recv_limited(remaining) {
+            let runs = match direct_rx.try_recv_limited(remaining) {
                 Ok(runs) => runs,
                 Err(std::sync::mpsc::TryRecvError::Empty) => break,
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(0),

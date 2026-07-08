@@ -66,8 +66,14 @@
             FipsPrivateMeshEvent::Packet(packet) => packet,
             event => panic!("expected packet event, got {event:?}"),
         });
-        assert_eq!(packets.next().map(Vec::from), Some(first));
-        assert_eq!(packets.next().map(Vec::from), Some(second));
+        assert_eq!(
+            packets.next().map(|packet| packet.as_ref().to_vec()),
+            Some(first)
+        );
+        assert_eq!(
+            packets.next().map(|packet| packet.as_ref().to_vec()),
+            Some(second)
+        );
         assert_peer_data_activity(&runtime, &participant_pubkey, expected_endpoint_data_bytes);
         runtime.shutdown().await.expect("shutdown");
     }
@@ -152,7 +158,7 @@
         let packets: Vec<_> = events
             .into_iter()
             .map(|event| match event {
-                FipsPrivateMeshEvent::Packet(packet) => packet,
+                FipsPrivateMeshEvent::Packet(packet) => packet.as_ref().to_vec(),
                 event => panic!("expected packet event, got {event:?}"),
             })
             .collect();
@@ -211,7 +217,7 @@
         let packets: Vec<_> = events
             .drain(..)
             .map(|event| match event {
-                FipsPrivateMeshEvent::Packet(packet) => packet,
+                FipsPrivateMeshEvent::Packet(packet) => packet.as_ref().to_vec(),
                 event => panic!("expected packet event, got {event:?}"),
             })
             .collect();
@@ -233,7 +239,7 @@
         let packets: Vec<_> = events
             .drain(..)
             .map(|event| match event {
-                FipsPrivateMeshEvent::Packet(packet) => packet,
+                FipsPrivateMeshEvent::Packet(packet) => packet.as_ref().to_vec(),
                 event => panic!("expected packet event, got {event:?}"),
             })
             .collect();
@@ -305,9 +311,16 @@
             let stop = AtomicBool::new(false);
             let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
             let mut packets = DirectTunWriteBatch::with_capacity(1);
+            let mut direct_rx = bob_runtime.direct_endpoint_rx.cursor();
 
             let emitted = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(1, &stop, &mut packets, &event_tx)?
+                .recv_direct_endpoint_tun_batch_blocking(
+                    &mut direct_rx,
+                    1,
+                    &stop,
+                    &mut packets,
+                    &event_tx,
+                )?
                 .expect("warmup packet should be admitted");
             assert_eq!(emitted, 1);
             assert_eq!(packets.len(), 1);
@@ -346,9 +359,16 @@
         let receiver = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
             let mut packets = DirectTunWriteBatch::with_capacity(4);
+            let mut direct_rx = bob_runtime.direct_endpoint_rx.cursor();
 
             let emitted = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(8, &thread_stop, &mut packets, &event_tx)?
+                .recv_direct_endpoint_tun_batch_blocking(
+                    &mut direct_rx,
+                    8,
+                    &thread_stop,
+                    &mut packets,
+                    &event_tx,
+                )?
                 .expect("new-config packet should be admitted");
             assert!(emitted >= 1);
             assert_eq!(packets.len(), emitted);
@@ -467,9 +487,16 @@
             let stop = AtomicBool::new(false);
             let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
             let mut packets = DirectTunWriteBatch::with_capacity(1);
+            let mut direct_rx = bob_runtime.direct_endpoint_rx.cursor();
 
             let received = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(1, &stop, &mut packets, &event_tx)?
+                .recv_direct_endpoint_tun_batch_blocking(
+                    &mut direct_rx,
+                    1,
+                    &stop,
+                    &mut packets,
+                    &event_tx,
+                )?
                 .expect("warmup packet should be admitted");
             assert_eq!(received, 1);
             assert_eq!(packets.len(), 1);
@@ -491,9 +518,16 @@
             let stop = AtomicBool::new(false);
             let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
             let mut packets = DirectTunWriteBatch::with_capacity(8);
+            let mut direct_rx = bob_runtime.direct_endpoint_rx.cursor();
 
             let received = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(2, &stop, &mut packets, &event_tx)?
+                .recv_direct_endpoint_tun_batch_blocking(
+                    &mut direct_rx,
+                    2,
+                    &stop,
+                    &mut packets,
+                    &event_tx,
+                )?
                 .expect("batch should contain admitted packets");
             assert_eq!(received, 2);
 
@@ -504,7 +538,13 @@
             packets.clear();
 
             let received = bob_runtime
-                .recv_direct_endpoint_tun_batch_blocking(8, &stop, &mut packets, &event_tx)?
+                .recv_direct_endpoint_tun_batch_blocking(
+                    &mut direct_rx,
+                    8,
+                    &stop,
+                    &mut packets,
+                    &event_tx,
+                )?
                 .expect("batch should contain admitted packets");
             assert_eq!(received, 1);
 

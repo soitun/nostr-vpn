@@ -2,13 +2,13 @@ impl FipsPrivateMeshRuntime {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn recv_direct_endpoint_tun_batch_blocking(
         &self,
+        rx: &mut FipsDirectEndpointRxCursor,
         limit: usize,
         stop: &AtomicBool,
         packet_outputs: &mut DirectTunWriteBatch,
         event_tx: &mpsc::Sender<FipsPrivateMeshEvent>,
     ) -> Result<Option<usize>> {
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
-        let rx = &self.direct_endpoint_rx;
 
         loop {
             if stop.load(Ordering::Acquire) {

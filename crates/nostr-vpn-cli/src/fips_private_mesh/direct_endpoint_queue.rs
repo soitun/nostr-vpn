@@ -13,6 +13,12 @@ struct FipsDirectEndpointQueue {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+struct FipsDirectEndpointRxCursor {
+    queue: FipsDirectEndpointDataRx,
+    pending: Option<FipsDirectEndpointQueuedRuns>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Default)]
 struct FipsDirectEndpointQueueState {
     batches: VecDeque<FipsDirectEndpointQueuedRuns>,
@@ -118,18 +124,30 @@ impl FipsDirectEndpointQueue {
         Ok(())
     }
 
+    fn cursor(self: &Arc<Self>) -> FipsDirectEndpointRxCursor {
+        FipsDirectEndpointRxCursor {
+            queue: Arc::clone(self),
+            pending: None,
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl FipsDirectEndpointRxCursor {
     fn recv_source_batch_timeout(
-        &self,
+        &mut self,
         timeout: Duration,
         limit: usize,
     ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::RecvTimeoutError> {
         let mut state = self
+            .queue
             .state
             .lock()
             .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)?;
-        if state.batches.is_empty() {
+        if self.pending.is_none() && state.batches.is_empty() {
             state.waiting_consumer = true;
             let (next_state, wait) = self
+                .queue
                 .ready
                 .wait_timeout_while(state, timeout, |state| state.batches.is_empty())
                 .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)?;
@@ -139,30 +157,48 @@ impl FipsDirectEndpointQueue {
                 return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
             }
         }
-        let mut queued = state
-            .batches
-            .pop_front()
+        let mut queued = self
+            .pending
+            .take()
+            .or_else(|| state.batches.pop_front())
             .ok_or(std::sync::mpsc::RecvTimeoutError::Timeout)?;
-        coalesce_limited_direct_endpoint_runs(&mut queued, limit, &mut state);
+        coalesce_limited_direct_endpoint_runs(&mut queued, limit, &mut state, &mut self.pending);
         Ok(queued.runs)
     }
 
     fn try_recv_limited(
-        &self,
+        &mut self,
         limit: usize,
     ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
         let mut state = self
+            .queue
             .state
             .lock()
             .map_err(|_| std::sync::mpsc::TryRecvError::Disconnected)?;
-        let mut queued = state
-            .batches
-            .pop_front()
+        let mut queued = self
+            .pending
+            .take()
+            .or_else(|| state.batches.pop_front())
             .ok_or(std::sync::mpsc::TryRecvError::Empty)?;
-        coalesce_limited_direct_endpoint_runs(&mut queued, limit, &mut state);
+        coalesce_limited_direct_endpoint_runs(&mut queued, limit, &mut state, &mut self.pending);
         Ok(queued.runs)
     }
+}
 
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+impl Drop for FipsDirectEndpointRxCursor {
+    fn drop(&mut self) {
+        let Some(pending) = self.pending.take() else {
+            return;
+        };
+        if let Ok(mut state) = self.queue.state.lock() {
+            let wake_consumer = state.waiting_consumer;
+            state.batches.push_front(pending);
+            if wake_consumer {
+                self.queue.ready.notify_one();
+            }
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -170,10 +206,11 @@ fn coalesce_limited_direct_endpoint_runs(
     queued: &mut FipsDirectEndpointQueuedRuns,
     limit: usize,
     state: &mut FipsDirectEndpointQueueState,
+    pending: &mut Option<FipsDirectEndpointQueuedRuns>,
 ) {
     let limit = limit.max(1);
     record_direct_endpoint_queue_residence(queued);
-    limit_queued_direct_endpoint_runs_to_remaining(queued, limit, state);
+    *pending = limit_queued_direct_endpoint_runs_to_remaining(queued, limit);
     let Some(source_node_addr) = queued.source_node_addr else {
         crate::pipeline_profile::record_direct_endpoint_rx_batch(1, queued.packets, 1);
         return;
@@ -193,14 +230,13 @@ fn coalesce_limited_direct_endpoint_runs(
             .pop_front()
             .expect("front batch must remain present while queue lock is held");
         record_direct_endpoint_queue_residence(&next);
-        limit_queued_direct_endpoint_runs_to_remaining(
-            &mut next,
-            limit.saturating_sub(packet_count),
-            state,
-        );
+        *pending = limit_queued_direct_endpoint_runs_to_remaining(&mut next, limit - packet_count);
         packet_count = packet_count.saturating_add(next.packets);
         coalesced_batches = coalesced_batches.saturating_add(1);
         queued.runs.append(&mut next.runs);
+        if pending.is_some() {
+            break;
+        }
     }
     queued.packets = packet_count;
 
@@ -215,10 +251,9 @@ fn coalesce_limited_direct_endpoint_runs(
 fn limit_queued_direct_endpoint_runs_to_remaining(
     queued: &mut FipsDirectEndpointQueuedRuns,
     remaining: usize,
-    state: &mut FipsDirectEndpointQueueState,
-) {
+) -> Option<FipsDirectEndpointQueuedRuns> {
     if queued.packets <= remaining {
-        return;
+        return None;
     }
     let enqueued_at = queued.enqueued_at;
     let runs = std::mem::take(&mut queued.runs);
@@ -229,10 +264,9 @@ fn limit_queued_direct_endpoint_runs_to_remaining(
         let mut tail_queued = FipsDirectEndpointQueuedRuns::with_enqueued_at(tail, enqueued_at);
         crate::pipeline_profile::record_direct_endpoint_rx_limit_split(tail_queued.packets);
         tail_queued.arrival = DirectEndpointQueueArrival::Backlog;
-        state
-            .batches
-            .push_front(tail_queued);
+        return Some(tail_queued);
     }
+    None
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

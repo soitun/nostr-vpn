@@ -260,7 +260,7 @@
         .expect("packet should pass Bob admission");
         assert_eq!(events.len(), 1);
         let received = match events.drain(..).next().expect("one Bob event") {
-            FipsPrivateMeshEvent::Packet(packet) => Vec::from(packet),
+            FipsPrivateMeshEvent::Packet(packet) => packet.as_ref().to_vec(),
             event => panic!("expected packet event, got {event:?}"),
         };
         assert_eq!(received, alice_to_bob);
@@ -277,7 +277,7 @@
         .expect("packet should pass Alice admission");
         assert_eq!(events.len(), 1);
         let received = match events.drain(..).next().expect("one Alice event") {
-            FipsPrivateMeshEvent::Packet(packet) => Vec::from(packet),
+            FipsPrivateMeshEvent::Packet(packet) => packet.as_ref().to_vec(),
             event => panic!("expected packet event, got {event:?}"),
         };
         assert_eq!(received, bob_to_alice);
