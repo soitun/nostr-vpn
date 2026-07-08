@@ -228,6 +228,15 @@ pub(crate) fn build_health_issues(
 ) -> Vec<HealthIssue> {
     let mut issues = Vec::new();
 
+    if vpn_active && local_identity_missing_from_active_roster(app) {
+        issues.push(HealthIssue::new(
+            "network.self_not_in_roster",
+            HealthSeverity::Critical,
+            "This device is not in the active network roster",
+            "Peers will reject FIPS traffic from this device identity until an admin adds it to the active network or accepts its pending join request.",
+        ));
+    }
+
     if vpn_active && network.captive_portal == Some(true) {
         issues.push(HealthIssue::new(
             "network.captive_portal",
@@ -311,6 +320,22 @@ pub(crate) fn build_health_issues(
     }
 
     issues
+}
+
+fn local_identity_missing_from_active_roster(app: &AppConfig) -> bool {
+    let Ok(own_pubkey) = app.own_nostr_pubkey_hex() else {
+        return false;
+    };
+    let Some(network) = app.active_network_opt() else {
+        return false;
+    };
+    if network.outbound_join_request.is_some() {
+        return false;
+    }
+
+    !app.active_network_signal_pubkeys_hex()
+        .iter()
+        .any(|participant| participant == &own_pubkey)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -518,7 +543,8 @@ mod tests {
         captive_portal_interface_name_needs_detection, check_captive_portal_endpoint,
         mapping_varies_by_dest_ip, parse_http_response, prefer_nonempty_network_snapshot,
     };
-    use nostr_vpn_core::config::AppConfig;
+    use nostr_sdk::prelude::Keys;
+    use nostr_vpn_core::config::{AppConfig, PendingOutboundJoinRequest};
     use nostr_vpn_core::diagnostics::ProbeState;
 
     use crate::DaemonPeerState;
@@ -798,6 +824,66 @@ mod tests {
         );
 
         assert!(issues.iter().any(|issue| issue.code == "exit_node.offline"));
+    }
+
+    #[test]
+    fn health_issues_flag_local_identity_missing_from_active_roster() {
+        let mut app = AppConfig::generated();
+        let own_pubkey = app.own_nostr_pubkey_hex().expect("own pubkey");
+        app.networks[0].enabled = true;
+        app.networks[0].devices = vec![Keys::generate().public_key().to_hex()];
+        app.networks[0].admins = vec![Keys::generate().public_key().to_hex()];
+        app.ensure_defaults();
+        let network = NetworkSnapshot {
+            default_interface: Some("en0".to_string()),
+            primary_ipv4: Some(Ipv4Addr::new(192, 168, 1, 4)),
+            ..NetworkSnapshot::default()
+        }
+        .summary(Some(10), Some(false));
+
+        let issues = build_health_issues(&app, true, false, &network, &Default::default(), &[]);
+
+        assert!(
+            issues.iter().any(|issue| {
+                issue.code == "network.self_not_in_roster"
+                    && issue.detail.contains("until an admin adds it")
+            }),
+            "issues={issues:#?} members={:?} own={own_pubkey}",
+            app.active_network_signal_pubkeys_hex()
+        );
+        assert!(
+            !app.active_network_signal_pubkeys_hex()
+                .iter()
+                .any(|participant| participant == &own_pubkey)
+        );
+    }
+
+    #[test]
+    fn health_issues_do_not_flag_pending_join_as_missing_roster() {
+        let mut app = AppConfig::generated();
+        let admin = Keys::generate().public_key().to_hex();
+        app.networks[0].enabled = true;
+        app.networks[0].devices.clear();
+        app.networks[0].admins = vec![admin.clone()];
+        app.networks[0].outbound_join_request = Some(PendingOutboundJoinRequest {
+            recipient: admin,
+            requested_at: 123,
+        });
+        app.ensure_defaults();
+        let network = NetworkSnapshot {
+            default_interface: Some("en0".to_string()),
+            primary_ipv4: Some(Ipv4Addr::new(192, 168, 1, 4)),
+            ..NetworkSnapshot::default()
+        }
+        .summary(Some(10), Some(false));
+
+        let issues = build_health_issues(&app, true, false, &network, &Default::default(), &[]);
+
+        assert!(
+            issues
+                .iter()
+                .all(|issue| issue.code != "network.self_not_in_roster")
+        );
     }
 
     #[test]

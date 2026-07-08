@@ -131,12 +131,3 @@ pub(crate) fn canonicalize_inbound_join_requests(
         })
         .collect()
 }
-
-pub(crate) fn normalize_npub_key(value: &str) -> Option<String> {
-    let candidate = value.trim();
-    if !candidate.starts_with("npub1") {
-        return None;
-    }
-
-    canonical_npub_key(candidate)
-}

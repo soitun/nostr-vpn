@@ -324,6 +324,72 @@ fn save_serializes_user_facing_pubkeys_as_npubs() {
 }
 
 #[test]
+fn hex_user_facing_pubkeys_load_for_backward_compatibility_and_save_as_npubs() {
+    let own = Keys::generate();
+    let peer = Keys::generate();
+    let admin = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let own_npub = own.public_key().to_bech32().expect("own npub");
+    let peer_hex = peer.public_key().to_hex();
+    let peer_npub = peer.public_key().to_bech32().expect("peer npub");
+    let admin_hex = admin.public_key().to_hex();
+    let admin_npub = admin.public_key().to_bech32().expect("admin npub");
+    let raw = format!(
+        r#"
+exit_node = "{peer_hex}"
+
+[peer_aliases]
+{peer_hex} = "Server A"
+
+[fips_peer_endpoints]
+{peer_hex} = ["10.203.0.12:51820"]
+
+[[networks]]
+id = "network-1"
+name = "Network 1"
+enabled = true
+network_id = "mesh-home"
+devices = ["{peer_hex}"]
+admins = ["{admin_hex}"]
+invite_inviter = "{admin_hex}"
+shared_roster_signed_by = "{admin_hex}"
+
+[nostr]
+secret_key = "{secret_key}"
+public_key = "{own_hex}"
+"#,
+        secret_key = own.secret_key().to_secret_hex(),
+    );
+
+    let mut config: AppConfig = toml::from_str(&raw).expect("parse hex config");
+    config.ensure_defaults();
+
+    assert_eq!(config.own_nostr_pubkey_hex().expect("own pubkey"), own_hex);
+    assert_eq!(config.exit_node, peer_hex);
+    assert_eq!(config.device_pubkeys_hex(), vec![peer_hex.clone()]);
+    assert_eq!(config.active_network_admin_pubkeys_hex(), vec![admin_hex]);
+    assert_eq!(config.peer_alias(&peer_hex).as_deref(), Some("server-a"));
+    assert_eq!(
+        config.fips_peer_endpoint_hints(&peer_hex),
+        vec!["10.203.0.12:51820".to_string()]
+    );
+
+    let path = unique_temp_config_path("hex-user-facing-pubkeys-save-as-npubs");
+    config.save(&path).expect("save migrated hex config");
+    let saved = fs::read_to_string(&path).expect("read migrated config");
+    let _ = fs::remove_file(&path);
+
+    assert!(saved.contains(&format!("public_key = \"{own_npub}\"")));
+    assert!(saved.contains(&format!("exit_node = \"{peer_npub}\"")));
+    assert!(saved.contains(&format!("devices = [\"{peer_npub}\"]")));
+    assert!(saved.contains(&format!("admins = [\"{admin_npub}\"]")));
+    assert!(saved.contains(&format!("{peer_npub} = \"server-a\"")));
+    assert!(saved.contains(&format!("{peer_npub} = [\"10.203.0.12:51820\"]")));
+    assert!(!saved.contains(&own_hex));
+    assert!(!saved.contains(&peer_hex));
+}
+
+#[test]
 fn legacy_participants_key_loads_and_saves_as_devices() {
     let peer = Keys::generate();
     let peer_hex = peer.public_key().to_hex();

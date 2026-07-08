@@ -168,9 +168,9 @@ pub fn maybe_autoconfigure_node(config: &mut crate::config::AppConfig) {
 
     let network_id = config.effective_network_id();
     if !network_id.is_empty()
-        && needs_tunnel_ip_autoconfig(&config.node.tunnel_ip)
         && let Ok(own_pubkey) = config.own_nostr_pubkey_hex()
         && let Some(tunnel_ip) = derive_mesh_tunnel_ip(&network_id, &own_pubkey)
+        && should_autoconfigure_tunnel_ip(&config.node.tunnel_ip, &tunnel_ip)
     {
         config.node.tunnel_ip = tunnel_ip;
     }
@@ -200,6 +200,22 @@ pub fn needs_endpoint_autoconfig(endpoint: &str) -> bool {
 pub fn needs_tunnel_ip_autoconfig(tunnel_ip: &str) -> bool {
     let value = tunnel_ip.trim();
     value.is_empty() || value == "10.44.0.1/32"
+}
+
+fn should_autoconfigure_tunnel_ip(configured: &str, derived: &str) -> bool {
+    needs_tunnel_ip_autoconfig(configured)
+        || (configured.trim() != derived.trim() && is_mesh_tunnel_ip(configured))
+}
+
+fn is_mesh_tunnel_ip(tunnel_ip: &str) -> bool {
+    let addr = tunnel_ip
+        .trim()
+        .split_once('/')
+        .map_or_else(|| tunnel_ip.trim(), |(addr, _prefix)| addr.trim());
+    matches!(
+        addr.parse::<IpAddr>(),
+        Ok(IpAddr::V4(ip)) if matches!(ip.octets(), [10, 44, _, _])
+    )
 }
 
 fn ipv4_is_documentation(octets: [u8; 4]) -> bool {

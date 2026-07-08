@@ -49,8 +49,8 @@ use crate::config_secrets::{
 use crate::fips_control::{PeerEndpointHint, SignedRoster, peer_endpoint_hint_addr};
 use crate::network_roster::{
     canonical_npub_key, canonicalize_inbound_join_requests, canonicalize_outbound_join_request,
-    normalize_inbound_join_requests, normalize_network_admins, normalize_npub_key,
-    normalize_outbound_join_request, normalize_shared_roster_devices,
+    normalize_inbound_join_requests, normalize_network_admins, normalize_outbound_join_request,
+    normalize_shared_roster_devices,
 };
 use crate::network_routes::is_exit_node_route;
 use crate::paid_routes::PaidExitConfig;

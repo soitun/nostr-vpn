@@ -52,7 +52,7 @@ impl AppConfig {
     fn normalize_peer_aliases(&mut self) {
         let mut normalized_aliases = HashMap::new();
         for (participant, alias) in &self.peer_aliases {
-            if let Some(participant_npub) = normalize_npub_key(participant)
+            if let Some(participant_npub) = canonical_npub_key(participant)
                 && let Some(alias) = normalize_magic_dns_label(alias)
             {
                 normalized_aliases.insert(participant_npub, alias);

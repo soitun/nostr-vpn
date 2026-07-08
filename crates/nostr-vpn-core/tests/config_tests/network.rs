@@ -201,6 +201,47 @@ fn tunnel_ip_stays_stable_when_roster_changes_if_network_id_is_fixed() {
 }
 
 #[test]
+fn tunnel_ip_recomputes_when_identity_changes() {
+    let old = Keys::generate();
+    let new = Keys::generate();
+    let old_hex = old.public_key().to_hex();
+    let new_hex = new.public_key().to_hex();
+    let network_id = "mesh-fixed";
+    let old_tunnel_ip = derive_mesh_tunnel_ip(network_id, &old_hex).expect("old tunnel ip");
+    let new_tunnel_ip = derive_mesh_tunnel_ip(network_id, &new_hex).expect("new tunnel ip");
+
+    let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
+    config.networks[0].network_id = network_id.to_string();
+    config.nostr.secret_key = new.secret_key().to_secret_hex();
+    config.nostr.public_key = new_hex;
+    config.node.tunnel_ip = old_tunnel_ip;
+    keep_endpoint_autoconfig_off(&mut config);
+
+    maybe_autoconfigure_node(&mut config);
+
+    assert_eq!(config.node.tunnel_ip, new_tunnel_ip);
+}
+
+#[test]
+fn tunnel_ip_preserves_non_mesh_custom_address() {
+    let keys = Keys::generate();
+    let own_hex = keys.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    activate_first_network(&mut config);
+    config.networks[0].network_id = "mesh-fixed".to_string();
+    config.nostr.secret_key = keys.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex;
+    config.node.tunnel_ip = "172.16.44.23/32".to_string();
+    keep_endpoint_autoconfig_off(&mut config);
+
+    maybe_autoconfigure_node(&mut config);
+
+    assert_eq!(config.node.tunnel_ip, "172.16.44.23/32");
+}
+
+#[test]
 fn endpoint_and_tunnel_autoconfig_detection_works() {
     assert!(needs_endpoint_autoconfig("127.0.0.1:51820"));
     assert!(needs_endpoint_autoconfig("0.0.0.0:51820"));
