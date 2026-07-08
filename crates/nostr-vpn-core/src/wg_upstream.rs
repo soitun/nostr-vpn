@@ -2,13 +2,10 @@
 //!
 //! Wraps `boringtun::noise::Tunn` for the case where this device is a WG
 //! *client* of one upstream provider, not a multi-peer mesh participant.
-//! Lives here in `nostr-vpn-core` so both the desktop daemon
-//! (`nvpn`) and the mobile runtime (`nostr-vpn-app-core`) can use
-//! the same boringtun pump — only the platform glue (tun ownership,
-//! routing-table changes) lives in the platform-specific crate.
+//! Lives here in `nostr-vpn-core` so desktop and mobile share the same
+//! boringtun pump while platform-specific crates own tun/routing glue.
 //!
-//! Three concurrent jobs drive it, all dispatched through a single
-//! coordinator task so the `Tunn` doesn't need a mutex:
+//! Three jobs run through one coordinator task so `Tunn` doesn't need a mutex:
 //!   * UDP-rx: receive ciphertext from upstream → `Tunn::decapsulate` →
 //!     forward plaintext to the platform writer.
 //!   * tun-rx: receive plaintext from the platform reader →

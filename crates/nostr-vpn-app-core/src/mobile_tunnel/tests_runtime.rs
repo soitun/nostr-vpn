@@ -351,7 +351,7 @@
                     Ok(Some(received)) if received > 0 => {
                         for message in received_batch.drain(..) {
                             if message.source_peer.npub() == started.endpoint.npub()
-                                && message.data == packets[messages.len()]
+                                && message.data.as_slice() == packets[messages.len()].as_slice()
                             {
                                 messages.push(message);
                                 if messages.len() == packets.len() {

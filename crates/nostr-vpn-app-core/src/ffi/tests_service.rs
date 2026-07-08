@@ -1,3 +1,13 @@
+    fn unique_service_test_dir(prefix: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("{prefix}-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        dir
+    }
+
     #[test]
     fn native_state_hides_reachable_peers_when_vpn_is_paused() {
         let error = anyhow!("boom");
@@ -48,12 +58,7 @@
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-mobile-connect-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-mobile-connect");
         runtime.config_path = dir.join("config.toml");
         create_test_network(&mut runtime, "Home");
         runtime
@@ -75,12 +80,7 @@
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-mobile-refresh-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-mobile-refresh");
         runtime.config_path = dir.join("config.toml");
         let network_id = create_test_network(&mut runtime, "Home");
         let peer = Keys::generate().public_key().to_hex();
@@ -138,12 +138,7 @@
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-mobile-future-refresh-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-mobile-future-refresh");
         runtime.config_path = dir.join("config.toml");
         let network_id = create_test_network(&mut runtime, "Home");
         let peer = Keys::generate().public_key().to_hex();
@@ -200,12 +195,7 @@
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-mobile-disconnect-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-mobile-disconnect");
         runtime.config_path = dir.join("config.toml");
         create_test_network(&mut runtime, "Home");
         runtime
@@ -272,12 +262,7 @@
             }
         }
 
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-service-restore-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-service-restore");
         let calls_path = dir.join("calls.txt");
         let resumed_path = dir.join("resumed");
         let script_path = dir.join("nvpn");
@@ -380,12 +365,7 @@ exit 0
 
     #[test]
     fn settings_patch_persists_wireguard_exit_config() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-wireguard-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-wireguard");
 
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
@@ -440,12 +420,7 @@ exit 0
 
     #[test]
     fn settings_patch_persists_nostr_pubsub_config() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-pubsub-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-pubsub");
 
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
@@ -481,12 +456,7 @@ exit 0
 
     #[test]
     fn settings_patch_persists_paid_exit_seller_config() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-paid-exit-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-paid-exit");
 
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
@@ -577,12 +547,7 @@ exit 0
     fn discover_paid_route_offers_passes_configured_rating_sources() {
         use std::os::unix::fs::PermissionsExt;
 
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-paid-rating-discover-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-paid-rating-discover");
         let calls_path = dir.join("calls.txt");
         let script_path = dir.join("nvpn");
         let rating_path = dir.join("ratings.json");
@@ -643,12 +608,7 @@ exit 0
         // Selecting a peer exit clears WG upstream, and selecting WG
         // upstream clears the peer exit — the daemon enforces this
         // so every UI can just push the new selection.
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-mutual-exit-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-mutual-exit");
 
         let peer_npub = Keys::generate()
             .public_key()
@@ -718,12 +678,7 @@ exit 0
 
     #[test]
     fn settings_patch_persists_fips_host_controls() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-fips-host-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-fips-host");
 
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
@@ -756,12 +711,7 @@ exit 0
 
     #[test]
     fn settings_patch_imports_wireguard_exit_config_block() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-wireguard-import-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-wireguard-import");
 
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
@@ -813,12 +763,7 @@ exit 0
 
     #[test]
     fn settings_patch_rejects_bad_wireguard_exit_config_without_replacing_saved_config() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-wireguard-bad-import-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-wireguard-bad-import");
 
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
@@ -891,12 +836,7 @@ exit 0
     fn connect_vpn_resumes_running_daemon_without_elevated_start() {
         use std::os::unix::fs::PermissionsExt;
 
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-resume-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-resume");
         let calls_path = dir.join("calls.txt");
         let script_path = dir.join("nvpn");
         let calls_literal = calls_path
@@ -962,12 +902,7 @@ exit 0
     fn macos_connect_without_service_does_not_start_or_prompt() {
         use std::os::unix::fs::PermissionsExt;
 
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-no-service-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
+        let dir = unique_service_test_dir("nvpn-app-core-no-service");
         let calls_path = dir.join("calls.txt");
         let script_path = dir.join("nvpn");
         let calls_literal = calls_path
