@@ -86,7 +86,7 @@ async fn handle_mobile_endpoint_message(
     let packet = control.mesh.read().ok().and_then(|mesh| {
         mesh.receive_endpoint_data_owned_with_source_node_addr(
             source_node_addr.as_bytes(),
-            Vec::<u8>::from(message.data),
+            message.data.into_vec(),
         )
         .map(|packet| (packet.source_pubkey.to_string(), packet.bytes))
     });
@@ -268,14 +268,14 @@ fn decode_mobile_control_frame(
     control_fragments: &mut FipsControlFragmentBuffer,
     message: &FipsEndpointMessage,
 ) -> Result<Option<FipsControlFrame>> {
-    let Some(frame) = decode_fips_control_frame(&message.data)? else {
+    let Some(frame) = decode_fips_control_frame(message.data.as_slice())? else {
         return Ok(None);
     };
     let FipsControlFrame::Fragment { .. } = frame else {
         return Ok(Some(frame));
     };
     let source_key = endpoint_source_key(message.source_peer);
-    control_fragments.decode(&source_key, &message.data, unix_timestamp())
+    control_fragments.decode(&source_key, message.data.as_slice(), unix_timestamp())
 }
 
 fn control_frame_network_matches(expected_network_id: &str, frame: &FipsControlFrame) -> bool {
