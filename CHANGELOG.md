@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.88 - 2026-07-08
+
 ### Added
 
 - Added the public iOS App Store download link alongside the TestFlight beta
@@ -11,8 +13,17 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- Bumped to FIPS 0.3.78/0.3.53 for the direct endpoint dataplane APIs used by
-  the Linux direct TUN fast path.
+- Bumped to FIPS 0.3.80/0.3.55 for the latest FIPS dataplane cleanup and
+  endpoint packet-buffer API.
+- User-facing peer/admin public keys in config continue to load from legacy hex
+  values and save back as npubs.
+- Derived mesh tunnel IPs recompute when the device identity changes, while
+  custom non-mesh tunnel IPs are preserved.
+
+### Fixed
+
+- `nvpn doctor` now reports a critical issue when this device identity is not in
+  the active network roster and no join request is pending.
 
 ## 4.0.87 - 2026-06-22
 

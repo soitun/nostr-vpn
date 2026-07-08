@@ -31,8 +31,8 @@ android {
         applicationId = "org.nostrvpn.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 40087
-        versionName = "4.0.87"
+        versionCode = 40088
+        versionName = "4.0.88"
         buildConfigField("String", "NVPN_BUILD_GIT_SHA", buildConfigString(buildGitSha))
         buildConfigField("String", "NVPN_BUILD_TIMESTAMP_UTC", buildConfigString(buildTimestampUtc))
 
