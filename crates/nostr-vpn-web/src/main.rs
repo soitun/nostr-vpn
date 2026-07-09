@@ -20,9 +20,9 @@ use tower_http::services::{ServeDir, ServeFile};
 mod ui_types;
 
 use crate::ui_types::{
-    AliasRequest, EndpointHintsRequest, InviteRequest, JoinRequestAction, ManualNetworkRequest,
-    NameRequest, NetworkEnabledRequest, NetworkIdRequest, NetworkMeshRequest, NetworkNameRequest,
-    NetworkPeerRequest, ParticipantRequest, QrMatrixRequest, QrMatrixResponse,
+    AliasRequest, EndpointHintsRequest, ImportJoinRequest, InviteRequest, JoinRequestAction,
+    ManualNetworkRequest, NameRequest, NetworkEnabledRequest, NetworkIdRequest, NetworkMeshRequest,
+    NetworkNameRequest, NetworkPeerRequest, ParticipantRequest, QrMatrixRequest, QrMatrixResponse,
 };
 
 const NVPN_BIN_ENV: &str = "NVPN_CLI_PATH";
@@ -132,6 +132,7 @@ async fn main() -> Result<()> {
         .route("/api/add_admin", post(add_admin))
         .route("/api/reset_network_invite", post(reset_network_invite))
         .route("/api/import_network_invite", post(import_network_invite))
+        .route("/api/import_join_request", post(import_join_request))
         .route("/api/start_invite_broadcast", post(start_invite_broadcast))
         .route("/api/stop_invite_broadcast", post(stop_invite_broadcast))
         .route("/api/start_nearby_discovery", post(start_nearby_discovery))
@@ -330,6 +331,18 @@ async fn import_network_invite(
         &state,
         NativeAppAction::ImportNetworkInvite {
             invite: request.invite,
+        },
+    )
+}
+
+async fn import_join_request(
+    State(state): State<ServerState>,
+    Json(request): Json<ImportJoinRequest>,
+) -> ApiResult<UiStateResponse> {
+    dispatch(
+        &state,
+        NativeAppAction::ImportJoinRequest {
+            request: request.request,
         },
     )
 }

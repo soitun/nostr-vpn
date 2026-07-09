@@ -691,9 +691,15 @@ private struct JoinNetworkCard: View {
 
             DisclosureGroup("Legacy manual join", isExpanded: $manualExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Use this only when link approval isn't available. Enter the admin's Device ID and network ID, then have them add your Device ID to the compatible signed roster.")
+                    Text("Use this only when link approval isn't available. Give the admin your Device ID, then enter their Device ID and network ID.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Your Device ID")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        CopyLine(value: model.state.ownNpub, model: model)
+                    }
                     TextField("Admin Device ID", text: $manualAdminId)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
@@ -733,8 +739,8 @@ private struct JoinNetworkCard: View {
 }
 
 /// Admin-only sheet for linking a device to YOUR network. The preferred path
-/// is scan/copy/broadcast + approve; direct Device ID entry remains for
-/// compatible signed-roster clients.
+/// is scan/paste the joiner's approval request and approve it; direct Device
+/// ID entry remains for compatible signed-roster clients.
 private struct AddDeviceSheet: View {
     @ObservedObject var model: AppModel
     let network: NetworkState
@@ -745,9 +751,6 @@ private struct AddDeviceSheet: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
-                if network.enabled {
-                    InviteToMyNetworkCard(model: model, network: network)
-                }
                 ForEach(network.inboundJoinRequests) { request in
                     JoinRequestRow(request: request) {
                         model.dispatch(
@@ -773,11 +776,11 @@ private struct AddDeviceSheet: View {
                     scan: { qrScannerPresented = true },
                     paste: {
                         if let text = UIPasteboard.general.string {
-                            importJoinRequest(text)
+                            importJoinerValue(text)
                         }
                     },
                     submit: {
-                        importJoinRequest(joinRequestInput)
+                        importJoinerValue(joinRequestInput)
                         joinRequestInput = ""
                     }
                 )
@@ -811,6 +814,20 @@ private struct AddDeviceSheet: View {
         )
     }
 
+    private func importJoinerValue(_ value: String) {
+        let request = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !request.isEmpty else { return }
+        if looksLikeJoinRequestQrOrLink(request) {
+            importJoinRequest(request)
+            return
+        }
+        if let scanned = parseScannedDeviceLinkQr(request) {
+            addScannedJoiner(scanned)
+            return
+        }
+        importJoinRequest(request)
+    }
+
     private func handleScannedJoinerCode(_ value: String) {
         if looksLikeJoinRequestQrOrLink(value) {
             importJoinRequest(value)
@@ -820,6 +837,10 @@ private struct AddDeviceSheet: View {
             scanError = "Not a Nostr VPN joiner QR."
             return
         }
+        addScannedJoiner(scanned)
+    }
+
+    private func addScannedJoiner(_ scanned: ScannedDeviceLink) {
         scanError = ""
         model.dispatch(
             NativeActions.addParticipant(
@@ -843,10 +864,10 @@ private struct ScanJoinerDeviceCard: View {
         AppCard {
             Text("Add approval request")
                 .font(.headline)
-            Text("Scan or paste the other device's approval request. Device ID QR scanning still works for manual pairing.")
+            Text("Scan or paste the joiner's approval request or Device ID.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            TextField("nvpn://join-request?app_key=…", text: $requestInput)
+            TextField("Approval request or Device ID", text: $requestInput)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder)
@@ -903,119 +924,6 @@ private struct ManualPairingInfoCard: View {
                 CopyLine(value: network.networkId, displayValue: displayNetworkId(network.networkId), model: model)
             }
         }
-    }
-}
-
-private struct InviteToMyNetworkCard: View {
-    @ObservedObject var model: AppModel
-    let network: NetworkState
-
-    var body: some View {
-        AppCard {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 16) {
-                    QrCodeView(matrix: model.qrMatrix(for: model.state.activeNetworkInvite))
-                        .frame(width: 300, height: 300)
-                    inviteControls
-                }
-                VStack(alignment: .leading, spacing: 10) {
-                    QrCodeView(matrix: model.qrMatrix(for: model.state.activeNetworkInvite))
-                        .frame(width: 320, height: 320)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    inviteControls
-                }
-                VStack(alignment: .leading, spacing: 10) {
-                    QrCodeView(matrix: model.qrMatrix(for: model.state.activeNetworkInvite))
-                        .frame(width: 288, height: 288)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    inviteControls
-                }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var inviteControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("Link a device")
-                .font(.headline)
-            Text("Have the other device scan or open this link, then approve its request below.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ViewThatFits(in: .horizontal) {
-                HStack {
-                    inviteCopyButton
-                    inviteResetButton
-                }
-                VStack(alignment: .leading, spacing: 8) {
-                    inviteCopyButton
-                    inviteResetButton
-                }
-            }
-            if let inviteUrl = URL(string: model.state.activeNetworkInvite) {
-                ShareLink(item: inviteUrl) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-            } else if !model.state.activeNetworkInvite.isEmpty {
-                ShareLink(item: model.state.activeNetworkInvite) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-            }
-            Toggle("Allow approval requests", isOn: Binding(
-                get: { network.joinRequestsEnabled },
-                set: { enabled in
-                    model.dispatch(
-                        NativeActions.setJoinRequests(networkId: network.id, enabled: enabled),
-                        status: "Saving approval setting"
-                    )
-                }
-            ))
-            .disabled(!network.localIsAdmin || model.actionInFlight)
-            Button {
-                if model.state.inviteBroadcastActive {
-                    model.dispatch(NativeActions.stopInviteBroadcast(), status: "Stopped sharing link")
-                } else {
-                    model.dispatch(NativeActions.startInviteBroadcast(), status: "Sharing link nearby")
-                }
-            } label: {
-                Label(
-                    model.state.inviteBroadcastActive
-                        ? "Sharing link · \(formatRemaining(model.state.inviteBroadcastRemainingSecs))"
-                        : "Share link nearby",
-                    systemImage: model.state.inviteBroadcastActive ? "stop.circle" : "dot.radiowaves.left.and.right"
-                )
-            }
-            .buttonStyle(.bordered)
-        }
-    }
-
-    private var inviteCopyButton: some View {
-        Button {
-            model.copy(model.state.activeNetworkInvite)
-        } label: {
-            Label("Copy Link", systemImage: model.copiedValue == model.state.activeNetworkInvite ? "checkmark" : "doc.on.doc")
-        }
-        .disabled(model.state.activeNetworkInvite.isEmpty)
-    }
-
-    private var inviteResetButton: some View {
-        Button(role: .destructive) {
-            model.dispatch(
-                NativeActions.resetNetworkInvite(networkId: network.id),
-                status: "Resetting link"
-            )
-        } label: {
-            Label("Reset", systemImage: "arrow.clockwise")
-        }
-        .disabled(!network.localIsAdmin || model.actionInFlight)
-    }
-
-    private func formatRemaining(_ seconds: UInt64) -> String {
-        if seconds == 0 { return "off" }
-        let minutes = seconds / 60
-        if minutes == 0 { return "\(seconds)s" }
-        let secs = seconds % 60
-        return secs == 0 ? "\(minutes)m" : String(format: "%dm%02ds", minutes, secs)
     }
 }
 
@@ -2304,7 +2212,7 @@ private struct FipsSettingsCard: View {
 
 private struct PubsubSettingsCard: View {
     @ObservedObject var model: AppModel
-    @State private var mode = "client"
+    @State private var mode = "relay"
     @State private var fanout = ""
     @State private var maxHops = ""
     @State private var maxEventBytes = ""

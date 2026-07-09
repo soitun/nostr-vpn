@@ -99,8 +99,8 @@ pub fn normalize_relay_urls(values: Vec<String>) -> Vec<String> {
 #[serde(rename_all = "snake_case")]
 pub enum NostrPubsubMode {
     Off,
-    #[default]
     Client,
+    #[default]
     Relay,
 }
 
@@ -170,7 +170,7 @@ impl NostrPubsubConfig {
 impl Default for NostrPubsubConfig {
     fn default() -> Self {
         Self {
-            mode: NostrPubsubMode::Client,
+            mode: NostrPubsubMode::Relay,
             fanout: default_nostr_pubsub_fanout(),
             max_hops: default_nostr_pubsub_max_hops(),
             max_event_bytes: default_nostr_pubsub_max_event_bytes(),

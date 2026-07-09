@@ -34,8 +34,8 @@
   let busyAction = '';
   let error = '';
   let notice = '';
-  let qrInvite = '';
   let joinRequestQr = '';
+  let joinerInput = '';
   let settingsDirty = false;
   let participantNpub = '';
   let participantAlias = '';
@@ -67,7 +67,7 @@
     tunnelIp: '',
     listenPort: '',
     relays: '',
-    nostrPubsubMode: 'client',
+    nostrPubsubMode: 'relay',
     nostrPubsubFanout: '4',
     nostrPubsubMaxHops: '2',
     nostrPubsubMaxEventBytes: '65536',
@@ -171,7 +171,6 @@
       participant.tunnelIp.toLowerCase().includes(query)
     );
   });
-  $: qrInvite = state?.activeNetworkInvite ?? '';
   $: joinRequestQr = state?.joinRequestQrCodeOrLink ?? '';
   $: if (addDeviceOpen && !shownNetwork?.enabled) {
     addDeviceOpen = false;
@@ -216,7 +215,7 @@
       tunnelIp: next.tunnelIp,
       listenPort: String(next.listenPort || ''),
       relays: relays.map((relay) => relay.url).join('\n'),
-      nostrPubsubMode: next.nostrPubsubMode || 'client',
+      nostrPubsubMode: next.nostrPubsubMode || 'relay',
       nostrPubsubFanout: String(next.nostrPubsubFanout || 4),
       nostrPubsubMaxHops: String(next.nostrPubsubMaxHops || 2),
       nostrPubsubMaxEventBytes: String(next.nostrPubsubMaxEventBytes || 65536),
@@ -637,13 +636,6 @@
     }
   }
 
-  async function resetNetworkInvite(network: NetworkView) {
-    if (!window.confirm('Reset this invite link? Devices with the old link will no longer be able to request access.')) {
-      return;
-    }
-    await run('/api/reset_network_invite', { networkId: network.id }, 'Resetting invite');
-  }
-
   async function saveAlias(participant: ParticipantView) {
     await run(
       '/api/set_participant_alias',
@@ -732,6 +724,30 @@
     );
   }
 
+  async function importJoinerValue() {
+    if (!shownNetwork) {
+      return;
+    }
+    const value = joinerInput.trim();
+    if (!value) {
+      return;
+    }
+    const ok = isValidDeviceId(value)
+      ? await run(
+          '/api/add_participant',
+          {
+            networkId: shownNetwork.id,
+            npub: value,
+            alias: null,
+          },
+          'Adding device',
+        )
+      : await run('/api/import_join_request', { request: value }, 'Importing request');
+    if (ok) {
+      joinerInput = '';
+    }
+  }
+
   async function importNetworkInvite(invite: string, label = 'Importing') {
     const existingIds = new Set(state?.networks.map((network) => network.id) ?? []);
     const next = await runState('/api/import_network_invite', { invite }, label);
@@ -754,17 +770,6 @@
       closeAddNetwork();
       tab = 'devices';
     }
-  }
-
-  async function toggleInviteBroadcast() {
-    if (!state) {
-      return;
-    }
-    await run(
-      state.inviteBroadcastActive ? '/api/stop_invite_broadcast' : '/api/start_invite_broadcast',
-      undefined,
-      state.inviteBroadcastActive ? 'Stopping nearby sharing' : 'Sharing nearby',
-    );
   }
 
   async function toggleNearbyDiscovery() {
@@ -1119,61 +1124,33 @@
 
       {#if addDeviceOpen && shownNetwork}
         <Modal title="Add Device" titleId="add-device-title" on:close={() => (addDeviceOpen = false)}>
-          <div class="modal-section invite-section">
-            <div class="qr-frame compact">
-              {#if qrInvite}
-                <QRCode data={qrInvite} size={320} />
-              {:else}
-                <div class="qr-empty">QR</div>
-              {/if}
-            </div>
-            <div class="share-copy">
-              <div class="section-heading">
-                <div>
-                  <h3>Invite Devices</h3>
-                  <p>{shownNetwork.name}</p>
-                </div>
+          <form class="modal-section" on:submit|preventDefault={importJoinerValue}>
+            <div class="section-heading">
+              <div>
+                <h3>Link Device</h3>
+                <p>{shownNetwork.name}</p>
               </div>
-              <div class="button-row">
-                <CopyButton
-                  variant="secondary"
-                  value={qrInvite}
-                  label="Invite"
-                  text="Copy Link"
-                  disabled={!qrInvite}
-                  on:copied={handleCopied}
+            </div>
+            <label>
+              <span>Approval request or Device ID</span>
+              <textarea bind:value={joinerInput} rows="4"></textarea>
+            </label>
+            <div class="button-row">
+              <button class="secondary-button" type="submit" disabled={Boolean(busyAction) || !joinerInput.trim()}>
+                Import
+              </button>
+              <label class="switch-row inline-switch">
+                <span>Allow requests</span>
+                <input
+                  type="checkbox"
+                  checked={shownNetwork.joinRequestsEnabled}
+                  disabled={!shownNetwork.localIsAdmin || Boolean(busyAction)}
+                  on:change={(event) =>
+                    setJoinRequests(shownNetwork, (event.currentTarget as HTMLInputElement).checked)}
                 />
-                <button
-                  type="button"
-                  class="small-button"
-                  disabled={!shownNetwork.localIsAdmin || !shownNetwork.enabled || Boolean(busyAction)}
-                  on:click={() => resetNetworkInvite(shownNetwork)}
-                >
-                  Reset
-                </button>
-                <button
-                  type="button"
-                  class="secondary-button"
-                  disabled={!shownNetwork.enabled}
-                  on:click={toggleInviteBroadcast}
-                >
-                  {state.inviteBroadcastActive
-                    ? `Sharing nearby · ${remainingText(state.inviteBroadcastRemainingSecs)}`
-                    : 'Share invite nearby'}
-                </button>
-                <label class="switch-row inline-switch">
-                  <span>Allow requests</span>
-                  <input
-                    type="checkbox"
-                    checked={shownNetwork.joinRequestsEnabled}
-                    disabled={!shownNetwork.localIsAdmin || Boolean(busyAction)}
-                    on:change={(event) =>
-                      setJoinRequests(shownNetwork, (event.currentTarget as HTMLInputElement).checked)}
-                  />
-                </label>
-              </div>
+              </label>
             </div>
-          </div>
+          </form>
 
           {#if shownNetwork.inboundJoinRequests.length > 0}
             <div class="modal-section join-requests-list">
@@ -1229,7 +1206,7 @@
             <div class="section-heading">
               <div>
                 <h3>Add by Device ID</h3>
-                <p>{shownNetwork.name}</p>
+                <p>Joiner's Device ID</p>
               </div>
             </div>
             <div class="form-grid">
@@ -1349,7 +1326,14 @@
               <div class="section-heading">
                 <div>
                   <h3>Add manually</h3>
-                  <p>Admin Device ID + Network ID</p>
+                  <p>Your Device ID + admin network details</p>
+                </div>
+              </div>
+              <div class="detail-list">
+                <div>
+                  <span>Your Device ID</span>
+                  <strong>{state.ownNpub}</strong>
+                  <CopyButton value={state.ownNpub} label="Device ID" on:copied={handleCopied} />
                 </div>
               </div>
               <div class="form-grid">

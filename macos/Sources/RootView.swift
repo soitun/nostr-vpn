@@ -41,7 +41,7 @@ struct RootView: View {
     @State private var listenPort = ""
     @State private var relayInput = ""
     @State private var fipsHostInboundTcpPorts = ""
-    @State private var nostrPubsubMode = "client"
+    @State private var nostrPubsubMode = "relay"
     @State private var nostrPubsubFanout = ""
     @State private var nostrPubsubMaxHops = ""
     @State private var nostrPubsubMaxEventBytes = ""
@@ -219,8 +219,8 @@ struct RootView: View {
         }
         .sheet(isPresented: $showingQrScanner) {
             QRCodeScannerSheet { code in
-                if scanningJoinRequest {
-                    manager.importJoinRequest(code)
+                if scanningJoinRequest, let network = shownNetwork {
+                    importJoinRequestOrAddDevice(code, network: network)
                 }
                 scanningJoinRequest = false
                 showingQrScanner = false
@@ -269,7 +269,7 @@ struct RootView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    inviteSection(network)
+                    approvalRequestInputSection(network)
                     joinRequestsSection(network)
                     manualPairingInfoSection(network)
                     addByDeviceIdSection(network)
@@ -1125,50 +1125,30 @@ struct RootView: View {
         }
     }
 
-    private func inviteSection(_ network: NativeNetworkState) -> some View {
-        let invite = network.enabled ? state.activeNetworkInvite : ""
-        return surface {
-            ViewThatFits(in: .horizontal) {
-                HStack(alignment: .top, spacing: 18) {
-                    InviteQRCodeView(invite: invite)
-                        .frame(width: 260, height: 260)
-                    inviteControls(network, invite: invite)
-                }
-                VStack(alignment: .leading, spacing: 12) {
-                    InviteQRCodeView(invite: invite)
-                        .frame(width: 300, height: 300)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    inviteControls(network, invite: invite)
-                }
-            }
-        }
-    }
-
-    private func inviteControls(_ network: NativeNetworkState, invite: String) -> some View {
+    private func approvalRequestInputSection(_ network: NativeNetworkState) -> some View {
         let trimmedJoinRequest = joinRequestInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        return VStack(alignment: .leading, spacing: 12) {
-            sectionHeader("Link Devices", systemImage: "qrcode")
+        return surface {
+            sectionHeader("Approve Joining Device", systemImage: "camera.viewfinder")
+            Text("Scan the joining device's request QR, or paste its approval request or Device ID.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 Button {
-                    manager.copy(invite, as: .invite)
+                    scanningJoinRequest = true
+                    showingQrScanner = true
                 } label: {
-                    Label("Copy Link", systemImage: copyIndicator(.invite, peerNpub: nil) ? "checkmark" : "doc.on.doc")
+                    Label("Scan QR", systemImage: "camera.viewfinder")
                 }
-                .buttonStyle(.bordered)
-                .disabled(invite.isEmpty)
-                Button(role: .destructive) {
-                    manager.resetNetworkInvite(networkId: network.id)
-                } label: {
-                    Label("Reset", systemImage: "arrow.clockwise")
-                }
-                .buttonStyle(.bordered)
-                .disabled(!network.localIsAdmin || manager.actionInFlight || !network.enabled)
+                .disabled(manager.actionInFlight)
+                TextField("nvpn://join-request… or npub1…", text: $joinRequestInput)
+                    .textFieldStyle(.roundedBorder)
                 Button {
-                    manager.share(invite)
+                    importJoinRequestOrAddDevice(trimmedJoinRequest, network: network)
+                    joinRequestInput = ""
                 } label: {
-                    Label("Share", systemImage: "square.and.arrow.up")
+                    Label("Import", systemImage: "tray.and.arrow.down")
                 }
-                .disabled(invite.isEmpty)
+                .disabled(trimmedJoinRequest.isEmpty || manager.actionInFlight)
             }
             HStack {
                 Toggle("Allow approval requests", isOn: Binding(
@@ -1176,45 +1156,19 @@ struct RootView: View {
                     set: { manager.setJoinRequests(networkId: network.id, enabled: $0) }
                 ))
                 .disabled(!network.localIsAdmin || manager.actionInFlight)
-                .help("Allow devices with this link to ask for approval")
+                .help("Allow devices that already have a network invite to ask for approval")
                 badge(network.joinRequestsEnabled ? "Allowed" : "Blocked", style: network.joinRequestsEnabled ? .ok : .muted)
-                Spacer()
-                Button {
-                    state.inviteBroadcastActive ? manager.stopInviteBroadcast() : manager.startInviteBroadcast()
-                } label: {
-                    Label(
-                        state.inviteBroadcastActive
-                            ? "Sharing link · \(formatRemaining(state.inviteBroadcastRemainingSecs))"
-                            : "Share link nearby",
-                        systemImage: state.inviteBroadcastActive ? "stop.circle" : "dot.radiowaves.left.and.right"
-                    )
-                }
-                .disabled(manager.actionInFlight || !network.enabled)
             }
-            if network.localIsAdmin {
-                Divider()
-                VStack(alignment: .leading, spacing: 8) {
-                    sectionHeader("Add Approval Request", systemImage: "person.badge.plus")
-                    HStack(spacing: 8) {
-                        TextField("nvpn://join-request?app_key=…", text: $joinRequestInput)
-                            .textFieldStyle(.roundedBorder)
-                        Button {
-                            manager.importJoinRequest(trimmedJoinRequest)
-                            joinRequestInput = ""
-                        } label: {
-                            Label("Import", systemImage: "tray.and.arrow.down")
-                        }
-                        .disabled(trimmedJoinRequest.isEmpty || manager.actionInFlight)
-                        Button {
-                            scanningJoinRequest = true
-                            showingQrScanner = true
-                        } label: {
-                            Label("Scan QR", systemImage: "camera.viewfinder")
-                        }
-                        .disabled(manager.actionInFlight)
-                    }
-                }
-            }
+        }
+    }
+
+    private func importJoinRequestOrAddDevice(_ value: String, network: NativeNetworkState) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if isValidDeviceId(trimmed) {
+            manager.addParticipant(networkId: network.id, npub: trimmed)
+        } else {
+            manager.importJoinRequest(trimmed)
         }
     }
 
@@ -1222,8 +1176,8 @@ struct RootView: View {
         let trimmed = addByDeviceIdInput.trimmingCharacters(in: .whitespacesAndNewlines)
         let invalid = !trimmed.isEmpty && !isValidDeviceId(trimmed)
         return surface {
-            sectionHeader("Legacy Add by Device ID", systemImage: "plus")
-            Text("Manual compatibility path: add the other device directly to this signed roster. Prefer link approval when both devices support it.")
+            sectionHeader("Add by Device ID", systemImage: "plus")
+            Text("Paste the joining device's npub to add it directly. The joining device still needs your Device ID and this network ID for manual pairing.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
@@ -1311,6 +1265,7 @@ struct RootView: View {
                     }
                 }
                 .disabled(manager.actionInFlight)
+                detailValueRow("Your Device ID", state.ownNpub)
             }
 
             DisclosureGroup("Legacy invite link", isExpanded: $legacyInviteExpanded) {
@@ -1410,7 +1365,7 @@ struct RootView: View {
         let canSubmit = !admin.isEmpty && !mesh.isEmpty && !adminInvalid
         return DisclosureGroup("Legacy manual join", isExpanded: $manualJoinExpanded) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Use this only when link approval isn't available. Get the admin's Device ID and network ID, then have the admin add your Device ID to the compatible signed roster.")
+                Text("Use this only when link approval isn't available. Enter the admin's Device ID and network ID, then give the admin your Device ID shown above.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 TextField("Admin Device ID", text: $manualJoinAdminId)

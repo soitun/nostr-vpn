@@ -144,7 +144,17 @@
                 </Grid>
                 <Expander Header="Add manually" Margin="0,10,0,0" IsExpanded="{Binding ManualJoinExpanded, Mode=TwoWay}">
                   <StackPanel Margin="0,8,0,0">
-                    <TextBlock Text="Both sides have to add each other. Get the admin's Device ID and the network ID from them, then have the admin add your Device ID on their Add device page." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="Share your Device ID with the admin. If they give you their Admin Device ID and Network ID, enter them here." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Grid Margin="0,0,0,8">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Your Device ID" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                      <TextBlock Grid.Column="1" Text="{Binding State.OwnNpub}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                      <Button Grid.Column="2" Content="Copy" Tag="{Binding State.OwnNpub}" Click="CopyPeer_Click" />
+                    </Grid>
                     <TextBox Text="{Binding ManualJoinAdminId, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4">
                       <TextBox.Style>
                         <Style TargetType="TextBox">
@@ -457,7 +467,17 @@
                 </StackPanel>
                 <Expander Header="Add manually" Margin="0,10,0,0" IsExpanded="{Binding ManualJoinExpanded, Mode=TwoWay}">
                   <StackPanel Margin="0,8,0,0">
-                    <TextBlock Text="Both sides have to add each other. Get the admin's Device ID and the network ID from them, then have the admin add your Device ID on their Add device page." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <TextBlock Text="Share your Device ID with the admin. If they give you their Admin Device ID and Network ID, enter them here." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Grid Margin="0,0,0,8">
+                      <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="110" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                      </Grid.ColumnDefinitions>
+                      <TextBlock Text="Your Device ID" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" />
+                      <TextBlock Grid.Column="1" Text="{Binding State.OwnNpub}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                      <Button Grid.Column="2" Content="Copy" Tag="{Binding State.OwnNpub}" Click="CopyPeer_Click" />
+                    </Grid>
                     <TextBox Text="{Binding ManualJoinAdminId, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,4">
                       <TextBox.Style>
                         <Style TargetType="TextBox">
@@ -502,37 +522,27 @@
           </StackPanel>
 
           <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=AddDevice}">
-            <Border Style="{StaticResource Card}" Visibility="{Binding ShowActiveNetworkInviteCard, Converter={StaticResource BoolToVisibility}}">
-              <Grid>
-                <Grid.ColumnDefinitions>
-                  <ColumnDefinition Width="*" MinWidth="220" MaxWidth="300" />
-                  <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Viewbox Grid.Column="0"
-                         Stretch="Uniform"
-                         StretchDirection="DownOnly"
-                         MaxWidth="300"
-                         MaxHeight="300"
-                         HorizontalAlignment="Stretch"
-                         VerticalAlignment="Top">
-                  <controls:QrCodeView Width="300" Height="300" Matrix="{Binding InviteQr}" />
-                </Viewbox>
-                <StackPanel Grid.Column="1" Margin="18,0,0,0">
-                  <TextBlock Text="Invite to my network" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                  <TextBlock Text="Share this code with another device to give it access to your network." Foreground="{StaticResource TextSecondary}" FontSize="12" Margin="0,0,0,8" TextWrapping="Wrap" />
-                  <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                    <Button Content="Copy Link" Command="{Binding CopyInviteCommand}" Margin="0,0,8,0" />
-                    <Button Content="Reset" Command="{Binding ResetInviteCommand}" Margin="0,0,8,0" />
-                    <Button Content="Import approval QR file" Command="{Binding ImportJoinRequestQrImageCommand}" Margin="0,0,8,0" />
-                    <Button Content="{Binding InviteBroadcastButtonText}" Command="{Binding ToggleInviteBroadcastCommand}" />
-                    <CheckBox Content="Allow join requests"
-                              IsChecked="{Binding ActiveNetwork.JoinRequestsEnabled, Mode=OneWay}"
-                              IsEnabled="{Binding ActiveNetwork.LocalIsAdmin}"
-                              Click="JoinRequests_Click"
-                              Margin="12,4,0,4" />
-                  </StackPanel>
+            <Border Style="{StaticResource Card}" Visibility="{Binding ShowLinkDeviceCard, Converter={StaticResource BoolToVisibility}}">
+              <StackPanel>
+                <TextBlock Text="Link Device" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4" />
+                <TextBlock Text="Import the joiner's approval request, or add their Device ID below." Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                  </Grid.ColumnDefinitions>
+                  <TextBox Text="{Binding JoinRequestInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Approval request or Device ID" Margin="0,0,8,0" />
+                  <Button Grid.Column="1" Content="Import" Command="{Binding ImportJoinRequestCommand}" />
+                </Grid>
+                <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                  <Button Content="Import approval QR file" Command="{Binding ImportJoinRequestQrImageCommand}" Margin="0,0,8,0" />
+                  <CheckBox Content="Allow join requests"
+                            IsChecked="{Binding ActiveNetwork.JoinRequestsEnabled, Mode=OneWay}"
+                            IsEnabled="{Binding ActiveNetwork.LocalIsAdmin}"
+                            Click="JoinRequests_Click"
+                            Margin="0,4,0,4" />
                 </StackPanel>
-              </Grid>
+              </StackPanel>
             </Border>
 
             <Border Style="{StaticResource Card}" Visibility="{Binding ActiveNetworkHasIncomingJoinRequests, Converter={StaticResource BoolToVisibility}}">
@@ -562,7 +572,7 @@
             <Border Style="{StaticResource Card}" Visibility="{Binding HasActiveNetwork, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <TextBlock Text="For manual join" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4" />
-                <TextBlock Text="If the other device can't scan or paste an invite, share these two values. They'll enter them under Join Network → Add manually. You still need to add their Device ID below." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <TextBlock Text="If the other device needs to add this network manually, share these two values. They'll enter them under Join Network → Add manually. You still need to add their Device ID below." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" />
                 <Grid Margin="0,0,0,8">
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="110" />
@@ -589,7 +599,7 @@
             <Border Style="{StaticResource Card}" Visibility="{Binding ActiveNetwork.LocalIsAdmin, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <TextBlock Text="Add by Device ID" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4" />
-                <TextBlock Text="Manual pairing: enter the other device's Device ID. They also need to add yours." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBlock Text="Manual pairing: enter the joiner's Device ID." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />

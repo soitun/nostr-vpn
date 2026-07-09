@@ -131,18 +131,6 @@ enum NativeActions {
         importInvite(link)
     }
 
-    static func resetNetworkInvite(networkId: String) -> [String: Any] {
-        ["type": "reset_network_invite", "networkId": networkId]
-    }
-
-    static func startInviteBroadcast() -> [String: Any] {
-        ["type": "start_invite_broadcast"]
-    }
-
-    static func stopInviteBroadcast() -> [String: Any] {
-        ["type": "stop_invite_broadcast"]
-    }
-
     static func startNearbyDiscovery() -> [String: Any] {
         ["type": "start_nearby_discovery"]
     }

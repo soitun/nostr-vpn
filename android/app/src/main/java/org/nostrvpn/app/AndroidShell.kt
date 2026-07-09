@@ -255,7 +255,6 @@ internal fun NostrVpnApp(
         AddDevicesDialog(
             state = state,
             network = network,
-            qrJson = qrJson,
             scanDeviceQr = scanDeviceQr,
             dispatch = dispatch,
             onDismiss = { showAddDevice = false },
@@ -720,10 +719,12 @@ private fun NetworkSetupCard(
                                 val adminInvalid = adminTrim.isNotEmpty() && !isValidDeviceId(adminTrim)
                                 val canSubmit = adminTrim.isNotEmpty() && meshTrim.isNotEmpty() && !adminInvalid
                                 Text(
-                                    "Both sides have to add each other. Get the admin's Device ID and the network ID from them, then have the admin add your Device ID on their Add device page.",
+                                    "Give the admin your Device ID, then enter their Device ID and network ID.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = Muted,
                                 )
+                                Text("Your Device ID", style = MaterialTheme.typography.bodySmall, color = Muted)
+                                CopyButton(state.ownNpub, "Copy Device ID")
                                 OutlinedTextField(
                                     value = manualAdminId,
                                     onValueChange = { manualAdminId = it },
@@ -824,20 +825,32 @@ private fun AddNetworkDialog(
     )
 }
 
-/// Admin-only sheet for adding a device to YOUR network. Two paths:
-/// share an invite, or directly add by Device ID. Joining someone
-/// else's network and finding nearby networks belong to Add Network,
-/// not here.
+/// Admin-only sheet for adding a device to YOUR network. The admin scans or
+/// pastes the joiner's request/Device ID; joining someone else's network and
+/// finding nearby networks belong to Add Network, not here.
 @Composable
 private fun AddDevicesDialog(
     state: AppState,
     network: NetworkState,
-    qrJson: (String) -> JSONObject,
     scanDeviceQr: (String) -> Unit,
     dispatch: (JSONObject) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var joinRequestInput by remember(network.id) { mutableStateOf("") }
+    fun importJoinerValue(value: String) {
+        val trimmed = value.trim()
+        if (trimmed.isEmpty()) return
+        if (looksLikeJoinRequestQrOrLink(trimmed)) {
+            dispatch(NativeActions.importJoinRequest(trimmed))
+            return
+        }
+        val scanned = parseScannedDeviceLinkQr(trimmed)
+        if (scanned != null) {
+            dispatch(NativeActions.addParticipant(network.id, scanned.deviceId, scanned.alias))
+            return
+        }
+        dispatch(NativeActions.importJoinRequest(trimmed))
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Device") },
@@ -846,79 +859,9 @@ private fun AddDevicesDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                if (network.enabled) {
-                    Text("Invite to my network", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "Share this invite so the other device can request access to your network.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Muted,
-                    )
-                    if (state.activeNetworkInvite.isNotBlank()) {
-                        BoxWithConstraints(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            val qrSide = if (maxWidth < 420.dp) {
-                                maxWidth.coerceAtMost(320.dp)
-                            } else {
-                                (maxWidth * 0.5f).coerceAtLeast(220.dp).coerceAtMost(320.dp)
-                            }
-                            QrCode(
-                                invite = state.activeNetworkInvite,
-                                qrJson = qrJson,
-                                side = qrSide,
-                            )
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            CopyButton(state.activeNetworkInvite, "Copy link")
-                            OutlinedButton(onClick = {
-                                dispatch(NativeActions.resetNetworkInvite(network.id))
-                            }) {
-                                Text("Reset")
-                            }
-                        }
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Switch(
-                            checked = network.joinRequestsEnabled,
-                            onCheckedChange = { enabled ->
-                                dispatch(NativeActions.setJoinRequests(network.id, enabled))
-                            },
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text("Allow join requests")
-                    }
-                    Button(onClick = {
-                        dispatch(
-                            if (state.inviteBroadcastActive) {
-                                NativeActions.stopInviteBroadcast()
-                            } else {
-                                NativeActions.startInviteBroadcast()
-                            },
-                        )
-                    }) {
-                        Text(
-                            if (state.inviteBroadcastActive) {
-                                "Sharing nearby · ${formatDialogRemaining(state.inviteBroadcastRemainingSecs)}"
-                            } else {
-                                "Share invite nearby"
-                            },
-                        )
-                    }
-                }
-
-                if (network.inboundJoinRequests.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Requests", style = MaterialTheme.typography.titleMedium)
-                    network.inboundJoinRequests.forEach { request ->
-                        JoinRequestCard(network, request, dispatch)
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
                 Text("Add approval request", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Scan or paste the other device's approval request. Device ID QR scanning still works for manual pairing.",
+                    "Scan or paste the joiner's approval request or Device ID.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Muted,
                 )
@@ -927,12 +870,12 @@ private fun AddDevicesDialog(
                     onValueChange = { joinRequestInput = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("nvpn://join-request?app_key=…") },
+                    label = { Text("Approval request or Device ID") },
                 )
                 Button(
                     enabled = joinRequestInput.trim().isNotEmpty(),
                     onClick = {
-                        dispatch(NativeActions.importJoinRequest(joinRequestInput.trim()))
+                        importJoinerValue(joinRequestInput)
                         joinRequestInput = ""
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -945,11 +888,29 @@ private fun AddDevicesDialog(
                 ) {
                     Text("Scan QR")
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Switch(
+                        checked = network.joinRequestsEnabled,
+                        onCheckedChange = { enabled ->
+                            dispatch(NativeActions.setJoinRequests(network.id, enabled))
+                        },
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Allow approval requests")
+                }
+
+                if (network.inboundJoinRequests.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Requests", style = MaterialTheme.typography.titleMedium)
+                    network.inboundJoinRequests.forEach { request ->
+                        JoinRequestCard(network, request, dispatch)
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("For manual join", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "If the other device can't scan or paste an invite, share these two values. They'll enter them under Join Network → Add manually. You still need to add their Device ID below.",
+                    "If link approval isn't available, share these two values. They'll enter them under Join Network → Add manually. You still need to add their Device ID below.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Muted,
                 )
@@ -961,7 +922,7 @@ private fun AddDevicesDialog(
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("Add by Device ID", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Manual pairing: enter the other device's Device ID. They also need to add yours.",
+                    "Manual pairing: enter the joiner's Device ID.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Muted,
                 )
@@ -1002,14 +963,6 @@ private fun JoinRequestCard(
             }
         }
     }
-}
-
-private fun formatDialogRemaining(seconds: Long): String {
-    if (seconds <= 0) return "off"
-    val minutes = seconds / 60
-    if (minutes == 0L) return "${seconds}s"
-    val secs = seconds % 60
-    return if (secs == 0L) "${minutes}m" else "${minutes}m%02ds".format(secs)
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.internetPage(

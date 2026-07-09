@@ -56,7 +56,7 @@
   <svg
     class="qr-image"
     role="img"
-    aria-label="Invite QR code"
+    aria-label="QR code"
     width={size}
     height={size}
     viewBox={`0 0 ${matrix.width} ${matrix.width}`}

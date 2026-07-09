@@ -91,6 +91,7 @@ impl PageScrollOffsets {
 #[derive(Clone, Default)]
 struct Drafts {
     invite: String,
+    join_request: String,
     participant_npub: String,
     participant_alias: String,
     network_name: String,

@@ -168,10 +168,9 @@ test('bundled UI loads, navigates, renders QR, and stays responsive', async ({ p
 
     await page.getByRole('button', { name: 'Add Device' }).click();
     await expect(page.getByRole('heading', { name: 'Add Device' })).toBeVisible();
-    await expect(page.locator('.qr-frame')).toBeVisible();
-    const inviteQr = page.locator('.qr-frame svg[aria-label="Invite QR code"]');
-    await expect(inviteQr).toBeVisible();
-    await expect(inviteQr.locator('path')).toHaveAttribute('d', /M\d+ \d+h1v1h-1z/);
+    await expect(page.getByRole('heading', { name: 'Link Device' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Add by Device ID' })).toBeVisible();
+    await expect(page.locator('.qr-frame')).toHaveCount(0);
     await page.getByRole('button', { name: 'Done' }).click();
     await expectModalClosesWithEscape(page, 'Add Device', 'Add Device');
     await expectModalClosesOnBackdrop(page, 'Add Device', 'Add Device');

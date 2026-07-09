@@ -22,9 +22,6 @@ public static class NativeActions
     public static string RejectJoinRequest(string networkId, string requesterNpub) => AppCoreClient.Action(new { type = "reject_join_request", networkId, requesterNpub });
     public static string ImportNetworkInvite(string invite) => AppCoreClient.Action(new { type = "import_network_invite", invite });
     public static string ImportJoinRequest(string request) => AppCoreClient.Action(new { type = "import_join_request", request });
-    public static string ResetNetworkInvite(string networkId) => AppCoreClient.Action(new { type = "reset_network_invite", networkId });
-    public static string StartInviteBroadcast() => AppCoreClient.Action(new { type = "start_invite_broadcast" });
-    public static string StopInviteBroadcast() => AppCoreClient.Action(new { type = "stop_invite_broadcast" });
     public static string StartNearbyDiscovery() => AppCoreClient.Action(new { type = "start_nearby_discovery" });
     public static string StopNearbyDiscovery() => AppCoreClient.Action(new { type = "stop_nearby_discovery" });
     public static string AddParticipant(string networkId, string npub, string? alias) => AppCoreClient.Action(new { type = "add_participant", networkId, npub, alias });

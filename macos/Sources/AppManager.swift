@@ -979,10 +979,6 @@ final class AppManager: ObservableObject {
         dispatch(.setNetworkJoinRequestsEnabled(networkId: networkId, enabled: enabled), status: "Saving approval setting")
     }
 
-    func resetNetworkInvite(networkId: String) {
-        dispatch(.resetNetworkInvite(networkId: networkId), status: "Resetting link")
-    }
-
     func requestNetworkJoin(networkId: String) {
         dispatch(.requestNetworkJoin(networkId: networkId), status: "Requesting approval")
     }
@@ -1065,14 +1061,6 @@ final class AppManager: ObservableObject {
 
     func uninstallService() {
         dispatch(.uninstallSystemService, status: "Uninstalling service", successStatus: "Service uninstalled", settleService: true)
-    }
-
-    func startInviteBroadcast() {
-        dispatch(.startInviteBroadcast, status: "Sharing link nearby")
-    }
-
-    func stopInviteBroadcast() {
-        dispatch(.stopInviteBroadcast, status: "Stopped sharing link")
     }
 
     func startNearbyDiscovery() {
@@ -1656,7 +1644,7 @@ final class AppManager: ObservableObject {
                 NativeRelayState(url: "wss://relay.damus.io", status: "connected", enabled: true),
                 NativeRelayState(url: "wss://relay.nostr.band", status: "unknown", enabled: true)
             ],
-            nostrPubsubMode: "client",
+            nostrPubsubMode: "relay",
             nostrPubsubFanout: 4,
             nostrPubsubMaxHops: 2,
             nostrPubsubMaxEventBytes: 65_536,
