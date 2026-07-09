@@ -5,6 +5,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CORE_DIR="$ROOT/crates/nostr-vpn-app-core"
 MACOS_DIR="$ROOT/macos"
+MACOS_ENTITLEMENTS="$MACOS_DIR/NostrVpnMac.entitlements"
 BINDINGS_DIR="$MACOS_DIR/Bindings"
 FRAMEWORKS_DIR="$MACOS_DIR/Frameworks"
 BUILD_DIR="$MACOS_DIR/.build"
@@ -662,6 +663,11 @@ app_is_stapled() {
 sign_release_app_deep() {
   local app_path="$1"
   local identity="$2"
+  local entitlement_args=()
+
+  if [[ -f "$MACOS_ENTITLEMENTS" ]]; then
+    entitlement_args=(--entitlements "$MACOS_ENTITLEMENTS")
+  fi
 
   while IFS= read -r -d '' executable; do
     if file "$executable" | grep -Eq 'Mach-O'; then
@@ -669,7 +675,7 @@ sign_release_app_deep() {
     fi
   done < <(find "$app_path/Contents" -type f -perm -111 -print0)
 
-  run_codesign --force --deep "$(codesign_timestamp_arg)" --options runtime --sign "$identity" "$app_path"
+  run_codesign --force --deep "$(codesign_timestamp_arg)" --options runtime "${entitlement_args[@]}" --sign "$identity" "$app_path"
   codesign --verify --deep --strict --verbose=2 "$app_path"
 }
 

@@ -754,13 +754,6 @@ code {
   margin-top: 0;
 }
 
-.join-requests-list {
-  margin-top: 6px;
-  padding: 12px;
-  border-radius: 8px;
-  background: var(--canvas);
-}
-
 .section-heading.compact {
   margin-bottom: 8px;
 }

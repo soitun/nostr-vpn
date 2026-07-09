@@ -155,6 +155,32 @@ mod tests {
         );
     }
 
+    #[test]
+    fn minimal_seeded_config_does_not_need_secret_migration() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-seeded-config-no-secret-migration-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        std::fs::write(&path, "node_name = \"iPhone\"\n").expect("write seeded config");
+
+        assert!(
+            !AppConfig::config_file_needs_secret_migration(&path)
+                .expect("inspect seeded config")
+        );
+        assert!(
+            !AppConfig::migrate_persisted_secrets(&path).expect("migration should be skipped")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read seeded config"),
+            "node_name = \"iPhone\"\n"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn load_rejects_mismatched_nostr_secret_sidecar() {

@@ -281,21 +281,24 @@ fn is_redacted_secret(value: &str) -> bool {
 
 fn nostr_secret_needs_migration(value: &toml::Value) -> bool {
     let Some(nostr) = value.get("nostr").and_then(toml::Value::as_table) else {
-        return true;
+        return false;
     };
 
-    let secret_key = nostr
-        .get("secret_key")
-        .and_then(toml::Value::as_str)
-        .unwrap_or_default()
-        .trim();
+    let Some(secret_key) = nostr.get("secret_key").and_then(toml::Value::as_str) else {
+        return false;
+    };
+    let secret_key = secret_key.trim();
+    if secret_key.is_empty() {
+        return false;
+    }
+
     let public_key = nostr
         .get("public_key")
         .and_then(toml::Value::as_str)
         .unwrap_or_default()
         .trim();
 
-    secret_key.is_empty() || public_key.is_empty() || !is_redacted_secret(secret_key)
+    public_key.is_empty() || !is_redacted_secret(secret_key)
 }
 
 fn plaintext_secret_field(value: &toml::Value, table: &str, field: &str) -> bool {

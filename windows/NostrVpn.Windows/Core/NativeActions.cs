@@ -16,12 +16,10 @@ public static class NativeActions
     public static string RemoveNetwork(string networkId) => AppCoreClient.Action(new { type = "remove_network", networkId });
     public static string SetNetworkMeshId(string networkId, string meshId) => AppCoreClient.Action(new { type = "set_network_mesh_id", networkId, meshId });
     public static string SetNetworkEnabled(string networkId, bool enabled) => AppCoreClient.Action(new { type = "set_network_enabled", networkId, enabled });
-    public static string SetNetworkJoinRequestsEnabled(string networkId, bool enabled) => AppCoreClient.Action(new { type = "set_network_join_requests_enabled", networkId, enabled });
-    public static string RequestNetworkJoin(string networkId) => AppCoreClient.Action(new { type = "request_network_join", networkId });
-    public static string AcceptJoinRequest(string networkId, string requesterNpub) => AppCoreClient.Action(new { type = "accept_join_request", networkId, requesterNpub });
-    public static string RejectJoinRequest(string networkId, string requesterNpub) => AppCoreClient.Action(new { type = "reject_join_request", networkId, requesterNpub });
     public static string ImportNetworkInvite(string invite) => AppCoreClient.Action(new { type = "import_network_invite", invite });
     public static string ImportJoinRequest(string request) => AppCoreClient.Action(new { type = "import_join_request", request });
+    public static string StartJoinRequestBroadcast() => AppCoreClient.Action(new { type = "start_invite_broadcast" });
+    public static string StopJoinRequestBroadcast() => AppCoreClient.Action(new { type = "stop_invite_broadcast" });
     public static string StartNearbyDiscovery() => AppCoreClient.Action(new { type = "start_nearby_discovery" });
     public static string StopNearbyDiscovery() => AppCoreClient.Action(new { type = "stop_nearby_discovery" });
     public static string AddParticipant(string networkId, string npub, string? alias) => AppCoreClient.Action(new { type = "add_participant", networkId, npub, alias });

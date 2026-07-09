@@ -307,8 +307,7 @@ internal fun parseScannedDeviceLinkQr(value: String): ScannedDeviceLink? {
 
 internal fun looksLikeJoinRequestQrOrLink(value: String): Boolean {
     val trimmed = value.trim()
-    return trimmed.startsWith("nvpn://join-request?", ignoreCase = true) ||
-        trimmed.startsWith("nostr-identity://device-approval", ignoreCase = true)
+    return trimmed.startsWith("nvpn://join-request?", ignoreCase = true)
 }
 
 private fun parseScannedDeviceJson(value: String): ScannedDeviceLink? {
@@ -385,7 +384,7 @@ private fun firstNonBlank(vararg values: String?): String? =
 internal fun NearbyCard(state: AppState, dispatch: (JSONObject) -> Unit) {
     AppCard {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Nearby invites", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Text("Nearby join requests", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             Button(onClick = {
                 dispatch(
                     if (state.nearbyDiscoveryActive) {
@@ -406,12 +405,46 @@ internal fun NearbyCard(state: AppState, dispatch: (JSONObject) -> Unit) {
         }
         if (state.lanPeers.isEmpty()) {
             Text(
-                if (state.nearbyDiscoveryActive) "No nearby invites yet" else "Tap above to find nearby",
+                if (state.nearbyDiscoveryActive) "No nearby join requests yet" else "Tap above to find nearby join requests",
                 color = Muted,
             )
         } else {
             state.lanPeers.forEach { peer -> LanPeerRow(peer, dispatch) }
         }
+    }
+}
+
+@Composable
+internal fun AdvertiseJoinRequestCard(state: AppState, dispatch: (JSONObject) -> Unit) {
+    AppCard {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Nearby join request", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+            Button(onClick = {
+                dispatch(
+                    if (state.inviteBroadcastActive) {
+                        NativeActions.stopJoinRequestBroadcast()
+                    } else {
+                        NativeActions.startJoinRequestBroadcast()
+                    },
+                )
+            }) {
+                Text(
+                    if (state.inviteBroadcastActive) {
+                        "Advertising · ${formatRemaining(state.inviteBroadcastRemainingSecs)}"
+                    } else {
+                        "Advertise nearby"
+                    },
+                )
+            }
+        }
+        Text(
+            if (state.inviteBroadcastActive) {
+                "Admins nearby can add this device from its join request."
+            } else {
+                "Advertise this device's join request to nearby admins."
+            },
+            color = Muted,
+        )
     }
 }
 
@@ -440,8 +473,8 @@ internal fun LanPeerRow(peer: LanPeerState, dispatch: (JSONObject) -> Unit) {
             Text(peer.nodeName.ifBlank { peer.networkName }, fontWeight = FontWeight.SemiBold)
             Text(peer.lastSeenText, color = Muted, style = MaterialTheme.typography.bodySmall)
         }
-        Button(onClick = { dispatch(NativeActions.importInvite(peer.invite)) }) {
-            Text("Join")
+        Button(onClick = { dispatch(NativeActions.importJoinRequest(peer.invite)) }) {
+            Text("Add")
         }
     }
 }

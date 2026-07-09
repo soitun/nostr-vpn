@@ -15,6 +15,10 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Reworked device linking so joined/admin apps no longer show their own join
+  request QR, admins scan or paste join requests directly, nearby discovery
+  advertises devices that want to join, requester device names are preserved,
+  and the macOS app carries the camera entitlement needed for QR scanning.
 - Preserved explicit static non-roster FIPS transit endpoints when Nostr
   discovery is disabled, while still keeping them out of private-network routes.
 - Hardened the FIPS routed UDP release gate to wait for FIPS-routed peer

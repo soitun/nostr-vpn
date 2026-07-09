@@ -11,6 +11,10 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -72,6 +76,7 @@ class MainActivity : ComponentActivity() {
             var pendingLocalNetworkAction by remember { mutableStateOf<JSONObject?>(null) }
             var showQrScanner by remember { mutableStateOf(false) }
             var qrScanNetworkId by remember { mutableStateOf("") }
+            var pendingScannedJoinRequest by remember { mutableStateOf<String?>(null) }
             fun showAndroidError(message: String, fallback: String = "Android action failed") {
                 androidError = message.trim().ifBlank { fallback }
             }
@@ -389,7 +394,7 @@ class MainActivity : ComponentActivity() {
                         onScanned = { value ->
                             if (looksLikeJoinRequestQrOrLink(value)) {
                                 showQrScanner = false
-                                dispatch(NativeActions.importJoinRequest(value.trim()))
+                                pendingScannedJoinRequest = value.trim()
                                 null
                             } else {
                                 val scanned = parseScannedDeviceLinkQr(value)
@@ -406,6 +411,33 @@ class MainActivity : ComponentActivity() {
                                     )
                                     null
                                 }
+                            }
+                        },
+                    )
+                }
+                pendingScannedJoinRequest?.let { request ->
+                    val networkName = displayState.networks
+                        .firstOrNull { it.id == qrScanNetworkId }
+                        ?.name
+                        ?.ifBlank { "this network" }
+                        ?: "this network"
+                    AlertDialog(
+                        onDismissRequest = { pendingScannedJoinRequest = null },
+                        title = { Text("Add device?") },
+                        text = { Text("Add the device from this join request to $networkName?") },
+                        confirmButton = {
+                            Button(
+                                onClick = {
+                                    dispatch(NativeActions.importJoinRequest(request))
+                                    pendingScannedJoinRequest = null
+                                },
+                            ) {
+                                Text("Add")
+                            }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { pendingScannedJoinRequest = null }) {
+                                Text("Cancel")
                             }
                         },
                     )

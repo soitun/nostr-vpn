@@ -28,7 +28,6 @@
               </Grid.ColumnDefinitions>
               <TextBlock Grid.Column="0" FontFamily="Segoe MDL2 Assets" Text="&#xE772;" />
               <TextBlock Grid.Column="1" Text="Devices" />
-              <Ellipse Grid.Column="2" Width="8" Height="8" Fill="{StaticResource Danger}" VerticalAlignment="Center" Margin="8,0,0,0" Visibility="{Binding HasIncomingJoinRequests, Converter={StaticResource BoolToVisibility}}" />
             </Grid>
           </Button>
           <Button Style="{StaticResource NavButton}" Command="{Binding ShowInternetCommand}">
@@ -128,10 +127,10 @@
               <StackPanel>
                 <Button Content="Back" Command="{Binding BackToNetworkSetupChoicesCommand}" HorizontalAlignment="Left" Margin="0,0,0,10" />
                 <TextBlock Text="Join Network" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <Viewbox Stretch="Uniform" StretchDirection="DownOnly" MaxWidth="220" MaxHeight="220" HorizontalAlignment="Center">
+                <Viewbox Stretch="Uniform" StretchDirection="DownOnly" MaxWidth="220" MaxHeight="220" HorizontalAlignment="Center" Visibility="{Binding ShowJoinRequestQr, Converter={StaticResource BoolToVisibility}}">
                   <controls:QrCodeView Width="220" Height="220" Matrix="{Binding JoinRequestQr}" />
                 </Viewbox>
-                <Button Content="Copy Request" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding JoinRequestQrCodeOrLink}" HorizontalAlignment="Center" Margin="0,8,0,10" />
+                <Button Content="Copy Request" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding JoinRequestQrCodeOrLink}" HorizontalAlignment="Center" Margin="0,8,0,10" Visibility="{Binding ShowJoinRequestQr, Converter={StaticResource BoolToVisibility}}" />
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -177,23 +176,10 @@
             <Border Style="{StaticResource Card}" Visibility="{Binding ShowNetworkSetupJoin, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <DockPanel LastChildFill="True" Margin="0,0,0,10">
-                  <Button DockPanel.Dock="Right" Content="{Binding NearbyDiscoveryButtonText}" Command="{Binding ToggleNearbyDiscoveryCommand}" />
-                  <TextBlock Text="Nearby invites" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                  <Button DockPanel.Dock="Right" Content="{Binding JoinRequestBroadcastButtonText}" Command="{Binding ToggleJoinRequestBroadcastCommand}" />
+                  <TextBlock Text="Nearby join request" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </DockPanel>
-                <ItemsControl ItemsSource="{Binding State.LanPeers}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                      <DockPanel Margin="0,0,0,8">
-                        <Button DockPanel.Dock="Right" Content="Join" Tag="{Binding Invite}" Click="JoinLanPeer_Click" />
-                        <StackPanel>
-                          <TextBlock Text="{Binding NodeName}" FontWeight="SemiBold" />
-                          <TextBlock Text="{Binding NetworkName}" Foreground="{StaticResource TextSecondary}" />
-                        </StackPanel>
-                      </DockPanel>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-                <TextBlock Text="No nearby invites yet" Foreground="{StaticResource TextSecondary}" Visibility="{Binding NoNearbyInvitesNoticeVisibility}" />
+                <TextBlock Text="Advertise this device's join request to nearby admins." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
           </StackPanel>
@@ -402,24 +388,6 @@
               </Border>
             </Grid>
 
-            <ItemsControl ItemsSource="{Binding ActiveNetwork.InboundJoinRequests}">
-              <ItemsControl.ItemTemplate>
-                <DataTemplate>
-                  <Border Style="{StaticResource Card}">
-                    <DockPanel>
-                      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                        <Button Content="Reject" Tag="{Binding}" Click="RejectJoin_Click" Margin="0,0,8,0" />
-                        <Button Content="Accept" Tag="{Binding}" Click="AcceptJoin_Click" />
-                      </StackPanel>
-                      <StackPanel>
-                        <TextBlock Text="{Binding RequesterNodeName}" FontWeight="SemiBold" />
-                        <TextBlock Text="{Binding RequestedAtText}" Foreground="{StaticResource TextSecondary}" />
-                      </StackPanel>
-                    </DockPanel>
-                  </Border>
-                </DataTemplate>
-              </ItemsControl.ItemTemplate>
-            </ItemsControl>
           </StackPanel>
 
           <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=AddNetwork}">
@@ -447,10 +415,10 @@
               <StackPanel>
                 <Button Content="Back" Command="{Binding BackToNetworkSetupChoicesCommand}" HorizontalAlignment="Left" Margin="0,0,0,10" />
                 <TextBlock Text="Join Network" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <Viewbox Stretch="Uniform" StretchDirection="DownOnly" MaxWidth="220" MaxHeight="220" HorizontalAlignment="Center">
+                <Viewbox Stretch="Uniform" StretchDirection="DownOnly" MaxWidth="220" MaxHeight="220" HorizontalAlignment="Center" Visibility="{Binding ShowJoinRequestQr, Converter={StaticResource BoolToVisibility}}">
                   <controls:QrCodeView Width="220" Height="220" Matrix="{Binding JoinRequestQr}" />
                 </Viewbox>
-                <Button Content="Copy Request" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding JoinRequestQrCodeOrLink}" HorizontalAlignment="Center" Margin="0,8,0,10" />
+                <Button Content="Copy Request" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding JoinRequestQrCodeOrLink}" HorizontalAlignment="Center" Margin="0,8,0,10" Visibility="{Binding ShowJoinRequestQr, Converter={StaticResource BoolToVisibility}}" />
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
@@ -461,10 +429,6 @@
                     <Button Content="Paste" Command="{Binding PasteInviteCommand}" />
                   </StackPanel>
                 </Grid>
-                <StackPanel Orientation="Horizontal" Margin="0,10,0,0" Visibility="{Binding ActiveNetworkJoinStatus, Converter={StaticResource NonEmptyStringToVisibility}}">
-                  <TextBlock Text="{Binding ActiveNetworkJoinStatus}" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center" Margin="0,0,10,0" />
-                  <Button Content="Request Access" Command="{Binding RequestNetworkJoinCommand}" Visibility="{Binding CanRequestActiveNetworkJoin, Converter={StaticResource BoolToVisibility}}" />
-                </StackPanel>
                 <Expander Header="Add manually" Margin="0,10,0,0" IsExpanded="{Binding ManualJoinExpanded, Mode=TwoWay}">
                   <StackPanel Margin="0,8,0,0">
                     <TextBlock Text="Share your Device ID with the admin. If they give you their Admin Device ID and Network ID, enter them here." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
@@ -500,72 +464,53 @@
             <Border Style="{StaticResource Card}" Visibility="{Binding ShowNetworkSetupJoin, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <DockPanel LastChildFill="True" Margin="0,0,0,10">
-                  <Button DockPanel.Dock="Right" Content="{Binding NearbyDiscoveryButtonText}" Command="{Binding ToggleNearbyDiscoveryCommand}" />
-                  <TextBlock Text="Nearby invites" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                  <Button DockPanel.Dock="Right" Content="{Binding JoinRequestBroadcastButtonText}" Command="{Binding ToggleJoinRequestBroadcastCommand}" />
+                  <TextBlock Text="Nearby join request" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </DockPanel>
-                <ItemsControl ItemsSource="{Binding State.LanPeers}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                      <DockPanel Margin="0,0,0,8">
-                        <Button DockPanel.Dock="Right" Content="Join" Tag="{Binding Invite}" Click="JoinLanPeer_Click" />
-                        <StackPanel>
-                          <TextBlock Text="{Binding NodeName}" FontWeight="SemiBold" />
-                          <TextBlock Text="{Binding NetworkName}" Foreground="{StaticResource TextSecondary}" />
-                        </StackPanel>
-                      </DockPanel>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
-                <TextBlock Text="No nearby invites yet" Foreground="{StaticResource TextSecondary}" Visibility="{Binding NoNearbyInvitesNoticeVisibility}" />
+                <TextBlock Text="Advertise this device's join request to nearby admins." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
           </StackPanel>
 
           <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=AddDevice}">
+            <Border Style="{StaticResource Card}">
+              <StackPanel>
+                <DockPanel LastChildFill="True" Margin="0,0,0,10">
+                  <Button DockPanel.Dock="Right" Content="{Binding NearbyDiscoveryButtonText}" Command="{Binding ToggleNearbyDiscoveryCommand}" />
+                  <TextBlock Text="Nearby join requests" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                </DockPanel>
+                <ItemsControl ItemsSource="{Binding State.LanPeers}">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <DockPanel Margin="0,0,0,8">
+                        <Button DockPanel.Dock="Right" Content="Add" Tag="{Binding Invite}" Click="AddNearbyJoinRequest_Click" />
+                        <StackPanel>
+                          <TextBlock Text="{Binding NodeName}" FontWeight="SemiBold" />
+                          <TextBlock Text="{Binding LastSeenText}" Foreground="{StaticResource TextSecondary}" />
+                        </StackPanel>
+                      </DockPanel>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
+                <TextBlock Text="No nearby join requests yet" Foreground="{StaticResource TextSecondary}" Visibility="{Binding NoNearbyInvitesNoticeVisibility}" />
+              </StackPanel>
+            </Border>
+
             <Border Style="{StaticResource Card}" Visibility="{Binding ShowLinkDeviceCard, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <TextBlock Text="Link Device" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4" />
-                <TextBlock Text="Import the joiner's approval request, or add their Device ID below." Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <TextBlock Text="Import the joiner's join request, or add their Device ID below." Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
                 <Grid>
                   <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                   </Grid.ColumnDefinitions>
-                  <TextBox Text="{Binding JoinRequestInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Approval request or Device ID" Margin="0,0,8,0" />
+                  <TextBox Text="{Binding JoinRequestInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Join request or Device ID" Margin="0,0,8,0" />
                   <Button Grid.Column="1" Content="Import" Command="{Binding ImportJoinRequestCommand}" />
                 </Grid>
                 <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
-                  <Button Content="Import approval QR file" Command="{Binding ImportJoinRequestQrImageCommand}" Margin="0,0,8,0" />
-                  <CheckBox Content="Allow join requests"
-                            IsChecked="{Binding ActiveNetwork.JoinRequestsEnabled, Mode=OneWay}"
-                            IsEnabled="{Binding ActiveNetwork.LocalIsAdmin}"
-                            Click="JoinRequests_Click"
-                            Margin="0,4,0,4" />
+                  <Button Content="Import join request QR file" Command="{Binding ImportJoinRequestQrImageCommand}" Margin="0,0,8,0" />
                 </StackPanel>
-              </StackPanel>
-            </Border>
-
-            <Border Style="{StaticResource Card}" Visibility="{Binding ActiveNetworkHasIncomingJoinRequests, Converter={StaticResource BoolToVisibility}}">
-              <StackPanel>
-                <TextBlock Text="Join Requests" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
-                <ItemsControl ItemsSource="{Binding ActiveNetwork.InboundJoinRequests}">
-                  <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                      <Border Style="{StaticResource Card}">
-                        <DockPanel>
-                          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                            <Button Content="Reject" Tag="{Binding}" Click="RejectJoin_Click" Margin="0,0,8,0" />
-                            <Button Content="Accept" Tag="{Binding}" Click="AcceptJoin_Click" />
-                          </StackPanel>
-                          <StackPanel>
-                            <TextBlock Text="{Binding RequesterNodeName}" FontWeight="SemiBold" />
-                            <TextBlock Text="{Binding RequestedAtText}" Foreground="{StaticResource TextSecondary}" />
-                          </StackPanel>
-                        </DockPanel>
-                      </Border>
-                    </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
               </StackPanel>
             </Border>
 
@@ -1028,7 +973,6 @@
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <CheckBox Margin="0,12,0,0" Content="Allow join requests" IsChecked="{Binding ActiveNetwork.JoinRequestsEnabled, Mode=OneWay}" Click="JoinRequests_Click" />
               </StackPanel>
             </Border>
 

@@ -9,7 +9,6 @@
   import nostrVpnIcon from './lib/nostr-vpn-icon.svg';
   import type {
     HealthIssue,
-    InboundJoinRequestView,
     NetworkView,
     ParticipantView,
     UiState,
@@ -36,6 +35,7 @@
   let notice = '';
   let joinRequestQr = '';
   let joinerInput = '';
+  let pendingJoinRequest = '';
   let settingsDirty = false;
   let participantNpub = '';
   let participantAlias = '';
@@ -45,7 +45,6 @@
   let newNetworkName = '';
   let addNetworkOpen = false;
   let addNetworkMode: 'choice' | 'create' | 'join' = 'choice';
-  let addNetworkJoinStatus = '';
   let addDeviceOpen = false;
   let diagnosticsOpen = false;
   let shownNetworkId = '';
@@ -110,19 +109,7 @@
   $: shownNetwork = state
     ? state.networks.find((network) => network.id === shownNetworkId) ?? activeNetwork ?? state.networks[0] ?? null
     : null;
-  $: addNetworkRequestNetwork =
-    (shownNetwork?.outboundJoinRequest || shownNetwork?.inviteInviterNpub
-      ? shownNetwork
-      : null) ??
-    state?.networks.find((network) => network.outboundJoinRequest || network.inviteInviterNpub) ??
-    null;
-  $: addNetworkJoinRequestSent = Boolean(
-    addNetworkJoinStatus || addNetworkRequestNetwork?.outboundJoinRequest,
-  );
   $: publicFipsAddress = state?.ownNpub ? `${state.ownNpub}.fips` : '';
-  $: incomingJoinRequestCount = state
-    ? state.networks.reduce((count, network) => count + network.inboundJoinRequests.length, 0)
-    : 0;
   $: participants = shownNetwork?.participants ?? [];
   $: manualAdminNpubTrimmed = manualAdminNpub.trim();
   $: manualNetworkIdNormalized = normalizeNetworkIdInput(manualNetworkId);
@@ -171,7 +158,7 @@
       participant.tunnelIp.toLowerCase().includes(query)
     );
   });
-  $: joinRequestQr = state?.joinRequestQrCodeOrLink ?? '';
+  $: joinRequestQr = activeNetwork ? '' : (state?.joinRequestQrCodeOrLink ?? '');
   $: if (addDeviceOpen && !shownNetwork?.enabled) {
     addDeviceOpen = false;
   }
@@ -317,7 +304,6 @@
   }
 
   function openAddNetwork() {
-    addNetworkJoinStatus = '';
     addNetworkMode = 'choice';
     addNetworkOpen = true;
   }
@@ -325,7 +311,6 @@
   function closeAddNetwork() {
     addNetworkOpen = false;
     addNetworkMode = 'choice';
-    addNetworkJoinStatus = '';
   }
 
   function messageOf(value: unknown): string {
@@ -359,6 +344,18 @@
       trimmed.startsWith('npub1') &&
       DEVICE_ID_BODY.test(trimmed.slice(5))
     );
+  }
+
+  function looksLikeJoinRequest(value: string): boolean {
+    const trimmed = value.trim().toLowerCase();
+    return trimmed.startsWith('nvpn://join-request?');
+  }
+
+  function stageJoinRequest(value: string) {
+    const trimmed = value.trim();
+    if (looksLikeJoinRequest(trimmed)) {
+      pendingJoinRequest = trimmed;
+    }
   }
 
   function heroTone(value: UiState | null): Tone {
@@ -691,45 +688,16 @@
     );
   }
 
-  async function setJoinRequests(network: NetworkView, enabled: boolean) {
-    await run(
-      '/api/set_network_join_requests_enabled',
-      {
-        networkId: network.id,
-        enabled,
-      },
-      'Updating requests',
-    );
-  }
-
-  async function acceptJoinRequest(network: NetworkView, request: InboundJoinRequestView) {
-    await run(
-      '/api/accept_join_request',
-      {
-        networkId: network.id,
-        requesterNpub: request.requesterNpub,
-      },
-      'Accepting',
-    );
-  }
-
-  async function rejectJoinRequest(network: NetworkView, request: InboundJoinRequestView) {
-    await run(
-      '/api/reject_join_request',
-      {
-        networkId: network.id,
-        requesterNpub: request.requesterNpub,
-      },
-      'Rejecting',
-    );
-  }
-
   async function importJoinerValue() {
     if (!shownNetwork) {
       return;
     }
     const value = joinerInput.trim();
     if (!value) {
+      return;
+    }
+    if (looksLikeJoinRequest(value)) {
+      stageJoinRequest(value);
       return;
     }
     const ok = isValidDeviceId(value)
@@ -742,9 +710,23 @@
           },
           'Adding device',
         )
-      : await run('/api/import_join_request', { request: value }, 'Importing request');
+      : await run('/api/import_join_request', { request: value }, 'Adding device');
     if (ok) {
       joinerInput = '';
+    }
+  }
+
+  async function confirmPendingJoinRequest() {
+    const request = pendingJoinRequest.trim();
+    if (!request) {
+      return;
+    }
+    const ok = await run('/api/import_join_request', { request }, 'Adding device');
+    if (ok) {
+      pendingJoinRequest = '';
+      joinerInput = '';
+      addDeviceOpen = false;
+      setNotice('Device added');
     }
   }
 
@@ -783,6 +765,17 @@
     );
   }
 
+  async function toggleJoinRequestBroadcast() {
+    if (!state) {
+      return;
+    }
+    await run(
+      state.inviteBroadcastActive ? '/api/stop_invite_broadcast' : '/api/start_invite_broadcast',
+      undefined,
+      state.inviteBroadcastActive ? 'Stopping nearby' : 'Advertising nearby',
+    );
+  }
+
   async function addNetwork() {
     const name = newNetworkName.trim();
     if (!name) {
@@ -796,21 +789,6 @@
       newNetworkName = '';
       closeAddNetwork();
       tab = 'devices';
-    }
-  }
-
-  async function requestNetworkJoin() {
-    const network = addNetworkRequestNetwork;
-    if (!network || network.outboundJoinRequest || !network.inviteInviterNpub) {
-      return;
-    }
-    const next = await runState(
-      '/api/request_network_join',
-      { networkId: network.id },
-      'Requesting access',
-    );
-    if (next) {
-      addNetworkJoinStatus = 'Join request sent';
     }
   }
 
@@ -1075,14 +1053,10 @@
           <button
             type="button"
             class:active={tab === item.id}
-            class:attention={item.id === 'devices' && incomingJoinRequestCount > 0}
             aria-current={tab === item.id ? 'page' : undefined}
             on:click={() => (tab = item.id)}
           >
             <span>{item.label}</span>
-            {#if item.id === 'devices' && incomingJoinRequestCount > 0}
-              <span class="nav-attention-dot" aria-hidden="true"></span>
-            {/if}
           </button>
         {/each}
       </nav>
@@ -1132,56 +1106,54 @@
               </div>
             </div>
             <label>
-              <span>Approval request or Device ID</span>
-              <textarea bind:value={joinerInput} rows="4"></textarea>
+              <span>Join request or Device ID</span>
+              <textarea
+                bind:value={joinerInput}
+                rows="4"
+                on:input={(event) => stageJoinRequest((event.currentTarget as HTMLTextAreaElement).value)}
+              ></textarea>
             </label>
             <div class="button-row">
               <button class="secondary-button" type="submit" disabled={Boolean(busyAction) || !joinerInput.trim()}>
                 Import
               </button>
-              <label class="switch-row inline-switch">
-                <span>Allow requests</span>
-                <input
-                  type="checkbox"
-                  checked={shownNetwork.joinRequestsEnabled}
-                  disabled={!shownNetwork.localIsAdmin || Boolean(busyAction)}
-                  on:change={(event) =>
-                    setJoinRequests(shownNetwork, (event.currentTarget as HTMLInputElement).checked)}
-                />
-              </label>
             </div>
-          </form>
+	          </form>
 
-          {#if shownNetwork.inboundJoinRequests.length > 0}
-            <div class="modal-section join-requests-list">
-              <div class="section-heading compact">
-                <div>
-                  <h3>Requests</h3>
-                  <p>{shownNetwork.inboundJoinRequests.length}</p>
-                </div>
-              </div>
-              <div class="stack">
-                {#each shownNetwork.inboundJoinRequests as request (request.requesterPubkeyHex || request.requesterNpub)}
-                  <div class="request-row">
-                    <div>
-                      <strong>{nonEmpty(request.requesterNodeName, shortMiddle(request.requesterNpub, 20))}</strong>
-                      <span>{request.requestedAtText}</span>
-                    </div>
-                    <div class="row-actions">
-                      <button type="button" class="small-button" on:click={() => acceptJoinRequest(shownNetwork, request)}>
-                        Accept
-                      </button>
-                      <button type="button" class="small-button danger" on:click={() => rejectJoinRequest(shownNetwork, request)}>
-                        Reject
-                      </button>
-                    </div>
-                  </div>
-                {/each}
-              </div>
-            </div>
-          {/if}
+	          <div class="modal-section">
+	            <div class="section-heading">
+	              <div>
+	                <h3>Nearby join requests</h3>
+	                <p>{state.lanPeers.length}</p>
+	              </div>
+	              <button type="button" class="small-button" on:click={toggleNearbyDiscovery}>
+	                {state.nearbyDiscoveryActive
+	                  ? `Finding nearby · ${remainingText(state.nearbyDiscoveryRemainingSecs)}`
+	                  : 'Find nearby'}
+	              </button>
+	            </div>
+	            {#if state.lanPeers.length === 0}
+	              <div class="empty-state">No nearby join requests yet</div>
+	            {:else}
+	              <div class="stack">
+	                {#each state.lanPeers as peer, index (index)}
+	                  <div class="request-row">
+	                    <div>
+	                      <strong>{peer.nodeName || peer.networkName || 'Nearby device'}</strong>
+	                      <span>{peer.lastSeenText ?? ''}</span>
+	                    </div>
+	                    {#if peer.invite}
+	                      <button type="button" class="small-button" on:click={() => (pendingJoinRequest = peer.invite ?? '')}>
+	                        Add
+	                      </button>
+	                    {/if}
+	                  </div>
+	                {/each}
+	              </div>
+	            {/if}
+	          </div>
 
-          <div class="modal-section">
+	          <div class="modal-section">
             <div class="section-heading">
               <div>
                 <h3>For Manual Join</h3>
@@ -1226,6 +1198,28 @@
         </Modal>
       {/if}
 
+      {#if pendingJoinRequest && shownNetwork}
+        <Modal title="Add Device?" titleId="confirm-join-request-title" on:close={() => (pendingJoinRequest = '')}>
+          <div class="modal-section">
+            <div class="section-heading">
+              <div>
+                <h3>Add device?</h3>
+                <p>{shownNetwork.name || 'This network'}</p>
+              </div>
+            </div>
+            <p class="muted-copy">Add the device from this join request to {shownNetwork.name || 'this network'}?</p>
+            <div class="button-row">
+              <button class="secondary-button" type="button" disabled={Boolean(busyAction)} on:click={confirmPendingJoinRequest}>
+                Add
+              </button>
+              <button class="small-button" type="button" on:click={() => (pendingJoinRequest = '')}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      {/if}
+
       {#if addNetworkOpen}
         <Modal title="Add Network" titleId="add-network-title" on:close={closeAddNetwork}>
           {#if addNetworkMode === 'choice'}
@@ -1265,20 +1259,18 @@
               <div class="section-heading">
                 <div>
                   <h3>Join Network</h3>
-                  <p>Approval request</p>
+                  <p>Join request</p>
                 </div>
               </div>
-              <div class="qr-frame compact">
-                {#if joinRequestQr}
+              {#if joinRequestQr}
+                <div class="qr-frame compact">
                   <QRCode data={joinRequestQr} size={320} />
-                {:else}
-                  <div class="qr-empty">QR</div>
-                {/if}
-              </div>
+                </div>
+              {/if}
               <CopyButton
                 variant="secondary"
                 value={joinRequestQr}
-                label="Approval request"
+                label="Join request"
                 text="Copy Request"
                 disabled={!joinRequestQr}
                 on:copied={handleCopied}
@@ -1304,22 +1296,6 @@
                   Paste
                 </button>
               </div>
-              {#if addNetworkRequestNetwork}
-                <div class="badge-row">
-                  {#if addNetworkJoinRequestSent}
-                    <span class="badge warn">Join request sent</span>
-                  {:else if addNetworkRequestNetwork.inviteInviterNpub}
-                    <button
-                      class="secondary-button"
-                      type="button"
-                      disabled={Boolean(busyAction)}
-                      on:click={requestNetworkJoin}
-                    >
-                      Request Access
-                    </button>
-                  {/if}
-                </div>
-              {/if}
             </form>
 
             <form class="modal-section" on:submit|preventDefault={manualAddNetwork}>
@@ -1365,38 +1341,20 @@
             <div class="modal-section">
               <div class="section-heading">
                 <div>
-                  <h3>Nearby Invites</h3>
-                  <p>{state.lanPeers.length}</p>
+                  <h3>Nearby join request</h3>
+                  <p>{state.inviteBroadcastActive ? 'Advertising' : 'Ready'}</p>
                 </div>
                 <button
                   type="button"
                   class="small-button"
-                  on:click={toggleNearbyDiscovery}
+                  on:click={toggleJoinRequestBroadcast}
                 >
-                  {state.nearbyDiscoveryActive
-                    ? `Finding nearby · ${remainingText(state.nearbyDiscoveryRemainingSecs)}`
-                    : 'Find nearby'}
+                  {state.inviteBroadcastActive
+                    ? `Advertising · ${remainingText(state.inviteBroadcastRemainingSecs)}`
+                    : 'Advertise nearby'}
                 </button>
               </div>
-              {#if state.lanPeers.length === 0}
-                <div class="empty-state">No nearby invites yet</div>
-              {:else}
-                <div class="stack">
-                  {#each state.lanPeers as peer, index (index)}
-                    <div class="request-row">
-                      <div>
-                        <strong>{peer.nodeName || peer.networkName || 'Nearby device'}</strong>
-                        <span>{peer.lastSeenText ?? ''}</span>
-                      </div>
-                      {#if peer.invite}
-                        <button type="button" class="small-button" on:click={() => importNetworkInvite(peer.invite ?? '', 'Joining')}>
-                          Join
-                        </button>
-                      {/if}
-                    </div>
-                  {/each}
-                </div>
-              {/if}
+              <p class="muted-copy">Advertise this device's join request to nearby admins.</p>
             </div>
           {/if}
         </Modal>
@@ -1489,34 +1447,6 @@
               {/if}
             </div>
 
-            {#if shownNetwork && shownNetwork.inboundJoinRequests.length > 0}
-              <div class="join-requests-list">
-                <div class="section-heading compact">
-                  <div>
-                    <h3>Requests</h3>
-                    <p>{shownNetwork.inboundJoinRequests.length}</p>
-                  </div>
-                </div>
-                <div class="stack">
-                  {#each shownNetwork.inboundJoinRequests as request (request.requesterPubkeyHex)}
-                    <div class="request-row">
-                      <div>
-                        <strong>{nonEmpty(request.requesterNodeName, shortMiddle(request.requesterNpub, 20))}</strong>
-                        <span>{request.requestedAtText}</span>
-                      </div>
-                      <div class="row-actions">
-                        <button type="button" class="small-button" on:click={() => acceptJoinRequest(shownNetwork, request)}>
-                          Accept
-                        </button>
-                        <button type="button" class="small-button danger" on:click={() => rejectJoinRequest(shownNetwork, request)}>
-                          Reject
-                        </button>
-                      </div>
-                    </div>
-                  {/each}
-                </div>
-              </div>
-            {/if}
           </div>
 
           <div class="device-detail-column">

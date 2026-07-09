@@ -127,6 +127,14 @@ enum NativeActions {
         ["type": "import_join_request", "request": request]
     }
 
+    static func startJoinRequestBroadcast() -> [String: Any] {
+        ["type": "start_invite_broadcast"]
+    }
+
+    static func stopJoinRequestBroadcast() -> [String: Any] {
+        ["type": "stop_invite_broadcast"]
+    }
+
     static func linkNetwork(_ link: String) -> [String: Any] {
         importInvite(link)
     }
@@ -157,14 +165,6 @@ enum NativeActions {
 
     static func removeNetwork(_ networkId: String) -> [String: Any] {
         ["type": "remove_network", "networkId": networkId]
-    }
-
-    static func requestNetworkJoin(networkId: String) -> [String: Any] {
-        ["type": "request_network_join", "networkId": networkId]
-    }
-
-    static func requestDeviceApproval(networkId: String) -> [String: Any] {
-        ["type": "request_device_approval", "networkId": networkId]
     }
 
     static func updateSettings(_ patch: [String: Any]) -> [String: Any] {
@@ -345,43 +345,4 @@ enum NativeActions {
         ["type": "remove_participant", "networkId": networkId, "npub": npub]
     }
 
-    static func acceptJoinRequest(networkId: String, requesterNpub: String) -> [String: Any] {
-        [
-            "type": "accept_join_request",
-            "networkId": networkId,
-            "requesterNpub": requesterNpub,
-        ]
-    }
-
-    static func approveDeviceLink(networkId: String, requesterNpub: String) -> [String: Any] {
-        [
-            "type": "approve_device_link",
-            "networkId": networkId,
-            "requesterNpub": requesterNpub,
-        ]
-    }
-
-    static func rejectDeviceLink(networkId: String, requesterNpub: String) -> [String: Any] {
-        [
-            "type": "reject_device_link",
-            "networkId": networkId,
-            "requesterNpub": requesterNpub,
-        ]
-    }
-
-    static func rejectJoinRequest(networkId: String, requesterNpub: String) -> [String: Any] {
-        [
-            "type": "reject_join_request",
-            "networkId": networkId,
-            "requesterNpub": requesterNpub,
-        ]
-    }
-
-    static func setJoinRequests(networkId: String, enabled: Bool) -> [String: Any] {
-        [
-            "type": "set_network_join_requests_enabled",
-            "networkId": networkId,
-            "enabled": enabled,
-        ]
-    }
 }

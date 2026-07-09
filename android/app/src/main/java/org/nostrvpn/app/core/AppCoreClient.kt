@@ -38,26 +38,16 @@ object NativeActions {
     fun disconnectVpn() = action("disconnect_vpn")
     fun importInvite(invite: String) = action("import_network_invite", "invite" to invite)
     fun importJoinRequest(request: String) = action("import_join_request", "request" to request)
+    fun startJoinRequestBroadcast() = action("start_invite_broadcast")
+    fun stopJoinRequestBroadcast() = action("stop_invite_broadcast")
     fun startNearbyDiscovery() = action("start_nearby_discovery")
     fun stopNearbyDiscovery() = action("stop_nearby_discovery")
     fun addNetwork(name: String) = action("add_network", "name" to name)
     fun manualAddNetwork(adminNpub: String, meshNetworkId: String) =
         action("manual_add_network", "adminNpub" to adminNpub, "meshNetworkId" to meshNetworkId)
 
-    fun requestNetworkJoin(networkId: String) =
-        action("request_network_join", "networkId" to networkId)
-
     fun setNetworkEnabled(networkId: String, enabled: Boolean) =
         action("set_network_enabled", "networkId" to networkId, "enabled" to enabled)
-
-    fun setJoinRequests(networkId: String, enabled: Boolean) =
-        action("set_network_join_requests_enabled", "networkId" to networkId, "enabled" to enabled)
-
-    fun acceptJoinRequest(networkId: String, requesterNpub: String) =
-        action("accept_join_request", "networkId" to networkId, "requesterNpub" to requesterNpub)
-
-    fun rejectJoinRequest(networkId: String, requesterNpub: String) =
-        action("reject_join_request", "networkId" to networkId, "requesterNpub" to requesterNpub)
 
     fun addParticipant(networkId: String, npub: String, alias: String? = null) =
         action("add_participant", "networkId" to networkId, "npub" to npub, "alias" to alias)

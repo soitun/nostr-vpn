@@ -135,10 +135,13 @@ Useful focused checks:
 ```bash
 pnpm --dir web/control-panel check
 ( cd linux && cargo check )
-dotnet build windows\NostrVpn.Windows\NostrVpn.Windows.csproj -p:EnableWindowsTargeting=true
 ```
 
-Run the Windows build on the configured Windows dev VM when local `dotnet` is unavailable.
+Run the Windows build from a checkout on the configured Windows dev VM:
+
+```powershell
+dotnet build windows\NostrVpn.Windows\NostrVpn.Windows.csproj -p:EnableWindowsTargeting=true
+```
 
 ### Packages and E2E
 

@@ -292,7 +292,7 @@
     }
 
     #[test]
-    fn compact_join_request_qr_or_link_can_be_imported_and_approved_by_admin() {
+    fn compact_join_request_qr_or_link_is_directly_added_by_admin() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -327,40 +327,33 @@
             .config
             .own_nostr_pubkey_hex()
             .expect("joiner pubkey");
-        let joiner_npub = to_npub(&joiner_pubkey);
         let join_request = crate::join_request_link::own_join_request_qr_code_or_link(
             &joiner.config,
         )
         .expect("joiner request link");
         assert!(join_request.starts_with("nvpn://join-request?app_key="));
+        assert!(join_request.contains("&name=Pixel%20Phone"));
 
         admin.dispatch(NativeAppAction::ImportJoinRequest {
             request: join_request,
         });
 
         assert!(admin.last_error.is_empty(), "{}", admin.last_error);
+        assert!(admin.config.networks[0].devices.contains(&joiner_pubkey));
+        assert!(admin.config.networks[0].inbound_join_requests.is_empty());
+        assert_eq!(
+            admin.config.peer_alias(&joiner_pubkey).as_deref(),
+            Some("pixel-phone")
+        );
         let imported = admin
             .state()
             .networks
             .into_iter()
             .find(|network| network.id == admin_network_id)
             .expect("admin network");
-        let request = imported
-            .inbound_join_requests
-            .first()
-            .expect("join request should be visible for admin approval");
-        assert_eq!(request.requester_npub, joiner_npub);
-        assert!(request.requester_node_name.is_empty());
-
-        admin.dispatch(NativeAppAction::AcceptJoinRequest {
-            network_id: admin_network_id,
-            requester_npub: joiner_npub,
-        });
-
-        assert!(admin.last_error.is_empty(), "{}", admin.last_error);
-        assert!(admin.config.networks[0].devices.contains(&joiner_pubkey));
-        assert!(admin.config.networks[0].inbound_join_requests.is_empty());
-        assert!(admin.config.peer_alias(&joiner_pubkey).is_none());
+        assert!(imported.inbound_join_requests.is_empty());
+        assert!(imported.join_request_qr_code_or_link.is_empty());
+        assert!(admin.state().join_request_qr_code_or_link.is_empty());
 
         let _ = fs::remove_dir_all(&admin_dir);
         let _ = fs::remove_dir_all(&joiner_dir);
@@ -548,7 +541,6 @@
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
         runtime.config_path = dir.join("config.toml");
-        create_test_network(&mut runtime, "Home");
 
         runtime.dispatch(NativeAppAction::StartInviteBroadcast);
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
@@ -582,7 +574,7 @@
     }
 
     #[test]
-    fn invite_broadcast_enables_join_requests() {
+    fn joined_device_does_not_advertise_nearby_join_request() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -595,17 +587,19 @@
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
         runtime.config_path = dir.join("config.toml");
-        create_test_network(&mut runtime, "Home");
-        runtime.config.networks[0].listen_for_join_requests = false;
+        let network_id = create_test_network(&mut runtime, "Home");
 
         runtime.dispatch(NativeAppAction::StartInviteBroadcast);
 
-        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
-        assert!(runtime.config.networks[0].listen_for_join_requests);
-        assert!(runtime.state().networks[0].join_requests_enabled);
-
-        let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
-        assert!(saved.networks[0].listen_for_join_requests);
+        assert!(
+            runtime
+                .last_error
+                .contains("nearby join request advertising is only available"),
+            "{}",
+            runtime.last_error
+        );
+        assert!(!runtime.state().invite_broadcast_active);
+        assert_eq!(runtime.config.networks[0].id, network_id);
 
         let _ = fs::remove_dir_all(&dir);
     }

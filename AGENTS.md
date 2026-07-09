@@ -23,7 +23,7 @@
 
 ## Platforms
 
-- Windows: use Windows dev VM; check `dotnet build windows\NostrVpn.Windows\NostrVpn.Windows.csproj -p:EnableWindowsTargeting=true`.
+- Windows: run build/test checks from the configured Windows dev VM checkout; do not use local macOS/Linux `dotnet` as the verification path. Check `dotnet build windows\NostrVpn.Windows\NostrVpn.Windows.csproj -p:EnableWindowsTargeting=true` there.
 - Mobile-sensitive: `just mobile-test-kit`; sim/device packet paths: `just mobile-test-kit-sim` / `just mobile-test-kit-device`.
 - FIPS protocol/routing/session/reconnect tests live in `fips`; Android/iOS VPN, FFI/JNI/C ABI, permissions, physical packet checks live here.
 - Do not commit hostnames, device IDs, signing details, or local paths; use env vars.

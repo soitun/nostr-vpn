@@ -1,6 +1,7 @@
 package org.nostrvpn.app
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -50,10 +52,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlin.math.PI
@@ -61,7 +66,6 @@ import kotlin.math.cos
 import kotlin.math.sin
 import org.json.JSONObject
 import org.nostrvpn.app.core.AppState
-import org.nostrvpn.app.core.InboundJoinRequest
 import org.nostrvpn.app.core.NativeActions
 import org.nostrvpn.app.core.NetworkState
 import org.nostrvpn.app.core.PaidRouteMarketState
@@ -69,7 +73,6 @@ import org.nostrvpn.app.core.PaidRouteOfferState
 import org.nostrvpn.app.core.PaidRouteSessionState
 import org.nostrvpn.app.core.ParticipantState
 import org.nostrvpn.app.core.activeNetwork
-import org.nostrvpn.app.core.joinRequestNetwork
 import org.nostrvpn.app.update.AndroidSelfUpdateState
 
 internal data class SelfUpdateActions(
@@ -173,7 +176,6 @@ internal fun NostrVpnApp(
     val network = state.networks.firstOrNull { it.id == shownNetworkId }
         ?: activeNetwork
         ?: state.networks.firstOrNull()
-    val hasIncomingJoinRequests = state.networks.any { it.inboundJoinRequests.isNotEmpty() }
     val visiblePages = Page.entries.filter { it.visibleIn(state) }
     val effectivePage = if (page.visibleIn(state)) page else Page.Devices
     LaunchedEffect(showAddDevice, network?.enabled) {
@@ -189,14 +191,16 @@ internal fun NostrVpnApp(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            MobileTopBar(
-                state = state,
-                network = network,
-                activeNetwork = activeNetwork,
-                dispatch = dispatch,
-                onSelectNetwork = { shownNetworkId = it },
-                onAddNetwork = { showAddNetwork = true },
-            )
+            if (network != null) {
+                MobileTopBar(
+                    state = state,
+                    network = network,
+                    activeNetwork = activeNetwork,
+                    dispatch = dispatch,
+                    onSelectNetwork = { shownNetworkId = it },
+                    onAddNetwork = { showAddNetwork = true },
+                )
+            }
         },
         bottomBar = {
             // Bottom nav only makes sense once a network exists. With no
@@ -212,7 +216,7 @@ internal fun NostrVpnApp(
                                 NavIcon(
                                     item,
                                     selected = effectivePage == item,
-                                    attention = item == Page.Devices && hasIncomingJoinRequests,
+                                    attention = false,
                                 )
                             },
                             label = { Text(item.title) },
@@ -233,7 +237,7 @@ internal fun NostrVpnApp(
                 item { Notice(state.error) }
             }
             if (network == null) {
-                addNetworkBody(state, qrJson, dispatch)
+                addNetworkBody(state, qrJson, dispatch, showWelcomeHeader = true)
             } else {
                 when (effectivePage) {
                     Page.Devices -> devicesPage(
@@ -411,6 +415,46 @@ private fun PlusIcon() {
 }
 
 @Composable
+private fun QrCodeIcon() {
+    Canvas(Modifier.size(18.dp)) {
+        val color = Color.White
+        val cell = size.width / 7f
+        val finderStroke = Stroke(width = 1.35.dp.toPx())
+
+        fun finder(x: Int, y: Int) {
+            drawRect(
+                color,
+                topLeft = Offset(x * cell, y * cell),
+                size = Size(3 * cell, 3 * cell),
+                style = finderStroke,
+            )
+            drawRect(
+                color,
+                topLeft = Offset((x + 1) * cell, (y + 1) * cell),
+                size = Size(cell, cell),
+            )
+        }
+
+        fun module(x: Int, y: Int) {
+            drawRect(
+                color,
+                topLeft = Offset(x * cell, y * cell),
+                size = Size(cell, cell),
+            )
+        }
+
+        finder(0, 0)
+        finder(4, 0)
+        finder(0, 4)
+        module(4, 4)
+        module(6, 4)
+        module(5, 5)
+        module(4, 6)
+        module(6, 6)
+    }
+}
+
+@Composable
 private fun NavIcon(page: Page, selected: Boolean, attention: Boolean = false) {
     val color = if (selected) Accent else MaterialTheme.colorScheme.onSurface
     val badgeRing = MaterialTheme.colorScheme.surface
@@ -522,9 +566,6 @@ private fun androidx.compose.foundation.lazy.LazyListScope.devicesPage(
     items(sortedParticipants(network.participants, state), key = { it.pubkeyHex.ifBlank { it.npub } }) { participant ->
         ParticipantRow(state, participant, network = network, dispatch = dispatch)
     }
-    items(network.inboundJoinRequests, key = { it.requesterNpub }) { request ->
-        JoinRequestCard(network, request, dispatch)
-    }
     item {
         OutlinedButton(
             onClick = onDeleteNetwork,
@@ -579,6 +620,7 @@ private fun NetworkSetupCard(
     qrJson: (String) -> JSONObject,
     dispatch: (JSONObject) -> Unit,
     onCreated: (() -> Unit)? = null,
+    showWelcomeHeader: Boolean = false,
 ) {
     var setupMode by remember { mutableStateOf<NetworkSetupMode?>(null) }
     var networkName by remember { mutableStateOf("My Network") }
@@ -591,10 +633,7 @@ private fun NetworkSetupCard(
     val clipboard = remember(context) {
         context.getSystemService(android.content.ClipboardManager::class.java)
     }
-    val requestNetwork = state.joinRequestNetwork
-    val joinRequestQrCodeOrLink = state.joinRequestQrCodeOrLink.ifBlank {
-        requestNetwork?.joinRequestQrCodeOrLink.orEmpty()
-    }
+    val joinRequestQrCodeOrLink = state.joinRequestQrCodeOrLink
     fun importInviteIfPresent(value: String): Boolean {
         val trimmed = value.trim()
         if (!trimmed.startsWith("nvpn://invite/", ignoreCase = true)) {
@@ -606,20 +645,49 @@ private fun NetworkSetupCard(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (showWelcomeHeader && setupMode == null) {
+            NostrVpnWelcomeHeader()
+        }
         if (setupMode == null) {
-            AppCard {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Button(
-                        onClick = { setupMode = NetworkSetupMode.Create },
-                        modifier = Modifier.fillMaxWidth(),
+            Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                Button(
+                    onClick = { setupMode = NetworkSetupMode.Create },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(58.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Create Network")
+                        PlusIcon()
+                        Text(
+                            "Create Network",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                     }
-                    Button(
-                        onClick = { setupMode = NetworkSetupMode.Join },
-                        modifier = Modifier.fillMaxWidth(),
+                }
+                Button(
+                    onClick = { setupMode = NetworkSetupMode.Join },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(58.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
+                ) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Text("Join Network")
+                        QrCodeIcon()
+                        Text(
+                            "Join Network",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                        )
                     }
                 }
             }
@@ -669,7 +737,7 @@ private fun NetworkSetupCard(
                             }
 
                             TextButton(onClick = { inviteExpanded = !inviteExpanded }) {
-                                Text(if (inviteExpanded) "Legacy invite link ▴" else "Legacy invite link ▾")
+                                Text(if (inviteExpanded) "Invite link ▴" else "Invite link ▾")
                             }
                             if (inviteExpanded) {
                                 OutlinedTextField(
@@ -694,16 +762,6 @@ private fun NetworkSetupCard(
                                     modifier = Modifier.fillMaxWidth(),
                                 ) {
                                     Text("Paste")
-                                }
-                                if (requestNetwork?.outboundJoinRequest == true) {
-                                    Text("Approval requested", style = MaterialTheme.typography.bodySmall, color = Color(0xFF9A3412))
-                                } else if (requestNetwork?.inviteInviterNpub?.isNotBlank() == true) {
-                                    Button(
-                                        onClick = { dispatch(NativeActions.requestNetworkJoin(requestNetwork.id)) },
-                                        modifier = Modifier.fillMaxWidth(),
-                                    ) {
-                                        Text("Request approval")
-                                    }
                                 }
                             }
 
@@ -759,11 +817,35 @@ private fun NetworkSetupCard(
                                 }
                             }
                         }
-                        NearbyCard(state, dispatch)
+                        AdvertiseJoinRequestCard(state, dispatch)
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NostrVpnWelcomeHeader() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 26.dp, bottom = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Image(
+            painter = painterResource(R.drawable.ic_launcher_foreground),
+            contentDescription = null,
+            modifier = Modifier.size(82.dp),
+        )
+        Text(
+            "Nostr VPN",
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 
@@ -793,8 +875,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.addNetworkBody(
     state: AppState,
     qrJson: (String) -> JSONObject,
     dispatch: (JSONObject) -> Unit,
+    showWelcomeHeader: Boolean = false,
 ) {
-    item { NetworkSetupCard(state, qrJson, dispatch) }
+    item { NetworkSetupCard(state, qrJson, dispatch, showWelcomeHeader = showWelcomeHeader) }
 }
 
 @Composable
@@ -837,11 +920,18 @@ private fun AddDevicesDialog(
     onDismiss: () -> Unit,
 ) {
     var joinRequestInput by remember(network.id) { mutableStateOf("") }
+    var pendingJoinRequest by remember(network.id) { mutableStateOf<String?>(null) }
+    fun stageJoinRequest(value: String) {
+        val trimmed = value.trim()
+        if (looksLikeJoinRequestQrOrLink(trimmed)) {
+            pendingJoinRequest = trimmed
+        }
+    }
     fun importJoinerValue(value: String) {
         val trimmed = value.trim()
         if (trimmed.isEmpty()) return
         if (looksLikeJoinRequestQrOrLink(trimmed)) {
-            dispatch(NativeActions.importJoinRequest(trimmed))
+            stageJoinRequest(trimmed)
             return
         }
         val scanned = parseScannedDeviceLinkQr(trimmed)
@@ -851,6 +941,30 @@ private fun AddDevicesDialog(
         }
         dispatch(NativeActions.importJoinRequest(trimmed))
     }
+    pendingJoinRequest?.let { request ->
+        AlertDialog(
+            onDismissRequest = { pendingJoinRequest = null },
+            title = { Text("Add device?") },
+            text = { Text("Add the device from this join request to ${network.name.ifBlank { "this network" }}?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        dispatch(NativeActions.importJoinRequest(request))
+                        joinRequestInput = ""
+                        pendingJoinRequest = null
+                        onDismiss()
+                    },
+                ) {
+                    Text("Add")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingJoinRequest = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Device") },
@@ -859,18 +973,21 @@ private fun AddDevicesDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Add approval request", style = MaterialTheme.typography.titleMedium)
+                Text("Add join request", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Scan or paste the joiner's approval request or Device ID.",
+                    "Scan or paste the joiner's join request or Device ID.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Muted,
                 )
                 OutlinedTextField(
                     value = joinRequestInput,
-                    onValueChange = { joinRequestInput = it },
+                    onValueChange = {
+                        joinRequestInput = it
+                        stageJoinRequest(it)
+                    },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("Approval request or Device ID") },
+                    label = { Text("Join request or Device ID") },
                 )
                 Button(
                     enabled = joinRequestInput.trim().isNotEmpty(),
@@ -888,29 +1005,11 @@ private fun AddDevicesDialog(
                 ) {
                     Text("Scan QR")
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Switch(
-                        checked = network.joinRequestsEnabled,
-                        onCheckedChange = { enabled ->
-                            dispatch(NativeActions.setJoinRequests(network.id, enabled))
-                        },
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Allow approval requests")
-                }
-
-                if (network.inboundJoinRequests.isNotEmpty()) {
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text("Requests", style = MaterialTheme.typography.titleMedium)
-                    network.inboundJoinRequests.forEach { request ->
-                        JoinRequestCard(network, request, dispatch)
-                    }
-                }
-
+                NearbyCard(state, dispatch)
                 Spacer(modifier = Modifier.height(8.dp))
                 Text("For manual join", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "If link approval isn't available, share these two values. They'll enter them under Join Network → Add manually. You still need to add their Device ID below.",
+                    "If join-request linking isn't available, share these two values. They'll enter them under Join Network -> Add manually. You still need to add their Device ID below.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Muted,
                 )
@@ -935,34 +1034,6 @@ private fun AddDevicesDialog(
             }
         },
     )
-}
-
-@Composable
-private fun JoinRequestCard(
-    network: NetworkState,
-    request: InboundJoinRequest,
-    dispatch: (JSONObject) -> Unit,
-) {
-    AppCard {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(request.requesterNodeName.ifBlank { "Join request" }, fontWeight = FontWeight.SemiBold)
-                Text(request.requestedAtText, color = Muted, style = MaterialTheme.typography.bodySmall)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = {
-                    dispatch(NativeActions.rejectJoinRequest(network.id, request.requesterNpub))
-                }) {
-                    Text("Reject", color = Color(0xFFB00020))
-                }
-                Button(onClick = {
-                    dispatch(NativeActions.acceptJoinRequest(network.id, request.requesterNpub))
-                }) {
-                    Text("Accept")
-                }
-            }
-        }
-    }
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.internetPage(

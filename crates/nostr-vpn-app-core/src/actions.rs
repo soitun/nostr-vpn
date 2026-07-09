@@ -42,7 +42,6 @@ pub enum NativeAppAction {
         network_id: String,
         enabled: bool,
     },
-    #[serde(alias = "request_device_approval")]
     RequestNetworkJoin {
         network_id: String,
     },
@@ -88,12 +87,10 @@ pub enum NativeAppAction {
         network_id: String,
         npub: String,
     },
-    #[serde(alias = "approve_device_link")]
     AcceptJoinRequest {
         network_id: String,
         requester_npub: String,
     },
-    #[serde(alias = "reject_device_link")]
     RejectJoinRequest {
         network_id: String,
         requester_npub: String,
@@ -297,18 +294,7 @@ mod tests {
     }
 
     #[test]
-    fn approval_action_aliases_accept_device_link_names() {
-        let request = serde_json::from_str::<NativeAppAction>(
-            r#"{"type":"request_device_approval","networkId":"net-1"}"#,
-        )
-        .expect("parse request approval alias");
-        assert_eq!(
-            request,
-            NativeAppAction::RequestNetworkJoin {
-                network_id: "net-1".to_string()
-            }
-        );
-
+    fn import_join_request_action_alias_accepts_legacy_name() {
         let import = serde_json::from_str::<NativeAppAction>(
             r#"{"type":"import_join_request_qr_or_link","request":"nvpn://join-request?app_key=abc"}"#,
         )
@@ -317,30 +303,6 @@ mod tests {
             import,
             NativeAppAction::ImportJoinRequest {
                 request: "nvpn://join-request?app_key=abc".to_string(),
-            }
-        );
-
-        let approve = serde_json::from_str::<NativeAppAction>(
-            r#"{"type":"approve_device_link","networkId":"net-1","requesterNpub":"npub1requester"}"#,
-        )
-        .expect("parse approve alias");
-        assert_eq!(
-            approve,
-            NativeAppAction::AcceptJoinRequest {
-                network_id: "net-1".to_string(),
-                requester_npub: "npub1requester".to_string(),
-            }
-        );
-
-        let reject = serde_json::from_str::<NativeAppAction>(
-            r#"{"type":"reject_device_link","networkId":"net-1","requesterNpub":"npub1requester"}"#,
-        )
-        .expect("parse reject alias");
-        assert_eq!(
-            reject,
-            NativeAppAction::RejectJoinRequest {
-                network_id: "net-1".to_string(),
-                requester_npub: "npub1requester".to_string(),
             }
         );
     }

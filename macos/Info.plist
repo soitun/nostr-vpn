@@ -38,6 +38,6 @@
 	<key>NSHighResolutionCapable</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan Nostr VPN device-link QR codes.</string>
+	<string>Scan Nostr VPN join request QR codes.</string>
 </dict>
 </plist>

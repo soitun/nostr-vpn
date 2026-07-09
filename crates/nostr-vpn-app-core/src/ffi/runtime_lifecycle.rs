@@ -19,6 +19,8 @@ impl NativeAppRuntime {
                     config_path.display()
                 )
             })?;
+        let persist_identity_defaults =
+            config_exists && config_file_needs_identity_defaults(&config_path)?;
         let mut config = if config_exists {
             AppConfig::load(&config_path)?
         } else {
@@ -26,7 +28,7 @@ impl NativeAppRuntime {
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
-        if !config_exists || migrated_config_secrets {
+        if !config_exists || migrated_config_secrets || persist_identity_defaults {
             config.save(&config_path)?;
         }
 
@@ -195,6 +197,8 @@ impl NativeAppRuntime {
             };
         let config_for_paid = (!config_unavailable).then_some(&self.config);
         let raw_port_mapping = daemon_state.map(|state| &state.port_mapping);
+        let has_enabled_network = !config_unavailable
+            && self.config.networks.iter().any(|network| network.enabled);
 
         NativeAppState {
             rev: self.rev,
@@ -309,7 +313,7 @@ impl NativeAppRuntime {
                 )
                 .unwrap_or_default()
             },
-            join_request_qr_code_or_link: if config_unavailable {
+            join_request_qr_code_or_link: if config_unavailable || has_enabled_network {
                 String::new()
             } else {
                 own_join_request_qr_code_or_link(&self.config).unwrap_or_default()
@@ -454,6 +458,25 @@ impl NativeAppRuntime {
         }
     }
 
+}
+
+fn config_file_needs_identity_defaults(path: &Path) -> Result<bool> {
+    let raw =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    let value: toml::Value = toml::from_str(&raw).context("failed to parse config TOML")?;
+    let Some(nostr) = value.get("nostr").and_then(toml::Value::as_table) else {
+        return Ok(true);
+    };
+
+    let has_secret = nostr
+        .get("secret_key")
+        .and_then(toml::Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    let has_public_key = nostr
+        .get("public_key")
+        .and_then(toml::Value::as_str)
+        .is_some_and(|value| !value.trim().is_empty());
+    Ok(!has_secret || !has_public_key)
 }
 
 fn usize_to_u32_saturating(value: usize) -> u32 {

@@ -143,29 +143,11 @@ public partial class MainWindow : Window
         }
     }
 
-    private async void AcceptJoin_Click(object sender, RoutedEventArgs e)
+    private async void AddNearbyJoinRequest_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is Button { Tag: NativeInboundJoinRequestState request })
+        if (sender is Button { Tag: string request })
         {
-            await ViewModel.AcceptJoinRequestAsync(request);
-        }
-    }
-
-    private async void RejectJoin_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: NativeInboundJoinRequestState request })
-        {
-            await ViewModel.RejectJoinRequestAsync(request);
-        }
-    }
-
-    private void JoinLanPeer_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is Button { Tag: string invite })
-        {
-            // Setting InviteInput triggers the auto-import path in the
-            // view-model, which also clears the field after dispatch.
-            ViewModel.InviteInput = invite;
+            await ViewModel.ImportNearbyJoinRequestAsync(request);
         }
     }
 
@@ -391,14 +373,6 @@ public partial class MainWindow : Window
         if (sender is CheckBox checkBox)
         {
             await ViewModel.SetCloseToTrayAsync(checkBox.IsChecked == true);
-        }
-    }
-
-    private async void JoinRequests_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is CheckBox checkBox && ViewModel.ActiveNetwork is { } network)
-        {
-            await ViewModel.SetJoinRequestsAsync(network.Id, checkBox.IsChecked == true);
         }
     }
 

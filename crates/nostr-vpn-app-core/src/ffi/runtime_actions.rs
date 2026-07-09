@@ -394,50 +394,52 @@ impl NativeAppRuntime {
 
     fn import_join_request(&mut self, request: &str) -> Result<()> {
         let parsed = parse_join_request_qr_code_or_link(request)?;
+        let network_id = self.active_admin_network_id()?;
+        self.add_join_requester_to_network(
+            &network_id,
+            &parsed.pubkey_hex,
+            parsed.node_name.as_str(),
+        )
+    }
+
+    fn active_admin_network_id(&self) -> Result<String> {
         let own_pubkey = self.config.own_nostr_pubkey_hex().ok();
-        let network_id = self
-            .config
+        self.config
             .networks
             .iter()
             .find(|network| {
-                own_pubkey.as_deref().is_some_and(|own_pubkey| {
-                    network.admins.iter().any(|admin| admin == own_pubkey)
-                }) && network.enabled
+                network.enabled
+                    && own_pubkey.as_deref().is_some_and(|own_pubkey| {
+                        network.admins.iter().any(|admin| admin == own_pubkey)
+                    })
             })
             .map(|network| network.id.clone())
-            .ok_or_else(|| anyhow!("active network is not administered by this device"))?;
-        let requester = parsed.requester_pubkey_hex;
-        let requested_at = unix_timestamp();
-        let network = self
-            .config
-            .network_by_id_mut(&network_id)
-            .ok_or_else(|| anyhow!("network not found"))?;
+            .ok_or_else(|| anyhow!("active network is not administered by this device"))
+    }
 
-        if !network
-            .devices
-            .iter()
-            .chain(network.admins.iter())
-            .any(|member| member == &requester)
-        {
-            if let Some(existing) = network
-                .inbound_join_requests
-                .iter_mut()
-                .find(|pending| pending.requester == requester)
-            {
-                existing.requested_at = existing.requested_at.max(requested_at);
-                existing.requester_node_name.clear();
-            } else {
-                network.inbound_join_requests.push(PendingInboundJoinRequest {
-                    requester,
-                    requester_node_name: String::new(),
-                    requested_at,
-                });
-                network
-                    .inbound_join_requests
-                    .sort_by(|left, right| left.requester.cmp(&right.requester));
-            }
+    fn add_join_requester_to_network(
+        &mut self,
+        network_id: &str,
+        requester: &str,
+        requester_node_name: &str,
+    ) -> Result<()> {
+        let requester = normalize_nostr_pubkey(requester)?;
+        self.config
+            .add_participant_to_network(network_id, &requester)?;
+        let requester_node_name = requester_node_name.trim();
+        if !requester_node_name.is_empty() {
+            let _ = self.config.set_peer_alias(&requester, requester_node_name);
         }
-        self.save_reload_and_refresh()
+        if let Some(network) = self.config.network_by_id_mut(network_id) {
+            network
+                .inbound_join_requests
+                .retain(|pending| pending.requester != requester);
+        }
+        self.save_reload_and_refresh()?;
+        if !self.vpn_enabled {
+            self.connect_vpn()?;
+        }
+        Ok(())
     }
 
     fn manual_add_network(&mut self, admin_npub: &str, mesh_network_id: &str) -> Result<()> {
@@ -539,30 +541,17 @@ impl NativeAppRuntime {
             .map(|pending| pending.requester_node_name.clone())
             .ok_or_else(|| anyhow!("no pending join request from {requester_npub}"))?;
 
-        self.config
-            .add_participant_to_network(network_id, &requester)?;
-        if !requester_node_name.trim().is_empty() {
-            let _ = self.config.set_peer_alias(&requester, &requester_node_name);
-        }
-        if let Some(network) = self.config.network_by_id_mut(network_id) {
-            network
-                .inbound_join_requests
-                .retain(|pending| pending.requester != requester);
-        }
-        self.save_reload_and_refresh()?;
-        if !self.vpn_enabled {
-            self.connect_vpn()?;
-        }
-        Ok(())
+        self.add_join_requester_to_network(network_id, &requester, &requester_node_name)
     }
 
     fn start_invite_broadcast(&mut self) -> Result<()> {
-        if network_setup_required_for_config(&self.config) {
-            return Err(anyhow!("Create or join a network first"));
-        }
-        self.ensure_active_network_accepts_join_requests()?;
         self.refresh_lan_pairing();
         let announcement = self.build_lan_pairing_announcement()?;
+        if announcement.invite.trim().is_empty() {
+            return Err(anyhow!(
+                "nearby join request advertising is only available before this device has joined a network"
+            ));
+        }
         let expires_at = lan_pairing_deadline();
         self.ensure_lan_pairing_worker(announcement.clone())?;
         if let Some(worker) = self.lan_pairing_worker.as_ref() {
@@ -571,19 +560,6 @@ impl NativeAppRuntime {
         }
         self.invite_broadcast_expires_at = Some(expires_at);
         Ok(())
-    }
-
-    fn ensure_active_network_accepts_join_requests(&mut self) -> Result<()> {
-        let Some(network) = self.config.active_network_opt() else {
-            return Ok(());
-        };
-        let enabled = network.listen_for_join_requests;
-        let network_id = network.id.clone();
-        if !enabled {
-            self.config
-                .set_network_join_requests_enabled(&network_id, true)?;
-        }
-        self.save_reload_refresh_and_maybe_connect_for_join_requests(true)
     }
 
     fn stop_invite_broadcast(&mut self) {
@@ -636,9 +612,11 @@ impl NativeAppRuntime {
 
     fn build_lan_pairing_announcement(&self) -> Result<LanPairingAnnouncement> {
         let own_npub = to_npub(&self.config.own_nostr_pubkey_hex()?);
-        let invite =
-            active_network_invite_code_with_endpoints(&self.config, &self.live_inviter_endpoints())
-                .unwrap_or_default();
+        let invite = if self.config.networks.iter().any(|network| network.enabled) {
+            String::new()
+        } else {
+            own_join_request_qr_code_or_link(&self.config).unwrap_or_default()
+        };
         let endpoint = self
             .daemon_state
             .as_ref()
@@ -770,6 +748,15 @@ impl NativeAppRuntime {
         let Ok(sender_hex) = normalize_nostr_pubkey(&signal.npub) else {
             return false;
         };
+        if lan_signal_is_join_request(signal) {
+            return self.config.networks.iter().any(|network| {
+                network.admins.iter().any(|admin| admin == &sender_hex)
+                    || network
+                        .devices
+                        .iter()
+                        .any(|device| device == &sender_hex)
+            });
+        }
         let signal_network_id = normalize_runtime_network_id(&signal.network_id);
         self.config.networks.iter().any(|network| {
             normalize_runtime_network_id(&network.network_id) == signal_network_id
@@ -780,4 +767,11 @@ impl NativeAppRuntime {
                         .any(|device| device == &sender_hex))
         })
     }
+}
+
+fn lan_signal_is_join_request(signal: &LanPairingSignal) -> bool {
+    let invite = signal.invite.trim();
+    invite
+        .get(.."nvpn://join-request?".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("nvpn://join-request?"))
 }

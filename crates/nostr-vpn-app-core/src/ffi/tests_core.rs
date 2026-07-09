@@ -83,6 +83,9 @@
         assert!(saved.networks.is_empty());
         assert!(!saved.nostr.secret_key.trim().is_empty());
         assert!(!saved.nostr.public_key.trim().is_empty());
+        let raw = fs::read_to_string(&config_path).expect("read persisted config");
+        assert!(raw.contains("[nostr]"));
+        assert!(raw.contains("public_key"));
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -87,7 +87,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _manualJoinAdminId = "";
     private string _manualJoinMeshId = "";
     private bool _manualJoinExpanded;
-    private string _addNetworkJoinStatus = "";
     private string _networkSetupMode = "";
     private string _updateStatus = "";
     private Uri? _updateAssetUrl;
@@ -98,6 +97,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private bool _autoInstallUpdates;
     private string _updateVersion = "";
     private QrMatrix _joinRequestQr = new();
+    private bool _joinRequestPromptOpen;
     private static readonly TimeSpan UpdatePollInterval = LoadUpdatePollInterval();
     private static readonly Brush HeaderDangerBrush = new SolidColorBrush(Color.FromRgb(220, 38, 38));
     private static readonly Brush TextSecondaryBrush = new SolidColorBrush(Color.FromRgb(104, 113, 124));
@@ -118,7 +118,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         ShowDevicesCommand = new RelayCommand(_ => Page = AppPage.Devices);
         ShowAddNetworkCommand = new RelayCommand(_ =>
         {
-            AddNetworkJoinStatus = "";
             SetNetworkSetupMode("");
             Page = AppPage.AddNetwork;
         });
@@ -139,6 +138,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         ImportJoinRequestQrImageCommand = new AsyncRelayCommand(_ => ImportJoinRequestQrImageAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true);
         ImportJoinRequestCommand = new AsyncRelayCommand(_ => ImportJoinRequestAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true && !string.IsNullOrWhiteSpace(JoinRequestInput));
         ToggleNearbyDiscoveryCommand = new AsyncRelayCommand(_ => DispatchAsync(State.NearbyDiscoveryActive ? NativeActions.StopNearbyDiscovery() : NativeActions.StartNearbyDiscovery(), "Finding nearby"));
+        ToggleJoinRequestBroadcastCommand = new AsyncRelayCommand(_ => DispatchAsync(State.InviteBroadcastActive ? NativeActions.StopJoinRequestBroadcast() : NativeActions.StartJoinRequestBroadcast(), State.InviteBroadcastActive ? "Stopping nearby" : "Advertising nearby"));
         AddParticipantCommand = new AsyncRelayCommand(_ => AddParticipantAsync(), _ => !ActionInFlight && ActiveNetwork is { LocalIsAdmin: true, Enabled: true } && !string.IsNullOrWhiteSpace(ParticipantInput) && !ParticipantInputInvalid);
         SaveNodeCommand = new AsyncRelayCommand(_ => SaveNodeAsync(), _ => !ActionInFlight);
         AddRelayCommand = new AsyncRelayCommand(_ => AddRelayAsync(), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(RelayInput));
@@ -160,7 +160,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         SaveNetworkNameCommand = new AsyncRelayCommand(_ => RenameActiveNetworkAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true && !string.IsNullOrWhiteSpace(NetworkNameDraft));
         SaveNetworkMeshIdCommand = new AsyncRelayCommand(_ => SaveActiveNetworkMeshIdAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true && !string.IsNullOrWhiteSpace(NetworkMeshIdDraft));
         CopyNetworkIdCommand = new RelayCommand(_ => CopyText(ActiveNetwork?.NetworkId ?? ""), _ => !string.IsNullOrWhiteSpace(ActiveNetwork?.NetworkId));
-        RequestNetworkJoinCommand = new AsyncRelayCommand(_ => RequestActiveNetworkJoinAsync(), _ => !ActionInFlight && CanRequestActiveNetworkJoin);
         InstallServiceCommand = new AsyncRelayCommand(_ => DispatchAsync(NativeActions.InstallSystemService(), "Installing service"), _ => !ActionInFlight && State.ServiceSupported);
         EnableServiceCommand = new AsyncRelayCommand(_ => DispatchAsync(NativeActions.EnableSystemService(), "Enabling service"), _ => !ActionInFlight && State.ServiceEnablementSupported);
         DisableServiceCommand = new AsyncRelayCommand(_ => DispatchAsync(NativeActions.DisableSystemService(), "Disabling service"), _ => !ActionInFlight && State.ServiceEnablementSupported);
@@ -210,7 +209,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             }
             if (_page == AppPage.AddNetwork && nextPage != AppPage.AddNetwork)
             {
-                AddNetworkJoinStatus = "";
+                SetNetworkSetupMode("");
             }
             _page = nextPage;
             OnPropertyChanged();
@@ -266,9 +265,15 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         get => _joinRequestInput;
         set
         {
-            if (SetField(ref _joinRequestInput, value))
+            if (!SetField(ref _joinRequestInput, value))
             {
-                CommandManager.InvalidateRequerySuggested();
+                return;
+            }
+            CommandManager.InvalidateRequerySuggested();
+            var trimmed = (value ?? string.Empty).Trim();
+            if (!ActionInFlight && ActiveNetwork?.LocalIsAdmin == true && LooksLikeJoinRequest(trimmed))
+            {
+                _ = ConfirmAndImportJoinRequestAsync(trimmed);
             }
         }
     }
@@ -721,11 +726,13 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     }
 
     private NativeNetworkState? RuntimeActiveNetwork => State.Networks.FirstOrDefault(network => network.Enabled);
+    public bool HasEnabledNetwork => RuntimeActiveNetwork is not null;
     public NativeNetworkState? ActiveNetwork =>
         State.Networks.FirstOrDefault(network => network.Id == _shownNetworkId)
         ?? RuntimeActiveNetwork
         ?? State.Networks.FirstOrDefault();
     public bool HasActiveNetwork => ActiveNetwork is not null;
+    public bool ShowJoinRequestQr => !HasEnabledNetwork && !string.IsNullOrWhiteSpace(State.JoinRequestQrCodeOrLink);
     public string OfferExitNodeLabel
     {
         get
@@ -762,8 +769,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public bool PublicFipsRoutingEnabled => State.FipsHostTunnelEnabled && !ActionInFlight;
     public Brush ShownNetworkStatusBrush => ActiveNetwork?.Enabled == true ? ActiveNetworkBrush : InactiveNetworkBrush;
     public bool ShowNetworkStatusDot => State.Networks.Count > 1;
-    public bool HasIncomingJoinRequests => State.Networks.Any(network => network.InboundJoinRequests.Count > 0);
-    public bool ActiveNetworkHasIncomingJoinRequests => ActiveNetwork?.InboundJoinRequests.Count > 0;
     public bool ShowLinkDeviceCard => ActiveNetwork?.Enabled == true;
     public string ActiveNetworkDisplayNetworkId => DisplayNetworkId(ActiveNetwork?.NetworkId ?? "");
     public string HeroSubtitle => $"{State.ConnectedPeerCount} of {State.ExpectedPeerCount} connected";
@@ -807,6 +812,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public string NearbyDiscoveryButtonText => State.NearbyDiscoveryActive
         ? $"Finding nearby · {FormatRemaining(State.NearbyDiscoveryRemainingSecs)}"
         : "Find nearby";
+    public string JoinRequestBroadcastButtonText => State.InviteBroadcastActive
+        ? $"Advertising · {FormatRemaining(State.InviteBroadcastRemainingSecs)}"
+        : "Advertise nearby";
 
     private static string FormatRemaining(ulong seconds)
     {
@@ -875,42 +883,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public string DiagnosticsPeers => $"{State.ConnectedPeerCount}/{State.ExpectedPeerCount}";
     public string DiagnosticsFips => $"{State.FipsConnectedPeerCount}/{State.FipsRosterPeerCount} direct";
     public string DiagnosticsOtherFips => $"{State.NonFipsRosterPeerCount}";
-    public bool CanRequestActiveNetworkJoin => string.IsNullOrWhiteSpace(AddNetworkJoinStatus)
-        && ActiveNetwork is { OutboundJoinRequest: null } network
-        && !string.IsNullOrWhiteSpace(network.InviteInviterNpub);
-    public string AddNetworkJoinStatus
-    {
-        get => _addNetworkJoinStatus;
-        private set
-        {
-            if (_addNetworkJoinStatus == value)
-            {
-                return;
-            }
-            _addNetworkJoinStatus = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(ActiveNetworkJoinStatus));
-            OnPropertyChanged(nameof(CanRequestActiveNetworkJoin));
-        }
-    }
-
-    public string ActiveNetworkJoinStatus
-    {
-        get
-        {
-            if (!string.IsNullOrWhiteSpace(AddNetworkJoinStatus))
-            {
-                return AddNetworkJoinStatus;
-            }
-            var network = ActiveNetwork;
-            if (network?.OutboundJoinRequest is not null)
-            {
-                return "Join request sent";
-            }
-            return CanRequestActiveNetworkJoin ? "Invite needs approval" : "";
-        }
-    }
-
     public ICommand ShowDevicesCommand { get; }
     public ICommand ShowAddNetworkCommand { get; }
     public ICommand ShowAddDeviceCommand { get; }
@@ -928,6 +900,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand ImportJoinRequestQrImageCommand { get; }
     public ICommand ImportJoinRequestCommand { get; }
     public ICommand ToggleNearbyDiscoveryCommand { get; }
+    public ICommand ToggleJoinRequestBroadcastCommand { get; }
     public ICommand AddParticipantCommand { get; }
     public ICommand SaveNodeCommand { get; }
     public ICommand AddRelayCommand { get; }
@@ -945,7 +918,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand SaveNetworkNameCommand { get; }
     public ICommand SaveNetworkMeshIdCommand { get; }
     public ICommand CopyNetworkIdCommand { get; }
-    public ICommand RequestNetworkJoinCommand { get; }
     public ICommand InstallServiceCommand { get; }
     public ICommand EnableServiceCommand { get; }
     public ICommand DisableServiceCommand { get; }
@@ -1294,9 +1266,11 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         return DispatchAsync(NativeActions.RemoveNetwork(networkId), "Deleting network");
     }
 
-    public Task SetJoinRequestsAsync(string networkId, bool enabled)
+    public Task ImportNearbyJoinRequestAsync(string? request)
     {
-        return DispatchAsync(NativeActions.SetNetworkJoinRequestsEnabled(networkId, enabled), "Saving join requests");
+        return string.IsNullOrWhiteSpace(request)
+            ? Task.CompletedTask
+            : ConfirmAndImportJoinRequestAsync(request.Trim());
     }
 
     public Task RenameActiveNetworkAsync()
@@ -1315,36 +1289,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         return network is null || string.IsNullOrWhiteSpace(meshId)
             ? Task.CompletedTask
             : DispatchAsync(NativeActions.SetNetworkMeshId(network.Id, meshId), "Saving network ID");
-    }
-
-    public async Task RequestActiveNetworkJoinAsync()
-    {
-        var network = ActiveNetwork;
-        if (network is null)
-        {
-            return;
-        }
-        await DispatchAsync(NativeActions.RequestNetworkJoin(network.Id), "Requesting access");
-        if (string.IsNullOrWhiteSpace(State.Error))
-        {
-            AddNetworkJoinStatus = "Join request sent";
-        }
-    }
-
-    public Task AcceptJoinRequestAsync(NativeInboundJoinRequestState request)
-    {
-        var network = ActiveNetwork;
-        return network?.LocalIsAdmin == true
-            ? DispatchAsync(NativeActions.AcceptJoinRequest(network.Id, request.RequesterNpub), "Accepting join request")
-            : Task.CompletedTask;
-    }
-
-    public Task RejectJoinRequestAsync(NativeInboundJoinRequestState request)
-    {
-        var network = ActiveNetwork;
-        return network?.LocalIsAdmin == true
-            ? DispatchAsync(NativeActions.RejectJoinRequest(network.Id, request.RequesterNpub), "Rejecting join request")
-            : Task.CompletedTask;
     }
 
     public Task SetParticipantAliasAsync(NativeParticipantState participant, string alias)
@@ -1543,6 +1487,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     private static bool LooksLikeInviteCode(string value)
         => value.StartsWith("nvpn://invite/", StringComparison.OrdinalIgnoreCase);
 
+    private static bool LooksLikeJoinRequest(string value)
+        => value.StartsWith("nvpn://join-request?", StringComparison.OrdinalIgnoreCase);
+
     private const string Bech32BodyCharset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
     /// <summary>
@@ -1567,6 +1514,11 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         {
             return;
         }
+        if (LooksLikeJoinRequest(request))
+        {
+            await ConfirmAndImportJoinRequestAsync(request);
+            return;
+        }
         var network = ActiveNetwork;
         if (IsValidDeviceId(request) && network?.LocalIsAdmin == true)
         {
@@ -1574,9 +1526,48 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         }
         else
         {
-            await DispatchAsync(NativeActions.ImportJoinRequest(request), "Importing request");
+            await DispatchAsync(NativeActions.ImportJoinRequest(request), "Adding device");
         }
         JoinRequestInput = "";
+    }
+
+    private async Task ConfirmAndImportJoinRequestAsync(string request)
+    {
+        var trimmed = request.Trim();
+        if (_joinRequestPromptOpen || !LooksLikeJoinRequest(trimmed))
+        {
+            return;
+        }
+        var network = ActiveNetwork;
+        if (network?.LocalIsAdmin != true)
+        {
+            return;
+        }
+        _joinRequestPromptOpen = true;
+        try
+        {
+            var name = string.IsNullOrWhiteSpace(network.Name) ? "this network" : network.Name;
+            var result = MessageBox.Show(
+                $"Add the device from this join request to {name}?",
+                "Add device?",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (result != MessageBoxResult.Yes)
+            {
+                return;
+            }
+            await DispatchAsync(NativeActions.ImportJoinRequest(trimmed), "Adding device");
+            if (string.IsNullOrWhiteSpace(State.Error))
+            {
+                JoinRequestInput = "";
+                Page = AppPage.Devices;
+                Notice = "Device added";
+            }
+        }
+        finally
+        {
+            _joinRequestPromptOpen = false;
+        }
     }
 
     private async Task ImportJoinRequestQrImageAsync()
@@ -1596,7 +1587,21 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             Notice = result.Error;
             return;
         }
-        await DispatchAsync(NativeActions.ImportJoinRequest(result.Value), "Importing request");
+        var value = result.Value.Trim();
+        if (LooksLikeJoinRequest(value))
+        {
+            await ConfirmAndImportJoinRequestAsync(value);
+            return;
+        }
+        var network = ActiveNetwork;
+        if (IsValidDeviceId(value) && network?.LocalIsAdmin == true)
+        {
+            await DispatchAsync(NativeActions.AddParticipant(network.Id, value, null), "Adding device");
+        }
+        else
+        {
+            await DispatchAsync(NativeActions.ImportJoinRequest(value), "Adding device");
+        }
     }
 
     private async Task ImportWireGuardExitAsync()
@@ -1799,7 +1804,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         TagSelfParticipants(state);
         NormalizeSelectedParticipant(state);
         State = state;
-        JoinRequestQr = _core.QrMatrix(state.JoinRequestQrCodeOrLink);
+        JoinRequestQr = string.IsNullOrWhiteSpace(state.JoinRequestQrCodeOrLink)
+            ? new QrMatrix()
+            : _core.QrMatrix(state.JoinRequestQrCodeOrLink);
         if (syncDrafts)
         {
             SyncDrafts(state);
@@ -1890,6 +1897,8 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(ActiveNetwork));
         OnPropertyChanged(nameof(ExitNodeParticipants));
         OnPropertyChanged(nameof(HasActiveNetwork));
+        OnPropertyChanged(nameof(HasEnabledNetwork));
+        OnPropertyChanged(nameof(ShowJoinRequestQr));
         OnPropertyChanged(nameof(OfferExitNodeLabel));
         OnPropertyChanged(nameof(InactiveNetworks));
         OnPropertyChanged(nameof(SelectedParticipantKey));
@@ -1898,10 +1907,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(ActiveNetworkName));
         OnPropertyChanged(nameof(ShownNetworkStatusBrush));
         OnPropertyChanged(nameof(ShowNetworkStatusDot));
-        OnPropertyChanged(nameof(HasIncomingJoinRequests));
-        OnPropertyChanged(nameof(ActiveNetworkHasIncomingJoinRequests));
         OnPropertyChanged(nameof(ShowLinkDeviceCard));
         OnPropertyChanged(nameof(JoinRequestQrCodeOrLink));
+        OnPropertyChanged(nameof(ShowJoinRequestQr));
         OnPropertyChanged(nameof(ShowNetworkSetupChoices));
         OnPropertyChanged(nameof(ShowNetworkSetupCreate));
         OnPropertyChanged(nameof(ShowNetworkSetupJoin));
@@ -1915,6 +1923,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(PublicFipsAddress));
         OnPropertyChanged(nameof(PublicFipsRoutingEnabled));
         OnPropertyChanged(nameof(NearbyDiscoveryButtonText));
+        OnPropertyChanged(nameof(JoinRequestBroadcastButtonText));
         OnPropertyChanged(nameof(NoNearbyInvitesNoticeVisibility));
         OnPropertyChanged(nameof(ServiceSummary));
         OnPropertyChanged(nameof(CliSummary));
@@ -1928,8 +1937,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(DiagnosticsPeers));
         OnPropertyChanged(nameof(DiagnosticsFips));
         OnPropertyChanged(nameof(DiagnosticsOtherFips));
-        OnPropertyChanged(nameof(CanRequestActiveNetworkJoin));
-        OnPropertyChanged(nameof(ActiveNetworkJoinStatus));
         OnPropertyChanged(nameof(DirectExitMarker));
         OnPropertyChanged(nameof(WireguardExitMarker));
         OnPropertyChanged(nameof(WireguardExitSubtitle));

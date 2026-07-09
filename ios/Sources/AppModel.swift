@@ -255,18 +255,14 @@ final class AppModel: ObservableObject {
         switch type {
         case "import_network_invite",
              "import_join_request",
-             "request_network_join",
              "manual_add_network",
              "set_network_enabled",
              "set_network_mesh_id",
-             "set_network_join_requests_enabled",
              "add_participant",
              "set_participant_endpoint_hints",
              "add_admin",
              "remove_participant",
-             "remove_admin",
-             "accept_join_request",
-             "reject_join_request":
+             "remove_admin":
             return true
         default:
             return false

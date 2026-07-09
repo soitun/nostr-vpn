@@ -24,6 +24,7 @@ const LAN_PAIRING_PORT: u16 = 38_911;
 const LAN_PAIRING_ANNOUNCE_EVERY: Duration = Duration::from_secs(3);
 const LAN_PAIRING_READ_TIMEOUT: Duration = Duration::from_millis(250);
 const LAN_PAIRING_BUFFER_BYTES: usize = 8_192;
+const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request?";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanPairingSignal {
@@ -297,8 +298,19 @@ fn decode_lan_pairing_payload(payload: &[u8], own_npub: &str) -> Result<Option<L
         return Ok(None);
     }
 
-    let invite =
-        parse_network_invite(&announcement.invite).context("failed to parse LAN pairing invite")?;
+    let advertised = announcement.invite.trim();
+    if is_join_request_link(advertised) {
+        return Ok(Some(LanPairingSignal {
+            npub: sender_npub.clone(),
+            node_name: announcement.node_name.trim().to_string(),
+            endpoint: announcement.endpoint.trim().to_string(),
+            network_name: "Join request".to_string(),
+            network_id: sender_npub,
+            invite: advertised.to_string(),
+        }));
+    }
+
+    let invite = parse_network_invite(advertised).context("failed to parse LAN pairing invite")?;
     if !invite.admins.iter().any(|admin| admin == &sender_npub) {
         return Ok(None);
     }
@@ -313,8 +325,14 @@ fn decode_lan_pairing_payload(payload: &[u8], own_npub: &str) -> Result<Option<L
             invite.network_name
         },
         network_id: invite.network_id,
-        invite: announcement.invite.trim().to_string(),
+        invite: advertised.to_string(),
     }))
+}
+
+fn is_join_request_link(value: &str) -> bool {
+    value
+        .get(..JOIN_REQUEST_LINK_PREFIX.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(JOIN_REQUEST_LINK_PREFIX))
 }
 
 fn run_lan_pairing_loop(
@@ -508,6 +526,36 @@ mod tests {
         assert_eq!(signal.endpoint, "192.0.2.10:51820");
         assert_eq!(signal.network_name, "Office mesh");
         assert_eq!(signal.network_id, "office-mesh");
+    }
+
+    #[test]
+    fn decodes_lan_announcement_with_join_request() {
+        let requester_npub = nostr_sdk::Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("requester npub");
+        let own_npub = nostr_sdk::Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("own npub");
+        let join_request = "nvpn://join-request?app_key=npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq02hl6p";
+        let payload = json!({
+            "v": LAN_PAIRING_ANNOUNCEMENT_VERSION,
+            "npub": requester_npub,
+            "nodeName": "Pixel Phone",
+            "endpoint": "",
+            "invite": join_request,
+            "timestamp": 42
+        })
+        .to_string();
+
+        let signal = decode_lan_pairing_payload(payload.as_bytes(), &own_npub)
+            .expect("decode")
+            .expect("peer");
+
+        assert_eq!(signal.node_name, "Pixel Phone");
+        assert_eq!(signal.network_name, "Join request");
+        assert_eq!(signal.invite, join_request);
     }
 
     #[test]

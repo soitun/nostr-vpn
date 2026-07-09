@@ -314,19 +314,6 @@ final class AppManager: ObservableObject {
         switch action {
         case "tick":
             dispatch(.tick, status: "Refreshing")
-        case "request-join":
-            let networkId = queryValue("networkId", in: url) ?? queryValue("network", in: url) ?? activeNetwork?.id
-            if let networkId {
-                requestNetworkJoin(networkId: networkId)
-            }
-        case "accept-join":
-            let networkId = queryValue("networkId", in: url) ?? queryValue("network", in: url) ?? activeNetwork?.id
-            let requester = queryValue("requester", in: url)
-                ?? queryValue("requesterNpub", in: url)
-                ?? activeNetwork?.inboundJoinRequests.first?.requesterNpub
-            if let networkId, let requester {
-                acceptJoinRequest(networkId: networkId, requesterNpub: requester)
-            }
         default:
             break
         }
@@ -354,7 +341,7 @@ final class AppManager: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
-        dispatch(.importJoinRequest(request: trimmed), status: "Importing request")
+        dispatch(.importJoinRequest(request: trimmed), status: "Adding device")
     }
 
     func chooseWireGuardConfigFile() {
@@ -975,30 +962,6 @@ final class AppManager: ObservableObject {
         dispatch(.setNetworkEnabled(networkId: networkId, enabled: enabled), status: enabled ? "Activating network" : "Disabling network")
     }
 
-    func setJoinRequests(networkId: String, enabled: Bool) {
-        dispatch(.setNetworkJoinRequestsEnabled(networkId: networkId, enabled: enabled), status: "Saving approval setting")
-    }
-
-    func requestNetworkJoin(networkId: String) {
-        dispatch(.requestNetworkJoin(networkId: networkId), status: "Requesting approval")
-    }
-
-    func requestDeviceApproval(networkId: String) {
-        requestNetworkJoin(networkId: networkId)
-    }
-
-    func acceptJoinRequest(networkId: String, requesterNpub: String) {
-        dispatch(.acceptJoinRequest(networkId: networkId, requesterNpub: requesterNpub), status: "Approving device")
-    }
-
-    func approveDeviceLink(networkId: String, requesterNpub: String) {
-        dispatch(.acceptJoinRequest(networkId: networkId, requesterNpub: requesterNpub), status: "Approving device")
-    }
-
-    func rejectJoinRequest(networkId: String, requesterNpub: String) {
-        dispatch(.rejectJoinRequest(networkId: networkId, requesterNpub: requesterNpub), status: "Rejecting approval request")
-    }
-
     func setParticipantAlias(npub: String, alias: String) {
         dispatch(.setParticipantAlias(npub: npub, alias: alias), status: "Saving alias")
     }
@@ -1069,6 +1032,14 @@ final class AppManager: ObservableObject {
 
     func stopNearbyDiscovery() {
         dispatch(.stopNearbyDiscovery, status: "Stopped looking")
+    }
+
+    func startJoinRequestBroadcast() {
+        dispatch(.startInviteBroadcast, status: "Advertising nearby")
+    }
+
+    func stopJoinRequestBroadcast() {
+        dispatch(.stopInviteBroadcast, status: "Stopping nearby")
     }
 
     func checkForUpdates(manual: Bool = true) {
