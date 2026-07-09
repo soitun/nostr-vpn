@@ -381,6 +381,7 @@ main() {
   cleanup
   docker_bench_init_summary
   docker_bench_write_metadata boringtun "$DURATION"
+  docker_bench_validate_host_quiet perf-boringtun
   start_compose_services
   for service in node-a node-b; do
     wait_for_service "$service"

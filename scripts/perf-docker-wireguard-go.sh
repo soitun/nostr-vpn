@@ -384,6 +384,7 @@ main() {
   write_wireguard_go_cpu_phase_header
   docker_bench_write_metadata wireguard-go "$DURATION"
   write_wireguard_go_source_metadata
+  docker_bench_validate_host_quiet perf-wireguard-go
   start_compose_services
   for service in node-a node-b; do
     wait_for_service "$service"

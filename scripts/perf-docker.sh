@@ -1198,6 +1198,7 @@ write_pipeline_phase_range_header "$PIPELINE_PHASE_RANGES"
 write_daemon_cpu_phase_header
 write_loaded_ping_summary_header
 docker_bench_write_metadata nvpn "$DURATION"
+docker_bench_validate_host_quiet perf
 start_compose_services
 for service in node-a node-b; do
   wait_for_service "$service"

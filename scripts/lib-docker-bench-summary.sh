@@ -449,6 +449,100 @@ docker_bench_git_dirty() {
   fi
 }
 
+docker_bench_host_loadavg() {
+  if [[ -r /proc/loadavg ]]; then
+    awk '{print $1 "\t" $2 "\t" $3}' /proc/loadavg
+    return
+  fi
+
+  if command -v sysctl >/dev/null 2>&1; then
+    local sysctl_load
+    sysctl_load="$(sysctl -n vm.loadavg 2>/dev/null | awk '
+      {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^[0-9]+([.][0-9]+)?$/) {
+            values[++count] = $i
+          }
+        }
+      }
+      END {
+        if (count >= 3) {
+          printf "%s\t%s\t%s\n", values[1], values[2], values[3]
+        }
+      }' || true)"
+    if [[ -n "$sysctl_load" ]]; then
+      printf '%s\n' "$sysctl_load"
+      return
+    fi
+  fi
+
+  uptime 2>/dev/null | awk -F 'load averages?: ' '
+    NF > 1 {
+      gsub(/,/, "", $2)
+      split($2, values, " ")
+      if (values[1] != "" && values[2] != "" && values[3] != "") {
+        printf "%s\t%s\t%s\n", values[1], values[2], values[3]
+      }
+    }' || true
+}
+
+docker_bench_host_online_cpus() {
+  local cpus
+  cpus="$(getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  if [[ "$cpus" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s\n' "$cpus"
+    return
+  fi
+
+  cpus="$(nproc 2>/dev/null || true)"
+  if [[ "$cpus" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s\n' "$cpus"
+    return
+  fi
+
+  cpus="$(sysctl -n hw.ncpu 2>/dev/null || true)"
+  if [[ "$cpus" =~ ^[1-9][0-9]*$ ]]; then
+    printf '%s\n' "$cpus"
+  fi
+}
+
+docker_bench_host_load_per_cpu() {
+  local load="$1"
+  local cpus="$2"
+  awk -v load="$load" -v cpus="$cpus" 'BEGIN {
+    if (load ~ /^[0-9]+([.][0-9]+)?$/ && cpus ~ /^[1-9][0-9]*$/) {
+      printf "%.6f\n", load / cpus
+    }
+  }'
+}
+
+docker_bench_validate_host_quiet() {
+  local log_prefix="$1"
+  local max_load_per_cpu="${NVPN_DOCKER_MAX_HOST_LOAD_PER_CPU:-}"
+  [[ -n "$max_load_per_cpu" ]] || return 0
+  if [[ ! "$max_load_per_cpu" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    printf '%s: invalid NVPN_DOCKER_MAX_HOST_LOAD_PER_CPU=%s (expected non-negative number)\n' \
+      "$log_prefix" "$max_load_per_cpu" >&2
+    return 2
+  fi
+
+  local load1 load5 load15 cpus load_per_cpu
+  IFS=$'\t' read -r load1 load5 load15 < <(docker_bench_host_loadavg) || true
+  cpus="$(docker_bench_host_online_cpus)"
+  load_per_cpu="$(docker_bench_host_load_per_cpu "$load1" "$cpus")"
+  if [[ -z "$load_per_cpu" ]]; then
+    printf '%s: unable to read host load for NVPN_DOCKER_MAX_HOST_LOAD_PER_CPU guard\n' \
+      "$log_prefix" >&2
+    return 2
+  fi
+
+  if ! awk -v actual="$load_per_cpu" -v max="$max_load_per_cpu" 'BEGIN { exit(actual <= max ? 0 : 1) }'; then
+    printf '%s: host load1_per_cpu=%s exceeds NVPN_DOCKER_MAX_HOST_LOAD_PER_CPU=%s (load1=%s cpus=%s)\n' \
+      "$log_prefix" "$load_per_cpu" "$max_load_per_cpu" "$load1" "$cpus" >&2
+    return 1
+  fi
+}
+
 docker_bench_start_cpu_stress_for_service() {
   local service="$1"
   local workers="$2"
@@ -604,6 +698,12 @@ docker_bench_write_metadata() {
   local nvpn_git_dirty=""
   local fips_git_head=""
   local fips_git_dirty=""
+  local host_load1=""
+  local host_load5=""
+  local host_load15=""
+  local host_online_cpus=""
+  local host_load1_per_cpu=""
+  local host_max_load1_per_cpu="${NVPN_DOCKER_MAX_HOST_LOAD_PER_CPU:-}"
   local expected_fsp_owner_placement="${NVPN_DOCKER_EXPECT_FSP_OWNER_PLACEMENT:-}"
   local expected_fsp_owner_placement_exclusive="${NVPN_DOCKER_EXPECT_FSP_OWNER_PLACEMENT_EXCLUSIVE:-}"
   local max_fsp_owner_placement_other_path_rate="${NVPN_DOCKER_MAX_FSP_OWNER_PLACEMENT_OTHER_PATH_RATE:-}"
@@ -703,10 +803,19 @@ docker_bench_write_metadata() {
     fips_git_head="$(docker_bench_git_head "$NVPN_FIPS_REPO_PATH")"
     fips_git_dirty="$(docker_bench_git_dirty "$NVPN_FIPS_REPO_PATH")"
   fi
+  IFS=$'\t' read -r host_load1 host_load5 host_load15 < <(docker_bench_host_loadavg) || true
+  host_online_cpus="$(docker_bench_host_online_cpus)"
+  host_load1_per_cpu="$(docker_bench_host_load_per_cpu "$host_load1" "$host_online_cpus")"
   jq -n \
     --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg backend "$backend" \
     --arg duration_secs "$duration" \
+    --arg host_load1 "$host_load1" \
+    --arg host_load5 "$host_load5" \
+    --arg host_load15 "$host_load15" \
+    --arg host_online_cpus "$host_online_cpus" \
+    --arg host_load1_per_cpu "$host_load1_per_cpu" \
+    --arg host_max_load1_per_cpu "$host_max_load1_per_cpu" \
     --arg stress_enabled "$stress_enabled" \
     --arg stress_sides "$(docker_bench_cpu_stress_sides)" \
     --arg local_workers "$local_workers" \
@@ -816,10 +925,23 @@ docker_bench_write_metadata() {
        end;
      def string_or_null($v):
        if $v == "" then null else $v end;
+     def number_or_null($v):
+       if $v == "" then null
+       elif ($v | test("^[0-9]+([.][0-9]+)?$")) then ($v | tonumber)
+       else null
+       end;
      {
       generated_at: $generated_at,
       backend: $backend,
       duration_secs: ($duration_secs | tonumber),
+      host: {
+        load1: number_or_null($host_load1),
+        load5: number_or_null($host_load5),
+        load15: number_or_null($host_load15),
+        online_cpus: number_or_null($host_online_cpus),
+        load1_per_cpu: number_or_null($host_load1_per_cpu),
+        max_load1_per_cpu: number_or_null($host_max_load1_per_cpu)
+      },
       run_env: {
         dataplane_profile: string_or_null($dataplane_profile),
         placement_profile: string_or_null($placement_profile),

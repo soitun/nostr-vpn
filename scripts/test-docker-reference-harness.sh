@@ -528,11 +528,33 @@ test_metadata_writer_records_run_provenance() {
   assert_eq "$(jq -r '.run_env.direct_fmp_forced' "$metadata")" "false" "metadata direct-FMP forced default"
   assert_eq "$(jq -r '.run_env.require_no_direct_fmp' "$metadata")" "false" "metadata no-direct requirement default"
   assert_eq "$(jq -r '.run_env.require_no_fsp_aead_helpers' "$metadata")" "false" "metadata no-FSP-helper requirement default"
+  assert_eq "$(jq -r '.host | has("load1")' "$metadata")" "true" "metadata host load1 field"
+  assert_eq "$(jq -r '.host | has("load5")' "$metadata")" "true" "metadata host load5 field"
+  assert_eq "$(jq -r '.host | has("load15")' "$metadata")" "true" "metadata host load15 field"
+  assert_eq "$(jq -r '.host | has("online_cpus")' "$metadata")" "true" "metadata host CPU field"
+  assert_eq "$(jq -r '.host | has("load1_per_cpu")' "$metadata")" "true" "metadata host load-per-CPU field"
   assert_eq "$(jq -r '.source.local_fips_patch.enabled' "$metadata")" "true" "metadata local FIPS enabled"
   assert_eq "$(jq -r '.source.nvpn | has("git_head")' "$metadata")" "true" "metadata nvpn head field"
   assert_eq "$(jq -r '.source.local_fips_patch | has("git_head")' "$metadata")" "true" "metadata FIPS head field"
 
   rm -rf "$dir"
+}
+
+test_host_quiet_guard_rejects_invalid_threshold() {
+  local output status
+  set +e
+  output="$(
+    NVPN_DOCKER_MAX_HOST_LOAD_PER_CPU=bogus \
+      docker_bench_validate_host_quiet test-host 2>&1
+  )"
+  status=$?
+  set -e
+
+  [[ "$status" != "0" ]] || fail "invalid host quiet threshold was accepted"
+  case "$output" in
+    *"invalid NVPN_DOCKER_MAX_HOST_LOAD_PER_CPU=bogus"*) ;;
+    *) fail "invalid host quiet threshold diagnostic missing: $output" ;;
+  esac
 }
 
 test_dataplane_profile_expands_connect_env() {
@@ -1691,6 +1713,15 @@ test_docker_perf_scripts_reject_translated_processes() {
   assert_file_contains "$ROOT_DIR/scripts/perf-docker-boringtun.sh" "docker_bench_assert_native_processes perf-boringtun boringtun-cli node-a node-b" "boringtun Docker perf rejects translated boringtun"
 }
 
+test_docker_perf_scripts_share_host_quiet_guard() {
+  local helper="$ROOT_DIR/scripts/lib-docker-bench-summary.sh"
+  assert_file_contains "$helper" "docker_bench_validate_host_quiet" "Docker perf shared host quiet guard"
+  assert_file_contains "$helper" "NVPN_DOCKER_MAX_HOST_LOAD_PER_CPU" "Docker perf host quiet guard env"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker.sh" "docker_bench_validate_host_quiet perf" "nvpn Docker perf uses host quiet guard"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker-wireguard-go.sh" "docker_bench_validate_host_quiet perf-wireguard-go" "wireguard-go Docker perf uses host quiet guard"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker-boringtun.sh" "docker_bench_validate_host_quiet perf-boringtun" "boringtun Docker perf uses host quiet guard"
+}
+
 test_json_and_ping_parsers
 test_cpu_accounting_helpers
 test_udp1000_parallel_bandwidth_helpers_preserve_total_target
@@ -1704,6 +1735,7 @@ test_metadata_writer_records_udp1000_per_stream_bandwidth
 test_metadata_writer_records_guard_thresholds
 test_metadata_writer_records_fips_soak_thresholds
 test_metadata_writer_records_run_provenance
+test_host_quiet_guard_rejects_invalid_threshold
 test_dataplane_profile_expands_connect_env
 test_placement_profile_expands_worker_open_connect_env
 test_placement_profile_allows_explicit_nonexclusive_worker_open_guard
@@ -1731,5 +1763,6 @@ test_nvpn_perf_docker_records_daemon_cpu_phase_artifact
 test_wireguard_go_perf_docker_records_cpu_phase_artifact
 test_docker_perf_scripts_share_iperf_socket_buffer_limit_helper
 test_docker_perf_scripts_reject_translated_processes
+test_docker_perf_scripts_share_host_quiet_guard
 
 printf 'docker benchmark summary self-test passed\n'
