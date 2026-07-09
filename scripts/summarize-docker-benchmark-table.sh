@@ -670,7 +670,7 @@ candidate_status() {
 
 write_header() {
   write_tsv_row \
-    label backend git_head fips_head dirty duration_secs stress placement dataplane \
+    label backend git_head fips_head dirty duration_secs stress placement dataplane build_class \
     tcp_single_mbps tcp_single_retrans tcp_4_mbps tcp_4_retrans tcp_8_mbps tcp_8_retrans \
     tcp_single_cpu_s_per_gbyte tcp_4_cpu_s_per_gbyte tcp_8_cpu_s_per_gbyte \
     udp_200_mbps udp_200_loss_pct udp_1000_mbps udp_1000_loss_pct ping_loss_pct ping_avg_ms \
@@ -694,7 +694,7 @@ write_row() {
   local tcp_single tcp_single_retrans tcp_4 tcp_4_retrans tcp_8 tcp_8_retrans
   local tcp_single_cpu_per_gbyte tcp_4_cpu_per_gbyte tcp_8_cpu_per_gbyte
   local udp_200 udp_200_loss udp_1000 udp_1000_loss ping_loss ping_avg
-  local git_head ref_git_head fips_head nvpn_dirty fips_dirty ref_dirty dirty stress placement dataplane
+  local git_head ref_git_head fips_head nvpn_dirty fips_dirty ref_dirty dirty stress placement dataplane build_class
   local hard_total hard_events blocking_hard_total zero_status candidate
   local iperf_udp200_sockbuf iperf_udp1000_sockbuf udp_receiver_rmem udp_receiver_wmem
   local node_b_udp_rcvbuf_errors attribution
@@ -752,6 +752,7 @@ write_row() {
   stress="$(metadata_value "$artifact_dir" '.cpu_stress | if .enabled == true then (.sides + ":l" + (.local_workers|tostring) + "/r" + (.remote_workers|tostring)) else "false" end')"
   placement="$(metadata_value "$artifact_dir" '.run_env.placement_profile')"
   dataplane="$(metadata_value "$artifact_dir" '.run_env.dataplane_profile')"
+  build_class="$(metadata_value "$artifact_dir" '.source.runtime.node_a.binary_linkage')"
 
   iperf_udp200_sockbuf="$(iperf_udp_socket_buffer_summary "$artifact_dir" "$summary" udp-200)"
   iperf_udp1000_sockbuf="$(iperf_udp_socket_buffer_summary "$artifact_dir" "$summary" udp-1000)"
@@ -799,6 +800,7 @@ write_row() {
     "$(tsv_escape "$stress")" \
     "$(tsv_escape "$placement")" \
     "$(tsv_escape "$dataplane")" \
+    "$(tsv_escape "$build_class")" \
     "$(tsv_escape "$tcp_single")" \
     "$(tsv_escape "$tcp_single_retrans")" \
     "$(tsv_escape "$tcp_4")" \
@@ -882,6 +884,31 @@ write_input_rows() {
   done < <(tail -n +2 "$summary")
 }
 
+validate_build_classes() {
+  local table="$1"
+  local mismatch
+  mismatch="$(awk -F '\t' '
+    NR == 1 {
+      for (i = 1; i <= NF; i++) {
+        if ($i == "label") label_idx = i
+        if ($i == "backend") backend_idx = i
+        if ($i == "build_class") class_idx = i
+      }
+      next
+    }
+    class_idx && $class_idx != "" {
+      split($backend_idx, parts, "/")
+      backend = parts[1]
+      if (seen[backend] != "" && seen[backend] != $class_idx) {
+        printf "%s backend mixes %s and %s at %s", backend, seen[backend], $class_idx, $label_idx
+        exit
+      }
+      seen[backend] = $class_idx
+    }
+  ' "$table")"
+  [[ -z "$mismatch" ]] || die "$mismatch"
+}
+
 need_cmd jq
 
 rows=()
@@ -922,6 +949,7 @@ for row in "${rows[@]}"; do
   [[ -n "$label" && -n "$input" ]] || die "empty label or artifact in '$row'"
   write_input_rows "$label" "$input" >>"$tmp_tsv"
 done
+validate_build_classes "$tmp_tsv"
 
 if [[ -n "$OUTPUT_DIR" ]]; then
   mkdir -p "$OUTPUT_DIR"

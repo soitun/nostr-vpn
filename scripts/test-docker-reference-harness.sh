@@ -1038,6 +1038,7 @@ write_metadata_fixture() {
   local iperf_udp1000_parallel="${16:-}"
   local iperf_udp1000_bandwidth="${17:-1G}"
   local iperf_udp1000_per_stream_bandwidth="${18:-}"
+  local binary_linkage="${19:-}"
   mkdir -p "$dir"
   jq -n \
     --arg backend "$backend" \
@@ -1057,6 +1058,7 @@ write_metadata_fixture() {
     --arg iperf_udp1000_parallel "$iperf_udp1000_parallel" \
     --arg iperf_udp1000_bandwidth "$iperf_udp1000_bandwidth" \
     --arg iperf_udp1000_per_stream_bandwidth "$iperf_udp1000_per_stream_bandwidth" \
+    --arg binary_linkage "$binary_linkage" \
     '{
       backend: $backend,
       run_env: {
@@ -1095,6 +1097,14 @@ write_metadata_fixture() {
           enabled: ($local_fips_patch_enabled == "true"),
           git_head: (if $fips_git_head == "" then null else $fips_git_head end),
           dirty: ($fips_git_dirty == "true")
+        },
+        runtime: {
+          node_a: {
+            binary_linkage: (if $binary_linkage == "" then null else $binary_linkage end)
+          },
+          node_b: {
+            binary_linkage: (if $binary_linkage == "" then null else $binary_linkage end)
+          }
         }
       }
     }' >"$dir/metadata.json"
@@ -1193,7 +1203,7 @@ test_docker_comparison_outputs() {
 
 test_docker_benchmark_table_outputs() {
   local dir out fields current_status current_events current_socket published_status published_events legacy_status wg_status
-  local current_receiver published_receiver current_provenance current_pipeline_shape markdown_row
+  local current_receiver published_receiver current_provenance current_build_class current_pipeline_shape markdown_row
   dir="$(mktemp -d)"
   write_summary_fixture \
     "$dir/current/summary.tsv" \
@@ -1205,7 +1215,7 @@ test_docker_benchmark_table_outputs() {
     1000 0 \
     0 0.3 \
     "$dir/current/raw"
-  write_metadata_fixture "$dir/current" nvpn true both 1 1 false "" "" true nvpnabc false fipsabc false
+  write_metadata_fixture "$dir/current" nvpn true both 1 1 false "" "" true nvpnabc false fipsabc false "" "" 1G "" dynamic-glibc
   mkdir -p "$dir/current/raw"
   {
     printf 'event\tmax_rate_per_sec\ttotal\n'
@@ -1253,7 +1263,7 @@ test_docker_benchmark_table_outputs() {
     998 0.2 \
     0 0.5 \
     "$dir/published/raw"
-  write_metadata_fixture "$dir/published" nvpn true both 1 1 false "" "" false publishedabc false "" false
+  write_metadata_fixture "$dir/published" nvpn true both 1 1 false "" "" false publishedabc false "" false "" "" 1G "" dynamic-glibc
   mkdir -p "$dir/published/raw"
   {
     printf 'event\tmax_rate_per_sec\ttotal\n'
@@ -1278,7 +1288,7 @@ test_docker_benchmark_table_outputs() {
     1000 0 \
     0 0.4 \
     "$dir/legacy/raw"
-  write_metadata_fixture "$dir/legacy" nvpn true both 1 1 false "" "" true legacyabc false fipsabc true
+  write_metadata_fixture "$dir/legacy" nvpn true both 1 1 false "" "" true legacyabc false fipsabc true "" "" 1G "" dynamic-glibc
   mkdir -p "$dir/legacy/raw"
   {
     printf 'phase\tservice\thard_events\n'
@@ -1296,7 +1306,7 @@ test_docker_benchmark_table_outputs() {
     1000 0 \
     0 0.2 \
     "$dir/wg/raw"
-  write_metadata_fixture "$dir/wg" wireguard-go true both 1 1
+  write_metadata_fixture "$dir/wg" wireguard-go true both 1 1 false "" "" false "" false "" false "" "" 1G "" static
   out="$dir/out"
 
   "$TABLE_SCRIPT" \
@@ -1318,9 +1328,10 @@ test_docker_benchmark_table_outputs() {
   legacy_status="$(table_values "$out/stress-table.tsv" legacy udp_ping_zero hard_events_total hard_events candidate)"
   wg_status="$(table_values "$out/stress-table.tsv" wg backend udp_ping_zero hard_events_total candidate)"
   current_provenance="$(table_values "$out/stress-table.tsv" current git_head fips_head dirty stress)"
+  current_build_class="$(table_values "$out/stress-table.tsv" current build_class)"
   markdown_row="$(grep -F '| current | nvpn |' "$out/stress-table.md")"
 
-  assert_eq "$fields" "50" "Docker benchmark table field count"
+  assert_eq "$fields" "51" "Docker benchmark table field count"
   assert_eq "$current_status" $'true\t7\trx_loop_slow_maintenance_skipped:7\tpass' "Docker benchmark table current status"
   assert_eq "$current_events" $'0\t0\t0\t0\t0\t0' "Docker benchmark table current event split"
   assert_eq "$current_socket" $'16777216/33554432\t8388608/16777216' "Docker benchmark table connected UDP buffer summary"
@@ -1332,10 +1343,21 @@ test_docker_benchmark_table_outputs() {
   assert_eq "$legacy_status" $'true\t15\tdecrypt_fallback_pressure_drain:15\tfail' "Docker benchmark table legacy phase hard-event fallback"
   assert_eq "$wg_status" $'wireguard-go\ttrue\tn/a\treference' "Docker benchmark table WG reference status"
   assert_eq "$current_provenance" $'nvpnabc\tfipsabc\tnvpn=false,fips=false\tboth:l1/r1' "Docker benchmark table provenance"
+  assert_eq "$current_build_class" "dynamic-glibc" "Docker benchmark table build class"
   case "$markdown_row" in
     *"| 3000 | 10 | 2800 |"*) ;;
     *) fail "Docker benchmark markdown row missing current throughput: $markdown_row" ;;
   esac
+
+  jq '.source.runtime.node_a.binary_linkage = "static" | .source.runtime.node_b.binary_linkage = "static"' \
+    "$dir/legacy/metadata.json" >"$dir/legacy/metadata.json.tmp"
+  mv "$dir/legacy/metadata.json.tmp" "$dir/legacy/metadata.json"
+  if "$TABLE_SCRIPT" current="$dir/current" legacy="$dir/legacy" >/dev/null 2>"$dir/mixed-build.stderr"; then
+    fail "Docker benchmark table accepted mixed nvpn build classes"
+  fi
+  assert_file_contains "$dir/mixed-build.stderr" \
+    "nvpn backend mixes dynamic-glibc and static at legacy" \
+    "Docker benchmark mixed-build rejection"
 
   rm -rf "$dir"
 }
@@ -1849,6 +1871,10 @@ test_docker_perf_scripts_reject_translated_processes() {
   native='30 /usr/local/bin/nvpn connect'
   rosetta='30 /run/rosetta/rosetta /usr/local/bin/nvpn daemon --config /cfg/container.toml'
   qemu='30 /usr/bin/qemu-x86_64 /usr/local/bin/wireguard-go --foreground wg0'
+
+  assert_eq "$(docker_bench_binary_linkage $'\tstatically linked')" "static" "static PIE linkage"
+  assert_eq "$(docker_bench_binary_linkage $'\tlibc.so.6 => /lib/libc.so.6\n\t/lib64/ld-linux-x86-64.so.2')" "dynamic-glibc" "glibc linkage"
+  assert_eq "$(docker_bench_binary_linkage $'\t/lib/ld-musl-x86_64.so.1')" "dynamic-musl" "musl linkage"
 
   if docker_bench_process_uses_translation "$native"; then
     fail "native process was classified as translated"

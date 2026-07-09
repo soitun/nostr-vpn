@@ -685,9 +685,20 @@ docker_bench_finish_phase_perf() {
     -i "$data_path" >"$report_path" 2>>"$log_path" || true
 }
 
+docker_bench_binary_linkage() {
+  case "$1" in
+    *"statically linked"* | *"not a dynamic executable"*) printf 'static\n' ;;
+    *"libc.musl-"* | *"ld-musl-"*) printf 'dynamic-musl\n' ;;
+    *"libc.so.6"* | *"ld-linux-"*) printf 'dynamic-glibc\n' ;;
+    *) printf 'unknown\n' ;;
+  esac
+}
+
 docker_bench_runtime_service_provenance() {
   local service="$1"
-  local cid image_id binary_sha256 version_output nvpn_version fips_core_version online_cpus cpuset_cpus
+  local backend="$2"
+  local binary_name cid image_id binary_sha256 ldd_output binary_linkage
+  local version_output nvpn_version fips_core_version online_cpus cpuset_cpus
   if ! declare -p COMPOSE >/dev/null 2>&1; then
     printf '{}\n'
     return
@@ -698,11 +709,22 @@ docker_bench_runtime_service_provenance() {
     return
   fi
 
+  case "$backend" in
+    wireguard-go) binary_name="wireguard-go" ;;
+    boringtun) binary_name="boringtun-cli" ;;
+    *) binary_name="nvpn" ;;
+  esac
   image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
   binary_sha256="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
-    'sha256sum "$(command -v nvpn)"' 2>/dev/null || true)"
+    'sha256sum "$(command -v "$1")"' sh "$binary_name" 2>/dev/null || true)"
   binary_sha256="${binary_sha256%% *}"
-  version_output="$("${COMPOSE[@]}" exec -T "$service" nvpn version --verbose 2>/dev/null || true)"
+  ldd_output="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+    'ldd "$(command -v "$1")" 2>&1' sh "$binary_name" 2>/dev/null || true)"
+  binary_linkage="$(docker_bench_binary_linkage "$ldd_output")"
+  version_output=""
+  if [[ "$binary_name" == "nvpn" ]]; then
+    version_output="$("${COMPOSE[@]}" exec -T "$service" nvpn version --verbose 2>/dev/null || true)"
+  fi
   nvpn_version="${version_output%%$'\n'*}"
   fips_core_version="$(printf '%s\n' "$version_output" | sed -n 's/^fips_core_version: //p')"
   online_cpus="$("${COMPOSE[@]}" exec -T "$service" getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
@@ -710,14 +732,18 @@ docker_bench_runtime_service_provenance() {
 
   jq -n \
     --arg image_id "$image_id" \
+    --arg binary_name "$binary_name" \
     --arg binary_sha256 "$binary_sha256" \
+    --arg binary_linkage "$binary_linkage" \
     --arg nvpn_version "$nvpn_version" \
     --arg fips_core_version "$fips_core_version" \
     --arg online_cpus "$online_cpus" \
     --arg cpuset_cpus "$cpuset_cpus" \
     '{
       image_id: (if $image_id == "" then null else $image_id end),
+      binary_name: $binary_name,
       binary_sha256: (if $binary_sha256 == "" then null else $binary_sha256 end),
+      binary_linkage: $binary_linkage,
       nvpn_version: (if $nvpn_version == "" then null else $nvpn_version end),
       fips_core_version: (if $fips_core_version == "" then null else $fips_core_version end),
       online_cpus: (if $online_cpus == "" then null else ($online_cpus | tonumber) end),
@@ -870,8 +896,17 @@ docker_bench_write_metadata() {
   IFS=$'\t' read -r host_load1 host_load5 host_load15 < <(docker_bench_host_loadavg) || true
   host_online_cpus="$(docker_bench_host_online_cpus)"
   host_load1_per_cpu="$(docker_bench_host_load_per_cpu "$host_load1" "$host_online_cpus")"
-  runtime_node_a="$(docker_bench_runtime_service_provenance node-a)"
-  runtime_node_b="$(docker_bench_runtime_service_provenance node-b)"
+  runtime_node_a="$(docker_bench_runtime_service_provenance node-a "$backend")"
+  runtime_node_b="$(docker_bench_runtime_service_provenance node-b "$backend")"
+  local runtime_linkage_a runtime_linkage_b
+  runtime_linkage_a="$(jq -r '.binary_linkage // ""' <<<"$runtime_node_a")"
+  runtime_linkage_b="$(jq -r '.binary_linkage // ""' <<<"$runtime_node_b")"
+  if [[ -n "$runtime_linkage_a" && -n "$runtime_linkage_b" \
+      && "$runtime_linkage_a" != "$runtime_linkage_b" ]]; then
+    printf 'docker bench metadata failed: node linkage mismatch: node-a=%s node-b=%s\n' \
+      "$runtime_linkage_a" "$runtime_linkage_b" >&2
+    return 1
+  fi
   jq -n \
     --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg backend "$backend" \
