@@ -26,6 +26,11 @@ mod windows_network;
 mod windows_tunnel;
 #[cfg(target_os = "linux")]
 mod wireguard_exit;
+
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use fips_core::discovery::nostr::{OverlayEndpointAdvert, OverlayTransportKind};
 use std::collections::{HashMap, HashSet};
 #[cfg(target_os = "windows")]
