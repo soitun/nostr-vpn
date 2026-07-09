@@ -86,9 +86,6 @@ if [[ -n "$FIPS_REPO_PATH" ]]; then
     ' "$WORK_DIR/Cargo.toml"
 fi
 
-if [[ -z "$CASHU_SERVICE_REPO_PATH" && -d "$WORKSPACE/../cashu-service/.git" ]]; then
-  CASHU_SERVICE_REPO_PATH="$(cd "$WORKSPACE/../cashu-service" && pwd)"
-fi
 if [[ -n "$CASHU_SERVICE_REPO_PATH" ]]; then
   CASHU_PATCH_DIR="$WORK_DIR/.cashu-service-patch"
   mkdir -p "$CASHU_PATCH_DIR"
@@ -103,9 +100,6 @@ if [[ -n "$CASHU_SERVICE_REPO_PATH" ]]; then
     ' "$WORK_DIR/Cargo.toml"
 fi
 
-if [[ -z "$CDK_SPILMAN_REPO_PATH" && -d "$WORKSPACE/../cashu_spilman_channels/.git" ]]; then
-  CDK_SPILMAN_REPO_PATH="$(cd "$WORKSPACE/../cashu_spilman_channels" && pwd)"
-fi
 if [[ -n "$CDK_SPILMAN_REPO_PATH" ]]; then
   CDK_SPILMAN_PATCH_DIR="$WORK_DIR/cashu_spilman_channels"
   mkdir -p "$CDK_SPILMAN_PATCH_DIR"
