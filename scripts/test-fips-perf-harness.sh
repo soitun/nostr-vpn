@@ -1421,10 +1421,17 @@ test_nvpn_perf_docker_placement_hunt_hooks() {
 
 test_nvpn_perf_docker_identity_hooks() {
   local script="$ROOT_DIR/scripts/perf-docker.sh"
+  local summary_lib="$ROOT_DIR/scripts/lib-docker-bench-summary.sh"
   assert_file_contains "$script" "NVPN_DOCKER_NODE_A_NOSTR_SECRET_KEY" "node-a deterministic secret env"
   assert_file_contains "$script" "NVPN_DOCKER_NODE_A_NOSTR_PUBLIC_KEY" "node-a deterministic public env"
   assert_file_contains "$script" "NVPN_DOCKER_NODE_B_NOSTR_SECRET_KEY" "node-b deterministic secret env"
   assert_file_contains "$script" "NVPN_DOCKER_NODE_B_NOSTR_PUBLIC_KEY" "node-b deterministic public env"
+  assert_file_contains "$script" "DEFAULT_NODE_A_NOSTR_SECRET_KEY" "node-a default Docker perf identity"
+  assert_file_contains "$script" "DEFAULT_NODE_B_NOSTR_SECRET_KEY" "node-b default Docker perf identity"
+  assert_file_contains "$script" "DEFAULT_NODE_A_ID" "node-a default Docker perf node-id"
+  assert_file_contains "$script" "DEFAULT_NODE_B_ID" "node-b default Docker perf node-id"
+  assert_file_contains "$script" "NVPN_DOCKER_NOSTR_IDENTITY_SOURCE" "effective identity source metadata"
+  assert_file_contains "$script" "nvpn-runtime-identities.json" "runtime identity artifact"
   assert_file_contains "$script" "NVPN_DOCKER_NODE_A_ID" "node-a deterministic node-id env"
   assert_file_contains "$script" "NVPN_DOCKER_NODE_B_ID" "node-b deterministic node-id env"
   assert_file_contains "$script" "validate_nostr_identity_env" "deterministic identity validation hook"
@@ -1435,6 +1442,8 @@ test_nvpn_perf_docker_identity_hooks() {
   assert_file_contains "$script" "install_configured_node_ids" "deterministic node-id install hook"
   assert_file_contains "$script" ".config.toml.nostr-secret-key.secret" "Linux sidecar secret install"
   assert_file_contains "$script" "stored-in-private-secret-file" "redacted config marker after identity install"
+  assert_file_contains "$summary_lib" "runtime_identity" "runtime identity metadata"
+  assert_file_contains "$summary_lib" "NVPN_DOCKER_NODE_A_RUNTIME_PUBLIC_KEY" "runtime public key metadata"
 }
 
 test_host_snapshot_artifact() {

@@ -14,11 +14,12 @@
 #   NVPN_DOCKER_REQUIRE_NO_DIRECT_FMP=1
 #   NVPN_DOCKER_REQUIRE_NO_FSP_AEAD_HELPERS=1
 #   NVPN_DOCKER_NODE_{A,B}_NOSTR_{SECRET_KEY,PUBLIC_KEY}=...
-#     installs throwaway deterministic Nostr identities into the Docker nodes
-#     after `nvpn init`; values must be single-token nsec/npub or hex strings.
+#     overrides the public Docker-only benchmark identities installed after
+#     `nvpn init`; values must be single-token nsec/npub or hex strings.
 #   NVPN_DOCKER_NODE_{A,B}_ID=...
-#     pins generated node IDs for config replay. FSP owner placement can still
-#     vary with runtime transport/session assignment; keep placement guards on.
+#     overrides the public Docker-only benchmark node IDs. FSP owner placement
+#     can still vary with runtime transport/session assignment; keep placement
+#     guards on.
 #   NVPN_DOCKER_PLACEMENT_PREFLIGHT_MODE=tcp|ping
 #     defaults to a short TCP preflight when placement guards are enabled. TCP
 #     produces a real bulk stream, so placement assertions do not depend on
@@ -100,12 +101,32 @@ PLACEMENT_PREFLIGHT_STREAMS="${NVPN_DOCKER_PLACEMENT_PREFLIGHT_STREAMS:-4}"
 PLACEMENT_PREFLIGHT_PING_COUNT="${NVPN_DOCKER_PLACEMENT_PREFLIGHT_PING_COUNT:-120}"
 PLACEMENT_PREFLIGHT_PING_SIZE="${NVPN_DOCKER_PLACEMENT_PREFLIGHT_PING_SIZE:-1200}"
 PLACEMENT_PREFLIGHT_WAIT_SECS="${NVPN_DOCKER_PLACEMENT_PREFLIGHT_WAIT_SECS:-$((PIPELINE_INTERVAL_SECS + 1))}"
-NODE_A_NOSTR_SECRET_KEY="${NVPN_DOCKER_NODE_A_NOSTR_SECRET_KEY:-}"
-NODE_A_NOSTR_PUBLIC_KEY="${NVPN_DOCKER_NODE_A_NOSTR_PUBLIC_KEY:-}"
-NODE_B_NOSTR_SECRET_KEY="${NVPN_DOCKER_NODE_B_NOSTR_SECRET_KEY:-}"
-NODE_B_NOSTR_PUBLIC_KEY="${NVPN_DOCKER_NODE_B_NOSTR_PUBLIC_KEY:-}"
-NODE_A_ID="${NVPN_DOCKER_NODE_A_ID:-}"
-NODE_B_ID="${NVPN_DOCKER_NODE_B_ID:-}"
+DEFAULT_NODE_A_NOSTR_SECRET_KEY="f55a70f3b3c2dd82bc7004118a246602cafa581cffced63e74676f0730c49478"
+DEFAULT_NODE_A_NOSTR_PUBLIC_KEY="60661f4fd74e2274ee536d3ef0ba2261dcd2448e9b0de5fcb0b27fecb76cc3ed"
+DEFAULT_NODE_B_NOSTR_SECRET_KEY="8e7a15bb8430bbd511b66340483f99177d6ea5e9a7bcf9d8f0d934747838d2d6"
+DEFAULT_NODE_B_NOSTR_PUBLIC_KEY="1cd7d884c2b66c224eb13bcb83f17e0dab90adc28092df28b90c3073df5794ed"
+DEFAULT_NODE_A_ID="11111111-1111-4111-8111-111111111111"
+DEFAULT_NODE_B_ID="22222222-2222-4222-8222-222222222222"
+NOSTR_IDENTITY_SOURCE="docker-default"
+NODE_ID_SOURCE="docker-default"
+if [[ -n "${NVPN_DOCKER_NODE_A_NOSTR_SECRET_KEY:-}${NVPN_DOCKER_NODE_A_NOSTR_PUBLIC_KEY:-}${NVPN_DOCKER_NODE_B_NOSTR_SECRET_KEY:-}${NVPN_DOCKER_NODE_B_NOSTR_PUBLIC_KEY:-}" ]]; then
+  NOSTR_IDENTITY_SOURCE="custom"
+fi
+if [[ -n "${NVPN_DOCKER_NODE_A_ID:-}${NVPN_DOCKER_NODE_B_ID:-}" ]]; then
+  NODE_ID_SOURCE="custom"
+fi
+NODE_A_NOSTR_SECRET_KEY="${NVPN_DOCKER_NODE_A_NOSTR_SECRET_KEY:-$DEFAULT_NODE_A_NOSTR_SECRET_KEY}"
+NODE_A_NOSTR_PUBLIC_KEY="${NVPN_DOCKER_NODE_A_NOSTR_PUBLIC_KEY:-$DEFAULT_NODE_A_NOSTR_PUBLIC_KEY}"
+NODE_B_NOSTR_SECRET_KEY="${NVPN_DOCKER_NODE_B_NOSTR_SECRET_KEY:-$DEFAULT_NODE_B_NOSTR_SECRET_KEY}"
+NODE_B_NOSTR_PUBLIC_KEY="${NVPN_DOCKER_NODE_B_NOSTR_PUBLIC_KEY:-$DEFAULT_NODE_B_NOSTR_PUBLIC_KEY}"
+NODE_A_ID="${NVPN_DOCKER_NODE_A_ID:-$DEFAULT_NODE_A_ID}"
+NODE_B_ID="${NVPN_DOCKER_NODE_B_ID:-$DEFAULT_NODE_B_ID}"
+NVPN_DOCKER_NOSTR_IDENTITY_SOURCE="$NOSTR_IDENTITY_SOURCE"
+NVPN_DOCKER_NODE_ID_SOURCE="$NODE_ID_SOURCE"
+NVPN_DOCKER_NODE_A_NOSTR_PUBLIC_KEY_EFFECTIVE="$NODE_A_NOSTR_PUBLIC_KEY"
+NVPN_DOCKER_NODE_B_NOSTR_PUBLIC_KEY_EFFECTIVE="$NODE_B_NOSTR_PUBLIC_KEY"
+NVPN_DOCKER_NODE_A_ID_EFFECTIVE="$NODE_A_ID"
+NVPN_DOCKER_NODE_B_ID_EFFECTIVE="$NODE_B_ID"
 NVPN_DOCKER_PIPELINE_TRACE="$PIPELINE_TRACE"
 NVPN_DOCKER_PIPELINE_INTERVAL_SECS="$PIPELINE_INTERVAL_SECS"
 DIAGNOSTICS_READY=0
@@ -222,6 +243,17 @@ validate_nostr_identity_env() {
     echo "perf: Docker Nostr identity env is all-or-none; set secret/public for both node-a and node-b" >&2
     return 2
   fi
+
+  for value in \
+    "$NODE_A_NOSTR_SECRET_KEY" \
+    "$NODE_A_NOSTR_PUBLIC_KEY" \
+    "$NODE_B_NOSTR_SECRET_KEY" \
+    "$NODE_B_NOSTR_PUBLIC_KEY"; do
+    if ! identity_value_is_safe_token "$value"; then
+      echo "perf: effective Docker Nostr identity values must be single alphanumeric nsec/npub or hex tokens" >&2
+      return 2
+    fi
+  done
 }
 
 validate_node_id_env() {
@@ -245,6 +277,13 @@ validate_node_id_env() {
     echo "perf: Docker node ID env is all-or-none; set node IDs for both node-a and node-b" >&2
     return 2
   fi
+
+  for value in "$NODE_A_ID" "$NODE_B_ID"; do
+    if ! node_id_value_is_safe_token "$value"; then
+      echo "perf: effective Docker node IDs must be single alphanumeric/dash tokens" >&2
+      return 2
+    fi
+  done
 }
 
 EXTRA_CONNECT_ENV="$(docker_bench_effective_extra_env)"
@@ -591,6 +630,32 @@ install_configured_node_ids() {
   [[ -n "$NODE_A_ID" && -n "$NODE_B_ID" ]] || return 0
   "${COMPOSE[@]}" exec -T node-a nvpn set --node-id "$NODE_A_ID" >/dev/null
   "${COMPOSE[@]}" exec -T node-b nvpn set --node-id "$NODE_B_ID" >/dev/null
+}
+
+write_runtime_identity_artifact() {
+  jq -n \
+    --arg nostr_identity_source "$NOSTR_IDENTITY_SOURCE" \
+    --arg node_id_source "$NODE_ID_SOURCE" \
+    --arg node_a_public_key "$ALICE_NPUB" \
+    --arg node_b_public_key "$BOB_NPUB" \
+    --arg node_a_node_id "$NODE_A_ID" \
+    --arg node_b_node_id "$NODE_B_ID" \
+    --arg node_a_tunnel_ip "$ALICE_TUNNEL_IP" \
+    --arg node_b_tunnel_ip "$BOB_TUNNEL_IP" \
+    '{
+      nostr_identity_source: $nostr_identity_source,
+      node_id_source: $node_id_source,
+      node_a: {
+        public_key: $node_a_public_key,
+        node_id: $node_a_node_id,
+        tunnel_ip: $node_a_tunnel_ip
+      },
+      node_b: {
+        public_key: $node_b_public_key,
+        node_id: $node_b_node_id,
+        tunnel_ip: $node_b_tunnel_ip
+      }
+    }' >"$RAW_DIR/nvpn-runtime-identities.json"
 }
 
 pipeline_line_count() {
@@ -1247,6 +1312,14 @@ fi
 
 ALICE_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip | tr -d '\r')"
 BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip | tr -d '\r')"
+NVPN_DOCKER_NODE_A_RUNTIME_PUBLIC_KEY="$ALICE_NPUB"
+NVPN_DOCKER_NODE_B_RUNTIME_PUBLIC_KEY="$BOB_NPUB"
+NVPN_DOCKER_NODE_A_RUNTIME_NODE_ID="$NODE_A_ID"
+NVPN_DOCKER_NODE_B_RUNTIME_NODE_ID="$NODE_B_ID"
+NVPN_DOCKER_NODE_A_RUNTIME_TUNNEL_IP="$ALICE_TUNNEL_IP"
+NVPN_DOCKER_NODE_B_RUNTIME_TUNNEL_IP="$BOB_TUNNEL_IP"
+write_runtime_identity_artifact
+docker_bench_write_metadata nvpn "$DURATION"
 
 connect_env=""
 if is_true "$PIPELINE_TRACE"; then

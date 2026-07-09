@@ -698,6 +698,14 @@ docker_bench_write_metadata() {
   local nvpn_git_dirty=""
   local fips_git_head=""
   local fips_git_dirty=""
+  local nostr_identity_source="${NVPN_DOCKER_NOSTR_IDENTITY_SOURCE:-}"
+  local node_id_source="${NVPN_DOCKER_NODE_ID_SOURCE:-}"
+  local node_a_public_key="${NVPN_DOCKER_NODE_A_RUNTIME_PUBLIC_KEY:-${NVPN_DOCKER_NODE_A_NOSTR_PUBLIC_KEY_EFFECTIVE:-}}"
+  local node_b_public_key="${NVPN_DOCKER_NODE_B_RUNTIME_PUBLIC_KEY:-${NVPN_DOCKER_NODE_B_NOSTR_PUBLIC_KEY_EFFECTIVE:-}}"
+  local node_a_node_id="${NVPN_DOCKER_NODE_A_RUNTIME_NODE_ID:-${NVPN_DOCKER_NODE_A_ID_EFFECTIVE:-}}"
+  local node_b_node_id="${NVPN_DOCKER_NODE_B_RUNTIME_NODE_ID:-${NVPN_DOCKER_NODE_B_ID_EFFECTIVE:-}}"
+  local node_a_tunnel_ip="${NVPN_DOCKER_NODE_A_RUNTIME_TUNNEL_IP:-}"
+  local node_b_tunnel_ip="${NVPN_DOCKER_NODE_B_RUNTIME_TUNNEL_IP:-}"
   local host_load1=""
   local host_load5=""
   local host_load15=""
@@ -851,6 +859,14 @@ docker_bench_write_metadata() {
     --arg nvpn_git_dirty "$nvpn_git_dirty" \
     --arg fips_git_head "$fips_git_head" \
     --arg fips_git_dirty "$fips_git_dirty" \
+    --arg nostr_identity_source "$nostr_identity_source" \
+    --arg node_id_source "$node_id_source" \
+    --arg node_a_public_key "$node_a_public_key" \
+    --arg node_b_public_key "$node_b_public_key" \
+    --arg node_a_node_id "$node_a_node_id" \
+    --arg node_b_node_id "$node_b_node_id" \
+    --arg node_a_tunnel_ip "$node_a_tunnel_ip" \
+    --arg node_b_tunnel_ip "$node_b_tunnel_ip" \
     --arg guard_min_tcp_mbps "${NVPN_DOCKER_MIN_TCP_MBPS:-}" \
     --arg guard_min_tcp_single_mbps "${NVPN_DOCKER_MIN_TCP_SINGLE_MBPS:-}" \
     --arg guard_min_tcp_4_mbps "${NVPN_DOCKER_MIN_TCP_4_MBPS:-}" \
@@ -1013,6 +1029,20 @@ docker_bench_write_metadata() {
         ),
         udp1000_bandwidth: string_or_null($iperf_udp1000_bandwidth),
         udp1000_per_stream_bandwidth: string_or_null($iperf_udp1000_per_stream_bandwidth)
+      },
+      runtime_identity: {
+        nostr_identity_source: string_or_null($nostr_identity_source),
+        node_id_source: string_or_null($node_id_source),
+        node_a: {
+          public_key: string_or_null($node_a_public_key),
+          node_id: string_or_null($node_a_node_id),
+          tunnel_ip: string_or_null($node_a_tunnel_ip)
+        },
+        node_b: {
+          public_key: string_or_null($node_b_public_key),
+          node_id: string_or_null($node_b_node_id),
+          tunnel_ip: string_or_null($node_b_tunnel_ip)
+        }
       },
       guard_thresholds: {
         min_tcp_mbps: string_or_null($guard_min_tcp_mbps),
