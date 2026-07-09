@@ -1270,8 +1270,10 @@ for service in node-a node-b; do
 done
 docker_bench_configure_iperf_socket_buffer_limits perf "$IPERF_SOCKET_BUFFER"
 
-"${COMPOSE[@]}" exec -T node-a nvpn init --force >/dev/null
-"${COMPOSE[@]}" exec -T node-b nvpn init --force >/dev/null
+"${COMPOSE[@]}" exec -T node-a nvpn init --force \
+  --device "$NODE_A_NOSTR_PUBLIC_KEY" --device "$NODE_B_NOSTR_PUBLIC_KEY" >/dev/null
+"${COMPOSE[@]}" exec -T node-b nvpn init --force \
+  --device "$NODE_A_NOSTR_PUBLIC_KEY" --device "$NODE_B_NOSTR_PUBLIC_KEY" >/dev/null
 install_configured_nostr_identities
 install_configured_node_ids
 ALICE_NPUB="$(nostr_pubkey_from_config node-a)"
@@ -1280,13 +1282,6 @@ if [[ -z "$ALICE_NPUB" || -z "$BOB_NPUB" ]]; then
   echo "perf: unable to resolve node npubs from config" >&2
   exit 1
 fi
-
-"${COMPOSE[@]}" exec -T node-a nvpn set \
-  --participant "$ALICE_NPUB" \
-  --participant "$BOB_NPUB" >/dev/null
-"${COMPOSE[@]}" exec -T node-b nvpn set \
-  --participant "$ALICE_NPUB" \
-  --participant "$BOB_NPUB" >/dev/null
 
 "${COMPOSE[@]}" exec -T node-a nvpn set \
   --network-id "$NETWORK_ID" \
