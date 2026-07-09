@@ -80,9 +80,9 @@ if [[ -n "$FIPS_REPO_PATH" ]]; then
   NVPN_LOCAL_FIPS_ENDPOINT_PATH=".fips-patch/crates/fips-endpoint" \
   NVPN_LOCAL_FIPS_IDENTITY_PATH=".fips-patch/crates/fips-identity" \
     perl -0pi -e '
-      s#fips-core = \{ version = "([^"]+)", path = "[^"]*" \}#fips-core = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_CORE_PATH}" }#;
-      s#fips-endpoint = \{ version = "([^"]+)", path = "[^"]*" \}#fips-endpoint = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_ENDPOINT_PATH}" }#;
-      s#fips-identity = \{ version = "([^"]+)", path = "[^"]*" \}#fips-identity = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_IDENTITY_PATH}" }#;
+      s#(fips-core = \{[^}\n]*path = ")[^"]*(")#$1$ENV{NVPN_LOCAL_FIPS_CORE_PATH}$2#;
+      s#(fips-endpoint = \{[^}\n]*path = ")[^"]*(")#$1$ENV{NVPN_LOCAL_FIPS_ENDPOINT_PATH}$2#;
+      s#(fips-identity = \{[^}\n]*path = ")[^"]*(")#$1$ENV{NVPN_LOCAL_FIPS_IDENTITY_PATH}$2#;
     ' "$WORK_DIR/Cargo.toml"
 fi
 
