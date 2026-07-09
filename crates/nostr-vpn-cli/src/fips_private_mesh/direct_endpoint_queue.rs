@@ -275,9 +275,7 @@ fn limit_queued_direct_endpoint_runs_to_remaining(
     let enqueued_at = queued.enqueued_at;
     let packet_count = queued.packets;
     let source_node_addr = queued.source_node_addr;
-    let runs = std::mem::take(&mut queued.runs);
-    let (head, tail) = split_direct_packet_runs_at_packet_limit(runs, remaining);
-    queued.runs = head;
+    let tail = split_queued_direct_packet_runs_at_packet_limit(&mut queued.runs, remaining);
     if let Some(source_node_addr) = source_node_addr {
         queued.packets = remaining;
         queued.source_node_addr = (remaining > 0).then_some(source_node_addr);
@@ -326,45 +324,39 @@ fn record_direct_endpoint_queue_residence(queued: &FipsDirectEndpointQueuedRuns)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn split_direct_packet_runs_at_packet_limit(
-    runs: Vec<FipsEndpointDirectPacketRun>,
+fn split_queued_direct_packet_runs_at_packet_limit(
+    runs: &mut Vec<FipsEndpointDirectPacketRun>,
     limit: usize,
-) -> (
-    Vec<FipsEndpointDirectPacketRun>,
-    Vec<FipsEndpointDirectPacketRun>,
-) {
+) -> Vec<FipsEndpointDirectPacketRun> {
     if limit == 0 {
-        return (Vec::new(), runs);
+        return std::mem::take(runs);
     }
 
-    let mut head = Vec::new();
-    let mut tail = Vec::new();
-    let mut remaining = limit;
-    for mut run in runs {
-        if remaining == 0 {
-            tail.push(run);
+    let mut consumed = 0usize;
+    let mut index = 0usize;
+    while index < runs.len() {
+        let next = consumed.saturating_add(runs[index].len());
+        if next < limit {
+            consumed = next;
+            index = index.saturating_add(1);
             continue;
         }
-
-        let run_len = run.len();
-        if run_len <= remaining {
-            remaining -= run_len;
-            head.push(run);
-            continue;
+        if next == limit {
+            return runs.split_off(index.saturating_add(1));
         }
 
-        if let Some(tail_run) = run.split_off_packets(remaining) {
-            if !run.is_empty() {
-                head.push(run);
-            }
+        let split_at = limit - consumed;
+        let mut tail = Vec::with_capacity(runs.len().saturating_sub(index));
+        if let Some(tail_run) = runs[index].split_off_packets(split_at) {
             if !tail_run.is_empty() {
                 tail.push(tail_run);
             }
         }
-        remaining = 0;
+        tail.extend(runs.split_off(index.saturating_add(1)));
+        return tail;
     }
 
-    (head, tail)
+    Vec::new()
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
