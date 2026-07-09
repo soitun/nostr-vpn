@@ -335,7 +335,13 @@ run_wireguard_go_pass() {
   local tcp_8_json="$prefix-tcp-8.json"
   local udp_200_json="$prefix-udp-200m.json"
   local udp_1000_json="$prefix-udp-1000m.json"
+  local tcp_single_reverse_json="$prefix-tcp-single-b-to-a.json"
+  local tcp_4_reverse_json="$prefix-tcp-4-b-to-a.json"
+  local tcp_8_reverse_json="$prefix-tcp-8-b-to-a.json"
+  local udp_200_reverse_json="$prefix-udp-200m-b-to-a.json"
+  local udp_1000_reverse_json="$prefix-udp-1000m-b-to-a.json"
   local ping_output="$prefix-ping.txt"
+  local -a udp1000_args
 
   reset_wg
   setup_wg
@@ -351,15 +357,21 @@ run_wireguard_go_pass() {
   "${COMPOSE[@]}" exec -d node-b sh -lc "iperf3 -s -D --logfile /tmp/iperf3-server.log"
   sleep 1
 
-  run_test_json tcp-single "TCP single stream" "$tcp_single_json"
-  run_test_json tcp-4 "TCP 4 streams" "$tcp_4_json" -P 4
-  run_test_json tcp-8 "TCP 8 streams" "$tcp_8_json" -P 8
-  run_test_json udp-200 "UDP 200 Mbit target" "$udp_200_json" -u -b 200M
+  run_test_json tcp-single "TCP single stream (A -> B)" "$tcp_single_json"
+  run_test_json tcp-single-b-to-a "TCP single stream (B -> A)" "$tcp_single_reverse_json" -R
+  run_test_json tcp-4 "TCP 4 streams (A -> B)" "$tcp_4_json" -P 4
+  run_test_json tcp-4-b-to-a "TCP 4 streams (B -> A)" "$tcp_4_reverse_json" -P 4 -R
+  run_test_json tcp-8 "TCP 8 streams (A -> B)" "$tcp_8_json" -P 8
+  run_test_json tcp-8-b-to-a "TCP 8 streams (B -> A)" "$tcp_8_reverse_json" -P 8 -R
+  run_test_json udp-200 "UDP 200 Mbit target (A -> B)" "$udp_200_json" -u -b 200M
+  run_test_json udp-200-b-to-a "UDP 200 Mbit target (B -> A)" "$udp_200_reverse_json" -u -b 200M -R
   if [[ ${#UDP1000_PARALLEL_ARGS[@]} -gt 0 ]]; then
-    run_test_json udp-1000 "UDP 1000 Mbit target" "$udp_1000_json" -u -b "$UDP1000_PER_STREAM_BANDWIDTH" "${UDP1000_PARALLEL_ARGS[@]}"
+    udp1000_args=(-u -b "$UDP1000_PER_STREAM_BANDWIDTH" "${UDP1000_PARALLEL_ARGS[@]}")
   else
-    run_test_json udp-1000 "UDP 1000 Mbit target" "$udp_1000_json" -u -b "$UDP1000_BANDWIDTH"
+    udp1000_args=(-u -b "$UDP1000_BANDWIDTH")
   fi
+  run_test_json udp-1000 "UDP 1000 Mbit target (A -> B)" "$udp_1000_json" "${udp1000_args[@]}"
+  run_test_json udp-1000-b-to-a "UDP 1000 Mbit target (B -> A)" "$udp_1000_reverse_json" "${udp1000_args[@]}" -R
   write_iperf_socket_buffer_summary
   write_udp_receiver_limits
   run_ping_summary "$ping_output"
@@ -374,7 +386,12 @@ run_wireguard_go_pass() {
     "$tcp_8_json" \
     "$udp_200_json" \
     "$udp_1000_json" \
-    "$ping_output"
+    "$ping_output" \
+    "$tcp_single_reverse_json" \
+    "$tcp_4_reverse_json" \
+    "$tcp_8_reverse_json" \
+    "$udp_200_reverse_json" \
+    "$udp_1000_reverse_json"
 }
 
 main() {
@@ -382,7 +399,7 @@ main() {
   cleanup
   docker_bench_init_summary
   write_wireguard_go_cpu_phase_header
-  docker_bench_write_metadata wireguard-go "$DURATION"
+  docker_bench_write_metadata wireguard-go "$DURATION" "a_to_b,b_to_a"
   write_wireguard_go_source_metadata
   docker_bench_validate_host_quiet perf-wireguard-go
   start_compose_services

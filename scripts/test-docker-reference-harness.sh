@@ -1809,6 +1809,23 @@ test_nvpn_perf_docker_runs_bidirectional_scorecard() {
   assert_file_contains "$script" 'run_test_json udp-1000-b-to-a "UDP 1000 Mbit target (B -> A)" "$udp_1000_reverse_json"' "nvpn Docker perf reverse UDP1000"
 }
 
+test_reference_perf_scripts_run_bidirectional_scorecard() {
+  local backend script phase metric reverse_runs summary_uses
+  for backend in wireguard-go boringtun; do
+    script="$ROOT_DIR/scripts/perf-docker-$backend.sh"
+    reverse_runs="$(grep -c '^  run_test_json .*b-to-a .* -R$' "$script" || true)"
+    assert_eq "$reverse_runs" "5" "$backend Docker perf reverse phase count"
+    assert_file_contains "$script" "docker_bench_write_metadata $backend \"\$DURATION\" \"a_to_b,b_to_a\"" "$backend Docker perf direction metadata"
+    for phase in tcp-single tcp-4 tcp-8 udp-200 udp-1000; do
+      assert_file_contains "$script" "run_test_json $phase-b-to-a " "$backend Docker perf reverse $phase"
+    done
+    for metric in tcp_single tcp_4 tcp_8 udp_200 udp_1000; do
+      summary_uses="$(grep -Fc "\"\$${metric}_reverse_json\"" "$script" || true)"
+      assert_eq "$summary_uses" "2" "$backend Docker perf $metric reverse run and summary use"
+    done
+  done
+}
+
 test_wireguard_go_perf_docker_records_cpu_phase_artifact() {
   local script="$ROOT_DIR/scripts/perf-docker-wireguard-go.sh"
   assert_file_contains "$script" "wireguard-go-cpu-phases.tsv" "wireguard-go Docker perf CPU artifact"
@@ -1899,6 +1916,7 @@ test_docker_comparison_selects_wireguard_go_reference
 test_docker_comparison_labels_same_backend_profiles
 test_nvpn_perf_docker_records_daemon_cpu_phase_artifact
 test_nvpn_perf_docker_runs_bidirectional_scorecard
+test_reference_perf_scripts_run_bidirectional_scorecard
 test_wireguard_go_perf_docker_records_cpu_phase_artifact
 test_docker_perf_scripts_share_iperf_socket_buffer_limit_helper
 test_docker_perf_scripts_reject_translated_processes
