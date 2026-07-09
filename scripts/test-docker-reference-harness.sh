@@ -99,6 +99,38 @@ write_udp_json() {
 EOF
 }
 
+write_reverse_tcp_json() {
+  local path="$1"
+  cat >"$path" <<'EOF'
+{
+  "end": {
+    "sum_received": {
+      "bits_per_second": 765432100,
+      "bytes": 75000000
+    },
+    "sum_sent": {
+      "retransmits": 11
+    }
+  }
+}
+EOF
+}
+
+write_reverse_udp_json() {
+  local path="$1"
+  cat >"$path" <<'EOF'
+{
+  "end": {
+    "sum": {
+      "bits_per_second": 543210000,
+      "bytes": 50000000,
+      "lost_percent": 2.5
+    }
+  }
+}
+EOF
+}
+
 write_ping_output() {
   local path="$1"
   cat >"$path" <<'EOF'
@@ -174,7 +206,8 @@ test_udp1000_parallel_bandwidth_helpers_preserve_total_target() {
 
 test_summary_row() {
   local dir tcp_single tcp_4 tcp_8 udp_200 udp_1000 ping_output
-  local header row nvpn_row fields nvpn_fields lane_header lane_row
+  local tcp_single_reverse tcp_4_reverse tcp_8_reverse udp_200_reverse udp_1000_reverse
+  local header row nvpn_row fields nvpn_fields lane_header lane_row direction_header direction_row
   dir="$(mktemp -d)"
   OUTPUT_DIR="$dir/out"
   RAW_DIR="$OUTPUT_DIR/raw"
@@ -187,27 +220,42 @@ test_summary_row() {
   tcp_8="$dir/tcp-8.json"
   udp_200="$dir/udp-200.json"
   udp_1000="$dir/udp-1000.json"
+  tcp_single_reverse="$dir/tcp-single-b-to-a.json"
+  tcp_4_reverse="$dir/tcp-4-b-to-a.json"
+  tcp_8_reverse="$dir/tcp-8-b-to-a.json"
+  udp_200_reverse="$dir/udp-200-b-to-a.json"
+  udp_1000_reverse="$dir/udp-1000-b-to-a.json"
   ping_output="$dir/ping.txt"
   write_tcp_json "$tcp_single"
   write_tcp_json "$tcp_4"
   write_tcp_json "$tcp_8"
   write_udp_json "$udp_200"
   write_udp_json "$udp_1000"
+  write_reverse_tcp_json "$tcp_single_reverse"
+  write_reverse_tcp_json "$tcp_4_reverse"
+  write_reverse_tcp_json "$tcp_8_reverse"
+  write_reverse_udp_json "$udp_200_reverse"
+  write_reverse_udp_json "$udp_1000_reverse"
   write_ping_output "$ping_output"
 
   docker_bench_append_summary_row boringtun 1 "$DURATION" "$RAW_DIR" "$tcp_single" "$tcp_4" "$tcp_8" "$udp_200" "$udp_1000" "$ping_output"
-  docker_bench_append_summary_row nvpn "" "$DURATION" "$RAW_DIR" "$tcp_single" "$tcp_4" "$tcp_8" "$udp_200" "$udp_1000" "$ping_output"
+  docker_bench_append_summary_row nvpn "" "$DURATION" "$RAW_DIR" "$tcp_single" "$tcp_4" "$tcp_8" "$udp_200" "$udp_1000" "$ping_output" \
+    "$tcp_single_reverse" "$tcp_4_reverse" "$tcp_8_reverse" "$udp_200_reverse" "$udp_1000_reverse"
   header="$(awk -F '\t' 'NR == 1 { print $1 "\t" $2 "\t" $3 "\t" $16 }' "$SUMMARY_TSV")"
   row="$(awk -F '\t' 'NR == 2 { print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $10 "\t" $11 "\t" $14 "\t" $15 }' "$SUMMARY_TSV")"
   nvpn_row="$(awk -F '\t' 'NR == 3 { print $1 "\t" $2 "\t" $3 "\t" $4 "\t" $5 "\t" $10 "\t" $11 "\t" $14 "\t" $15 }' "$SUMMARY_TSV")"
   fields="$(awk -F '\t' 'NR == 2 { print NF }' "$SUMMARY_TSV")"
   nvpn_fields="$(awk -F '\t' 'NR == 3 { print NF }' "$SUMMARY_TSV")"
+  direction_header="$(awk -F '\t' 'NR == 1 { for (i = 35; i <= 46; i++) printf "%s%s", (i == 35 ? "" : "\t"), $i }' "$SUMMARY_TSV")"
+  direction_row="$(awk -F '\t' 'NR == 3 { for (i = 35; i <= 46; i++) printf "%s%s", (i == 35 ? "" : "\t"), $i }' "$SUMMARY_TSV")"
 
   assert_eq "$header" $'backend\tthreads\tduration_secs\traw_dir' "summary header"
   assert_eq "$row" $'boringtun\t1\t3\t1234.568\t7\t987.654\t1.25\t0.333333\t1.234' "summary row"
   assert_eq "$nvpn_row" $'nvpn\t\t3\t1234.568\t7\t987.654\t1.25\t0.333333\t1.234' "nvpn summary row"
-  assert_eq "$fields" "34" "summary field count"
-  assert_eq "$nvpn_fields" "34" "nvpn summary field count"
+  assert_eq "$fields" "46" "summary field count"
+  assert_eq "$nvpn_fields" "46" "nvpn summary field count"
+  assert_eq "$direction_header" $'forward_direction\treverse_direction\ttcp_single_b_to_a_mbps\ttcp_single_b_to_a_retrans\ttcp_4_b_to_a_mbps\ttcp_4_b_to_a_retrans\ttcp_8_b_to_a_mbps\ttcp_8_b_to_a_retrans\tudp_200_b_to_a_mbps\tudp_200_b_to_a_loss_pct\tudp_1000_b_to_a_mbps\tudp_1000_b_to_a_loss_pct' "summary direction header"
+  assert_eq "$direction_row" $'a_to_b\tb_to_a\t765.432\t11\t765.432\t11\t765.432\t11\t543.21\t2.5\t543.21\t2.5' "nvpn reverse summary row"
 
   rm -rf "$dir"
 
@@ -359,6 +407,25 @@ test_metadata_writer_records_iperf_timeout() {
   )
 
   assert_eq "$(jq -r '.iperf.timeout_secs' "$metadata")" "11" "metadata iperf timeout"
+
+  rm -rf "$dir"
+}
+
+test_metadata_writer_records_iperf_directions() {
+  local dir metadata
+  dir="$(mktemp -d)"
+  OUTPUT_DIR="$dir/out"
+  metadata="$OUTPUT_DIR/metadata.json"
+  mkdir -p "$OUTPUT_DIR"
+
+  (
+    docker_bench_write_metadata nvpn 3 "a_to_b,b_to_a"
+  )
+
+  assert_eq \
+    "$(jq -c '.iperf.directions' "$metadata")" \
+    '[{"id":"a_to_b","sender":"node-a","receiver":"node-b","iperf_reverse":false},{"id":"b_to_a","sender":"node-b","receiver":"node-a","iperf_reverse":true}]' \
+    "metadata iperf directions"
 
   rm -rf "$dir"
 }
@@ -1346,6 +1413,61 @@ test_docker_benchmark_summary_guards_accept_healthy_fixture() {
   rm -rf "$dir"
 }
 
+test_docker_benchmark_summary_guards_check_reverse_direction() {
+  local dir summary tcp_single tcp_4 tcp_8 udp_200 udp_1000 ping_output
+  local tcp_single_reverse tcp_4_reverse tcp_8_reverse udp_200_reverse udp_1000_reverse
+  dir="$(mktemp -d)"
+  OUTPUT_DIR="$dir/out"
+  RAW_DIR="$OUTPUT_DIR/raw"
+  summary="$OUTPUT_DIR/summary.tsv"
+  SUMMARY_TSV="$summary"
+  docker_bench_init_summary
+
+  tcp_single="$dir/tcp-single.json"
+  tcp_4="$dir/tcp-4.json"
+  tcp_8="$dir/tcp-8.json"
+  udp_200="$dir/udp-200.json"
+  udp_1000="$dir/udp-1000.json"
+  tcp_single_reverse="$dir/tcp-single-b-to-a.json"
+  tcp_4_reverse="$dir/tcp-4-b-to-a.json"
+  tcp_8_reverse="$dir/tcp-8-b-to-a.json"
+  udp_200_reverse="$dir/udp-200-b-to-a.json"
+  udp_1000_reverse="$dir/udp-1000-b-to-a.json"
+  ping_output="$dir/ping.txt"
+  write_tcp_json "$tcp_single"
+  write_tcp_json "$tcp_4"
+  write_tcp_json "$tcp_8"
+  write_udp_json "$udp_200"
+  write_udp_json "$udp_1000"
+  write_reverse_tcp_json "$tcp_single_reverse"
+  write_reverse_tcp_json "$tcp_4_reverse"
+  write_reverse_tcp_json "$tcp_8_reverse"
+  write_reverse_udp_json "$udp_200_reverse"
+  write_reverse_udp_json "$udp_1000_reverse"
+  write_ping_output "$ping_output"
+  docker_bench_append_summary_row nvpn "" 3 "$RAW_DIR" \
+    "$tcp_single" "$tcp_4" "$tcp_8" "$udp_200" "$udp_1000" "$ping_output" \
+    "$tcp_single_reverse" "$tcp_4_reverse" "$tcp_8_reverse" "$udp_200_reverse" "$udp_1000_reverse"
+
+  if (
+    export NVPN_DOCKER_MIN_TCP_MBPS=1000
+    export NVPN_DOCKER_MAX_TCP_RETRANS=10
+    export NVPN_DOCKER_MIN_UDP200_MBPS=600
+    export NVPN_DOCKER_MIN_UDP1000_MBPS=600
+    export NVPN_DOCKER_MAX_UDP_LOSS_PCT=2
+    docker_bench_assert_summary_guards "$summary"
+  ) 2>"$dir/guarded.stderr"; then
+    fail "Docker benchmark guard should check reverse direction"
+  fi
+
+  assert_file_contains "$OUTPUT_DIR/guard-failures.tsv" $'tcp_single_b_to_a_mbps\t>=\t765.432\t1000' "reverse TCP throughput guard"
+  assert_file_contains "$OUTPUT_DIR/guard-failures.tsv" $'tcp_8_b_to_a_retrans\t<=\t11\t10' "reverse TCP retrans guard"
+  assert_file_contains "$OUTPUT_DIR/guard-failures.tsv" $'udp_200_b_to_a_mbps\t>=\t543.21\t600' "reverse UDP throughput guard"
+  assert_file_contains "$OUTPUT_DIR/guard-failures.tsv" $'udp_1000_b_to_a_loss_pct\t<=\t2.5\t2' "reverse UDP loss guard"
+
+  rm -rf "$dir"
+}
+
 test_docker_benchmark_tun_drop_guards_are_opt_in() {
   local dir tun_summary failure_path
   dir="$(mktemp -d)"
@@ -1673,6 +1795,20 @@ test_nvpn_perf_docker_records_daemon_cpu_phase_artifact() {
   assert_file_contains "$script" "docker_bench_iperf_transfer_bytes" "nvpn Docker perf transfer-byte accounting"
 }
 
+test_nvpn_perf_docker_runs_bidirectional_scorecard() {
+  local script="$ROOT_DIR/scripts/perf-docker.sh"
+  local reverse_runs
+  reverse_runs="$(grep -c '^run_test_json .* -R$' "$script" || true)"
+
+  assert_eq "$reverse_runs" "5" "nvpn Docker perf reverse phase count"
+  assert_file_contains "$script" 'docker_bench_write_metadata nvpn "$DURATION" "a_to_b,b_to_a"' "nvpn Docker perf direction metadata"
+  assert_file_contains "$script" 'run_test_json tcp-single-b-to-a "TCP single stream (B -> A)" "$tcp_single_reverse_json" -R' "nvpn Docker perf reverse TCP single"
+  assert_file_contains "$script" 'run_test_json tcp-4-b-to-a "TCP 4 streams (B -> A)" "$tcp_4_reverse_json" -P 4 -R' "nvpn Docker perf reverse TCP 4"
+  assert_file_contains "$script" 'run_test_json tcp-8-b-to-a "TCP 8 streams (B -> A)" "$tcp_8_reverse_json" -P 8 -R' "nvpn Docker perf reverse TCP 8"
+  assert_file_contains "$script" 'run_test_json udp-200-b-to-a "UDP 200 Mbit target (B -> A)" "$udp_200_reverse_json" -u -b 200M -R' "nvpn Docker perf reverse UDP200"
+  assert_file_contains "$script" 'run_test_json udp-1000-b-to-a "UDP 1000 Mbit target (B -> A)" "$udp_1000_reverse_json"' "nvpn Docker perf reverse UDP1000"
+}
+
 test_wireguard_go_perf_docker_records_cpu_phase_artifact() {
   local script="$ROOT_DIR/scripts/perf-docker-wireguard-go.sh"
   assert_file_contains "$script" "wireguard-go-cpu-phases.tsv" "wireguard-go Docker perf CPU artifact"
@@ -1731,6 +1867,7 @@ test_local_fips_repo_path_defaults_to_patch
 test_metadata_writer_records_pipeline_trace
 test_metadata_writer_records_iperf_interval
 test_metadata_writer_records_iperf_timeout
+test_metadata_writer_records_iperf_directions
 test_metadata_writer_records_udp1000_per_stream_bandwidth
 test_metadata_writer_records_guard_thresholds
 test_metadata_writer_records_fips_soak_thresholds
@@ -1752,6 +1889,7 @@ test_docker_comparison_outputs
 test_docker_benchmark_table_outputs
 test_docker_benchmark_summary_guards_are_opt_in
 test_docker_benchmark_summary_guards_accept_healthy_fixture
+test_docker_benchmark_summary_guards_check_reverse_direction
 test_docker_benchmark_tun_drop_guards_are_opt_in
 test_docker_benchmark_pipeline_hard_event_guards_are_opt_in
 test_docker_benchmark_pipeline_hard_event_guard_can_require_all_zero
@@ -1760,6 +1898,7 @@ test_docker_comparison_relaxes_udp_bulk_loss_under_cpu_stress
 test_docker_comparison_selects_wireguard_go_reference
 test_docker_comparison_labels_same_backend_profiles
 test_nvpn_perf_docker_records_daemon_cpu_phase_artifact
+test_nvpn_perf_docker_runs_bidirectional_scorecard
 test_wireguard_go_perf_docker_records_cpu_phase_artifact
 test_docker_perf_scripts_share_iperf_socket_buffer_limit_helper
 test_docker_perf_scripts_reject_translated_processes

@@ -1262,7 +1262,7 @@ docker_bench_init_summary
 write_pipeline_phase_range_header "$PIPELINE_PHASE_RANGES"
 write_daemon_cpu_phase_header
 write_loaded_ping_summary_header
-docker_bench_write_metadata nvpn "$DURATION"
+docker_bench_write_metadata nvpn "$DURATION" "a_to_b,b_to_a"
 docker_bench_validate_host_quiet perf
 start_compose_services
 for service in node-a node-b; do
@@ -1314,7 +1314,7 @@ NVPN_DOCKER_NODE_B_RUNTIME_NODE_ID="$NODE_B_ID"
 NVPN_DOCKER_NODE_A_RUNTIME_TUNNEL_IP="$ALICE_TUNNEL_IP"
 NVPN_DOCKER_NODE_B_RUNTIME_TUNNEL_IP="$BOB_TUNNEL_IP"
 write_runtime_identity_artifact
-docker_bench_write_metadata nvpn "$DURATION"
+docker_bench_write_metadata nvpn "$DURATION" "a_to_b,b_to_a"
 
 connect_env=""
 if is_true "$PIPELINE_TRACE"; then
@@ -1424,17 +1424,28 @@ tcp_4_json="$RAW_DIR/nvpn-tcp-4.json"
 tcp_8_json="$RAW_DIR/nvpn-tcp-8.json"
 udp_200_json="$RAW_DIR/nvpn-udp-200m.json"
 udp_1000_json="$RAW_DIR/nvpn-udp-1000m.json"
+tcp_single_reverse_json="$RAW_DIR/nvpn-tcp-single-b-to-a.json"
+tcp_4_reverse_json="$RAW_DIR/nvpn-tcp-4-b-to-a.json"
+tcp_8_reverse_json="$RAW_DIR/nvpn-tcp-8-b-to-a.json"
+udp_200_reverse_json="$RAW_DIR/nvpn-udp-200m-b-to-a.json"
+udp_1000_reverse_json="$RAW_DIR/nvpn-udp-1000m-b-to-a.json"
 ping_output="$RAW_DIR/nvpn-ping.txt"
 
-run_test_json tcp-single "TCP single stream" "$tcp_single_json"
-run_test_json tcp-4 "TCP 4 streams" "$tcp_4_json" -P 4
-run_test_json tcp-8 "TCP 8 streams" "$tcp_8_json" -P 8
-run_test_json udp-200 "UDP 200 Mbit target" "$udp_200_json" -u -b 200M
+run_test_json tcp-single "TCP single stream (A -> B)" "$tcp_single_json"
+run_test_json tcp-single-b-to-a "TCP single stream (B -> A)" "$tcp_single_reverse_json" -R
+run_test_json tcp-4 "TCP 4 streams (A -> B)" "$tcp_4_json" -P 4
+run_test_json tcp-4-b-to-a "TCP 4 streams (B -> A)" "$tcp_4_reverse_json" -P 4 -R
+run_test_json tcp-8 "TCP 8 streams (A -> B)" "$tcp_8_json" -P 8
+run_test_json tcp-8-b-to-a "TCP 8 streams (B -> A)" "$tcp_8_reverse_json" -P 8 -R
+run_test_json udp-200 "UDP 200 Mbit target (A -> B)" "$udp_200_json" -u -b 200M
+run_test_json udp-200-b-to-a "UDP 200 Mbit target (B -> A)" "$udp_200_reverse_json" -u -b 200M -R
 if [[ ${#UDP1000_PARALLEL_ARGS[@]} -gt 0 ]]; then
-  run_test_json udp-1000 "UDP 1000 Mbit target" "$udp_1000_json" -u -b "$UDP1000_PER_STREAM_BANDWIDTH" "${UDP1000_PARALLEL_ARGS[@]}"
+  udp1000_args=(-u -b "$UDP1000_PER_STREAM_BANDWIDTH" "${UDP1000_PARALLEL_ARGS[@]}")
 else
-  run_test_json udp-1000 "UDP 1000 Mbit target" "$udp_1000_json" -u -b "$UDP1000_BANDWIDTH"
+  udp1000_args=(-u -b "$UDP1000_BANDWIDTH")
 fi
+run_test_json udp-1000 "UDP 1000 Mbit target (A -> B)" "$udp_1000_json" "${udp1000_args[@]}"
+run_test_json udp-1000-b-to-a "UDP 1000 Mbit target (B -> A)" "$udp_1000_reverse_json" "${udp1000_args[@]}" -R
 write_iperf_socket_buffer_summary
 
 printf '## ping (300 packets, 10ms apart) over mesh\n'
@@ -1467,7 +1478,12 @@ docker_bench_append_summary_row \
   "$tcp_8_json" \
   "$udp_200_json" \
   "$udp_1000_json" \
-  "$ping_output"
+  "$ping_output" \
+  "$tcp_single_reverse_json" \
+  "$tcp_4_reverse_json" \
+  "$tcp_8_reverse_json" \
+  "$udp_200_reverse_json" \
+  "$udp_1000_reverse_json"
 
 capture_nvpn_diagnostics 0
 guard_status=0

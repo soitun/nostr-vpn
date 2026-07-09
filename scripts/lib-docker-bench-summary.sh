@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 # Shared parsers/summary writers for simple Docker VPN benchmark scripts.
 
+docker_bench_write_tsv_row() {
+  local first="$1"
+  shift
+  printf '%s' "$first"
+  printf '\t%s' "$@"
+  printf '\n'
+}
+
 docker_bench_init_summary() {
   mkdir -p "$RAW_DIR"
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  docker_bench_write_tsv_row \
     backend threads duration_secs \
     tcp_single_mbps tcp_single_retrans \
     tcp_4_mbps tcp_4_retrans \
@@ -17,7 +25,13 @@ docker_bench_init_summary() {
     udp1000_bandwidth udp1000_per_stream_bandwidth \
     dataplane_profile placement_profile \
     ping_mdev_ms ping_p95_ms ping_p99_ms ping_max_ms \
-    ping_samples ping_gt1ms ping_gt2ms ping_gt10ms >"$SUMMARY_TSV"
+    ping_samples ping_gt1ms ping_gt2ms ping_gt10ms \
+    forward_direction reverse_direction \
+    tcp_single_b_to_a_mbps tcp_single_b_to_a_retrans \
+    tcp_4_b_to_a_mbps tcp_4_b_to_a_retrans \
+    tcp_8_b_to_a_mbps tcp_8_b_to_a_retrans \
+    udp_200_b_to_a_mbps udp_200_b_to_a_loss_pct \
+    udp_1000_b_to_a_mbps udp_1000_b_to_a_loss_pct >"$SUMMARY_TSV"
 }
 
 docker_bench_tsv_field() {
@@ -714,6 +728,7 @@ docker_bench_runtime_service_provenance() {
 docker_bench_write_metadata() {
   local backend="$1"
   local duration="$2"
+  local iperf_directions="${3:-a_to_b}"
   local metadata_path="${OUTPUT_DIR}/metadata.json"
   local stress_enabled=0
   local local_workers=0
@@ -875,6 +890,7 @@ docker_bench_write_metadata() {
     --arg pipeline_trace_interval_secs "$pipeline_trace_interval_secs" \
     --arg iperf_interval_secs "$iperf_interval_secs" \
     --arg iperf_timeout_secs "$iperf_timeout_secs" \
+    --arg iperf_directions "$iperf_directions" \
     --arg perf_phases "$perf_phases" \
     --arg perf_freq "$perf_freq" \
     --arg iperf_socket_buffer "${NVPN_DOCKER_IPERF_SOCKET_BUFFER:-}" \
@@ -1060,6 +1076,14 @@ docker_bench_write_metadata() {
         )
       },
       iperf: {
+        directions: (
+          $iperf_directions | split(",") | map({
+            id: .,
+            sender: (if . == "b_to_a" then "node-b" else "node-a" end),
+            receiver: (if . == "b_to_a" then "node-a" else "node-b" end),
+            iperf_reverse: (. == "b_to_a")
+          })
+        ),
         interval_secs: ($iperf_interval_secs | tonumber),
         timeout_secs: (
           if $iperf_timeout_secs == "" then null
@@ -1197,6 +1221,12 @@ docker_bench_iperf_loss_pct() {
   docker_bench_json_number '(.end.sum.lost_percent // .end.sum_received.lost_percent // 0)' "$1"
 }
 
+docker_bench_iperf_optional() {
+  local parser="$1"
+  local path="$2"
+  [[ -n "$path" ]] && "$parser" "$path"
+}
+
 docker_bench_parse_ping_loss_avg() {
   awk '
     /packets transmitted/ {
@@ -1266,9 +1296,15 @@ docker_bench_append_summary_row() {
   local udp_200_json="$8"
   local udp_1000_json="$9"
   local ping_output="${10}"
+  local tcp_single_reverse_json="${11:-}"
+  local tcp_4_reverse_json="${12:-}"
+  local tcp_8_reverse_json="${13:-}"
+  local udp_200_reverse_json="${14:-}"
+  local udp_1000_reverse_json="${15:-}"
   local ping_loss ping_avg
   local stress_enabled=false local_workers=0 remote_workers=0
   local udp1000_parallel udp1000_per_stream_bandwidth
+  local reverse_direction=""
   local ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10 ping_tail_stats
 
   read -r ping_loss ping_avg <<<"$(docker_bench_parse_ping_loss_avg "$ping_output")"
@@ -1286,8 +1322,9 @@ docker_bench_append_summary_row() {
   fi
   udp1000_parallel="$(docker_bench_udp1000_parallel_streams)"
   udp1000_per_stream_bandwidth="$(docker_bench_udp1000_per_stream_bandwidth)"
+  [[ -z "$tcp_single_reverse_json" ]] || reverse_direction=b_to_a
 
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+  docker_bench_write_tsv_row \
     "$backend" \
     "$threads" \
     "$duration" \
@@ -1321,7 +1358,19 @@ docker_bench_append_summary_row() {
     "$ping_samples" \
     "$ping_gt1" \
     "$ping_gt2" \
-    "$ping_gt10" >>"$SUMMARY_TSV"
+    "$ping_gt10" \
+    a_to_b \
+    "$reverse_direction" \
+    "$(docker_bench_iperf_optional docker_bench_iperf_mbps "$tcp_single_reverse_json")" \
+    "$(docker_bench_iperf_optional docker_bench_iperf_retrans "$tcp_single_reverse_json")" \
+    "$(docker_bench_iperf_optional docker_bench_iperf_mbps "$tcp_4_reverse_json")" \
+    "$(docker_bench_iperf_optional docker_bench_iperf_retrans "$tcp_4_reverse_json")" \
+    "$(docker_bench_iperf_optional docker_bench_iperf_mbps "$tcp_8_reverse_json")" \
+    "$(docker_bench_iperf_optional docker_bench_iperf_retrans "$tcp_8_reverse_json")" \
+    "$(docker_bench_iperf_optional docker_bench_iperf_mbps "$udp_200_reverse_json")" \
+    "$(docker_bench_iperf_optional docker_bench_iperf_loss_pct "$udp_200_reverse_json")" \
+    "$(docker_bench_iperf_optional docker_bench_iperf_mbps "$udp_1000_reverse_json")" \
+    "$(docker_bench_iperf_optional docker_bench_iperf_loss_pct "$udp_1000_reverse_json")" >>"$SUMMARY_TSV"
 }
 
 docker_bench_guard_threshold() {
@@ -1544,6 +1593,9 @@ docker_bench_assert_summary_guards() {
   local backend threads duration tcp_single tcp_single_retrans tcp_4 tcp_4_retrans
   local tcp_8 tcp_8_retrans udp_200 udp_200_loss udp_1000 udp_1000_loss
   local ping_loss ping_avg raw_dir
+  local reverse_direction tcp_single_reverse tcp_single_reverse_retrans
+  local tcp_4_reverse tcp_4_reverse_retrans tcp_8_reverse tcp_8_reverse_retrans
+  local udp_200_reverse udp_200_reverse_loss udp_1000_reverse udp_1000_reverse_loss
   local tsv_value
 
   tsv_value() {
@@ -1565,6 +1617,17 @@ docker_bench_assert_summary_guards() {
   ping_loss="$(tsv_value 14)"
   ping_avg="$(tsv_value 15)"
   raw_dir="$(tsv_value 16)"
+  reverse_direction="$(tsv_value 36)"
+  tcp_single_reverse="$(tsv_value 37)"
+  tcp_single_reverse_retrans="$(tsv_value 38)"
+  tcp_4_reverse="$(tsv_value 39)"
+  tcp_4_reverse_retrans="$(tsv_value 40)"
+  tcp_8_reverse="$(tsv_value 41)"
+  tcp_8_reverse_retrans="$(tsv_value 42)"
+  udp_200_reverse="$(tsv_value 43)"
+  udp_200_reverse_loss="$(tsv_value 44)"
+  udp_1000_reverse="$(tsv_value 45)"
+  udp_1000_reverse_loss="$(tsv_value 46)"
 
   mkdir -p "$OUTPUT_DIR"
   rm -f "$failure_path"
@@ -1583,6 +1646,19 @@ docker_bench_assert_summary_guards() {
   docker_bench_guard_check_at_most "$failure_path" "udp_200_loss_pct" "$udp_200_loss" "$(docker_bench_guard_threshold NVPN_DOCKER_MAX_UDP200_LOSS_PCT NVPN_DOCKER_MAX_UDP_LOSS_PCT)" || failure_count=$((failure_count + 1))
   docker_bench_guard_check_at_most "$failure_path" "udp_1000_loss_pct" "$udp_1000_loss" "$(docker_bench_guard_threshold NVPN_DOCKER_MAX_UDP1000_LOSS_PCT NVPN_DOCKER_MAX_UDP_LOSS_PCT)" || failure_count=$((failure_count + 1))
   docker_bench_guard_check_at_most "$failure_path" "ping_loss_pct" "$ping_loss" "${NVPN_DOCKER_MAX_PING_LOSS_PCT:-}" || failure_count=$((failure_count + 1))
+
+  if [[ "$reverse_direction" == "b_to_a" ]]; then
+    docker_bench_guard_check_at_least "$failure_path" "tcp_single_b_to_a_mbps" "$tcp_single_reverse" "$(docker_bench_guard_threshold NVPN_DOCKER_MIN_TCP_SINGLE_MBPS NVPN_DOCKER_MIN_TCP_MBPS)" || failure_count=$((failure_count + 1))
+    docker_bench_guard_check_at_least "$failure_path" "tcp_4_b_to_a_mbps" "$tcp_4_reverse" "$(docker_bench_guard_threshold NVPN_DOCKER_MIN_TCP_4_MBPS NVPN_DOCKER_MIN_TCP_MBPS)" || failure_count=$((failure_count + 1))
+    docker_bench_guard_check_at_least "$failure_path" "tcp_8_b_to_a_mbps" "$tcp_8_reverse" "$(docker_bench_guard_threshold NVPN_DOCKER_MIN_TCP_8_MBPS NVPN_DOCKER_MIN_TCP_MBPS)" || failure_count=$((failure_count + 1))
+    docker_bench_guard_check_at_least "$failure_path" "udp_200_b_to_a_mbps" "$udp_200_reverse" "${NVPN_DOCKER_MIN_UDP200_MBPS:-}" || failure_count=$((failure_count + 1))
+    docker_bench_guard_check_at_least "$failure_path" "udp_1000_b_to_a_mbps" "$udp_1000_reverse" "${NVPN_DOCKER_MIN_UDP1000_MBPS:-}" || failure_count=$((failure_count + 1))
+    docker_bench_guard_check_at_most "$failure_path" "tcp_single_b_to_a_retrans" "$tcp_single_reverse_retrans" "$(docker_bench_guard_threshold NVPN_DOCKER_MAX_TCP_SINGLE_RETRANS NVPN_DOCKER_MAX_TCP_RETRANS)" || failure_count=$((failure_count + 1))
+    docker_bench_guard_check_at_most "$failure_path" "tcp_4_b_to_a_retrans" "$tcp_4_reverse_retrans" "$(docker_bench_guard_threshold NVPN_DOCKER_MAX_TCP_4_RETRANS NVPN_DOCKER_MAX_TCP_RETRANS)" || failure_count=$((failure_count + 1))
+    docker_bench_guard_check_at_most "$failure_path" "tcp_8_b_to_a_retrans" "$tcp_8_reverse_retrans" "$(docker_bench_guard_threshold NVPN_DOCKER_MAX_TCP_8_RETRANS NVPN_DOCKER_MAX_TCP_RETRANS)" || failure_count=$((failure_count + 1))
+    docker_bench_guard_check_at_most "$failure_path" "udp_200_b_to_a_loss_pct" "$udp_200_reverse_loss" "$(docker_bench_guard_threshold NVPN_DOCKER_MAX_UDP200_LOSS_PCT NVPN_DOCKER_MAX_UDP_LOSS_PCT)" || failure_count=$((failure_count + 1))
+    docker_bench_guard_check_at_most "$failure_path" "udp_1000_b_to_a_loss_pct" "$udp_1000_reverse_loss" "$(docker_bench_guard_threshold NVPN_DOCKER_MAX_UDP1000_LOSS_PCT NVPN_DOCKER_MAX_UDP_LOSS_PCT)" || failure_count=$((failure_count + 1))
+  fi
 
   if (( failure_count > 0 )); then
     printf 'docker bench guard failed: wrote %s\n' "$failure_path" >&2
