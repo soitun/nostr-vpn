@@ -273,14 +273,32 @@ fn limit_queued_direct_endpoint_runs_to_remaining(
         return None;
     }
     let enqueued_at = queued.enqueued_at;
+    let packet_count = queued.packets;
+    let source_node_addr = queued.source_node_addr;
     let runs = std::mem::take(&mut queued.runs);
     let (head, tail) = split_direct_packet_runs_at_packet_limit(runs, remaining);
     queued.runs = head;
-    (queued.packets, queued.source_node_addr) = direct_packet_runs_summary(&queued.runs);
+    if let Some(source_node_addr) = source_node_addr {
+        queued.packets = remaining;
+        queued.source_node_addr = (remaining > 0).then_some(source_node_addr);
+    } else {
+        (queued.packets, queued.source_node_addr) = direct_packet_runs_summary(&queued.runs);
+    }
     if !tail.is_empty() {
-        let mut tail_queued = FipsDirectEndpointQueuedRuns::with_enqueued_at(tail, enqueued_at);
+        let tail_queued = if let Some(source_node_addr) = source_node_addr {
+            FipsDirectEndpointQueuedRuns {
+                runs: tail,
+                packets: packet_count.saturating_sub(remaining),
+                source_node_addr: Some(source_node_addr),
+                enqueued_at,
+                arrival: DirectEndpointQueueArrival::Backlog,
+            }
+        } else {
+            let mut tail_queued = FipsDirectEndpointQueuedRuns::with_enqueued_at(tail, enqueued_at);
+            tail_queued.arrival = DirectEndpointQueueArrival::Backlog;
+            tail_queued
+        };
         crate::pipeline_profile::record_direct_endpoint_rx_limit_split(tail_queued.packets);
-        tail_queued.arrival = DirectEndpointQueueArrival::Backlog;
         return Some(tail_queued);
     }
     None
