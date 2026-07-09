@@ -1901,6 +1901,14 @@ test_docker_perf_scripts_share_host_quiet_guard() {
   assert_file_contains "$ROOT_DIR/scripts/perf-docker-boringtun.sh" "docker_bench_validate_host_quiet perf-boringtun" "boringtun Docker perf uses host quiet guard"
 }
 
+test_docker_perf_scripts_share_exclusive_lock() {
+  local helper="$ROOT_DIR/scripts/lib-docker-bench-summary.sh"
+  assert_file_contains "$helper" "docker_bench_acquire_perf_lock" "Docker perf shared exclusive lock helper"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker.sh" "docker_bench_acquire_perf_lock perf" "nvpn Docker perf takes exclusive lock"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker-wireguard-go.sh" "docker_bench_acquire_perf_lock perf-wireguard-go" "wireguard-go Docker perf takes exclusive lock"
+  assert_file_contains "$ROOT_DIR/scripts/perf-docker-boringtun.sh" "docker_bench_acquire_perf_lock perf-boringtun" "boringtun Docker perf takes exclusive lock"
+}
+
 test_json_and_ping_parsers
 test_cpu_accounting_helpers
 test_udp1000_parallel_bandwidth_helpers_preserve_total_target
@@ -1947,5 +1955,6 @@ test_wireguard_go_perf_docker_records_cpu_phase_artifact
 test_docker_perf_scripts_share_iperf_socket_buffer_limit_helper
 test_docker_perf_scripts_reject_translated_processes
 test_docker_perf_scripts_share_host_quiet_guard
+test_docker_perf_scripts_share_exclusive_lock
 
 printf 'docker benchmark summary self-test passed\n'

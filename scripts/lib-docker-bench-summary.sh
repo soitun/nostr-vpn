@@ -694,6 +694,24 @@ docker_bench_binary_linkage() {
   esac
 }
 
+docker_bench_acquire_perf_lock() {
+  local label="$1"
+  local lock_path="/tmp/nostr-vpn-docker-perf.lock"
+  local owner
+  command -v flock >/dev/null 2>&1 || {
+    printf '%s: missing required command: flock\n' "$label" >&2
+    return 1
+  }
+  exec 9>>"$lock_path"
+  if ! flock -n 9; then
+    owner="$(cat "$lock_path" 2>/dev/null || true)"
+    printf '%s: another Docker benchmark holds %s (pid %s)\n' \
+      "$label" "$lock_path" "${owner:-unknown}" >&2
+    return 1
+  fi
+  printf '%s\n' "$$" >"$lock_path"
+}
+
 docker_bench_runtime_service_provenance() {
   local service="$1"
   local backend="$2"

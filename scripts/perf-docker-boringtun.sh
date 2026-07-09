@@ -27,6 +27,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SUMMARY_LIB="$ROOT_DIR/scripts/lib-docker-bench-summary.sh"
 # shellcheck source=scripts/lib-docker-bench-summary.sh
 source "$SUMMARY_LIB"
+docker_bench_acquire_perf_lock perf-boringtun
 PROJECT_NAME="${PROJECT_NAME:-nvpn-bench-boringtun}"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.bench-boringtun.yml")
 
