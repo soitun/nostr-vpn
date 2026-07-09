@@ -671,6 +671,46 @@ docker_bench_finish_phase_perf() {
     -i "$data_path" >"$report_path" 2>>"$log_path" || true
 }
 
+docker_bench_runtime_service_provenance() {
+  local service="$1"
+  local cid image_id binary_sha256 version_output nvpn_version fips_core_version online_cpus cpuset_cpus
+  if ! declare -p COMPOSE >/dev/null 2>&1; then
+    printf '{}\n'
+    return
+  fi
+  cid="$("${COMPOSE[@]}" ps -q "$service" 2>/dev/null || true)"
+  if [[ -z "$cid" ]]; then
+    printf '{}\n'
+    return
+  fi
+
+  image_id="$(docker inspect --format '{{.Image}}' "$cid" 2>/dev/null || true)"
+  binary_sha256="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+    'sha256sum "$(command -v nvpn)"' 2>/dev/null || true)"
+  binary_sha256="${binary_sha256%% *}"
+  version_output="$("${COMPOSE[@]}" exec -T "$service" nvpn version --verbose 2>/dev/null || true)"
+  nvpn_version="${version_output%%$'\n'*}"
+  fips_core_version="$(printf '%s\n' "$version_output" | sed -n 's/^fips_core_version: //p')"
+  online_cpus="$("${COMPOSE[@]}" exec -T "$service" getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+  cpuset_cpus="$(docker inspect --format '{{.HostConfig.CpusetCpus}}' "$cid" 2>/dev/null || true)"
+
+  jq -n \
+    --arg image_id "$image_id" \
+    --arg binary_sha256 "$binary_sha256" \
+    --arg nvpn_version "$nvpn_version" \
+    --arg fips_core_version "$fips_core_version" \
+    --arg online_cpus "$online_cpus" \
+    --arg cpuset_cpus "$cpuset_cpus" \
+    '{
+      image_id: (if $image_id == "" then null else $image_id end),
+      binary_sha256: (if $binary_sha256 == "" then null else $binary_sha256 end),
+      nvpn_version: (if $nvpn_version == "" then null else $nvpn_version end),
+      fips_core_version: (if $fips_core_version == "" then null else $fips_core_version end),
+      online_cpus: (if $online_cpus == "" then null else ($online_cpus | tonumber) end),
+      cpuset_cpus: (if $cpuset_cpus == "" then null else $cpuset_cpus end)
+    }'
+}
+
 docker_bench_write_metadata() {
   local backend="$1"
   local duration="$2"
@@ -698,6 +738,7 @@ docker_bench_write_metadata() {
   local nvpn_git_dirty=""
   local fips_git_head=""
   local fips_git_dirty=""
+  local runtime_node_a runtime_node_b
   local nostr_identity_source="${NVPN_DOCKER_NOSTR_IDENTITY_SOURCE:-}"
   local node_id_source="${NVPN_DOCKER_NODE_ID_SOURCE:-}"
   local node_a_public_key="${NVPN_DOCKER_NODE_A_RUNTIME_PUBLIC_KEY:-${NVPN_DOCKER_NODE_A_NOSTR_PUBLIC_KEY_EFFECTIVE:-}}"
@@ -814,6 +855,8 @@ docker_bench_write_metadata() {
   IFS=$'\t' read -r host_load1 host_load5 host_load15 < <(docker_bench_host_loadavg) || true
   host_online_cpus="$(docker_bench_host_online_cpus)"
   host_load1_per_cpu="$(docker_bench_host_load_per_cpu "$host_load1" "$host_online_cpus")"
+  runtime_node_a="$(docker_bench_runtime_service_provenance node-a)"
+  runtime_node_b="$(docker_bench_runtime_service_provenance node-b)"
   jq -n \
     --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --arg backend "$backend" \
@@ -859,6 +902,8 @@ docker_bench_write_metadata() {
     --arg nvpn_git_dirty "$nvpn_git_dirty" \
     --arg fips_git_head "$fips_git_head" \
     --arg fips_git_dirty "$fips_git_dirty" \
+    --argjson runtime_node_a "$runtime_node_a" \
+    --argjson runtime_node_b "$runtime_node_b" \
     --arg nostr_identity_source "$nostr_identity_source" \
     --arg node_id_source "$node_id_source" \
     --arg node_a_public_key "$node_a_public_key" \
@@ -1121,6 +1166,10 @@ docker_bench_write_metadata() {
           enabled: ($patch_local_fips_enabled == "1"),
           git_head: (if $fips_git_head == "" then null else $fips_git_head end),
           dirty: bool_or_null($fips_git_dirty)
+        },
+        runtime: {
+          node_a: $runtime_node_a,
+          node_b: $runtime_node_b
         }
       }
     }' >"$metadata_path"
