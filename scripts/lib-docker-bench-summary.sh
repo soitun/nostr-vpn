@@ -1020,6 +1020,7 @@ docker_bench_parse_ping_loss_avg() {
 
 docker_bench_parse_ping_tail_stats() {
   local file="$1"
+  local IFS=$' \t\n'
   local mdev max count p95 p99 gt1 gt2 gt10
   read -r max mdev <<<"$(
     awk -F'= ' '/round-trip|rtt min/ {split($2,a,"/"); split(a[4], b, " "); print a[3], b[1]}' "$file" \
@@ -1067,11 +1068,12 @@ docker_bench_append_summary_row() {
   local ping_loss ping_avg
   local stress_enabled=false local_workers=0 remote_workers=0
   local udp1000_parallel udp1000_per_stream_bandwidth
-  local ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10
+  local ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10 ping_tail_stats
 
   read -r ping_loss ping_avg <<<"$(docker_bench_parse_ping_loss_avg "$ping_output")"
+  ping_tail_stats="$(docker_bench_parse_ping_tail_stats "$ping_output")"
   IFS=$'\t' read -r ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10 \
-    <<<"$(docker_bench_parse_ping_tail_stats "$ping_output")"
+    <<<"$ping_tail_stats"
   if docker_bench_cpu_stress_enabled; then
     stress_enabled=true
     if docker_bench_cpu_stress_side_enabled local; then

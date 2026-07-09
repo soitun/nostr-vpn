@@ -103,6 +103,9 @@ write_ping_output() {
   local path="$1"
   cat >"$path" <<'EOF'
 PING 10.44.0.2 (10.44.0.2) 56(84) bytes of data.
+64 bytes from 10.44.0.2: icmp_seq=1 ttl=64 time=0.400 ms
+64 bytes from 10.44.0.2: icmp_seq=2 ttl=64 time=1.200 ms
+64 bytes from 10.44.0.2: icmp_seq=3 ttl=64 time=8.900 ms
 
 --- 10.44.0.2 ping statistics ---
 300 packets transmitted, 299 received, 0.333333% packet loss, time 3017ms
@@ -112,6 +115,7 @@ EOF
 
 test_json_and_ping_parsers() {
   local dir tcp_json udp_json ping_output stats loss avg
+  local tail_stats ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10
   dir="$(mktemp -d)"
   tcp_json="$dir/tcp.json"
   udp_json="$dir/udp.json"
@@ -130,6 +134,17 @@ test_json_and_ping_parsers() {
   read -r loss avg <<<"$stats"
   assert_eq "$loss" "0.333333" "ping loss"
   assert_eq "$avg" "1.234" "ping avg"
+  tail_stats="$(IFS=$'\t'; docker_bench_parse_ping_tail_stats "$ping_output")"
+  IFS=$'\t' read -r ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10 \
+    <<<"$tail_stats"
+  assert_eq "$ping_mdev" "0.500" "ping mdev"
+  assert_eq "$ping_p95" "8.900" "ping p95"
+  assert_eq "$ping_p99" "8.900" "ping p99"
+  assert_eq "$ping_max" "8.900" "ping max"
+  assert_eq "$ping_samples" "3" "ping sample count"
+  assert_eq "$ping_gt1" "2" "ping >1ms count"
+  assert_eq "$ping_gt2" "1" "ping >2ms count"
+  assert_eq "$ping_gt10" "0" "ping >10ms count"
 
   rm -rf "$dir"
 }

@@ -417,10 +417,11 @@ append_loaded_ping_summary() {
   local ping_output="$2"
   [[ -s "$ping_output" ]] || return 0
 
-  local ping_loss ping_avg ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10
+  local ping_loss ping_avg ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10 ping_tail_stats
   read -r ping_loss ping_avg <<<"$(docker_bench_parse_ping_loss_avg "$ping_output")"
+  ping_tail_stats="$(docker_bench_parse_ping_tail_stats "$ping_output")"
   IFS=$'\t' read -r ping_mdev ping_p95 ping_p99 ping_max ping_samples ping_gt1 ping_gt2 ping_gt10 \
-    <<<"$(docker_bench_parse_ping_tail_stats "$ping_output")"
+    <<<"$ping_tail_stats"
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$phase" \
     "$ping_samples" \
@@ -444,10 +445,22 @@ start_loaded_phase_ping() {
   local ping_count timeout_secs
   ping_count="$(loaded_ping_count_for_duration)"
   timeout_secs="$((DURATION + 5))"
-  timeout --kill-after=2s "$timeout_secs" \
+  local -a timeout_cmd=()
+  if command -v timeout >/dev/null 2>&1; then
+    timeout_cmd=(timeout --kill-after=2s "$timeout_secs")
+  elif command -v gtimeout >/dev/null 2>&1; then
+    timeout_cmd=(gtimeout --kill-after=2s "$timeout_secs")
+  fi
+
+  if ((${#timeout_cmd[@]} > 0)); then
+    "${timeout_cmd[@]}" "${COMPOSE[@]}" exec -T node-a \
+      ping -c "$ping_count" -i "$LOADED_PING_INTERVAL_SECS" "$BOB_TUNNEL_IP" \
+      >"$ping_output" 2>&1 &
+  else
     "${COMPOSE[@]}" exec -T node-a \
       ping -c "$ping_count" -i "$LOADED_PING_INTERVAL_SECS" "$BOB_TUNNEL_IP" \
-    >"$ping_output" 2>&1 &
+      >"$ping_output" 2>&1 &
+  fi
   LOADED_PHASE_PING_PID="$!"
 }
 
