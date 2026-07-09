@@ -712,6 +712,18 @@ docker_bench_acquire_perf_lock() {
   printf '%s\n' "$$" >"$lock_path"
 }
 
+docker_bench_assert_host_build_quiet() {
+  local label="$1"
+  local pids
+  pids="$({ pgrep -x cargo || true; pgrep -x rustc || true; } | sort -nu)"
+  if [[ -n "$pids" ]]; then
+    printf '%s: competing Cargo/rustc process detected; benchmark window is invalid\n' \
+      "$label" >&2
+    ps -o pid=,ppid=,stat=,pcpu=,comm=,args= -p "$(tr '\n' ',' <<<"$pids" | sed 's/,$//')" >&2
+    return 1
+  fi
+}
+
 docker_bench_runtime_service_provenance() {
   local service="$1"
   local backend="$2"

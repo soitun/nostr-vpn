@@ -56,6 +56,7 @@ SUMMARY_LIB="$ROOT_DIR/scripts/lib-docker-bench-summary.sh"
 # shellcheck source=scripts/lib-docker-bench-summary.sh
 source "$SUMMARY_LIB"
 docker_bench_acquire_perf_lock perf
+docker_bench_assert_host_build_quiet "perf start"
 docker_bench_apply_local_fips_patch_default
 PROJECT_NAME="${PROJECT_NAME:-nvpn-perf}"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml")
@@ -1355,6 +1356,7 @@ run_test_json() {
   local loaded_ping_pid="" loaded_ping_output="$RAW_DIR/nvpn-loaded-ping-$phase.txt"
   local is_udp=0
   [[ "${1:-}" == "-u" ]] && is_udp=1
+  docker_bench_assert_host_build_quiet "perf $phase start"
   printf '## %s\n' "$label"
   start_iperf_server
   # --connect-timeout caps the 3WHS so a broken path bails out fast
@@ -1387,6 +1389,7 @@ run_test_json() {
   fi
   finish_phase_perf "$phase" "$phase_perf_pid"
   finish_loaded_phase_ping "$phase" "$loaded_ping_pid" "$loaded_ping_output"
+  docker_bench_assert_host_build_quiet "perf $phase end"
   cpu_end_node_a="$(daemon_cpu_sample node-a)"
   cpu_end_node_b="$(daemon_cpu_sample node-b)"
   if jq -e 'has("error")' "$json_path" >/dev/null; then
@@ -1450,11 +1453,13 @@ run_test_json udp-1000-b-to-a "UDP 1000 Mbit target (B -> A)" "$udp_1000_reverse
 write_iperf_socket_buffer_summary
 
 printf '## ping (300 packets, 10ms apart) over mesh\n'
+docker_bench_assert_host_build_quiet "perf ping start"
 ping_start_node_a="$(pipeline_line_count node-a)"
 ping_start_node_b="$(pipeline_line_count node-b)"
 ping_cpu_start_node_a="$(daemon_cpu_sample node-a)"
 ping_cpu_start_node_b="$(daemon_cpu_sample node-b)"
 "${COMPOSE[@]}" exec -T node-a ping -c 300 -i 0.01 "$BOB_TUNNEL_IP" >"$ping_output" 2>&1
+docker_bench_assert_host_build_quiet "perf ping end"
 ping_cpu_end_node_a="$(daemon_cpu_sample node-a)"
 ping_cpu_end_node_b="$(daemon_cpu_sample node-b)"
 ping_end_node_a="$(pipeline_line_count node-a)"

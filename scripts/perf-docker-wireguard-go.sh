@@ -21,6 +21,7 @@ SUMMARY_LIB="$ROOT_DIR/scripts/lib-docker-bench-summary.sh"
 # shellcheck source=scripts/lib-docker-bench-summary.sh
 source "$SUMMARY_LIB"
 docker_bench_acquire_perf_lock perf-wireguard-go
+docker_bench_assert_host_build_quiet "perf-wireguard-go start"
 PROJECT_NAME="${PROJECT_NAME:-nvpn-bench-wireguard-go}"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.bench-wireguard-go.yml")
 
@@ -223,6 +224,7 @@ run_test_json() {
   local cpu_start_node_a cpu_start_node_b cpu_end_node_a cpu_end_node_b transfer_bytes
   local is_udp=0
   [[ "${1:-}" == "-u" ]] && is_udp=1
+  docker_bench_assert_host_build_quiet "perf-wireguard-go $phase start"
   printf '## %s\n' "$label"
   local err_path="$json_path.stderr"
   local iperf_cmd=(
@@ -249,6 +251,7 @@ run_test_json() {
   cpu_end_node_a="$(wireguard_go_cpu_sample node-a)"
   cpu_end_node_b="$(wireguard_go_cpu_sample node-b)"
   docker_bench_finish_phase_perf wireguard-go "$phase" "$RAW_DIR" "$perf_pid"
+  docker_bench_assert_host_build_quiet "perf-wireguard-go $phase end"
   if jq -e 'has("error")' "$json_path" >/dev/null; then
     cat "$err_path" >&2
     cat "$json_path" >&2
@@ -313,9 +316,11 @@ run_ping_summary() {
   local output_path="$1"
   local cpu_start_node_a cpu_start_node_b cpu_end_node_a cpu_end_node_b
   printf '## ping (300 packets, 10ms apart) over wg0\n'
+  docker_bench_assert_host_build_quiet "perf-wireguard-go ping start"
   cpu_start_node_a="$(wireguard_go_cpu_sample node-a)"
   cpu_start_node_b="$(wireguard_go_cpu_sample node-b)"
   "${COMPOSE[@]}" exec -T node-a ping -c 300 -i 0.01 "$BOB_TUN" >"$output_path" 2>&1
+  docker_bench_assert_host_build_quiet "perf-wireguard-go ping end"
   cpu_end_node_a="$(wireguard_go_cpu_sample node-a)"
   cpu_end_node_b="$(wireguard_go_cpu_sample node-b)"
   append_wireguard_go_cpu_phase_rows \
