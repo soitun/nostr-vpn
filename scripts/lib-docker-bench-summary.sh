@@ -507,11 +507,11 @@ docker_bench_host_online_cpus() {
 }
 
 docker_bench_host_load_per_cpu() {
-  local load="$1"
+  local load_avg="$1"
   local cpus="$2"
-  awk -v load="$load" -v cpus="$cpus" 'BEGIN {
-    if (load ~ /^[0-9]+([.][0-9]+)?$/ && cpus ~ /^[1-9][0-9]*$/) {
-      printf "%.6f\n", load / cpus
+  awk -v load_avg="$load_avg" -v cpus="$cpus" 'BEGIN {
+    if (load_avg ~ /^[0-9]+([.][0-9]+)?$/ && cpus ~ /^[1-9][0-9]*$/) {
+      printf "%.6f\n", load_avg / cpus
     }
   }'
 }
