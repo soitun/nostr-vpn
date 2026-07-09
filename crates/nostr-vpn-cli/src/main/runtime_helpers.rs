@@ -110,7 +110,7 @@ async fn refresh_port_mapping(
     listen_port: u16,
     port_mapping_runtime: &mut PortMappingRuntime,
 ) {
-    if !app.nat.enabled {
+    if !port_mapping_needed(app) {
         port_mapping_runtime.stop().await;
         return;
     }
@@ -122,6 +122,10 @@ async fn refresh_port_mapping(
     {
         eprintln!("nat: port mapping refresh failed: {error}");
     }
+}
+
+fn port_mapping_needed(app: &AppConfig) -> bool {
+    app.nat.enabled && app.fips_nostr_discovery_enabled
 }
 
 fn network_probe_timeout(app: &AppConfig) -> Duration {

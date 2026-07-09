@@ -7,10 +7,11 @@ use crab_nat::{
     InternetProtocol, PortMapping as CrabPortMapping, PortMappingOptions, PortMappingType,
     TimeoutConfig,
 };
-use igd_next::PortMappingProtocol;
 use igd_next::aio::Gateway as UpnpGateway;
 use igd_next::aio::tokio::{Tokio as UpnpProvider, search_gateway};
+use igd_next::{PortMappingProtocol, SearchOptions};
 use nostr_vpn_core::diagnostics::{PortMappingStatus, ProbeState, ProbeStatus};
+use tokio::time::timeout as tokio_timeout;
 
 use super::NetworkSnapshot;
 use super::probes::{
@@ -158,31 +159,42 @@ impl PortMappingRuntime {
         }
 
         let local_addr = SocketAddr::new(local_ip, listen_port);
-        match search_gateway(Default::default()).await {
+        let search_options = SearchOptions {
+            timeout: Some(timeout),
+            single_search_timeout: Some(timeout.min(Duration::from_millis(500))),
+            ..SearchOptions::default()
+        };
+        match search_gateway(search_options).await {
             Ok(gateway) => {
-                let endpoint = match gateway
-                    .add_port(
+                let endpoint = match tokio_timeout(
+                    timeout,
+                    gateway.add_port(
                         PortMappingProtocol::UDP,
                         listen_port,
                         local_addr,
                         PORT_MAPPING_LEASE_SECS,
                         UPNP_DESCRIPTION,
-                    )
-                    .await
+                    ),
+                )
+                .await
                 {
-                    Ok(()) => {
-                        let external_ip = gateway.get_external_ip().await.ok();
-                        external_ip.map(|ip| SocketAddr::new(ip, listen_port))
-                    }
-                    Err(_) => gateway
-                        .get_any_address(
+                    Ok(Ok(())) => tokio_timeout(timeout, gateway.get_external_ip())
+                        .await
+                        .ok()
+                        .and_then(Result::ok)
+                        .map(|ip| SocketAddr::new(ip, listen_port)),
+                    Ok(Err(_)) | Err(_) => tokio_timeout(
+                        timeout,
+                        gateway.get_any_address(
                             PortMappingProtocol::UDP,
                             local_addr,
                             PORT_MAPPING_LEASE_SECS,
                             UPNP_DESCRIPTION,
-                        )
-                        .await
-                        .ok(),
+                        ),
+                    )
+                    .await
+                    .ok()
+                    .and_then(Result::ok),
                 };
 
                 if let Some(endpoint) = endpoint {
@@ -257,10 +269,13 @@ impl PortMappingRuntime {
                 let _ = mapping.try_drop().await;
             }
             ActivePortMappingLease::Upnp(lease) => {
-                let _ = lease
-                    .gateway
-                    .remove_port(PortMappingProtocol::UDP, lease.external_endpoint.port())
-                    .await;
+                let _ = tokio_timeout(
+                    Duration::from_secs(1),
+                    lease
+                        .gateway
+                        .remove_port(PortMappingProtocol::UDP, lease.external_endpoint.port()),
+                )
+                .await;
             }
         }
     }

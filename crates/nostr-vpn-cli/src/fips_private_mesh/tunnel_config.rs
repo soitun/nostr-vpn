@@ -211,6 +211,13 @@ impl FipsPrivateTunnelConfig {
         route_targets.dedup();
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let fips_host = FipsHostTunnelConfig::from_app(app)?;
+        #[cfg(target_os = "linux")]
+        let control_plane_bypass_hosts =
+            if crate::route_targets_require_endpoint_bypass(&route_targets) {
+                crate::control_plane_bypass_ipv4_hosts(app)
+            } else {
+                Vec::new()
+            };
 
         Ok(Self {
             identity_nsec: app.nostr.secret_key.clone(),
@@ -262,7 +269,7 @@ impl FipsPrivateTunnelConfig {
             open_discovery_max_pending,
             mesh_mtu: private_mesh_mtu_from_app(Some(app)),
             #[cfg(target_os = "linux")]
-            control_plane_bypass_hosts: crate::control_plane_bypass_ipv4_hosts(app),
+            control_plane_bypass_hosts,
         })
     }
 
