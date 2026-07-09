@@ -772,6 +772,6 @@ impl NativeAppRuntime {
 fn lan_signal_is_join_request(signal: &LanPairingSignal) -> bool {
     let invite = signal.invite.trim();
     invite
-        .get(.."nvpn://join-request?".len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("nvpn://join-request?"))
+        .get(.."nvpn://join-request".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("nvpn://join-request"))
 }

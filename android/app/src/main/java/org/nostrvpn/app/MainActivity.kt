@@ -284,7 +284,11 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(deepLink, debugAction, debugInvite, debugExitNode, debugNetworkName, debugWireGuardConfig) {
                 val invite = deepLink
                 if (!invite.isNullOrBlank() && invite.startsWith("nvpn://", ignoreCase = true)) {
-                    dispatch(NativeActions.importInvite(invite))
+                    if (looksLikeJoinRequestQrOrLink(invite)) {
+                        dispatch(NativeActions.importJoinRequest(invite))
+                    } else {
+                        dispatch(NativeActions.importInvite(invite))
+                    }
                     deepLink = null
                 }
                 val inviteExtra = debugInvite

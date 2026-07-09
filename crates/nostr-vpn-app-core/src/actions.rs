@@ -296,13 +296,13 @@ mod tests {
     #[test]
     fn import_join_request_action_alias_accepts_legacy_name() {
         let import = serde_json::from_str::<NativeAppAction>(
-            r#"{"type":"import_join_request_qr_or_link","request":"nvpn://join-request?app_key=abc"}"#,
+            r#"{"type":"import_join_request_qr_or_link","request":"nvpn://join-request/payload"}"#,
         )
         .expect("parse import join request alias");
         assert_eq!(
             import,
             NativeAppAction::ImportJoinRequest {
-                request: "nvpn://join-request?app_key=abc".to_string(),
+                request: "nvpn://join-request/payload".to_string(),
             }
         );
     }

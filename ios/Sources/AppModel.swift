@@ -289,6 +289,10 @@ final class AppModel: ObservableObject {
             importInvite(raw)
             return
         }
+        if raw.lowercased().hasPrefix("nvpn://join-request") {
+            dispatch(NativeActions.importJoinRequest(raw), status: "Adding device")
+            return
+        }
 
         guard url.scheme == "nvpn", url.host == "debug" else {
             return

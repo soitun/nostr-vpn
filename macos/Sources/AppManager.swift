@@ -305,6 +305,10 @@ final class AppManager: ObservableObject {
             importInvite(raw)
             return
         }
+        if raw.lowercased().hasPrefix("nvpn://join-request") {
+            importJoinRequest(raw)
+            return
+        }
 
         #if DEBUG
         guard url.scheme == "nvpn", url.host == "debug" else {
@@ -1621,7 +1625,7 @@ final class AppManager: ObservableObject {
             nostrPubsubMaxEventBytes: 65_536,
             networkId: networkId,
             activeNetworkInvite: "nvpn://invite/demo-mesh",
-            joinRequestQrCodeOrLink: "nvpn://join-request?app_key=demo",
+            joinRequestQrCodeOrLink: "nvpn://join-request/demo",
             exitNode: sellerScreenshot ? "" : "npub1paidexitfinlanddemo",
             exitNodeLeakProtection: true,
             exitNodeActive: !sellerScreenshot,

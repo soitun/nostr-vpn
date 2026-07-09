@@ -1,6 +1,7 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeepLink {
     Invite(String),
+    JoinRequest(String),
     #[cfg(debug_assertions)]
     Debug(DebugAction),
 }
@@ -25,6 +26,12 @@ pub fn parse(raw: &str) -> Option<DeepLink> {
     }
     if raw.starts_with("nvpn://invite/") {
         return Some(DeepLink::Invite(raw.to_string()));
+    }
+    if raw
+        .get(.."nvpn://join-request".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("nvpn://join-request"))
+    {
+        return Some(DeepLink::JoinRequest(raw.to_string()));
     }
 
     #[cfg(debug_assertions)]
@@ -122,6 +129,16 @@ mod tests {
         assert_eq!(
             parse(" nvpn://invite/example "),
             Some(DeepLink::Invite("nvpn://invite/example".to_string()))
+        );
+    }
+
+    #[test]
+    fn parses_join_request_links_verbatim() {
+        assert_eq!(
+            parse(" nvpn://join-request/payload "),
+            Some(DeepLink::JoinRequest(
+                "nvpn://join-request/payload".to_string()
+            ))
         );
     }
 

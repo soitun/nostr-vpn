@@ -24,7 +24,7 @@ const LAN_PAIRING_PORT: u16 = 38_911;
 const LAN_PAIRING_ANNOUNCE_EVERY: Duration = Duration::from_secs(3);
 const LAN_PAIRING_READ_TIMEOUT: Duration = Duration::from_millis(250);
 const LAN_PAIRING_BUFFER_BYTES: usize = 8_192;
-const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request?";
+const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LanPairingSignal {
@@ -538,7 +538,7 @@ mod tests {
             .public_key()
             .to_bech32()
             .expect("own npub");
-        let join_request = "nvpn://join-request?app_key=npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq02hl6p";
+        let join_request = "nvpn://join-request/payload";
         let payload = json!({
             "v": LAN_PAIRING_ANNOUNCEMENT_VERSION,
             "npub": requester_npub,

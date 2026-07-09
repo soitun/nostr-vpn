@@ -1410,6 +1410,11 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         if (url.StartsWith("nvpn://invite/", StringComparison.OrdinalIgnoreCase))
         {
             _ = ImportInviteAsync(url);
+            return;
+        }
+        if (url.StartsWith("nvpn://join-request", StringComparison.OrdinalIgnoreCase))
+        {
+            _ = ConfirmAndImportJoinRequestAsync(url);
         }
     }
 
@@ -1488,7 +1493,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         => value.StartsWith("nvpn://invite/", StringComparison.OrdinalIgnoreCase);
 
     private static bool LooksLikeJoinRequest(string value)
-        => value.StartsWith("nvpn://join-request?", StringComparison.OrdinalIgnoreCase);
+        => value.StartsWith("nvpn://join-request", StringComparison.OrdinalIgnoreCase);
 
     private const string Bech32BodyCharset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 

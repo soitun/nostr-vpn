@@ -2784,7 +2784,7 @@ private struct PendingJoinRequest: Identifiable {
 
 private func looksLikeJoinRequestQrOrLink(_ value: String) -> Bool {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.lowercased().hasPrefix("nvpn://join-request?")
+    return trimmed.lowercased().hasPrefix("nvpn://join-request")
 }
 
 private func parseScannedDeviceLinkQr(_ value: String) -> ScannedDeviceLink? {

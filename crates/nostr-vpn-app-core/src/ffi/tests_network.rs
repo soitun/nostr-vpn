@@ -292,7 +292,7 @@
     }
 
     #[test]
-    fn compact_join_request_qr_or_link_is_directly_added_by_admin() {
+    fn full_join_request_qr_or_link_is_directly_added_by_admin() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -331,8 +331,17 @@
             &joiner.config,
         )
         .expect("joiner request link");
-        assert!(join_request.starts_with("nvpn://join-request?app_key="));
-        assert!(join_request.contains("&name=Pixel%20Phone"));
+        assert!(join_request.starts_with("nvpn://join-request/"));
+        let parsed_request =
+            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_request(
+                &join_request,
+                &[crate::join_request_link::JOIN_REQUEST_LINK_PREFIX],
+            )
+            .expect("parse full join request")
+            .expect("join request payload");
+        assert_eq!(parsed_request.device_app_key_pubkey, joiner_pubkey);
+        assert!(parsed_request.request_secret.len() >= 32);
+        assert_ne!(parsed_request.request_pubkey, parsed_request.device_app_key_pubkey);
 
         admin.dispatch(NativeAppAction::ImportJoinRequest {
             request: join_request,

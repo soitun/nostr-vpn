@@ -350,6 +350,9 @@ fn drain_pending_urls(runtime: &AppRuntime) {
 fn handle_deep_link(app: &AppRef, raw: &str) {
     match deep_link::parse(raw) {
         Some(deep_link::DeepLink::Invite(invite)) => import_invite(app, invite),
+        Some(deep_link::DeepLink::JoinRequest(request)) => {
+            dispatch(app, NativeAppAction::ImportJoinRequest { request });
+        }
         #[cfg(debug_assertions)]
         Some(deep_link::DeepLink::Debug(deep_link::DebugAction::Tick)) => {
             dispatch(app, NativeAppAction::Tick);

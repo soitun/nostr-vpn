@@ -307,7 +307,7 @@ internal fun parseScannedDeviceLinkQr(value: String): ScannedDeviceLink? {
 
 internal fun looksLikeJoinRequestQrOrLink(value: String): Boolean {
     val trimmed = value.trim()
-    return trimmed.startsWith("nvpn://join-request?", ignoreCase = true)
+    return trimmed.startsWith("nvpn://join-request", ignoreCase = true)
 }
 
 private fun parseScannedDeviceJson(value: String): ScannedDeviceLink? {

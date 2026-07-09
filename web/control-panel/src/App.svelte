@@ -348,7 +348,7 @@
 
   function looksLikeJoinRequest(value: string): boolean {
     const trimmed = value.trim().toLowerCase();
-    return trimmed.startsWith('nvpn://join-request?');
+    return trimmed.startsWith('nvpn://join-request');
   }
 
   function stageJoinRequest(value: string) {

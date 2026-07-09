@@ -4073,7 +4073,7 @@ private struct PendingJoinRequest: Identifiable {
 
 private func looksLikeJoinRequestQrOrLink(_ value: String) -> Bool {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    return trimmed.hasPrefix("nvpn://join-request?")
+    return trimmed.hasPrefix("nvpn://join-request")
 }
 
 private struct LocalSearchScope<Content: View>: View {
