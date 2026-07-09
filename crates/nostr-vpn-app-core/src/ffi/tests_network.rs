@@ -327,10 +327,31 @@
             .config
             .own_nostr_pubkey_hex()
             .expect("joiner pubkey");
-        let join_request = crate::join_request_link::own_join_request_qr_code_or_link(
-            &joiner.config,
-        )
-        .expect("joiner request link");
+        let request_keys = Keys::generate();
+        let request_secret =
+            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let local_request =
+            nostr_vpn_core::identity_bridge::create_nostr_identity_device_approval_request(
+                &joiner.config.nostr_keys().expect("joiner keys"),
+                nostr_vpn_core::identity_bridge::CreateNostrIdentityDeviceApprovalRequestOptions {
+                    request_keys: Some(request_keys.clone()),
+                    request_secret: Some(request_secret.to_string()),
+                    requested_at: 1_778_998_000,
+                    request_type: Some("nostr-vpn.join-request".to_string()),
+                    resources: Vec::new(),
+                    expires_at: None,
+                    profile_id: None,
+                    admin_app_key_pubkey: None,
+                    label: Some(joiner.config.node_name.clone()),
+                },
+            )
+            .expect("joiner request");
+        let join_request =
+            nostr_vpn_core::identity_bridge::encode_nostr_identity_device_approval_request(
+                &local_request.request,
+                Some(crate::join_request_link::JOIN_REQUEST_LINK_PREFIX),
+            )
+            .expect("joiner request link");
         assert!(join_request.starts_with("nvpn://join-request/"));
         let parsed_request =
             nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_request(
@@ -348,6 +369,40 @@
         });
 
         assert!(admin.last_error.is_empty(), "{}", admin.last_error);
+        assert_eq!(admin.published_join_approval_events.len(), 2);
+        let roster_identity =
+            nostr_vpn_core::identity_bridge::parse_roster_app_key_sidecar_event(
+                &admin.published_join_approval_events[0],
+            )
+            .expect("parse roster sidecar")
+            .expect("roster sidecar identity");
+        assert_eq!(roster_identity.facet.pubkey, joiner_pubkey);
+        let receipt =
+            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_receipt_event(
+                &admin.published_join_approval_events[1],
+                &request_keys,
+            )
+            .expect("decrypt approval receipt");
+        assert_eq!(receipt.request_pubkey, parsed_request.request_pubkey);
+        assert_eq!(receipt.device_app_key_pubkey, joiner_pubkey);
+        assert_eq!(receipt.approved_by_pubkey, admin.config.own_nostr_pubkey_hex().unwrap());
+        assert_eq!(receipt.request_secret, request_secret);
+        let roster_op_event_id = admin.published_join_approval_events[0].id.to_hex();
+        assert_eq!(
+            receipt.roster_op_id.as_deref(),
+            Some(roster_op_event_id.as_str())
+        );
+        let receipt_roster_op =
+            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_receipt_roster_op(
+                &receipt,
+            )
+            .expect("receipt embeds roster op");
+        assert_eq!(receipt_roster_op.op_id, roster_op_event_id);
+        assert!(
+            !admin.published_join_approval_events[1]
+                .content
+                .contains(request_secret)
+        );
         assert!(admin.config.networks[0].devices.contains(&joiner_pubkey));
         assert!(admin.config.networks[0].inbound_join_requests.is_empty());
         assert_eq!(
@@ -366,6 +421,43 @@
 
         let _ = fs::remove_dir_all(&admin_dir);
         let _ = fs::remove_dir_all(&joiner_dir);
+    }
+
+    #[test]
+    fn compact_join_request_link_is_rejected_without_adding_device() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-compact-join-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let error = anyhow!("boom");
+        let mut admin = NativeAppRuntime::from_startup_error(&error);
+        admin.startup_error = None;
+        admin.mobile_runtime = true;
+        admin.config_path = dir.join("config.toml");
+        let admin_pubkey = admin
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("admin pubkey");
+        create_test_network(&mut admin, "Home");
+        admin.config.networks[0].admins = vec![admin_pubkey];
+
+        let joiner_pubkey = Keys::generate().public_key().to_hex();
+        let compact = format!("nvpn://join-request?app_key={joiner_pubkey}");
+
+        admin.dispatch(NativeAppAction::ImportJoinRequest { request: compact });
+
+        assert!(
+            admin.last_error.contains("missing request secret"),
+            "{}",
+            admin.last_error
+        );
+        assert!(!admin.config.networks[0].devices.contains(&joiner_pubkey));
+        assert!(admin.published_join_approval_events.is_empty());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]

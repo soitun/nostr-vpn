@@ -3,8 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::config::{AppConfig, normalize_nostr_pubkey};
 use nostr_vpn_core::identity_bridge::{
-    CreateNostrIdentityDeviceApprovalRequestOptions, create_nostr_identity_device_approval_request,
-    encode_nostr_identity_device_approval_request,
+    CreateNostrIdentityDeviceApprovalRequestOptions, NostrIdentityDeviceApprovalRequest,
+    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
     parse_compact_nostr_identity_device_approval_request,
     parse_nostr_identity_device_approval_request,
 };
@@ -17,6 +17,7 @@ const JOIN_REQUEST_TYPE: &str = "nostr-vpn.join-request";
 pub(crate) struct JoinRequestQrCodeOrLink {
     pub pubkey_hex: String,
     pub node_name: String,
+    pub approval_request: NostrIdentityDeviceApprovalRequest,
 }
 
 pub(crate) fn own_join_request_qr_code_or_link(config: &AppConfig) -> Result<String> {
@@ -58,7 +59,8 @@ pub(crate) fn parse_join_request_qr_code_or_link(value: &str) -> Result<JoinRequ
         let requester = normalize_nostr_pubkey(&request.device_app_key_pubkey)?;
         return Ok(JoinRequestQrCodeOrLink {
             pubkey_hex: requester,
-            node_name: request.label.unwrap_or_default(),
+            node_name: request.label.clone().unwrap_or_default(),
+            approval_request: request,
         });
     }
 

@@ -395,11 +395,100 @@ impl NativeAppRuntime {
     fn import_join_request(&mut self, request: &str) -> Result<()> {
         let parsed = parse_join_request_qr_code_or_link(request)?;
         let network_id = self.active_admin_network_id()?;
+        self.publish_imported_join_request_approval(&network_id, &parsed.approval_request)?;
         self.add_join_requester_to_network(
             &network_id,
             &parsed.pubkey_hex,
             parsed.node_name.as_str(),
         )
+    }
+
+    fn publish_imported_join_request_approval(
+        &mut self,
+        network_id: &str,
+        request: &NostrIdentityDeviceApprovalRequest,
+    ) -> Result<()> {
+        let signer_keys = self.config.nostr_keys()?;
+        let signer_pubkey = signer_keys.public_key().to_hex();
+        if let Some(admin_app_key_pubkey) = &request.admin_app_key_pubkey {
+            let admin_app_key_pubkey = normalize_nostr_pubkey(admin_app_key_pubkey)?;
+            if admin_app_key_pubkey != signer_pubkey {
+                return Err(anyhow!(
+                    "join request is addressed to a different admin device"
+                ));
+            }
+        }
+        let network_name = self
+            .config
+            .network_by_id(network_id)
+            .and_then(|network| non_empty(&network.name));
+        let profile_id = request.profile_id.unwrap_or_else(NostrIdentityId::new_v4);
+        let sidecar = build_device_approval_sidecar(
+            &signer_keys,
+            NostrIdentityDeviceApprovalSidecarRequest {
+                profile_id,
+                network_name,
+                request_pubkey: request.request_pubkey.clone(),
+                device_app_key_pubkey: request.device_app_key_pubkey.clone(),
+                request_secret: request.request_secret.clone(),
+                parents: Vec::new(),
+                actor_seq: None,
+                approved_at: unix_timestamp(),
+            },
+        )
+        .context("failed to build join request approval receipt")?;
+        self.publish_join_request_approval_events(&[
+            sidecar.roster_op_event,
+            sidecar.receipt_event,
+        ])
+    }
+
+    #[cfg(test)]
+    fn publish_join_request_approval_events(&mut self, events: &[Event]) -> Result<()> {
+        self.published_join_approval_events
+            .extend(events.iter().cloned());
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn publish_join_request_approval_events(&self, events: &[Event]) -> Result<()> {
+        let relays = effective_config_relays(&self.config);
+        if relays.is_empty() {
+            return Err(anyhow!(
+                "no Nostr relays configured for join request approval receipt publishing"
+            ));
+        }
+        let keys = self.config.nostr_keys()?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("failed to start join request approval publisher")?;
+        runtime.block_on(async {
+            let client = Client::new(keys);
+            for relay in &relays {
+                client
+                    .add_relay(relay)
+                    .await
+                    .map_err(|error| anyhow!("failed to add Nostr relay {relay}: {error}"))?;
+            }
+            client.connect().await;
+            for event in events {
+                let output = client
+                    .send_event_to(relays.clone(), event)
+                    .await
+                    .map_err(|error| {
+                        anyhow!("failed to publish join request approval receipt: {error}")
+                    })?;
+                if output.success.is_empty() {
+                    client.disconnect().await;
+                    return Err(anyhow!(
+                        "join request approval receipt was not accepted by any relay"
+                    ));
+                }
+            }
+            client.disconnect().await;
+            Ok(())
+        })
     }
 
     fn active_admin_network_id(&self) -> Result<String> {
