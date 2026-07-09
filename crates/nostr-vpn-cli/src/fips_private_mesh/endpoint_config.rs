@@ -39,11 +39,8 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
 
 fn fips_peer_address_from_hint(hint: &FipsPeerAddressHint) -> PeerAddress {
     let (transport, addr) = split_peer_transport_addr(&hint.addr);
-    let mut peer_address = PeerAddress::with_priority(
-        transport,
-        addr,
-        peer_address_hint_effective_priority(hint),
-    );
+    let mut peer_address =
+        PeerAddress::with_priority(transport, addr, peer_address_hint_effective_priority(hint));
     if let Some(seen_at_ms) = hint.seen_at_ms {
         peer_address = peer_address.with_seen_at_ms(seen_at_ms);
     }
@@ -186,6 +183,12 @@ fn fips_endpoint_config_with_open_discovery_limit(
             config.node.discovery.nostr.advert_relays = transport.nostr_relays.clone();
             config.node.discovery.nostr.dm_relays = transport.nostr_relays.clone();
         }
+        configure_fips_webrtc_transport(
+            &mut config,
+            advertise_on_nostr,
+            &transport.nostr_relays,
+            &transport.stun_servers,
+        );
     }
     config.transports.udp = TransportInstances::Single(UdpConfig {
         bind_addr,
@@ -413,6 +416,34 @@ fn fips_udp_external_addr(transport: &FipsEndpointTransportConfig) -> Option<Str
     Some(parsed.to_string())
 }
 
+fn configure_fips_webrtc_transport(
+    config: &mut Config,
+    advertise_on_nostr: bool,
+    signal_relays: &[String],
+    stun_servers: &[String],
+) {
+    if !advertise_on_nostr {
+        return;
+    }
+
+    #[allow(clippy::default_trait_access)]
+    {
+        config.transports.webrtc = TransportInstances::Single(Default::default());
+    }
+    let TransportInstances::Single(webrtc) = &mut config.transports.webrtc else {
+        return;
+    };
+    webrtc.advertise_on_nostr = Some(true);
+    webrtc.auto_connect = Some(true);
+    webrtc.accept_connections = Some(true);
+    if !signal_relays.is_empty() {
+        webrtc.signal_relays = Some(signal_relays.to_vec());
+    }
+    if !stun_servers.is_empty() {
+        webrtc.stun_servers = Some(stun_servers.to_vec());
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) identity_nsec: String,
@@ -453,4 +484,77 @@ pub(crate) struct FipsPrivateTunnelConfig {
     mesh_mtu: MeshMtu,
     #[cfg(target_os = "linux")]
     pub(crate) control_plane_bypass_hosts: Vec<Ipv4Addr>,
+}
+
+#[cfg(test)]
+mod endpoint_config_tests {
+    use super::*;
+    use nostr_sdk::prelude::Keys;
+
+    fn test_peer() -> FipsMeshPeerConfig {
+        let participant = Keys::generate().public_key().to_hex();
+        FipsMeshPeerConfig::from_participant_pubkey(&participant, vec!["10.44.1.2/32".to_string()])
+            .expect("peer config")
+    }
+
+    fn test_transport(nostr_discovery_enabled: bool) -> FipsEndpointTransportConfig {
+        FipsEndpointTransportConfig {
+            listen_port: 51820,
+            advertised_endpoint: "192.168.50.20:51820".to_string(),
+            advertise_public_endpoint: false,
+            nostr_discovery_enabled,
+            stun_servers: vec!["stun:stun.example.org:3478".to_string()],
+            nostr_relays: vec!["wss://relay.example.org".to_string()],
+            share_local_candidates: true,
+        }
+    }
+
+    #[test]
+    fn endpoint_config_configures_webrtc_when_nostr_discovery_on() {
+        let peer = test_peer();
+        let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
+        let transport = test_transport(true);
+        let config = fips_endpoint_config_with_open_discovery_limit(
+            &endpoint_peers,
+            Some(&transport),
+            resolve_private_mesh_mtu(None, None, None),
+            NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        );
+
+        config
+            .validate()
+            .expect("WebRTC-enabled endpoint config should validate");
+        let TransportInstances::Single(webrtc) = &config.transports.webrtc else {
+            panic!("expected one WebRTC transport");
+        };
+        assert_eq!(webrtc.advertise_on_nostr, Some(true));
+        assert_eq!(webrtc.auto_connect, Some(true));
+        assert_eq!(webrtc.accept_connections, Some(true));
+        assert_eq!(
+            webrtc.signal_relays.as_ref().expect("signal relays"),
+            &transport.nostr_relays
+        );
+        assert_eq!(
+            webrtc.stun_servers.as_ref().expect("stun servers"),
+            &transport.stun_servers
+        );
+    }
+
+    #[test]
+    fn endpoint_config_leaves_webrtc_empty_when_nostr_discovery_off() {
+        let peer = test_peer();
+        let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
+        let transport = test_transport(false);
+        let config = fips_endpoint_config_with_open_discovery_limit(
+            &endpoint_peers,
+            Some(&transport),
+            resolve_private_mesh_mtu(None, None, None),
+            NostrDiscoveryPolicy::ConfiguredOnly,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        );
+
+        assert!(!config.node.discovery.nostr.enabled);
+        assert!(config.transports.webrtc.is_empty());
+    }
 }

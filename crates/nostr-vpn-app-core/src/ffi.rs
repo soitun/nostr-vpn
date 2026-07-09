@@ -21,7 +21,8 @@ use nostr_vpn_core::config::{
 use nostr_vpn_core::diagnostics::ProbeStatus;
 use nostr_vpn_core::identity_bridge::{
     NostrIdentityDeviceApprovalRequest, NostrIdentityDeviceApprovalSidecarRequest, NostrIdentityId,
-    build_device_approval_sidecar,
+    NostrVpnJoinApprovalContextRequest, build_device_approval_sidecar,
+    build_nostr_vpn_join_approval_context_event,
 };
 use nostr_vpn_core::paid_routes::{ExitNetworkClass, PaidExitUpstream, PaidRouteMeter};
 use nostr_vpn_core::process_ext::CommandWindowExt;

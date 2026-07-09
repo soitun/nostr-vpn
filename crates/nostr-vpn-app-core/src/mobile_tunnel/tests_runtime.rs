@@ -100,6 +100,7 @@
         config.node.discovery.nostr.enabled = false;
         config.node.discovery.nostr.advertise = false;
         config.node.discovery.lan.enabled = false;
+        config.transports.webrtc = TransportInstances::default();
         config.transports.udp = TransportInstances::Single(UdpConfig {
             bind_addr: Some(format!("127.0.0.1:{}", mobile.listen_port)),
             outbound_only: Some(false),

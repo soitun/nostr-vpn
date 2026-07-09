@@ -19,7 +19,9 @@ pub use nostr_identity::{
     parse_nostr_identity_device_approval_receipt_roster_op,
     parse_nostr_identity_device_approval_request,
 };
+use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::prelude::{Event, JsonUtil, Keys, PublicKey};
+use nostr_sdk::{EventBuilder, Kind, Tag, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::fips_control::{NetworkRoster, SignedRoster};
@@ -33,6 +35,8 @@ pub const CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND: u16 = KIND_NOSTR_IDENTITY_ROSTE
 pub const CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE: &str = IDENTITY_GRAPH_ROSTER_TYPE;
 pub const CANONICAL_NETWORK_NAME_FACT: &str = "network_name";
 pub const LEGACY_SIGNED_NETWORK_ROSTER_KIND: u16 = 30_388;
+pub const NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE: &str = "nostr-vpn.join-request-approval-context";
+pub const NOSTR_VPN_JOIN_APPROVAL_CONTEXT_SCHEMA: u32 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -118,6 +122,35 @@ pub struct NostrIdentityDeviceApprovalSidecarRequest {
     pub request_secret: String,
     pub parents: Vec<String>,
     pub actor_seq: Option<u64>,
+    pub approved_at: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct NostrVpnJoinApprovalContext {
+    pub schema: u32,
+    pub profile_id: NostrIdentityId,
+    pub request_pubkey: String,
+    pub device_app_key_pubkey: String,
+    pub approved_by_pubkey: String,
+    pub approved_at: i64,
+    pub request_secret: String,
+    pub mesh_network_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roster_op_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NostrVpnJoinApprovalContextRequest {
+    pub profile_id: NostrIdentityId,
+    pub request_pubkey: String,
+    pub device_app_key_pubkey: String,
+    pub request_secret: String,
+    pub mesh_network_id: String,
+    pub network_name: Option<String>,
+    pub roster_op_id: Option<String>,
     pub approved_at: u64,
 }
 
@@ -373,6 +406,153 @@ pub fn build_device_approval_sidecar(
         roster_op_event,
         receipt_event,
     })
+}
+
+pub fn build_nostr_vpn_join_approval_context_event(
+    signer_keys: &Keys,
+    request: NostrVpnJoinApprovalContextRequest,
+) -> Result<Event> {
+    let context = normalize_nostr_vpn_join_approval_context(signer_keys, request)?;
+    let request_pubkey = PublicKey::parse(&context.request_pubkey)
+        .context("invalid Nostr VPN approval context request pubkey")?;
+    let encrypted = nip44::encrypt(
+        signer_keys.secret_key(),
+        &request_pubkey,
+        serde_json::to_string(&context).context("failed to encode Nostr VPN approval context")?,
+        Nip44Version::V2,
+    )
+    .map_err(|error| anyhow!("failed to encrypt Nostr VPN approval context: {error}"))?;
+    let profile_id = context.profile_id.to_string();
+    let approved_at = u64::try_from(context.approved_at)
+        .context("Nostr VPN approval context approved_at is negative")?;
+    EventBuilder::new(Kind::from(CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND), encrypted)
+        .tag(
+            Tag::parse(["type", NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE])
+                .map_err(|error| anyhow!("failed to tag Nostr VPN approval context: {error}"))?,
+        )
+        .tag(
+            Tag::parse(["p", context.request_pubkey.as_str()])
+                .map_err(|error| anyhow!("failed to tag Nostr VPN approval context: {error}"))?,
+        )
+        .tag(
+            Tag::parse(["i", profile_id.as_str(), "subject"])
+                .map_err(|error| anyhow!("failed to tag Nostr VPN approval context: {error}"))?,
+        )
+        .custom_created_at(Timestamp::from(approved_at))
+        .sign_with_keys(signer_keys)
+        .map_err(|error| anyhow!("failed to sign Nostr VPN approval context: {error}"))
+}
+
+pub fn parse_nostr_vpn_join_approval_context_event(
+    event: &Event,
+    request_keys: &Keys,
+) -> Result<NostrVpnJoinApprovalContext> {
+    event
+        .verify()
+        .map_err(|error| anyhow!("invalid Nostr VPN approval context signature: {error}"))?;
+    if u16::from(event.kind) != CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND {
+        return Err(anyhow!("Nostr VPN approval context has invalid kind"));
+    }
+    require_event_tag(event, "type", NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE)?;
+    let request_pubkey = request_keys.public_key().to_hex();
+    require_event_tag(event, "p", &request_pubkey)?;
+    let plaintext = nip44::decrypt(request_keys.secret_key(), &event.pubkey, &event.content)
+        .map_err(|error| anyhow!("failed to decrypt Nostr VPN approval context: {error}"))?;
+    let context: NostrVpnJoinApprovalContext =
+        serde_json::from_str(&plaintext).context("failed to parse Nostr VPN approval context")?;
+    validate_nostr_vpn_join_approval_context(&context)?;
+    if context.request_pubkey != request_pubkey {
+        return Err(anyhow!("Nostr VPN approval context request mismatch"));
+    }
+    if context.approved_by_pubkey != event.pubkey.to_hex() {
+        return Err(anyhow!("Nostr VPN approval context signer mismatch"));
+    }
+    let event_created_at = i64::try_from(event.created_at.as_secs())
+        .context("Nostr VPN approval context created_at overflows i64")?;
+    if context.approved_at != event_created_at {
+        return Err(anyhow!("Nostr VPN approval context approved_at mismatch"));
+    }
+    Ok(context)
+}
+
+fn normalize_nostr_vpn_join_approval_context(
+    signer_keys: &Keys,
+    request: NostrVpnJoinApprovalContextRequest,
+) -> Result<NostrVpnJoinApprovalContext> {
+    let approved_at = i64::try_from(request.approved_at)
+        .context("Nostr VPN approval context approved_at overflows i64")?;
+    let context = NostrVpnJoinApprovalContext {
+        schema: NOSTR_VPN_JOIN_APPROVAL_CONTEXT_SCHEMA,
+        profile_id: request.profile_id,
+        request_pubkey: normalize_pubkey(&request.request_pubkey, "Nostr VPN approval request")?,
+        device_app_key_pubkey: normalize_pubkey(
+            &request.device_app_key_pubkey,
+            "Nostr VPN approval device",
+        )?,
+        approved_by_pubkey: signer_keys.public_key().to_hex(),
+        approved_at,
+        request_secret: request.request_secret.trim().to_string(),
+        mesh_network_id: request.mesh_network_id.trim().to_string(),
+        network_name: request
+            .network_name
+            .and_then(|value| normalized_network_name(&value)),
+        roster_op_id: request.roster_op_id.and_then(|value| {
+            let trimmed = value.trim().to_string();
+            (!trimmed.is_empty()).then_some(trimmed)
+        }),
+    };
+    validate_nostr_vpn_join_approval_context(&context)?;
+    Ok(context)
+}
+
+fn validate_nostr_vpn_join_approval_context(context: &NostrVpnJoinApprovalContext) -> Result<()> {
+    if context.schema != NOSTR_VPN_JOIN_APPROVAL_CONTEXT_SCHEMA {
+        return Err(anyhow!(
+            "unsupported Nostr VPN approval context schema {}",
+            context.schema
+        ));
+    }
+    normalize_pubkey(&context.request_pubkey, "Nostr VPN approval request")?;
+    normalize_pubkey(&context.device_app_key_pubkey, "Nostr VPN approval device")?;
+    normalize_pubkey(&context.approved_by_pubkey, "Nostr VPN approval signer")?;
+    if context.approved_at < 0 {
+        return Err(anyhow!(
+            "Nostr VPN approval context approved_at is negative"
+        ));
+    }
+    if context.request_secret.trim().is_empty() {
+        return Err(anyhow!(
+            "Nostr VPN approval context request_secret is empty"
+        ));
+    }
+    if context.mesh_network_id.trim().is_empty() {
+        return Err(anyhow!(
+            "Nostr VPN approval context mesh_network_id is empty"
+        ));
+    }
+    if let Some(roster_op_id) = &context.roster_op_id
+        && !is_hex_event_id(roster_op_id)
+    {
+        return Err(anyhow!(
+            "Nostr VPN approval context roster_op_id is invalid"
+        ));
+    }
+    Ok(())
+}
+
+fn require_event_tag(event: &Event, name: &str, value: &str) -> Result<()> {
+    if event.tags.iter().any(|tag| {
+        let parts = tag.as_slice();
+        parts.first().is_some_and(|part| part == name)
+            && parts.get(1).is_some_and(|part| part == value)
+    }) {
+        return Ok(());
+    }
+    Err(anyhow!("Nostr VPN approval context missing {name} tag"))
+}
+
+fn is_hex_event_id(value: &str) -> bool {
+    value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
 pub fn build_device_approval_for_link_request(

@@ -422,24 +422,45 @@ impl NativeAppRuntime {
             .config
             .network_by_id(network_id)
             .and_then(|network| non_empty(&network.name));
+        let mesh_network_id = self
+            .config
+            .network_by_id(network_id)
+            .map(|network| normalize_runtime_network_id(&network.network_id))
+            .ok_or_else(|| anyhow!("network not found"))?;
         let profile_id = request.profile_id.unwrap_or_else(NostrIdentityId::new_v4);
+        let approved_at = unix_timestamp();
         let sidecar = build_device_approval_sidecar(
             &signer_keys,
             NostrIdentityDeviceApprovalSidecarRequest {
                 profile_id,
-                network_name,
+                network_name: network_name.clone(),
                 request_pubkey: request.request_pubkey.clone(),
                 device_app_key_pubkey: request.device_app_key_pubkey.clone(),
                 request_secret: request.request_secret.clone(),
                 parents: Vec::new(),
                 actor_seq: None,
-                approved_at: unix_timestamp(),
+                approved_at,
             },
         )
         .context("failed to build join request approval receipt")?;
+        let context_event = build_nostr_vpn_join_approval_context_event(
+            &signer_keys,
+            NostrVpnJoinApprovalContextRequest {
+                profile_id,
+                request_pubkey: request.request_pubkey.clone(),
+                device_app_key_pubkey: request.device_app_key_pubkey.clone(),
+                request_secret: request.request_secret.clone(),
+                mesh_network_id,
+                network_name,
+                roster_op_id: Some(sidecar.roster_op_event.id.to_hex()),
+                approved_at,
+            },
+        )
+        .context("failed to build Nostr VPN join approval context")?;
         self.publish_join_request_approval_events(&[
             sidecar.roster_op_event,
             sidecar.receipt_event,
+            context_event,
         ])
     }
 

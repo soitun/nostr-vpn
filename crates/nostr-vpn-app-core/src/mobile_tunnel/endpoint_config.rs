@@ -273,6 +273,12 @@ fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig 
             .stun_servers
             .clone_from(&mobile.stun_servers);
     }
+    configure_mobile_webrtc_transport(
+        &mut config,
+        nostr_enabled,
+        &mobile.nostr_relays,
+        &mobile.stun_servers,
+    );
     config.transports.udp = TransportInstances::Single(UdpConfig {
         bind_addr: Some(mobile_udp_bind_addr(mobile.listen_port)),
         outbound_only: Some(false),
@@ -511,5 +517,87 @@ fn wg_upstream_excluded_route_for_addr(upstream: SocketAddr) -> Option<String> {
     match upstream.ip() {
         IpAddr::V4(ip) => Some(format!("{ip}/32")),
         IpAddr::V6(_) => None,
+    }
+}
+
+fn configure_mobile_webrtc_transport(
+    config: &mut FipsConfig,
+    nostr_enabled: bool,
+    signal_relays: &[String],
+    stun_servers: &[String],
+) {
+    if !nostr_enabled {
+        return;
+    }
+
+    #[allow(clippy::default_trait_access)]
+    {
+        config.transports.webrtc = TransportInstances::Single(Default::default());
+    }
+    let TransportInstances::Single(webrtc) = &mut config.transports.webrtc else {
+        return;
+    };
+    webrtc.advertise_on_nostr = Some(true);
+    webrtc.auto_connect = Some(true);
+    webrtc.accept_connections = Some(true);
+    if !signal_relays.is_empty() {
+        webrtc.signal_relays = Some(signal_relays.to_vec());
+    }
+    if !stun_servers.is_empty() {
+        webrtc.stun_servers = Some(stun_servers.to_vec());
+    }
+}
+
+#[cfg(test)]
+mod endpoint_config_tests {
+    use super::*;
+    use nostr_sdk::prelude::Keys;
+
+    fn test_peer() -> FipsMeshPeerConfig {
+        let participant = Keys::generate().public_key().to_hex();
+        FipsMeshPeerConfig::from_participant_pubkey(&participant, vec!["10.44.1.2/32".to_string()])
+            .expect("peer config")
+    }
+
+    #[test]
+    fn mobile_endpoint_config_configures_webrtc_when_discovery_on() {
+        let mobile = MobileTunnelConfig {
+            peers: vec![test_peer()],
+            nostr_relays: vec!["wss://relay.example.org".to_string()],
+            stun_servers: vec!["stun:stun.example.org:3478".to_string()],
+            ..empty_config()
+        };
+        let config = fips_endpoint_config("nostr-vpn:test", &mobile);
+
+        config
+            .validate()
+            .expect("WebRTC-enabled mobile FIPS config should validate");
+        let TransportInstances::Single(webrtc) = &config.transports.webrtc else {
+            panic!("expected one WebRTC transport");
+        };
+        assert_eq!(webrtc.advertise_on_nostr, Some(true));
+        assert_eq!(webrtc.auto_connect, Some(true));
+        assert_eq!(webrtc.accept_connections, Some(true));
+        assert_eq!(
+            webrtc.signal_relays.as_ref().expect("signal relays"),
+            &mobile.nostr_relays
+        );
+        assert_eq!(
+            webrtc.stun_servers.as_ref().expect("stun servers"),
+            &mobile.stun_servers
+        );
+    }
+
+    #[test]
+    fn mobile_endpoint_config_leaves_webrtc_empty_when_discovery_off() {
+        let mobile = MobileTunnelConfig {
+            peers: vec![test_peer()],
+            nostr_discovery_enabled: false,
+            ..empty_config()
+        };
+        let config = fips_endpoint_config("nostr-vpn:test", &mobile);
+
+        assert!(!config.node.discovery.nostr.enabled);
+        assert!(config.transports.webrtc.is_empty());
     }
 }

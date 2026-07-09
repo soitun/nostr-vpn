@@ -21,6 +21,7 @@ anyhow.workspace = true
 base64.workspace = true
 dirs.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+fips-core.workspace = true
 fips-endpoint.workspace = true
 netdev.workspace = true
 nostr-sdk.workspace = true

@@ -369,7 +369,7 @@
         });
 
         assert!(admin.last_error.is_empty(), "{}", admin.last_error);
-        assert_eq!(admin.published_join_approval_events.len(), 2);
+        assert_eq!(admin.published_join_approval_events.len(), 3);
         let roster_identity =
             nostr_vpn_core::identity_bridge::parse_roster_app_key_sidecar_event(
                 &admin.published_join_approval_events[0],
@@ -402,6 +402,32 @@
             !admin.published_join_approval_events[1]
                 .content
                 .contains(request_secret)
+        );
+        let vpn_context =
+            nostr_vpn_core::identity_bridge::parse_nostr_vpn_join_approval_context_event(
+                &admin.published_join_approval_events[2],
+                &request_keys,
+            )
+            .expect("decrypt Nostr VPN approval context");
+        assert_eq!(vpn_context.request_pubkey, parsed_request.request_pubkey);
+        assert_eq!(vpn_context.device_app_key_pubkey, joiner_pubkey);
+        assert_eq!(
+            vpn_context.approved_by_pubkey,
+            admin.config.own_nostr_pubkey_hex().unwrap()
+        );
+        assert_eq!(vpn_context.request_secret, request_secret);
+        assert_eq!(vpn_context.mesh_network_id, "8d4f34f5425bc50e");
+        assert_eq!(vpn_context.network_name.as_deref(), Some("Home"));
+        assert_eq!(vpn_context.roster_op_id.as_deref(), Some(roster_op_event_id.as_str()));
+        assert!(
+            !admin.published_join_approval_events[2]
+                .content
+                .contains(request_secret)
+        );
+        assert!(
+            !admin.published_join_approval_events[2]
+                .content
+                .contains("8d4f34f5425bc50e")
         );
         assert!(admin.config.networks[0].devices.contains(&joiner_pubkey));
         assert!(admin.config.networks[0].inbound_join_requests.is_empty());
