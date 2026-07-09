@@ -1,463 +1,270 @@
-use std::io::Write;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::collections::HashSet;
+use std::env;
+use std::fs;
+use std::io::{self, BufRead, Write};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt as _;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
-use anyhow::{Context, Result, anyhow, bail};
-use fips_core::config::{NostrDiscoveryPolicy, TransportInstances};
-use fips_core::{Config, Identity, IdentityConfig, WebRtcConfig};
-use fips_endpoint::FipsEndpoint;
-use nostr_sdk::prelude::{Client, Event, Keys};
-use nostr_vpn_core::identity_bridge::{
-    NostrIdentityDeviceApprovalSidecarRequest, NostrIdentityId, NostrVpnJoinApprovalContextRequest,
-    build_device_approval_sidecar, build_nostr_vpn_join_approval_context_event,
-    parse_nostr_identity_device_approval_request,
-};
+use nostr_vpn_app_core::{FfiApp, NativeAppAction, NativeAppState};
 use serde_json::json;
-use tokio::net::UdpSocket;
-use tokio::time::{sleep, timeout};
 
-const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
-const DEFAULT_DISCOVERY_APP: &str = "fips-overlay-v1";
+const REAL_E2E_GUARD: &str = "NVPN_WEBVM_REAL_E2E";
+const IMPORT_COMMAND_PREFIX: &str = "import ";
 
 #[derive(Debug)]
 struct Args {
-    relay: String,
-    join_request: String,
-    mesh_network_id: String,
-    network_name: Option<String>,
-    timeout_ms: u64,
-    discovery_app: String,
+    config_path: PathBuf,
+    nvpn_bin: PathBuf,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct HarnessError {
+    stage: &'static str,
+    code: &'static str,
+}
+
+type HarnessResult<T> = Result<T, HarnessError>;
+
+impl HarnessError {
+    const fn new(stage: &'static str, code: &'static str) -> Self {
+        Self { stage, code }
+    }
 }
 
 impl Args {
-    fn parse() -> Result<Self> {
-        let mut relay = None;
-        let mut join_request = None;
-        let mut mesh_network_id = Some("8d4f34f5425bc50e".to_string());
-        let mut network_name = Some("Home".to_string());
-        let mut timeout_ms = 60_000;
-        let mut discovery_app = DEFAULT_DISCOVERY_APP.to_string();
-
-        let mut args = std::env::args().skip(1);
+    fn parse() -> HarnessResult<Self> {
+        let mut config_path = None;
+        let mut nvpn_bin = None;
+        let mut args = env::args().skip(1);
         while let Some(flag) = args.next() {
             match flag.as_str() {
-                "--help" | "-h" => {
-                    print_help();
-                    std::process::exit(0);
+                "--config-path" => {
+                    config_path = Some(required_arg_value(&mut args)?);
                 }
-                "--relay" => relay = Some(require_value(&mut args, "--relay")?),
-                "--join-request" => {
-                    join_request = Some(require_value(&mut args, "--join-request")?);
+                "--nvpn-bin" => {
+                    nvpn_bin = Some(required_arg_value(&mut args)?);
                 }
-                "--mesh-network-id" => {
-                    mesh_network_id = Some(require_value(&mut args, "--mesh-network-id")?);
-                }
-                "--network-name" => {
-                    let value = require_value(&mut args, "--network-name")?;
-                    network_name = (!value.trim().is_empty()).then_some(value);
-                }
-                "--timeout-ms" => {
-                    timeout_ms = require_value(&mut args, "--timeout-ms")?
-                        .parse()
-                        .context("invalid --timeout-ms")?;
-                }
-                "--discovery-app" => {
-                    discovery_app = require_value(&mut args, "--discovery-app")?;
-                }
-                unknown => bail!("unknown argument: {unknown}"),
+                _ => return Err(HarnessError::new("arguments", "invalid-argument")),
             }
         }
 
-        let relay = relay.context("--relay is required")?;
-        let join_request = join_request.context("--join-request is required")?;
-        let mesh_network_id = mesh_network_id
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .context("--mesh-network-id must not be empty")?;
-        let discovery_app = discovery_app.trim().to_string();
-        if discovery_app.is_empty() {
-            bail!("--discovery-app must not be empty");
-        }
-
+        let config_path =
+            config_path.ok_or_else(|| HarnessError::new("arguments", "missing-config-path"))?;
+        let nvpn_bin =
+            nvpn_bin.ok_or_else(|| HarnessError::new("arguments", "missing-nvpn-bin"))?;
         Ok(Self {
-            relay,
-            join_request,
-            mesh_network_id,
-            network_name,
-            timeout_ms,
-            discovery_app,
+            config_path: canonical_file(&config_path, false)?,
+            nvpn_bin: canonical_file(&nvpn_bin, true)?,
         })
     }
 }
 
-fn require_value(args: &mut impl Iterator<Item = String>, flag: &str) -> Result<String> {
+fn required_arg_value(args: &mut impl Iterator<Item = String>) -> HarnessResult<PathBuf> {
     args.next()
-        .filter(|value| !value.starts_with("--"))
-        .with_context(|| format!("{flag} requires a value"))
+        .filter(|value| !value.starts_with("--") && !value.trim().is_empty())
+        .map(PathBuf::from)
+        .ok_or_else(|| HarnessError::new("arguments", "missing-argument-value"))
 }
 
-fn print_help() {
-    println!(
-        "Usage: cargo run -p nostr-vpn-app-core --example webvm_native_fips_e2e -- \\
-         --relay ws://127.0.0.1:1234 \\
-         --join-request nvpn://join-request/... \\
-         [--mesh-network-id 8d4f34f5425bc50e] [--network-name Home] [--timeout-ms 60000]"
-    );
+fn canonical_file(path: &Path, require_executable: bool) -> HarnessResult<PathBuf> {
+    let canonical =
+        fs::canonicalize(path).map_err(|_| HarnessError::new("preflight", "path-unavailable"))?;
+    let metadata =
+        fs::metadata(&canonical).map_err(|_| HarnessError::new("preflight", "path-unavailable"))?;
+    if !metadata.is_file() {
+        return Err(HarnessError::new("preflight", "path-is-not-file"));
+    }
+    #[cfg(unix)]
+    if require_executable && metadata.permissions().mode() & 0o111 == 0 {
+        return Err(HarnessError::new("preflight", "nvpn-binary-not-executable"));
+    }
+    #[cfg(not(unix))]
+    let _ = require_executable;
+    Ok(canonical)
 }
 
-fn unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs())
-        .unwrap_or(0)
+fn emit_status(value: &serde_json::Value) -> HarnessResult<()> {
+    let stdout = io::stdout();
+    let mut output = stdout.lock();
+    serde_json::to_writer(&mut output, &value)
+        .map_err(|_| HarnessError::new("output", "json-write-failed"))?;
+    writeln!(output).map_err(|_| HarnessError::new("output", "stdout-write-failed"))?;
+    output
+        .flush()
+        .map_err(|_| HarnessError::new("output", "stdout-flush-failed"))
 }
 
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    bytes
+fn read_command(input: &mut impl BufRead) -> HarnessResult<Option<String>> {
+    let mut command = String::new();
+    let bytes = input
+        .read_line(&mut command)
+        .map_err(|_| HarnessError::new("protocol", "stdin-read-failed"))?;
+    if bytes == 0 {
+        return Ok(None);
+    }
+    while matches!(command.as_bytes().last(), Some(b'\n' | b'\r')) {
+        command.pop();
+    }
+    Ok(Some(command))
+}
+
+fn participant_keys(state: &NativeAppState) -> HashSet<(String, String)> {
+    state
+        .networks
         .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>()
+        .flat_map(|network| {
+            network
+                .participants
+                .iter()
+                .map(|participant| (network.id.clone(), participant.npub.clone()))
+        })
+        .collect()
 }
 
-fn print_json(value: serde_json::Value) -> Result<()> {
-    println!("{value}");
-    std::io::stdout().flush().context("failed to flush stdout")
+fn added_participant(
+    before: &NativeAppState,
+    after: &NativeAppState,
+) -> HarnessResult<(String, String)> {
+    let before_keys = participant_keys(before);
+    let mut added = participant_keys(after)
+        .into_iter()
+        .filter(|key| !before_keys.contains(key));
+    let participant = added
+        .next()
+        .ok_or_else(|| HarnessError::new("import", "participant-not-added"))?;
+    if added.next().is_some() {
+        return Err(HarnessError::new("import", "ambiguous-participant-change"));
+    }
+    Ok(participant)
 }
 
-async fn print_peer_snapshot(endpoint: &FipsEndpoint, label: &str) -> Result<()> {
-    let peers = endpoint
-        .peers()
-        .await
-        .context("failed to snapshot native FIPS peers")?;
-    print_json(json!({
-        "type": "peer-snapshot",
-        "label": label,
-        "peers": peers.into_iter().map(|peer| json!({
-            "npub": peer.npub,
-            "connected": peer.connected,
-            "transportType": peer.transport_type,
-            "transportAddr": peer.transport_addr,
-            "packetsSent": peer.packets_sent,
-            "packetsRecv": peer.packets_recv,
-            "bytesSent": peer.bytes_sent,
-            "bytesRecv": peer.bytes_recv,
-            "lastOutboundRoute": peer.last_outbound_route,
-        })).collect::<Vec<_>>(),
-    }))
-}
-
-#[derive(Debug)]
-struct Ipv4UdpPacket {
-    source_ip: Ipv4Addr,
-    destination_ip: Ipv4Addr,
-    source_port: u16,
-    destination_port: u16,
-    payload: Vec<u8>,
-}
-
-fn parse_ipv4_udp(packet: &[u8]) -> Option<Ipv4UdpPacket> {
-    if packet.len() < 28 || packet[0] >> 4 != 4 {
-        return None;
-    }
-    let header_len = usize::from(packet[0] & 0x0f) * 4;
-    if header_len < 20 || packet.len() < header_len + 8 || packet[9] != 17 {
-        return None;
-    }
-    let total_len = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
-    if total_len < header_len + 8 || total_len > packet.len() {
-        return None;
-    }
-    let udp = &packet[header_len..total_len];
-    let udp_len = usize::from(u16::from_be_bytes([udp[4], udp[5]]));
-    if udp_len < 8 || udp_len > udp.len() {
-        return None;
-    }
-    Some(Ipv4UdpPacket {
-        source_ip: Ipv4Addr::new(packet[12], packet[13], packet[14], packet[15]),
-        destination_ip: Ipv4Addr::new(packet[16], packet[17], packet[18], packet[19]),
-        source_port: u16::from_be_bytes([udp[0], udp[1]]),
-        destination_port: u16::from_be_bytes([udp[2], udp[3]]),
-        payload: udp[8..udp_len].to_vec(),
+fn participant_exists(state: &NativeAppState, network_id: &str, npub: &str) -> bool {
+    state.networks.iter().any(|network| {
+        network.id == network_id
+            && network
+                .participants
+                .iter()
+                .any(|participant| participant.npub == npub)
     })
 }
 
-fn ipv4_checksum(header: &[u8]) -> u16 {
-    let mut sum = 0u32;
-    let mut chunks = header.chunks_exact(2);
-    for chunk in &mut chunks {
-        sum += u32::from(u16::from_be_bytes([chunk[0], chunk[1]]));
-        while sum > 0xffff {
-            sum = (sum & 0xffff) + (sum >> 16);
+fn cleanup(
+    app: &FfiApp,
+    participant: Option<&(String, String)>,
+    restore_disconnected: bool,
+) -> HarnessResult<()> {
+    let mut participant_removed = false;
+    if let Some((network_id, npub)) = participant {
+        let state = app.dispatch(NativeAppAction::RemoveParticipant {
+            network_id: network_id.clone(),
+            npub: npub.clone(),
+        });
+        if !state.error.is_empty() || participant_exists(&state, network_id, npub) {
+            return Err(HarnessError::new("cleanup", "participant-remove-failed"));
         }
+        participant_removed = true;
     }
-    if let Some(byte) = chunks.remainder().first() {
-        sum += u32::from(*byte) << 8;
-        while sum > 0xffff {
-            sum = (sum & 0xffff) + (sum >> 16);
+
+    let mut vpn_restored = false;
+    let state = app.state();
+    if restore_disconnected && (state.vpn_enabled || state.vpn_active) {
+        let state = app.dispatch(NativeAppAction::DisconnectVpn);
+        if !state.error.is_empty() {
+            return Err(HarnessError::new("cleanup", "vpn-restore-failed"));
         }
+        vpn_restored = true;
     }
-    !(sum as u16)
+
+    emit_status(&json!({
+        "status": "cleaned",
+        "participantRemoved": participant_removed,
+        "vpnRestored": vpn_restored,
+    }))
 }
 
-fn build_ipv4_udp_packet(
-    source_ip: Ipv4Addr,
-    destination_ip: Ipv4Addr,
-    source_port: u16,
-    destination_port: u16,
-    payload: &[u8],
-) -> Result<Vec<u8>> {
-    let udp_len = 8usize
-        .checked_add(payload.len())
-        .context("UDP payload length overflow")?;
-    let total_len = 20usize
-        .checked_add(udp_len)
-        .context("IPv4 packet length overflow")?;
-    let total_len_u16 = u16::try_from(total_len).context("IPv4 response is too large")?;
-    let udp_len_u16 = u16::try_from(udp_len).context("UDP response is too large")?;
-    let mut packet = vec![0u8; total_len];
-    packet[0] = 0x45;
-    packet[2..4].copy_from_slice(&total_len_u16.to_be_bytes());
-    packet[4..6].copy_from_slice(&0x4e56u16.to_be_bytes());
-    packet[6] = 0x40;
-    packet[8] = 64;
-    packet[9] = 17;
-    packet[12..16].copy_from_slice(&source_ip.octets());
-    packet[16..20].copy_from_slice(&destination_ip.octets());
-    let checksum = ipv4_checksum(&packet[..20]);
-    packet[10..12].copy_from_slice(&checksum.to_be_bytes());
-
-    let udp_offset = 20;
-    packet[udp_offset..udp_offset + 2].copy_from_slice(&source_port.to_be_bytes());
-    packet[udp_offset + 2..udp_offset + 4].copy_from_slice(&destination_port.to_be_bytes());
-    packet[udp_offset + 4..udp_offset + 6].copy_from_slice(&udp_len_u16.to_be_bytes());
-    packet[udp_offset + 6..udp_offset + 8].copy_from_slice(&0u16.to_be_bytes());
-    packet[udp_offset + 8..].copy_from_slice(payload);
-    Ok(packet)
-}
-
-async fn try_udp_exit(packet: &[u8]) -> Result<Option<(Vec<u8>, SocketAddrV4, usize)>> {
-    let Some(parsed) = parse_ipv4_udp(packet) else {
-        return Ok(None);
-    };
-    let target = SocketAddrV4::new(parsed.destination_ip, parsed.destination_port);
-    let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
-        .await
-        .context("failed to bind UDP exit socket")?;
-    socket
-        .send_to(&parsed.payload, SocketAddr::V4(target))
-        .await
-        .with_context(|| format!("failed to send UDP exit packet to {target}"))?;
-    let mut response = vec![0u8; 2048];
-    let (len, source) = timeout(Duration::from_secs(10), socket.recv_from(&mut response))
-        .await
-        .with_context(|| format!("timed out waiting for UDP exit response from {target}"))?
-        .context("failed to receive UDP exit response")?;
-    if source != SocketAddr::V4(target) {
-        bail!("UDP exit response came from unexpected source {source}; expected {target}");
+fn run() -> HarnessResult<()> {
+    if env::var(REAL_E2E_GUARD).as_deref() != Ok("1") {
+        return Err(HarnessError::new("guard", "real-e2e-not-enabled"));
     }
-    response.truncate(len);
-    let response_packet = build_ipv4_udp_packet(
-        parsed.destination_ip,
-        parsed.source_ip,
-        parsed.destination_port,
-        parsed.source_port,
-        &response,
-    )?;
-    Ok(Some((response_packet, target, len)))
-}
 
-async fn publish_events(keys: Keys, relay: &str, events: &[Event]) -> Result<()> {
-    let relays = vec![relay.to_string()];
-    let client = Client::new(keys);
-    client
-        .add_relay(relay)
-        .await
-        .with_context(|| format!("failed to add relay {relay}"))?;
-    client.connect().await;
-    for event in events {
-        let output = client
-            .send_event_to(relays.clone(), event)
-            .await
-            .context("failed to publish native approval event")?;
-        if output.success.is_empty() {
-            client.disconnect().await;
-            bail!("native approval event was not accepted by the relay");
-        }
-    }
-    client.disconnect().await;
-    Ok(())
-}
-
-async fn start_native_endpoint(args: &Args, secret_hex: &str) -> Result<FipsEndpoint> {
-    let mut config = Config::new();
-    config.node.identity = IdentityConfig {
-        nsec: Some(secret_hex.to_string()),
-        persistent: false,
-    };
-    config.node.discovery.nostr.enabled = true;
-    config.node.discovery.nostr.advertise = true;
-    config.node.discovery.nostr.advert_relays = vec![args.relay.clone()];
-    config.node.discovery.nostr.dm_relays = vec![args.relay.clone()];
-    config.node.discovery.nostr.stun_servers = Vec::new();
-    config.node.discovery.nostr.app = args.discovery_app.clone();
-    config.node.discovery.nostr.policy = NostrDiscoveryPolicy::Open;
-    config.transports.webrtc = TransportInstances::Single(WebRtcConfig {
-        advertise_on_nostr: Some(true),
-        auto_connect: Some(false),
-        accept_connections: Some(true),
-        connect_timeout_ms: Some(15_000),
-        ice_gather_timeout_ms: Some(1_500),
-        signal_relays: Some(vec![args.relay.clone()]),
-        stun_servers: Some(Vec::new()),
-        ..WebRtcConfig::default()
-    });
-
-    FipsEndpoint::builder()
-        .config(config)
-        .discovery_scope(args.discovery_app.clone())
-        .without_system_tun()
-        .bind()
-        .await
-        .context("failed to start native FIPS WebRTC endpoint")
-}
-
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
     let args = Args::parse()?;
-    let request = parse_nostr_identity_device_approval_request(
-        args.join_request.trim(),
-        &[JOIN_REQUEST_LINK_PREFIX],
-    )
-    .context("failed to parse join request")?
-    .ok_or_else(|| anyhow!("join request is not a full Nostr VPN join request"))?;
-
-    let admin_keys = Keys::generate();
-    let admin_pubkey_hex = admin_keys.public_key().to_hex();
-    if let Some(admin_app_key_pubkey) = &request.admin_app_key_pubkey
-        && admin_app_key_pubkey.trim().to_lowercase() != admin_pubkey_hex
+    let app = FfiApp::new_with_config_path(
+        args.config_path,
+        env!("CARGO_PKG_VERSION").to_string(),
+        Some(args.nvpn_bin),
+    );
+    let before = app.state();
+    if !before.error.is_empty() {
+        return Err(HarnessError::new("startup", "ffi-app-startup-failed"));
+    }
+    if !before
+        .networks
+        .iter()
+        .any(|network| network.enabled && network.local_is_admin)
     {
-        bail!("join request is addressed to a different admin app key");
+        return Err(HarnessError::new(
+            "preflight",
+            "active-admin-network-required",
+        ));
     }
-    if request.request_pubkey.trim().is_empty() {
-        bail!("join request is missing request pubkey");
+    let restore_disconnected = !before.vpn_enabled && !before.vpn_active;
+    emit_status(&json!({ "status": "ready" }))?;
+
+    let stdin = io::stdin();
+    let mut input = stdin.lock();
+    let Some(mut command) = read_command(&mut input)? else {
+        return cleanup(&app, None, false);
+    };
+    if command == "cleanup" {
+        return cleanup(&app, None, false);
     }
-    if request.device_app_key_pubkey.trim().is_empty() {
-        bail!("join request is missing joiner app pubkey");
+    let mut request = command
+        .strip_prefix(IMPORT_COMMAND_PREFIX)
+        .ok_or_else(|| HarnessError::new("protocol", "import-command-required"))?
+        .to_string();
+    command.clear();
+    if !request.starts_with("nvpn://join-request/") || request.chars().any(char::is_whitespace) {
+        request.clear();
+        return Err(HarnessError::new("import", "invalid-join-request"));
     }
-    if request.request_secret.trim().is_empty() {
-        bail!("join request is missing request secret");
+
+    let after = app.dispatch(NativeAppAction::ImportJoinRequest {
+        request: std::mem::take(&mut request),
+    });
+    let participant = added_participant(&before, &after)?;
+    if !after.error.is_empty() {
+        cleanup(&app, Some(&participant), restore_disconnected)?;
+        return Err(HarnessError::new("import", "ffi-import-failed"));
     }
-    print_json(json!({
-        "type": "join-request-parsed",
-        "requestPubkey": request.request_pubkey.clone(),
-        "deviceAppKeyPubkey": request.device_app_key_pubkey.clone(),
-        "hasRequestSecret": true,
+    emit_status(&json!({
+        "status": "imported",
+        "participantAdded": true,
     }))?;
 
-    let approved_at = unix_timestamp();
-    let profile_id = request
-        .profile_id
-        .clone()
-        .unwrap_or_else(NostrIdentityId::new_v4);
-    let sidecar = build_device_approval_sidecar(
-        &admin_keys,
-        NostrIdentityDeviceApprovalSidecarRequest {
-            profile_id,
-            network_name: args.network_name.clone(),
-            request_pubkey: request.request_pubkey.clone(),
-            device_app_key_pubkey: request.device_app_key_pubkey.clone(),
-            request_secret: request.request_secret.clone(),
-            parents: Vec::new(),
-            actor_seq: None,
-            approved_at,
-        },
-    )
-    .context("failed to build native approval receipt")?;
-    let context_event = build_nostr_vpn_join_approval_context_event(
-        &admin_keys,
-        NostrVpnJoinApprovalContextRequest {
-            profile_id,
-            request_pubkey: request.request_pubkey.clone(),
-            device_app_key_pubkey: request.device_app_key_pubkey.clone(),
-            request_secret: request.request_secret.clone(),
-            mesh_network_id: args.mesh_network_id.clone(),
-            network_name: args.network_name.clone(),
-            roster_op_id: Some(sidecar.roster_op_event.id.to_hex()),
-            approved_at,
-        },
-    )
-    .context("failed to build Nostr VPN approval context")?;
-
-    publish_events(
-        admin_keys.clone(),
-        &args.relay,
-        &[
-            sidecar.roster_op_event.clone(),
-            sidecar.receipt_event.clone(),
-            context_event,
-        ],
-    )
-    .await?;
-    print_json(json!({
-        "type": "approval-published",
-        "adminPubkeyHex": admin_pubkey_hex,
-        "rosterOpId": sidecar.roster_op_event.id.to_hex(),
-        "meshNetworkId": args.mesh_network_id,
-    }))?;
-
-    let secret_hex = admin_keys.secret_key().to_secret_hex();
-    let identity = Identity::from_secret_str(&secret_hex)?;
-    let endpoint_pubkey_hex = bytes_to_hex(&identity.pubkey_full().serialize());
-    let endpoint = start_native_endpoint(&args, &secret_hex).await?;
-    print_json(json!({
-        "type": "ready",
-        "adminPubkeyHex": admin_pubkey_hex,
-        "endpointPubkeyHex": endpoint_pubkey_hex,
-        "npub": endpoint.npub(),
-        "meshNetworkId": args.mesh_network_id,
-        "relay": args.relay,
-    }))?;
-
-    let mut messages = Vec::with_capacity(1);
-    let received = timeout(
-        Duration::from_millis(args.timeout_ms),
-        endpoint.recv_batch_into(&mut messages, 1),
-    )
-    .await
-    .context("timed out waiting for endpoint data from WebVM")?
-    .ok_or_else(|| anyhow!("native endpoint closed before receiving endpoint data"))?;
-    if received == 0 {
-        bail!("native endpoint receive returned an empty endpoint-data batch");
-    }
-    let message = messages
-        .pop()
-        .ok_or_else(|| anyhow!("native endpoint receive returned no endpoint-data message"))?;
-    let source_peer = message.source_peer;
-    let source_peer_npub = source_peer.npub();
-    let payload = message.data.into_vec();
-    print_json(json!({
-        "type": "endpoint-data",
-        "sourcePeerNpub": source_peer_npub,
-        "payloadHex": bytes_to_hex(&payload),
-        "bytes": payload.len(),
-    }))?;
-    print_peer_snapshot(&endpoint, "after-endpoint-data").await?;
-    if let Some((response_packet, target, response_bytes)) = try_udp_exit(&payload).await? {
-        print_json(json!({
-            "type": "exit-udp-response",
-            "sourcePeerNpub": source_peer_npub,
-            "target": target.to_string(),
-            "responseBytes": response_bytes,
-            "payloadHex": bytes_to_hex(&response_packet),
-        }))?;
-        for _ in 0..16 {
-            endpoint
-                .send_batch_to_peer(source_peer, vec![response_packet.clone()])
-                .await
-                .context("failed to send UDP exit response over FIPS endpoint data")?;
-            sleep(Duration::from_millis(500)).await;
+    match read_command(&mut input)? {
+        None => cleanup(&app, Some(&participant), restore_disconnected),
+        Some(command) if command == "cleanup" => {
+            cleanup(&app, Some(&participant), restore_disconnected)
         }
-        print_peer_snapshot(&endpoint, "after-exit-response-send").await?;
+        Some(_) => {
+            cleanup(&app, Some(&participant), restore_disconnected)?;
+            Err(HarnessError::new("protocol", "unexpected-command"))
+        }
     }
-    Ok(())
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            let _ = emit_status(&json!({
+                "status": "error",
+                "stage": error.stage,
+                "code": error.code,
+            }));
+            ExitCode::FAILURE
+        }
+    }
 }

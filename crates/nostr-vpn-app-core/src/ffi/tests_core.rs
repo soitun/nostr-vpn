@@ -83,9 +83,21 @@
         assert!(saved.networks.is_empty());
         assert!(!saved.nostr.secret_key.trim().is_empty());
         assert!(!saved.nostr.public_key.trim().is_empty());
+        let first_join_link = runtime.state().join_request_qr_code_or_link;
+        assert!(first_join_link.starts_with("nvpn://join-request/"));
+        let pending = saved
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("pending join request");
         let raw = fs::read_to_string(&config_path).expect("read persisted config");
         assert!(raw.contains("[nostr]"));
         assert!(raw.contains("public_key"));
+        assert!(!raw.contains(&pending.request.request_secret));
+        assert!(!raw.contains(&pending.request_private_key));
+
+        let reloaded = NativeAppRuntime::new(dir.to_str().expect("utf8 temp dir"), String::new())
+            .expect("runtime reloads");
+        assert_eq!(reloaded.state().join_request_qr_code_or_link, first_join_link);
 
         let _ = fs::remove_dir_all(&dir);
     }

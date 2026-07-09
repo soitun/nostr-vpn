@@ -7,6 +7,7 @@ use nostr_sdk::prelude::Keys;
 use sha2::{Digest as _, Sha256};
 
 use crate::config::{AppConfig, normalize_nostr_pubkey};
+use crate::join_requests::PendingNostrJoinRequest;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SecretPersistence {
@@ -36,7 +37,8 @@ pub(crate) fn prepare_config_secrets_for_save(
         path,
         ConfigSecret::WireGuardExitPeerPreshared,
         &mut config.wireguard_exit.peer_preshared_key,
-    )
+    )?;
+    persist_pending_join_request(path, config)
 }
 
 pub(crate) fn delete_config_secrets(path: &Path) -> Result<()> {
@@ -45,6 +47,7 @@ pub(crate) fn delete_config_secrets(path: &Path) -> Result<()> {
         ConfigSecret::Nostr,
         ConfigSecret::WireGuardExitPrivate,
         ConfigSecret::WireGuardExitPeerPreshared,
+        ConfigSecret::PendingJoinRequest,
     ] {
         if let Err(error) = platform::delete_secret(path, kind) {
             result = Err(error);
@@ -68,6 +71,10 @@ pub(crate) fn config_file_needs_secret_migration(path: &Path) -> Result<bool> {
         }
     }
 
+    if plaintext_pending_join_request(&value) {
+        return Ok(true);
+    }
+
     Ok(false)
 }
 
@@ -76,6 +83,7 @@ enum ConfigSecret {
     Nostr,
     WireGuardExitPrivate,
     WireGuardExitPeerPreshared,
+    PendingJoinRequest,
 }
 
 impl ConfigSecret {
@@ -84,6 +92,7 @@ impl ConfigSecret {
             Self::Nostr => "nostr-secret-key",
             Self::WireGuardExitPrivate => "wireguard-exit-private-key",
             Self::WireGuardExitPeerPreshared => "wireguard-exit-peer-preshared-key",
+            Self::PendingJoinRequest => "pending-join-request",
         }
     }
 
@@ -92,6 +101,7 @@ impl ConfigSecret {
             Self::Nostr => "Nostr secret key",
             Self::WireGuardExitPrivate => "WireGuard exit private key",
             Self::WireGuardExitPeerPreshared => "WireGuard exit peer preshared key",
+            Self::PendingJoinRequest => "pending Nostr join request",
         }
     }
 }
@@ -122,6 +132,7 @@ fn hydrate_config_secret_fields(path: &Path, config: &mut AppConfig) -> Result<(
         config.wireguard_exit.peer_preshared_key =
             read_required_secret(path, ConfigSecret::WireGuardExitPeerPreshared)?;
     }
+    hydrate_pending_join_request(path, config)?;
 
     if config.nostr.secret_key.trim().is_empty()
         && normalize_nostr_pubkey(&config.nostr.public_key).is_ok()
@@ -134,6 +145,73 @@ fn hydrate_config_secret_fields(path: &Path, config: &mut AppConfig) -> Result<(
     }
 
     validate_nostr_secret_matches_public_key(path, config)?;
+    if let Some(pending) = &config.pending_nostr_join_request {
+        pending.validate_for_device(&config.own_nostr_pubkey_hex()?)?;
+    }
+    Ok(())
+}
+
+fn hydrate_pending_join_request(path: &Path, config: &mut AppConfig) -> Result<()> {
+    let Some(redacted) = config.pending_nostr_join_request.as_ref() else {
+        return Ok(());
+    };
+    let secret_redacted = is_redacted_secret(&redacted.request.request_secret);
+    let key_redacted = is_redacted_secret(&redacted.request_private_key);
+    match (secret_redacted, key_redacted) {
+        (false, false) => return Ok(()),
+        (true, true) => {}
+        _ => {
+            return Err(anyhow!(
+                "pending Nostr join request has partially redacted secret material"
+            ));
+        }
+    }
+
+    let raw = read_required_secret(path, ConfigSecret::PendingJoinRequest)?;
+    let hydrated: PendingNostrJoinRequest = serde_json::from_str(&raw)
+        .context("failed to parse pending Nostr join request from secret storage")?;
+    let mut expected_public = hydrated.clone();
+    expected_public.request.request_secret.clear();
+    expected_public.request_private_key.clear();
+    let mut configured_public = redacted.clone();
+    configured_public.request.request_secret.clear();
+    configured_public.request_private_key.clear();
+    if configured_public != expected_public {
+        return Err(anyhow!(
+            "pending Nostr join request in config does not match secret storage"
+        ));
+    }
+    config.pending_nostr_join_request = Some(hydrated);
+    Ok(())
+}
+
+fn persist_pending_join_request(path: &Path, config: &mut AppConfig) -> Result<()> {
+    let Some(pending) = config.pending_nostr_join_request.as_mut() else {
+        return platform::delete_secret(path, ConfigSecret::PendingJoinRequest);
+    };
+    let secret_redacted = is_redacted_secret(&pending.request.request_secret);
+    let key_redacted = is_redacted_secret(&pending.request_private_key);
+    match (secret_redacted, key_redacted) {
+        (true, true) => return Ok(()),
+        (false, false) => {}
+        _ => {
+            return Err(anyhow!(
+                "pending Nostr join request has partially redacted secret material"
+            ));
+        }
+    }
+    let device_pubkey = normalize_nostr_pubkey(&config.nostr.public_key)?;
+    pending.validate_for_device(&device_pubkey)?;
+    let mut encoded = serde_json::to_string(pending)
+        .context("failed to encode pending Nostr join request for secret storage")?;
+    persist_field(path, ConfigSecret::PendingJoinRequest, &mut encoded)?;
+    if !is_redacted_secret(&encoded) {
+        return Err(anyhow!(
+            "pending Nostr join request was not stored securely"
+        ));
+    }
+    pending.request.request_secret = platform::REDACTED_SECRET_MARKER.to_string();
+    pending.request_private_key = platform::REDACTED_SECRET_MARKER.to_string();
     Ok(())
 }
 
@@ -311,6 +389,27 @@ fn plaintext_secret_field(value: &toml::Value, table: &str, field: &str) -> bool
             let value = value.trim();
             !value.is_empty() && !is_redacted_secret(value)
         })
+}
+
+fn plaintext_pending_join_request(value: &toml::Value) -> bool {
+    let Some(pending) = value
+        .get("pending_nostr_join_request")
+        .and_then(toml::Value::as_table)
+    else {
+        return false;
+    };
+    let request_secret = pending
+        .get("request")
+        .and_then(toml::Value::as_table)
+        .and_then(|request| request.get("requestSecret"))
+        .and_then(toml::Value::as_str);
+    let request_private_key = pending
+        .get("request_private_key")
+        .and_then(toml::Value::as_str);
+    [request_secret, request_private_key]
+        .into_iter()
+        .flatten()
+        .any(|value| !value.trim().is_empty() && !is_redacted_secret(value))
 }
 
 include!("config_secrets/platform_macos.rs");

@@ -4,11 +4,12 @@ use anyhow::{Context, Result, anyhow};
 pub use nostr_identity::{
     CreateNostrIdentityDeviceApprovalRequestOptions, IDENTITY_GRAPH_ROSTER_TYPE,
     KIND_NOSTR_IDENTITY_ROSTER_OP, NOSTR_IDENTITY_COMPACT_DEVICE_APPROVAL_REQUEST_PREFIX,
-    NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA, NostrIdentityCapabilities,
-    NostrIdentityCompactDeviceApprovalRequest, NostrIdentityDeviceApprovalReceipt,
-    NostrIdentityDeviceApprovalRequest, NostrIdentityError, NostrIdentityFacet, NostrIdentityId,
-    NostrIdentityKeyPurpose, NostrIdentityRosterOp, SignedIdentityLinkRequest,
-    SignedNostrIdentityRosterOp, build_nostr_identity_device_approval_receipt_event,
+    NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE,
+    NostrIdentityCapabilities, NostrIdentityCompactDeviceApprovalRequest,
+    NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest, NostrIdentityError,
+    NostrIdentityFacet, NostrIdentityId, NostrIdentityKeyPurpose, NostrIdentityRosterOp,
+    NostrIdentityRosterOpContent, SignedIdentityLinkRequest, SignedNostrIdentityRosterOp,
+    build_nostr_identity_device_approval_receipt_event,
     compact_nostr_identity_device_approval_request_has_prefix,
     create_nostr_identity_device_approval_request,
     encode_compact_nostr_identity_device_approval_request,
@@ -17,7 +18,8 @@ pub use nostr_identity::{
     parse_identity_link_request_event_for_invite_pubkey,
     parse_nostr_identity_device_approval_receipt_event,
     parse_nostr_identity_device_approval_receipt_roster_op,
-    parse_nostr_identity_device_approval_request,
+    parse_nostr_identity_device_approval_request, parse_nostr_identity_roster_op_event,
+    project_nostr_identity_roster,
 };
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::prelude::{Event, JsonUtil, Keys, PublicKey};
@@ -109,8 +111,15 @@ pub struct ParsedIdentityRosterBridgeEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NostrIdentityDeviceApprovalSidecar {
-    pub roster_op_event: Event,
+    pub canonical_roster_events: Vec<Event>,
     pub receipt_event: Event,
+}
+
+impl NostrIdentityDeviceApprovalSidecar {
+    #[must_use]
+    pub fn approved_device_roster_op(&self) -> Option<&Event> {
+        self.canonical_roster_events.last()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,8 +129,7 @@ pub struct NostrIdentityDeviceApprovalSidecarRequest {
     pub request_pubkey: String,
     pub device_app_key_pubkey: String,
     pub request_secret: String,
-    pub parents: Vec<String>,
-    pub actor_seq: Option<u64>,
+    pub canonical_profile_is_fresh: bool,
     pub approved_at: u64,
 }
 
@@ -140,6 +148,11 @@ pub struct NostrVpnJoinApprovalContext {
     pub network_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub roster_op_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub canonical_roster_events: Vec<String>,
+    pub signed_network_roster_event: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_node_pubkey: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +164,9 @@ pub struct NostrVpnJoinApprovalContextRequest {
     pub mesh_network_id: String,
     pub network_name: Option<String>,
     pub roster_op_id: Option<String>,
+    pub canonical_roster_events: Vec<String>,
+    pub signed_network_roster_event: String,
+    pub exit_node_pubkey: Option<String>,
     pub approved_at: u64,
 }
 
@@ -376,18 +392,48 @@ pub fn build_device_approval_sidecar(
     let network_name = request.network_name.clone();
     let approved_at_i64 =
         i64::try_from(request.approved_at).context("approval approved_at overflows i64")?;
-    let roster_op_event = build_roster_app_key_sidecar_event_with_network_name(
-        signer_keys,
-        RosterAppKeySidecarEventRequest {
-            profile_id: request.profile_id,
-            pubkey: device_app_key_pubkey.clone(),
-            role: RosterAppKeyRole::Member,
-            parents: request.parents,
-            actor_seq: request.actor_seq,
-            created_at: request.approved_at,
-            network_name,
-        },
-    )?;
+    let canonical_roster_events = if request.canonical_profile_is_fresh {
+        if request.approved_at == 0 {
+            return Err(anyhow!(
+                "fresh canonical profile approval timestamp must be positive"
+            ));
+        }
+        let genesis = build_roster_app_key_sidecar_event_with_network_name(
+            signer_keys,
+            RosterAppKeySidecarEventRequest {
+                profile_id: request.profile_id,
+                pubkey: signer_keys.public_key().to_hex(),
+                role: RosterAppKeyRole::Admin,
+                parents: Vec::new(),
+                actor_seq: None,
+                created_at: request.approved_at - 1,
+                network_name: network_name.clone(),
+            },
+        )?;
+        let member = build_roster_app_key_sidecar_event_with_network_name(
+            signer_keys,
+            RosterAppKeySidecarEventRequest {
+                profile_id: request.profile_id,
+                pubkey: device_app_key_pubkey.clone(),
+                role: RosterAppKeyRole::Member,
+                parents: vec![genesis.id.to_hex()],
+                actor_seq: None,
+                created_at: request.approved_at,
+                network_name,
+            },
+        )?;
+        let events = vec![genesis, member];
+        validate_canonical_roster_chain(
+            request.profile_id,
+            signer_keys.public_key().to_hex().as_str(),
+            &device_app_key_pubkey,
+            &events,
+        )?;
+        events
+    } else {
+        Vec::new()
+    };
+    let approved_device_roster_op = canonical_roster_events.last();
     let receipt = NostrIdentityDeviceApprovalReceipt {
         schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
         profile_id: request.profile_id,
@@ -397,15 +443,110 @@ pub fn build_device_approval_sidecar(
         approved_at: approved_at_i64,
         request_secret: request.request_secret.trim().to_string(),
         subject_pubkey: None,
-        roster_op_id: Some(roster_op_event.id.to_hex()),
-        signed_roster_event: Some(roster_op_event.as_json()),
+        roster_op_id: approved_device_roster_op.map(|event| event.id.to_hex()),
+        signed_roster_event: approved_device_roster_op.map(JsonUtil::as_json),
     };
     let receipt_event = build_nostr_identity_device_approval_receipt_event(signer_keys, receipt)
         .map_err(|error| anyhow!("failed to build NostrIdentity approval receipt: {error}"))?;
     Ok(NostrIdentityDeviceApprovalSidecar {
-        roster_op_event,
+        canonical_roster_events,
         receipt_event,
     })
+}
+
+pub fn build_device_approval_sidecar_from_shared_approval(
+    signer_keys: &Keys,
+    approval_request: &NostrIdentityDeviceApprovalRequest,
+    approval_content: NostrIdentityRosterOpContent,
+    mut canonical_roster_events: Vec<Event>,
+) -> Result<NostrIdentityDeviceApprovalSidecar> {
+    validate_shared_device_approval_content(signer_keys, approval_request, &approval_content)?;
+    let publish_canonical_member = !canonical_roster_events.is_empty();
+    if publish_canonical_member {
+        let member = nostr_identity::build_nostr_identity_roster_op_event_with_client_nonce(
+            signer_keys,
+            approval_content.profile_id,
+            approval_content.parents.clone(),
+            approval_content.actor_seq,
+            approval_content.op.clone(),
+            approval_content.created_at,
+            approval_content.client_nonce.clone(),
+            None,
+        )
+        .map_err(|error| anyhow!("failed to sign shared device approval AddFacet: {error}"))?;
+        let signed = parse_nostr_identity_roster_op_event(&member)
+            .map_err(|error| anyhow!("failed to parse shared device approval AddFacet: {error}"))?;
+        if signed.content != approval_content {
+            return Err(anyhow!(
+                "signed device approval AddFacet differs from shared approval content"
+            ));
+        }
+        canonical_roster_events.push(member);
+        validate_canonical_roster_chain(
+            approval_content.profile_id,
+            signer_keys.public_key().to_hex().as_str(),
+            &approval_request.device_app_key_pubkey,
+            &canonical_roster_events,
+        )?;
+    }
+
+    let approved_device_roster_op = if publish_canonical_member {
+        canonical_roster_events.last()
+    } else {
+        None
+    };
+    let receipt = NostrIdentityDeviceApprovalReceipt {
+        schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
+        profile_id: approval_content.profile_id,
+        request_pubkey: normalize_pubkey(&approval_request.request_pubkey, "approval request")?,
+        device_app_key_pubkey: normalize_pubkey(
+            &approval_request.device_app_key_pubkey,
+            "approval device",
+        )?,
+        approved_by_pubkey: signer_keys.public_key().to_hex(),
+        approved_at: approval_content.created_at,
+        request_secret: approval_request.request_secret.trim().to_string(),
+        subject_pubkey: None,
+        roster_op_id: approved_device_roster_op.map(|event| event.id.to_hex()),
+        signed_roster_event: approved_device_roster_op.map(JsonUtil::as_json),
+    };
+    let receipt_event = build_nostr_identity_device_approval_receipt_event(signer_keys, receipt)
+        .map_err(|error| anyhow!("failed to build NostrIdentity approval receipt: {error}"))?;
+    Ok(NostrIdentityDeviceApprovalSidecar {
+        canonical_roster_events,
+        receipt_event,
+    })
+}
+
+fn validate_shared_device_approval_content(
+    signer_keys: &Keys,
+    approval_request: &NostrIdentityDeviceApprovalRequest,
+    approval_content: &NostrIdentityRosterOpContent,
+) -> Result<()> {
+    let signer_pubkey = signer_keys.public_key().to_hex();
+    if approval_content.actor_pubkey != signer_pubkey {
+        return Err(anyhow!("shared device approval actor mismatch"));
+    }
+    if let Some(profile_id) = approval_request.profile_id
+        && approval_content.profile_id != profile_id
+    {
+        return Err(anyhow!("shared device approval profile mismatch"));
+    }
+    let NostrIdentityRosterOp::AddFacet { facet } = &approval_content.op else {
+        return Err(anyhow!("shared device approval is not an AddFacet op"));
+    };
+    let device_pubkey =
+        normalize_pubkey(&approval_request.device_app_key_pubkey, "approval device")?;
+    if facet.pubkey != device_pubkey
+        || facet.profile_id != Some(approval_content.profile_id)
+        || !facet.purposes.contains(&NostrIdentityKeyPurpose::AppKey)
+        || facet.capabilities != NostrIdentityCapabilities::app_writer()
+    {
+        return Err(anyhow!(
+            "shared device approval AddFacet does not match requested AppKey"
+        ));
+    }
+    Ok(())
 }
 
 pub fn build_nostr_vpn_join_approval_context_event(
@@ -472,6 +613,7 @@ pub fn parse_nostr_vpn_join_approval_context_event(
     if context.approved_at != event_created_at {
         return Err(anyhow!("Nostr VPN approval context approved_at mismatch"));
     }
+    require_subject_tag(event, &context.profile_id.to_string())?;
     Ok(context)
 }
 
@@ -500,6 +642,12 @@ fn normalize_nostr_vpn_join_approval_context(
             let trimmed = value.trim().to_string();
             (!trimmed.is_empty()).then_some(trimmed)
         }),
+        canonical_roster_events: request.canonical_roster_events,
+        signed_network_roster_event: request.signed_network_roster_event.trim().to_string(),
+        exit_node_pubkey: request
+            .exit_node_pubkey
+            .map(|value| normalize_pubkey(&value, "Nostr VPN approval exit"))
+            .transpose()?,
     };
     validate_nostr_vpn_join_approval_context(&context)?;
     Ok(context)
@@ -537,6 +685,16 @@ fn validate_nostr_vpn_join_approval_context(context: &NostrVpnJoinApprovalContex
             "Nostr VPN approval context roster_op_id is invalid"
         ));
     }
+    validate_nostr_vpn_network_roster(context)?;
+    if context.canonical_roster_events.is_empty() {
+        if context.roster_op_id.is_some() {
+            return Err(anyhow!(
+                "Nostr VPN approval context roster_op_id has no canonical roster chain"
+            ));
+        }
+    } else {
+        validate_canonical_roster_event_jsons(context)?;
+    }
     Ok(())
 }
 
@@ -551,6 +709,138 @@ fn require_event_tag(event: &Event, name: &str, value: &str) -> Result<()> {
     Err(anyhow!("Nostr VPN approval context missing {name} tag"))
 }
 
+fn require_subject_tag(event: &Event, profile_id: &str) -> Result<()> {
+    if event.tags.iter().any(|tag| {
+        let parts = tag.as_slice();
+        parts.first().is_some_and(|part| part == "i")
+            && parts.get(1).is_some_and(|part| part == profile_id)
+            && parts.get(2).is_some_and(|part| part == "subject")
+    }) {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "Nostr VPN approval context missing profile subject tag"
+    ))
+}
+
+fn validate_nostr_vpn_network_roster(context: &NostrVpnJoinApprovalContext) -> Result<()> {
+    if context.signed_network_roster_event.trim().is_empty() {
+        return Err(anyhow!(
+            "Nostr VPN approval context signed network roster is empty"
+        ));
+    }
+    let event = Event::from_json(&context.signed_network_roster_event)
+        .context("invalid Nostr VPN approval signed network roster event")?;
+    let signed = SignedRoster::from_event(event)?;
+    if signed.signer_pubkey_hex()? != context.approved_by_pubkey {
+        return Err(anyhow!("Nostr VPN approval network roster signer mismatch"));
+    }
+    if signed.network_id()? != context.mesh_network_id {
+        return Err(anyhow!("Nostr VPN approval network roster id mismatch"));
+    }
+    let approved_at = u64::try_from(context.approved_at)
+        .context("Nostr VPN approval context approved_at is negative")?;
+    if signed.signed_at() != approved_at {
+        return Err(anyhow!(
+            "Nostr VPN approval network roster timestamp mismatch"
+        ));
+    }
+    let roster = signed.roster()?;
+    let network_name = normalized_network_name(&roster.network_name);
+    if network_name != context.network_name {
+        return Err(anyhow!("Nostr VPN approval network name mismatch"));
+    }
+    let admins = normalize_pubkey_set(&roster.admins, "approval admin")?;
+    let devices = normalize_pubkey_set(&roster.devices, "approval member")?;
+    if !admins.contains(&context.approved_by_pubkey) {
+        return Err(anyhow!(
+            "Nostr VPN approval signer is not a network roster admin"
+        ));
+    }
+    if !devices.contains(&context.device_app_key_pubkey)
+        && !admins.contains(&context.device_app_key_pubkey)
+    {
+        return Err(anyhow!(
+            "Nostr VPN approval device is missing from network roster"
+        ));
+    }
+    if let Some(exit_node) = &context.exit_node_pubkey
+        && !devices.contains(exit_node)
+        && !admins.contains(exit_node)
+    {
+        return Err(anyhow!(
+            "Nostr VPN approval exit is missing from network roster"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_canonical_roster_event_jsons(context: &NostrVpnJoinApprovalContext) -> Result<()> {
+    let events = context
+        .canonical_roster_events
+        .iter()
+        .map(|value| Event::from_json(value).context("invalid canonical roster event JSON"))
+        .collect::<Result<Vec<_>>>()?;
+    validate_canonical_roster_chain(
+        context.profile_id,
+        &context.approved_by_pubkey,
+        &context.device_app_key_pubkey,
+        &events,
+    )?;
+    let expected_op_id = context
+        .roster_op_id
+        .as_deref()
+        .ok_or_else(|| anyhow!("Nostr VPN approval canonical roster op id is missing"))?;
+    if events.last().map(|event| event.id.to_hex()).as_deref() != Some(expected_op_id) {
+        return Err(anyhow!(
+            "Nostr VPN approval canonical roster op id mismatch"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_canonical_roster_chain(
+    profile_id: NostrIdentityId,
+    approved_by_pubkey: &str,
+    device_app_key_pubkey: &str,
+    events: &[Event],
+) -> Result<()> {
+    let signed = events
+        .iter()
+        .map(|event| {
+            parse_nostr_identity_roster_op_event(event)
+                .map_err(|error| anyhow!("invalid canonical roster event: {error}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    if signed
+        .iter()
+        .any(|op| op.content.profile_id != profile_id || op.signer_pubkey != approved_by_pubkey)
+    {
+        return Err(anyhow!("canonical roster profile or signer mismatch"));
+    }
+    let projection = project_nostr_identity_roster(profile_id, signed);
+    if projection.accepted_op_ids.len() != events.len() || !projection.rejected_op_ids.is_empty() {
+        return Err(anyhow!("canonical roster chain does not project cleanly"));
+    }
+    if !projection
+        .active_facets
+        .get(approved_by_pubkey)
+        .is_some_and(|facet| facet.capabilities.can_admin_profile)
+    {
+        return Err(anyhow!("canonical roster chain has no admin genesis"));
+    }
+    if !projection
+        .active_facets
+        .get(device_app_key_pubkey)
+        .is_some_and(|facet| facet.purposes.contains(&NostrIdentityKeyPurpose::AppKey))
+    {
+        return Err(anyhow!(
+            "canonical roster chain does not add approval device"
+        ));
+    }
+    Ok(())
+}
+
 fn is_hex_event_id(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
@@ -558,8 +848,8 @@ fn is_hex_event_id(value: &str) -> bool {
 pub fn build_device_approval_for_link_request(
     signer_keys: &Keys,
     link_request: &SignedIdentityLinkRequest,
-    parents: Vec<String>,
-    actor_seq: Option<u64>,
+    _parents: Vec<String>,
+    _actor_seq: Option<u64>,
     approved_at: u64,
 ) -> Result<NostrIdentityDeviceApprovalSidecar> {
     let signer_pubkey = signer_keys.public_key().to_hex();
@@ -581,8 +871,7 @@ pub fn build_device_approval_for_link_request(
             request_pubkey: link_request.signer_pubkey.clone(),
             device_app_key_pubkey: link_request.content.joining_pubkey.clone(),
             request_secret: link_request.content.client_nonce.clone(),
-            parents,
-            actor_seq,
+            canonical_profile_is_fresh: false,
             approved_at,
         },
     )

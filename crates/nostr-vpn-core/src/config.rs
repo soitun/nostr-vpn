@@ -47,6 +47,8 @@ use crate::config_secrets::{
     hydrate_config_secrets, prepare_config_secrets_for_save,
 };
 use crate::fips_control::{PeerEndpointHint, SignedRoster, peer_endpoint_hint_addr};
+use crate::identity_bridge::NostrIdentityId;
+use crate::join_requests::PendingNostrJoinRequest;
 use crate::network_roster::{
     canonical_npub_key, canonicalize_inbound_join_requests, canonicalize_outbound_join_request,
     normalize_inbound_join_requests, normalize_network_admins, normalize_outbound_join_request,

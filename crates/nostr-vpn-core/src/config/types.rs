@@ -202,6 +202,8 @@ pub struct NostrConfig {
     /// Nostr public identity key in `npub` or hex format.
     #[serde(default)]
     pub public_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_profile_id: Option<NostrIdentityId>,
     #[serde(default, skip_serializing_if = "NostrPubsubConfig::is_default")]
     pub pubsub: NostrPubsubConfig,
 }
@@ -214,6 +216,7 @@ impl Default for NostrConfig {
             disabled_relays: Vec::new(),
             secret_key,
             public_key,
+            identity_profile_id: None,
             pubsub: NostrPubsubConfig::default(),
         }
     }
@@ -304,6 +307,8 @@ pub struct AppConfig {
     pub nat: NatConfig,
     #[serde(default)]
     pub nostr: NostrConfig,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_nostr_join_request: Option<PendingNostrJoinRequest>,
     #[serde(default)]
     pub node: NodeConfig,
 }
@@ -869,6 +874,7 @@ impl Default for AppConfig {
             peer_aliases: default_peer_aliases(),
             nat: NatConfig::default(),
             nostr: NostrConfig::default(),
+            pending_nostr_join_request: None,
             node: NodeConfig::default(),
         };
         config.ensure_defaults();

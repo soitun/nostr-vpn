@@ -270,7 +270,36 @@ impl FipsPrivateTunnelConfig {
             mesh_mtu: private_mesh_mtu_from_app(Some(app)),
             #[cfg(target_os = "linux")]
             control_plane_bypass_hosts,
+            local_ethernet_underlay: None,
         })
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn use_local_ethernet_only(
+        &mut self,
+        interface: impl Into<String>,
+        discovery_scope: impl Into<String>,
+    ) {
+        self.local_ethernet_underlay = Some(FipsLocalEthernetUnderlayConfig {
+            interface: interface.into(),
+            discovery_scope: discovery_scope.into(),
+        });
+        self.advertised_endpoint.clear();
+        self.advertise_public_endpoint = false;
+        self.stun_servers.clear();
+        self.nostr_relays.clear();
+        self.share_local_candidates = false;
+        self.nostr_discovery_enabled = false;
+        self.nostr_discovery_policy = NostrDiscoveryPolicy::ConfiguredOnly;
+        self.open_discovery_max_pending = 0;
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            self.fips_host = None;
+        }
+        #[cfg(target_os = "linux")]
+        {
+            self.control_plane_bypass_hosts.clear();
+        }
     }
 
     pub(crate) fn clamp_mesh_mtu_to_underlay_interface_mtu(
@@ -392,6 +421,7 @@ fn fips_tunnel_requires_endpoint_restart(
         || current.nostr_discovery_policy != next.nostr_discovery_policy
         || current.open_discovery_max_pending != next.open_discovery_max_pending
         || current.mesh_mtu.underlay_udp != next.mesh_mtu.underlay_udp
+        || current.local_ethernet_underlay != next.local_ethernet_underlay
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

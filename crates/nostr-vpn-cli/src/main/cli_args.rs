@@ -74,6 +74,9 @@ enum Command {
     Resume(ControlArgs),
     /// Run a FIPS private mesh session from config.
     Connect(ConnectArgs),
+    /// Run the Ethernet-only guest runtime used by WebVM.
+    #[command(name = "webvm-guest")]
+    WebvmGuest(WebvmGuestArgs),
     /// Show local and discovered peer status.
     Status(StatusArgs),
     /// Update persisted node/network settings.
@@ -127,6 +130,28 @@ enum Command {
     /// Internal daemon entrypoint. Use `nvpn start --daemon`.
     #[command(hide = true)]
     Daemon(DaemonArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+struct WebvmGuestArgs {
+    /// Persistent nvpn configuration path.
+    #[arg(long)]
+    config: PathBuf,
+    /// Guest Ethernet interface connected to the browser FIPS host.
+    #[arg(long)]
+    ethernet_interface: String,
+    /// Ethernet beacon scope shared with the browser FIPS host.
+    #[arg(long)]
+    discovery_scope: String,
+    /// Authenticated FSP service port for targeted approval pubsub.
+    #[arg(long)]
+    join_pubsub_port: u16,
+    /// Atomically updated file containing the pending full pairing URI.
+    #[arg(long)]
+    pairing_uri_file: PathBuf,
+    /// Guest TUN interface used after approval.
+    #[arg(long)]
+    tun_interface: String,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

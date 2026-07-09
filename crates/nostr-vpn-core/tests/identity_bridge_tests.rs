@@ -14,10 +14,13 @@ use nostr_vpn_core::identity_bridge::{
     build_roster_app_key_sidecar_event, build_roster_app_key_sidecar_event_with_network_name,
     parse_identity_link_request_event_for_invite_pubkey, parse_identity_roster_bridge_event,
     parse_nostr_identity_device_approval_receipt_event,
-    parse_nostr_identity_device_approval_receipt_roster_op, parse_roster_app_key_sidecar_event,
-    roster_app_key_identities, signed_roster_app_key_identities,
+    parse_nostr_identity_device_approval_receipt_roster_op, parse_nostr_identity_roster_op_event,
+    parse_roster_app_key_sidecar_event, project_nostr_identity_roster, roster_app_key_identities,
+    signed_roster_app_key_identities,
 };
 use uuid::Uuid;
+
+const APPROVAL_SECRET: &str = "scan-secret-abcdefghijklmnopqrstuvwxyz";
 
 #[test]
 fn bridge_represents_roster_members_as_canonical_app_keys() {
@@ -322,7 +325,7 @@ fn approval_can_be_built_directly_from_a_scanned_link_request() {
         profile_id,
         &admin.public_key().to_bech32().expect("admin npub"),
         &admin.public_key().to_bech32().expect("invite npub"),
-        "scan-secret",
+        APPROVAL_SECRET,
         Some("Laptop".to_string()),
         1_726_000_250,
     )
@@ -355,7 +358,7 @@ fn approval_can_be_built_directly_from_a_scanned_link_request() {
         joining_device.public_key().to_hex()
     );
     assert_eq!(receipt.approved_by_pubkey, admin.public_key().to_hex());
-    assert_eq!(receipt.request_secret, "scan-secret");
+    assert_eq!(receipt.request_secret, APPROVAL_SECRET);
 }
 
 #[test]
@@ -374,17 +377,21 @@ fn approval_sidecar_embeds_canonical_roster_op_and_parses_receipt() {
             network_name: Some("Home Mesh".to_string()),
             request_pubkey: request.public_key().to_bech32().expect("request npub"),
             device_app_key_pubkey: device.public_key().to_bech32().expect("device npub"),
-            request_secret: "scan-secret".to_string(),
-            parents: Vec::new(),
-            actor_seq: None,
+            request_secret: APPROVAL_SECRET.to_string(),
+            canonical_profile_is_fresh: true,
             approved_at: 1_726_000_300,
         },
     )
     .expect("build approval sidecar");
 
-    assert_ne!(u16::from(approval.roster_op_event.kind), 30_388);
+    assert_eq!(approval.canonical_roster_events.len(), 2);
+    let roster_op_event = approval
+        .approved_device_roster_op()
+        .expect("approved device roster op");
+
+    assert_ne!(u16::from(roster_op_event.kind), 30_388);
     assert_eq!(
-        u16::from(approval.roster_op_event.kind),
+        u16::from(roster_op_event.kind),
         CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND
     );
     assert_eq!(
@@ -399,11 +406,11 @@ fn approval_sidecar_embeds_canonical_roster_op_and_parses_receipt() {
     assert_eq!(receipt.request_pubkey, request.public_key().to_hex());
     assert_eq!(receipt.device_app_key_pubkey, device.public_key().to_hex());
     assert_eq!(receipt.approved_by_pubkey, admin.public_key().to_hex());
-    assert_eq!(receipt.request_secret, "scan-secret");
+    assert_eq!(receipt.request_secret, APPROVAL_SECRET);
     assert_eq!(
         receipt.signed_roster_event.as_deref(),
         Some(
-            Event::from_json(approval.roster_op_event.as_json())
+            Event::from_json(roster_op_event.as_json())
                 .unwrap()
                 .as_json()
         )
@@ -412,7 +419,7 @@ fn approval_sidecar_embeds_canonical_roster_op_and_parses_receipt() {
 
     let roster_op = parse_nostr_identity_device_approval_receipt_roster_op(&receipt)
         .expect("receipt roster op");
-    let bridged = parse_identity_roster_bridge_event(&approval.roster_op_event, &BTreeMap::new())
+    let bridged = parse_identity_roster_bridge_event(roster_op_event, &BTreeMap::new())
         .expect("parse bridge event")
         .expect("approval roster op");
     assert_eq!(bridged.network_name.as_deref(), Some("Home Mesh"));
@@ -424,4 +431,25 @@ fn approval_sidecar_embeds_canonical_roster_op_and_parses_receipt() {
         }
         other => panic!("expected add facet, got {other:?}"),
     }
+
+    let signed_ops = approval
+        .canonical_roster_events
+        .iter()
+        .map(parse_nostr_identity_roster_op_event)
+        .collect::<Result<Vec<_>, _>>()
+        .expect("parse canonical chain");
+    let projection = project_nostr_identity_roster(profile_id, signed_ops);
+    assert_eq!(projection.accepted_op_ids.len(), 2);
+    assert!(projection.rejected_op_ids.is_empty());
+    assert!(
+        projection
+            .active_facets
+            .get(&admin.public_key().to_hex())
+            .is_some_and(|facet| facet.capabilities.can_admin_profile)
+    );
+    assert!(
+        projection
+            .active_facets
+            .contains_key(&device.public_key().to_hex())
+    );
 }

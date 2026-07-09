@@ -1,13 +1,15 @@
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl FipsPrivateTunnelRuntime {
     pub(crate) async fn start(config: FipsPrivateTunnelConfig) -> Result<Self> {
-        crate::pipeline_profile::maybe_spawn_reporter();
-        #[cfg(target_os = "linux")]
-        ensure_linux_tun_permissions(&config.iface)?;
-
         let scope = config
-            .nostr_discovery_enabled
-            .then(|| fips_lan_discovery_scope(&config.network_id));
+            .local_ethernet_underlay
+            .is_none()
+            .then(|| {
+                config
+                    .nostr_discovery_enabled
+                    .then(|| fips_lan_discovery_scope(&config.network_id))
+            })
+            .flatten();
         let transport = FipsEndpointTransportConfig {
             listen_port: config.listen_port,
             advertised_endpoint: config.advertised_endpoint.clone(),
@@ -17,13 +19,21 @@ impl FipsPrivateTunnelRuntime {
             nostr_relays: config.nostr_relays.clone(),
             share_local_candidates: config.share_local_candidates,
         };
-        let endpoint_config = fips_endpoint_config_with_open_discovery_limit(
-            &config.endpoint_peers,
-            Some(&transport),
-            config.mesh_mtu,
-            config.nostr_discovery_policy,
-            config.open_discovery_max_pending,
-        );
+        let endpoint_config = if let Some(ethernet) = config.local_ethernet_underlay.as_ref() {
+            fips_endpoint_config_for_local_ethernet(
+                &config.endpoint_peers,
+                ethernet,
+                config.mesh_mtu,
+            )
+        } else {
+            fips_endpoint_config_with_open_discovery_limit(
+                &config.endpoint_peers,
+                Some(&transport),
+                config.mesh_mtu,
+                config.nostr_discovery_policy,
+                config.open_discovery_max_pending,
+            )
+        };
         let local_allowed_ips = config.local_allowed_ips();
         let local_tunnel_ips = config.local_tunnel_ips();
         let mesh = Arc::new(
@@ -38,6 +48,38 @@ impl FipsPrivateTunnelRuntime {
             )
             .await?,
         );
+        Self::start_with_mesh(config, mesh).await
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) async fn start_with_shared_endpoint(
+        config: FipsPrivateTunnelConfig,
+        shared: FipsSharedEndpoint,
+    ) -> Result<Self> {
+        if config.local_ethernet_underlay.is_none() {
+            return Err(anyhow!(
+                "shared FIPS endpoint requires a local-Ethernet-only tunnel config"
+            ));
+        }
+        let local_allowed_ips = config.local_allowed_ips();
+        let local_tunnel_ips = config.local_tunnel_ips();
+        let mesh = Arc::new(FipsPrivateMeshRuntime::from_shared_endpoint(
+            shared,
+            config.peers.clone(),
+            local_allowed_ips,
+            local_tunnel_ips,
+            config.paid_route_admissions.clone(),
+        ));
+        Self::start_with_mesh(config, mesh).await
+    }
+
+    async fn start_with_mesh(
+        config: FipsPrivateTunnelConfig,
+        mesh: Arc<FipsPrivateMeshRuntime>,
+    ) -> Result<Self> {
+        crate::pipeline_profile::maybe_spawn_reporter();
+        #[cfg(target_os = "linux")]
+        ensure_linux_tun_permissions(&config.iface)?;
         #[cfg(feature = "paid-exit")]
         mesh.set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
         let tun = Arc::new(

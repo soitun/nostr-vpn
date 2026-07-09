@@ -2,9 +2,9 @@ use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
 use fips_endpoint::{
-    Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointError, FipsEndpointMessage,
-    FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
-    PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
+    Config, ConnectPolicy, EthernetConfig, FipsEndpoint, FipsEndpointData, FipsEndpointError,
+    FipsEndpointMessage, FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress,
+    PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
 };
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use fips_endpoint::{
@@ -204,7 +204,7 @@ use wintun::{Adapter, MAX_RING_CAPACITY, Session};
 use crate::fips_host_tunnel::FipsHostTunnelConfig;
 
 pub(crate) struct FipsPrivateMeshRuntime {
-    endpoint: FipsEndpoint,
+    endpoint: Arc<FipsEndpoint>,
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     direct_endpoint_rx: FipsDirectEndpointDataRx,
     local_tunnel_ips: HashSet<IpAddr>,
@@ -219,6 +219,19 @@ pub(crate) struct FipsPrivateMeshRuntime {
     control_fragments: Mutex<ControlFragmentBuffer>,
     #[cfg(feature = "paid-exit")]
     paid_route_accounting: Mutex<FipsPaidRouteAccounting>,
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) struct FipsSharedEndpoint {
+    endpoint: Arc<FipsEndpoint>,
+    direct_endpoint_rx: FipsDirectEndpointDataRx,
+}
+
+#[cfg(target_os = "linux")]
+impl FipsSharedEndpoint {
+    pub(crate) fn endpoint(&self) -> &Arc<FipsEndpoint> {
+        &self.endpoint
+    }
 }
 
 include!("fips_private_mesh/direct_endpoint_queue.rs");
@@ -242,6 +255,10 @@ include!("fips_private_mesh/tunnel_runtime_windows.rs");
 include!("fips_private_mesh/windows_tun.rs");
 include!("fips_private_mesh/tunnel_runtime_unsupported.rs");
 include!("fips_private_mesh/time.rs");
+#[cfg(any(target_os = "linux", test))]
+include!("fips_private_mesh/webvm_dns.rs");
+#[cfg(target_os = "linux")]
+include!("fips_private_mesh/webvm_host_network.rs");
 
 #[cfg(test)]
 mod tests {

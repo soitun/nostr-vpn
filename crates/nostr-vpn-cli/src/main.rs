@@ -18,6 +18,7 @@ mod recent_peers_store;
 mod service_management;
 mod session_runtime;
 mod updater;
+mod webvm_guest;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod wg_upstream_runtime;
 #[cfg(target_os = "windows")]

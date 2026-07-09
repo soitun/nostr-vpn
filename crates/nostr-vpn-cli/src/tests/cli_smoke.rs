@@ -1,10 +1,8 @@
-#[cfg(feature = "paid-exit")]
-use clap::Parser;
-use clap::{CommandFactory, error::ErrorKind};
+use clap::{CommandFactory, Parser, error::ErrorKind};
 
-use crate::Cli;
 #[cfg(feature = "paid-exit")]
-use crate::{Command, PaidExitCommand};
+use crate::PaidExitCommand;
+use crate::{Cli, Command};
 
 #[test]
 fn clap_binary_name_is_nvpn() {
@@ -24,6 +22,38 @@ fn clap_supports_root_version_flag() {
             .contains(&format!("nvpn {}", env!("CARGO_PKG_VERSION"))),
         "version output should include binary name and package version"
     );
+}
+
+#[test]
+fn clap_parses_complete_webvm_guest_contract() {
+    let cli = Cli::parse_from([
+        "nvpn",
+        "webvm-guest",
+        "--config",
+        "/etc/nvpn/webvm.toml",
+        "--ethernet-interface",
+        "eth0",
+        "--discovery-scope",
+        "fips-overlay-v1",
+        "--join-pubsub-port",
+        "7368",
+        "--pairing-uri-file",
+        "/run/nvpn/pairing-uri",
+        "--tun-interface",
+        "nvpn0",
+    ]);
+    let Command::WebvmGuest(args) = cli.command else {
+        panic!("expected webvm-guest command");
+    };
+    assert_eq!(args.config.to_string_lossy(), "/etc/nvpn/webvm.toml");
+    assert_eq!(args.ethernet_interface, "eth0");
+    assert_eq!(args.discovery_scope, "fips-overlay-v1");
+    assert_eq!(args.join_pubsub_port, 7_368);
+    assert_eq!(
+        args.pairing_uri_file.to_string_lossy(),
+        "/run/nvpn/pairing-uri"
+    );
+    assert_eq!(args.tun_interface, "nvpn0");
 }
 
 #[test]

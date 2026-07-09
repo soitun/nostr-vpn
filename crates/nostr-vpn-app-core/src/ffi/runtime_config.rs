@@ -664,7 +664,12 @@ impl NativeAppRuntime {
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
-        if !config_exists {
+        let pending_join_request_changed = if config.networks.iter().any(|network| network.enabled) {
+            config.clear_pending_nostr_join_request()
+        } else {
+            config.ensure_pending_nostr_join_request(unix_timestamp())?
+        };
+        if !config_exists || pending_join_request_changed {
             config.save(&self.config_path)?;
         }
 

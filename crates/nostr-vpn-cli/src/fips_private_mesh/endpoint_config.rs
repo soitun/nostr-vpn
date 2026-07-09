@@ -240,6 +240,59 @@ fn fips_endpoint_config_with_open_discovery_limit(
     config
 }
 
+fn fips_endpoint_config_for_local_ethernet(
+    peers: &[FipsEndpointPeerTransportConfig],
+    ethernet: &FipsLocalEthernetUnderlayConfig,
+    mesh_mtu: MeshMtu,
+) -> Config {
+    let mut config = fips_endpoint_config_with_open_discovery_limit(
+        peers,
+        None,
+        mesh_mtu,
+        NostrDiscoveryPolicy::ConfiguredOnly,
+        0,
+    );
+    config.node.discovery.nostr.enabled = false;
+    config.node.discovery.nostr.advertise = false;
+    config.node.discovery.nostr.share_local_candidates = false;
+    config.node.discovery.nostr.advert_relays.clear();
+    config.node.discovery.nostr.dm_relays.clear();
+    config.node.discovery.nostr.stun_servers.clear();
+    config.node.discovery.lan.enabled = false;
+    config.node.discovery.lan.scope = Some(ethernet.discovery_scope.clone());
+    config.node.discovery.local.enabled = false;
+    config.transports = Default::default();
+    config.transports.ethernet = TransportInstances::Single(EthernetConfig {
+        interface: ethernet.interface.clone(),
+        discovery: Some(true),
+        announce: Some(true),
+        auto_connect: Some(true),
+        accept_connections: Some(true),
+        discovery_scope: Some(ethernet.discovery_scope.clone()),
+        mtu: Some(mesh_mtu.underlay_udp),
+        ..EthernetConfig::default()
+    });
+    for peer in &mut config.peers {
+        peer.addresses.clear();
+    }
+    config
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn local_ethernet_only_endpoint_config(
+    interface: &str,
+    discovery_scope: &str,
+) -> Config {
+    fips_endpoint_config_for_local_ethernet(
+        &[],
+        &FipsLocalEthernetUnderlayConfig {
+            interface: interface.to_string(),
+            discovery_scope: discovery_scope.to_string(),
+        },
+        resolve_private_mesh_mtu(None, None, None),
+    )
+}
+
 fn fips_endpoint_peers_from_mesh(
     mesh_peers: &[FipsMeshPeerConfig],
     operator_static_endpoints: Vec<(String, Vec<String>)>,
@@ -444,6 +497,12 @@ fn configure_fips_webrtc_transport(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FipsLocalEthernetUnderlayConfig {
+    interface: String,
+    discovery_scope: String,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) identity_nsec: String,
@@ -484,6 +543,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     mesh_mtu: MeshMtu,
     #[cfg(target_os = "linux")]
     pub(crate) control_plane_bypass_hosts: Vec<Ipv4Addr>,
+    local_ethernet_underlay: Option<FipsLocalEthernetUnderlayConfig>,
 }
 
 #[cfg(test)]
@@ -556,5 +616,36 @@ mod endpoint_config_tests {
 
         assert!(!config.node.discovery.nostr.enabled);
         assert!(config.transports.webrtc.is_empty());
+    }
+
+    #[test]
+    fn webvm_endpoint_configures_only_scoped_local_ethernet() {
+        let config = local_ethernet_only_endpoint_config("eth0", "fips-overlay-v1");
+
+        config
+            .validate()
+            .expect("Ethernet-only WebVM endpoint config should validate");
+        assert!(!config.node.discovery.nostr.enabled);
+        assert!(!config.node.discovery.nostr.advertise);
+        assert!(config.node.discovery.nostr.advert_relays.is_empty());
+        assert!(config.node.discovery.nostr.dm_relays.is_empty());
+        assert!(config.node.discovery.nostr.stun_servers.is_empty());
+        assert!(!config.node.discovery.lan.enabled);
+        assert!(!config.node.discovery.local.enabled);
+        assert!(config.peers.is_empty());
+        assert!(config.transports.udp.is_empty());
+        assert!(config.transports.tcp.is_empty());
+        assert!(config.transports.tor.is_empty());
+        assert!(config.transports.webrtc.is_empty());
+        assert!(config.transports.ble.is_empty());
+        let TransportInstances::Single(ethernet) = &config.transports.ethernet else {
+            panic!("expected exactly one Ethernet transport");
+        };
+        assert_eq!(ethernet.interface, "eth0");
+        assert_eq!(ethernet.discovery_scope.as_deref(), Some("fips-overlay-v1"));
+        assert_eq!(ethernet.discovery, Some(true));
+        assert_eq!(ethernet.announce, Some(true));
+        assert_eq!(ethernet.auto_connect, Some(true));
+        assert_eq!(ethernet.accept_connections, Some(true));
     }
 }

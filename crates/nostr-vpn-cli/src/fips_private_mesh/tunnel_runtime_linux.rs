@@ -1,3 +1,12 @@
+#[cfg(any(target_os = "linux", test))]
+fn linux_route_targets_require_ip_endpoint_bypass(
+    config: &FipsPrivateTunnelConfig,
+    route_targets: &[String],
+) -> bool {
+    config.local_ethernet_underlay.is_none()
+        && crate::route_targets_require_endpoint_bypass(route_targets)
+}
+
 impl FipsPrivateTunnelRuntime {
     #[cfg(target_os = "linux")]
     async fn apply_linux_network_state(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
@@ -7,7 +16,7 @@ impl FipsPrivateTunnelRuntime {
         let requested_exit = requested_ipv4_exit || requested_ipv6_exit;
         let strict_exit = config.exit_node_leak_protection && requested_exit;
         let original_route_targets_require_bypass =
-            crate::route_targets_require_endpoint_bypass(&route_targets);
+            linux_route_targets_require_ip_endpoint_bypass(config, &route_targets);
         let mut peer_endpoint_hosts = Vec::new();
         if original_route_targets_require_bypass {
             peer_endpoint_hosts = self.endpoint_bypass_ipv4_hosts(config).await?;

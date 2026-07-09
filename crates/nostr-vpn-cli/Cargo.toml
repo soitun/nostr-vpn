@@ -23,6 +23,7 @@ clap.workspace = true
 dirs.workspace = true
 fips-core.workspace = true
 fips-endpoint.workspace = true
+hickory-proto.workspace = true
 hex.workspace = true
 serde.workspace = true
 serde_json.workspace = true

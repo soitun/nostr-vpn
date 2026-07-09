@@ -20,15 +20,15 @@ impl FipsPrivateMeshRuntime {
             endpoint_builder = endpoint_builder.discovery_scope(scope);
         }
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        let endpoint = endpoint_builder
+        let endpoint = Arc::new(endpoint_builder
             .bind_with_direct_sink(direct_endpoint_sink)
             .await
-            .context("failed to bind embedded FIPS endpoint")?;
+            .context("failed to bind embedded FIPS endpoint")?);
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        let endpoint = endpoint_builder
+        let endpoint = Arc::new(endpoint_builder
             .bind()
             .await
-            .context("failed to bind embedded FIPS endpoint")?;
+            .context("failed to bind embedded FIPS endpoint")?);
         let peer_identities = peer_identity_map(&peers);
         let mesh = FipsMeshRuntime::with_local_routes_and_paid_route_admissions(
             peers,
@@ -55,6 +55,40 @@ impl FipsPrivateMeshRuntime {
             #[cfg(feature = "paid-exit")]
             paid_route_accounting: Mutex::new(FipsPaidRouteAccounting::default()),
         })
+    }
+
+    #[cfg(target_os = "linux")]
+    fn from_shared_endpoint(
+        shared: FipsSharedEndpoint,
+        peers: Vec<FipsMeshPeerConfig>,
+        local_allowed_ips: Vec<String>,
+        local_tunnel_ips: Vec<IpAddr>,
+        paid_route_admissions: Vec<FipsPaidRouteAdmission>,
+    ) -> Self {
+        let peer_identities = peer_identity_map(&peers);
+        let mesh = FipsMeshRuntime::with_local_routes_and_paid_route_admissions(
+            peers,
+            local_allowed_ips,
+            paid_route_admissions,
+        );
+        let local_tunnel_ips = local_tunnel_ips.into_iter().collect();
+        let peer_activity = peer_activity_map(&mesh.peer_pubkeys(), None);
+        Self {
+            endpoint: shared.endpoint,
+            direct_endpoint_rx: shared.direct_endpoint_rx,
+            local_tunnel_ips,
+            mesh: ArcSwap::from_pointee(mesh),
+            mesh_generation: AtomicU64::new(0),
+            peer_activity: ArcSwap::from_pointee(peer_activity),
+            peer_identities: ArcSwap::from_pointee(peer_identities),
+            presence: RwLock::new(HashMap::new()),
+            link_status: RwLock::new(HashMap::new()),
+            other_link_status: RwLock::new(HashMap::new()),
+            peer_capabilities: RwLock::new(HashMap::new()),
+            control_fragments: Mutex::new(ControlFragmentBuffer::default()),
+            #[cfg(feature = "paid-exit")]
+            paid_route_accounting: Mutex::new(FipsPaidRouteAccounting::default()),
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -282,6 +316,27 @@ impl FipsPrivateMeshRuntime {
 
         Ok(sent)
     }
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) async fn bind_local_ethernet_shared_endpoint(
+    identity_nsec: impl Into<String>,
+    interface: &str,
+    discovery_scope: &str,
+) -> Result<FipsSharedEndpoint> {
+    let config = local_ethernet_only_endpoint_config(interface, discovery_scope);
+    let (direct_endpoint_sink, direct_endpoint_rx) = fips_direct_endpoint_queue_pair();
+    let endpoint = FipsEndpoint::builder()
+        .config(config)
+        .identity_nsec(identity_nsec)
+        .without_system_tun()
+        .bind_with_direct_sink(direct_endpoint_sink)
+        .await
+        .context("failed to bind shared local-Ethernet FIPS endpoint")?;
+    Ok(FipsSharedEndpoint {
+        endpoint: Arc::new(endpoint),
+        direct_endpoint_rx,
+    })
 }
 
 struct RoutedTunPipelinePacket<'a> {

@@ -28,7 +28,16 @@ impl NativeAppRuntime {
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
-        if !config_exists || migrated_config_secrets || persist_identity_defaults {
+        let pending_join_request_changed = if config.networks.iter().any(|network| network.enabled) {
+            config.clear_pending_nostr_join_request()
+        } else {
+            config.ensure_pending_nostr_join_request(unix_timestamp())?
+        };
+        if !config_exists
+            || migrated_config_secrets
+            || persist_identity_defaults
+            || pending_join_request_changed
+        {
             config.save(&config_path)?;
         }
 
@@ -86,6 +95,7 @@ impl NativeAppRuntime {
         #[cfg(test)]
         {
             config.node.endpoint = "198.51.100.10:51820".to_string();
+            let _ = config.ensure_pending_nostr_join_request(unix_timestamp());
         }
         Self {
             rev: 0,

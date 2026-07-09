@@ -97,6 +97,9 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Connect(args) => {
             connect_vpn(args).await?;
         }
+        Command::WebvmGuest(args) => {
+            webvm_guest::run(args).await?;
+        }
         Command::Status(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let (app, network_id) =

@@ -8,8 +8,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-#[cfg(not(test))]
-use nostr_sdk::prelude::Client;
 use nostr_sdk::prelude::Event;
 use nostr_vpn_core::config::{
     AppConfig, NetworkConfig, NostrPubsubMode, PendingInboundJoinRequest,
@@ -19,11 +17,6 @@ use nostr_vpn_core::config::{
     wireguard_exit_config_text,
 };
 use nostr_vpn_core::diagnostics::ProbeStatus;
-use nostr_vpn_core::identity_bridge::{
-    NostrIdentityDeviceApprovalRequest, NostrIdentityDeviceApprovalSidecarRequest, NostrIdentityId,
-    NostrVpnJoinApprovalContextRequest, build_device_approval_sidecar,
-    build_nostr_vpn_join_approval_context_event,
-};
 use nostr_vpn_core::paid_routes::{ExitNetworkClass, PaidExitUpstream, PaidRouteMeter};
 use nostr_vpn_core::process_ext::CommandWindowExt;
 use serde::Deserialize;
@@ -34,6 +27,7 @@ use crate::invite::{
     apply_network_invite_to_active_network, parse_network_invite, preferred_join_request_recipient,
     to_npub,
 };
+use crate::join_approval::prepare_join_approval;
 use crate::join_request_link::{
     own_join_request_qr_code_or_link, parse_join_request_qr_code_or_link,
 };

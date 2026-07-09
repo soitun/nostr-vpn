@@ -292,6 +292,7 @@
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn full_join_request_qr_or_link_is_directly_added_by_admin() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -316,7 +317,7 @@
             .expect("admin pubkey");
         let admin_network_id = create_test_network(&mut admin, "Home");
         admin.config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
-        admin.config.networks[0].admins = vec![admin_pubkey];
+        admin.config.networks[0].admins = vec![admin_pubkey.clone()];
 
         let mut joiner = NativeAppRuntime::from_startup_error(&error);
         joiner.startup_error = None;
@@ -369,17 +370,25 @@
         });
 
         assert!(admin.last_error.is_empty(), "{}", admin.last_error);
-        assert_eq!(admin.published_join_approval_events.len(), 3);
-        let roster_identity =
+        assert_eq!(admin.published_join_approval_events.len(), 5);
+        let canonical_admin =
             nostr_vpn_core::identity_bridge::parse_roster_app_key_sidecar_event(
                 &admin.published_join_approval_events[0],
+            )
+            .expect("parse canonical admin genesis")
+            .expect("canonical admin identity");
+        assert_eq!(canonical_admin.facet.pubkey, admin_pubkey);
+        assert_eq!(canonical_admin.role, nostr_vpn_core::identity_bridge::RosterAppKeyRole::Admin);
+        let roster_identity =
+            nostr_vpn_core::identity_bridge::parse_roster_app_key_sidecar_event(
+                &admin.published_join_approval_events[1],
             )
             .expect("parse roster sidecar")
             .expect("roster sidecar identity");
         assert_eq!(roster_identity.facet.pubkey, joiner_pubkey);
         let receipt =
             nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_receipt_event(
-                &admin.published_join_approval_events[1],
+                &admin.published_join_approval_events[3],
                 &request_keys,
             )
             .expect("decrypt approval receipt");
@@ -387,7 +396,7 @@
         assert_eq!(receipt.device_app_key_pubkey, joiner_pubkey);
         assert_eq!(receipt.approved_by_pubkey, admin.config.own_nostr_pubkey_hex().unwrap());
         assert_eq!(receipt.request_secret, request_secret);
-        let roster_op_event_id = admin.published_join_approval_events[0].id.to_hex();
+        let roster_op_event_id = admin.published_join_approval_events[1].id.to_hex();
         assert_eq!(
             receipt.roster_op_id.as_deref(),
             Some(roster_op_event_id.as_str())
@@ -399,13 +408,13 @@
             .expect("receipt embeds roster op");
         assert_eq!(receipt_roster_op.op_id, roster_op_event_id);
         assert!(
-            !admin.published_join_approval_events[1]
+            !admin.published_join_approval_events[3]
                 .content
                 .contains(request_secret)
         );
         let vpn_context =
             nostr_vpn_core::identity_bridge::parse_nostr_vpn_join_approval_context_event(
-                &admin.published_join_approval_events[2],
+                &admin.published_join_approval_events[4],
                 &request_keys,
             )
             .expect("decrypt Nostr VPN approval context");
@@ -420,12 +429,12 @@
         assert_eq!(vpn_context.network_name.as_deref(), Some("Home"));
         assert_eq!(vpn_context.roster_op_id.as_deref(), Some(roster_op_event_id.as_str()));
         assert!(
-            !admin.published_join_approval_events[2]
+            !admin.published_join_approval_events[4]
                 .content
                 .contains(request_secret)
         );
         assert!(
-            !admin.published_join_approval_events[2]
+            !admin.published_join_approval_events[4]
                 .content
                 .contains("8d4f34f5425bc50e")
         );
@@ -450,7 +459,7 @@
     }
 
     #[test]
-    fn compact_join_request_link_is_rejected_without_adding_device() {
+    fn unsupported_compact_join_request_is_rejected_without_adding_device() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -476,7 +485,7 @@
         admin.dispatch(NativeAppAction::ImportJoinRequest { request: compact });
 
         assert!(
-            admin.last_error.contains("missing request secret"),
+            admin.last_error.contains("unsupported join request link"),
             "{}",
             admin.last_error
         );
