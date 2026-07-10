@@ -182,7 +182,10 @@ impl FipsPrivateTunnelRuntime {
     pub(crate) async fn refresh_peer_dependent_routes(&mut self) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            if !crate::route_targets_require_endpoint_bypass(&self.config.route_targets) {
+            if !linux_route_targets_require_ip_endpoint_bypass(
+                &self.config,
+                &self.config.route_targets,
+            ) {
                 return Ok(());
             }
 

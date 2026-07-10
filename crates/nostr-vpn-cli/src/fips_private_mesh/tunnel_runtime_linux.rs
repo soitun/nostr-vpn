@@ -105,7 +105,8 @@ impl FipsPrivateTunnelRuntime {
             return;
         }
         match crate::linux_default_route() {
-            Ok(route) => self.original_default_route = Some(route.line),
+            Ok(route) if route.dev != self.iface => self.original_default_route = Some(route.line),
+            Ok(_) => {}
             Err(error) => eprintln!("fips: failed to capture original default route: {error}"),
         }
     }
@@ -116,7 +117,10 @@ impl FipsPrivateTunnelRuntime {
             return;
         }
         match crate::linux_default_ipv6_route() {
-            Ok(route) => self.original_default_ipv6_route = Some(route.line),
+            Ok(route) if route.dev != self.iface => {
+                self.original_default_ipv6_route = Some(route.line);
+            }
+            Ok(_) => {}
             Err(error) => eprintln!("fips: failed to capture original IPv6 default route: {error}"),
         }
     }

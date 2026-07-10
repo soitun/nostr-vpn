@@ -382,21 +382,6 @@ pub(crate) fn apply_local_interface_network_with_mtu_and_addresses(
             if linux_route_target_is_ipv6(target) && !local_has_ipv6 {
                 continue;
             }
-            if target == "0.0.0.0/0" {
-                let _ = ProcessCommand::new("ip")
-                    .arg("-4")
-                    .arg("route")
-                    .arg("del")
-                    .arg("default")
-                    .status();
-            } else if target == "::/0" {
-                let _ = ProcessCommand::new("ip")
-                    .arg("-6")
-                    .arg("route")
-                    .arg("del")
-                    .arg("default")
-                    .status();
-            }
             let mut command = ProcessCommand::new("ip");
             command.args(linux_route_replace_args(
                 target,
