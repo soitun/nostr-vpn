@@ -262,15 +262,12 @@ fn spawn_blocking_mesh_recv_worker(
         .spawn(move || {
             let recv_burst = FIPS_MESH_RECV_BURST;
             let mut packet_batch = DirectTunWriteBatch::with_capacity(recv_burst);
-            let mut direct_rx = mesh.direct_endpoint_rx.cursor();
             #[cfg(target_os = "linux")]
             let mut vnet_write_preparer = LinuxVnetWritePreparer::new();
             let pipeline_profile_enabled = crate::pipeline_profile::enabled();
             while !thread_stop.load(Ordering::Acquire) {
                 packet_batch.clear();
                 let received = mesh.recv_direct_endpoint_tun_batch_blocking(
-                    &mut direct_rx,
-                    recv_burst,
                     &thread_stop,
                     &mut packet_batch,
                     &event_tx,

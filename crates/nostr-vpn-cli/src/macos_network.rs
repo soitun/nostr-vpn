@@ -33,10 +33,6 @@ pub(super) fn macos_default_routes_from_netstat(output: &str) -> Vec<MacosRouteS
     routes
 }
 
-pub(crate) fn macos_has_underlay_default_route(output: &str) -> bool {
-    macos_underlay_default_route_from_routes(&macos_default_routes_from_netstat(output)).is_some()
-}
-
 #[cfg(target_os = "macos")]
 pub(crate) fn spawn_macos_route_change_monitor() -> Option<mpsc::Receiver<()>> {
     let fd = unsafe { libc::socket(libc::AF_ROUTE, libc::SOCK_RAW, libc::AF_UNSPEC) };
@@ -112,29 +108,6 @@ pub(crate) fn macos_route_message_is_underlay_relevant(message: &[u8]) -> bool {
         return false;
     };
     matches!(message_type, 0x0c | 0x0d | 0x0e | 0x12)
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn macos_has_tunnel_split_default_routes(output: &str) -> bool {
-    output.lines().map(str::trim).any(|line| {
-        let tokens = line.split_whitespace().collect::<Vec<_>>();
-        if tokens.len() < 4 {
-            return false;
-        }
-
-        let target = tokens[0];
-        let iface_index = if tokens.last().copied() == Some("!") {
-            tokens.len().saturating_sub(2)
-        } else {
-            tokens.len().saturating_sub(1)
-        };
-        let Some(interface) = tokens.get(iface_index).copied() else {
-            return false;
-        };
-
-        interface.starts_with("utun")
-            && matches!(target, "0/1" | "0.0.0.0/1" | "128/1" | "128.0.0.0/1")
-    })
 }
 
 pub(super) fn macos_underlay_default_route_from_routes(
@@ -255,39 +228,6 @@ pub(crate) fn macos_underlay_default_route_from_system() -> Result<Option<MacosR
 }
 
 #[cfg(target_os = "macos")]
-fn macos_unscoped_default_route_uses_underlay() -> bool {
-    let Ok(output) = ProcessCommand::new("route")
-        .arg("-n")
-        .arg("get")
-        .arg("1.1.1.1")
-        .output()
-    else {
-        return false;
-    };
-    if !output.status.success() {
-        return false;
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    macos_route_get_uses_underlay_interface(&stdout)
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn macos_route_get_uses_underlay_interface(output: &str) -> bool {
-    let interface = output.lines().map(str::trim).find_map(|line| {
-        line.strip_prefix("interface:")
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-    });
-    interface.is_some_and(|iface| {
-        !iface.starts_with("utun")
-            && !iface.starts_with("bridge")
-            && iface != "lo0"
-            && iface != "gif0"
-            && iface != "stf0"
-    })
-}
-
-#[cfg(target_os = "macos")]
 pub(crate) fn macos_tunnel_interfaces_with_ipv4(tunnel_ip: Ipv4Addr) -> Result<Vec<String>> {
     let output = command_stdout_checked(ProcessCommand::new("ifconfig").arg("-l"))?;
     let mut matches = Vec::new();
@@ -300,63 +240,6 @@ pub(crate) fn macos_tunnel_interfaces_with_ipv4(tunnel_ip: Ipv4Addr) -> Result<V
         }
     }
     Ok(matches)
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn renew_macos_interface_dhcp(iface: &str) -> Result<()> {
-    run_checked(
-        ProcessCommand::new("ipconfig")
-            .arg("set")
-            .arg(iface)
-            .arg("DHCP"),
-    )
-}
-
-#[cfg(target_os = "macos")]
-pub(crate) fn ensure_macos_underlay_default_route() -> Result<bool> {
-    let output = command_stdout_checked(
-        ProcessCommand::new("netstat")
-            .arg("-rn")
-            .arg("-f")
-            .arg("inet"),
-    )?;
-    if macos_has_tunnel_split_default_routes(&output)
-        || macos_unscoped_default_route_uses_underlay()
-    {
-        return Ok(false);
-    }
-
-    let Some(underlay) = macos_underlay_default_route_from_system()? else {
-        return Ok(false);
-    };
-
-    if restore_macos_default_route(&underlay).is_ok() {
-        let refreshed_output = command_stdout_checked(
-            ProcessCommand::new("netstat")
-                .arg("-rn")
-                .arg("-f")
-                .arg("inet"),
-        )?;
-        if macos_has_underlay_default_route(&refreshed_output) {
-            return Ok(true);
-        }
-    }
-
-    let _ = renew_macos_interface_dhcp(&underlay.interface);
-    let refreshed_output = command_stdout_checked(
-        ProcessCommand::new("netstat")
-            .arg("-rn")
-            .arg("-f")
-            .arg("inet"),
-    )?;
-    if macos_has_underlay_default_route(&refreshed_output)
-        || macos_has_tunnel_split_default_routes(&refreshed_output)
-    {
-        return Ok(true);
-    }
-
-    restore_macos_default_route(&underlay)?;
-    Ok(true)
 }
 
 #[cfg(target_os = "macos")]

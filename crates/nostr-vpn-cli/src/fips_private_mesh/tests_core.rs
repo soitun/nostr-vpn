@@ -4,13 +4,14 @@
         FIPS_ENDPOINT_FAST_LINK_DEAD_TIMEOUT_SECS, FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS,
         FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS, FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST,
         FIPS_ENDPOINT_REKEY_AFTER_SECS, FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS,
-        FIPS_LAN_DISCOVERY_SCOPE_PREFIX, FIPS_MESH_EVENT_DRAIN_LIMIT,
+        FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS, FIPS_LAN_DISCOVERY_SCOPE_PREFIX,
+        FIPS_MESH_EVENT_DRAIN_LIMIT,
         FIPS_NOSTR_EXTENDED_COOLDOWN_SECS, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
         FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS, FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
         FIPS_RECONNECT_BACKOFF_BASE_SECS, FIPS_RECONNECT_BACKOFF_MAX_SECS,
         FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS,
-        FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY, FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY,
+        FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY, FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY,
         FipsEndpointSendRun, FipsEndpointTransportConfig, FipsPeerActivity, FipsPeerActivitySnapshot,
         FipsPeerAddressHint, FipsPeerIdentityMap, FipsPeerRxKind, FipsPrivateMeshEvent,
         FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
@@ -31,9 +32,7 @@
         tag_authenticated_transport_addr, unix_timestamp,
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    use super::{
-        BorrowedTunFd, DirectTunWriteBatch, TunPipelinePacket, raw_write_packet_to_tun,
-    };
+    use super::{BorrowedTunFd, TunPipelinePacket, raw_write_packet_to_tun};
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
     use fips_endpoint::{
@@ -51,11 +50,6 @@
     use nostr_vpn_core::join_requests::MeshJoinRequest;
     use std::collections::{HashMap, HashSet};
     use std::net::{IpAddr, Ipv4Addr, UdpSocket};
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    use std::sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-    };
     use std::time::Duration;
 
     const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
@@ -123,7 +117,7 @@
         let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
         events.clear();
         loop {
-            if drain_direct_endpoint_mesh_events_into(runtime, events, limit).await? > 0 {
+            if drain_direct_endpoint_mesh_events_into(runtime, events).await? > 0 {
                 return Ok(Some(events.len()));
             }
 
@@ -172,25 +166,23 @@
     async fn drain_direct_endpoint_mesh_events_into(
         runtime: &FipsPrivateMeshRuntime,
         events: &mut Vec<FipsPrivateMeshEvent>,
-        limit: usize,
     ) -> anyhow::Result<usize> {
         let initial_len = events.len();
-        let mut direct_rx = runtime.direct_endpoint_rx.cursor();
-        while events.len() < limit {
-            let remaining = limit - events.len();
-            let runs = match direct_rx.try_recv_limited(remaining) {
-                Ok(runs) => runs,
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(0),
-            };
-            direct_endpoint_packet_runs_to_mesh_events(
-                runtime,
-                runs,
-                Some(unix_timestamp()),
-                events,
-            )
-            .await?;
-        }
+        let runs = match runtime
+            .direct_endpoint_rx
+            .try_recv_limited(FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS)
+        {
+            Ok(runs) => runs,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(0),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(0),
+        };
+        direct_endpoint_packet_runs_to_mesh_events(
+            runtime,
+            runs,
+            Some(unix_timestamp()),
+            events,
+        )
+        .await?;
 
         Ok(events.len().saturating_sub(initial_len))
     }
@@ -388,11 +380,11 @@
         let udp = fips_peer_address_from_hint(&FipsPeerAddressHint {
             addr: "udp:203.0.113.21:2121".to_string(),
             seen_at_ms: None,
-            priority: FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY,
+            priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
         });
         assert_eq!(udp.transport, "udp");
         assert_eq!(udp.addr, "203.0.113.21:2121");
-        assert_eq!(udp.priority, FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY);
+        assert_eq!(udp.priority, FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY);
     }
 
     #[test]

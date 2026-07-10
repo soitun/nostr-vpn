@@ -34,12 +34,9 @@ const MAX_PENDING_RETRIES_PER_PEER: usize = 64;
 const OUTBOX_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 const OUTBOX_BATCH: usize = 8;
 
-enum RuntimeCommand {
-    Stop,
-    Publish {
-        event: Box<Event>,
-        response: oneshot::Sender<Result<bool>>,
-    },
+struct PublishRequest {
+    event: Box<Event>,
+    response: oneshot::Sender<Result<bool>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -263,8 +260,9 @@ impl ControlEventStore {
 }
 
 pub struct ControlPubsubFipsRuntime {
-    command_tx: mpsc::Sender<RuntimeCommand>,
+    command_tx: mpsc::Sender<PublishRequest>,
     events: Arc<Mutex<ControlEventStore>>,
+    relay_client: Option<Client>,
     task: JoinHandle<()>,
 }
 
@@ -306,6 +304,7 @@ impl ControlPubsubFipsRuntime {
             .await
             .context("failed to register the FIPS control pubsub service")?;
         let bridge = RelayBridge::start(config.mode, relays).await?;
+        let relay_client = bridge.as_ref().map(|bridge| bridge.client.clone());
         let outbox_path = store_path
             .as_deref()
             .map(control_pubsub_outbox_directory_from_store_path);
@@ -341,6 +340,7 @@ impl ControlPubsubFipsRuntime {
         Ok(Some(Self {
             command_tx,
             events,
+            relay_client,
             task,
         }))
     }
@@ -352,7 +352,7 @@ impl ControlPubsubFipsRuntime {
     pub async fn publish(&self, event: Event) -> Result<bool> {
         let (response, result) = oneshot::channel();
         self.command_tx
-            .send(RuntimeCommand::Publish {
+            .send(PublishRequest {
                 event: Box::new(event),
                 response,
             })
@@ -363,9 +363,18 @@ impl ControlPubsubFipsRuntime {
             .context("control pubsub runtime stopped while publishing")?
     }
 
-    pub async fn stop(self) {
-        let _ = self.command_tx.send(RuntimeCommand::Stop).await;
-        let _ = self.task.await;
+    pub async fn stop(mut self) {
+        self.task.abort();
+        let _ = (&mut self.task).await;
+        if let Some(client) = self.relay_client.take() {
+            client.shutdown().await;
+        }
+    }
+}
+
+impl Drop for ControlPubsubFipsRuntime {
+    fn drop(&mut self) {
+        self.task.abort();
     }
 }
 
@@ -403,10 +412,6 @@ impl RelayBridge {
             tracing::warn!(%error, event_id = %event.id, "failed to bridge control event to Nostr relays");
         }
     }
-
-    async fn shutdown(&self) {
-        self.client.shutdown().await;
-    }
 }
 
 struct PubsubRunState {
@@ -431,7 +436,7 @@ async fn run(
     state: PubsubRunState,
     receiver: FipsEndpointServiceReceiver,
     outbox_path: Option<PathBuf>,
-    mut command_rx: mpsc::Receiver<RuntimeCommand>,
+    mut command_rx: mpsc::Receiver<PublishRequest>,
 ) {
     let PubsubRunState {
         endpoint,
@@ -460,26 +465,22 @@ async fn run(
     loop {
         tokio::select! {
             command = command_rx.recv() => {
-                match command {
-                    Some(RuntimeCommand::Stop) | None => break,
-                    Some(RuntimeCommand::Publish { event, response }) => {
-                        let result = publish_local(
-                            PublishContext {
-                                endpoint: &endpoint,
-                                codec: &codec,
-                                bridge: bridge.as_ref(),
-                                events: &events,
-                                peer_policy: peer_policy.as_deref(),
-                            },
-                            &mut mesh,
-                            &mut retries,
-                            Some(&mut pubsub_policy),
-                            *event,
-                        )
-                        .await;
-                        let _ = response.send(result);
-                    }
-                }
+                let Some(PublishRequest { event, response }) = command else { break; };
+                let result = publish_local(
+                    PublishContext {
+                        endpoint: &endpoint,
+                        codec: &codec,
+                        bridge: bridge.as_ref(),
+                        events: &events,
+                        peer_policy: peer_policy.as_deref(),
+                    },
+                    &mut mesh,
+                    &mut retries,
+                    Some(&mut pubsub_policy),
+                    *event,
+                )
+                .await;
+                let _ = response.send(result);
             }
             _ = outbox_tick.tick(), if outbox_path.is_some() => {
                 publish_outbox_batch(
@@ -601,9 +602,6 @@ async fn run(
                 .await;
             }
         }
-    }
-    if let Some(bridge) = bridge.as_ref() {
-        bridge.shutdown().await;
     }
 }
 

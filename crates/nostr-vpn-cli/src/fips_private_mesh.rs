@@ -8,6 +8,7 @@ use fips_endpoint::{
 };
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use fips_endpoint::{
+    FIPS_ENDPOINT_DIRECT_PACKET_QUEUE_MAX_PACKETS, FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS,
     FipsEndpointDirectDeliveryError, FipsEndpointDirectPacketBatch, FipsEndpointDirectPacketRun,
     FipsEndpointDirectSink,
 };
@@ -23,7 +24,7 @@ use nostr_vpn_core::fips_control::{
     is_fips_control_frame,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use nostr_vpn_core::fips_mesh::packet_destination;
+use nostr_vpn_core::fips_mesh::packet_endpoints;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use nostr_vpn_core::fips_mesh::{FipsEndpointAdmissionCache, FipsEndpointSourceAdmitter};
 use nostr_vpn_core::fips_mesh::{
@@ -116,8 +117,8 @@ const fn macos_default_udp_send_buf_size() -> usize {
 // whether the sender should yield between batches. FIPS's raw
 // `FIPS_MACOS_SEND_PACE_MBPS` rate knob remains opt-in for lab A/Bs; the default
 // path shapes backlog instead of sleeping to a fixed bandwidth number.
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-const FIPS_MESH_RECV_BURST: usize = 128;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+const FIPS_MESH_RECV_BURST: usize = FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 const FIPS_MESH_EVENT_DRAIN_LIMIT: usize = 256;
 #[cfg(target_os = "linux")]
@@ -128,8 +129,6 @@ const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = Some(macos_default_udp_sen
 const DEFAULT_FIPS_UDP_SEND_BUF_SIZE: Option<usize> = None;
 #[cfg(target_os = "windows")]
 const WINDOWS_FIPS_TUN_READ_BURST: usize = 128;
-#[cfg(target_os = "windows")]
-const WINDOWS_FIPS_TUN_WRITE_BURST: usize = 128;
 
 fn fips_udp_send_buf_size() -> Option<usize> {
     static VALUE: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();

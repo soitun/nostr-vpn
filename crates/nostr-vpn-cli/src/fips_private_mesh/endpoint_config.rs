@@ -18,9 +18,9 @@ struct FipsEndpointTransportConfig {
 /// recent-peers cache entries, `None` for operator-supplied static hints.
 /// fips's dialer uses this field as a recency tiebreaker inside the same
 /// priority tier.
-const FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY: u8 = 100;
+const FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY: u8 = 10;
 const FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 100;
-const FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY: u8 = 200;
+const FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 200;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct FipsPeerAddressHint {
@@ -39,29 +39,20 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
 
 fn fips_peer_address_from_hint(hint: &FipsPeerAddressHint) -> PeerAddress {
     let (transport, addr) = split_peer_transport_addr(&hint.addr);
-    let mut peer_address =
-        PeerAddress::with_priority(transport, addr, peer_address_hint_effective_priority(hint));
+    let mut peer_address = PeerAddress::with_priority(transport, addr, hint.priority);
     if let Some(seen_at_ms) = hint.seen_at_ms {
-        peer_address = peer_address.with_seen_at_ms(seen_at_ms);
+        peer_address = peer_address.learned().with_seen_at_ms(seen_at_ms);
     }
     peer_address
-}
-
-fn operator_static_endpoint_priority(addr: &str) -> u8 {
-    endpoint_hint_priority(addr, FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY)
 }
 
 fn dynamic_endpoint_priority(addr: &str) -> u8 {
     endpoint_hint_priority(addr, FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY)
 }
 
-fn peer_address_hint_effective_priority(hint: &FipsPeerAddressHint) -> u8 {
-    endpoint_hint_priority(&hint.addr, hint.priority)
-}
-
 fn endpoint_hint_priority(addr: &str, normal_priority: u8) -> u8 {
     if endpoint_addr_is_private_or_local(addr) {
-        FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY
+        FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY
     } else {
         normal_priority
     }
@@ -329,7 +320,7 @@ fn fips_endpoint_peers_from_mesh(
             if trimmed.is_empty() {
                 continue;
             }
-            let priority = operator_static_endpoint_priority(trimmed);
+            let priority = FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY;
             if let Some(existing) = peer.addresses.iter_mut().find(|hint| hint.addr == trimmed) {
                 existing.seen_at_ms = None;
                 existing.priority = existing.priority.min(priority);

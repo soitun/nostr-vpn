@@ -6,7 +6,7 @@ use std::sync::atomic::{
 use std::time::Instant;
 
 const N_STAGES: usize = 10;
-const N_COUNTERS: usize = 39;
+const N_COUNTERS: usize = 36;
 const HIST_BUCKETS: usize = 48;
 
 #[derive(Copy, Clone)]
@@ -80,9 +80,6 @@ pub(crate) enum Counter {
     DirectEndpointRxBatches = 33,
     DirectEndpointRxRuns = 34,
     DirectEndpointRxPackets = 35,
-    DirectEndpointRxCoalescedBatches = 36,
-    DirectEndpointRxLimitSplits = 37,
-    DirectEndpointRxLimitTailPackets = 38,
 }
 
 impl Counter {
@@ -126,13 +123,6 @@ impl Counter {
             Counter::DirectEndpointRxBatches => "nvpn_direct_endpoint_rx_batches",
             Counter::DirectEndpointRxRuns => "nvpn_direct_endpoint_rx_runs",
             Counter::DirectEndpointRxPackets => "nvpn_direct_endpoint_rx_packets",
-            Counter::DirectEndpointRxCoalescedBatches => {
-                "nvpn_direct_endpoint_rx_coalesced_batches"
-            }
-            Counter::DirectEndpointRxLimitSplits => "nvpn_direct_endpoint_rx_limit_splits",
-            Counter::DirectEndpointRxLimitTailPackets => {
-                "nvpn_direct_endpoint_rx_limit_tail_packets"
-            }
         }
     }
 }
@@ -175,9 +165,6 @@ fn counter_from_index(idx: usize) -> Counter {
         33 => Counter::DirectEndpointRxBatches,
         34 => Counter::DirectEndpointRxRuns,
         35 => Counter::DirectEndpointRxPackets,
-        36 => Counter::DirectEndpointRxCoalescedBatches,
-        37 => Counter::DirectEndpointRxLimitSplits,
-        38 => Counter::DirectEndpointRxLimitTailPackets,
         _ => unreachable!(),
     }
 }
@@ -375,33 +362,13 @@ pub(crate) fn record_direct_endpoint_sink_batch(runs: usize, packets: usize, que
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-pub(crate) fn record_direct_endpoint_rx_batch(
-    runs: usize,
-    packets: usize,
-    coalesced_batches: usize,
-) {
+pub(crate) fn record_direct_endpoint_rx_batch(runs: usize, packets: usize) {
     if packets == 0 || !enabled() {
         return;
     }
     increment_counter_by(Counter::DirectEndpointRxBatches, 1);
     increment_counter_by(Counter::DirectEndpointRxRuns, runs as u64);
     increment_counter_by(Counter::DirectEndpointRxPackets, packets as u64);
-    increment_counter_by(
-        Counter::DirectEndpointRxCoalescedBatches,
-        coalesced_batches.saturating_sub(1) as u64,
-    );
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-pub(crate) fn record_direct_endpoint_rx_limit_split(tail_packets: usize) {
-    if tail_packets == 0 || !enabled() {
-        return;
-    }
-    increment_counter_by(Counter::DirectEndpointRxLimitSplits, 1);
-    increment_counter_by(
-        Counter::DirectEndpointRxLimitTailPackets,
-        tail_packets as u64,
-    );
 }
 
 pub(crate) struct Timer {
@@ -579,7 +546,7 @@ mod tests {
 
     #[test]
     fn mesh_send_pipeline_names_are_stable() {
-        assert_eq!(N_COUNTERS, 39);
+        assert_eq!(N_COUNTERS, 36);
         assert_eq!(Stage::TunRead.name(), "nvpn_tun_read");
         assert_eq!(Stage::MeshRecv.name(), "nvpn_mesh_recv");
         assert_eq!(Stage::MeshRoute.name(), "nvpn_mesh_route");
@@ -620,18 +587,6 @@ mod tests {
         assert_eq!(
             Counter::DirectEndpointSinkMaxQueueDepth.name(),
             "nvpn_direct_endpoint_sink_max_queue_depth"
-        );
-        assert_eq!(
-            Counter::DirectEndpointRxCoalescedBatches.name(),
-            "nvpn_direct_endpoint_rx_coalesced_batches"
-        );
-        assert_eq!(
-            Counter::DirectEndpointRxLimitSplits.name(),
-            "nvpn_direct_endpoint_rx_limit_splits"
-        );
-        assert_eq!(
-            Counter::DirectEndpointRxLimitTailPackets.name(),
-            "nvpn_direct_endpoint_rx_limit_tail_packets"
         );
         assert_eq!(
             stage_from_index(Stage::MeshRoute as usize).name(),

@@ -12,23 +12,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     }
     let (mut app, mut network_id) =
         load_config_with_overrides(&config_path, args.network_id, args.devices)?;
-    #[cfg(target_os = "macos")]
-    {
-        let captive_portal = detect_captive_portal(network_probe_timeout(&app)).await;
-        if macos_underlay_route_repair_allowed(captive_portal) {
-            match crate::macos_network::ensure_macos_underlay_default_route() {
-                Ok(true) => eprintln!("connect: restored missing macOS underlay default route"),
-                Ok(false) => {}
-                Err(error) => {
-                    eprintln!("connect: failed to ensure macOS underlay default route: {error}")
-                }
-            }
-        } else {
-            eprintln!(
-                "connect: deferring macOS underlay default route repair while captive portal is detected"
-            );
-        }
-    }
     let configured_participants = app.participant_pubkeys_hex();
     if configured_participants.is_empty() {
         return Err(anyhow!(

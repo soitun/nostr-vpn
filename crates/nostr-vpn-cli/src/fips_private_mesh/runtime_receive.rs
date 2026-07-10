@@ -2,14 +2,10 @@ impl FipsPrivateMeshRuntime {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn recv_direct_endpoint_tun_batch_blocking(
         &self,
-        rx: &mut FipsDirectEndpointRxCursor,
-        limit: usize,
         stop: &AtomicBool,
         packet_outputs: &mut DirectTunWriteBatch,
         event_tx: &mpsc::Sender<FipsPrivateMeshEvent>,
     ) -> Result<Option<usize>> {
-        let limit = limit.clamp(1, FIPS_MESH_EVENT_DRAIN_LIMIT);
-
         loop {
             if stop.load(Ordering::Acquire) {
                 return Ok(None);
@@ -18,14 +14,17 @@ impl FipsPrivateMeshRuntime {
             let mut emitted = 0usize;
             let mut received = 0usize;
             let mut turn_start = None;
-            let (_, mesh) = self.stable_mesh_snapshot();
-            while received < limit {
+            let mut mesh = None;
+            while received < FIPS_MESH_RECV_BURST {
                 let runs = if received == 0 {
                     loop {
                         if stop.load(Ordering::Acquire) {
                             return Ok(None);
                         }
-                        match rx.recv_source_batch_timeout(Duration::from_millis(100), limit) {
+                        match self.direct_endpoint_rx.recv_source_batch_timeout(
+                            Duration::from_millis(100),
+                            FIPS_MESH_RECV_BURST,
+                        ) {
                             Ok(runs) => break runs,
                             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
                             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
@@ -34,22 +33,24 @@ impl FipsPrivateMeshRuntime {
                         }
                     }
                 } else {
-                    match rx.try_recv_limited(limit.saturating_sub(received)) {
+                    match self
+                        .direct_endpoint_rx
+                        .try_recv_limited(FIPS_MESH_RECV_BURST.saturating_sub(received))
+                    {
                         Ok(runs) => runs,
                         Err(std::sync::mpsc::TryRecvError::Empty) => break,
                         Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(None),
                     }
                 };
 
-                if runs.is_empty() {
-                    continue;
-                }
                 if turn_start.is_none() {
                     turn_start = crate::pipeline_profile::stamp();
                 }
+                let mesh = mesh.get_or_insert_with(|| self.stable_mesh_snapshot().1);
 
-                let (received_packets, accepted_packets) = self.admit_direct_endpoint_packet_runs_blocking(
-                    &mesh,
+                let (received_packets, accepted_packets) = self
+                    .admit_direct_endpoint_packet_runs_blocking(
+                    mesh.as_ref(),
                     runs,
                     packet_outputs,
                     event_tx,
@@ -314,12 +315,7 @@ impl FipsPrivateMeshRuntime {
         let mut accepted = 0usize;
         let mut control_events_open = true;
         for run in runs {
-            let run_packets = run.len();
-            received = received.saturating_add(run_packets);
-            if run_packets == 0 {
-                continue;
-            }
-
+            received = received.saturating_add(run.len());
             let source_node_addr = *run.source_peer().node_addr().as_bytes();
             if current_source_node_addr != Some(source_node_addr) {
                 current_source_node_addr = Some(source_node_addr);
@@ -363,9 +359,7 @@ impl FipsPrivateMeshRuntime {
     ) -> Result<(usize, usize)> {
         let source_peer = *run.source_peer();
         let enqueued_at_ms = run.enqueued_at_ms();
-        let now = Some(unix_timestamp());
-        let mut accepted_count = 0usize;
-        let mut endpoint_bytes = 0usize;
+        let mut control_now = None;
         let mut control_error = None;
         run.retain_packets(|_index, packet| {
             if control_error.is_some() {
@@ -380,6 +374,7 @@ impl FipsPrivateMeshRuntime {
                                 data: FipsEndpointData::new(packet.to_vec()),
                                 enqueued_at_ms,
                             };
+                            let now = Some(*control_now.get_or_insert_with(unix_timestamp));
                             match self.endpoint_message_to_mesh_event_outcome(message, now) {
                                 Ok(outcome) => {
                                     if let Some(reply) = outcome.reply
@@ -414,19 +409,19 @@ impl FipsPrivateMeshRuntime {
             if !admitter.admit_packet_cached(packet, admission_cache) {
                 return false;
             }
-            accepted_count = accepted_count.saturating_add(1);
-            endpoint_bytes = endpoint_bytes.saturating_add(packet.len());
             true
         });
         if let Some(error) = control_error {
             return Err(error);
         }
+        let accepted_count = run.len();
         if accepted_count == 0 {
             return Ok((0, 0));
         }
         let Some(admitter) = admitter else {
             return Ok((0, 0));
         };
+        let endpoint_bytes = run.packet_bytes();
 
         if fips_tun_packet_debug_enabled() {
             for packet in run.packet_slices() {

@@ -131,15 +131,12 @@ fn spawn_windows_fips_mesh_recv_task(
     event_tx: mpsc::Sender<FipsPrivateMeshEvent>,
 ) -> JoinHandle<()> {
     tokio::task::spawn_blocking(move || {
-        let recv_burst = WINDOWS_FIPS_TUN_WRITE_BURST;
+        let recv_burst = FIPS_MESH_RECV_BURST;
         let mut packet_batch = DirectTunWriteBatch::with_capacity(recv_burst);
-        let mut direct_rx = mesh.direct_endpoint_rx.cursor();
         let pipeline_profile_enabled = crate::pipeline_profile::enabled();
         while !stop.load(Ordering::Acquire) {
             packet_batch.clear();
             let received = mesh.recv_direct_endpoint_tun_batch_blocking(
-                &mut direct_rx,
-                recv_burst,
                 &stop,
                 &mut packet_batch,
                 &event_tx,

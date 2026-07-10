@@ -128,10 +128,9 @@ impl FipsPrivateTunnelRuntime {
             tun_send_worker,
             mesh_recv_worker,
             event_rx,
-            #[cfg(target_os = "linux")]
             endpoint_bypass_routes: Vec::new(),
             #[cfg(target_os = "macos")]
-            endpoint_bypass_routes: Vec::new(),
+            endpoint_bypass_underlay: None,
             #[cfg(target_os = "linux")]
             original_default_route: None,
             #[cfg(target_os = "linux")]
@@ -217,12 +216,10 @@ impl FipsPrivateTunnelRuntime {
 
         #[cfg(target_os = "macos")]
         {
-            if !crate::route_targets_require_endpoint_bypass(&self.config.route_targets) {
-                return Ok(());
-            }
-
             let config = self.config.clone();
-            return self.apply_interface_config(&config).await;
+            self.reconcile_macos_endpoint_bypass_for_config(&config)
+                .await?;
+            return Ok(());
         }
     }
 
@@ -283,46 +280,23 @@ impl FipsPrivateTunnelRuntime {
         let original_route_targets_require_bypass =
             crate::route_targets_require_endpoint_bypass(&route_targets);
 
-        if original_route_targets_require_bypass {
-            let peer_endpoint_hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
-            if requested_ipv4_exit && peer_endpoint_hosts.is_empty() {
-                eprintln!(
-                    "fips: withholding macOS default route until the selected exit peer underlay endpoint is known"
-                );
-                route_targets.retain(|route| !crate::is_exit_node_route(route));
-                self.reconcile_macos_endpoint_bypass_routes(&[], None);
-            } else {
-                match crate::macos_underlay_default_route_from_system() {
-                    Ok(Some(underlay)) => {
-                        let endpoint_bypass_routes =
-                            crate::macos_network::macos_endpoint_bypass_targets_for_hosts(
-                                &peer_endpoint_hosts,
-                            );
-                        self.reconcile_macos_endpoint_bypass_routes(
-                            &endpoint_bypass_routes,
-                            Some(&underlay),
-                        );
-                    }
-                    Ok(None) => {
-                        eprintln!(
-                            "fips: withholding macOS default route because no underlay default route is available"
-                        );
-                        route_targets.retain(|route| !crate::is_exit_node_route(route));
-                        self.reconcile_macos_endpoint_bypass_routes(&[], None);
-                    }
-                    Err(error) => {
-                        eprintln!(
-                            "fips: withholding macOS default route because underlay route lookup failed: {error}"
-                        );
-                        route_targets.retain(|route| !crate::is_exit_node_route(route));
-                        self.reconcile_macos_endpoint_bypass_routes(&[], None);
-                    }
-                }
-            }
-        } else {
-            self.reconcile_macos_endpoint_bypass_routes(&[], None);
-        }
+        // A config or platform-network refresh must restore routes the OS may have dropped.
+        self.endpoint_bypass_underlay = None;
+        let (has_peer_endpoint_hosts, underlay) = self
+            .reconcile_macos_endpoint_bypass_for_config(config)
+            .await?;
 
+        if requested_ipv4_exit && !has_peer_endpoint_hosts {
+            eprintln!(
+                "fips: withholding macOS default route until the selected exit peer underlay endpoint is known"
+            );
+            route_targets.retain(|route| !crate::is_exit_node_route(route));
+        } else if original_route_targets_require_bypass && underlay.is_none() {
+            eprintln!(
+                "fips: withholding macOS default route because no underlay default route is available"
+            );
+            route_targets.retain(|route| !crate::is_exit_node_route(route));
+        }
         let active_ipv4_exit = route_targets.iter().any(|route| route == "0.0.0.0/0");
         if !active_ipv4_exit
             && let Err(error) = crate::delete_macos_default_route_for_interface(&self.iface)
@@ -350,6 +324,27 @@ impl FipsPrivateTunnelRuntime {
     }
 
     #[cfg(target_os = "macos")]
+    async fn reconcile_macos_endpoint_bypass_for_config(
+        &mut self,
+        config: &FipsPrivateTunnelConfig,
+    ) -> Result<(bool, Option<crate::MacosRouteSpec>)> {
+        let hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
+        let routes = crate::macos_network::macos_endpoint_bypass_targets_for_hosts(&hosts);
+        let underlay = match crate::macos_underlay_default_route_from_system() {
+            Ok(underlay) => underlay,
+            Err(error) => {
+                eprintln!("fips: failed to resolve macOS endpoint underlay route: {error}");
+                None
+            }
+        };
+        self.reconcile_macos_endpoint_bypass_routes(
+            underlay.as_ref().map_or(&[], |_| routes.as_slice()),
+            underlay.as_ref(),
+        );
+        Ok((!hosts.is_empty(), underlay))
+    }
+
+    #[cfg(target_os = "macos")]
     fn reconcile_macos_endpoint_bypass_routes(
         &mut self,
         routes: &[String],
@@ -359,6 +354,7 @@ impl FipsPrivateTunnelRuntime {
             .iter()
             .cloned()
             .collect::<std::collections::HashSet<_>>();
+        let underlay_changed = self.endpoint_bypass_underlay.as_ref() != underlay;
 
         let stale = self
             .endpoint_bypass_routes
@@ -375,7 +371,10 @@ impl FipsPrivateTunnelRuntime {
         }
 
         if let Some(underlay) = underlay {
-            for route in routes {
+            for route in routes
+                .iter()
+                .filter(|route| underlay_changed || !self.endpoint_bypass_routes.contains(*route))
+            {
                 if let Err(error) =
                     crate::apply_macos_route_spec(route, underlay.gateway.as_deref(), None)
                 {
@@ -389,6 +388,7 @@ impl FipsPrivateTunnelRuntime {
 
         self.endpoint_bypass_routes = desired.into_iter().collect();
         self.endpoint_bypass_routes.sort();
+        self.endpoint_bypass_underlay = underlay.cloned();
     }
 
     #[cfg(target_os = "macos")]

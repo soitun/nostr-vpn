@@ -610,7 +610,7 @@
     }
 
     #[test]
-    fn endpoint_peer_hints_make_private_static_addresses_last_resort() {
+    fn endpoint_peer_hints_prefer_configured_private_addresses() {
         let endpoint_peers = fips_endpoint_peers_from_mesh(
             &[],
             vec![("peer".to_string(), vec!["192.168.178.91:51830".to_string()])],
@@ -637,12 +637,12 @@
 
         assert_eq!(
             static_hint.priority,
-            FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY
+            FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY
         );
         assert_eq!(recent_hint.priority, FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY);
         assert_eq!(
             fips_peer_address_from_hint(static_hint).priority,
-            FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY
+            FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY
         );
         assert_eq!(
             fips_peer_address_from_hint(recent_hint).priority,
@@ -674,11 +674,11 @@
         assert_eq!(recent_hint.seen_at_ms, Some(123_000));
         assert_eq!(
             recent_hint.priority,
-            FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY
+            FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY
         );
         assert_eq!(
             fips_peer_address_from_hint(recent_hint).priority,
-            FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY
+            FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY
         );
     }
 
@@ -708,7 +708,7 @@
             .find(|hint| hint.addr == "89.27.103.157:33838")
             .expect("recent hint");
 
-        assert_eq!(static_hint.priority, FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY);
+        assert_eq!(static_hint.priority, FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY);
         assert_eq!(recent_hint.priority, FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY);
     }
 
@@ -740,7 +740,7 @@
         assert_eq!(matching_hints[0].seen_at_ms, None);
         assert_eq!(
             matching_hints[0].priority,
-            FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY
+            FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY
         );
         assert_eq!(
             fips_peer_address_from_hint(matching_hints[0]).seen_at_ms,

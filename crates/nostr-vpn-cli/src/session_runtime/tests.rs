@@ -89,20 +89,19 @@ mod tests {
     }
     #[test]
     fn link_event_refresh_classifies_path_refreshes() {
-        let idle = fips_link_event_refresh(false, false, false, false, false);
+        let idle = fips_link_event_refresh(false, false, false, false);
         assert_eq!(idle, FipsLinkEventRefresh::None);
 
         for refresh in [
-            fips_link_event_refresh(false, true, false, false, false),
-            fips_link_event_refresh(false, false, true, false, false),
-            fips_link_event_refresh(false, false, false, false, true),
+            fips_link_event_refresh(false, true, false, false),
+            fips_link_event_refresh(false, false, true, false),
+            fips_link_event_refresh(false, false, false, true),
         ] {
             assert_eq!(refresh, FipsLinkEventRefresh::RefreshPaths);
         }
 
         for refresh in [
-            fips_link_event_refresh(true, false, false, false, false),
-            fips_link_event_refresh(false, false, false, true, false),
+            fips_link_event_refresh(true, false, false, false),
         ] {
             assert_eq!(refresh, FipsLinkEventRefresh::None);
         }

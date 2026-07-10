@@ -267,7 +267,7 @@ impl FipsMeshRuntime {
         &'a self,
         packet: Vec<u8>,
     ) -> Option<RoutedFipsPacket<'a>> {
-        let destination = packet_destination(&packet)?;
+        let (_, destination) = packet_endpoints(&packet)?;
         self.route_outbound_packet_owned_with_peer_to_destination(packet, destination)
     }
 
@@ -282,7 +282,7 @@ impl FipsMeshRuntime {
     }
 
     fn route_outbound_peer(&self, packet: &[u8]) -> Option<&FipsMeshPeerRuntime> {
-        let destination = packet_destination(packet)?;
+        let (_, destination) = packet_endpoints(packet)?;
         self.select_peer_for_ip(destination)
     }
 
@@ -541,7 +541,7 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
         data: &[u8],
         mut cache: Option<&mut FipsEndpointAdmissionCache>,
     ) -> Option<&'a FipsMeshPeerRuntime> {
-        let packet_source = packet_source(data)?;
+        let (packet_source, packet_destination) = packet_endpoints(data)?;
         let source_allowed = match cache.as_mut() {
             Some(cache) => match cache.source {
                 Some((source, allowed)) if source == packet_source => allowed,
@@ -557,7 +557,6 @@ impl<'a> FipsEndpointSourceAdmitter<'a> {
             return None;
         }
 
-        let packet_destination = packet_destination(data)?;
         let destination_allowed = match cache.as_mut() {
             Some(cache) => match cache.destination {
                 Some((destination, allowed)) if destination == packet_destination => allowed,

@@ -13,23 +13,16 @@ struct FipsDirectEndpointQueue {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-struct FipsDirectEndpointRxCursor {
-    queue: FipsDirectEndpointDataRx,
-    pending: Option<FipsDirectEndpointQueuedRuns>,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[derive(Default)]
 struct FipsDirectEndpointQueueState {
-    batches: VecDeque<FipsDirectEndpointQueuedRuns>,
+    runs: VecDeque<FipsDirectEndpointQueuedRun>,
+    packets: usize,
     interrupt_pending: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-struct FipsDirectEndpointQueuedRuns {
-    runs: Vec<FipsEndpointDirectPacketRun>,
-    packets: usize,
-    source_node_addr: Option<[u8; 16]>,
+struct FipsDirectEndpointQueuedRun {
+    run: FipsEndpointDirectPacketRun,
     enqueued_at: Option<Instant>,
 }
 
@@ -42,22 +35,6 @@ fn fips_direct_endpoint_queue_pair() -> (FipsDirectEndpointDataSink, FipsDirectE
         },
         queue,
     )
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-impl FipsDirectEndpointQueuedRuns {
-    fn with_enqueued_at(
-        runs: Vec<FipsEndpointDirectPacketRun>,
-        enqueued_at: Option<Instant>,
-    ) -> Self {
-        let (packets, source_node_addr) = direct_packet_runs_summary(&runs);
-        Self {
-            runs,
-            packets,
-            source_node_addr,
-            enqueued_at,
-        }
-    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -83,34 +60,43 @@ impl FipsDirectEndpointQueue {
         &self,
         runs: Vec<FipsEndpointDirectPacketRun>,
     ) -> Result<(), FipsEndpointDirectDeliveryError> {
-        let queued =
-            FipsDirectEndpointQueuedRuns::with_enqueued_at(runs, crate::pipeline_profile::stamp());
-        if queued.packets == 0 {
-            return Ok(());
-        }
+        debug_assert!(
+            !runs.is_empty()
+                && runs.iter().all(|run| !run.is_empty()
+                    && run.len() <= FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS)
+        );
+        let run_count = runs.len();
+        let packets = runs.iter().map(FipsEndpointDirectPacketRun::len).sum();
+        let enqueued_at = crate::pipeline_profile::stamp();
         let mut state = self
             .state
             .lock()
             .map_err(|_| FipsEndpointDirectDeliveryError::Unavailable)?;
-        let wake_consumer = state.batches.is_empty();
-        let queue_depth = state.batches.len().saturating_add(1);
-        crate::pipeline_profile::record_direct_endpoint_sink_batch(
-            queued.runs.len(),
-            queued.packets,
-            queue_depth,
+        let Some(queued_packets) = state.packets.checked_add(packets) else {
+            drop(state);
+            return Err(FipsEndpointDirectDeliveryError::Unavailable);
+        };
+        if queued_packets > FIPS_ENDPOINT_DIRECT_PACKET_QUEUE_MAX_PACKETS {
+            drop(state);
+            return Err(FipsEndpointDirectDeliveryError::Unavailable);
+        }
+        let wake_consumer = state.runs.is_empty();
+        let queue_depth = state.runs.len().saturating_add(runs.len());
+        state.packets = queued_packets;
+        state.runs.extend(
+            runs.into_iter()
+                .map(|run| FipsDirectEndpointQueuedRun { run, enqueued_at }),
         );
-        state.batches.push_back(queued);
+        drop(state);
         if wake_consumer {
             self.ready.notify_one();
         }
+        crate::pipeline_profile::record_direct_endpoint_sink_batch(
+            run_count,
+            packets,
+            queue_depth,
+        );
         Ok(())
-    }
-
-    fn cursor(self: &Arc<Self>) -> FipsDirectEndpointRxCursor {
-        FipsDirectEndpointRxCursor {
-            queue: Arc::clone(self),
-            pending: None,
-        }
     }
 
     fn interrupt(&self) {
@@ -122,236 +108,108 @@ impl FipsDirectEndpointQueue {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-impl FipsDirectEndpointRxCursor {
+impl FipsDirectEndpointQueue {
     fn recv_source_batch_timeout(
-        &mut self,
+        &self,
         timeout: Duration,
         limit: usize,
     ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::RecvTimeoutError> {
-        if let Some(runs) = self.take_pending_limited(limit) {
-            return Ok(runs);
-        }
-
         let mut state = self
-            .queue
             .state
             .lock()
             .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)?;
-        if state.batches.is_empty() {
+        if state.runs.is_empty() {
             let (next_state, wait) = self
-                .queue
                 .ready
                 .wait_timeout_while(state, timeout, |state| {
-                    state.batches.is_empty() && !state.interrupt_pending
+                    state.runs.is_empty() && !state.interrupt_pending
                 })
                 .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)?;
             state = next_state;
             let interrupted = std::mem::take(&mut state.interrupt_pending);
-            if interrupted && state.batches.is_empty() {
+            if interrupted && state.runs.is_empty() {
                 return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
             }
-            if wait.timed_out() && state.batches.is_empty() {
+            if wait.timed_out() && state.runs.is_empty() {
                 return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
             }
         }
-        let mut queued = state
-            .batches
+        let queued = state
+            .runs
             .pop_front()
             .ok_or(std::sync::mpsc::RecvTimeoutError::Timeout)?;
-        coalesce_limited_direct_endpoint_runs(&mut queued, limit, &mut state, &mut self.pending);
-        Ok(queued.runs)
+        Ok(coalesce_direct_endpoint_runs(queued, limit, &mut state))
     }
 
     fn try_recv_limited(
-        &mut self,
+        &self,
         limit: usize,
     ) -> Result<Vec<FipsEndpointDirectPacketRun>, std::sync::mpsc::TryRecvError> {
-        if let Some(runs) = self.take_pending_limited(limit) {
-            return Ok(runs);
-        }
-
         let mut state = self
-            .queue
             .state
             .lock()
             .map_err(|_| std::sync::mpsc::TryRecvError::Disconnected)?;
-        let mut queued = state
-            .batches
+        let limit = limit
+            .max(1)
+            .min(FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS);
+        if state
+            .runs
+            .front()
+            .is_some_and(|queued| queued.run.len() > limit)
+        {
+            return Err(std::sync::mpsc::TryRecvError::Empty);
+        }
+        let queued = state
+            .runs
             .pop_front()
             .ok_or(std::sync::mpsc::TryRecvError::Empty)?;
-        coalesce_limited_direct_endpoint_runs(&mut queued, limit, &mut state, &mut self.pending);
-        Ok(queued.runs)
-    }
-
-    fn take_pending_limited(&mut self, limit: usize) -> Option<Vec<FipsEndpointDirectPacketRun>> {
-        let mut queued = self.pending.take()?;
-        self.pending = limit_queued_direct_endpoint_runs_to_remaining(&mut queued, limit.max(1));
-        crate::pipeline_profile::record_direct_endpoint_rx_batch(
-            queued.runs.len(),
-            queued.packets,
-            1,
-        );
-        Some(queued.runs)
+        Ok(coalesce_direct_endpoint_runs(queued, limit, &mut state))
     }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-impl Drop for FipsDirectEndpointRxCursor {
-    fn drop(&mut self) {
-        let Some(pending) = self.pending.take() else {
-            return;
-        };
-        if let Ok(mut state) = self.queue.state.lock() {
-            let wake_consumer = state.batches.is_empty();
-            state.batches.push_front(pending);
-            if wake_consumer {
-                self.queue.ready.notify_one();
-            }
-        }
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn coalesce_limited_direct_endpoint_runs(
-    queued: &mut FipsDirectEndpointQueuedRuns,
+fn coalesce_direct_endpoint_runs(
+    queued: FipsDirectEndpointQueuedRun,
     limit: usize,
     state: &mut FipsDirectEndpointQueueState,
-    pending: &mut Option<FipsDirectEndpointQueuedRuns>,
-) {
-    let limit = limit.max(1);
-    record_direct_endpoint_queue_residence(queued);
-    *pending = limit_queued_direct_endpoint_runs_to_remaining(queued, limit);
-    let Some(source_node_addr) = queued.source_node_addr else {
-        crate::pipeline_profile::record_direct_endpoint_rx_batch(1, queued.packets, 1);
-        return;
-    };
-
-    let mut packet_count = queued.packets;
-    let mut coalesced_batches = 1usize;
+) -> Vec<FipsEndpointDirectPacketRun> {
+    let limit = limit
+        .max(1)
+        .min(FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS);
+    let source_node_addr = *queued.run.source_peer().node_addr().as_bytes();
+    let mut packet_count = queued.run.len();
+    record_direct_endpoint_queue_residence(queued.enqueued_at);
+    let mut runs = vec![queued.run];
     while packet_count < limit {
-        let Some(next) = state.batches.front() else {
+        let Some(next) = state.runs.front() else {
             break;
         };
-        if next.source_node_addr != Some(source_node_addr) {
+        let next_packets = next.run.len();
+        if next.run.source_peer().node_addr().as_bytes() != &source_node_addr
+            || packet_count.saturating_add(next_packets) > limit
+        {
             break;
         }
-        let mut next = state
-            .batches
+        let next = state
+            .runs
             .pop_front()
-            .expect("front batch must remain present while queue lock is held");
-        record_direct_endpoint_queue_residence(&next);
-        *pending = limit_queued_direct_endpoint_runs_to_remaining(&mut next, limit - packet_count);
-        packet_count = packet_count.saturating_add(next.packets);
-        coalesced_batches = coalesced_batches.saturating_add(1);
-        queued.runs.append(&mut next.runs);
-        if pending.is_some() {
-            break;
-        }
+            .expect("front run must remain present while queue lock is held");
+        record_direct_endpoint_queue_residence(next.enqueued_at);
+        packet_count = packet_count.saturating_add(next_packets);
+        runs.push(next.run);
     }
-    queued.packets = packet_count;
-
-    crate::pipeline_profile::record_direct_endpoint_rx_batch(
-        queued.runs.len(),
-        packet_count,
-        coalesced_batches,
-    );
+    state.packets = state
+        .packets
+        .checked_sub(packet_count)
+        .expect("queued packet count must cover every removed direct packet run");
+    crate::pipeline_profile::record_direct_endpoint_rx_batch(runs.len(), packet_count);
+    runs
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn limit_queued_direct_endpoint_runs_to_remaining(
-    queued: &mut FipsDirectEndpointQueuedRuns,
-    remaining: usize,
-) -> Option<FipsDirectEndpointQueuedRuns> {
-    if queued.packets <= remaining {
-        return None;
-    }
-    let enqueued_at = queued.enqueued_at;
-    let packet_count = queued.packets;
-    let source_node_addr = queued.source_node_addr;
-    let tail = split_queued_direct_packet_runs_at_packet_limit(&mut queued.runs, remaining);
-    if let Some(source_node_addr) = source_node_addr {
-        queued.packets = remaining;
-        queued.source_node_addr = (remaining > 0).then_some(source_node_addr);
-    } else {
-        (queued.packets, queued.source_node_addr) = direct_packet_runs_summary(&queued.runs);
-    }
-    if !tail.is_empty() {
-        let tail_queued = if let Some(source_node_addr) = source_node_addr {
-            FipsDirectEndpointQueuedRuns {
-                runs: tail,
-                packets: packet_count.saturating_sub(remaining),
-                source_node_addr: Some(source_node_addr),
-                enqueued_at,
-            }
-        } else {
-            FipsDirectEndpointQueuedRuns::with_enqueued_at(tail, enqueued_at)
-        };
-        crate::pipeline_profile::record_direct_endpoint_rx_limit_split(tail_queued.packets);
-        return Some(tail_queued);
-    }
-    None
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn record_direct_endpoint_queue_residence(queued: &FipsDirectEndpointQueuedRuns) {
+fn record_direct_endpoint_queue_residence(enqueued_at: Option<Instant>) {
     crate::pipeline_profile::record_since(
         crate::pipeline_profile::Stage::DirectEndpointQueue,
-        queued.enqueued_at,
+        enqueued_at,
     );
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn split_queued_direct_packet_runs_at_packet_limit(
-    runs: &mut Vec<FipsEndpointDirectPacketRun>,
-    limit: usize,
-) -> Vec<FipsEndpointDirectPacketRun> {
-    if limit == 0 {
-        return std::mem::take(runs);
-    }
-
-    let mut consumed = 0usize;
-    let mut index = 0usize;
-    while index < runs.len() {
-        let next = consumed.saturating_add(runs[index].len());
-        if next < limit {
-            consumed = next;
-            index = index.saturating_add(1);
-            continue;
-        }
-        if next == limit {
-            return runs.split_off(index.saturating_add(1));
-        }
-
-        let split_at = limit - consumed;
-        let mut tail = Vec::with_capacity(runs.len().saturating_sub(index));
-        if let Some(tail_run) = runs[index].split_off_packets(split_at)
-            && !tail_run.is_empty()
-        {
-            tail.push(tail_run);
-        }
-        tail.extend(runs.split_off(index.saturating_add(1)));
-        return tail;
-    }
-
-    Vec::new()
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-fn direct_packet_runs_summary(runs: &[FipsEndpointDirectPacketRun]) -> (usize, Option<[u8; 16]>) {
-    let Some((first, rest)) = runs.split_first() else {
-        return (0, None);
-    };
-
-    let first_source = *first.source_peer().node_addr().as_bytes();
-    let mut packets = first.len();
-    let mut source_node_addr = Some(first_source);
-    for run in rest {
-        packets += run.len();
-        if source_node_addr.is_some() && run.source_peer().node_addr().as_bytes() != &first_source
-        {
-            source_node_addr = None;
-        }
-    }
-
-    (packets, source_node_addr)
 }

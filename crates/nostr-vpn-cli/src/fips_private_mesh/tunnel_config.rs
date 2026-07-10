@@ -94,9 +94,8 @@ impl FipsPrivateTunnelConfig {
         // Address hints feed into fips's unified `PeerConfig.addresses`:
         //   * operator-configured `fips_peer_endpoints` (unstamped)
         //   * recent-peers cache entries (stamped with `last_success_at`)
-        // Persisted private static hints come from old invites and only make
-        // sense while we are still on that LAN, so drop them before fips gives
-        // configured addresses first shot over discovery/NAT candidates.
+        // Configured hints are authenticated by FIPS and may intentionally
+        // cross a routed private network, so only reject overlay tunnel loops.
         let desired_endpoint_hint_npubs = app
             .active_network_signal_pubkeys_hex()
             .into_iter()
@@ -125,7 +124,7 @@ impl FipsPrivateTunnelConfig {
             app.fips_static_peer_endpoints(),
             &tunnel_endpoint_hosts,
             &local_private_subnets,
-            !app.fips_nostr_discovery_enabled,
+            true,
         );
         // Built-in public bootstrap nodes as fallback transit. They share the
         // same `discovery_fallback_transit` path as operator-configured static
@@ -469,10 +468,9 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     tun_send_worker: FipsTunSendWorker,
     mesh_recv_worker: FipsMeshRecvWorker,
     event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,
-    #[cfg(target_os = "linux")]
     endpoint_bypass_routes: Vec<String>,
     #[cfg(target_os = "macos")]
-    endpoint_bypass_routes: Vec<String>,
+    endpoint_bypass_underlay: Option<crate::MacosRouteSpec>,
     #[cfg(target_os = "linux")]
     original_default_route: Option<String>,
     #[cfg(target_os = "linux")]

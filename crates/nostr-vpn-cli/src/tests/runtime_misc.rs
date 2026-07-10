@@ -485,80 +485,31 @@ fn daemon_network_refresh_cadence_keeps_link_changes_low_latency() {
 }
 
 #[test]
-fn macos_underlay_route_check_throttles_route_event_storms() {
-    assert_eq!(MACOS_UNDERLAY_ROUTE_CHECK_INTERVAL_SECS, 5);
-
-    let start = Instant::now();
-    let mut last_check_at = start;
-
-    assert!(!macos_underlay_route_check_due(
-        &mut last_check_at,
-        false,
-        false,
-        start + Duration::from_secs(1),
-    ));
-    assert_eq!(last_check_at, start);
-
-    assert!(macos_underlay_route_check_due(
-        &mut last_check_at,
-        false,
-        false,
-        start + Duration::from_secs(5),
-    ));
-    assert_eq!(last_check_at, start + Duration::from_secs(5));
-
-    assert!(macos_underlay_route_check_due(
-        &mut last_check_at,
-        true,
-        false,
-        start + Duration::from_secs(6),
-    ));
-    assert_eq!(last_check_at, start + Duration::from_secs(6));
-
-    assert!(macos_underlay_route_check_due(
-        &mut last_check_at,
-        false,
-        true,
-        start + Duration::from_secs(7),
-    ));
-}
-
-#[test]
-fn macos_underlay_route_repair_defers_only_for_confirmed_captive_portal() {
-    assert!(!macos_underlay_route_repair_allowed(Some(true)));
-    assert!(macos_underlay_route_repair_allowed(Some(false)));
-    assert!(macos_underlay_route_repair_allowed(None));
-}
-#[test]
 fn fips_link_events_refresh_paths_for_major_link_changes() {
     assert_eq!(
-        fips_link_event_refresh(false, true, false, false, false),
+        fips_link_event_refresh(false, true, false, false),
         FipsLinkEventRefresh::RefreshPaths
     );
     assert_eq!(
-        fips_link_event_refresh(false, false, false, false, true),
+        fips_link_event_refresh(false, false, false, true),
         FipsLinkEventRefresh::RefreshPaths
     );
 }
 #[test]
 fn fips_link_events_refresh_paths_for_endpoint_only_changes() {
     assert_eq!(
-        fips_link_event_refresh(false, false, true, false, false),
+        fips_link_event_refresh(false, false, true, false),
         FipsLinkEventRefresh::RefreshPaths
     );
     assert_eq!(
-        fips_link_event_refresh(false, false, false, false, false),
+        fips_link_event_refresh(false, false, false, false),
         FipsLinkEventRefresh::None
     );
 }
 #[test]
 fn fips_link_events_skip_route_maintenance_only_refreshes() {
     assert_eq!(
-        fips_link_event_refresh(true, false, false, false, false),
-        FipsLinkEventRefresh::None
-    );
-    assert_eq!(
-        fips_link_event_refresh(false, false, false, true, false),
+        fips_link_event_refresh(true, false, false, false),
         FipsLinkEventRefresh::None
     );
 }
@@ -815,15 +766,4 @@ fn macos_exit_node_cleanup_flushes_only_nvpn_anchor() {
     let args = crate::macos_network::macos_pf_anchor_flush_args();
     assert_eq!(args, vec!["-a", "com.apple/nostrvpn-exit", "-F", "all"]);
     assert_eq!(args[1].matches('/').count(), 1);
-}
-
-#[cfg(target_os = "macos")]
-#[test]
-fn macos_underlay_repair_resets_tunnel_runtime() {
-    let mut runtime = CliTunnelRuntime::new("utun4");
-    runtime.active_listen_port = Some(51820);
-
-    crate::session_runtime::reset_tunnel_runtime_after_macos_underlay_repair(&mut runtime);
-
-    assert!(runtime.active_listen_port.is_none());
 }

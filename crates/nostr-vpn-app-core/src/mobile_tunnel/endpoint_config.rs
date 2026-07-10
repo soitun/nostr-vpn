@@ -110,13 +110,9 @@ fn fips_peer_config_from_hint(
         .flatten()
         .map(|hint| {
             let (transport, addr) = split_peer_transport_addr(&hint.addr);
-            let mut addr = PeerAddress::with_priority(
-                transport,
-                addr,
-                mobile_fips_peer_address_hint_effective_priority(hint),
-            );
+            let mut addr = PeerAddress::with_priority(transport, addr, hint.priority);
             if let Some(seen_at_ms) = hint.seen_at_ms {
-                addr = addr.with_seen_at_ms(seen_at_ms);
+                addr = addr.learned().with_seen_at_ms(seen_at_ms);
             }
             addr
         })
@@ -172,10 +168,7 @@ fn fips_address_hints(
                             format!("{transport}:{addr}")
                         };
                         FipsPeerAddressHint {
-                            priority: mobile_fips_endpoint_hint_priority(
-                                &addr,
-                                FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
-                            ),
+                            priority: FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
                             addr,
                             seen_at_ms: None,
                         }
@@ -448,13 +441,9 @@ fn endpoint_hint_ip_is_unusable(ip: IpAddr) -> bool {
     }
 }
 
-fn mobile_fips_peer_address_hint_effective_priority(hint: &FipsPeerAddressHint) -> u8 {
-    mobile_fips_endpoint_hint_priority(&hint.addr, hint.priority)
-}
-
 fn mobile_fips_endpoint_hint_priority(addr: &str, normal_priority: u8) -> u8 {
     if endpoint_addr_is_private_or_local(addr) {
-        FIPS_PRIVATE_PEER_ENDPOINT_PRIORITY
+        FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY
     } else {
         normal_priority
     }

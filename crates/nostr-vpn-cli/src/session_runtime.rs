@@ -7,8 +7,6 @@ pub(crate) const DAEMON_NETWORK_REFRESH_INTERVAL_SECS: u64 = 15;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub(crate) const DAEMON_NETWORK_REFRESH_INTERVAL_SECS: u64 = 1;
 pub(crate) const DAEMON_NETWORK_EVENT_DEBOUNCE_MILLIS: u64 = 250;
-#[cfg(any(target_os = "macos", test))]
-pub(crate) const MACOS_UNDERLAY_ROUTE_CHECK_INTERVAL_SECS: u64 = 5;
 macro_rules! current_fips_peer_statuses {
     ($runtime:expr) => {
         $runtime

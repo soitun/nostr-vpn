@@ -301,47 +301,35 @@ impl IpRoute {
     }
 }
 
-pub fn packet_destination(packet: &[u8]) -> Option<IpAddr> {
-    match packet.first()? >> 4 {
-        4 => ipv4_packet_addr(packet, 16),
-        6 => ipv6_packet_addr(packet, 24),
+pub fn packet_endpoints(packet: &[u8]) -> Option<(IpAddr, IpAddr)> {
+    let first = *packet.first()?;
+    match first >> 4 {
+        4 => {
+            let ihl = first & 0x0f;
+            if packet.len() < 20 || ihl < 5 || packet.len() < usize::from(ihl) * 4 {
+                return None;
+            }
+            Some((
+                IpAddr::V4(Ipv4Addr::new(
+                    packet[12], packet[13], packet[14], packet[15],
+                )),
+                IpAddr::V4(Ipv4Addr::new(
+                    packet[16], packet[17], packet[18], packet[19],
+                )),
+            ))
+        }
+        6 => {
+            let mut source = [0_u8; 16];
+            let mut destination = [0_u8; 16];
+            source.copy_from_slice(packet.get(8..24)?);
+            destination.copy_from_slice(packet.get(24..40)?);
+            Some((
+                IpAddr::V6(Ipv6Addr::from(source)),
+                IpAddr::V6(Ipv6Addr::from(destination)),
+            ))
+        }
         _ => None,
     }
-}
-
-fn packet_source(packet: &[u8]) -> Option<IpAddr> {
-    match packet.first()? >> 4 {
-        4 => ipv4_packet_addr(packet, 12),
-        6 => ipv6_packet_addr(packet, 8),
-        _ => None,
-    }
-}
-
-fn ipv4_packet_addr(packet: &[u8], offset: usize) -> Option<IpAddr> {
-    if packet.len() < 20 || offset + 4 > packet.len() {
-        return None;
-    }
-    let ihl = packet[0] & 0x0f;
-    if ihl < 5 || packet.len() < usize::from(ihl) * 4 {
-        return None;
-    }
-
-    Some(IpAddr::V4(Ipv4Addr::new(
-        packet[offset],
-        packet[offset + 1],
-        packet[offset + 2],
-        packet[offset + 3],
-    )))
-}
-
-fn ipv6_packet_addr(packet: &[u8], offset: usize) -> Option<IpAddr> {
-    if packet.len() < 40 || offset + 16 > packet.len() {
-        return None;
-    }
-
-    let mut octets = [0_u8; 16];
-    octets.copy_from_slice(&packet[offset..offset + 16]);
-    Some(IpAddr::V6(Ipv6Addr::from(octets)))
 }
 
 fn mask_ipv4(ip: Ipv4Addr, bits: u8) -> Ipv4Addr {

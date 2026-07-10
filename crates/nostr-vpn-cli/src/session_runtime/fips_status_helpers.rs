@@ -125,10 +125,9 @@ pub(crate) fn fips_link_event_refresh(
     platform_network_event: bool,
     network_changed: bool,
     endpoint_changed: bool,
-    underlay_repaired: bool,
     resumed_after_sleep: bool,
 ) -> FipsLinkEventRefresh {
-    let _ = (platform_network_event, underlay_repaired);
+    let _ = platform_network_event;
     if network_changed || endpoint_changed || resumed_after_sleep {
         FipsLinkEventRefresh::RefreshPaths
     } else {
@@ -564,19 +563,6 @@ fn fips_roster_pubkeys(app: &AppConfig, own_pubkey: Option<&str>) -> HashSet<Str
         .collect()
 }
 
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn reset_tunnel_runtime_after_macos_underlay_repair(
-    tunnel_runtime: &mut CliTunnelRuntime,
-) {
-    tunnel_runtime.stop();
-}
-
-#[cfg(not(any(target_os = "macos", test)))]
-pub(crate) fn reset_tunnel_runtime_after_macos_underlay_repair(
-    _tunnel_runtime: &mut CliTunnelRuntime,
-) {
-}
-
 fn prefer_nonself_tunnel_snapshot(
     tunnel_runtime: &CliTunnelRuntime,
     previous: &crate::diagnostics::NetworkSnapshot,
@@ -595,30 +581,6 @@ fn prefer_nonself_tunnel_snapshot(
         Some(iface) if tunnel_runtime.owns_interface(iface) => previous.clone(),
         _ => latest,
     }
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn macos_underlay_route_check_due(
-    last_check_at: &mut Instant,
-    network_changed: bool,
-    resumed_after_sleep: bool,
-    now: Instant,
-) -> bool {
-    if network_changed
-        || resumed_after_sleep
-        || now.saturating_duration_since(*last_check_at)
-            >= Duration::from_secs(MACOS_UNDERLAY_ROUTE_CHECK_INTERVAL_SECS)
-    {
-        *last_check_at = now;
-        true
-    } else {
-        false
-    }
-}
-
-#[cfg(any(target_os = "macos", test))]
-pub(crate) fn macos_underlay_route_repair_allowed(captive_portal: Option<bool>) -> bool {
-    captive_portal != Some(true)
 }
 
 async fn capture_network_snapshot_for_daemon() -> crate::diagnostics::NetworkSnapshot {
@@ -664,45 +626,4 @@ fn drain_platform_network_changes(rx: &mut Option<tokio::sync::mpsc::Receiver<()
         return;
     };
     while rx.try_recv().is_ok() {}
-}
-
-#[cfg(target_os = "macos")]
-async fn ensure_macos_underlay_default_route_for_daemon() -> Result<bool> {
-    tokio::task::spawn_blocking(crate::macos_network::ensure_macos_underlay_default_route)
-        .await
-        .context("macOS underlay route check task failed")?
-}
-
-#[cfg(target_os = "macos")]
-async fn maybe_ensure_macos_underlay_default_route_for_daemon(
-    last_check_at: &mut Instant,
-    network_changed: bool,
-    resumed_after_sleep: bool,
-    now: Instant,
-    captive_portal: Option<bool>,
-) -> bool {
-    if !macos_underlay_route_repair_allowed(captive_portal) {
-        if macos_underlay_route_check_due(last_check_at, false, resumed_after_sleep, now) {
-            eprintln!(
-                "daemon: deferring macOS underlay default route repair while captive portal is detected"
-            );
-        }
-        return false;
-    }
-
-    if !macos_underlay_route_check_due(last_check_at, network_changed, resumed_after_sleep, now) {
-        return false;
-    }
-
-    match ensure_macos_underlay_default_route_for_daemon().await {
-        Ok(true) => {
-            eprintln!("daemon: restored missing macOS underlay default route");
-            true
-        }
-        Ok(false) => false,
-        Err(error) => {
-            eprintln!("daemon: failed to ensure macOS underlay default route: {error}");
-            false
-        }
-    }
 }

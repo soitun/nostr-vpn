@@ -292,7 +292,7 @@ struct FipsTunSendWorker {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TunPipelinePacket {
     fn new(bytes: Vec<u8>) -> Self {
-        let destination = packet_destination(&bytes);
+        let destination = packet_endpoints(&bytes).map(|(_, destination)| destination);
         Self::from_destination(bytes, destination)
     }
 

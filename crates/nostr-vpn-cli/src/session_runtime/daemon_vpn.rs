@@ -78,27 +78,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let mut network_changed_at = Some(unix_timestamp());
     let timeout = network_probe_timeout(&app);
     let mut captive_portal = detect_captive_portal(timeout).await;
-    #[cfg(target_os = "macos")]
-    {
-        if macos_underlay_route_repair_allowed(captive_portal) {
-            match ensure_macos_underlay_default_route_for_daemon().await {
-                Ok(true) => {
-                    eprintln!("daemon: restored missing macOS underlay default route");
-                    network_snapshot = capture_network_snapshot_for_daemon().await;
-                    network_changed_at = Some(unix_timestamp());
-                    captive_portal = detect_captive_portal(timeout).await;
-                }
-                Ok(false) => {}
-                Err(error) => {
-                    eprintln!("daemon: failed to ensure macOS underlay default route: {error}")
-                }
-            }
-        } else {
-            eprintln!(
-                "daemon: deferring macOS underlay default route repair while captive portal is detected"
-            );
-        }
-    }
     let mut port_mapping_runtime = PortMappingRuntime::default();
     let mut vpn_enabled = daemon_start_vpn_enabled(&app, args.paused);
     if daemon_vpn_active(vpn_enabled, expected_peers) {
@@ -268,9 +247,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     )?;
     let mut last_state_persisted_at = Instant::now();
     let daemon_state_persist_interval = Duration::from_secs(DAEMON_STATE_PERSIST_INTERVAL_SECS);
-    #[cfg(target_os = "macos")]
-    let mut last_macos_underlay_route_check_at =
-        Instant::now() - Duration::from_secs(MACOS_UNDERLAY_ROUTE_CHECK_INTERVAL_SECS);
     let mut platform_network_event_pending = false;
     let mut platform_network_event_suppressed_until: Option<Instant> = None;
 
@@ -527,33 +503,13 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 if resumed_after_sleep {
                     eprintln!("daemon: sleep/wake detected; refreshing FIPS endpoint state");
                 }
-                let mut latest_snapshot = prefer_nonself_tunnel_snapshot(
+                let latest_snapshot = prefer_nonself_tunnel_snapshot(
                     &tunnel_runtime,
                     &network_snapshot,
                     capture_network_snapshot_for_daemon().await,
                 );
-                let mut network_changed = latest_snapshot.changed_since(&network_snapshot);
+                let network_changed = latest_snapshot.changed_since(&network_snapshot);
                 if network_changed || resumed_after_sleep {
-                    captive_portal = detect_captive_portal(timeout).await;
-                }
-                #[cfg(target_os = "macos")]
-                let underlay_repaired = maybe_ensure_macos_underlay_default_route_for_daemon(
-                    &mut last_macos_underlay_route_check_at,
-                    network_changed,
-                    resumed_after_sleep,
-                    observed_at,
-                    captive_portal,
-                )
-                .await;
-                #[cfg(not(target_os = "macos"))]
-                let underlay_repaired = false;
-                if underlay_repaired {
-                    latest_snapshot = prefer_nonself_tunnel_snapshot(
-                        &tunnel_runtime,
-                        &network_snapshot,
-                        capture_network_snapshot_for_daemon().await,
-                    );
-                    network_changed = latest_snapshot.changed_since(&network_snapshot);
                     captive_portal = detect_captive_portal(timeout).await;
                 }
                 let platform_network_event = std::mem::take(&mut platform_network_event_pending);
@@ -609,7 +565,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 if !platform_network_event
                     && !network_changed
                     && !endpoint_changed
-                    && !underlay_repaired
                     && !resumed_after_sleep
                 {
                     continue;
@@ -618,13 +573,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     platform_network_event,
                     network_changed,
                     endpoint_changed,
-                    underlay_repaired,
                     resumed_after_sleep,
                 );
 
                 if platform_network_event
                     || network_changed
-                    || underlay_repaired
                     || resumed_after_sleep
                     || endpoint_changed
                 {
@@ -632,8 +585,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         "network change"
                     } else if resumed_after_sleep {
                         "sleep/wake"
-                    } else if underlay_repaired {
-                        "macOS underlay repair"
                     } else if platform_network_event {
                         "platform route event"
                     } else {
@@ -647,18 +598,12 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         network_snapshot = latest_snapshot;
                         network_changed_at = Some(now);
                         eprintln!("daemon: sleep/wake detected; refreshing FIPS endpoint state");
-                    } else if underlay_repaired {
-                        network_snapshot = latest_snapshot;
-                        eprintln!("daemon: refreshing tunnel after macOS underlay repair");
                     } else if platform_network_event {
                         eprintln!(
                             "daemon: platform route event detected; refreshing FIPS endpoint state"
                         );
                     } else {
                         eprintln!("daemon: endpoint changed; refreshing FIPS endpoint state");
-                    }
-                    if underlay_repaired {
-                        reset_tunnel_runtime_after_macos_underlay_repair(&mut tunnel_runtime);
                     }
                     let fips_result = match fips_refresh {
                         FipsLinkEventRefresh::RefreshPaths => {
