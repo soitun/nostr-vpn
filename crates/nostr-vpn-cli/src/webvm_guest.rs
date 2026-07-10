@@ -243,13 +243,31 @@ fn validate_approved_config(app: &AppConfig) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn webvm_pairing_uri(app: &AppConfig) -> Result<String> {
+    let pending = app
+        .pending_nostr_join_request
+        .as_ref()
+        .ok_or_else(|| anyhow!("no pending Nostr join request"))?;
+    pending.validate_for_device(&app.own_nostr_pubkey_hex()?)?;
+    let mut bootstrap =
+        nostr_vpn_core::identity_bridge::nostr_identity_device_approval_bootstrap(&pending.request)
+            .map_err(|error| anyhow!("failed to build WebVM approval bootstrap: {error}"))?;
+    bootstrap.label = None;
+    nostr_vpn_core::identity_bridge::encode_nostr_identity_device_approval_bootstrap(
+        &bootstrap,
+        Some(JOIN_REQUEST_LINK_PREFIX),
+    )
+    .map_err(|error| anyhow!("failed to encode WebVM approval bootstrap: {error}"))
+}
+
 #[cfg(target_os = "linux")]
 async fn pair_over_fips(
     args: &WebvmGuestArgs,
     endpoint: &FipsEndpoint,
     app: &mut AppConfig,
 ) -> Result<()> {
-    let pairing_uri = app.pending_nostr_join_request_link(JOIN_REQUEST_LINK_PREFIX)?;
+    let pairing_uri = webvm_pairing_uri(app)?;
     write_pairing_uri(&args.pairing_uri_file, &pairing_uri)?;
 
     endpoint
@@ -258,7 +276,7 @@ async fn pair_over_fips(
         .context("failed to register WebVM join pubsub service")?;
 
     println!(
-        "webvm-guest: awaiting approval over Ethernet FIPS service {}",
+        "webvm-guest: awaiting approval receipts over Ethernet FIPS service {}",
         args.join_pubsub_port
     );
     let mut client = NostrJoinFipsPubsubClient::new(app)?;
@@ -276,7 +294,6 @@ async fn wait_for_approval(
     app: &mut AppConfig,
     client: &mut NostrJoinFipsPubsubClient,
 ) -> Result<()> {
-    let request_event = client.request_event_datagram(app)?;
     let subscribe = client.subscribe_datagram(app)?;
     let mut subscribed = HashMap::<String, (u64, Instant)>::new();
     let mut datagrams = Vec::<FipsEndpointServiceDatagram>::with_capacity(SERVICE_RECV_BATCH);
@@ -291,7 +308,6 @@ async fn wait_for_approval(
             _ = host_poll.tick() => {
                 sync_connected_hosts(
                     endpoint,
-                    &request_event,
                     &subscribe,
                     &mut subscribed,
                 ).await?;
@@ -340,7 +356,6 @@ async fn wait_for_approval(
 #[cfg(target_os = "linux")]
 async fn sync_connected_hosts(
     endpoint: &FipsEndpoint,
-    request_event: &NostrJoinFipsPubsubDatagram,
     subscribe: &NostrJoinFipsPubsubDatagram,
     subscribed: &mut HashMap<String, (u64, Instant)>,
 ) -> Result<()> {
@@ -381,24 +396,18 @@ async fn sync_connected_hosts(
             .with_context(|| format!("invalid browser FIPS host npub {}", host.npub))?;
         endpoint
             .send_datagram(
-                remote.clone(),
-                request_event.source_port,
-                request_event.destination_port,
-                request_event.payload.clone(),
-            )
-            .await
-            .with_context(|| {
-                format!("failed to publish request through FIPS host {}", host.npub)
-            })?;
-        endpoint
-            .send_datagram(
                 remote,
                 subscribe.source_port,
                 subscribe.destination_port,
                 subscribe.payload.clone(),
             )
             .await
-            .with_context(|| format!("failed to subscribe through FIPS host {}", host.npub))?;
+            .with_context(|| {
+                format!(
+                    "failed to subscribe for approval receipts through FIPS host {}",
+                    host.npub
+                )
+            })?;
         subscribed.insert(host.npub, (host.link_id, Instant::now()));
     }
     Ok(())
@@ -590,8 +599,6 @@ fn remove_pairing_uri(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use nostr_sdk::JsonUtil as _;
-
     use super::*;
 
     fn temp_path(name: &str) -> PathBuf {
@@ -609,13 +616,9 @@ mod tests {
     fn first_boot_persists_one_stable_compact_join_bootstrap() {
         let path = temp_path("config").with_extension("toml");
         let first = load_or_initialize_config(&path, 1_778_998_000).expect("first boot");
-        let first_uri = first
-            .pending_nostr_join_request_link(JOIN_REQUEST_LINK_PREFIX)
-            .expect("first URI");
+        let first_uri = webvm_pairing_uri(&first).expect("first URI");
         let second = load_or_initialize_config(&path, 1_778_998_100).expect("second boot");
-        let second_uri = second
-            .pending_nostr_join_request_link(JOIN_REQUEST_LINK_PREFIX)
-            .expect("second URI");
+        let second_uri = webvm_pairing_uri(&second).expect("second URI");
         assert_eq!(first_uri, second_uri);
         assert!(first_uri.starts_with(JOIN_REQUEST_LINK_PREFIX));
         assert!(
@@ -638,14 +641,13 @@ mod tests {
                 .len(),
             3
         );
+        assert!(bootstrap.label.is_none());
         let pending = second.pending_nostr_join_request.expect("pending request");
         assert_ne!(
             pending.request.request_pubkey,
             pending.request.device_app_key_pubkey
         );
         assert_eq!(bootstrap.request_secret, pending.request.request_secret);
-        let event = pending.request_event().expect("transported request event");
-        assert!(!event.as_json().contains(&bootstrap.request_secret));
 
         AppConfig::delete_persisted_secrets_for_path(&path).expect("delete secrets");
         let _ = fs::remove_file(path);

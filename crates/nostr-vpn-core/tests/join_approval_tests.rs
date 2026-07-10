@@ -11,8 +11,6 @@ use nostr_vpn_core::identity_bridge::{
     NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE, NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE,
     NostrIdentityDeviceApprovalSidecarRequest, NostrIdentityId, NostrVpnJoinApprovalContextRequest,
     build_device_approval_sidecar, build_nostr_vpn_join_approval_context_event,
-    parse_nostr_identity_device_approval_bootstrap,
-    parse_nostr_identity_device_approval_request_event,
 };
 use nostr_vpn_core::join_pubsub::{
     NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, NostrJoinFipsPubsubClient, NostrJoinFipsPubsubDatagram,
@@ -226,7 +224,7 @@ fn approval_batch_is_auto_detected_applied_and_clears_pending_request() {
 }
 
 #[test]
-fn fips_pubsub_frames_hide_secret_and_auto_apply_delivered_approval() {
+fn fips_pubsub_sends_only_receipt_subscription_and_auto_applies_approval() {
     let mut joiner = pending_joiner();
     let pending = joiner
         .pending_nostr_join_request
@@ -234,35 +232,6 @@ fn fips_pubsub_frames_hide_secret_and_auto_apply_delivered_approval() {
         .expect("pending request")
         .clone();
     let mut client = NostrJoinFipsPubsubClient::new(&joiner).expect("pubsub client");
-    let request_publish = client
-        .request_event_datagram(&joiner)
-        .expect("request event datagram");
-    let request_publish_json =
-        String::from_utf8(request_publish.payload.clone()).expect("request EVENT utf8");
-    assert!(request_publish_json.contains("\"EVENT\""));
-    assert!(!request_publish_json.contains(&pending.request.request_secret));
-    assert!(!request_publish_json.contains(&pending.request_private_key));
-    let FipsPubsubWireMessage::Event {
-        subscription_id: None,
-        event: request_event,
-    } = FipsPubsubWireCodec::default()
-        .decode_frame(&request_publish.payload)
-        .expect("decode request event")
-    else {
-        panic!("request must be a published EVENT frame");
-    };
-    let bootstrap_uri = joiner
-        .pending_nostr_join_request_link("nvpn://join-request/")
-        .expect("bootstrap URI");
-    let bootstrap =
-        parse_nostr_identity_device_approval_bootstrap(&bootstrap_uri, &["nvpn://join-request/"])
-            .expect("parse bootstrap")
-            .expect("bootstrap payload");
-    assert_eq!(
-        parse_nostr_identity_device_approval_request_event(request_event.as_event(), &bootstrap)
-            .expect("parse transported request"),
-        pending.request
-    );
     let subscribe = client
         .subscribe_datagram(&joiner)
         .expect("subscription datagram");
@@ -279,6 +248,7 @@ fn fips_pubsub_frames_hide_secret_and_auto_apply_delivered_approval() {
     assert!(!subscribe_json.contains(&pending.request_private_key));
     let subscribe_value: serde_json::Value =
         serde_json::from_str(&subscribe_json).expect("REQ json");
+    assert_eq!(subscribe_value[0], "REQ");
     let filter = &subscribe_value[2];
     assert_eq!(filter["#p"][0], pending.request.request_pubkey);
     assert!(filter.get("authors").is_none());
