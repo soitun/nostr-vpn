@@ -8,6 +8,8 @@ use anyhow::{Context, Result, anyhow};
 use fips_core::{
     FipsEndpoint, FipsEndpointOutboundDatagram, FipsEndpointServiceReceiver, PeerIdentity,
 };
+use nostr_pubsub::MeshPeer;
+use nostr_pubsub_social_graph::MeshPeerPolicy;
 use nostr_sdk::prelude::{Client, Event, Filter, Keys, Kind, RelayPoolNotification};
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::control_pubsub::{
@@ -273,6 +275,26 @@ impl ControlPubsubFipsRuntime {
         relays: Vec<String>,
         store_path: Option<PathBuf>,
     ) -> Result<Option<Self>> {
+        Self::start_inner(endpoint, config, relays, store_path, None).await
+    }
+
+    pub async fn start_with_peer_policy(
+        endpoint: Arc<FipsEndpoint>,
+        config: NostrPubsubConfig,
+        relays: Vec<String>,
+        store_path: Option<PathBuf>,
+        peer_policy: Arc<dyn MeshPeerPolicy>,
+    ) -> Result<Option<Self>> {
+        Self::start_inner(endpoint, config, relays, store_path, Some(peer_policy)).await
+    }
+
+    async fn start_inner(
+        endpoint: Arc<FipsEndpoint>,
+        config: NostrPubsubConfig,
+        relays: Vec<String>,
+        store_path: Option<PathBuf>,
+        peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
+    ) -> Result<Option<Self>> {
         if config.mode == NostrPubsubMode::Off {
             return Ok(None);
         }
@@ -289,11 +311,14 @@ impl ControlPubsubFipsRuntime {
         let task_events = Arc::clone(&events);
         let task = tokio::spawn(async move {
             run(
-                endpoint,
+                PubsubRunState {
+                    endpoint,
+                    config,
+                    bridge,
+                    events: task_events,
+                    peer_policy,
+                },
                 receiver,
-                config,
-                bridge,
-                task_events,
                 outbox_path,
                 command_rx,
             )
@@ -370,15 +395,36 @@ impl RelayBridge {
     }
 }
 
-async fn run(
+struct PubsubRunState {
     endpoint: Arc<FipsEndpoint>,
-    receiver: FipsEndpointServiceReceiver,
     config: NostrPubsubConfig,
-    mut bridge: Option<RelayBridge>,
+    bridge: Option<RelayBridge>,
     events: Arc<Mutex<ControlEventStore>>,
+    peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
+}
+
+#[derive(Clone, Copy)]
+struct PublishContext<'a> {
+    endpoint: &'a FipsEndpoint,
+    codec: &'a ControlPubsubCodec,
+    bridge: Option<&'a RelayBridge>,
+    events: &'a Arc<Mutex<ControlEventStore>>,
+    peer_policy: Option<&'a dyn MeshPeerPolicy>,
+}
+
+async fn run(
+    state: PubsubRunState,
+    receiver: FipsEndpointServiceReceiver,
     outbox_path: Option<PathBuf>,
     mut command_rx: mpsc::Receiver<RuntimeCommand>,
 ) {
+    let PubsubRunState {
+        endpoint,
+        config,
+        mut bridge,
+        events,
+        peer_policy,
+    } = state;
     let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
     let options = ControlPubsubOptions {
         fanout: config.fanout,
@@ -402,11 +448,14 @@ async fn run(
                     Some(RuntimeCommand::Stop) | None => break,
                     Some(RuntimeCommand::Publish { event, response }) => {
                         let result = publish_local(
-                            &endpoint,
-                            &codec,
+                            PublishContext {
+                                endpoint: &endpoint,
+                                codec: &codec,
+                                bridge: bridge.as_ref(),
+                                events: &events,
+                                peer_policy: peer_policy.as_deref(),
+                            },
                             &mut mesh,
-                            bridge.as_ref(),
-                            &events,
                             &mut retries,
                             *event,
                         )
@@ -417,11 +466,14 @@ async fn run(
             }
             _ = outbox_tick.tick(), if outbox_path.is_some() => {
                 publish_outbox_batch(
-                    &endpoint,
-                    &codec,
+                    PublishContext {
+                        endpoint: &endpoint,
+                        codec: &codec,
+                        bridge: bridge.as_ref(),
+                        events: &events,
+                        peer_policy: peer_policy.as_deref(),
+                    },
                     &mut mesh,
-                    bridge.as_ref(),
-                    &events,
                     &mut retries,
                     outbox_path.as_deref().expect("outbox path is present"),
                 )
@@ -429,9 +481,13 @@ async fn run(
             }
             count = receiver.recv_batch_into(&mut datagrams, RECEIVE_BATCH) => {
                 let Some(count) = count else { break; };
-                let peers = connected_peers(&endpoint).await;
+                let peers = connected_peers(&endpoint, peer_policy.as_deref()).await;
                 for datagram in datagrams.iter().take(count) {
                     let source = datagram.source_peer.npub().to_string();
+                    if !peer_is_accepted(&source, peer_policy.as_deref()) {
+                        tracing::debug!(%source, "dropped control pubsub datagram by peer reputation");
+                        continue;
+                    }
                     let message = match codec.decode(datagram.data.as_ref()) {
                         Ok(message) => message,
                         Err(error) => {
@@ -460,7 +516,7 @@ async fn run(
             }
             notification = relay_notification(&mut bridge) => {
                 let Some(event) = notification else { continue; };
-                let peers = connected_peers(&endpoint).await;
+                let peers = connected_peers(&endpoint, peer_policy.as_deref()).await;
                 match mesh.publish(event.clone(), &peers, now_ms()) {
                     Ok(actions) => {
                         ingest_into_fips_discovery(&endpoint, &event).await;
@@ -491,15 +547,19 @@ async fn run(
 }
 
 async fn publish_local(
-    endpoint: &FipsEndpoint,
-    codec: &ControlPubsubCodec,
+    context: PublishContext<'_>,
     mesh: &mut ControlPubsubMesh,
-    bridge: Option<&RelayBridge>,
-    events: &Arc<Mutex<ControlEventStore>>,
     retries: &mut RetryState,
     event: Event,
 ) -> Result<bool> {
-    let peers = connected_peers(endpoint).await;
+    let PublishContext {
+        endpoint,
+        codec,
+        bridge,
+        events,
+        peer_policy,
+    } = context;
+    let peers = connected_peers(endpoint, peer_policy).await;
     if peers.is_empty() && bridge.is_none() {
         return Ok(false);
     }
@@ -515,11 +575,8 @@ async fn publish_local(
 }
 
 async fn publish_outbox_batch(
-    endpoint: &FipsEndpoint,
-    codec: &ControlPubsubCodec,
+    context: PublishContext<'_>,
     mesh: &mut ControlPubsubMesh,
-    bridge: Option<&RelayBridge>,
-    events: &Arc<Mutex<ControlEventStore>>,
     retries: &mut RetryState,
     outbox_path: &Path,
 ) {
@@ -542,7 +599,7 @@ async fn publish_outbox_batch(
             let _ = fs::remove_file(&path);
             continue;
         }
-        match publish_local(endpoint, codec, mesh, bridge, events, retries, event).await {
+        match publish_local(context, mesh, retries, event).await {
             Ok(true) => {
                 if let Err(error) = fs::remove_file(&path) {
                     tracing::warn!(%error, path = %path.display(), "failed to remove published control pubsub outbox entry");
@@ -644,18 +701,38 @@ async fn ingest_into_fips_discovery(endpoint: &FipsEndpoint, event: &Event) {
     }
 }
 
-async fn connected_peers(endpoint: &FipsEndpoint) -> Vec<String> {
+async fn connected_peers(
+    endpoint: &FipsEndpoint,
+    peer_policy: Option<&dyn MeshPeerPolicy>,
+) -> Vec<MeshPeer> {
     let mut peers = endpoint
         .peers()
         .await
         .unwrap_or_default()
         .into_iter()
         .filter(|peer| peer.connected)
-        .map(|peer| peer.npub)
+        .filter_map(|peer| select_mesh_peer(&peer.npub, peer_policy))
         .collect::<Vec<_>>();
-    peers.sort();
-    peers.dedup();
+    peers.sort_by(|left, right| left.id.cmp(&right.id));
+    peers.dedup_by(|left, right| left.id == right.id);
     peers
+}
+
+fn peer_is_accepted(peer_id: &str, peer_policy: Option<&dyn MeshPeerPolicy>) -> bool {
+    select_mesh_peer(peer_id, peer_policy).is_some()
+}
+
+fn select_mesh_peer(peer_id: &str, peer_policy: Option<&dyn MeshPeerPolicy>) -> Option<MeshPeer> {
+    let Some(peer_policy) = peer_policy else {
+        return Some(MeshPeer::new(peer_id));
+    };
+    match peer_policy.select_mesh_peer(peer_id) {
+        Ok(peer) => peer,
+        Err(error) => {
+            tracing::warn!(%error, %peer_id, "peer reputation failed; treating peer as unknown");
+            Some(MeshPeer::new(peer_id))
+        }
+    }
 }
 
 async fn relay_notification(bridge: &mut Option<RelayBridge>) -> Option<Event> {

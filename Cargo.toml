@@ -53,8 +53,11 @@ uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip44", "nip59"] }
 nostr-pubsub = { version = "0.1.5", path = "../nostr-pubsub/crates/nostr-pubsub" }
+nostr-pubsub-social-graph = { version = "0.1.5", path = "../nostr-pubsub/crates/nostr-pubsub-social-graph" }
 nostr-pubsub-relay = "0.1.4"
-nostr-identity = "0.1.5"
+nostr-social-graph = { version = "0.1.2", path = "../nostr-social-graph/rust/crates/nostr-social-graph" }
+nostr-social-memory = { version = "0.1.1", path = "../nostr-social-graph/rust/crates/nostr-social-memory" }
+nostr-identity = { version = "0.1.5", path = "../nostr-social-graph/rust/crates/nostr-identity" }
 nostr-vpn-core = { version = "4.0.40", path = "crates/nostr-vpn-core" }
 nostr-vpn-wintun = { version = "4.0.40", path = "crates/nostr-vpn-wintun" }
 

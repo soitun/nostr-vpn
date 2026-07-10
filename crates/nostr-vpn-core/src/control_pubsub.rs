@@ -114,24 +114,19 @@ impl ControlPubsubMesh {
     pub fn publish(
         &mut self,
         event: Event,
-        peers: &[String],
+        peers: &[MeshPeer],
         now_ms: u64,
     ) -> Result<Vec<ControlPubsubAction>> {
-        self.inner.publish(event, &mesh_peers(peers), now_ms)
+        self.inner.publish(event, peers, now_ms)
     }
 
     pub fn receive(
         &mut self,
         source_peer: &str,
         message: ControlPubsubWireMessage,
-        peers: &[String],
+        peers: &[MeshPeer],
         now_ms: u64,
     ) -> Result<Vec<ControlPubsubAction>> {
-        self.inner
-            .receive(source_peer, message, &mesh_peers(peers), now_ms)
+        self.inner.receive(source_peer, message, peers, now_ms)
     }
-}
-
-fn mesh_peers(peers: &[String]) -> Vec<MeshPeer> {
-    peers.iter().cloned().map(MeshPeer::new).collect()
 }

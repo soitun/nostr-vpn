@@ -10,6 +10,8 @@ use fips_core::{
     SimTransportConfig, register_sim_network, unregister_sim_network,
 };
 use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, Timestamp};
+use nostr_social_graph::RatingGraphConfig;
+use nostr_social_memory::rating_from_event;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::control_pubsub::{
     CONTROL_PUBSUB_FIPS_SERVICE_PORT, ControlPubsubCodec, ControlPubsubWireMessage,
@@ -17,6 +19,12 @@ use nostr_vpn_core::control_pubsub::{
 };
 use nvpn::control_pubsub_runtime::ControlPubsubFipsRuntime;
 use serde::{Deserialize, Serialize};
+
+mod reputation;
+use reputation::{
+    PEER_RATING_SCOPE, ReputationSeedReport, ReputationSetup, SharedMeshPeerPolicy,
+    SharedReputationGraph, build_reputation_policies, canonical_rating_event,
+};
 
 const DEFAULT_SEED: u64 = 0x4e56_504e_5055_4253;
 const DEFAULT_HONEST_RATIO_PERCENT: usize = 80;
@@ -64,6 +72,13 @@ pub struct SimulationReport {
     pub fake_inventories_attempted: usize,
     pub fake_inventories_sent: usize,
     pub rating_spam_published: usize,
+    pub rating_spam_stored_by_honest_nodes: usize,
+    pub trusted_positive_ratings_applied: usize,
+    pub trusted_negative_ratings_applied: usize,
+    pub untrusted_ratings_ignored: usize,
+    pub received_untrusted_ratings_ignored: usize,
+    pub unknown_honest_peer_links: usize,
+    pub unknown_attacker_peer_links: usize,
     pub max_events_stored_per_node: usize,
     pub total_events_stored: usize,
     pub attack_network: SimNetworkStats,
@@ -86,6 +101,8 @@ struct SimulationRuntime {
     keys: Vec<Keys>,
     endpoints: Vec<Arc<FipsEndpoint>>,
     pubsub: Vec<ControlPubsubFipsRuntime>,
+    reputation_graphs: Vec<Option<SharedReputationGraph>>,
+    reputation_seed: ReputationSeedReport,
 }
 
 pub async fn run_simulation(config: SimulationConfig) -> Result<SimulationReport> {
@@ -108,86 +125,15 @@ impl SimulationRuntime {
             .iter()
             .map(|spec| Keys::parse(&spec.secret_hex).expect("deterministic key parses"))
             .collect::<Vec<_>>();
-        let network = SimNetwork::new(config.seed);
-        for (index, spec) in specs.iter().enumerate() {
-            for neighbor in &spec.neighbors {
-                if index < *neighbor {
-                    network.set_link(
-                        spec.sim_addr.clone(),
-                        specs[*neighbor].sim_addr.clone(),
-                        SimLink::default(),
-                    );
-                }
-            }
-        }
+        let ReputationSetup {
+            policies: peer_policies,
+            graphs: reputation_graphs,
+            report: reputation_seed,
+        } = build_reputation_policies(&config, &specs, &keys)?;
+        let network = simulation_network(config.seed, &specs);
         register_sim_network(network_id.clone(), network.clone());
-
-        let mut endpoints = Vec::with_capacity(config.node_count);
-        for (index, spec) in specs.iter().enumerate() {
-            let endpoint = Box::pin(
-                FipsEndpoint::builder()
-                    .config(endpoint_config(&config, &network_id, &specs, index))
-                    .identity_nsec(spec.secret_hex.clone())
-                    .without_system_tun()
-                    .packet_channel_capacity(8_192)
-                    .bind(),
-            )
-            .await;
-            match endpoint {
-                Ok(endpoint) => endpoints.push(Arc::new(endpoint)),
-                Err(error) => {
-                    for endpoint in &endpoints {
-                        let _ = endpoint.shutdown().await;
-                    }
-                    unregister_sim_network(&network_id);
-                    return Err(error).context("failed to start simulated FIPS endpoint");
-                }
-            }
-        }
-
-        let connected_node_count = wait_for_connections(
-            &endpoints,
-            Duration::from_millis(config.convergence_timeout_ms),
-        )
-        .await;
-        if connected_node_count < config.node_count {
-            for endpoint in &endpoints {
-                let _ = endpoint.shutdown().await;
-            }
-            unregister_sim_network(&network_id);
-            bail!(
-                "only {connected_node_count}/{} FIPS nodes reached {CONNECTED_PEERS_REQUIRED} connected peers",
-                config.node_count
-            );
-        }
-
-        let pubsub_config = NostrPubsubConfig {
-            mode: NostrPubsubMode::Client,
-            fanout: 8,
-            max_hops: 10,
-            max_event_bytes: 56 * 1024,
-        };
-        let mut pubsub = Vec::with_capacity(config.node_count);
-        for endpoint in &endpoints {
-            match ControlPubsubFipsRuntime::start(
-                Arc::clone(endpoint),
-                pubsub_config.clone(),
-                Vec::new(),
-                None,
-            )
-            .await
-            {
-                Ok(Some(runtime)) => pubsub.push(runtime),
-                Ok(None) => {
-                    shutdown_partial(pubsub, &endpoints, &network_id).await;
-                    bail!("control pubsub unexpectedly disabled");
-                }
-                Err(error) => {
-                    shutdown_partial(pubsub, &endpoints, &network_id).await;
-                    return Err(error).context("failed to start Nostr VPN pubsub runtime");
-                }
-            }
-        }
+        let endpoints = start_sim_endpoints(&config, &network_id, &specs).await?;
+        let pubsub = start_pubsub_runtimes(&network_id, &endpoints, &peer_policies).await?;
 
         Ok(Self {
             config,
@@ -197,6 +143,8 @@ impl SimulationRuntime {
             keys,
             endpoints,
             pubsub,
+            reputation_graphs,
+            reputation_seed,
         })
     }
 
@@ -219,6 +167,11 @@ impl SimulationRuntime {
         let (fake_inventories_attempted, fake_inventories_sent) =
             self.inject_fake_inventories().await?;
         let rating_spam_published = self.publish_rating_spam().await?;
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        let rating_spam_stored_by_honest_nodes =
+            self.honest_rating_event_count(honest_node_count).await;
+        let received_untrusted_ratings_ignored =
+            self.apply_received_ratings(honest_node_count).await?;
         let post_attack = signed_event(
             &self.keys[1],
             FIPS_PEER_ADVERT_KIND,
@@ -259,6 +212,16 @@ impl SimulationRuntime {
             fake_inventories_attempted,
             fake_inventories_sent,
             rating_spam_published,
+            rating_spam_stored_by_honest_nodes,
+            trusted_positive_ratings_applied: self.reputation_seed.trusted_positive_ratings_applied,
+            trusted_negative_ratings_applied: self.reputation_seed.trusted_negative_ratings_applied,
+            untrusted_ratings_ignored: self
+                .reputation_seed
+                .untrusted_ratings_ignored
+                .saturating_add(received_untrusted_ratings_ignored),
+            received_untrusted_ratings_ignored,
+            unknown_honest_peer_links: self.reputation_seed.unknown_honest_peer_links,
+            unknown_attacker_peer_links: self.reputation_seed.unknown_attacker_peer_links,
             max_events_stored_per_node,
             total_events_stored,
             attack_network: self.network.stats().delta_since(&before_attack),
@@ -287,6 +250,44 @@ impl SimulationRuntime {
             }
             tokio::time::sleep(DELIVERY_POLL_INTERVAL).await;
         }
+    }
+
+    async fn honest_rating_event_count(&self, honest_count: usize) -> usize {
+        let mut count = 0usize;
+        for runtime in self.pubsub.iter().take(honest_count) {
+            count = count.saturating_add(
+                runtime
+                    .events()
+                    .await
+                    .iter()
+                    .filter(|event| event.kind == Kind::Custom(RATING_FACT_KIND))
+                    .count(),
+            );
+        }
+        count
+    }
+
+    async fn apply_received_ratings(&self, honest_count: usize) -> Result<usize> {
+        let config = RatingGraphConfig::for_scopes([PEER_RATING_SCOPE]);
+        let mut ignored = 0usize;
+        for (index, runtime) in self.pubsub.iter().take(honest_count).enumerate() {
+            let ratings = runtime
+                .events()
+                .await
+                .iter()
+                .filter(|event| event.kind == Kind::Custom(RATING_FACT_KIND))
+                .filter_map(|event| rating_from_event(event).ok())
+                .collect::<Vec<_>>();
+            let Some(graph) = self.reputation_graphs[index].as_ref() else {
+                continue;
+            };
+            let projection = graph
+                .write()
+                .map_err(|_| anyhow::anyhow!("simulation reputation graph lock poisoned"))?
+                .apply_ratings(&ratings, &config)?;
+            ignored = ignored.saturating_add(projection.ignored_ratings);
+        }
+        Ok(ignored)
     }
 
     async fn inject_fake_inventories(&self) -> Result<(usize, usize)> {
@@ -334,12 +335,15 @@ impl SimulationRuntime {
         let honest_count = self.config.node_count - self.config.attacker_count;
         let mut published = 0usize;
         for attacker in honest_count..self.config.node_count {
-            let event = signed_event(
+            let attacker_pubkey = self.keys[attacker].public_key().to_hex();
+            let event = canonical_rating_event(
                 &self.keys[attacker],
-                RATING_FACT_KIND,
-                &format!(r#"{{"type":"rating","subject":"sybil-{attacker}","rating":100}}"#),
+                &attacker_pubkey,
+                &attacker_pubkey,
+                100,
                 100 + attacker as u64,
-            );
+                "sybil self-praise",
+            )?;
             if self.pubsub[attacker].publish(event).await? {
                 published += 1;
             }
@@ -363,6 +367,111 @@ impl SimulationRuntime {
         }
         Ok(())
     }
+}
+
+fn simulation_network(seed: u64, specs: &[NodeSpec]) -> SimNetwork {
+    let network = SimNetwork::new(seed);
+    for (index, spec) in specs.iter().enumerate() {
+        for neighbor in &spec.neighbors {
+            if index < *neighbor {
+                network.set_link(
+                    spec.sim_addr.clone(),
+                    specs[*neighbor].sim_addr.clone(),
+                    SimLink::default(),
+                );
+            }
+        }
+    }
+    network
+}
+
+async fn start_sim_endpoints(
+    config: &SimulationConfig,
+    network_id: &str,
+    specs: &[NodeSpec],
+) -> Result<Vec<Arc<FipsEndpoint>>> {
+    let mut endpoints = Vec::with_capacity(config.node_count);
+    for (index, spec) in specs.iter().enumerate() {
+        let endpoint = Box::pin(
+            FipsEndpoint::builder()
+                .config(endpoint_config(config, network_id, specs, index))
+                .identity_nsec(spec.secret_hex.clone())
+                .without_system_tun()
+                .packet_channel_capacity(8_192)
+                .bind(),
+        )
+        .await;
+        match endpoint {
+            Ok(endpoint) => endpoints.push(Arc::new(endpoint)),
+            Err(error) => {
+                shutdown_partial(Vec::new(), &endpoints, network_id).await;
+                return Err(error).context("failed to start simulated FIPS endpoint");
+            }
+        }
+    }
+
+    let connected_node_count = wait_for_connections(
+        &endpoints,
+        Duration::from_millis(config.convergence_timeout_ms),
+    )
+    .await;
+    if connected_node_count < config.node_count {
+        shutdown_partial(Vec::new(), &endpoints, network_id).await;
+        bail!(
+            "only {connected_node_count}/{} FIPS nodes reached {CONNECTED_PEERS_REQUIRED} connected peers",
+            config.node_count
+        );
+    }
+    Ok(endpoints)
+}
+
+async fn start_pubsub_runtimes(
+    network_id: &str,
+    endpoints: &[Arc<FipsEndpoint>],
+    peer_policies: &[Option<SharedMeshPeerPolicy>],
+) -> Result<Vec<ControlPubsubFipsRuntime>> {
+    let pubsub_config = NostrPubsubConfig {
+        mode: NostrPubsubMode::Client,
+        fanout: 8,
+        max_hops: 10,
+        max_event_bytes: 56 * 1024,
+    };
+    let mut pubsub = Vec::with_capacity(endpoints.len());
+    for (index, endpoint) in endpoints.iter().enumerate() {
+        let runtime = match peer_policies[index].as_ref() {
+            Some(peer_policy) => {
+                ControlPubsubFipsRuntime::start_with_peer_policy(
+                    Arc::clone(endpoint),
+                    pubsub_config.clone(),
+                    Vec::new(),
+                    None,
+                    Arc::clone(peer_policy),
+                )
+                .await
+            }
+            None => {
+                ControlPubsubFipsRuntime::start(
+                    Arc::clone(endpoint),
+                    pubsub_config.clone(),
+                    Vec::new(),
+                    None,
+                )
+                .await
+            }
+        };
+        match runtime {
+            Ok(Some(runtime)) => pubsub.push(runtime),
+            Ok(None) => {
+                shutdown_partial(pubsub, endpoints, network_id).await;
+                bail!("control pubsub unexpectedly disabled");
+            }
+            Err(error) => {
+                shutdown_partial(pubsub, endpoints, network_id).await;
+                return Err(error).context("failed to start Nostr VPN pubsub runtime");
+            }
+        }
+    }
+    Ok(pubsub)
 }
 
 async fn shutdown_partial(
@@ -562,6 +671,15 @@ mod tests {
             "{report:?}"
         );
         assert_eq!(report.rating_spam_published, 3, "{report:?}");
+        assert!(report.trusted_positive_ratings_applied > 0, "{report:?}");
+        assert!(report.trusted_negative_ratings_applied > 0, "{report:?}");
+        assert!(report.unknown_honest_peer_links > 0, "{report:?}");
+        assert!(report.unknown_attacker_peer_links > 0, "{report:?}");
+        assert!(report.rating_spam_stored_by_honest_nodes > 0, "{report:?}");
+        assert!(
+            report.received_untrusted_ratings_ignored >= report.rating_spam_stored_by_honest_nodes,
+            "{report:?}"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -579,6 +697,15 @@ mod tests {
             "{report:?}"
         );
         assert_eq!(report.rating_spam_published, 20, "{report:?}");
+        assert!(report.trusted_positive_ratings_applied > 0, "{report:?}");
+        assert!(report.trusted_negative_ratings_applied > 0, "{report:?}");
+        assert!(report.unknown_honest_peer_links > 0, "{report:?}");
+        assert!(report.unknown_attacker_peer_links > 0, "{report:?}");
+        assert!(report.rating_spam_stored_by_honest_nodes > 0, "{report:?}");
+        assert!(
+            report.received_untrusted_ratings_ignored >= report.rating_spam_stored_by_honest_nodes,
+            "{report:?}"
+        );
         assert!(report.max_events_stored_per_node <= 22, "{report:?}");
         assert!(report.attack_network.packets_sent < 200_000, "{report:?}");
         assert!(report.attack_network.bytes_sent < 40_000_000, "{report:?}");

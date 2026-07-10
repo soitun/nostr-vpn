@@ -1255,8 +1255,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327"
 dependencies = [
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-link",
 ]
 
@@ -3720,8 +3722,6 @@ dependencies = [
 [[package]]
 name = "nostr-identity"
 version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "848aac810edafec01cd47650e31bfe920129a9d1422df0385cca286625caeed4"
 dependencies = [
  "anyhow",
  "nostr-sdk",
@@ -3756,6 +3756,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "nostr-pubsub-social-graph"
+version = "0.1.5"
+dependencies = [
+ "async-trait",
+ "nostr-pubsub",
+ "nostr-social-graph",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "nostr-relay-pool"
 version = "0.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3786,6 +3796,32 @@ dependencies = [
  "nostr-relay-pool",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "nostr-social-graph"
+version = "0.1.2"
+dependencies = [
+ "hex",
+ "indexmap 2.14.0",
+ "serde",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
+name = "nostr-social-memory"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "nostr-identity",
+ "nostr-sdk",
+ "nostr-social-graph",
+ "serde",
+ "serde_json",
+ "toml 0.8.23",
+ "uuid",
 ]
 
 [[package]]
@@ -3862,7 +3898,10 @@ dependencies = [
  "anyhow",
  "fips-core",
  "hex",
+ "nostr-pubsub-social-graph",
  "nostr-sdk",
+ "nostr-social-graph",
+ "nostr-social-memory",
  "nostr-vpn-core",
  "nvpn",
  "serde",
@@ -4015,6 +4054,7 @@ dependencies = [
  "mimalloc",
  "netdev",
  "nostr-pubsub",
+ "nostr-pubsub-social-graph",
  "nostr-sdk",
  "nostr-vpn-core",
  "nostr-vpn-wintun",

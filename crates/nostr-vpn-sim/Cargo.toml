@@ -12,6 +12,9 @@ anyhow.workspace = true
 fips-core = { workspace = true, features = ["sim-transport"] }
 hex.workspace = true
 nostr-sdk.workspace = true
+nostr-pubsub-social-graph.workspace = true
+nostr-social-graph.workspace = true
+nostr-social-memory.workspace = true
 nostr-vpn-core.workspace = true
 nvpn = { path = "../nostr-vpn-cli" }
 serde.workspace = true

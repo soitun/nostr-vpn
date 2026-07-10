@@ -10,6 +10,13 @@ The default scenario starts 100 instances, publishes an honest baseline event,
 injects unanswered inventory spam and valid signed rating spam from 20 peers,
 then measures honest event delivery under pressure.
 
+Each honest instance has a local `nostr-social-graph` rooted at its FIPS
+identity. Canonical signed `fips.peer` ratings classify connected peers as
+known-good, malicious, or explicitly unknown. Unknown peers keep exploration
+capacity; ratings and false accusations from unknown attackers are parsed but
+do not enter the trusted graph. The production Nostr VPN pubsub actor applies
+the same policy to inbound admission and outbound inv/want fanout.
+
 ```sh
 cargo run -p nostr-vpn-sim
 cargo test -p nostr-vpn-sim hundred_instance -- --ignored --nocapture

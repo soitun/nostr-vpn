@@ -1,5 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 
+use nostr_pubsub::MeshPeer;
 use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind};
 use nostr_vpn_core::control_pubsub::{
     CONTROL_PUBSUB_PROTOCOL, ControlPubsubAction, ControlPubsubCodec, ControlPubsubMesh,
@@ -10,6 +11,10 @@ fn signed_event(kind: u16, content: &str) -> Event {
     EventBuilder::new(Kind::Custom(kind), content)
         .sign_with_keys(&Keys::generate())
         .expect("signed event")
+}
+
+fn peer(id: &str) -> MeshPeer {
+    MeshPeer::new(id)
 }
 
 #[test]
@@ -25,9 +30,9 @@ fn three_node_line_delivers_after_relay_bootstrap_is_gone() {
         ("c".to_string(), ControlPubsubMesh::new(options)),
     ]);
     let peers = HashMap::from([
-        ("a".to_string(), vec!["b".to_string()]),
-        ("b".to_string(), vec!["a".to_string(), "c".to_string()]),
-        ("c".to_string(), vec!["b".to_string()]),
+        ("a".to_string(), vec![peer("b")]),
+        ("b".to_string(), vec![peer("a"), peer("c")]),
+        ("c".to_string(), vec![peer("b")]),
     ]);
     let event = signed_event(37_196, "paid exit offer");
     let event_id = event.id.to_hex();
@@ -102,11 +107,7 @@ fn three_node_line_delivers_after_relay_bootstrap_is_gone() {
 fn control_pubsub_rejects_non_control_event_kinds() {
     let mut mesh = ControlPubsubMesh::new(ControlPubsubOptions::default());
     let error = mesh
-        .publish(
-            signed_event(1, "ordinary note"),
-            &["peer".to_string()],
-            1_000,
-        )
+        .publish(signed_event(1, "ordinary note"), &[peer("peer")], 1_000)
         .expect_err("ordinary notes must not enter the nvpn control stream");
     assert!(error.to_string().contains("unsupported Nostr event kind 1"));
 }
@@ -115,7 +116,7 @@ fn control_pubsub_rejects_non_control_event_kinds() {
 fn relay_echo_does_not_reannounce_an_event() {
     let mut mesh = ControlPubsubMesh::new(ControlPubsubOptions::default());
     let event = signed_event(37_195, "peer advert");
-    let peers = ["peer".to_string()];
+    let peers = [peer("peer")];
 
     assert_eq!(
         mesh.publish(event.clone(), &peers, 1_000)
