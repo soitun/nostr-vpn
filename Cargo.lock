@@ -4066,6 +4066,8 @@ dependencies = [
  "nostr-pubsub",
  "nostr-pubsub-social-graph",
  "nostr-sdk",
+ "nostr-social-graph",
+ "nostr-social-memory",
  "nostr-vpn-core",
  "nostr-vpn-wintun",
  "rand 0.9.4",

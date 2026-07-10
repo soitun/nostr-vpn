@@ -11,6 +11,7 @@ use fips_core::{
 use nostr_pubsub::MeshPeer;
 use nostr_pubsub_social_graph::MeshPeerPolicy;
 use nostr_sdk::prelude::{Client, Event, Filter, Keys, Kind, RelayPoolNotification};
+use nostr_social_memory::rating_from_event;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::control_pubsub::{
     CONTROL_PUBSUB_FIPS_SERVICE_PORT, CONTROL_PUBSUB_MAX_EVENT_BYTES,
@@ -21,6 +22,12 @@ use nostr_vpn_core::control_pubsub::{
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
+
+mod reputation;
+use reputation::{
+    DEFAULT_PEER_RATING_SCOPE, DefaultPeerReputation, PeerRatingPublisher,
+    RATING_EVALUATION_INTERVAL, RATING_PUBLISH_BATCH,
+};
 
 const STORE_VERSION: u8 = 1;
 const STORE_MAX_EVENTS: usize = 1_024;
@@ -275,7 +282,19 @@ impl ControlPubsubFipsRuntime {
         relays: Vec<String>,
         store_path: Option<PathBuf>,
     ) -> Result<Option<Self>> {
-        Self::start_inner(endpoint, config, relays, store_path, None).await
+        if config.mode == NostrPubsubMode::Off {
+            return Ok(None);
+        }
+        let (reputation, peer_policy) = DefaultPeerReputation::new(endpoint.npub())?;
+        Self::start_inner(
+            endpoint,
+            config,
+            relays,
+            store_path,
+            Some(peer_policy),
+            Some(reputation),
+        )
+        .await
     }
 
     pub async fn start_with_peer_policy(
@@ -285,7 +304,15 @@ impl ControlPubsubFipsRuntime {
         store_path: Option<PathBuf>,
         peer_policy: Arc<dyn MeshPeerPolicy>,
     ) -> Result<Option<Self>> {
-        Self::start_inner(endpoint, config, relays, store_path, Some(peer_policy)).await
+        Self::start_inner(
+            endpoint,
+            config,
+            relays,
+            store_path,
+            Some(peer_policy),
+            None,
+        )
+        .await
     }
 
     async fn start_inner(
@@ -294,6 +321,7 @@ impl ControlPubsubFipsRuntime {
         relays: Vec<String>,
         store_path: Option<PathBuf>,
         peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
+        mut default_reputation: Option<DefaultPeerReputation>,
     ) -> Result<Option<Self>> {
         if config.mode == NostrPubsubMode::Off {
             return Ok(None);
@@ -306,7 +334,15 @@ impl ControlPubsubFipsRuntime {
         let outbox_path = store_path
             .as_deref()
             .map(control_pubsub_outbox_directory_from_store_path);
-        let events = Arc::new(Mutex::new(ControlEventStore::load(store_path)?));
+        let event_store = ControlEventStore::load(store_path)?;
+        let stored_events = event_store.snapshot();
+        if let Some(reputation) = default_reputation.as_mut() {
+            reputation.replay(stored_events.iter())?;
+        }
+        let rating_publisher = default_reputation
+            .as_ref()
+            .map(|reputation| PeerRatingPublisher::from_events(&stored_events, &reputation.root));
+        let events = Arc::new(Mutex::new(event_store));
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let task_events = Arc::clone(&events);
         let task = tokio::spawn(async move {
@@ -317,6 +353,8 @@ impl ControlPubsubFipsRuntime {
                     bridge,
                     events: task_events,
                     peer_policy,
+                    default_reputation,
+                    rating_publisher,
                 },
                 receiver,
                 outbox_path,
@@ -401,6 +439,8 @@ struct PubsubRunState {
     bridge: Option<RelayBridge>,
     events: Arc<Mutex<ControlEventStore>>,
     peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
+    default_reputation: Option<DefaultPeerReputation>,
+    rating_publisher: Option<PeerRatingPublisher>,
 }
 
 #[derive(Clone, Copy)]
@@ -424,6 +464,8 @@ async fn run(
         mut bridge,
         events,
         peer_policy,
+        mut default_reputation,
+        mut rating_publisher,
     } = state;
     let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
     let options = ControlPubsubOptions {
@@ -440,6 +482,11 @@ async fn run(
     retry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
     outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut rating_tick = tokio::time::interval_at(
+        tokio::time::Instant::now() + RATING_EVALUATION_INTERVAL,
+        RATING_EVALUATION_INTERVAL,
+    );
+    rating_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
@@ -457,6 +504,7 @@ async fn run(
                             },
                             &mut mesh,
                             &mut retries,
+                            &mut default_reputation,
                             *event,
                         )
                         .await;
@@ -475,6 +523,7 @@ async fn run(
                     },
                     &mut mesh,
                     &mut retries,
+                    &mut default_reputation,
                     outbox_path.as_deref().expect("outbox path is present"),
                 )
                 .await;
@@ -505,6 +554,7 @@ async fn run(
                                 bridge.as_ref(),
                                 &events,
                                 &mut retries,
+                                &mut default_reputation,
                                 actions,
                             )
                             .await;
@@ -519,6 +569,7 @@ async fn run(
                 let peers = connected_peers(&endpoint, peer_policy.as_deref()).await;
                 match mesh.publish(event.clone(), &peers, now_ms()) {
                     Ok(actions) => {
+                        ingest_default_reputation(&mut default_reputation, &event);
                         ingest_into_fips_discovery(&endpoint, &event).await;
                         if let Err(error) = events.lock().await.insert(event) {
                             tracing::warn!(%error, "failed to store control event from relay");
@@ -529,6 +580,7 @@ async fn run(
                             None,
                             &events,
                             &mut retries,
+                            &mut default_reputation,
                             actions,
                         )
                         .await;
@@ -538,6 +590,22 @@ async fn run(
             }
             _ = retry_tick.tick() => {
                 send_control_messages(&endpoint, &codec, retries.due(now_ms())).await;
+            }
+            _ = rating_tick.tick(), if rating_publisher.is_some() => {
+                publish_machine_rating_batch(
+                    PublishContext {
+                        endpoint: &endpoint,
+                        codec: &codec,
+                        bridge: bridge.as_ref(),
+                        events: &events,
+                        peer_policy: peer_policy.as_deref(),
+                    },
+                    &mut mesh,
+                    &mut retries,
+                    &mut default_reputation,
+                    rating_publisher.as_mut().expect("rating publisher is present"),
+                )
+                .await;
             }
         }
     }
@@ -550,6 +618,7 @@ async fn publish_local(
     context: PublishContext<'_>,
     mesh: &mut ControlPubsubMesh,
     retries: &mut RetryState,
+    default_reputation: &mut Option<DefaultPeerReputation>,
     event: Event,
 ) -> Result<bool> {
     let PublishContext {
@@ -565,19 +634,72 @@ async fn publish_local(
     }
     let actions = mesh.publish(event.clone(), &peers, now_ms())?;
     tracing::debug!(event_id = %event.id, peers = peers.len(), actions = actions.len(), "publishing local control event");
+    ingest_default_reputation(default_reputation, &event);
     events.lock().await.insert(event.clone())?;
     ingest_into_fips_discovery(endpoint, &event).await;
     if let Some(bridge) = bridge {
         bridge.publish(&event).await;
     }
-    execute_actions(endpoint, codec, None, events, retries, actions).await;
+    execute_actions(
+        endpoint,
+        codec,
+        None,
+        events,
+        retries,
+        default_reputation,
+        actions,
+    )
+    .await;
     Ok(true)
+}
+
+async fn publish_machine_rating_batch(
+    context: PublishContext<'_>,
+    mesh: &mut ControlPubsubMesh,
+    retries: &mut RetryState,
+    default_reputation: &mut Option<DefaultPeerReputation>,
+    publisher: &mut PeerRatingPublisher,
+) {
+    let events = match context
+        .endpoint
+        .peer_rating_events(DEFAULT_PEER_RATING_SCOPE)
+        .await
+    {
+        Ok(events) => events,
+        Err(error) => {
+            tracing::warn!(%error, "failed to snapshot signed FIPS peer ratings");
+            return;
+        }
+    };
+    let now = now_ms();
+    let mut published = 0usize;
+    for event in events {
+        let Ok(rating) = rating_from_event(&event) else {
+            tracing::warn!(event_id = %event.id, "FIPS produced an invalid peer rating event");
+            continue;
+        };
+        let Some(candidate) = publisher.candidate(&rating, now) else {
+            continue;
+        };
+        match publish_local(context, mesh, retries, default_reputation, event).await {
+            Ok(true) => {
+                publisher.record(candidate, now);
+                published += 1;
+                if published >= RATING_PUBLISH_BATCH {
+                    break;
+                }
+            }
+            Ok(false) => break,
+            Err(error) => tracing::warn!(%error, "failed to publish signed FIPS peer rating"),
+        }
+    }
 }
 
 async fn publish_outbox_batch(
     context: PublishContext<'_>,
     mesh: &mut ControlPubsubMesh,
     retries: &mut RetryState,
+    default_reputation: &mut Option<DefaultPeerReputation>,
     outbox_path: &Path,
 ) {
     for path in control_pubsub_outbox_event_paths(outbox_path) {
@@ -599,7 +721,7 @@ async fn publish_outbox_batch(
             let _ = fs::remove_file(&path);
             continue;
         }
-        match publish_local(context, mesh, retries, event).await {
+        match publish_local(context, mesh, retries, default_reputation, event).await {
             Ok(true) => {
                 if let Err(error) = fs::remove_file(&path) {
                     tracing::warn!(%error, path = %path.display(), "failed to remove published control pubsub outbox entry");
@@ -620,6 +742,7 @@ async fn execute_actions(
     bridge: Option<&RelayBridge>,
     events: &Arc<Mutex<ControlEventStore>>,
     retries: &mut RetryState,
+    default_reputation: &mut Option<DefaultPeerReputation>,
     actions: Vec<ControlPubsubAction>,
 ) {
     let mut outbound = Vec::new();
@@ -630,6 +753,7 @@ async fn execute_actions(
                 outbound.push((peer_id, message));
             }
             ControlPubsubAction::Deliver { event, .. } => {
+                ingest_default_reputation(default_reputation, &event);
                 ingest_into_fips_discovery(endpoint, &event).await;
                 let inserted = match events.lock().await.insert(event.clone()) {
                     Ok(inserted) => inserted,
@@ -649,6 +773,19 @@ async fn execute_actions(
     }
 
     send_control_messages(endpoint, codec, outbound).await;
+}
+
+fn ingest_default_reputation(reputation: &mut Option<DefaultPeerReputation>, event: &Event) {
+    let Some(reputation) = reputation.as_mut() else {
+        return;
+    };
+    match reputation.ingest_event(event) {
+        Ok(true) => tracing::debug!(event_id = %event.id, "updated default peer reputation"),
+        Ok(false) => {}
+        Err(error) => {
+            tracing::warn!(%error, event_id = %event.id, "failed to update default peer reputation")
+        }
+    }
 }
 
 async fn send_control_messages(
@@ -880,12 +1017,11 @@ mod tests {
     use std::net::UdpSocket;
     use std::time::Duration;
 
+    use super::*;
     use fips_endpoint::{
         Config, ConnectPolicy, PeerConfig, RoutingMode, TransportInstances, UdpConfig,
     };
     use nostr_sdk::prelude::{EventBuilder, ToBech32};
-
-    use super::*;
 
     #[test]
     fn retry_state_is_acknowledged_and_bounded_per_peer() {

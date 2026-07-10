@@ -29,7 +29,6 @@ use reputation::{
 const DEFAULT_SEED: u64 = 0x4e56_504e_5055_4253;
 const DEFAULT_HONEST_RATIO_PERCENT: usize = 80;
 const DEFAULT_FAKE_INVENTORIES_PER_ATTACKER: usize = 8;
-const CONNECTED_PEERS_REQUIRED: usize = 2;
 const DELIVERY_POLL_INTERVAL: Duration = Duration::from_millis(50);
 const SIM_PROTOCOL_MAX_WIRE_BYTES: usize = 60 * 1024;
 
@@ -412,13 +411,14 @@ async fn start_sim_endpoints(
 
     let connected_node_count = wait_for_connections(
         &endpoints,
+        specs,
         Duration::from_millis(config.convergence_timeout_ms),
     )
     .await;
     if connected_node_count < config.node_count {
         shutdown_partial(Vec::new(), &endpoints, network_id).await;
         bail!(
-            "only {connected_node_count}/{} FIPS nodes reached {CONNECTED_PEERS_REQUIRED} connected peers",
+            "only {connected_node_count}/{} FIPS nodes reached their configured peer count",
             config.node_count
         );
     }
@@ -600,12 +600,16 @@ fn endpoint_config(
     config
 }
 
-async fn wait_for_connections(endpoints: &[Arc<FipsEndpoint>], timeout: Duration) -> usize {
+async fn wait_for_connections(
+    endpoints: &[Arc<FipsEndpoint>],
+    specs: &[NodeSpec],
+    timeout: Duration,
+) -> usize {
     let deadline = tokio::time::Instant::now() + timeout;
     let mut best = 0usize;
     loop {
         let mut connected = 0usize;
-        for endpoint in endpoints {
+        for (endpoint, spec) in endpoints.iter().zip(specs) {
             let peer_count = endpoint
                 .peers()
                 .await
@@ -613,7 +617,7 @@ async fn wait_for_connections(endpoints: &[Arc<FipsEndpoint>], timeout: Duration
                 .into_iter()
                 .filter(|peer| peer.connected)
                 .count();
-            if peer_count >= CONNECTED_PEERS_REQUIRED {
+            if peer_count >= spec.neighbors.len() {
                 connected += 1;
             }
         }

@@ -36,6 +36,8 @@ tracing.workspace = true
 nostr-sdk.workspace = true
 nostr-pubsub.workspace = true
 nostr-pubsub-social-graph.workspace = true
+nostr-social-graph.workspace = true
+nostr-social-memory.workspace = true
 cashu-service = { workspace = true, optional = true, features = [
   "wallet",
   "spilman-wallet-http",
