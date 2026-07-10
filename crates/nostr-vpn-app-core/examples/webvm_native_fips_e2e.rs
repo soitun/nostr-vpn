@@ -233,6 +233,7 @@ fn prepare_host_config(restore: &HostRestore) -> HarnessResult<String> {
             .map_err(|_| HarnessError::new("preflight", "temporary-network-enable-failed"))?;
     }
     config.node.advertise_exit_node = true;
+    config.connect_to_non_roster_fips_peers = true;
     config.exit_node.clear();
     config
         .save(&restore.config_path)

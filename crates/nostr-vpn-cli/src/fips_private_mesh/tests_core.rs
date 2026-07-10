@@ -6,9 +6,10 @@
         FIPS_ENDPOINT_REKEY_AFTER_SECS, FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS,
         FIPS_LAN_DISCOVERY_SCOPE_PREFIX, FIPS_MESH_EVENT_DRAIN_LIMIT,
         FIPS_NOSTR_EXTENDED_COOLDOWN_SECS, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
-        FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
-        FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS, FIPS_RECONNECT_BACKOFF_BASE_SECS,
-        FIPS_RECONNECT_BACKOFF_MAX_SECS, FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS,
+        FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS, FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
+        FIPS_RECONNECT_BACKOFF_BASE_SECS, FIPS_RECONNECT_BACKOFF_MAX_SECS,
+        FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS,
         FIPS_PRIVATE_STATIC_PEER_ENDPOINT_PRIORITY, FIPS_PUBLIC_PEER_ENDPOINT_PRIORITY,
         FipsEndpointSendRun, FipsEndpointTransportConfig, FipsPeerActivity, FipsPeerActivitySnapshot,
         FipsPeerAddressHint, FipsPeerIdentityMap, FipsPeerRxKind, FipsPrivateMeshEvent,
@@ -418,6 +419,26 @@
             NostrDiscoveryPolicy::ConfiguredOnly
         );
 
+        app.node.advertise_exit_node = true;
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            &network_id,
+            "utun100",
+            app.own_nostr_pubkey_hex().ok().as_deref(),
+            None,
+            &[],
+        )
+        .expect("advertised exit tunnel config");
+        assert_eq!(
+            config.nostr_discovery_policy,
+            NostrDiscoveryPolicy::Open
+        );
+        assert_eq!(
+            config.open_discovery_max_pending,
+            FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING
+        );
+
+        app.node.advertise_exit_node = false;
         app.connect_to_non_roster_fips_peers = true;
         let config = FipsPrivateTunnelConfig::from_app(
             &app,

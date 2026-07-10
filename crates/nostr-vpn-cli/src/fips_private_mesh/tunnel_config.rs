@@ -148,7 +148,9 @@ impl FipsPrivateTunnelConfig {
         } else {
             0
         };
-        let open_discovery_max_pending = if allow_non_roster_transit {
+        let open_discovery_max_pending = if app.node.advertise_exit_node {
+            FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING
+        } else if allow_non_roster_transit {
             open_discovery_limit_after_transit_seeds(static_non_roster_transit_seeds)
         } else {
             0
