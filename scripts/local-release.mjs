@@ -574,14 +574,14 @@ function buildLinuxArtifacts({ env, tag, dryRun, builtLines }) {
   const imageName = 'nostr-vpn-linux-release'
   const linuxDebName = `nostr-vpn-${tag}-linux-${linuxArchSuffix}.deb`
   const dockerVolumes = ['-v', `${repoRoot}:/work`]
-  if (env.NVPN_FIPS_REPO_PATH) {
-    const fipsRepoPath = resolve(env.NVPN_FIPS_REPO_PATH)
-    const endpointManifest = join(fipsRepoPath, 'crates', 'fips-endpoint', 'Cargo.toml')
-    if (!existsSync(endpointManifest)) {
-      throw new Error(`NVPN_FIPS_REPO_PATH does not contain fips-endpoint sources: ${fipsRepoPath}`)
+  const fipsRepoPath = resolve(env.NVPN_FIPS_REPO_PATH || join(repoRoot, '..', 'fips'))
+  for (const crate of ['fips-core', 'fips-endpoint', 'fips-identity']) {
+    const manifest = join(fipsRepoPath, 'crates', crate, 'Cargo.toml')
+    if (!existsSync(manifest)) {
+      throw new Error(`FIPS release source is missing crates/${crate}/Cargo.toml: ${fipsRepoPath}`)
     }
-    dockerVolumes.push('-v', `${fipsRepoPath}:/fips:ro`)
   }
+  dockerVolumes.push('-v', `${fipsRepoPath}:/fips:ro`)
 
   run('docker', ['build', '--platform', platform, '-f', 'Dockerfile.linux-release', '-t', imageName, '.'], {
     dryRun,
