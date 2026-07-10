@@ -137,6 +137,36 @@ optional_tsv_value() {
   tsv_value "$@" 2>/dev/null || true
 }
 
+require_bidirectional_summary() {
+  local summary="$1"
+  local label="$2"
+  local backend="$3"
+  local threads="$4"
+  local field value
+  local missing=()
+  for field in \
+    forward_direction reverse_direction \
+    tcp_single_mbps tcp_single_retrans tcp_4_mbps tcp_4_retrans \
+    tcp_8_mbps tcp_8_retrans udp_200_mbps udp_200_loss_pct \
+    udp_1000_mbps udp_1000_loss_pct \
+    tcp_single_b_to_a_mbps tcp_single_b_to_a_retrans \
+    tcp_4_b_to_a_mbps tcp_4_b_to_a_retrans \
+    tcp_8_b_to_a_mbps tcp_8_b_to_a_retrans \
+    udp_200_b_to_a_mbps udp_200_b_to_a_loss_pct \
+    udp_1000_b_to_a_mbps udp_1000_b_to_a_loss_pct; do
+    value="$(tsv_value "$summary" "$field" "$backend" "$threads" 2>/dev/null || true)"
+    [[ -n "$value" ]] || missing+=("$field")
+  done
+  (( ${#missing[@]} == 0 )) \
+    || die "$label summary is missing mandatory bidirectional fields: ${missing[*]}"
+
+  local forward_direction reverse_direction
+  forward_direction="$(tsv_value "$summary" forward_direction "$backend" "$threads")"
+  reverse_direction="$(tsv_value "$summary" reverse_direction "$backend" "$threads")"
+  [[ "$forward_direction" == "a_to_b" && "$reverse_direction" == "b_to_a" ]] \
+    || die "$label summary directions must be a_to_b and b_to_a, got $forward_direction and $reverse_direction"
+}
+
 cpu_phase_file() {
   local summary="$1"
   local backend="$2"
@@ -312,6 +342,8 @@ write_normalized_summary_row() {
     "$(metadata_value "$input" '.cpu_stress.remote_workers')" \
     "$pipeline_trace_enabled" \
     "$pipeline_trace_interval_secs" \
+    "$(tsv_value "$source" forward_direction "$backend" "$threads")" \
+    "$(tsv_value "$source" reverse_direction "$backend" "$threads")" \
     "$(tsv_value "$source" tcp_single_mbps "$backend" "$threads")" \
     "$(tsv_value "$source" tcp_single_retrans "$backend" "$threads")" \
     "$(tsv_value "$source" tcp_4_mbps "$backend" "$threads")" \
@@ -322,6 +354,16 @@ write_normalized_summary_row() {
     "$(tsv_value "$source" udp_200_loss_pct "$backend" "$threads")" \
     "$(tsv_value "$source" udp_1000_mbps "$backend" "$threads")" \
     "$(tsv_value "$source" udp_1000_loss_pct "$backend" "$threads")" \
+    "$(tsv_value "$source" tcp_single_b_to_a_mbps "$backend" "$threads")" \
+    "$(tsv_value "$source" tcp_single_b_to_a_retrans "$backend" "$threads")" \
+    "$(tsv_value "$source" tcp_4_b_to_a_mbps "$backend" "$threads")" \
+    "$(tsv_value "$source" tcp_4_b_to_a_retrans "$backend" "$threads")" \
+    "$(tsv_value "$source" tcp_8_b_to_a_mbps "$backend" "$threads")" \
+    "$(tsv_value "$source" tcp_8_b_to_a_retrans "$backend" "$threads")" \
+    "$(tsv_value "$source" udp_200_b_to_a_mbps "$backend" "$threads")" \
+    "$(tsv_value "$source" udp_200_b_to_a_loss_pct "$backend" "$threads")" \
+    "$(tsv_value "$source" udp_1000_b_to_a_mbps "$backend" "$threads")" \
+    "$(tsv_value "$source" udp_1000_b_to_a_loss_pct "$backend" "$threads")" \
     "$(tsv_value "$source" ping_loss_pct "$backend" "$threads")" \
     "$(tsv_value "$source" ping_avg_ms "$backend" "$threads")" \
     "$(optional_tsv_value "$source" ping_mdev_ms "$backend" "$threads")" \
@@ -516,6 +558,8 @@ main() {
   local nvpn_summary reference_summary
   nvpn_summary="$(summary_file "$NVPN_INPUT")"
   reference_summary="$(summary_file "$REFERENCE_INPUT")"
+  require_bidirectional_summary "$nvpn_summary" "$NVPN_LABEL" "$NVPN_BACKEND" "$NVPN_THREADS"
+  require_bidirectional_summary "$reference_summary" "$REFERENCE_LABEL" "$REFERENCE_BACKEND" "$REFERENCE_THREADS"
   mkdir -p "$OUTPUT_DIR"
 
   local nvpn_stress_enabled nvpn_stress_sides nvpn_stress_local_workers nvpn_stress_remote_workers
@@ -590,9 +634,16 @@ main() {
     label source_summary backend threads duration_secs \
     cpu_stress_enabled cpu_stress_sides local_cpu_stress_workers remote_cpu_stress_workers \
     pipeline_trace_enabled pipeline_trace_interval_secs \
+    forward_direction reverse_direction \
     tcp_single_mbps tcp_single_retrans tcp_4_mbps tcp_4_retrans \
     tcp_8_mbps tcp_8_retrans udp_200_mbps udp_200_loss_pct \
-    udp_1000_mbps udp_1000_loss_pct ping_loss_pct ping_avg_ms \
+    udp_1000_mbps udp_1000_loss_pct \
+    tcp_single_b_to_a_mbps tcp_single_b_to_a_retrans \
+    tcp_4_b_to_a_mbps tcp_4_b_to_a_retrans \
+    tcp_8_b_to_a_mbps tcp_8_b_to_a_retrans \
+    udp_200_b_to_a_mbps udp_200_b_to_a_loss_pct \
+    udp_1000_b_to_a_mbps udp_1000_b_to_a_loss_pct \
+    ping_loss_pct ping_avg_ms \
     ping_mdev_ms ping_p95_ms ping_p99_ms ping_max_ms \
     tcp_single_cpu_sec_per_gb tcp_4_cpu_sec_per_gb tcp_8_cpu_sec_per_gb \
     udp_200_cpu_sec_per_gb udp_1000_cpu_sec_per_gb raw_dir \
@@ -601,16 +652,24 @@ main() {
   write_normalized_summary_row "$REFERENCE_LABEL" "$reference_summary" "$REFERENCE_BACKEND" "$REFERENCE_THREADS" "$REFERENCE_INPUT" >>"$comparison_tsv"
 
   write_row metric unit better_when nvpn reference nvpn_percent_of_reference nvpn_minus_reference >"$ratios_tsv"
-  write_metric_ratio tcp_single_mbps Mbps higher "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
-  write_metric_ratio tcp_single_retrans count lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
-  write_metric_ratio tcp_4_mbps Mbps higher "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
-  write_metric_ratio tcp_4_retrans count lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
-  write_metric_ratio tcp_8_mbps Mbps higher "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
-  write_metric_ratio tcp_8_retrans count lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
-  write_metric_ratio udp_200_mbps Mbps higher "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
-  write_metric_ratio udp_200_loss_pct pct lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
-  write_metric_ratio udp_1000_mbps Mbps higher "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
-  write_metric_ratio udp_1000_loss_pct pct lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+  write_row check metric status nvpn reference threshold comparison >"$thresholds_tsv"
+  local direction_suffix metric
+  for direction_suffix in "" _b_to_a; do
+    for metric in tcp_single tcp_4 tcp_8 udp_200 udp_1000; do
+      write_metric_ratio "${metric}${direction_suffix}_mbps" Mbps higher "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+      write_threshold_higher_pct "${metric}${direction_suffix}_throughput" "${metric}${direction_suffix}_mbps" "$MIN_THROUGHPUT_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
+    done
+    for metric in tcp_single tcp_4 tcp_8; do
+      write_metric_ratio "${metric}${direction_suffix}_retrans" count lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+      write_threshold_lower_pct "${metric}${direction_suffix}_retrans" "${metric}${direction_suffix}_retrans" "$MAX_RETRANS_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
+    done
+    for metric in udp_200 udp_1000; do
+      write_metric_ratio "${metric}${direction_suffix}_loss_pct" pct lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
+      write_threshold_lower_delta "${metric}${direction_suffix}_loss" "${metric}${direction_suffix}_loss_pct" "$effective_udp_loss_delta_pct" pp "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
+      [[ "$REQUIRE_NVPN_UDP_ZERO_LOSS" != "1" ]] \
+        || write_threshold_zero "nvpn_${metric}${direction_suffix}_zero_loss" "${metric}${direction_suffix}_loss_pct" "$nvpn_summary" >>"$thresholds_tsv"
+    done
+  done
   write_metric_ratio ping_loss_pct pct lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
   write_metric_ratio ping_avg_ms ms lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
   write_optional_metric_ratio ping_mdev_ms ms lower "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
@@ -623,26 +682,11 @@ main() {
   write_cpu_metric_ratio udp_200_cpu_sec_per_gb udp-200 "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
   write_cpu_metric_ratio udp_1000_cpu_sec_per_gb udp-1000 "$nvpn_summary" "$reference_summary" >>"$ratios_tsv"
 
-  write_row check metric status nvpn reference threshold comparison >"$thresholds_tsv"
-  write_threshold_higher_pct tcp_single_throughput tcp_single_mbps "$MIN_THROUGHPUT_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
-  write_threshold_higher_pct tcp_4_throughput tcp_4_mbps "$MIN_THROUGHPUT_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
-  write_threshold_higher_pct tcp_8_throughput tcp_8_mbps "$MIN_THROUGHPUT_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
-  write_threshold_higher_pct udp_200_throughput udp_200_mbps "$MIN_THROUGHPUT_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
-  write_threshold_higher_pct udp_1000_throughput udp_1000_mbps "$MIN_THROUGHPUT_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
-  write_threshold_lower_pct tcp_single_retrans tcp_single_retrans "$MAX_RETRANS_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
-  write_threshold_lower_pct tcp_4_retrans tcp_4_retrans "$MAX_RETRANS_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
-  write_threshold_lower_pct tcp_8_retrans tcp_8_retrans "$MAX_RETRANS_PCT" "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
-  write_threshold_lower_delta udp_200_loss udp_200_loss_pct "$effective_udp_loss_delta_pct" pp "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
-  write_threshold_lower_delta udp_1000_loss udp_1000_loss_pct "$effective_udp_loss_delta_pct" pp "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
   write_threshold_lower_delta ping_loss ping_loss_pct "$MAX_LOSS_DELTA_PCT" pp "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
   write_threshold_lower_delta ping_avg ping_avg_ms "$MAX_PING_AVG_DELTA_MS" ms "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
   write_optional_threshold_lower_delta ping_p95 ping_p95_ms "$MAX_PING_P95_DELTA_MS" ms "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
   write_optional_threshold_lower_delta ping_p99 ping_p99_ms "$MAX_PING_P99_DELTA_MS" ms "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
   write_optional_threshold_lower_delta ping_max ping_max_ms "$MAX_PING_MAX_DELTA_MS" ms "$nvpn_summary" "$reference_summary" >>"$thresholds_tsv"
-  if [[ "$REQUIRE_NVPN_UDP_ZERO_LOSS" == "1" ]]; then
-    write_threshold_zero nvpn_udp_200_zero_loss udp_200_loss_pct "$nvpn_summary" >>"$thresholds_tsv"
-    write_threshold_zero nvpn_udp_1000_zero_loss udp_1000_loss_pct "$nvpn_summary" >>"$thresholds_tsv"
-  fi
   if [[ "$REQUIRE_NVPN_PING_ZERO_LOSS" == "1" ]]; then
     write_threshold_zero nvpn_ping_zero_loss ping_loss_pct "$nvpn_summary" >>"$thresholds_tsv"
   fi
