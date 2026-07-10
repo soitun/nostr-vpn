@@ -298,12 +298,9 @@ async fn wait_for_approval(
                     return Err(anyhow!("WebVM pairing FIPS endpoint closed"));
                 };
                 for datagram in &datagrams {
-                    let source_npub = datagram.source_peer.npub();
-                    if !subscribed.contains_key(&source_npub) {
-                        return Err(anyhow!(
-                            "join approval arrived from an unsubscribed FIPS peer"
-                        ));
-                    }
+                    // FIPS is routed: the authenticated source can be the approval
+                    // publisher rather than the adjacent host carrying our subscription.
+                    // The signed payload and request secret authorize the approval.
                     let inbound = NostrJoinFipsPubsubDatagram {
                         source_port: datagram.source_port,
                         destination_port: datagram.destination_port,
