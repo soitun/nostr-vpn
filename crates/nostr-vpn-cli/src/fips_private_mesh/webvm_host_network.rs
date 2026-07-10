@@ -3,18 +3,18 @@ use std::fs;
 const WEBVM_FIPS_HOST_IFACE: &str = "nvpnfips0";
 const WEBVM_FIPS_HOST_MTU: u16 = 1280;
 const WEBVM_FIPS_DNS_BIND: &str = "127.0.0.1:53";
-const WEBVM_FIPS_PUBLIC_DNS: &str = "1.1.1.1:53";
 const WEBVM_FIPS_ROUTE: &str = "fd00::/8";
 const WEBVM_RESOLV_CONF: &str = "/etc/resolv.conf";
 
 pub(crate) struct WebvmFipsHostNetworkRuntime {
     stop: Arc<AtomicBool>,
-    vpn_ready: Arc<AtomicBool>,
+    exit_peer: Arc<RwLock<Option<PeerIdentity>>>,
     tun_read_thread: Option<std::thread::JoinHandle<()>>,
     tun_write_thread: Option<std::thread::JoinHandle<()>>,
     outbound_task: Option<tokio::task::JoinHandle<()>>,
     inbound_task: Option<tokio::task::JoinHandle<()>>,
     dns_task: Option<tokio::task::JoinHandle<()>>,
+    exit_dns: Option<crate::exit_dns_runtime::ExitDnsFipsRuntime>,
     resolver: WebvmResolverGuard,
     _tun: Arc<SystemTun>,
 }
@@ -47,15 +47,28 @@ impl WebvmFipsHostNetworkRuntime {
                 });
             }
         };
-        let resolver = match WebvmResolverGuard::install() {
+        let mut resolver = match WebvmResolverGuard::install() {
             Ok(resolver) => resolver,
             Err(error) => {
                 remove_webvm_fips_route_rule();
                 return Err(error);
             }
         };
+        let exit_dns = match crate::exit_dns_runtime::ExitDnsFipsRuntime::start_client(Arc::clone(
+            &endpoint,
+        ))
+        .await
+        {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                remove_webvm_fips_route_rule();
+                let _ = resolver.restore();
+                return Err(error);
+            }
+        };
+        let exit_dns_client = exit_dns.client();
         let stop = Arc::new(AtomicBool::new(false));
-        let vpn_ready = Arc::new(AtomicBool::new(false));
+        let exit_peer = Arc::new(RwLock::new(None));
 
         let (tun_outbound_tx, mut tun_outbound_rx) = mpsc::channel::<Vec<u8>>(256);
         let (tun_inbound_tx, tun_inbound_rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(256);
@@ -88,25 +101,38 @@ impl WebvmFipsHostNetworkRuntime {
                 }
             }
         });
-        let dns_vpn_ready = Arc::clone(&vpn_ready);
-        let dns_task = tokio::spawn(run_webvm_fips_dns(dns_socket, endpoint, dns_vpn_ready));
+        let dns_exit_peer = Arc::clone(&exit_peer);
+        let dns_task = tokio::spawn(run_webvm_fips_dns(
+            dns_socket,
+            endpoint,
+            exit_dns_client,
+            dns_exit_peer,
+        ));
 
         println!("webvm-guest: .fips IPv6 and DNS active on {iface} before pairing");
         Ok(Self {
             stop,
-            vpn_ready,
+            exit_peer,
             tun_read_thread,
             tun_write_thread,
             outbound_task: Some(outbound_task),
             inbound_task: Some(inbound_task),
             dns_task: Some(dns_task),
+            exit_dns: Some(exit_dns),
             resolver,
             _tun: tun,
         })
     }
 
-    pub(crate) fn enable_vpn_dns(&self) {
-        self.vpn_ready.store(true, Ordering::Release);
+    pub(crate) fn enable_vpn_dns(&self, exit_node: &str) -> Result<()> {
+        let npub = normalize_fips_endpoint_npub(exit_node);
+        let exit_peer = PeerIdentity::from_npub(&npub)
+            .with_context(|| format!("invalid approved WebVM exit node {exit_node}"))?;
+        *self
+            .exit_peer
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(exit_peer);
+        Ok(())
     }
 
     pub(crate) async fn stop(mut self) -> Result<()> {
@@ -122,6 +148,9 @@ impl WebvmFipsHostNetworkRuntime {
         if let Some(task) = self.dns_task.take() {
             task.abort();
             let _ = task.await;
+        }
+        if let Some(exit_dns) = self.exit_dns.take() {
+            exit_dns.stop().await;
         }
         let read_thread = self.tun_read_thread.take();
         let write_thread = self.tun_write_thread.take();
@@ -232,7 +261,8 @@ fn spawn_webvm_fips_tun_writer(
 async fn run_webvm_fips_dns(
     socket: tokio::net::UdpSocket,
     endpoint: Arc<FipsEndpoint>,
-    vpn_ready: Arc<AtomicBool>,
+    exit_dns: crate::exit_dns_runtime::ExitDnsFipsClient,
+    exit_peer: Arc<RwLock<Option<PeerIdentity>>>,
 ) {
     let hosts = fips_core::upper::hosts::HostMap::new();
     let mut buf = [0u8; 4096];
@@ -262,25 +292,24 @@ async fn run_webvm_fips_dns(
             let _ = socket.send_to(&response, source).await;
             continue;
         }
-        if !vpn_ready.load(Ordering::Acquire) {
+        let selected_exit = *exit_peer
+            .read()
+            .unwrap_or_else(|error| error.into_inner());
+        let Some(selected_exit) = selected_exit else {
+            if let Some(response) = webvm_public_dns_refused_response(query) {
+                let _ = socket.send_to(&response, source).await;
+            }
             continue;
-        }
-        if let Some(response) = forward_webvm_dns_over_vpn(query).await {
+        };
+        let response = exit_dns
+            .resolve(selected_exit, query)
+            .await
+            .ok()
+            .or_else(|| nostr_vpn_core::exit_dns::build_exit_dns_servfail_response(query));
+        if let Some(response) = response {
             let _ = socket.send_to(&response, source).await;
         }
     }
-}
-
-async fn forward_webvm_dns_over_vpn(query: &[u8]) -> Option<Vec<u8>> {
-    let socket = tokio::net::UdpSocket::bind("0.0.0.0:0").await.ok()?;
-    socket.send_to(query, WEBVM_FIPS_PUBLIC_DNS).await.ok()?;
-    let mut response = vec![0u8; 4096];
-    let (len, _) = tokio::time::timeout(Duration::from_secs(3), socket.recv_from(&mut response))
-        .await
-        .ok()?
-        .ok()?;
-    response.truncate(len);
-    Some(response)
 }
 
 struct WebvmResolverGuard {

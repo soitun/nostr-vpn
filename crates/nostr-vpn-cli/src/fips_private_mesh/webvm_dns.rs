@@ -11,6 +11,10 @@ fn webvm_dns_query_is_fips(query: &[u8]) -> bool {
     })
 }
 
+fn webvm_public_dns_refused_response(query: &[u8]) -> Option<Vec<u8>> {
+    nostr_vpn_core::exit_dns::build_exit_dns_refused_response(query)
+}
+
 fn webvm_iris_localhost_dns_response(query: &[u8]) -> Option<Vec<u8>> {
     use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
     use hickory_proto::rr::rdata::A;
@@ -140,5 +144,17 @@ mod webvm_dns_tests {
             webvm_iris_localhost_dns_response(&query("npub1example.fips.", RecordType::AAAA))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn public_dns_before_pairing_returns_explicit_refused() {
+        let response = Message::from_vec(
+            &webvm_public_dns_refused_response(&query("example.com.", RecordType::A))
+                .expect("REFUSED response"),
+        )
+        .expect("decode DNS response");
+        assert_eq!(response.id, 42);
+        assert_eq!(response.metadata.response_code, ResponseCode::Refused);
+        assert_eq!(response.queries.len(), 1);
     }
 }

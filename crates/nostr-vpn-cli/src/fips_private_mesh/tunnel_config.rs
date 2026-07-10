@@ -24,6 +24,13 @@ impl FipsPrivateTunnelConfig {
         let mut peers = Vec::new();
         let mut route_targets = Vec::new();
         let participants = app.participant_pubkeys_hex();
+        let mut active_roster_endpoint_npubs = participants
+            .iter()
+            .filter(|participant| Some(participant.as_str()) != own_pubkey)
+            .map(|participant| normalize_fips_endpoint_npub(participant))
+            .collect::<Vec<_>>();
+        active_roster_endpoint_npubs.sort();
+        active_roster_endpoint_npubs.dedup();
         let mut route_by_participant = HashMap::<String, Vec<String>>::new();
         for participant in participants {
             if Some(participant.as_str()) == own_pubkey {
@@ -236,6 +243,7 @@ impl FipsPrivateTunnelConfig {
             control_pubsub_store_path: PathBuf::new(),
             share_local_candidates: app.lan_discovery_enabled,
             peers,
+            active_roster_endpoint_npubs,
             endpoint_peers,
             route_targets,
             #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -336,6 +344,12 @@ impl FipsPrivateTunnelConfig {
         ips.sort();
         ips.dedup();
         ips
+    }
+
+    fn exit_dns_service_enabled(&self) -> bool {
+        self.local_advertised_routes
+            .iter()
+            .any(|route| matches!(route.trim(), "0.0.0.0/0" | "::/0"))
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", test))]
@@ -446,6 +460,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     iface: String,
     mesh: Arc<FipsPrivateMeshRuntime>,
     control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
+    exit_dns: Option<crate::exit_dns_runtime::ExitDnsFipsRuntime>,
     config: FipsPrivateTunnelConfig,
     _tun: Arc<SystemTun>,
     fips_host: Option<crate::fips_host_tunnel::FipsHostTunnelRuntime>,

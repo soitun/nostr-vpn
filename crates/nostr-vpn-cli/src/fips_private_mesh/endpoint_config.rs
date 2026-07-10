@@ -518,6 +518,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) control_pubsub_store_path: PathBuf,
     pub(crate) share_local_candidates: bool,
     pub(crate) peers: Vec<FipsMeshPeerConfig>,
+    pub(crate) active_roster_endpoint_npubs: Vec<String>,
     pub(crate) endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
     pub(crate) route_targets: Vec<String>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]

@@ -48,7 +48,7 @@ impl FipsPrivateTunnelRuntime {
             )
             .await?,
         );
-        Self::start_with_mesh(config, mesh).await
+        Self::start_with_mesh(config, mesh, true).await
     }
 
     #[cfg(target_os = "linux")]
@@ -70,18 +70,33 @@ impl FipsPrivateTunnelRuntime {
             local_tunnel_ips,
             config.paid_route_admissions.clone(),
         ));
-        Self::start_with_mesh(config, mesh).await
+        // The WebVM host network owns the exit-DNS service receiver before
+        // pairing on this shared endpoint.
+        Self::start_with_mesh(config, mesh, false).await
     }
 
     async fn start_with_mesh(
         config: FipsPrivateTunnelConfig,
         mesh: Arc<FipsPrivateMeshRuntime>,
+        register_exit_dns: bool,
     ) -> Result<Self> {
         crate::pipeline_profile::maybe_spawn_reporter();
         #[cfg(target_os = "linux")]
         ensure_linux_tun_permissions(&config.iface)?;
         #[cfg(feature = "paid-exit")]
         mesh.set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
+        let exit_dns = if register_exit_dns {
+            Some(
+                crate::exit_dns_runtime::ExitDnsFipsRuntime::start_tunnel(
+                    Arc::clone(mesh.endpoint()),
+                    config.exit_dns_service_enabled(),
+                    &config.active_roster_endpoint_npubs,
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
         let control_pubsub = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start(
             Arc::clone(mesh.endpoint()),
             config.nostr_pubsub.clone(),
@@ -106,6 +121,7 @@ impl FipsPrivateTunnelRuntime {
             iface,
             mesh,
             control_pubsub,
+            exit_dns,
             config: config.clone(),
             _tun: tun,
             fips_host: None,
@@ -172,6 +188,12 @@ impl FipsPrivateTunnelRuntime {
         if self.config.nostr_relays != config.nostr_relays {
             self.mesh.update_relays(&config.nostr_relays).await?;
         }
+        if let Some(exit_dns) = self.exit_dns.as_ref() {
+            exit_dns.reconfigure(
+                config.exit_dns_service_enabled(),
+                &config.active_roster_endpoint_npubs,
+            );
+        }
         self.apply_interface_config(&config).await?;
         self.reconcile_fips_host_runtime(config.fips_host.clone())
             .await?;
@@ -220,6 +242,9 @@ impl FipsPrivateTunnelRuntime {
             handle.cleanup().await;
         }
         runtime.stop_fips_host_runtime().await;
+        if let Some(exit_dns) = runtime.exit_dns.take() {
+            exit_dns.stop().await;
+        }
         if let Some(control_pubsub) = runtime.control_pubsub.take() {
             control_pubsub.stop().await;
         }

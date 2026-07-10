@@ -440,7 +440,11 @@ async fn run_tunnel(
             return Err(error).context("failed to start WebVM guest VPN tunnel");
         }
     };
-    host_network.enable_vpn_dns();
+    if let Err(error) = host_network.enable_vpn_dns(&app.exit_node) {
+        let _ = host_network.stop().await;
+        let _ = runtime.stop().await;
+        return Err(error);
+    }
     println!(
         "webvm-guest: Nostr VPN tunnel {} over Ethernet {}",
         runtime.iface(),

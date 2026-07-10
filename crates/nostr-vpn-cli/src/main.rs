@@ -2,6 +2,10 @@ mod config_bootstrap;
 mod control_pubsub_runtime;
 mod daemon_runtime;
 mod diagnostics;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+mod exit_dns_resolver;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+mod exit_dns_runtime;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod fips_host_tunnel;
 mod fips_private_mesh;

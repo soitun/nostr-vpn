@@ -58,6 +58,12 @@
         assert!(!carol_peer.allowed_ips.contains(&"0.0.0.0/0".to_string()));
         assert!(config.route_targets.contains(&"0.0.0.0/0".to_string()));
         assert!(!config.route_targets.contains(&"::/0".to_string()));
+        let mut expected_roster_npubs = vec![
+            bob_keys.public_key().to_bech32().expect("bob npub"),
+            carol_keys.public_key().to_bech32().expect("carol npub"),
+        ];
+        expected_roster_npubs.sort();
+        assert_eq!(config.active_roster_endpoint_npubs, expected_roster_npubs);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
