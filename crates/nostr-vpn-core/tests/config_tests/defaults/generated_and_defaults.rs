@@ -120,12 +120,12 @@ mesh_tunnel_mtu = 1290
 }
 
 const LNVPS_BOOTSTRAP_NPUB: &str =
-    "npub1ekr70wv2592r52qx06tyz0xjwygveyr4cut486a4pggjc6cvdn7sm0pk2z";
+    "npub1uf4ua9n0hm2x4ct8sqcyqfh7w0s9n5qej9gpjjqjf9z0lsmh3jtsqyduhs";
 const LNVPS_BOOTSTRAP_ADDRS: &[&str] = &[
-    "udp:185.18.221.242:2121",
-    "udp:[2a13:2c0::4f44:f2b1:22dc:c62e]:2121",
-    "tcp:185.18.221.242:8443",
-    "tcp:[2a13:2c0::4f44:f2b1:22dc:c62e]:8443",
+    "udp:185.18.221.232:2121",
+    "udp:[2a13:2c0::f6a2:e727:9b98:d22c]:2121",
+    "tcp:185.18.221.232:8443",
+    "tcp:[2a13:2c0::f6a2:e727:9b98:d22c]:8443",
 ];
 const OSIRIS_BOOTSTRAP_NPUB: &str =
     "npub1pdwpuzkxkyurukrezseu3ny5w6x2d3xevsq3s6sly2vfz2925xasewk5g4";
@@ -138,23 +138,26 @@ fn fips_discovery_and_bootstrap_default_on() {
     assert!(config.fips_nostr_discovery_enabled);
     assert!(config.fips_bootstrap_enabled);
 
-    let bootstrap = config.fips_bootstrap_peer_endpoints();
+    let bootstrap = config
+        .fips_bootstrap_peer_endpoints()
+        .into_iter()
+        .collect::<std::collections::HashMap<_, _>>();
     assert_eq!(bootstrap.len(), 2);
-    assert_eq!(bootstrap[0].0, LNVPS_BOOTSTRAP_NPUB);
+    let lnvps_addrs = LNVPS_BOOTSTRAP_ADDRS
+        .iter()
+        .map(|addr| (*addr).to_string())
+        .collect::<Vec<_>>();
     assert_eq!(
-        bootstrap[0].1,
-        LNVPS_BOOTSTRAP_ADDRS
-            .iter()
-            .map(|addr| (*addr).to_string())
-            .collect::<Vec<_>>()
+        bootstrap.get(LNVPS_BOOTSTRAP_NPUB),
+        Some(&lnvps_addrs)
     );
-    assert_eq!(bootstrap[1].0, OSIRIS_BOOTSTRAP_NPUB);
+    let osiris_addrs = OSIRIS_BOOTSTRAP_ADDRS
+        .iter()
+        .map(|addr| (*addr).to_string())
+        .collect::<Vec<_>>();
     assert_eq!(
-        bootstrap[1].1,
-        OSIRIS_BOOTSTRAP_ADDRS
-            .iter()
-            .map(|addr| (*addr).to_string())
-            .collect::<Vec<_>>()
+        bootstrap.get(OSIRIS_BOOTSTRAP_NPUB),
+        Some(&osiris_addrs)
     );
 }
 

@@ -9,12 +9,12 @@ pub const DEFAULT_RELAYS: &[&str] = &[];
 pub const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
     // fips1 / lnvps
     (
-        "npub1ekr70wv2592r52qx06tyz0xjwygveyr4cut486a4pggjc6cvdn7sm0pk2z",
+        "npub1uf4ua9n0hm2x4ct8sqcyqfh7w0s9n5qej9gpjjqjf9z0lsmh3jtsqyduhs",
         &[
-            "udp:185.18.221.242:2121",
-            "udp:[2a13:2c0::4f44:f2b1:22dc:c62e]:2121",
-            "tcp:185.18.221.242:8443",
-            "tcp:[2a13:2c0::4f44:f2b1:22dc:c62e]:8443",
+            "udp:185.18.221.232:2121",
+            "udp:[2a13:2c0::f6a2:e727:9b98:d22c]:2121",
+            "tcp:185.18.221.232:8443",
+            "tcp:[2a13:2c0::f6a2:e727:9b98:d22c]:8443",
         ],
     ),
     // fips2 / osiris
