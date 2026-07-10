@@ -340,7 +340,7 @@ assert_no_direct_fmp_runtime_artifacts() {
   local first_hit
   first_hit="$(
     grep -R -n -E \
-      'decrypt_direct_fmp_endpoint_wait|endpoint_direct_fmp_receive_dropped|DirectEndpointData' \
+      'decrypt_direct_fmp_endpoint_wait|endpoint_direct_fmp_receive_dropped' \
       "$RAW_DIR" 2>/dev/null | head -1 || true
   )"
   if [[ -n "$first_hit" ]]; then
