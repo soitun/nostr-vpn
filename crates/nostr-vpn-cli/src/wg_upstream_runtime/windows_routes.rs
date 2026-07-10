@@ -91,9 +91,9 @@ pub struct WindowsFullDefaultRoute {
 
 #[cfg(target_os = "windows")]
 #[derive(Debug, Clone)]
-struct WindowsDefaultRoute {
-    gateway: String,
-    interface_index: u32,
+pub(crate) struct WindowsDefaultRoute {
+    pub(crate) gateway: String,
+    pub(crate) interface_index: u32,
 }
 
 #[cfg(target_os = "windows")]
@@ -144,7 +144,7 @@ impl Drop for WindowsFullDefaultRoute {
 }
 
 #[cfg(target_os = "windows")]
-fn capture_windows_default_route() -> Result<WindowsDefaultRoute> {
+pub(crate) fn capture_windows_default_route() -> Result<WindowsDefaultRoute> {
     // `route print -4 0.0.0.0` lists IPv4 default routes. Output
     // includes columns like:
     //   Network Destination | Netmask | Gateway | Interface | Metric

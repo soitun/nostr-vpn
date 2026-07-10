@@ -27,18 +27,29 @@ pub(crate) fn windows_interface_address(address: &str) -> Result<WindowsInterfac
     })
 }
 
-pub(crate) fn windows_add_route_args(prefix: &str, interface_index: u32) -> Result<Vec<String>> {
+pub(crate) fn windows_add_route_args(
+    prefix: &str,
+    interface_index: u32,
+    next_hop: Option<&str>,
+) -> Result<Vec<String>> {
     validate_windows_route_prefix(prefix)?;
-    Ok(vec![
+    let mut args = vec![
         "interface".to_string(),
         "ipv4".to_string(),
         "add".to_string(),
         "route".to_string(),
         prefix.trim().to_string(),
         format!("interface={interface_index}"),
-        "metric=1".to_string(),
-        "store=active".to_string(),
-    ])
+    ];
+    if let Some(next_hop) = next_hop {
+        let next_hop = next_hop
+            .trim()
+            .parse::<Ipv4Addr>()
+            .with_context(|| format!("invalid windows route next hop {next_hop}"))?;
+        args.push(format!("nexthop={next_hop}"));
+    }
+    args.extend(["metric=1".to_string(), "store=active".to_string()]);
+    Ok(args)
 }
 
 pub(crate) fn windows_delete_route_args(prefix: &str, interface_index: u32) -> Result<Vec<String>> {
@@ -109,9 +120,27 @@ pub(crate) fn apply_windows_routes(
     interface_index: u32,
     route_targets: &[String],
 ) -> Result<Vec<String>> {
+    apply_windows_routes_with_next_hop(interface_index, route_targets, None)
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn apply_windows_routes_via(
+    interface_index: u32,
+    next_hop: &str,
+    route_targets: &[String],
+) -> Result<Vec<String>> {
+    apply_windows_routes_with_next_hop(interface_index, route_targets, Some(next_hop))
+}
+
+#[cfg(target_os = "windows")]
+fn apply_windows_routes_with_next_hop(
+    interface_index: u32,
+    route_targets: &[String],
+    next_hop: Option<&str>,
+) -> Result<Vec<String>> {
     let mut applied = Vec::new();
     for route_target in route_targets {
-        let args = windows_add_route_args(route_target, interface_index)?;
+        let args = windows_add_route_args(route_target, interface_index, next_hop)?;
         if let Err(error) = run_windows_netsh(&args) {
             let _ = remove_windows_routes(interface_index, &applied);
             return Err(error);
@@ -193,7 +222,7 @@ mod tests {
     #[test]
     fn builds_windows_route_add_arguments() {
         assert_eq!(
-            windows_add_route_args("10.44.0.0/16", 7).expect("add args"),
+            windows_add_route_args("10.44.0.0/16", 7, None).expect("add args"),
             vec![
                 "interface".to_string(),
                 "ipv4".to_string(),
@@ -201,6 +230,24 @@ mod tests {
                 "route".to_string(),
                 "10.44.0.0/16".to_string(),
                 "interface=7".to_string(),
+                "metric=1".to_string(),
+                "store=active".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn builds_windows_route_via_arguments() {
+        assert_eq!(
+            windows_add_route_args("203.0.113.7/32", 9, Some("192.0.2.1")).expect("add via args"),
+            vec![
+                "interface".to_string(),
+                "ipv4".to_string(),
+                "add".to_string(),
+                "route".to_string(),
+                "203.0.113.7/32".to_string(),
+                "interface=9".to_string(),
+                "nexthop=192.0.2.1".to_string(),
                 "metric=1".to_string(),
                 "store=active".to_string(),
             ]

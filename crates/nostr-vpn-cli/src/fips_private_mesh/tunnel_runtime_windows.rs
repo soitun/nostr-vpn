@@ -43,8 +43,37 @@ impl FipsPrivateTunnelRuntime {
         )
         .await?;
         let (session, iface, interface_index) = start_windows_fips_wintun(&config)?;
-        let route_targets =
-            crate::windows_tunnel::apply_windows_routes(interface_index, &config.route_targets)?;
+        let endpoint_bypass_routes = windows_fips_endpoint_bypass_targets(
+            &config.endpoint_peers,
+            &config.route_targets,
+        );
+        let endpoint_bypass_underlay = if endpoint_bypass_routes.is_empty() {
+            None
+        } else {
+            let underlay = windows_fips_underlay_default_route(interface_index)?;
+            crate::windows_tunnel::apply_windows_routes_via(
+                underlay.interface_index,
+                &underlay.gateway,
+                &endpoint_bypass_routes,
+            )
+            .context("failed to apply Windows FIPS endpoint bypass routes")?;
+            Some(underlay)
+        };
+        let route_targets = match crate::windows_tunnel::apply_windows_routes(
+            interface_index,
+            &config.route_targets,
+        ) {
+            Ok(route_targets) => route_targets,
+            Err(error) => {
+                if let Some(underlay) = endpoint_bypass_underlay.as_ref() {
+                    let _ = crate::windows_tunnel::remove_windows_routes(
+                        underlay.interface_index,
+                        &endpoint_bypass_routes,
+                    );
+                }
+                return Err(error);
+            }
+        };
 
         let stop = Arc::new(AtomicBool::new(false));
         let (event_tx, event_rx) = mpsc::channel::<FipsPrivateMeshEvent>(1024);
@@ -72,6 +101,8 @@ impl FipsPrivateTunnelRuntime {
             event_rx,
             interface_index,
             route_targets,
+            endpoint_bypass_underlay,
+            endpoint_bypass_routes,
             wg_upstream: None,
         };
         // Reconcile the WG upstream against the initial config. Same
@@ -106,15 +137,7 @@ impl FipsPrivateTunnelRuntime {
         if self.config.nostr_relays != config.nostr_relays {
             self.mesh.update_relays(&config.nostr_relays).await?;
         }
-        if self.config.route_targets != config.route_targets {
-            crate::windows_tunnel::remove_windows_routes(self.interface_index, &self.route_targets)
-                .context("failed to remove stale Windows FIPS routes")?;
-            self.route_targets = crate::windows_tunnel::apply_windows_routes(
-                self.interface_index,
-                &config.route_targets,
-            )
-            .context("failed to apply Windows FIPS routes")?;
-        }
+        self.apply_windows_route_config(&config)?;
         self.reconcile_windows_wg_upstream(&config.wireguard_exit)
             .await;
         self.config = config;
@@ -122,6 +145,83 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) async fn refresh_peer_dependent_routes(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn apply_windows_route_config(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
+        let desired_endpoint_routes = windows_fips_endpoint_bypass_targets(
+            &config.endpoint_peers,
+            &config.route_targets,
+        );
+        let added_endpoint_routes = desired_endpoint_routes
+            .iter()
+            .filter(|route| !self.endpoint_bypass_routes.contains(*route))
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if !added_endpoint_routes.is_empty() {
+            let underlay = match self.endpoint_bypass_underlay.clone() {
+                Some(underlay) => underlay,
+                None => windows_fips_underlay_default_route(self.interface_index)?,
+            };
+            crate::windows_tunnel::apply_windows_routes_via(
+                underlay.interface_index,
+                &underlay.gateway,
+                &added_endpoint_routes,
+            )
+            .context("failed to apply Windows FIPS endpoint bypass routes")?;
+            self.endpoint_bypass_underlay = Some(underlay);
+        }
+
+        if self.config.route_targets != config.route_targets {
+            if let Err(error) = crate::windows_tunnel::remove_windows_routes(
+                self.interface_index,
+                &self.route_targets,
+            ) {
+                if let Some(underlay) = self.endpoint_bypass_underlay.as_ref() {
+                    let _ = crate::windows_tunnel::remove_windows_routes(
+                        underlay.interface_index,
+                        &added_endpoint_routes,
+                    );
+                }
+                return Err(error).context("failed to remove stale Windows FIPS routes");
+            }
+            match crate::windows_tunnel::apply_windows_routes(
+                self.interface_index,
+                &config.route_targets,
+            ) {
+                Ok(route_targets) => self.route_targets = route_targets,
+                Err(error) => {
+                    if let Some(underlay) = self.endpoint_bypass_underlay.as_ref() {
+                        let _ = crate::windows_tunnel::remove_windows_routes(
+                            underlay.interface_index,
+                            &added_endpoint_routes,
+                        );
+                    }
+                    return Err(error).context("failed to apply Windows FIPS routes");
+                }
+            }
+        }
+
+        let stale_endpoint_routes = self
+            .endpoint_bypass_routes
+            .iter()
+            .filter(|route| !desired_endpoint_routes.contains(*route))
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut active_endpoint_routes = desired_endpoint_routes;
+        if let Some(underlay) = self.endpoint_bypass_underlay.as_ref()
+            && let Err(error) = crate::windows_tunnel::remove_windows_routes(
+                underlay.interface_index,
+                &stale_endpoint_routes,
+            )
+        {
+            eprintln!("fips: failed to remove stale Windows endpoint bypass routes: {error}");
+            active_endpoint_routes.extend(stale_endpoint_routes);
+            active_endpoint_routes.sort();
+            active_endpoint_routes.dedup();
+        }
+        self.endpoint_bypass_routes = active_endpoint_routes;
         Ok(())
     }
 
@@ -183,6 +283,14 @@ impl FipsPrivateTunnelRuntime {
         ) {
             eprintln!("fips: failed to remove Windows FIPS routes: {error}");
         }
+        if let Some(underlay) = runtime.endpoint_bypass_underlay.as_ref()
+            && let Err(error) = crate::windows_tunnel::remove_windows_routes(
+                underlay.interface_index,
+                &runtime.endpoint_bypass_routes,
+            )
+        {
+            eprintln!("fips: failed to remove Windows endpoint bypass routes: {error}");
+        }
         let _ = runtime.tun_read_thread.join();
         runtime.mesh_recv_task.abort();
         let _ = runtime.mesh_recv_task.await;
@@ -192,5 +300,109 @@ impl FipsPrivateTunnelRuntime {
                 .context("failed to stop FIPS endpoint")?;
         }
         Ok(())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_fips_underlay_default_route(
+    tunnel_interface_index: u32,
+) -> Result<crate::wg_upstream_runtime::WindowsDefaultRoute> {
+    let underlay = crate::wg_upstream_runtime::capture_windows_default_route()
+        .context("failed to capture Windows FIPS underlay default route")?;
+    if underlay.interface_index == tunnel_interface_index {
+        return Err(anyhow!(
+            "captured Windows default route already points at the FIPS Wintun adapter (interface={tunnel_interface_index})"
+        ));
+    }
+    Ok(underlay)
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_fips_endpoint_bypass_targets(
+    endpoint_peers: &[FipsEndpointPeerTransportConfig],
+    route_targets: &[String],
+) -> Vec<String> {
+    let has_broad_ipv4_route = route_targets.iter().any(|route| {
+        let Some((host, bits)) = route.trim().split_once('/') else {
+            return false;
+        };
+        host.parse::<Ipv4Addr>().is_ok()
+            && bits.parse::<u8>().is_ok_and(|prefix_len| prefix_len < 32)
+    });
+    if !has_broad_ipv4_route {
+        return Vec::new();
+    }
+
+    let mut hosts = endpoint_peers
+        .iter()
+        .flat_map(|peer| peer.addresses.iter())
+        .filter(|hint| hint.seen_at_ms.is_none())
+        .filter_map(|hint| {
+            let (transport, addr) = split_peer_transport_addr(&hint.addr);
+            if transport != "udp" {
+                return None;
+            }
+            match addr.parse::<SocketAddr>().ok()?.ip() {
+                IpAddr::V4(host) => Some(host),
+                IpAddr::V6(_) => None,
+            }
+        })
+        .filter(|host| {
+            !route_targets.iter().any(|route| {
+                let Some((target, bits)) = route.trim().split_once('/') else {
+                    return false;
+                };
+                bits == "32" && target.parse::<Ipv4Addr>() == Ok(*host)
+            })
+        })
+        .collect::<Vec<_>>();
+    hosts.sort_unstable();
+    hosts.dedup();
+    hosts.into_iter().map(|host| format!("{host}/32")).collect()
+}
+
+#[cfg(test)]
+mod windows_endpoint_bypass_tests {
+    use super::*;
+
+    fn address(addr: &str) -> FipsPeerAddressHint {
+        FipsPeerAddressHint {
+            addr: addr.to_string(),
+            seen_at_ms: None,
+            priority: 0,
+        }
+    }
+
+    #[test]
+    fn configured_udp_endpoint_bypasses_are_deterministic() {
+        let peers = vec![FipsEndpointPeerTransportConfig {
+            npub: "peer".to_string(),
+            addresses: vec![
+                address("udp:203.0.113.7:2121"),
+                address("65.109.48.91:2121"),
+                address("udp:65.109.48.91:2121"),
+                address("tcp:192.0.2.9:8443"),
+                address("udp:[2001:db8::7]:2121"),
+                FipsPeerAddressHint {
+                    addr: "udp:192.0.2.10:2121".to_string(),
+                    seen_at_ms: Some(1),
+                    priority: 0,
+                },
+            ],
+            auto_reconnect: true,
+            discovery_fallback_transit: false,
+        }];
+
+        assert_eq!(
+            windows_fips_endpoint_bypass_targets(
+                &peers,
+                &["0.0.0.0/0".to_string(), "203.0.113.7/32".to_string()],
+            ),
+            vec!["65.109.48.91/32"]
+        );
+        assert!(
+            windows_fips_endpoint_bypass_targets(&peers, &["10.44.0.2/32".to_string()])
+                .is_empty()
+        );
     }
 }
