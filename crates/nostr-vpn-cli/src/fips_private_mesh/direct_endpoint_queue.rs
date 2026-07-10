@@ -23,6 +23,7 @@ struct FipsDirectEndpointRxCursor {
 struct FipsDirectEndpointQueueState {
     batches: VecDeque<FipsDirectEndpointQueuedRuns>,
     waiting_consumer: bool,
+    interrupt_pending: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -130,6 +131,13 @@ impl FipsDirectEndpointQueue {
             pending: None,
         }
     }
+
+    fn interrupt(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.interrupt_pending = true;
+        }
+        self.ready.notify_all();
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -153,10 +161,16 @@ impl FipsDirectEndpointRxCursor {
             let (next_state, wait) = self
                 .queue
                 .ready
-                .wait_timeout_while(state, timeout, |state| state.batches.is_empty())
+                .wait_timeout_while(state, timeout, |state| {
+                    state.batches.is_empty() && !state.interrupt_pending
+                })
                 .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)?;
             state = next_state;
             state.waiting_consumer = false;
+            let interrupted = std::mem::take(&mut state.interrupt_pending);
+            if interrupted && state.batches.is_empty() {
+                return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
+            }
             if wait.timed_out() && state.batches.is_empty() {
                 return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
             }

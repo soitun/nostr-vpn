@@ -78,9 +78,7 @@ impl FipsPrivateMeshRuntime {
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn wake_blocking_mesh_recv(&self) {
-        if let Ok(local) = PeerIdentity::from_npub(self.endpoint.npub()) {
-            let _ = self.endpoint.blocking_send_batch_to_peer(local, vec![Vec::new()]);
-        }
+        self.direct_endpoint_rx.interrupt();
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
