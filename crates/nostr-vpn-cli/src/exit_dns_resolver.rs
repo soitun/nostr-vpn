@@ -169,12 +169,15 @@ fn parse_macos_scutil_dns(contents: &str) -> Vec<SocketAddr> {
         .unwrap_or(contents);
     let mut servers = Vec::new();
     for block in unscoped.split("resolver #") {
-        let has_supplemental_domain = block.lines().any(|line| {
-            line.trim_start()
-                .strip_prefix("domain :")
+        let is_supplemental = block.lines().any(|line| {
+            let line = line.trim_start();
+            line.strip_prefix("domain :")
                 .is_some_and(|domain| !domain.trim().is_empty())
+                || line
+                    .strip_prefix("flags")
+                    .is_some_and(|flags| flags.contains("Supplemental"))
         });
-        if has_supplemental_domain {
+        if is_supplemental {
             continue;
         }
         let port = block
@@ -278,6 +281,32 @@ mod tests {
              DNS configuration (for scoped queries)\n\n\
              resolver #1\n\
                nameserver[0] : 198.51.100.53\n",
+        );
+        assert_eq!(
+            servers,
+            vec![
+                "192.0.2.53:53".parse().expect("IPv4 resolver"),
+                "[2001:db8::53]:53".parse().expect("IPv6 resolver"),
+            ]
+        );
+    }
+
+    #[test]
+    fn macos_parser_skips_supplemental_search_domain_resolver() {
+        let servers = parse_macos_scutil_dns(
+            "DNS configuration\n\n\
+             resolver #1\n\
+               search domain[0] : mesh.example\n\
+               nameserver[0] : 100.100.100.100\n\
+               nameserver[1] : fd00::53\n\
+               flags : Supplemental, Request A records, Request AAAA records\n\
+               order : 100200\n\
+             resolver #2\n\
+               nameserver[0] : 192.0.2.53\n\
+               nameserver[1] : 2001:db8::53\n\
+               flags : Request A records, Request AAAA records\n\
+               order : 200000\n\n\
+             DNS configuration (for scoped queries)\n",
         );
         assert_eq!(
             servers,
