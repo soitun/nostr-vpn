@@ -1837,11 +1837,13 @@ test_reference_perf_scripts_run_bidirectional_scorecard() {
   local backend script phase metric reverse_runs summary_uses
   for backend in wireguard-go boringtun; do
     script="$ROOT_DIR/scripts/perf-docker-$backend.sh"
-    reverse_runs="$(grep -c '^  run_test_json .*b-to-a .* -R$' "$script" || true)"
+    reverse_runs="$(grep -c '^  run_test_json .* b_to_a ' "$script" || true)"
     assert_eq "$reverse_runs" "5" "$backend Docker perf reverse phase count"
     assert_file_contains "$script" "docker_bench_write_metadata $backend \"\$DURATION\" \"a_to_b,b_to_a\"" "$backend Docker perf direction metadata"
+    assert_file_contains "$script" '.benchmark = {' "$backend Docker perf raw direction metadata"
+    assert_file_contains "$script" 'docker_bench_assert_bidirectional_summary "$SUMMARY_TSV"' "$backend Docker perf requires both scorecard directions"
     for phase in tcp-single tcp-4 tcp-8 udp-200 udp-1000; do
-      assert_file_contains "$script" "run_test_json $phase-b-to-a " "$backend Docker perf reverse $phase"
+      assert_file_contains "$script" "run_test_json $phase-b-to-a b_to_a " "$backend Docker perf reverse $phase"
     done
     for metric in tcp_single tcp_4 tcp_8 udp_200 udp_1000; do
       summary_uses="$(grep -Fc "\"\$${metric}_reverse_json\"" "$script" || true)"
