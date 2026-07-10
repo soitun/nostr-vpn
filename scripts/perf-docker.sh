@@ -1348,13 +1348,30 @@ docker_bench_start_cpu_stress
 
 run_test_json() {
   local phase="$1"
-  local label="$2"
-  local json_path="$3"
-  shift 3
+  local direction="$2"
+  local label="$3"
+  local json_path="$4"
+  shift 4
   local phase_start_node_a phase_start_node_b phase_end_node_a phase_end_node_b
   local cpu_start_node_a cpu_start_node_b cpu_end_node_a cpu_end_node_b transfer_bytes
   local loaded_ping_pid="" loaded_ping_output="$RAW_DIR/nvpn-loaded-ping-$phase.txt"
-  local is_udp=0
+  local is_udp=0 sender receiver iperf_reverse
+  case "$direction" in
+    a_to_b)
+      sender=node-a
+      receiver=node-b
+      iperf_reverse=false
+      ;;
+    b_to_a)
+      sender=node-b
+      receiver=node-a
+      iperf_reverse=true
+      ;;
+    *)
+      printf 'perf: invalid iperf direction for %s: %s\n' "$phase" "$direction" >&2
+      return 2
+      ;;
+  esac
   [[ "${1:-}" == "-u" ]] && is_udp=1
   docker_bench_assert_host_build_quiet "perf $phase start"
   printf '## %s\n' "$label"
@@ -1370,6 +1387,7 @@ run_test_json() {
   if (( is_udp )) && [[ -n "$IPERF_SOCKET_BUFFER" ]]; then
     iperf_cmd+=("${IPERF_SOCKET_BUFFER_ARGS[@]}")
   fi
+  [[ "$iperf_reverse" == true ]] && iperf_cmd+=(-R)
   iperf_cmd+=("$@")
   phase_start_node_a="$(pipeline_line_count node-a)"
   phase_start_node_b="$(pipeline_line_count node-b)"
@@ -1397,6 +1415,20 @@ run_test_json() {
     cat "$json_path" >&2
     return 1
   fi
+  jq \
+    --arg phase "$phase" \
+    --arg direction "$direction" \
+    --arg sender "$sender" \
+    --arg receiver "$receiver" \
+    --argjson iperf_reverse "$iperf_reverse" \
+    '.benchmark = {
+      phase: $phase,
+      direction: $direction,
+      sender: $sender,
+      receiver: $receiver,
+      iperf_reverse: $iperf_reverse
+    }' "$json_path" >"$json_path.tmp"
+  mv "$json_path.tmp" "$json_path"
   transfer_bytes="$(docker_bench_iperf_transfer_bytes "$json_path")"
   append_daemon_cpu_phase_rows \
     "$phase" \
@@ -1435,21 +1467,21 @@ udp_200_reverse_json="$RAW_DIR/nvpn-udp-200m-b-to-a.json"
 udp_1000_reverse_json="$RAW_DIR/nvpn-udp-1000m-b-to-a.json"
 ping_output="$RAW_DIR/nvpn-ping.txt"
 
-run_test_json tcp-single "TCP single stream (A -> B)" "$tcp_single_json"
-run_test_json tcp-single-b-to-a "TCP single stream (B -> A)" "$tcp_single_reverse_json" -R
-run_test_json tcp-4 "TCP 4 streams (A -> B)" "$tcp_4_json" -P 4
-run_test_json tcp-4-b-to-a "TCP 4 streams (B -> A)" "$tcp_4_reverse_json" -P 4 -R
-run_test_json tcp-8 "TCP 8 streams (A -> B)" "$tcp_8_json" -P 8
-run_test_json tcp-8-b-to-a "TCP 8 streams (B -> A)" "$tcp_8_reverse_json" -P 8 -R
-run_test_json udp-200 "UDP 200 Mbit target (A -> B)" "$udp_200_json" -u -b 200M
-run_test_json udp-200-b-to-a "UDP 200 Mbit target (B -> A)" "$udp_200_reverse_json" -u -b 200M -R
+run_test_json tcp-single a_to_b "TCP single stream (A -> B)" "$tcp_single_json"
+run_test_json tcp-single-b-to-a b_to_a "TCP single stream (B -> A)" "$tcp_single_reverse_json"
+run_test_json tcp-4 a_to_b "TCP 4 streams (A -> B)" "$tcp_4_json" -P 4
+run_test_json tcp-4-b-to-a b_to_a "TCP 4 streams (B -> A)" "$tcp_4_reverse_json" -P 4
+run_test_json tcp-8 a_to_b "TCP 8 streams (A -> B)" "$tcp_8_json" -P 8
+run_test_json tcp-8-b-to-a b_to_a "TCP 8 streams (B -> A)" "$tcp_8_reverse_json" -P 8
+run_test_json udp-200 a_to_b "UDP 200 Mbit target (A -> B)" "$udp_200_json" -u -b 200M
+run_test_json udp-200-b-to-a b_to_a "UDP 200 Mbit target (B -> A)" "$udp_200_reverse_json" -u -b 200M
 if [[ ${#UDP1000_PARALLEL_ARGS[@]} -gt 0 ]]; then
   udp1000_args=(-u -b "$UDP1000_PER_STREAM_BANDWIDTH" "${UDP1000_PARALLEL_ARGS[@]}")
 else
   udp1000_args=(-u -b "$UDP1000_BANDWIDTH")
 fi
-run_test_json udp-1000 "UDP 1000 Mbit target (A -> B)" "$udp_1000_json" "${udp1000_args[@]}"
-run_test_json udp-1000-b-to-a "UDP 1000 Mbit target (B -> A)" "$udp_1000_reverse_json" "${udp1000_args[@]}" -R
+run_test_json udp-1000 a_to_b "UDP 1000 Mbit target (A -> B)" "$udp_1000_json" "${udp1000_args[@]}"
+run_test_json udp-1000-b-to-a b_to_a "UDP 1000 Mbit target (B -> A)" "$udp_1000_reverse_json" "${udp1000_args[@]}"
 write_iperf_socket_buffer_summary
 
 printf '## ping (300 packets, 10ms apart) over mesh\n'
@@ -1490,6 +1522,7 @@ docker_bench_append_summary_row \
   "$tcp_8_reverse_json" \
   "$udp_200_reverse_json" \
   "$udp_1000_reverse_json"
+docker_bench_assert_bidirectional_summary "$SUMMARY_TSV"
 
 capture_nvpn_diagnostics 0
 guard_status=0

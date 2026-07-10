@@ -1820,15 +1820,17 @@ test_nvpn_perf_docker_records_daemon_cpu_phase_artifact() {
 test_nvpn_perf_docker_runs_bidirectional_scorecard() {
   local script="$ROOT_DIR/scripts/perf-docker.sh"
   local reverse_runs
-  reverse_runs="$(grep -c '^run_test_json .* -R$' "$script" || true)"
+  reverse_runs="$(grep -c '^run_test_json .* b_to_a ' "$script" || true)"
 
   assert_eq "$reverse_runs" "5" "nvpn Docker perf reverse phase count"
   assert_file_contains "$script" 'docker_bench_write_metadata nvpn "$DURATION" "a_to_b,b_to_a"' "nvpn Docker perf direction metadata"
-  assert_file_contains "$script" 'run_test_json tcp-single-b-to-a "TCP single stream (B -> A)" "$tcp_single_reverse_json" -R' "nvpn Docker perf reverse TCP single"
-  assert_file_contains "$script" 'run_test_json tcp-4-b-to-a "TCP 4 streams (B -> A)" "$tcp_4_reverse_json" -P 4 -R' "nvpn Docker perf reverse TCP 4"
-  assert_file_contains "$script" 'run_test_json tcp-8-b-to-a "TCP 8 streams (B -> A)" "$tcp_8_reverse_json" -P 8 -R' "nvpn Docker perf reverse TCP 8"
-  assert_file_contains "$script" 'run_test_json udp-200-b-to-a "UDP 200 Mbit target (B -> A)" "$udp_200_reverse_json" -u -b 200M -R' "nvpn Docker perf reverse UDP200"
-  assert_file_contains "$script" 'run_test_json udp-1000-b-to-a "UDP 1000 Mbit target (B -> A)" "$udp_1000_reverse_json"' "nvpn Docker perf reverse UDP1000"
+  assert_file_contains "$script" 'run_test_json tcp-single-b-to-a b_to_a "TCP single stream (B -> A)" "$tcp_single_reverse_json"' "nvpn Docker perf reverse TCP single"
+  assert_file_contains "$script" 'run_test_json tcp-4-b-to-a b_to_a "TCP 4 streams (B -> A)" "$tcp_4_reverse_json" -P 4' "nvpn Docker perf reverse TCP 4"
+  assert_file_contains "$script" 'run_test_json tcp-8-b-to-a b_to_a "TCP 8 streams (B -> A)" "$tcp_8_reverse_json" -P 8' "nvpn Docker perf reverse TCP 8"
+  assert_file_contains "$script" 'run_test_json udp-200-b-to-a b_to_a "UDP 200 Mbit target (B -> A)" "$udp_200_reverse_json" -u -b 200M' "nvpn Docker perf reverse UDP200"
+  assert_file_contains "$script" 'run_test_json udp-1000-b-to-a b_to_a "UDP 1000 Mbit target (B -> A)" "$udp_1000_reverse_json"' "nvpn Docker perf reverse UDP1000"
+  assert_file_contains "$script" 'docker_bench_assert_bidirectional_summary "$SUMMARY_TSV"' "nvpn Docker perf requires both scorecard directions"
+  assert_file_contains "$script" '.benchmark = {' "nvpn Docker perf raw direction metadata"
 }
 
 test_reference_perf_scripts_run_bidirectional_scorecard() {

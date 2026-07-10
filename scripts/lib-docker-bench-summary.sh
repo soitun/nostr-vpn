@@ -1438,6 +1438,37 @@ docker_bench_append_summary_row() {
     "$(docker_bench_iperf_optional docker_bench_iperf_loss_pct "$udp_1000_reverse_json")" >>"$SUMMARY_TSV"
 }
 
+docker_bench_assert_bidirectional_summary() {
+  local summary_tsv="${1:-$SUMMARY_TSV}"
+  awk -F '\t' '
+    BEGIN {
+      fields = "tcp_single_mbps tcp_single_retrans tcp_4_mbps tcp_4_retrans tcp_8_mbps tcp_8_retrans "
+      fields = fields "udp_200_mbps udp_200_loss_pct udp_1000_mbps udp_1000_loss_pct "
+      fields = fields "tcp_single_b_to_a_mbps tcp_single_b_to_a_retrans tcp_4_b_to_a_mbps tcp_4_b_to_a_retrans "
+      fields = fields "tcp_8_b_to_a_mbps tcp_8_b_to_a_retrans udp_200_b_to_a_mbps udp_200_b_to_a_loss_pct "
+      fields = fields "udp_1000_b_to_a_mbps udp_1000_b_to_a_loss_pct"
+      count = split(fields, required, " ")
+    }
+    NR == 1 {
+      for (i = 1; i <= NF; i++) column[$i] = i
+      if (!column["forward_direction"] || !column["reverse_direction"]) failed = 1
+      for (i = 1; i <= count; i++) if (!column[required[i]]) failed = 1
+      next
+    }
+    NF {
+      rows++
+      if ($(column["forward_direction"]) != "a_to_b" || $(column["reverse_direction"]) != "b_to_a") failed = 1
+      for (i = 1; i <= count; i++) if ($(column[required[i]]) == "") failed = 1
+    }
+    END {
+      if (rows == 0 || failed) {
+        print "docker bench summary is missing required A-to-B or B-to-A TCP/UDP results" > "/dev/stderr"
+        exit 1
+      }
+    }
+  ' "$summary_tsv"
+}
+
 docker_bench_guard_threshold() {
   local specific_name="$1"
   local common_name="$2"
