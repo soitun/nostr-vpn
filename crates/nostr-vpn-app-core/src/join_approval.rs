@@ -8,7 +8,8 @@ use nostr_identity::{
 use nostr_pubsub::{EventBus, EventSource, QueryOptions, VerifiedEvent};
 use nostr_pubsub_relay::RelayEventBus;
 use nostr_sdk::prelude::{
-    Alphabet, Client, Event, Filter, JsonUtil, Kind, PublicKey, SingleLetterTag,
+    Alphabet, Client, Event, Filter, JsonUtil, Kind, PublicKey, RelayPoolNotification,
+    SingleLetterTag,
 };
 use nostr_vpn_core::config::{
     AppConfig, SharedNetworkRoster, normalize_nostr_pubkey, normalize_runtime_network_id,
@@ -55,6 +56,12 @@ pub async fn fetch_join_approval_request(
             device_app_key_pubkey.to_hex(),
         )
         .limit(8);
+    let client = provider.client();
+    let mut notifications = client.notifications();
+    client
+        .subscribe(filter.clone(), None)
+        .await
+        .context("failed to subscribe for signed join request")?;
     let report = provider
         .query(vec![filter], QueryOptions { limit: Some(8) })
         .await
@@ -64,7 +71,39 @@ pub async fn fetch_join_approval_request(
         .into_iter()
         .map(|candidate| candidate.event.into_event())
         .collect::<Vec<_>>();
-    resolve_join_approval_request_events(bootstrap, &events, unix_timestamp_for_fetch())
+    if let Ok(request) =
+        resolve_join_approval_request_events(bootstrap, &events, unix_timestamp_for_fetch())
+    {
+        return Ok(request);
+    }
+
+    let timeout = tokio::time::sleep(std::time::Duration::from_secs(20));
+    tokio::pin!(timeout);
+    loop {
+        tokio::select! {
+            () = &mut timeout => break,
+            notification = notifications.recv() => {
+                match notification {
+                    Ok(RelayPoolNotification::Event { event, .. }) => {
+                        if let Ok(request) = resolve_join_approval_request_events(
+                            bootstrap,
+                            &[(*event).clone()],
+                            unix_timestamp_for_fetch(),
+                        ) {
+                            return Ok(request);
+                        }
+                    }
+                    Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        return Err(anyhow!("signed join request subscription closed"));
+                    }
+                }
+            }
+        }
+    }
+    Err(anyhow!(
+        "signed join request was not found for the scanned bootstrap"
+    ))
 }
 
 pub fn resolve_join_approval_request_events(
