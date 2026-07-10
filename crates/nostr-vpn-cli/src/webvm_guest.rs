@@ -310,6 +310,7 @@ async fn wait_for_approval(
                         destination_port: datagram.destination_port,
                         payload: datagram.data.as_ref().to_vec(),
                     };
+                    println!("webvm-guest: received approval candidate over FIPS");
                     let mut candidate = app.clone();
                     if let Some(applied) = client.ingest_datagram(
                         &mut candidate,

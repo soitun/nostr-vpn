@@ -5,9 +5,10 @@ use std::io::{self, BufRead, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode, Stdio};
 
 use nostr_vpn_app_core::{FfiApp, NativeAppAction, NativeAppState};
+use nostr_vpn_core::config::AppConfig;
 use serde_json::json;
 
 const REAL_E2E_GUARD: &str = "NVPN_WEBVM_REAL_E2E";
@@ -23,6 +24,29 @@ struct Args {
 struct HarnessError {
     stage: &'static str,
     code: &'static str,
+}
+
+#[derive(Debug)]
+struct HostRestore {
+    config_path: PathBuf,
+    journal_path: PathBuf,
+    nvpn_bin: PathBuf,
+}
+
+impl HostRestore {
+    fn new(args: &Args) -> Self {
+        let mut journal_name = args
+            .config_path
+            .file_name()
+            .unwrap_or_default()
+            .to_os_string();
+        journal_name.push(".webvm-e2e-restore");
+        Self {
+            config_path: args.config_path.clone(),
+            journal_path: args.config_path.with_file_name(journal_name),
+            nvpn_bin: args.nvpn_bin.clone(),
+        }
+    }
 }
 
 type HarnessResult<T> = Result<T, HarnessError>;
@@ -140,85 +164,139 @@ fn added_participant(
     Ok(participant)
 }
 
-fn participant_exists(state: &NativeAppState, network_id: &str, npub: &str) -> bool {
-    state.networks.iter().any(|network| {
-        network.id == network_id
-            && network
-                .participants
-                .iter()
-                .any(|participant| participant.npub == npub)
-    })
+fn reload_daemon(restore: &HostRestore) -> bool {
+    Command::new(&restore.nvpn_bin)
+        .args(["reload", "--config"])
+        .arg(&restore.config_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
-fn cleanup(
-    app: &FfiApp,
-    participant: Option<&(String, String)>,
-    restore_disconnected: bool,
-) -> HarnessResult<()> {
-    let mut participant_removed = false;
-    if let Some((network_id, npub)) = participant {
-        let state = app.dispatch(NativeAppAction::RemoveParticipant {
-            network_id: network_id.clone(),
-            npub: npub.clone(),
-        });
-        if !state.error.is_empty() || participant_exists(&state, network_id, npub) {
-            return Err(HarnessError::new("cleanup", "participant-remove-failed"));
-        }
-        participant_removed = true;
+fn write_restore_journal(restore: &HostRestore) -> HarnessResult<()> {
+    if restore.journal_path.exists() {
+        return Err(HarnessError::new("preflight", "stale-restore-journal"));
     }
+    fs::copy(&restore.config_path, &restore.journal_path)
+        .map_err(|_| HarnessError::new("preflight", "restore-journal-write-failed"))?;
+    #[cfg(unix)]
+    fs::set_permissions(&restore.journal_path, fs::Permissions::from_mode(0o600))
+        .map_err(|_| HarnessError::new("preflight", "restore-journal-permissions-failed"))?;
+    Ok(())
+}
 
-    let mut vpn_restored = false;
-    let state = app.state();
-    if restore_disconnected && (state.vpn_enabled || state.vpn_active) {
-        let state = app.dispatch(NativeAppAction::DisconnectVpn);
-        if !state.error.is_empty() {
-            return Err(HarnessError::new("cleanup", "vpn-restore-failed"));
-        }
-        vpn_restored = true;
+fn restore_host(restore: &HostRestore) -> bool {
+    if !restore.journal_path.is_file() {
+        return true;
+    }
+    let mut temporary_path = restore.config_path.clone();
+    temporary_path.set_extension("toml.webvm-e2e-restoring");
+    if fs::copy(&restore.journal_path, &temporary_path).is_err()
+        || fs::rename(&temporary_path, &restore.config_path).is_err()
+        || !reload_daemon(restore)
+    {
+        let _ = fs::remove_file(&temporary_path);
+        return false;
+    }
+    fs::remove_file(&restore.journal_path).is_ok()
+}
+
+fn cleanup(participant: Option<&(String, String)>, restore: &HostRestore) -> HarnessResult<()> {
+    if !restore_host(restore) {
+        return Err(HarnessError::new("cleanup", "host-restore-failed"));
     }
 
     emit_status(&json!({
         "status": "cleaned",
-        "participantRemoved": participant_removed,
-        "vpnRestored": vpn_restored,
+        "participantRemoved": participant.is_some(),
+        "hostConfigRestored": true,
     }))
 }
 
-fn run() -> HarnessResult<()> {
-    if env::var(REAL_E2E_GUARD).as_deref() != Ok("1") {
-        return Err(HarnessError::new("guard", "real-e2e-not-enabled"));
-    }
-
-    let args = Args::parse()?;
-    let app = FfiApp::new_with_config_path(
-        args.config_path,
-        env!("CARGO_PKG_VERSION").to_string(),
-        Some(args.nvpn_bin),
-    );
-    let before = app.state();
-    if !before.error.is_empty() {
-        return Err(HarnessError::new("startup", "ffi-app-startup-failed"));
-    }
-    if !before
+fn prepare_host_config(restore: &HostRestore) -> HarnessResult<()> {
+    write_restore_journal(restore)?;
+    let mut config = AppConfig::load(&restore.config_path)
+        .map_err(|_| HarnessError::new("preflight", "config-load-failed"))?;
+    let own_pubkey = config
+        .own_nostr_pubkey_hex()
+        .map_err(|_| HarnessError::new("preflight", "host-identity-unavailable"))?;
+    let active_is_admin = config
         .networks
         .iter()
-        .any(|network| network.enabled && network.local_is_admin)
-    {
-        return Err(HarnessError::new(
-            "preflight",
-            "active-admin-network-required",
-        ));
+        .any(|network| network.enabled && network.admins.iter().any(|admin| admin == &own_pubkey));
+    if !active_is_admin {
+        let network_id = config.add_owned_network("WebVM e2e");
+        config
+            .set_network_enabled(&network_id, true)
+            .map_err(|_| HarnessError::new("preflight", "temporary-network-enable-failed"))?;
     }
-    let restore_disconnected = !before.vpn_enabled && !before.vpn_active;
+    config.node.advertise_exit_node = true;
+    config
+        .save(&restore.config_path)
+        .map_err(|_| HarnessError::new("preflight", "config-save-failed"))?;
+    if !reload_daemon(restore) {
+        return Err(HarnessError::new("preflight", "daemon-reload-failed"));
+    }
+    Ok(())
+}
+
+fn sanitized_import_error(error: &str) -> &'static str {
+    let error = error.to_ascii_lowercase();
+    if error.contains("not administered") {
+        "active-admin-network-required"
+    } else if error.contains("timestamp is in the future") {
+        "join-request-from-future"
+    } else if error.contains("has expired") {
+        "join-request-expired"
+    } else if error.contains("must name exactly one approval relay") {
+        "approval-relay-count-invalid"
+    } else if error.contains("invalid join request approval relay") {
+        "approval-relay-resource-invalid"
+    } else if error.contains("failed to initialize join approval pubsub provider") {
+        "approval-relay-connect-failed"
+    } else if error.contains("approval relay") {
+        "invalid-approval-relay"
+    } else if error.contains("request type") {
+        "invalid-request-type"
+    } else if error.contains("separate ephemeral") {
+        "invalid-request-key"
+    } else if error.contains("different admin device") {
+        "wrong-admin-device"
+    } else if error.contains("failed to parse join request") {
+        "join-request-parse-failed"
+    } else if error.contains("no nostr relays") {
+        "approval-relays-unavailable"
+    } else if error.contains("failed to add nostr relay") {
+        "approval-relay-add-failed"
+    } else if error.contains("failed to publish join request approval") {
+        "approval-publish-failed"
+    } else if error.contains("pubsub batch timed out") {
+        "approval-publish-timeout"
+    } else if error.contains("not accepted by any relay") {
+        "approval-publish-rejected"
+    } else if error.contains("approval request") || error.contains("join request") {
+        "invalid-join-request"
+    } else {
+        "ffi-import-failed"
+    }
+}
+
+fn run_prepared_session(
+    app: &FfiApp,
+    before: &NativeAppState,
+    restore: &HostRestore,
+) -> HarnessResult<()> {
     emit_status(&json!({ "status": "ready" }))?;
 
     let stdin = io::stdin();
     let mut input = stdin.lock();
     let Some(mut command) = read_command(&mut input)? else {
-        return cleanup(&app, None, false);
+        return cleanup(None, restore);
     };
     if command == "cleanup" {
-        return cleanup(&app, None, false);
+        return cleanup(None, restore);
     }
     let mut request = command
         .strip_prefix(IMPORT_COMMAND_PREFIX)
@@ -233,24 +311,75 @@ fn run() -> HarnessResult<()> {
     let after = app.dispatch(NativeAppAction::ImportJoinRequest {
         request: std::mem::take(&mut request),
     });
-    let participant = added_participant(&before, &after)?;
     if !after.error.is_empty() {
-        cleanup(&app, Some(&participant), restore_disconnected)?;
-        return Err(HarnessError::new("import", "ffi-import-failed"));
+        return Err(HarnessError::new(
+            "import",
+            sanitized_import_error(&after.error),
+        ));
     }
+    let participant = added_participant(before, &after)?;
     emit_status(&json!({
         "status": "imported",
         "participantAdded": true,
     }))?;
 
     match read_command(&mut input)? {
-        None => cleanup(&app, Some(&participant), restore_disconnected),
-        Some(command) if command == "cleanup" => {
-            cleanup(&app, Some(&participant), restore_disconnected)
-        }
+        None => cleanup(Some(&participant), restore),
+        Some(command) if command == "cleanup" => cleanup(Some(&participant), restore),
         Some(_) => {
-            cleanup(&app, Some(&participant), restore_disconnected)?;
+            cleanup(Some(&participant), restore)?;
             Err(HarnessError::new("protocol", "unexpected-command"))
+        }
+    }
+}
+
+fn run() -> HarnessResult<()> {
+    if env::var(REAL_E2E_GUARD).as_deref() != Ok("1") {
+        return Err(HarnessError::new("guard", "real-e2e-not-enabled"));
+    }
+
+    let args = Args::parse()?;
+    let restore = HostRestore::new(&args);
+    if restore.journal_path.exists() && !restore_host(&restore) {
+        return Err(HarnessError::new("preflight", "stale-restore-failed"));
+    }
+    let initial_app = FfiApp::new_with_config_path(
+        args.config_path.clone(),
+        env!("CARGO_PKG_VERSION").to_string(),
+        Some(args.nvpn_bin.clone()),
+    );
+    let initial = initial_app.state();
+    if !initial.error.is_empty() {
+        return Err(HarnessError::new("startup", "ffi-app-startup-failed"));
+    }
+    drop(initial_app);
+    if let Err(error) = prepare_host_config(&restore) {
+        let _ = restore_host(&restore);
+        return Err(error);
+    }
+    let app = FfiApp::new_with_config_path(
+        args.config_path,
+        env!("CARGO_PKG_VERSION").to_string(),
+        Some(args.nvpn_bin),
+    );
+    let before = app.state();
+    if !before.error.is_empty()
+        || !before
+            .networks
+            .iter()
+            .any(|network| network.enabled && network.local_is_admin)
+    {
+        let _ = restore_host(&restore);
+        return Err(HarnessError::new(
+            "preflight",
+            "active-admin-network-required",
+        ));
+    }
+    match run_prepared_session(&app, &before, &restore) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = restore_host(&restore);
+            Err(error)
         }
     }
 }

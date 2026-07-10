@@ -339,7 +339,10 @@
                     request_secret: Some(request_secret.to_string()),
                     requested_at: 1_778_998_000,
                     request_type: Some("nostr-vpn.join-request".to_string()),
-                    resources: Vec::new(),
+                    resources: vec![nostr_identity::nostr_identity_device_approval_relay_resource(
+                        nostr_vpn_core::join_requests::NOSTR_VPN_JOIN_APPROVAL_RELAY,
+                    )
+                    .expect("approval relay resource")],
                     expires_at: None,
                     profile_id: None,
                     admin_app_key_pubkey: None,

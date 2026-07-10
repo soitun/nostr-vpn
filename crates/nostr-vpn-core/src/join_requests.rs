@@ -1,6 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use nostr_identity::{
-    NostrIdentityDeviceApprovalReceipt,
+    NostrIdentityDeviceApprovalReceipt, nostr_identity_device_approval_relay_resource,
+    nostr_identity_device_approval_request_relays,
     parse_nostr_identity_device_approval_receipt_event_for_request,
 };
 use nostr_sdk::prelude::{Event, JsonUtil, Keys};
@@ -19,6 +20,7 @@ use crate::identity_bridge::{
 
 pub const FIPS_JOIN_REQUEST_RETRY_SECS: u64 = 10;
 pub const NOSTR_VPN_JOIN_REQUEST_TYPE: &str = "nostr-vpn.join-request";
+pub const NOSTR_VPN_JOIN_APPROVAL_RELAY: &str = "wss://temp.iris.to";
 pub const MAX_NOSTR_JOIN_APPROVAL_AGE_SECS: u64 = 7 * 24 * 60 * 60;
 pub const MAX_NOSTR_JOIN_APPROVAL_FUTURE_SECS: u64 = 10 * 60;
 
@@ -89,6 +91,13 @@ impl PendingNostrJoinRequest {
                 "pending join request must use a separate ephemeral request key"
             ));
         }
+        let relays = nostr_identity_device_approval_request_relays(&self.request)
+            .map_err(|error| anyhow!("pending join request approval relay is invalid: {error}"))?;
+        if relays.as_slice() != [NOSTR_VPN_JOIN_APPROVAL_RELAY] {
+            return Err(anyhow!(
+                "pending join request must use the Nostr VPN approval relay"
+            ));
+        }
         self.request_keys()?;
         Ok(())
     }
@@ -104,8 +113,14 @@ impl AppConfig {
         let device_keys = self.nostr_keys()?;
         let device_pubkey = device_keys.public_key().to_hex();
         if let Some(pending) = &self.pending_nostr_join_request {
-            pending.validate_for_device(&device_pubkey)?;
-            return Ok(false);
+            let relays = nostr_identity_device_approval_request_relays(&pending.request).map_err(
+                |error| anyhow!("pending join request approval relay is invalid: {error}"),
+            )?;
+            if !relays.is_empty() {
+                pending.validate_for_device(&device_pubkey)?;
+                return Ok(false);
+            }
+            self.pending_nostr_join_request = None;
         }
         let requested_at =
             i64::try_from(requested_at).context("pending join request timestamp overflows i64")?;
@@ -117,7 +132,12 @@ impl AppConfig {
                 request_secret: None,
                 requested_at,
                 request_type: Some(NOSTR_VPN_JOIN_REQUEST_TYPE.to_string()),
-                resources: Vec::new(),
+                resources: vec![
+                    nostr_identity_device_approval_relay_resource(NOSTR_VPN_JOIN_APPROVAL_RELAY)
+                        .map_err(|error| {
+                            anyhow!("failed to build join approval relay resource: {error}")
+                        })?,
+                ],
                 expires_at: None,
                 profile_id: self.nostr.identity_profile_id,
                 admin_app_key_pubkey: None,

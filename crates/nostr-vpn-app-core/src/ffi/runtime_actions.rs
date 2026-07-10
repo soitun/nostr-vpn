@@ -59,6 +59,7 @@ impl NativeAppRuntime {
                 self.invalidate_service_status();
                 self.recover_from_startup_error()?;
                 self.refresh_service_status()?;
+                self.arm_daemon_status_grace();
                 // Refresh the daemon state after the service swap before
                 // deciding whether to reconnect. Otherwise stale pre-bootout
                 // `vpn_active` can make us skip the restore and the next UI
@@ -93,7 +94,9 @@ impl NativeAppRuntime {
                 ])?;
                 ensure_success("nvpn service enable", &output)?;
                 self.invalidate_service_status();
-                self.refresh_service_status()
+                self.refresh_service_status()?;
+                self.arm_daemon_status_grace();
+                Ok(())
             }
             NativeAppAction::DisableSystemService => {
                 let output = self.run_nvpn_service_action([
@@ -402,7 +405,7 @@ impl NativeAppRuntime {
             &parsed.approval_request,
             unix_timestamp(),
         )?;
-        self.publish_join_request_approval_events(&prepared.events)?;
+        self.publish_join_request_approval_events(&parsed.approval_request, &prepared.events)?;
         self.config = prepared.updated_config;
         self.save_reload_and_refresh()?;
         if !self.vpn_enabled {
@@ -413,20 +416,29 @@ impl NativeAppRuntime {
 
     #[cfg(test)]
     #[allow(clippy::unnecessary_wraps)]
-    fn publish_join_request_approval_events(&mut self, events: &[Event]) -> Result<()> {
+    fn publish_join_request_approval_events(
+        &mut self,
+        _request: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalRequest,
+        events: &[Event],
+    ) -> Result<()> {
         self.published_join_approval_events
             .extend(events.iter().cloned());
         Ok(())
     }
 
     #[cfg(not(test))]
-    fn publish_join_request_approval_events(&self, events: &[Event]) -> Result<()> {
+    fn publish_join_request_approval_events(
+        &self,
+        request: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalRequest,
+        events: &[Event],
+    ) -> Result<()> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .context("failed to start join request approval publisher")?;
         runtime.block_on(crate::join_approval::publish_join_approval_events(
             &self.config,
+            request,
             events,
         ))
     }

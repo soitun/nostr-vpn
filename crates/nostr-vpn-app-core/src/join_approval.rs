@@ -1,12 +1,15 @@
 use anyhow::{Context, Result, anyhow};
+use futures::future::join_all;
 use nostr_identity::{
     ApproveNostrIdentityDeviceApprovalRequestOptions, NostrIdentityCapabilities,
-    approve_nostr_identity_device_approval_request, parse_nostr_identity_roster_op_event,
+    approve_nostr_identity_device_approval_request, nostr_identity_device_approval_request_relays,
+    parse_nostr_identity_roster_op_event,
 };
+use nostr_pubsub::{EventBus, EventSource, VerifiedEvent};
+use nostr_pubsub_relay::RelayEventBus;
 use nostr_sdk::prelude::{Client, Event, JsonUtil};
 use nostr_vpn_core::config::{
-    AppConfig, SharedNetworkRoster, normalize_nostr_pubkey, normalize_relay_urls,
-    normalize_runtime_network_id,
+    AppConfig, SharedNetworkRoster, normalize_nostr_pubkey, normalize_runtime_network_id,
 };
 use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::{
@@ -114,7 +117,13 @@ pub fn prepare_join_approval(
         .map(|event| event.id.to_hex());
     let exit_node_pubkey = normalize_nostr_pubkey(&updated_config.exit_node)
         .ok()
-        .filter(|exit| shared.devices.contains(exit) || shared.admins.contains(exit));
+        .filter(|exit| shared.devices.contains(exit) || shared.admins.contains(exit))
+        .or_else(|| {
+            (updated_config.node.advertise_exit_node
+                && (shared.devices.contains(&signer_pubkey)
+                    || shared.admins.contains(&signer_pubkey)))
+            .then(|| signer_pubkey.clone())
+        });
     let context_event = build_nostr_vpn_join_approval_context_event(
         &signer_keys,
         NostrVpnJoinApprovalContextRequest {
@@ -210,48 +219,56 @@ pub fn apply_join_approval_events(
     config.apply_nostr_join_approval_events(events, now)
 }
 
-pub async fn publish_join_approval_events(config: &AppConfig, events: &[Event]) -> Result<()> {
-    let relays = join_approval_relays(config);
-    if relays.is_empty() {
-        return Err(anyhow!(
-            "no Nostr relays configured for join request approval receipt publishing"
-        ));
-    }
+pub async fn publish_join_approval_events(
+    config: &AppConfig,
+    request: &NostrIdentityDeviceApprovalRequest,
+    events: &[Event],
+) -> Result<()> {
+    let relays = join_approval_relays(request)?;
     let client = Client::new(config.nostr_keys()?);
-    for relay in &relays {
-        client
-            .add_relay(relay)
-            .await
-            .map_err(|error| anyhow!("failed to add Nostr relay {relay}: {error}"))?;
-    }
-    client.connect().await;
-    for event in events {
-        let output = client
-            .send_event_to(relays.clone(), event)
-            .await
+    let provider = RelayEventBus::with_client(client, relays, std::time::Duration::from_secs(10))
+        .await
+        .map_err(|error| anyhow!("failed to initialize join approval pubsub provider: {error}"))?;
+    let events = events
+        .iter()
+        .cloned()
+        .map(VerifiedEvent::try_from)
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("join request approval event failed signature verification")?;
+    let publishes = events
+        .into_iter()
+        .map(|event| provider.publish(event, EventSource::local_index("nostr-vpn-join-approval")));
+    let reports =
+        tokio::time::timeout(std::time::Duration::from_secs(30), join_all(publishes)).await;
+    provider.client().disconnect().await;
+    let reports = reports.context("join request approval pubsub batch timed out")?;
+    for report in reports {
+        let report = report
             .map_err(|error| anyhow!("failed to publish join request approval event: {error}"))?;
-        if output.success.is_empty() {
-            client.disconnect().await;
+        if !report.accepted {
             return Err(anyhow!(
-                "join request approval event was not accepted by any relay"
+                "join request approval pubsub provider rejected a verified event"
             ));
         }
     }
-    client.disconnect().await;
     Ok(())
 }
 
-fn join_approval_relays(config: &AppConfig) -> Vec<String> {
-    let disabled = normalize_relay_urls(config.nostr.disabled_relays.clone());
-    normalize_relay_urls(config.nostr.relays.clone())
-        .into_iter()
-        .filter(|relay| !disabled.contains(relay))
-        .collect()
+fn join_approval_relays(request: &NostrIdentityDeviceApprovalRequest) -> Result<Vec<String>> {
+    let relays = nostr_identity_device_approval_request_relays(request)
+        .map_err(|error| anyhow!("invalid join request approval relay: {error}"))?;
+    if relays.len() != 1 {
+        return Err(anyhow!("join request must name exactly one approval relay"));
+    }
+    Ok(relays)
 }
 
 #[cfg(test)]
 mod tests {
-    use nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_CLIENT_NONCE_PREFIX;
+    use nostr_identity::{
+        NOSTR_IDENTITY_DEVICE_APPROVAL_CLIENT_NONCE_PREFIX,
+        nostr_identity_device_approval_relay_resource,
+    };
     use nostr_sdk::prelude::Keys;
     use nostr_vpn_core::identity_bridge::{
         CreateNostrIdentityDeviceApprovalRequestOptions,
@@ -329,6 +346,33 @@ mod tests {
         assert_eq!(joiner.exit_node, exit_keys.public_key().to_hex());
     }
 
+    #[test]
+    fn advertising_admin_is_joiner_exit_when_no_upstream_is_selected() {
+        let requested_at = 1_778_998_000;
+        let mut joiner = AppConfig::generated_without_networks();
+        joiner
+            .ensure_pending_nostr_join_request(requested_at)
+            .expect("pending request");
+        let request = joiner
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("pending request")
+            .request
+            .clone();
+        let (mut admin, network_id) = approval_admin();
+        admin.node.advertise_exit_node = true;
+        admin.exit_node.clear();
+        let admin_pubkey = admin.own_nostr_pubkey_hex().expect("admin pubkey");
+
+        let prepared = prepare_join_approval(&admin, &network_id, &request, requested_at + 30)
+            .expect("prepare approval");
+        apply_join_approval_events(&mut joiner, &prepared.events, requested_at + 31)
+            .expect("apply approval")
+            .expect("approval detected");
+
+        assert_eq!(joiner.exit_node, admin_pubkey);
+    }
+
     fn approval_admin() -> (AppConfig, String) {
         let admin_keys = Keys::generate();
         let mut admin = AppConfig::generated();
@@ -355,7 +399,12 @@ mod tests {
                 request_secret: None,
                 requested_at: 100,
                 request_type: request_type.map(str::to_string),
-                resources: Vec::new(),
+                resources: vec![
+                    nostr_identity_device_approval_relay_resource(
+                        nostr_vpn_core::join_requests::NOSTR_VPN_JOIN_APPROVAL_RELAY,
+                    )
+                    .expect("approval relay resource"),
+                ],
                 expires_at,
                 profile_id: None,
                 admin_app_key_pubkey: None,
@@ -415,17 +464,13 @@ mod tests {
     }
 
     #[test]
-    fn approval_publisher_excludes_disabled_relays() {
-        let mut config = AppConfig::generated();
-        config.nostr.relays = vec![
-            "wss://one.example".to_string(),
-            "wss://two.example".to_string(),
-        ];
-        config.nostr.disabled_relays = vec!["wss://one.example".to_string()];
-
+    fn approval_publisher_requires_the_signed_request_relay() {
+        let mut request = signed_request(Some(NOSTR_VPN_JOIN_REQUEST_TYPE), None, false);
         assert_eq!(
-            join_approval_relays(&config),
-            vec!["wss://two.example".to_string()]
+            join_approval_relays(&request).expect("signed request relay"),
+            vec![nostr_vpn_core::join_requests::NOSTR_VPN_JOIN_APPROVAL_RELAY.to_string()]
         );
+        request.resources.clear();
+        assert!(join_approval_relays(&request).is_err());
     }
 }

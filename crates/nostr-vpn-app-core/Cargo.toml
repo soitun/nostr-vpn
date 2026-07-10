@@ -23,9 +23,12 @@ dirs.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 fips-core.workspace = true
 fips-endpoint.workspace = true
+futures.workspace = true
 netdev.workspace = true
 nostr-sdk.workspace = true
 nostr-identity.workspace = true
+nostr-pubsub.workspace = true
+nostr-pubsub-relay.workspace = true
 nostr-vpn-core = { workspace = true, features = ["updater"] }
 qrcode = { version = "0.14", default-features = false }
 rqrr = "0.10"
