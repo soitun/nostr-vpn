@@ -215,7 +215,7 @@ fn cleanup(participant: Option<&(String, String)>, restore: &HostRestore) -> Har
     }))
 }
 
-fn prepare_host_config(restore: &HostRestore) -> HarnessResult<()> {
+fn prepare_host_config(restore: &HostRestore) -> HarnessResult<String> {
     write_restore_journal(restore)?;
     let mut config = AppConfig::load(&restore.config_path)
         .map_err(|_| HarnessError::new("preflight", "config-load-failed"))?;
@@ -233,13 +233,14 @@ fn prepare_host_config(restore: &HostRestore) -> HarnessResult<()> {
             .map_err(|_| HarnessError::new("preflight", "temporary-network-enable-failed"))?;
     }
     config.node.advertise_exit_node = true;
+    config.exit_node.clear();
     config
         .save(&restore.config_path)
         .map_err(|_| HarnessError::new("preflight", "config-save-failed"))?;
     if !reload_daemon(restore) {
         return Err(HarnessError::new("preflight", "daemon-reload-failed"));
     }
-    Ok(())
+    Ok(own_pubkey)
 }
 
 fn sanitized_import_error(error: &str) -> &'static str {
@@ -287,8 +288,12 @@ fn run_prepared_session(
     app: &FfiApp,
     before: &NativeAppState,
     restore: &HostRestore,
+    exit_node: &str,
 ) -> HarnessResult<()> {
-    emit_status(&json!({ "status": "ready" }))?;
+    emit_status(&json!({
+        "status": "ready",
+        "exitNode": exit_node,
+    }))?;
 
     let stdin = io::stdin();
     let mut input = stdin.lock();
@@ -321,6 +326,7 @@ fn run_prepared_session(
     emit_status(&json!({
         "status": "imported",
         "participantAdded": true,
+        "exitNode": exit_node,
     }))?;
 
     match read_command(&mut input)? {
@@ -353,10 +359,13 @@ fn run() -> HarnessResult<()> {
         return Err(HarnessError::new("startup", "ffi-app-startup-failed"));
     }
     drop(initial_app);
-    if let Err(error) = prepare_host_config(&restore) {
-        let _ = restore_host(&restore);
-        return Err(error);
-    }
+    let expected_exit = match prepare_host_config(&restore) {
+        Ok(expected_exit) => expected_exit,
+        Err(error) => {
+            let _ = restore_host(&restore);
+            return Err(error);
+        }
+    };
     let app = FfiApp::new_with_config_path(
         args.config_path,
         env!("CARGO_PKG_VERSION").to_string(),
@@ -375,7 +384,7 @@ fn run() -> HarnessResult<()> {
             "active-admin-network-required",
         ));
     }
-    match run_prepared_session(&app, &before, &restore) {
+    match run_prepared_session(&app, &before, &restore, &expected_exit) {
         Ok(()) => Ok(()),
         Err(error) => {
             let _ = restore_host(&restore);
