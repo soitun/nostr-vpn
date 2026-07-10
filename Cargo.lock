@@ -602,7 +602,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.5.1",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -2093,7 +2093,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.82"
+version = "0.3.83"
 dependencies = [
  "bluer",
  "bytes",
@@ -3751,6 +3751,8 @@ dependencies = [
 [[package]]
 name = "nostr-pubsub"
 version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e65526f2dfdcf7fe14d8bf81c15357cb17e3dbc5ed9d1239a0608cc50645d091"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3762,6 +3764,8 @@ dependencies = [
 [[package]]
 name = "nostr-pubsub-fips"
 version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76a24d88fb04ccd3ed2566468976d5a7bd9b747f4451f038639fa8c5fc006f72"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -3787,6 +3791,8 @@ dependencies = [
 [[package]]
 name = "nostr-pubsub-social-graph"
 version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f09913726850c0a2759c0fe2cd833821ca5899c8b58ae7101c95b7e29bbb931"
 dependencies = [
  "async-trait",
  "nostr",
