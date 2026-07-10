@@ -20,16 +20,14 @@ COPY --from=fips . /app/fips
 
 ARG NVPN_PATCH_LOCAL_FIPS=0
 
-# CI gates the published FIPS crates pinned by Cargo.lock. Developers can set
-# NVPN_PATCH_LOCAL_FIPS=1 and NVPN_FIPS_REPO_PATH=../fips to exercise a sibling
-# FIPS checkout against these docker e2es.
+# Cargo already resolves the workspace's sibling FIPS paths through /app/fips.
+# The flag validates an explicitly selected local context and records provenance.
 RUN case "$NVPN_PATCH_LOCAL_FIPS" in \
         1|true|TRUE|True|yes|YES|Yes|on|ON|On) \
           test -f /app/fips/crates/fips-core/Cargo.toml \
             && test -f /app/fips/crates/fips-endpoint/Cargo.toml \
             && test -f /app/fips/crates/fips-identity/Cargo.toml \
             || { echo "NVPN_PATCH_LOCAL_FIPS=1 requires NVPN_FIPS_REPO_PATH to point at a fips checkout" >&2; exit 1; }; \
-          printf '\n[patch.crates-io]\nfips-core = { path = "/app/fips/crates/fips-core" }\nfips-endpoint = { path = "/app/fips/crates/fips-endpoint" }\nfips-identity = { path = "/app/fips/crates/fips-identity" }\n' >> Cargo.toml; \
           ;; \
       esac
 
