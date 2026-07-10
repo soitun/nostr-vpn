@@ -22,7 +22,6 @@ struct FipsDirectEndpointRxCursor {
 #[derive(Default)]
 struct FipsDirectEndpointQueueState {
     batches: VecDeque<FipsDirectEndpointQueuedRuns>,
-    waiting_consumer: bool,
     interrupt_pending: bool,
 }
 
@@ -32,15 +31,6 @@ struct FipsDirectEndpointQueuedRuns {
     packets: usize,
     source_node_addr: Option<[u8; 16]>,
     enqueued_at: Option<Instant>,
-    arrival: DirectEndpointQueueArrival,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-#[derive(Clone, Copy)]
-enum DirectEndpointQueueArrival {
-    ConsumerBusy,
-    Backlog,
-    Wake,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -66,7 +56,6 @@ impl FipsDirectEndpointQueuedRuns {
             packets,
             source_node_addr,
             enqueued_at,
-            arrival: DirectEndpointQueueArrival::ConsumerBusy,
         }
     }
 }
@@ -94,7 +83,7 @@ impl FipsDirectEndpointQueue {
         &self,
         runs: Vec<FipsEndpointDirectPacketRun>,
     ) -> Result<(), FipsEndpointDirectDeliveryError> {
-        let mut queued =
+        let queued =
             FipsDirectEndpointQueuedRuns::with_enqueued_at(runs, crate::pipeline_profile::stamp());
         if queued.packets == 0 {
             return Ok(());
@@ -103,20 +92,12 @@ impl FipsDirectEndpointQueue {
             .state
             .lock()
             .map_err(|_| FipsEndpointDirectDeliveryError::Unavailable)?;
-        let wake_consumer = state.waiting_consumer;
-        queued.arrival = if wake_consumer {
-            DirectEndpointQueueArrival::Wake
-        } else if state.batches.is_empty() {
-            DirectEndpointQueueArrival::ConsumerBusy
-        } else {
-            DirectEndpointQueueArrival::Backlog
-        };
+        let wake_consumer = state.batches.is_empty();
         let queue_depth = state.batches.len().saturating_add(1);
         crate::pipeline_profile::record_direct_endpoint_sink_batch(
             queued.runs.len(),
             queued.packets,
             queue_depth,
-            matches!(queued.arrival, DirectEndpointQueueArrival::Wake),
         );
         state.batches.push_back(queued);
         if wake_consumer {
@@ -157,7 +138,6 @@ impl FipsDirectEndpointRxCursor {
             .lock()
             .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)?;
         if state.batches.is_empty() {
-            state.waiting_consumer = true;
             let (next_state, wait) = self
                 .queue
                 .ready
@@ -166,7 +146,6 @@ impl FipsDirectEndpointRxCursor {
                 })
                 .map_err(|_| std::sync::mpsc::RecvTimeoutError::Disconnected)?;
             state = next_state;
-            state.waiting_consumer = false;
             let interrupted = std::mem::take(&mut state.interrupt_pending);
             if interrupted && state.batches.is_empty() {
                 return Err(std::sync::mpsc::RecvTimeoutError::Timeout);
@@ -223,7 +202,7 @@ impl Drop for FipsDirectEndpointRxCursor {
             return;
         };
         if let Ok(mut state) = self.queue.state.lock() {
-            let wake_consumer = state.waiting_consumer;
+            let wake_consumer = state.batches.is_empty();
             state.batches.push_front(pending);
             if wake_consumer {
                 self.queue.ready.notify_one();
@@ -303,12 +282,9 @@ fn limit_queued_direct_endpoint_runs_to_remaining(
                 packets: packet_count.saturating_sub(remaining),
                 source_node_addr: Some(source_node_addr),
                 enqueued_at,
-                arrival: DirectEndpointQueueArrival::Backlog,
             }
         } else {
-            let mut tail_queued = FipsDirectEndpointQueuedRuns::with_enqueued_at(tail, enqueued_at);
-            tail_queued.arrival = DirectEndpointQueueArrival::Backlog;
-            tail_queued
+            FipsDirectEndpointQueuedRuns::with_enqueued_at(tail, enqueued_at)
         };
         crate::pipeline_profile::record_direct_endpoint_rx_limit_split(tail_queued.packets);
         return Some(tail_queued);
@@ -320,19 +296,6 @@ fn limit_queued_direct_endpoint_runs_to_remaining(
 fn record_direct_endpoint_queue_residence(queued: &FipsDirectEndpointQueuedRuns) {
     crate::pipeline_profile::record_since(
         crate::pipeline_profile::Stage::DirectEndpointQueue,
-        queued.enqueued_at,
-    );
-    let stage = match queued.arrival {
-        DirectEndpointQueueArrival::Wake => crate::pipeline_profile::Stage::DirectEndpointWake,
-        DirectEndpointQueueArrival::Backlog => {
-            crate::pipeline_profile::Stage::DirectEndpointBacklog
-        }
-        DirectEndpointQueueArrival::ConsumerBusy => {
-            crate::pipeline_profile::Stage::DirectEndpointConsumerBusy
-        }
-    };
-    crate::pipeline_profile::record_since(
-        stage,
         queued.enqueued_at,
     );
 }
