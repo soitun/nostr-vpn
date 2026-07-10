@@ -602,7 +602,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.5.1",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -3722,6 +3722,8 @@ dependencies = [
 [[package]]
 name = "nostr-identity"
 version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "848aac810edafec01cd47650e31bfe920129a9d1422df0385cca286625caeed4"
 dependencies = [
  "anyhow",
  "nostr-sdk",
@@ -3734,6 +3736,8 @@ dependencies = [
 [[package]]
 name = "nostr-pubsub"
 version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e84e743336b85f08dcbbb63267f99b8960a0f04cf368d3fafeddefe41a650813"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3758,6 +3762,8 @@ dependencies = [
 [[package]]
 name = "nostr-pubsub-social-graph"
 version = "0.1.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d475aa6195a513fb335de608a6865b86795a457307cd324632446911bd3e2e9"
 dependencies = [
  "async-trait",
  "nostr-pubsub",
@@ -3801,6 +3807,8 @@ dependencies = [
 [[package]]
 name = "nostr-social-graph"
 version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3def488182531ba154e47a6bc88a9c4a0dbc2051c3ecbcddf3d584b442178148"
 dependencies = [
  "hex",
  "indexmap 2.14.0",
@@ -3812,6 +3820,8 @@ dependencies = [
 [[package]]
 name = "nostr-social-memory"
 version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0a51c186658b0602aebc9566ee405adfcc1c92d082c697543d0b50358da7f0f"
 dependencies = [
  "anyhow",
  "chrono",
