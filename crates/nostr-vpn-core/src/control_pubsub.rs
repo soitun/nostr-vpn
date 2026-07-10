@@ -129,4 +129,12 @@ impl ControlPubsubMesh {
     ) -> Result<Vec<ControlPubsubAction>> {
         self.inner.receive(source_peer, message, peers, now_ms)
     }
+
+    pub fn record_invalid_peer_message(&mut self, peer_id: &str) {
+        self.inner.record_invalid_message(peer_id);
+    }
+
+    pub fn dismiss_peer_frame(&mut self, peer_id: &str, event_id: &str) {
+        self.inner.dismiss_frame(peer_id, event_id);
+    }
 }

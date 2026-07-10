@@ -59,13 +59,21 @@ async fn paid_exit_publish_queues_for_p2p_when_no_relays_are_configured() {
 #[tokio::test]
 async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
     use nostr_sdk::prelude::{EventBuilder, Kind};
+    use nostr_social_graph::Rating;
+    use nostr_social_memory::RatingEventExt;
     use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 
+    let endpoint_keys = Keys::generate();
+    let blocked_author = Keys::generate();
     let relay_event = EventBuilder::new(Kind::Custom(37_195), "relay advert")
         .sign_with_keys(&Keys::generate())
         .expect("signed relay event");
+    let blocked_relay_event = EventBuilder::new(Kind::Custom(37_195), "blocked relay advert")
+        .sign_with_keys(&blocked_author)
+        .expect("signed blocked relay event");
     let relay = LocalNostrRelay::spawn_with_events(vec![
         serde_json::to_value(&relay_event).expect("relay event JSON"),
+        serde_json::to_value(&blocked_relay_event).expect("blocked relay event JSON"),
     ])
     .await;
     let nonce = std::time::SystemTime::now()
@@ -74,8 +82,39 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
         .as_nanos();
     let directory = std::env::temp_dir().join(format!("nvpn-control-relay-{nonce}"));
     let config_path = directory.join("config.toml");
+    let mut rating = Rating::new(
+        endpoint_keys.public_key().to_hex(),
+        blocked_author.public_key().to_hex(),
+        0,
+        0,
+        100,
+    );
+    rating.scope = Some("fips.peer".to_string());
+    rating.created_at = 1;
+    rating.sample_count = Some(1);
+    let blocked_author_rating = rating
+        .to_event(&endpoint_keys)
+        .expect("signed blocked-author rating");
+    let store_path = crate::control_pubsub_runtime::control_pubsub_store_file_path(&config_path);
+    std::fs::create_dir_all(store_path.parent().expect("store parent"))
+        .expect("create control pubsub store parent");
+    std::fs::write(
+        &store_path,
+        serde_json::to_vec(&serde_json::json!({
+            "version": 1,
+            "events": [blocked_author_rating],
+        }))
+        .expect("encode seeded reputation store"),
+    )
+    .expect("seed control pubsub reputation store");
     let endpoint = Arc::new(
         fips_core::FipsEndpoint::builder()
+            .identity_nsec(
+                endpoint_keys
+                    .secret_key()
+                    .to_bech32()
+                    .expect("endpoint nsec"),
+            )
             .without_system_tun()
             .bind()
             .await
@@ -88,7 +127,7 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
             ..NostrPubsubConfig::default()
         },
         vec![relay.url.clone()],
-        Some(crate::control_pubsub_runtime::control_pubsub_store_file_path(&config_path)),
+        Some(store_path),
     )
     .await
     .expect("start control relay bridge")
@@ -109,6 +148,15 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
     })
     .await
     .expect("relay event reaches the control pubsub cache");
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    assert!(
+        runtime
+            .events()
+            .await
+            .iter()
+            .all(|event| event.id != blocked_relay_event.id),
+        "known-bad relay author must be filtered before cache and mesh fanout"
+    );
 
     let mesh_event = EventBuilder::new(Kind::Custom(7_368), "mesh rating")
         .sign_with_keys(&Keys::generate())

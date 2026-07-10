@@ -52,14 +52,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip44", "nip59"] }
-nostr-pubsub = "0.1.5"
-nostr-pubsub-social-graph = "0.1.5"
+nostr-pubsub = { version = "0.1.6", path = "../nostr-pubsub/crates/nostr-pubsub" }
+nostr-pubsub-fips = { version = "0.1.6", path = "../nostr-pubsub/crates/nostr-pubsub-fips" }
+nostr-pubsub-social-graph = { version = "0.1.6", path = "../nostr-pubsub/crates/nostr-pubsub-social-graph" }
 nostr-pubsub-relay = "0.1.4"
 nostr-social-graph = "0.1.2"
 nostr-social-memory = "0.1.1"
 nostr-identity = "0.2.0"
 nostr-vpn-core = { version = "4.0.40", path = "crates/nostr-vpn-core" }
 nostr-vpn-wintun = { version = "4.0.40", path = "crates/nostr-vpn-wintun" }
+
+[patch.crates-io]
+nostr-pubsub = { path = "../nostr-pubsub/crates/nostr-pubsub" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
