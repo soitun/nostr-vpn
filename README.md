@@ -124,6 +124,21 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+Per-change core/contract verification:
+
+```bash
+just verify-fast
+```
+
+Managed native preflight and the nightly/release five-platform matrix:
+
+```bash
+just verify-health
+just verify-full
+```
+
+See [verification tiers and managed native lab](docs/verification-tiers.md).
+
 Release gate before version bumps and tags:
 
 ```bash

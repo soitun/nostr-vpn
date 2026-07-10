@@ -59,6 +59,9 @@ info:
     @echo "  just dataplane-host-pair-comparison-dry-run"
     @echo "  just dataplane-host-pair-comparison"
     @echo "  just release-gate"
+    @echo "  just verify-fast"
+    @echo "  just verify-health"
+    @echo "  just verify-full"
     @echo "  just security-regressions"
     @echo "  just e2e"
     @echo "  just e2e-connect"
@@ -216,6 +219,15 @@ dataplane-host-pair-comparison:
 
 release-gate:
     ./scripts/release-gate.sh
+
+verify-fast:
+    ./scripts/verify.sh fast
+
+verify-health:
+    ./scripts/verify.sh health
+
+verify-full:
+    ./scripts/verify.sh full
 
 security-regressions:
     cargo test -p nvpn platform_routing

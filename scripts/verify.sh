@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+usage() {
+  cat >&2 <<'EOF'
+usage: scripts/verify.sh fast|full|health
+
+fast   Per-change Rust/core/contract checks without native GUI or devices.
+full   Fast checks plus the reserved five-platform and physical-device matrix.
+health Preflight the full matrix without running tests.
+EOF
+}
+
+run_fast() {
+  python3 scripts/test-native-lab.py
+  node scripts/sync-versions.mjs --check
+  cargo fmt --check
+  cargo clippy --workspace --all-targets -- -D warnings
+  scripts/test-dataplane-safety-fast.sh nvpn app-state
+  scripts/mobile-test-kit.sh rust
+  scripts/test-mobile-platform-tools.sh
+  if [[ "${NVPN_VERIFY_FAST_WORKSPACE:-0}" == "1" ]]; then
+    cargo test --workspace
+  fi
+}
+
+build_health_args() {
+  HEALTH_ARGS=(
+    --health local:macos
+    --health command:xcrun
+    --health command:xcodebuild
+    --health command:adb
+    --health docker:daemon
+    --health command:ssh
+    --health env:NVPN_WINDOWS_SSH_HOST
+    --health "ios-simulator:${NVPN_LAB_IOS_SIMULATOR:-auto}"
+    --health "ios-device:${NVPN_LAB_IOS_DEVICE:-auto}"
+    --health "android:${NVPN_LAB_ANDROID_SERIAL:-auto}"
+  )
+  if [[ -n "${NVPN_WINDOWS_SSH_HOST:-}" ]]; then
+    HEALTH_ARGS+=(--health "ssh:${NVPN_WINDOWS_SSH_HOST}")
+  fi
+  ALLOCATION_ARGS=(
+    --allocation-env ios-simulator=NVPN_LAB_ALLOCATED_IOS_SIMULATOR
+    --allocation-env ios-device=NVPN_LAB_ALLOCATED_IOS_DEVICE
+    --allocation-env android=NVPN_LAB_ALLOCATED_ANDROID
+  )
+}
+
+run_full() {
+  build_health_args
+  result="${NVPN_VERIFY_RESULT:-$ROOT/artifacts/verification/full-native-result.json}"
+  python3 scripts/native-lab.py run \
+    --resource nostr-vpn-five-platform-native-matrix \
+    --result "$result" \
+    "${HEALTH_ARGS[@]}" \
+    "${ALLOCATION_ARGS[@]}" \
+    -- scripts/verify-full-native.sh
+}
+
+case "${1:-}" in
+  fast)
+    run_fast
+    ;;
+  full)
+    if [[ "${NVPN_VERIFY_SKIP_FAST:-0}" != "1" ]]; then
+      run_fast
+    fi
+    run_full
+    ;;
+  health)
+    build_health_args
+    python3 scripts/native-lab.py health "${HEALTH_ARGS[@]}"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
