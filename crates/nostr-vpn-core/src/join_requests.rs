@@ -408,6 +408,19 @@ fn verify_nostr_join_approval_pair(
     let signed_roster_event = Event::from_json(&context.context.signed_network_roster_event)
         .context("invalid approved network roster event JSON")?;
     let signed_roster = SignedRoster::from_event(signed_roster_event)?;
+    let roster = signed_roster.roster()?;
+    let approved_device = normalize_nostr_pubkey(&context.context.device_app_key_pubkey)?;
+    if !roster
+        .devices
+        .iter()
+        .chain(roster.admins.iter())
+        .filter_map(|member| normalize_nostr_pubkey(member).ok())
+        .any(|member| member == approved_device)
+    {
+        return Err(anyhow!(
+            "Nostr join approval signed roster does not contain the approved device AppKey"
+        ));
+    }
     Ok(VerifiedNostrJoinApproval {
         context: context.context.clone(),
         signed_roster,

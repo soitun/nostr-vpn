@@ -218,11 +218,10 @@ fn validate_approved_config(app: &AppConfig) -> Result<()> {
     let network = app
         .active_network_opt()
         .ok_or_else(|| anyhow!("WebVM guest has not been approved"))?;
-    let own_pubkey = app.own_nostr_pubkey_hex()?;
     let devices = app.participant_pubkeys_hex();
-    if !devices.iter().any(|device| device == &own_pubkey) {
+    if network.shared_roster_updated_at == 0 || network.shared_roster_signed_by.is_empty() {
         return Err(anyhow!(
-            "approved WebVM roster does not contain this device AppKey"
+            "approved WebVM config does not contain a verified signed roster"
         ));
     }
     if app.exit_node.is_empty() {
@@ -688,11 +687,14 @@ mod tests {
         let own_pubkey = app.own_nostr_pubkey_hex().expect("own AppKey");
         let exit_pubkey = Keys::generate().public_key().to_hex();
         app.networks[0].enabled = true;
-        app.networks[0].devices = vec![own_pubkey.clone(), exit_pubkey.clone()];
+        app.networks[0].devices = vec![exit_pubkey.clone()];
         app.networks[0].admins = vec![own_pubkey.clone()];
+        app.networks[0].shared_roster_updated_at = 1;
+        app.networks[0].shared_roster_signed_by = own_pubkey.clone();
         app.exit_node = exit_pubkey;
         app.ensure_defaults();
 
+        assert!(!app.participant_pubkeys_hex().contains(&own_pubkey));
         validate_approved_config(&app).expect("rostered Nostr VPN exit");
         app.exit_node = Keys::generate().public_key().to_hex();
         assert!(
