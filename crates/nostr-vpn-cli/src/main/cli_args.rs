@@ -111,6 +111,8 @@ enum Command {
     Ip(IpArgs),
     /// Resolve a node/tunnel IP to peer metadata.
     Whois(WhoisArgs),
+    /// Queue signed Nostr control events for publication over FIPS pubsub.
+    Pubsub(PubsubArgs),
     /// Probe a WireGuard upstream config (Mullvad/Proton-style) by running
     /// the userspace WG state machine against it and reporting whether
     /// the handshake completes. Without --replace-default or --scoped-host,
@@ -668,6 +670,29 @@ struct WhoisArgs {
     devices: Vec<String>,
     #[arg(long, hide = true, default_value_t = 2)]
     discover_secs: u64,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct PubsubArgs {
+    #[command(subcommand)]
+    command: PubsubCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum PubsubCommand {
+    /// Queue one signed kind 37195, 37196, or 7368 event JSON file.
+    Publish(PubsubPublishArgs),
+}
+
+#[derive(Debug, Args)]
+struct PubsubPublishArgs {
+    /// Signed Nostr event JSON file.
+    #[arg(long)]
+    event: PathBuf,
+    #[arg(long)]
+    config: Option<PathBuf>,
     #[arg(long)]
     json: bool,
 }

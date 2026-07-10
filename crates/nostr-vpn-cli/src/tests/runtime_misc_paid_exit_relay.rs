@@ -10,6 +10,53 @@ use tokio_tungstenite::tungstenite::Message;
 
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
+async fn paid_exit_publish_queues_for_p2p_when_no_relays_are_configured() {
+    use nostr_vpn_core::config::NostrPubsubMode;
+    use nostr_vpn_core::paid_routes::PaidRouteMeter;
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("nvpn-paid-exit-p2p-{nonce}"));
+    let config_path = directory.join("config.toml");
+    let mut app = AppConfig::generated();
+    app.nostr.relays.clear();
+    app.nostr.pubsub.mode = NostrPubsubMode::Client;
+    app.paid_exit.enabled = true;
+    app.paid_exit.pricing.meter = PaidRouteMeter::Bytes;
+    app.paid_exit.pricing.price_msat = 100;
+    app.paid_exit.pricing.per_units = 1_000_000;
+    app.paid_exit.channel.accepted_mints = vec!["https://mint.example".to_string()];
+    app.paid_exit.normalize();
+    let signed = signed_paid_exit_offer_from_config(
+        "relayless-exit",
+        &app.nostr_keys().expect("app keys"),
+        &app.paid_exit,
+        Some(local_paid_exit_quality_hint()),
+        unix_timestamp(),
+    )
+    .expect("signed paid exit offer");
+
+    let output = publish_paid_exit_offer_hybrid(&app, &config_path, &signed, &[])
+        .await
+        .expect("queue relayless paid exit offer");
+
+    assert_eq!(output["p2p_enabled"].as_bool(), Some(true));
+    assert_eq!(output["p2p_queued"].as_bool(), Some(true));
+    assert_eq!(output["success_count"].as_u64(), Some(0));
+    let queued = std::fs::read_dir(
+        crate::control_pubsub_runtime::control_pubsub_outbox_directory(&config_path),
+    )
+    .expect("read control pubsub outbox")
+    .count();
+    assert_eq!(queued, 1);
+
+    let _ = std::fs::remove_dir_all(directory);
+}
+
+#[cfg(feature = "paid-exit")]
+#[tokio::test]
 async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
     use nostr_sdk::prelude::{EventBuilder, Kind};
     use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
@@ -21,6 +68,12 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
         serde_json::to_value(&relay_event).expect("relay event JSON"),
     ])
     .await;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("nvpn-control-relay-{nonce}"));
+    let config_path = directory.join("config.toml");
     let endpoint = Arc::new(
         fips_core::FipsEndpoint::builder()
             .without_system_tun()
@@ -35,7 +88,7 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
             ..NostrPubsubConfig::default()
         },
         vec![relay.url.clone()],
-        None,
+        Some(crate::control_pubsub_runtime::control_pubsub_store_file_path(&config_path)),
     )
     .await
     .expect("start control relay bridge")
@@ -61,10 +114,10 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
         .sign_with_keys(&Keys::generate())
         .expect("signed mesh event");
     let mesh_event_id = mesh_event.id.to_hex();
-    runtime
-        .publish(mesh_event.clone())
-        .await
-        .expect("publish mesh event through relay bridge");
+    assert!(
+        crate::control_pubsub_runtime::queue_control_pubsub_event(&config_path, &mesh_event)
+            .expect("queue mesh event through relay bridge")
+    );
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {
             if relay
@@ -83,6 +136,7 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
     runtime.stop().await;
     endpoint.shutdown().await.expect("shutdown FIPS endpoint");
     relay.stop().await;
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[cfg(feature = "paid-exit")]

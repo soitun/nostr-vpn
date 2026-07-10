@@ -14,8 +14,6 @@ use nostr_vpn_core::control_pubsub::{
     ControlPubsubOptions, FIPS_PEER_ADVERT_KIND, PAID_EXIT_OFFER_KIND, RATING_FACT_KIND,
 };
 use serde::{Deserialize, Serialize};
-#[cfg(test)]
-use tokio::sync::oneshot;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 
@@ -25,13 +23,10 @@ const COMMAND_CAPACITY: usize = 64;
 const RECEIVE_BATCH: usize = 64;
 const SEND_ATTEMPTS: usize = 4;
 const SEND_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
+const OUTBOX_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+const OUTBOX_BATCH: usize = 8;
 
 enum RuntimeCommand {
-    #[cfg(test)]
-    Publish {
-        event: Box<Event>,
-        response: oneshot::Sender<Result<()>>,
-    },
     Stop,
 }
 
@@ -166,11 +161,23 @@ impl ControlPubsubFipsRuntime {
             .await
             .context("failed to register the FIPS control pubsub service")?;
         let bridge = RelayBridge::start(config.mode, relays).await?;
+        let outbox_path = store_path
+            .as_deref()
+            .map(control_pubsub_outbox_directory_from_store_path);
         let events = Arc::new(Mutex::new(ControlEventStore::load(store_path)?));
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let task_events = Arc::clone(&events);
         let task = tokio::spawn(async move {
-            run(endpoint, receiver, config, bridge, task_events, command_rx).await;
+            run(
+                endpoint,
+                receiver,
+                config,
+                bridge,
+                task_events,
+                outbox_path,
+                command_rx,
+            )
+            .await;
         });
         Ok(Some(Self {
             command_tx,
@@ -178,21 +185,6 @@ impl ControlPubsubFipsRuntime {
             events,
             task,
         }))
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn publish(&self, event: Event) -> Result<()> {
-        let (response, result) = oneshot::channel();
-        self.command_tx
-            .send(RuntimeCommand::Publish {
-                event: Box::new(event),
-                response,
-            })
-            .await
-            .map_err(|_| anyhow!("control pubsub runtime stopped"))?;
-        result
-            .await
-            .map_err(|_| anyhow!("control pubsub runtime stopped"))?
     }
 
     #[cfg(test)]
@@ -252,6 +244,7 @@ async fn run(
     config: NostrPubsubConfig,
     mut bridge: Option<RelayBridge>,
     events: Arc<Mutex<ControlEventStore>>,
+    outbox_path: Option<PathBuf>,
     mut command_rx: mpsc::Receiver<RuntimeCommand>,
 ) {
     let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
@@ -264,26 +257,26 @@ async fn run(
     let mut mesh = ControlPubsubMesh::new(options);
     let codec = ControlPubsubCodec::new(CONTROL_PUBSUB_MAX_WIRE_BYTES);
     let mut datagrams = Vec::with_capacity(RECEIVE_BATCH);
+    let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
+    outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
             command = command_rx.recv() => {
                 match command {
-                    #[cfg(test)]
-                    Some(RuntimeCommand::Publish { event, response }) => {
-                        let result = publish_local(
-                            &endpoint,
-                            &codec,
-                            &mut mesh,
-                            bridge.as_ref(),
-                            &events,
-                            *event,
-                        )
-                        .await;
-                        let _ = response.send(result);
-                    }
                     Some(RuntimeCommand::Stop) | None => break,
                 }
+            }
+            _ = outbox_tick.tick(), if outbox_path.is_some() => {
+                publish_outbox_batch(
+                    &endpoint,
+                    &codec,
+                    &mut mesh,
+                    bridge.as_ref(),
+                    &events,
+                    outbox_path.as_deref().expect("outbox path is present"),
+                )
+                .await;
             }
             count = receiver.recv_batch_into(&mut datagrams, RECEIVE_BATCH) => {
                 let Some(count) = count else { break; };
@@ -326,7 +319,6 @@ async fn run(
     }
 }
 
-#[cfg(test)]
 async fn publish_local(
     endpoint: &FipsEndpoint,
     codec: &ControlPubsubCodec,
@@ -334,8 +326,11 @@ async fn publish_local(
     bridge: Option<&RelayBridge>,
     events: &Arc<Mutex<ControlEventStore>>,
     event: Event,
-) -> Result<()> {
+) -> Result<bool> {
     let peers = connected_peers(endpoint).await;
+    if peers.is_empty() && bridge.is_none() {
+        return Ok(false);
+    }
     let actions = mesh.publish(event.clone(), &peers, now_ms())?;
     tracing::debug!(event_id = %event.id, peers = peers.len(), actions = actions.len(), "publishing local control event");
     events.lock().await.insert(event.clone())?;
@@ -344,7 +339,49 @@ async fn publish_local(
         bridge.publish(&event).await;
     }
     execute_actions(endpoint, codec, None, events, actions).await;
-    Ok(())
+    Ok(true)
+}
+
+async fn publish_outbox_batch(
+    endpoint: &FipsEndpoint,
+    codec: &ControlPubsubCodec,
+    mesh: &mut ControlPubsubMesh,
+    bridge: Option<&RelayBridge>,
+    events: &Arc<Mutex<ControlEventStore>>,
+    outbox_path: &Path,
+) {
+    for path in control_pubsub_outbox_event_paths(outbox_path) {
+        let event = match fs::read(&path)
+            .with_context(|| format!("failed to read {}", path.display()))
+            .and_then(|bytes| {
+                serde_json::from_slice::<Event>(&bytes)
+                    .with_context(|| format!("failed to decode {}", path.display()))
+            }) {
+            Ok(event) => event,
+            Err(error) => {
+                tracing::warn!(%error, "discarding invalid control pubsub outbox entry");
+                let _ = fs::remove_file(&path);
+                continue;
+            }
+        };
+        if let Err(error) = validate_control_pubsub_event(&event) {
+            tracing::warn!(%error, path = %path.display(), "discarding rejected control pubsub outbox entry");
+            let _ = fs::remove_file(&path);
+            continue;
+        }
+        match publish_local(endpoint, codec, mesh, bridge, events, event).await {
+            Ok(true) => {
+                if let Err(error) = fs::remove_file(&path) {
+                    tracing::warn!(%error, path = %path.display(), "failed to remove published control pubsub outbox entry");
+                }
+            }
+            Ok(false) => break,
+            Err(error) => {
+                tracing::warn!(%error, path = %path.display(), "discarding rejected control pubsub outbox entry");
+                let _ = fs::remove_file(&path);
+            }
+        }
+    }
 }
 
 async fn execute_actions(
@@ -491,6 +528,85 @@ pub(crate) fn control_pubsub_store_file_path(config_path: &Path) -> PathBuf {
         .join("control-pubsub-events.json")
 }
 
+fn control_pubsub_outbox_directory_from_store_path(store_path: &Path) -> PathBuf {
+    store_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("control-pubsub-outbox")
+}
+
+pub(crate) fn control_pubsub_outbox_directory(config_path: &Path) -> PathBuf {
+    control_pubsub_outbox_directory_from_store_path(&control_pubsub_store_file_path(config_path))
+}
+
+pub(crate) fn queue_control_pubsub_event(config_path: &Path, event: &Event) -> Result<bool> {
+    validate_control_pubsub_event(event)?;
+    let bytes = serde_json::to_vec(event).context("failed to encode control pubsub event")?;
+
+    let directory = control_pubsub_outbox_directory(config_path);
+    fs::create_dir_all(&directory)
+        .with_context(|| format!("failed to create {}", directory.display()))?;
+    let destination = directory.join(format!("{}.json", event.id.to_hex()));
+    if destination.exists() {
+        return Ok(false);
+    }
+    let temporary = directory.join(format!(
+        ".{}.{}-{}.tmp",
+        event.id.to_hex(),
+        std::process::id(),
+        now_ms()
+    ));
+    fs::write(&temporary, bytes)
+        .with_context(|| format!("failed to write {}", temporary.display()))?;
+    if let Err(error) = fs::rename(&temporary, &destination) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).with_context(|| format!("failed to queue {}", destination.display()));
+    }
+    Ok(true)
+}
+
+fn validate_control_pubsub_event(event: &Event) -> Result<()> {
+    event
+        .verify()
+        .map_err(|error| anyhow!("invalid signed control pubsub event: {error}"))?;
+    let kind = u16::from(event.kind);
+    if !is_control_kind(kind) {
+        anyhow::bail!("unsupported control pubsub event kind {kind}");
+    }
+    let bytes = serde_json::to_vec(event).context("failed to encode control pubsub event")?;
+    if bytes.len() > CONTROL_PUBSUB_MAX_EVENT_BYTES {
+        anyhow::bail!(
+            "control pubsub event is {} bytes, maximum is {}",
+            bytes.len(),
+            CONTROL_PUBSUB_MAX_EVENT_BYTES
+        );
+    }
+    Ok(())
+}
+
+fn control_pubsub_outbox_event_paths(directory: &Path) -> Vec<PathBuf> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => {
+            tracing::warn!(%error, path = %directory.display(), "failed to scan control pubsub outbox");
+            return Vec::new();
+        }
+    };
+    let mut paths = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.truncate(OUTBOX_BATCH);
+    paths
+}
+
 #[cfg(any(feature = "paid-exit", test))]
 pub(crate) fn load_control_pubsub_events(config_path: &Path) -> Result<Vec<Event>> {
     Ok(ControlEventStore::load(Some(control_pubsub_store_file_path(config_path)))?.snapshot())
@@ -597,6 +713,11 @@ mod tests {
 
         assert!(store.insert(event.clone()).expect("first insert"));
         assert!(!store.insert(event.clone()).expect("duplicate insert"));
+        assert!(queue_control_pubsub_event(&config_path, &event).expect("queue first publication"));
+        assert!(
+            !queue_control_pubsub_event(&config_path, &event)
+                .expect("deduplicate queued publication")
+        );
         assert_eq!(
             load_control_pubsub_events(&config_path)
                 .expect("reload store")
@@ -610,7 +731,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn client_outbox_waits_for_a_connected_fips_peer() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("nvpn-control-wait-{nonce}"));
+        let config_path = directory.join("config.toml");
+        let event = EventBuilder::new(Kind::Custom(PAID_EXIT_OFFER_KIND), "offer")
+            .sign_with_keys(&Keys::generate())
+            .expect("signed offer");
+        let endpoint = Arc::new(
+            FipsEndpoint::builder()
+                .without_system_tun()
+                .bind()
+                .await
+                .expect("bind FIPS endpoint"),
+        );
+        let runtime = ControlPubsubFipsRuntime::start(
+            Arc::clone(&endpoint),
+            NostrPubsubConfig {
+                mode: NostrPubsubMode::Client,
+                ..NostrPubsubConfig::default()
+            },
+            Vec::new(),
+            Some(control_pubsub_store_file_path(&config_path)),
+        )
+        .await
+        .expect("start client pubsub")
+        .expect("client pubsub enabled");
+
+        assert!(queue_control_pubsub_event(&config_path, &event).expect("queue offer"));
+        tokio::time::sleep(Duration::from_millis(600)).await;
+        assert!(
+            control_pubsub_outbox_directory(&config_path)
+                .join(format!("{}.json", event.id.to_hex()))
+                .exists()
+        );
+
+        runtime.stop().await;
+        endpoint.shutdown().await.expect("shutdown endpoint");
+        let _ = fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
     async fn three_node_fips_line_delivers_control_event_without_relays() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!("nvpn-control-publisher-{nonce}"));
+        let config_path = directory.join("config.toml");
         let alice = Keys::generate();
         let bob = Keys::generate();
         let carol = Keys::generate();
@@ -680,7 +851,7 @@ mod tests {
             Arc::clone(carol_endpoint.endpoint()),
             config,
             Vec::new(),
-            None,
+            Some(control_pubsub_store_file_path(&config_path)),
         )
         .await
         .expect("start Carol pubsub")
@@ -690,10 +861,7 @@ mod tests {
             .sign_with_keys(&carol)
             .expect("signed paid exit offer");
         let event_id = event.id;
-        carol_pubsub
-            .publish(event)
-            .await
-            .expect("publish over FIPS");
+        assert!(queue_control_pubsub_event(&config_path, &event).expect("queue over FIPS"));
 
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -726,5 +894,6 @@ mod tests {
         alice_endpoint.shutdown().await.expect("shutdown Alice");
         bob_endpoint.shutdown().await.expect("shutdown Bob");
         carol_endpoint.shutdown().await.expect("shutdown Carol");
+        let _ = fs::remove_dir_all(directory);
     }
 }

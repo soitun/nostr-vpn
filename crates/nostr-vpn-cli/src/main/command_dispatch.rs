@@ -651,6 +651,46 @@ async fn run_command(command: Command) -> Result<()> {
                 println!("timestamp={}", peer.timestamp);
             }
         }
+        Command::Pubsub(args) => match args.command {
+            PubsubCommand::Publish(args) => {
+                let config_path = args.config.unwrap_or_else(default_config_path);
+                let app = load_or_default_config(&config_path)?;
+                if !app.nostr.pubsub.enabled() {
+                    return Err(anyhow!(
+                        "nostr.pubsub.mode is off; set it to client or relay before publishing"
+                    ));
+                }
+                let bytes = fs::read(&args.event).with_context(|| {
+                    format!("failed to read signed Nostr event {}", args.event.display())
+                })?;
+                let event: nostr_sdk::prelude::Event = serde_json::from_slice(&bytes)
+                    .with_context(|| {
+                        format!("failed to decode signed Nostr event {}", args.event.display())
+                    })?;
+                let queued = crate::control_pubsub_runtime::queue_control_pubsub_event(
+                    &config_path,
+                    &event,
+                )?;
+                let outbox =
+                    crate::control_pubsub_runtime::control_pubsub_outbox_directory(&config_path);
+                if args.json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&serde_json::json!({
+                            "event_id": event.id.to_string(),
+                            "kind": u16::from(event.kind),
+                            "queued": queued,
+                            "outbox": outbox,
+                        }))?
+                    );
+                } else {
+                    println!("event_id: {}", event.id);
+                    println!("kind: {}", u16::from(event.kind));
+                    println!("queued: {queued}");
+                    println!("outbox: {}", outbox.display());
+                }
+            }
+        },
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
         Command::WgUpstreamTest(args) => {
             run_wg_upstream_test(args).await?;

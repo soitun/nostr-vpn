@@ -1920,7 +1920,9 @@ async fn paid_exit_run_once(args: PaidExitRunArgs) -> Result<PaidExitRunResult> 
     }
 
     let publish = if args.publish {
-        Some(publish_paid_exit_offer_to_relays(&app, &signed, &relays).await?)
+        Some(
+            publish_paid_exit_offer_hybrid(&app, &config_path, &signed, &relays).await?,
+        )
     } else {
         None
     };
@@ -2234,7 +2236,9 @@ async fn paid_exit_offer_command(args: PaidExitOfferArgs) -> Result<()> {
         persist_paid_exit_offer_snapshot(&store_path, &signed, &relays, &offer, unix_timestamp())?;
 
     let publish = if args.publish {
-        Some(publish_paid_exit_offer_to_relays(&app, &signed, &relays).await?)
+        Some(
+            publish_paid_exit_offer_hybrid(&app, &config_path, &signed, &relays).await?,
+        )
     } else {
         None
     };
@@ -5736,6 +5740,41 @@ async fn publish_paid_exit_offer_to_relays(
         "success_relays": output.success.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "failed_relays": failed,
     }))
+}
+
+async fn publish_paid_exit_offer_hybrid(
+    app: &AppConfig,
+    config_path: &Path,
+    signed: &SignedPaidRouteOffer,
+    relays: &[String],
+) -> Result<serde_json::Value> {
+    let p2p_enabled = app.nostr.pubsub.enabled();
+    let p2p_queued = if p2p_enabled {
+        crate::control_pubsub_runtime::queue_control_pubsub_event(config_path, &signed.event)?
+    } else {
+        false
+    };
+    let mut output = if relays.is_empty() {
+        if !p2p_enabled {
+            return Err(anyhow!(
+                "no publication path: Nostr relays are empty and nostr.pubsub.mode is off"
+            ));
+        }
+        json!({
+            "event_id": signed.event.id.to_string(),
+            "success_count": 0,
+            "failed_count": 0,
+            "success_relays": [],
+            "failed_relays": [],
+        })
+    } else {
+        publish_paid_exit_offer_to_relays(app, signed, relays).await?
+    };
+    output["p2p_enabled"] = json!(p2p_enabled);
+    output["p2p_queued"] = json!(p2p_queued);
+    output["p2p_outbox"] =
+        json!(crate::control_pubsub_runtime::control_pubsub_outbox_directory(config_path));
+    Ok(output)
 }
 
 async fn publish_paid_exit_payment_to_relays(

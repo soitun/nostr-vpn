@@ -2,7 +2,7 @@ use clap::{CommandFactory, Parser, error::ErrorKind};
 
 #[cfg(feature = "paid-exit")]
 use crate::PaidExitCommand;
-use crate::{Cli, Command};
+use crate::{Cli, Command, PubsubCommand};
 
 #[test]
 fn clap_binary_name_is_nvpn() {
@@ -80,6 +80,7 @@ fn clap_includes_tailscale_style_commands() {
         "doctor",
         "ip",
         "whois",
+        "pubsub",
         "install-cli",
         "uninstall-cli",
         "service",
@@ -92,6 +93,71 @@ fn clap_includes_tailscale_style_commands() {
             "missing subcommand {name}"
         );
     }
+}
+
+#[test]
+fn clap_parses_control_pubsub_publish_event_file() {
+    let cli = Cli::parse_from([
+        "nvpn",
+        "pubsub",
+        "publish",
+        "--event",
+        "/tmp/control-event.json",
+        "--config",
+        "/tmp/nvpn.toml",
+        "--json",
+    ]);
+    let Command::Pubsub(args) = cli.command else {
+        panic!("expected pubsub command");
+    };
+    let PubsubCommand::Publish(args) = args.command;
+    assert_eq!(args.event.to_string_lossy(), "/tmp/control-event.json");
+    assert_eq!(
+        args.config.expect("config").to_string_lossy(),
+        "/tmp/nvpn.toml"
+    );
+    assert!(args.json);
+}
+
+#[tokio::test]
+async fn control_pubsub_publish_command_queues_a_signed_event() {
+    use nostr_sdk::prelude::{EventBuilder, Keys, Kind};
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("nvpn-pubsub-cli-{nonce}"));
+    let config_path = directory.join("config.toml");
+    let event_path = directory.join("event.json");
+    let app = nostr_vpn_core::config::AppConfig::generated();
+    app.save(&config_path).expect("save config");
+    let event = EventBuilder::new(Kind::Custom(37_196), "paid exit offer")
+        .sign_with_keys(&Keys::generate())
+        .expect("signed event");
+    std::fs::write(&event_path, serde_json::to_vec(&event).expect("event JSON"))
+        .expect("write event");
+
+    let cli = Cli::parse_from([
+        "nvpn",
+        "pubsub",
+        "publish",
+        "--event",
+        event_path.to_str().expect("event path"),
+        "--config",
+        config_path.to_str().expect("config path"),
+        "--json",
+    ]);
+    crate::run_command(cli.command)
+        .await
+        .expect("queue event through CLI dispatch");
+
+    assert!(
+        crate::control_pubsub_runtime::control_pubsub_outbox_directory(&config_path)
+            .join(format!("{}.json", event.id.to_hex()))
+            .exists()
+    );
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[cfg(feature = "paid-exit")]
