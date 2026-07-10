@@ -2,6 +2,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use qrcode::QrCode;
+use qrcode::render::unicode::Dense1x2;
 
 use nostr_vpn_core::config::AppConfig;
 
@@ -16,13 +17,7 @@ pub(crate) fn pending_pairing_uri(config_path: &Path) -> Result<String> {
 
 pub(crate) fn render_pairing_output(uri: &str) -> Result<String> {
     let code = QrCode::new(uri.as_bytes()).context("failed to encode pairing QR code")?;
-    let qr = code
-        .render::<char>()
-        .quiet_zone(true)
-        .module_dimensions(2, 1)
-        .dark_color('#')
-        .light_color(' ')
-        .build();
+    let qr = code.render::<Dense1x2>().quiet_zone(true).build();
     Ok(format!("{qr}\n\n{uri}\n"))
 }
 
@@ -39,12 +34,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn terminal_output_contains_ascii_qr_and_exact_uri() {
+    fn terminal_output_contains_dense_qr_and_exact_uri() {
         let uri = "nvpn://join-request/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjE";
         let output = render_pairing_output(uri).expect("render pairing output");
 
-        assert!(output.is_ascii());
-        assert!(output.lines().any(|line| line.contains("#######")));
+        assert!(output.lines().any(|line| line.contains('█')));
+        assert!(output.lines().any(|line| line.contains('▀')));
         assert_eq!(output.lines().filter(|line| *line == uri).count(), 1);
         assert!(output.ends_with(&format!("\n\n{uri}\n")));
     }
