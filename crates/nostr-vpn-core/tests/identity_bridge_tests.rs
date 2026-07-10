@@ -20,7 +20,7 @@ use nostr_vpn_core::identity_bridge::{
 };
 use uuid::Uuid;
 
-const APPROVAL_SECRET: &str = "scan-secret-abcdefghijklmnopqrstuvwxyz";
+const APPROVAL_SECRET: &str = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
 
 #[test]
 fn bridge_represents_roster_members_as_canonical_app_keys() {

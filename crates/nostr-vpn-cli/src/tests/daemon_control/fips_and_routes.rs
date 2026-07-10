@@ -323,11 +323,13 @@ fn macos_route_monitor_ignores_self_host_route_churn() {
 }
 
 #[test]
-fn macos_tunnel_default_route_targets_use_split_defaults() {
+fn macos_tunnel_default_route_cleanup_targets_only_split_defaults() {
     assert_eq!(
         crate::macos_network::macos_tunnel_default_route_targets(),
         &["0.0.0.0/1", "128.0.0.0/1"]
     );
+    assert!(!crate::macos_network::macos_tunnel_default_route_targets()
+        .contains(&"0.0.0.0/0"));
 }
 
 #[test]

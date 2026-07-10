@@ -489,6 +489,26 @@ pub(crate) fn macos_pf_enabled() -> Result<bool> {
     crate::macos_network::macos_pf_enabled()
 }
 
+#[cfg(test)]
+pub(crate) fn parse_macos_ipv4_forwarding_state(output: &str) -> Result<bool> {
+    crate::macos_network::parse_macos_ipv4_forwarding_state(output)
+}
+
+#[cfg(test)]
+pub(crate) fn parse_macos_pf_enabled(output: &str) -> Result<bool> {
+    crate::macos_network::parse_macos_pf_enabled(output)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn read_macos_ipv4_forwarding() -> Result<bool> {
+    crate::macos_network::read_macos_ipv4_forwarding()
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn write_macos_ipv4_forwarding(enabled: bool) -> Result<()> {
+    crate::macos_network::write_macos_ipv4_forwarding(enabled)
+}
+
 #[cfg(target_os = "macos")]
 pub(crate) fn apply_macos_exit_node_pf_rules(
     tunnel_iface: &str,

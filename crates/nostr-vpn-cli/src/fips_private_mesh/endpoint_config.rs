@@ -188,6 +188,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
             advertise_on_nostr,
             &transport.nostr_relays,
             &transport.stun_servers,
+            mesh_mtu.underlay_udp,
         );
     }
     config.transports.udp = TransportInstances::Single(UdpConfig {
@@ -474,6 +475,7 @@ fn configure_fips_webrtc_transport(
     advertise_on_nostr: bool,
     signal_relays: &[String],
     stun_servers: &[String],
+    mtu: u16,
 ) {
     if !advertise_on_nostr {
         return;
@@ -489,6 +491,7 @@ fn configure_fips_webrtc_transport(
     webrtc.advertise_on_nostr = Some(true);
     webrtc.auto_connect = Some(true);
     webrtc.accept_connections = Some(true);
+    webrtc.mtu = Some(mtu);
     if !signal_relays.is_empty() {
         webrtc.signal_relays = Some(signal_relays.to_vec());
     }
@@ -577,10 +580,11 @@ mod endpoint_config_tests {
         let peer = test_peer();
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
         let transport = test_transport(true);
+        let mesh_mtu = resolve_private_mesh_mtu(None, None, None);
         let config = fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
             Some(&transport),
-            resolve_private_mesh_mtu(None, None, None),
+            mesh_mtu,
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         );
@@ -594,6 +598,7 @@ mod endpoint_config_tests {
         assert_eq!(webrtc.advertise_on_nostr, Some(true));
         assert_eq!(webrtc.auto_connect, Some(true));
         assert_eq!(webrtc.accept_connections, Some(true));
+        assert_eq!(webrtc.mtu, Some(mesh_mtu.underlay_udp));
         assert_eq!(
             webrtc.signal_relays.as_ref().expect("signal relays"),
             &transport.nostr_relays

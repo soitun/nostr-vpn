@@ -260,8 +260,12 @@ mod tests {
         assert_eq!(
             servers,
             vec![
-                "127.0.0.53:53".parse().expect("IPv4 resolver"),
-                "[2001:db8::53]:53".parse().expect("IPv6 resolver"),
+                "127.0.0.53:53"
+                    .parse::<SocketAddr>()
+                    .expect("IPv4 resolver"),
+                "[2001:db8::53]:53"
+                    .parse::<SocketAddr>()
+                    .expect("IPv6 resolver"),
             ]
         );
     }
@@ -285,8 +289,12 @@ mod tests {
         assert_eq!(
             servers,
             vec![
-                "192.0.2.53:53".parse().expect("IPv4 resolver"),
-                "[2001:db8::53]:53".parse().expect("IPv6 resolver"),
+                "192.0.2.53:53"
+                    .parse::<SocketAddr>()
+                    .expect("IPv4 resolver"),
+                "[2001:db8::53]:53"
+                    .parse::<SocketAddr>()
+                    .expect("IPv6 resolver"),
             ]
         );
     }
@@ -311,8 +319,12 @@ mod tests {
         assert_eq!(
             servers,
             vec![
-                "192.0.2.53:53".parse().expect("IPv4 resolver"),
-                "[2001:db8::53]:53".parse().expect("IPv6 resolver"),
+                "192.0.2.53:53"
+                    .parse::<SocketAddr>()
+                    .expect("IPv4 resolver"),
+                "[2001:db8::53]:53"
+                    .parse::<SocketAddr>()
+                    .expect("IPv6 resolver"),
             ]
         );
     }

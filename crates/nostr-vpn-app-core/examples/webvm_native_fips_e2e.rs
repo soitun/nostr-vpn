@@ -9,6 +9,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use nostr_vpn_app_core::{FfiApp, NativeAppAction, NativeAppState};
 use nostr_vpn_core::config::AppConfig;
+use nostr_vpn_core::join_requests::NOSTR_VPN_JOIN_APPROVAL_RELAY;
 use serde_json::json;
 
 const REAL_E2E_GUARD: &str = "NVPN_WEBVM_REAL_E2E";
@@ -229,6 +230,8 @@ fn prepare_host_config(restore: &HostRestore) -> HarnessResult<String> {
     config.node.advertise_exit_node = true;
     config.connect_to_non_roster_fips_peers = true;
     config.exit_node.clear();
+    config.nostr.relays = vec![NOSTR_VPN_JOIN_APPROVAL_RELAY.to_string()];
+    config.nostr.disabled_relays.clear();
     config
         .save(&restore.config_path)
         .map_err(|_| HarnessError::new("preflight", "config-save-failed"))?;

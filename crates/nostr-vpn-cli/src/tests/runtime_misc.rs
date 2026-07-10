@@ -792,11 +792,29 @@ fn macos_exit_node_pf_rules_are_scoped_to_tunnel_source_and_outbound_iface() {
 }
 
 #[test]
-fn macos_exit_node_cleanup_flushes_only_nvpn_anchor() {
-    assert_eq!(
-        crate::macos_network::macos_pf_anchor_flush_args(),
-        vec!["-a", "com.apple/to.nostrvpn/exit", "-F", "all"]
+fn macos_ipv4_forwarding_state_parser_accepts_only_kernel_boolean_values() {
+    assert!(!crate::parse_macos_ipv4_forwarding_state("0\n").expect("disabled state"));
+    assert!(crate::parse_macos_ipv4_forwarding_state("1\n").expect("enabled state"));
+    assert!(crate::parse_macos_ipv4_forwarding_state("2\n").is_err());
+    assert!(crate::parse_macos_ipv4_forwarding_state("").is_err());
+}
+
+#[test]
+fn macos_pf_state_parser_accepts_pfctl_status_details() {
+    assert!(
+        crate::parse_macos_pf_enabled("Status: Enabled for 2 days 01:02:03\n")
+            .expect("enabled state")
     );
+    assert!(!crate::parse_macos_pf_enabled("Status: Disabled\n").expect("disabled state"));
+    assert!(crate::parse_macos_pf_enabled("Status: Unknown\n").is_err());
+    assert!(crate::parse_macos_pf_enabled("").is_err());
+}
+
+#[test]
+fn macos_exit_node_cleanup_flushes_only_nvpn_anchor() {
+    let args = crate::macos_network::macos_pf_anchor_flush_args();
+    assert_eq!(args, vec!["-a", "com.apple/nostrvpn-exit", "-F", "all"]);
+    assert_eq!(args[1].matches('/').count(), 1);
 }
 
 #[cfg(target_os = "macos")]

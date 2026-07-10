@@ -379,9 +379,9 @@
         assert_eq!(
             forwarders,
             vec![
-                "94.140.14.14:53".parse().unwrap(),
-                "1.1.1.1:53".parse().unwrap(),
-                "9.9.9.9:53".parse().unwrap(),
+                "94.140.14.14:53".parse::<std::net::SocketAddr>().unwrap(),
+                "1.1.1.1:53".parse::<std::net::SocketAddr>().unwrap(),
+                "9.9.9.9:53".parse::<std::net::SocketAddr>().unwrap(),
             ]
         );
     }

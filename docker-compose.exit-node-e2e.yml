@@ -12,7 +12,7 @@ services:
       additional_contexts:
         cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-./docker/empty-cashu-service-context}
         cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
-        fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN
@@ -31,7 +31,7 @@ services:
       additional_contexts:
         cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-./docker/empty-cashu-service-context}
         cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
-        fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     command:
       - cdk-spilman-test-mintd
       - --listen-host
@@ -57,7 +57,7 @@ services:
       additional_contexts:
         cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-./docker/empty-cashu-service-context}
         cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
-        fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN
@@ -84,7 +84,7 @@ services:
       additional_contexts:
         cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-./docker/empty-cashu-service-context}
         cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
-        fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN
@@ -107,7 +107,7 @@ services:
       additional_contexts:
         cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-./docker/empty-cashu-service-context}
         cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
-        fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     cap_add:
       - NET_ADMIN
     sysctls:
@@ -147,7 +147,7 @@ services:
       additional_contexts:
         cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-./docker/empty-cashu-service-context}
         cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
-        fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
     entrypoint: ["sleep", "infinity"]
     cap_add:
       - NET_ADMIN

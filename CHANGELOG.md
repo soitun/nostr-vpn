@@ -4,6 +4,25 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.90 - 2026-07-10
+
+### Added
+
+- Added the WebVM guest pairing flow, which prints both a terminal QR code and
+  its canonical request-event-free approval URI and automatically applies the
+  signed native-app approval over the shared FIPS transport.
+
+### Changed
+
+- Bumped to FIPS Core 0.3.87 for authenticated reverse-hop routed session
+  establishment, and aligned WebRTC with the configured private-mesh MTU.
+
+### Fixed
+
+- Enabled and restored macOS IPv4 forwarding for exit-node operation, loaded
+  nvpn PF rules into a directly evaluated Apple anchor, and preserved the real
+  underlay default route across tunnel restarts.
+
 ## 4.0.89 - 2026-07-08
 
 ### Changed

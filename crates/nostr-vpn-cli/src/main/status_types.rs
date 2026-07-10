@@ -405,6 +405,7 @@ struct LinuxExitNodeRuntime {
 struct MacosExitNodeRuntime {
     outbound_iface: Option<String>,
     tunnel_source_cidr: Option<String>,
+    ipv4_forward_was_enabled: Option<bool>,
     pf_was_enabled: Option<bool>,
 }
 

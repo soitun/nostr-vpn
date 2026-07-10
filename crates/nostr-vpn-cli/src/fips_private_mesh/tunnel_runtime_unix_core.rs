@@ -538,12 +538,28 @@ impl FipsPrivateTunnelRuntime {
         let already_configured = self.exit_node_runtime.outbound_iface.as_deref()
             == Some(outbound_iface.as_str())
             && self.exit_node_runtime.tunnel_source_cidr.as_deref()
-                == Some(tunnel_source_cidr.as_str());
+                == Some(tunnel_source_cidr.as_str())
+            && self.exit_node_runtime.ipv4_forward_was_enabled.is_some();
         if already_configured {
             return;
         }
 
         self.cleanup_macos_exit_node_forwarding();
+        match crate::read_macos_ipv4_forwarding() {
+            Ok(previous) => {
+                self.exit_node_runtime.ipv4_forward_was_enabled = Some(previous);
+                if !previous && let Err(error) = crate::write_macos_ipv4_forwarding(true) {
+                    eprintln!("fips: failed to enable macOS IPv4 forwarding: {error}");
+                    self.cleanup_macos_exit_node_forwarding();
+                    return;
+                }
+            }
+            Err(error) => {
+                eprintln!("fips: failed to read macOS IPv4 forwarding state: {error}");
+                self.cleanup_macos_exit_node_forwarding();
+                return;
+            }
+        }
         match crate::macos_pf_enabled() {
             Ok(enabled) => {
                 self.exit_node_runtime.pf_was_enabled = Some(enabled);
@@ -584,6 +600,11 @@ impl FipsPrivateTunnelRuntime {
             && let Err(error) = crate::run_checked(ProcessCommand::new("pfctl").arg("-d"))
         {
             eprintln!("fips: failed to restore macOS PF enabled state: {error}");
+        }
+        if self.exit_node_runtime.ipv4_forward_was_enabled == Some(false)
+            && let Err(error) = crate::write_macos_ipv4_forwarding(false)
+        {
+            eprintln!("fips: failed to restore macOS IPv4 forwarding state: {error}");
         }
 
         self.exit_node_runtime = crate::MacosExitNodeRuntime::default();

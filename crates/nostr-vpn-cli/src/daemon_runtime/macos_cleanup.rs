@@ -184,6 +184,12 @@ pub(crate) fn repair_saved_network_state(config_path: &Path) -> Result<bool> {
             }
         }
 
+        if state.ipv4_forward_was_enabled == Some(false)
+            && let Err(error) = write_macos_ipv4_forwarding(false)
+        {
+            failures.push(format!("restore IPv4 forwarding state: {error}"));
+        }
+
         if using_legacy_route_cleanup
             && let Err(error) = repair_legacy_macos_network_state(config_path)
         {

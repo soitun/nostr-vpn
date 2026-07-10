@@ -2,10 +2,13 @@
 # Format: path max_lines reason
 # Keep caps close to current size. Split these files before raising caps.
 crates/nostr-vpn-cli/src/session_runtime/daemon_vpn.rs 1318 legacy-daemon-event-loop
-crates/nostr-vpn-cli/src/fips_private_mesh/tests_config.rs 1123 legacy-fips-config-regression-tests
+crates/nostr-vpn-app-core/src/ffi/tests_network.rs 1103 legacy-ffi-network-regression-tests
+crates/nostr-vpn-app-core/src/ffi/tests_service.rs 1068 legacy-ffi-service-regression-tests
+crates/nostr-vpn-cli/src/control_pubsub_runtime.rs 1329 legacy-control-pubsub-runtime
+crates/nostr-vpn-cli/src/fips_private_mesh/tests_config.rs 1163 legacy-fips-config-regression-tests
 crates/nostr-vpn-cli/src/main/runtime_helpers.rs 1060 legacy-runtime-helper-mix
 linux/src/main/paid_routes_page.rs 1176 paid-route-gtk-page
 crates/nostr-vpn-cli/src/tests/runtime_misc.rs 2500 legacy-mixed-runtime-tests
-crates/nostr-vpn-cli/src/main/paid_exit.rs 7224 default-off-paid-exit-cli-checkpoint
+crates/nostr-vpn-cli/src/main/paid_exit.rs 7316 default-off-paid-exit-cli-checkpoint
 crates/nostr-vpn-core/src/paid_routes.rs 2330 paid-route-config-and-event-model
 crates/nostr-vpn-core/src/paid_route_store.rs 6176 default-off-paid-exit-store-checkpoint

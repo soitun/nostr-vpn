@@ -458,9 +458,7 @@ pub(super) fn apply_macos_default_route(
 #[cfg(target_os = "macos")]
 pub(super) fn delete_macos_default_route_for_interface(iface: &str) -> Result<()> {
     let mut failures = Vec::new();
-    for target in
-        std::iter::once("0.0.0.0/0").chain(macos_tunnel_default_route_targets().iter().copied())
-    {
+    for target in macos_tunnel_default_route_targets() {
         if let Err(error) = delete_macos_direct_route_variants(target, iface) {
             failures.push(format!("remove {target} on {iface}: {error}"));
         }
@@ -580,7 +578,7 @@ fn delete_macos_direct_route_variants(target: &str, iface: &str) -> Result<()> {
 }
 
 #[cfg(any(target_os = "macos", test))]
-const MACOS_PF_EXIT_ANCHOR: &str = "com.apple/to.nostrvpn/exit";
+const MACOS_PF_EXIT_ANCHOR: &str = "com.apple/nostrvpn-exit";
 
 #[cfg(any(target_os = "macos", test))]
 pub(crate) fn macos_exit_node_pf_rules(
@@ -600,13 +598,54 @@ pub(crate) fn macos_exit_node_pf_rules(
     )
 }
 
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn parse_macos_ipv4_forwarding_state(output: &str) -> Result<bool> {
+    match output.trim() {
+        "0" => Ok(false),
+        "1" => Ok(true),
+        value => Err(anyhow!("unexpected net.inet.ip.forwarding value '{value}'")),
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn read_macos_ipv4_forwarding() -> Result<bool> {
+    let output = command_stdout_checked(
+        ProcessCommand::new("sysctl")
+            .arg("-n")
+            .arg("net.inet.ip.forwarding"),
+    )?;
+    parse_macos_ipv4_forwarding_state(&output)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn write_macos_ipv4_forwarding(enabled: bool) -> Result<()> {
+    run_checked(
+        ProcessCommand::new("sysctl")
+            .arg("-w")
+            .arg(format!("net.inet.ip.forwarding={}", u8::from(enabled))),
+    )
+}
+
 #[cfg(target_os = "macos")]
 pub(super) fn macos_pf_enabled() -> Result<bool> {
     let output = command_stdout_checked(ProcessCommand::new("pfctl").arg("-s").arg("info"))?;
-    Ok(output
-        .lines()
-        .map(str::trim)
-        .any(|line| line.eq_ignore_ascii_case("Status: Enabled")))
+    parse_macos_pf_enabled(&output)
+}
+
+#[cfg(any(target_os = "macos", test))]
+pub(crate) fn parse_macos_pf_enabled(output: &str) -> Result<bool> {
+    let state = output.lines().map(str::trim).find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.eq_ignore_ascii_case("status")
+            .then(|| value.split_whitespace().next())
+            .flatten()
+    });
+    match state {
+        Some(state) if state.eq_ignore_ascii_case("enabled") => Ok(true),
+        Some(state) if state.eq_ignore_ascii_case("disabled") => Ok(false),
+        Some(state) => Err(anyhow!("unexpected PF status '{state}'")),
+        None => Err(anyhow!("PF status output did not contain a status line")),
+    }
 }
 
 #[cfg(target_os = "macos")]
