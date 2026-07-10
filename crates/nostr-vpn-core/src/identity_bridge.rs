@@ -4,20 +4,18 @@ use anyhow::{Context, Result, anyhow};
 pub use nostr_identity::{
     CreateNostrIdentityDeviceApprovalRequestOptions, IDENTITY_GRAPH_ROSTER_TYPE,
     KIND_NOSTR_IDENTITY_ROSTER_OP, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
-    NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE, NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_TYPE,
-    NostrIdentityCapabilities, NostrIdentityDeviceApprovalBootstrap,
-    NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest, NostrIdentityError,
-    NostrIdentityFacet, NostrIdentityId, NostrIdentityKeyPurpose, NostrIdentityRosterOp,
-    NostrIdentityRosterOpContent, SignedIdentityLinkRequest, SignedNostrIdentityRosterOp,
+    NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE, NostrIdentityCapabilities,
+    NostrIdentityDeviceApprovalBootstrap, NostrIdentityDeviceApprovalReceipt,
+    NostrIdentityDeviceApprovalRequest, NostrIdentityError, NostrIdentityFacet, NostrIdentityId,
+    NostrIdentityKeyPurpose, NostrIdentityRosterOp, NostrIdentityRosterOpContent,
+    SignedIdentityLinkRequest, SignedNostrIdentityRosterOp,
     build_nostr_identity_device_approval_receipt_event,
-    build_nostr_identity_device_approval_request_event,
     create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_bootstrap,
     nostr_identity_device_approval_bootstrap, nostr_identity_device_approval_bootstrap_has_prefix,
     parse_identity_link_request_event_for_invite_pubkey,
     parse_nostr_identity_device_approval_bootstrap,
     parse_nostr_identity_device_approval_receipt_event,
-    parse_nostr_identity_device_approval_receipt_roster_op,
-    parse_nostr_identity_device_approval_request_event, parse_nostr_identity_roster_op_event,
+    parse_nostr_identity_device_approval_receipt_roster_op, parse_nostr_identity_roster_op_event,
     project_nostr_identity_roster,
 };
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
@@ -457,9 +455,57 @@ pub fn build_device_approval_sidecar_from_shared_approval(
     signer_keys: &Keys,
     approval_request: &NostrIdentityDeviceApprovalRequest,
     approval_content: NostrIdentityRosterOpContent,
+    canonical_roster_events: Vec<Event>,
+) -> Result<NostrIdentityDeviceApprovalSidecar> {
+    let request_pubkey = normalize_pubkey(&approval_request.request_pubkey, "approval request")?;
+    let device_app_key_pubkey =
+        normalize_pubkey(&approval_request.device_app_key_pubkey, "approval device")?;
+    build_device_approval_sidecar_from_shared_parts(
+        signer_keys,
+        request_pubkey,
+        device_app_key_pubkey,
+        approval_request.request_secret.trim().to_string(),
+        approval_request.profile_id,
+        approval_content,
+        canonical_roster_events,
+    )
+}
+
+pub fn build_device_approval_sidecar_from_bootstrap_approval(
+    signer_keys: &Keys,
+    bootstrap: &NostrIdentityDeviceApprovalBootstrap,
+    approval_content: NostrIdentityRosterOpContent,
+    canonical_roster_events: Vec<Event>,
+) -> Result<NostrIdentityDeviceApprovalSidecar> {
+    let request_pubkey = normalize_pubkey(&bootstrap.request_npub, "approval request")?;
+    let device_app_key_pubkey =
+        normalize_pubkey(&bootstrap.device_app_key_npub, "approval device")?;
+    build_device_approval_sidecar_from_shared_parts(
+        signer_keys,
+        request_pubkey,
+        device_app_key_pubkey,
+        bootstrap.request_secret.trim().to_string(),
+        None,
+        approval_content,
+        canonical_roster_events,
+    )
+}
+
+fn build_device_approval_sidecar_from_shared_parts(
+    signer_keys: &Keys,
+    request_pubkey: String,
+    device_app_key_pubkey: String,
+    request_secret: String,
+    expected_profile_id: Option<NostrIdentityId>,
+    approval_content: NostrIdentityRosterOpContent,
     mut canonical_roster_events: Vec<Event>,
 ) -> Result<NostrIdentityDeviceApprovalSidecar> {
-    validate_shared_device_approval_content(signer_keys, approval_request, &approval_content)?;
+    validate_shared_device_approval_content(
+        signer_keys,
+        &device_app_key_pubkey,
+        expected_profile_id,
+        &approval_content,
+    )?;
     let publish_canonical_member = !canonical_roster_events.is_empty();
     if publish_canonical_member {
         let member = nostr_identity::build_nostr_identity_roster_op_event_with_client_nonce(
@@ -484,7 +530,7 @@ pub fn build_device_approval_sidecar_from_shared_approval(
         validate_canonical_roster_chain(
             approval_content.profile_id,
             signer_keys.public_key().to_hex().as_str(),
-            &approval_request.device_app_key_pubkey,
+            &device_app_key_pubkey,
             &canonical_roster_events,
         )?;
     }
@@ -497,14 +543,11 @@ pub fn build_device_approval_sidecar_from_shared_approval(
     let receipt = NostrIdentityDeviceApprovalReceipt {
         schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
         profile_id: approval_content.profile_id,
-        request_pubkey: normalize_pubkey(&approval_request.request_pubkey, "approval request")?,
-        device_app_key_pubkey: normalize_pubkey(
-            &approval_request.device_app_key_pubkey,
-            "approval device",
-        )?,
+        request_pubkey,
+        device_app_key_pubkey,
         approved_by_pubkey: signer_keys.public_key().to_hex(),
         approved_at: approval_content.created_at,
-        request_secret: approval_request.request_secret.trim().to_string(),
+        request_secret,
         subject_pubkey: None,
         roster_op_id: approved_device_roster_op.map(|event| event.id.to_hex()),
         signed_roster_event: approved_device_roster_op.map(JsonUtil::as_json),
@@ -519,14 +562,15 @@ pub fn build_device_approval_sidecar_from_shared_approval(
 
 fn validate_shared_device_approval_content(
     signer_keys: &Keys,
-    approval_request: &NostrIdentityDeviceApprovalRequest,
+    device_app_key_pubkey: &str,
+    expected_profile_id: Option<NostrIdentityId>,
     approval_content: &NostrIdentityRosterOpContent,
 ) -> Result<()> {
     let signer_pubkey = signer_keys.public_key().to_hex();
     if approval_content.actor_pubkey != signer_pubkey {
         return Err(anyhow!("shared device approval actor mismatch"));
     }
-    if let Some(profile_id) = approval_request.profile_id
+    if let Some(profile_id) = expected_profile_id
         && approval_content.profile_id != profile_id
     {
         return Err(anyhow!("shared device approval profile mismatch"));
@@ -534,8 +578,7 @@ fn validate_shared_device_approval_content(
     let NostrIdentityRosterOp::AddFacet { facet } = &approval_content.op else {
         return Err(anyhow!("shared device approval is not an AddFacet op"));
     };
-    let device_pubkey =
-        normalize_pubkey(&approval_request.device_app_key_pubkey, "approval device")?;
+    let device_pubkey = normalize_pubkey(device_app_key_pubkey, "approval device")?;
     if facet.pubkey != device_pubkey
         || facet.profile_id != Some(approval_content.profile_id)
         || !facet.purposes.contains(&NostrIdentityKeyPurpose::AppKey)

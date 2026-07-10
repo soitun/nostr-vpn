@@ -293,7 +293,7 @@
 
     #[test]
     #[allow(clippy::too_many_lines)]
-    fn compact_join_bootstrap_and_signed_event_are_added_by_admin() {
+    fn compact_join_bootstrap_is_added_by_admin_without_request_event() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -325,41 +325,30 @@
         joiner.mobile_runtime = true;
         joiner.config_path = joiner_dir.join("config.toml");
         joiner.config.node_name = "Pixel Phone".to_string();
+        joiner.config.clear_pending_nostr_join_request();
         let joiner_pubkey = joiner
             .config
             .own_nostr_pubkey_hex()
             .expect("joiner pubkey");
-        let request_keys = Keys::generate();
-        let local_request =
-            nostr_vpn_core::identity_bridge::create_nostr_identity_device_approval_request(
-                &joiner.config.nostr_keys().expect("joiner keys"),
-                nostr_vpn_core::identity_bridge::CreateNostrIdentityDeviceApprovalRequestOptions {
-                    request_keys: Some(request_keys.clone()),
-                    request_secret: None,
-                    requested_at: 1_778_998_000,
-                    request_type: Some("nostr-vpn.join-request".to_string()),
-                    resources: vec![nostr_identity::nostr_identity_device_approval_relay_resource(
-                        nostr_vpn_core::join_requests::NOSTR_VPN_JOIN_APPROVAL_RELAY,
-                    )
-                    .expect("approval relay resource")],
-                    expires_at: None,
-                    profile_id: None,
-                    admin_app_key_pubkey: None,
-                    label: Some(joiner.config.node_name.clone()),
-                },
-            )
+        joiner
+            .config
+            .ensure_pending_nostr_join_request(1_778_998_000)
             .expect("joiner request");
-        let request_secret = local_request.request.request_secret.clone();
-        let bootstrap =
-            nostr_vpn_core::identity_bridge::nostr_identity_device_approval_bootstrap(
-                &local_request.request,
-            )
-            .expect("joiner request bootstrap");
-        let join_request =
-            nostr_vpn_core::identity_bridge::encode_nostr_identity_device_approval_bootstrap(
-                &bootstrap,
-                Some(crate::join_request_link::JOIN_REQUEST_LINK_PREFIX),
-            )
+        let pending = joiner
+            .config
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("pending request");
+        let request_keys = pending.request_keys().expect("request keys");
+        let request_secret = pending.request.request_secret.clone();
+        let request_pubkey = pending.request.request_pubkey.clone();
+        let bootstrap = nostr_vpn_core::identity_bridge::nostr_identity_device_approval_bootstrap(
+            &pending.request,
+        )
+        .expect("joiner request bootstrap");
+        let join_request = joiner
+            .config
+            .pending_nostr_join_request_link(crate::join_request_link::JOIN_REQUEST_LINK_PREFIX)
             .expect("joiner request link");
         assert!(join_request.starts_with("nvpn://join-request/"));
         let parsed_bootstrap =
@@ -370,24 +359,21 @@
             .expect("parse compact join request")
             .expect("join request bootstrap");
         assert_eq!(parsed_bootstrap, bootstrap);
-        let request_event = nostr_vpn_core::identity_bridge::build_nostr_identity_device_approval_request_event(
-            &request_keys,
-            &local_request.request,
-        )
-        .expect("signed join request event");
-        let parsed_request =
-            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_request_event(
-                &request_event,
-                &parsed_bootstrap,
-            )
-            .expect("parse transported join request");
-        assert_eq!(parsed_request.device_app_key_pubkey, joiner_pubkey);
-        assert_eq!(parsed_request.request_secret, request_secret);
-        assert_ne!(parsed_request.request_pubkey, parsed_request.device_app_key_pubkey);
+        assert_eq!(
+            nostr_vpn_core::config::normalize_nostr_pubkey(&parsed_bootstrap.device_app_key_npub)
+                .expect("stable AppKey"),
+            joiner_pubkey
+        );
+        assert_eq!(parsed_bootstrap.request_secret, request_secret);
+        assert_ne!(
+            nostr_vpn_core::config::normalize_nostr_pubkey(&parsed_bootstrap.request_npub)
+                .expect("request key"),
+            joiner_pubkey
+        );
 
         admin
-            .import_resolved_join_request(&parsed_request)
-            .expect("import resolved join request");
+            .import_join_request(&join_request)
+            .expect("import compact join request");
 
         assert!(admin.last_error.is_empty(), "{}", admin.last_error);
         assert_eq!(admin.published_join_approval_events.len(), 5);
@@ -407,12 +393,13 @@
             .expect("roster sidecar identity");
         assert_eq!(roster_identity.facet.pubkey, joiner_pubkey);
         let receipt =
-            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_receipt_event(
+            nostr_identity::parse_nostr_identity_device_approval_receipt_event_for_bootstrap(
                 &admin.published_join_approval_events[3],
                 &request_keys,
+                &parsed_bootstrap,
             )
             .expect("decrypt approval receipt");
-        assert_eq!(receipt.request_pubkey, parsed_request.request_pubkey);
+        assert_eq!(receipt.request_pubkey, request_pubkey);
         assert_eq!(receipt.device_app_key_pubkey, joiner_pubkey);
         assert_eq!(receipt.approved_by_pubkey, admin.config.own_nostr_pubkey_hex().unwrap());
         assert_eq!(receipt.request_secret, request_secret);
@@ -438,7 +425,7 @@
                 &request_keys,
             )
             .expect("decrypt Nostr VPN approval context");
-        assert_eq!(vpn_context.request_pubkey, parsed_request.request_pubkey);
+        assert_eq!(vpn_context.request_pubkey, request_pubkey);
         assert_eq!(vpn_context.device_app_key_pubkey, joiner_pubkey);
         assert_eq!(
             vpn_context.approved_by_pubkey,

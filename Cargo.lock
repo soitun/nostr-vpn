@@ -2093,7 +2093,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.83"
+version = "0.3.84"
 dependencies = [
  "bluer",
  "bytes",
@@ -3735,9 +3735,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e21a59934b0c9374e81669d17741628865fab53a00506ebc047a4a9ec32febd"
+checksum = "e60e2d54b509b0359b18ae0675e1c7301a386c8cd8cb4725a89de53e5647e2fb"
 dependencies = [
  "anyhow",
  "nostr-sdk",
@@ -3880,7 +3880,7 @@ dependencies = [
  "libc",
  "ndk-context",
  "netdev",
- "nostr-identity 0.2.0",
+ "nostr-identity 0.3.0",
  "nostr-pubsub",
  "nostr-pubsub-relay",
  "nostr-sdk",
@@ -3915,7 +3915,7 @@ dependencies = [
  "keyring-core",
  "libc",
  "netdev",
- "nostr-identity 0.2.0",
+ "nostr-identity 0.3.0",
  "nostr-pubsub",
  "nostr-sdk",
  "security-framework 2.11.1",

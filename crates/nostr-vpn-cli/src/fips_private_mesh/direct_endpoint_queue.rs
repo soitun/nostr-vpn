@@ -324,10 +324,10 @@ fn split_queued_direct_packet_runs_at_packet_limit(
 
         let split_at = limit - consumed;
         let mut tail = Vec::with_capacity(runs.len().saturating_sub(index));
-        if let Some(tail_run) = runs[index].split_off_packets(split_at) {
-            if !tail_run.is_empty() {
-                tail.push(tail_run);
-            }
+        if let Some(tail_run) = runs[index].split_off_packets(split_at)
+            && !tail_run.is_empty()
+        {
+            tail.push(tail_run);
         }
         tail.extend(runs.split_off(index.saturating_add(1)));
         return tail;

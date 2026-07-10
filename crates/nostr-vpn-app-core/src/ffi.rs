@@ -27,7 +27,7 @@ use crate::invite::{
     apply_network_invite_to_active_network, parse_network_invite, preferred_join_request_recipient,
     to_npub,
 };
-use crate::join_approval::{fetch_join_approval_request, prepare_join_approval};
+use crate::join_approval::prepare_join_approval;
 use crate::join_request_link::{
     own_join_request_qr_code_or_link, parse_join_request_qr_code_or_link,
 };

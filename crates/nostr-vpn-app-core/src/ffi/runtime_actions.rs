@@ -398,29 +398,17 @@ impl NativeAppRuntime {
 
     fn import_join_request(&mut self, request: &str) -> Result<()> {
         let parsed = parse_join_request_qr_code_or_link(request)?;
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("failed to start join request resolver")?;
-        let approval_request = runtime.block_on(fetch_join_approval_request(
-            &self.config,
-            &parsed.bootstrap,
-        ))?;
-        self.import_resolved_join_request(&approval_request)
+        self.import_parsed_join_request(&parsed.bootstrap)
     }
 
-    fn import_resolved_join_request(
+    fn import_parsed_join_request(
         &mut self,
-        approval_request: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalRequest,
+        bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
     ) -> Result<()> {
         let network_id = self.active_admin_network_id()?;
-        let prepared = prepare_join_approval(
-            &self.config,
-            &network_id,
-            approval_request,
-            unix_timestamp(),
-        )?;
-        self.publish_join_request_approval_events(approval_request, &prepared.events)?;
+        let prepared =
+            prepare_join_approval(&self.config, &network_id, bootstrap, unix_timestamp())?;
+        self.publish_join_request_approval_events(&prepared.events)?;
         self.config = prepared.updated_config;
         self.save_reload_and_refresh()?;
         if !self.vpn_enabled {
@@ -431,29 +419,20 @@ impl NativeAppRuntime {
 
     #[cfg(test)]
     #[allow(clippy::unnecessary_wraps)]
-    fn publish_join_request_approval_events(
-        &mut self,
-        _request: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalRequest,
-        events: &[Event],
-    ) -> Result<()> {
+    fn publish_join_request_approval_events(&mut self, events: &[Event]) -> Result<()> {
         self.published_join_approval_events
             .extend(events.iter().cloned());
         Ok(())
     }
 
     #[cfg(not(test))]
-    fn publish_join_request_approval_events(
-        &self,
-        request: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalRequest,
-        events: &[Event],
-    ) -> Result<()> {
+    fn publish_join_request_approval_events(&self, events: &[Event]) -> Result<()> {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .context("failed to start join request approval publisher")?;
         runtime.block_on(crate::join_approval::publish_join_approval_events(
             &self.config,
-            request,
             events,
         ))
     }
@@ -808,20 +787,14 @@ impl NativeAppRuntime {
         if lan_signal_is_join_request(signal) {
             return self.config.networks.iter().any(|network| {
                 network.admins.iter().any(|admin| admin == &sender_hex)
-                    || network
-                        .devices
-                        .iter()
-                        .any(|device| device == &sender_hex)
+                    || network.devices.iter().any(|device| device == &sender_hex)
             });
         }
         let signal_network_id = normalize_runtime_network_id(&signal.network_id);
         self.config.networks.iter().any(|network| {
             normalize_runtime_network_id(&network.network_id) == signal_network_id
                 && (network.admins.iter().any(|admin| admin == &sender_hex)
-                    || network
-                        .devices
-                        .iter()
-                        .any(|device| device == &sender_hex))
+                    || network.devices.iter().any(|device| device == &sender_hex))
         })
     }
 }

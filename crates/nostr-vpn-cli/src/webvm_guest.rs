@@ -245,20 +245,7 @@ fn validate_approved_config(app: &AppConfig) -> Result<()> {
 
 #[cfg(any(target_os = "linux", test))]
 fn webvm_pairing_uri(app: &AppConfig) -> Result<String> {
-    let pending = app
-        .pending_nostr_join_request
-        .as_ref()
-        .ok_or_else(|| anyhow!("no pending Nostr join request"))?;
-    pending.validate_for_device(&app.own_nostr_pubkey_hex()?)?;
-    let mut bootstrap =
-        nostr_vpn_core::identity_bridge::nostr_identity_device_approval_bootstrap(&pending.request)
-            .map_err(|error| anyhow!("failed to build WebVM approval bootstrap: {error}"))?;
-    bootstrap.label = None;
-    nostr_vpn_core::identity_bridge::encode_nostr_identity_device_approval_bootstrap(
-        &bootstrap,
-        Some(JOIN_REQUEST_LINK_PREFIX),
-    )
-    .map_err(|error| anyhow!("failed to encode WebVM approval bootstrap: {error}"))
+    app.pending_nostr_join_request_link(JOIN_REQUEST_LINK_PREFIX)
 }
 
 #[cfg(target_os = "linux")]
@@ -639,9 +626,9 @@ mod tests {
                 .as_object()
                 .expect("bootstrap object")
                 .len(),
-            3
+            4
         );
-        assert!(bootstrap.label.is_none());
+        assert!(bootstrap.label.is_some());
         let pending = second.pending_nostr_join_request.expect("pending request");
         assert_ne!(
             pending.request.request_pubkey,

@@ -2,7 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use nostr_identity::{
     NostrIdentityDeviceApprovalReceipt, nostr_identity_device_approval_relay_resource,
     nostr_identity_device_approval_request_relays,
-    parse_nostr_identity_device_approval_receipt_event_for_request,
+    parse_nostr_identity_device_approval_receipt_event_for_bootstrap,
 };
 use nostr_sdk::prelude::{Event, JsonUtil, Keys};
 use serde::{Deserialize, Serialize};
@@ -12,9 +12,8 @@ use crate::fips_control::SignedRoster;
 use crate::identity_bridge::{
     CreateNostrIdentityDeviceApprovalRequestOptions, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE,
     NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE, NostrIdentityDeviceApprovalRequest, NostrIdentityId,
-    NostrVpnJoinApprovalContext, build_nostr_identity_device_approval_request_event,
-    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_bootstrap,
-    nostr_identity_device_approval_bootstrap,
+    NostrVpnJoinApprovalContext, create_nostr_identity_device_approval_request,
+    encode_nostr_identity_device_approval_bootstrap, nostr_identity_device_approval_bootstrap,
     parse_nostr_identity_device_approval_receipt_roster_op,
     parse_nostr_vpn_join_approval_context_event,
 };
@@ -107,11 +106,6 @@ impl PendingNostrJoinRequest {
             .map_err(|error| anyhow!("failed to build pending join request bootstrap: {error}"))?;
         encode_nostr_identity_device_approval_bootstrap(&bootstrap, Some(prefix))
             .map_err(|error| anyhow!("failed to encode pending join request: {error}"))
-    }
-
-    pub fn request_event(&self) -> Result<Event> {
-        build_nostr_identity_device_approval_request_event(&self.request_keys()?, &self.request)
-            .map_err(|error| anyhow!("failed to build pending join request event: {error}"))
     }
 }
 
@@ -314,10 +308,12 @@ fn parse_nostr_join_approval_candidate(
     let is_context = event_has_tag(event, "type", NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE);
     match (is_receipt, is_context) {
         (true, false) => {
-            let receipt = parse_nostr_identity_device_approval_receipt_event_for_request(
+            let bootstrap = nostr_identity_device_approval_bootstrap(&pending.request)
+                .map_err(|error| anyhow!("invalid pending join bootstrap: {error}"))?;
+            let receipt = parse_nostr_identity_device_approval_receipt_event_for_bootstrap(
                 event,
                 request_keys,
-                &pending.request,
+                &bootstrap,
             )
             .map_err(|error| anyhow!("invalid Nostr join approval receipt: {error}"))?;
             validate_join_approval_freshness(pending, receipt.approved_at, now)?;
