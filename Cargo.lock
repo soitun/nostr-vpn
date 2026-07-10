@@ -3734,6 +3734,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "nostr-identity"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e21a59934b0c9374e81669d17741628865fab53a00506ebc047a4a9ec32febd"
+dependencies = [
+ "anyhow",
+ "nostr-sdk",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror 2.0.18",
+ "uuid",
+]
+
+[[package]]
 name = "nostr-pubsub"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3825,7 +3840,7 @@ checksum = "d0a51c186658b0602aebc9566ee405adfcc1c92d082c697543d0b50358da7f0f"
 dependencies = [
  "anyhow",
  "chrono",
- "nostr-identity",
+ "nostr-identity 0.1.5",
  "nostr-sdk",
  "nostr-social-graph",
  "serde",
@@ -3849,7 +3864,7 @@ dependencies = [
  "libc",
  "ndk-context",
  "netdev",
- "nostr-identity",
+ "nostr-identity 0.2.0",
  "nostr-pubsub",
  "nostr-pubsub-relay",
  "nostr-sdk",
@@ -3884,7 +3899,7 @@ dependencies = [
  "keyring-core",
  "libc",
  "netdev",
- "nostr-identity",
+ "nostr-identity 0.2.0",
  "nostr-pubsub",
  "nostr-sdk",
  "security-framework 2.11.1",

@@ -398,14 +398,29 @@ impl NativeAppRuntime {
 
     fn import_join_request(&mut self, request: &str) -> Result<()> {
         let parsed = parse_join_request_qr_code_or_link(request)?;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("failed to start join request resolver")?;
+        let approval_request = runtime.block_on(fetch_join_approval_request(
+            &self.config,
+            &parsed.bootstrap,
+        ))?;
+        self.import_resolved_join_request(&approval_request)
+    }
+
+    fn import_resolved_join_request(
+        &mut self,
+        approval_request: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalRequest,
+    ) -> Result<()> {
         let network_id = self.active_admin_network_id()?;
         let prepared = prepare_join_approval(
             &self.config,
             &network_id,
-            &parsed.approval_request,
+            approval_request,
             unix_timestamp(),
         )?;
-        self.publish_join_request_approval_events(&parsed.approval_request, &prepared.events)?;
+        self.publish_join_request_approval_events(approval_request, &prepared.events)?;
         self.config = prepared.updated_config;
         self.save_reload_and_refresh()?;
         if !self.vpn_enabled {

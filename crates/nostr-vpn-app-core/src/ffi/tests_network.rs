@@ -293,7 +293,7 @@
 
     #[test]
     #[allow(clippy::too_many_lines)]
-    fn full_join_request_qr_or_link_is_directly_added_by_admin() {
+    fn compact_join_bootstrap_and_signed_event_are_added_by_admin() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -308,6 +308,7 @@
         let error = anyhow!("boom");
         let mut admin = NativeAppRuntime::from_startup_error(&error);
         admin.startup_error = None;
+        admin.last_error.clear();
         admin.mobile_runtime = true;
         admin.config_path = admin_dir.join("config.toml");
         admin.config.node_name = "Admin Mac".to_string();
@@ -329,14 +330,12 @@
             .own_nostr_pubkey_hex()
             .expect("joiner pubkey");
         let request_keys = Keys::generate();
-        let request_secret =
-            "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
         let local_request =
             nostr_vpn_core::identity_bridge::create_nostr_identity_device_approval_request(
                 &joiner.config.nostr_keys().expect("joiner keys"),
                 nostr_vpn_core::identity_bridge::CreateNostrIdentityDeviceApprovalRequestOptions {
                     request_keys: Some(request_keys.clone()),
-                    request_secret: Some(request_secret.to_string()),
+                    request_secret: None,
                     requested_at: 1_778_998_000,
                     request_type: Some("nostr-vpn.join-request".to_string()),
                     resources: vec![nostr_identity::nostr_identity_device_approval_relay_resource(
@@ -350,27 +349,45 @@
                 },
             )
             .expect("joiner request");
-        let join_request =
-            nostr_vpn_core::identity_bridge::encode_nostr_identity_device_approval_request(
+        let request_secret = local_request.request.request_secret.clone();
+        let bootstrap =
+            nostr_vpn_core::identity_bridge::nostr_identity_device_approval_bootstrap(
                 &local_request.request,
+            )
+            .expect("joiner request bootstrap");
+        let join_request =
+            nostr_vpn_core::identity_bridge::encode_nostr_identity_device_approval_bootstrap(
+                &bootstrap,
                 Some(crate::join_request_link::JOIN_REQUEST_LINK_PREFIX),
             )
             .expect("joiner request link");
         assert!(join_request.starts_with("nvpn://join-request/"));
-        let parsed_request =
-            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_request(
+        let parsed_bootstrap =
+            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_bootstrap(
                 &join_request,
                 &[crate::join_request_link::JOIN_REQUEST_LINK_PREFIX],
             )
-            .expect("parse full join request")
-            .expect("join request payload");
+            .expect("parse compact join request")
+            .expect("join request bootstrap");
+        assert_eq!(parsed_bootstrap, bootstrap);
+        let request_event = nostr_vpn_core::identity_bridge::build_nostr_identity_device_approval_request_event(
+            &request_keys,
+            &local_request.request,
+        )
+        .expect("signed join request event");
+        let parsed_request =
+            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_request_event(
+                &request_event,
+                &parsed_bootstrap,
+            )
+            .expect("parse transported join request");
         assert_eq!(parsed_request.device_app_key_pubkey, joiner_pubkey);
-        assert!(parsed_request.request_secret.len() >= 32);
+        assert_eq!(parsed_request.request_secret, request_secret);
         assert_ne!(parsed_request.request_pubkey, parsed_request.device_app_key_pubkey);
 
-        admin.dispatch(NativeAppAction::ImportJoinRequest {
-            request: join_request,
-        });
+        admin
+            .import_resolved_join_request(&parsed_request)
+            .expect("import resolved join request");
 
         assert!(admin.last_error.is_empty(), "{}", admin.last_error);
         assert_eq!(admin.published_join_approval_events.len(), 5);
@@ -413,7 +430,7 @@
         assert!(
             !admin.published_join_approval_events[3]
                 .content
-                .contains(request_secret)
+                .contains(&request_secret)
         );
         let vpn_context =
             nostr_vpn_core::identity_bridge::parse_nostr_vpn_join_approval_context_event(
@@ -434,7 +451,7 @@
         assert!(
             !admin.published_join_approval_events[4]
                 .content
-                .contains(request_secret)
+                .contains(&request_secret)
         );
         assert!(
             !admin.published_join_approval_events[4]

@@ -37,7 +37,7 @@ pub(crate) async fn run(args: WebvmGuestArgs) -> Result<()> {
     #[cfg(not(target_os = "linux"))]
     {
         let _ = args;
-        return Err(anyhow!("webvm-guest is supported only on Linux"));
+        Err(anyhow!("webvm-guest is supported only on Linux"))
     }
 
     #[cfg(target_os = "linux")]
@@ -276,6 +276,7 @@ async fn wait_for_approval(
     app: &mut AppConfig,
     client: &mut NostrJoinFipsPubsubClient,
 ) -> Result<()> {
+    let request_event = client.request_event_datagram(app)?;
     let subscribe = client.subscribe_datagram(app)?;
     let mut subscribed = HashMap::<String, (u64, Instant)>::new();
     let mut datagrams = Vec::<FipsEndpointServiceDatagram>::with_capacity(SERVICE_RECV_BATCH);
@@ -288,7 +289,12 @@ async fn wait_for_approval(
                 return Err(anyhow!("WebVM guest pairing interrupted"));
             }
             _ = host_poll.tick() => {
-                subscribe_connected_hosts(endpoint, &subscribe, &mut subscribed).await?;
+                sync_connected_hosts(
+                    endpoint,
+                    &request_event,
+                    &subscribe,
+                    &mut subscribed,
+                ).await?;
             }
             received = endpoint.recv_service_datagram_batch_into(
                 &mut datagrams,
@@ -332,8 +338,9 @@ async fn wait_for_approval(
 }
 
 #[cfg(target_os = "linux")]
-async fn subscribe_connected_hosts(
+async fn sync_connected_hosts(
     endpoint: &FipsEndpoint,
+    request_event: &NostrJoinFipsPubsubDatagram,
     subscribe: &NostrJoinFipsPubsubDatagram,
     subscribed: &mut HashMap<String, (u64, Instant)>,
 ) -> Result<()> {
@@ -372,6 +379,17 @@ async fn subscribe_connected_hosts(
         }
         let remote = PeerIdentity::from_npub(&host.npub)
             .with_context(|| format!("invalid browser FIPS host npub {}", host.npub))?;
+        endpoint
+            .send_datagram(
+                remote.clone(),
+                request_event.source_port,
+                request_event.destination_port,
+                request_event.payload.clone(),
+            )
+            .await
+            .with_context(|| {
+                format!("failed to publish request through FIPS host {}", host.npub)
+            })?;
         endpoint
             .send_datagram(
                 remote,
@@ -572,6 +590,8 @@ fn remove_pairing_uri(path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use nostr_sdk::JsonUtil as _;
+
     use super::*;
 
     fn temp_path(name: &str) -> PathBuf {
@@ -586,7 +606,7 @@ mod tests {
     }
 
     #[test]
-    fn first_boot_persists_one_stable_full_join_request() {
+    fn first_boot_persists_one_stable_compact_join_bootstrap() {
         let path = temp_path("config").with_extension("toml");
         let first = load_or_initialize_config(&path, 1_778_998_000).expect("first boot");
         let first_uri = first
@@ -598,12 +618,34 @@ mod tests {
             .expect("second URI");
         assert_eq!(first_uri, second_uri);
         assert!(first_uri.starts_with(JOIN_REQUEST_LINK_PREFIX));
+        assert!(
+            first_uri.len() <= 360,
+            "pairing URI was {} bytes",
+            first_uri.len()
+        );
+        let bootstrap =
+            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_bootstrap(
+                &first_uri,
+                &[JOIN_REQUEST_LINK_PREFIX],
+            )
+            .expect("parse compact bootstrap")
+            .expect("bootstrap payload");
+        assert_eq!(
+            serde_json::to_value(&bootstrap)
+                .expect("serialize bootstrap")
+                .as_object()
+                .expect("bootstrap object")
+                .len(),
+            3
+        );
         let pending = second.pending_nostr_join_request.expect("pending request");
         assert_ne!(
             pending.request.request_pubkey,
             pending.request.device_app_key_pubkey
         );
-        assert!(pending.request.request_secret.len() >= 32);
+        assert_eq!(bootstrap.request_secret, pending.request.request_secret);
+        let event = pending.request_event().expect("transported request event");
+        assert!(!event.as_json().contains(&bootstrap.request_secret));
 
         AppConfig::delete_persisted_secrets_for_path(&path).expect("delete secrets");
         let _ = fs::remove_file(path);

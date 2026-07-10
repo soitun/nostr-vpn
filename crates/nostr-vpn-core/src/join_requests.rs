@@ -12,8 +12,9 @@ use crate::fips_control::SignedRoster;
 use crate::identity_bridge::{
     CreateNostrIdentityDeviceApprovalRequestOptions, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE,
     NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE, NostrIdentityDeviceApprovalRequest, NostrIdentityId,
-    NostrVpnJoinApprovalContext, create_nostr_identity_device_approval_request,
-    encode_nostr_identity_device_approval_request,
+    NostrVpnJoinApprovalContext, build_nostr_identity_device_approval_request_event,
+    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_bootstrap,
+    nostr_identity_device_approval_bootstrap,
     parse_nostr_identity_device_approval_receipt_roster_op,
     parse_nostr_vpn_join_approval_context_event,
 };
@@ -73,11 +74,10 @@ impl PendingNostrJoinRequest {
 
     pub fn validate_for_device(&self, device_app_key_pubkey: &str) -> Result<()> {
         let expected_device = normalize_nostr_pubkey(device_app_key_pubkey)?;
-        let encoded = encode_nostr_identity_device_approval_request(&self.request, None)
+        let bootstrap = nostr_identity_device_approval_bootstrap(&self.request)
             .map_err(|error| anyhow!("pending join request is invalid: {error}"))?;
-        if encoded.is_empty() {
-            return Err(anyhow!("pending join request encoding is empty"));
-        }
+        encode_nostr_identity_device_approval_bootstrap(&bootstrap, None)
+            .map_err(|error| anyhow!("pending join request bootstrap is invalid: {error}"))?;
         if self.request.device_app_key_pubkey != expected_device {
             return Err(anyhow!(
                 "pending join request device AppKey does not match local identity"
@@ -103,8 +103,15 @@ impl PendingNostrJoinRequest {
     }
 
     pub fn encode(&self, prefix: &str) -> Result<String> {
-        encode_nostr_identity_device_approval_request(&self.request, Some(prefix))
+        let bootstrap = nostr_identity_device_approval_bootstrap(&self.request)
+            .map_err(|error| anyhow!("failed to build pending join request bootstrap: {error}"))?;
+        encode_nostr_identity_device_approval_bootstrap(&bootstrap, Some(prefix))
             .map_err(|error| anyhow!("failed to encode pending join request: {error}"))
+    }
+
+    pub fn request_event(&self) -> Result<Event> {
+        build_nostr_identity_device_approval_request_event(&self.request_keys()?, &self.request)
+            .map_err(|error| anyhow!("failed to build pending join request event: {error}"))
     }
 }
 

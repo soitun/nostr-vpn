@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, anyhow};
-use nostr_pubsub::{Filter, FipsPubsubWireCodec, FipsPubsubWireMessage, PublicKey, SubscriptionId};
+use nostr_pubsub::{
+    Filter, FipsPubsubWireCodec, FipsPubsubWireMessage, PublicKey, SubscriptionId, VerifiedEvent,
+};
 use nostr_sdk::prelude::{Alphabet, Event, Kind, SingleLetterTag, Timestamp};
 
 use crate::config::AppConfig;
@@ -100,6 +102,25 @@ impl NostrJoinFipsPubsubClient {
             self.subscription_id.clone(),
             vec![filter],
         ))?;
+        Ok(NostrJoinFipsPubsubDatagram::new(payload))
+    }
+
+    pub fn request_event_datagram(
+        &self,
+        config: &AppConfig,
+    ) -> Result<NostrJoinFipsPubsubDatagram> {
+        let pending = config
+            .pending_nostr_join_request
+            .as_ref()
+            .ok_or_else(|| anyhow!("no pending Nostr join request"))?;
+        if pending.request.request_pubkey != self.request_pubkey {
+            return Err(anyhow!("pending Nostr join request changed"));
+        }
+        let event = VerifiedEvent::try_from(pending.request_event()?)
+            .context("pending Nostr join request event failed signature verification")?;
+        let payload = self
+            .codec
+            .encode_frame(&FipsPubsubWireMessage::publish(event))?;
         Ok(NostrJoinFipsPubsubDatagram::new(payload))
     }
 

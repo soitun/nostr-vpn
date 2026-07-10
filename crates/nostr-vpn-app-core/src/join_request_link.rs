@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::config::{AppConfig, normalize_nostr_pubkey};
 use nostr_vpn_core::identity_bridge::{
-    NostrIdentityDeviceApprovalRequest, parse_nostr_identity_device_approval_request,
+    NostrIdentityDeviceApprovalBootstrap, parse_nostr_identity_device_approval_bootstrap,
 };
 
 pub const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
@@ -9,8 +9,7 @@ pub const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JoinRequestQrCodeOrLink {
     pub pubkey_hex: String,
-    pub node_name: String,
-    pub approval_request: NostrIdentityDeviceApprovalRequest,
+    pub bootstrap: NostrIdentityDeviceApprovalBootstrap,
 }
 
 pub fn own_join_request_qr_code_or_link(config: &AppConfig) -> Result<String> {
@@ -25,15 +24,14 @@ pub fn parse_join_request_qr_code_or_link(value: &str) -> Result<JoinRequestQrCo
         return Err(anyhow!("join request is empty"));
     }
 
-    if let Some(request) =
-        parse_nostr_identity_device_approval_request(trimmed, &[JOIN_REQUEST_LINK_PREFIX])
+    if let Some(bootstrap) =
+        parse_nostr_identity_device_approval_bootstrap(trimmed, &[JOIN_REQUEST_LINK_PREFIX])
             .context("failed to parse join request")?
     {
-        let requester = normalize_nostr_pubkey(&request.device_app_key_pubkey)?;
+        let requester = normalize_nostr_pubkey(&bootstrap.device_app_key_npub)?;
         return Ok(JoinRequestQrCodeOrLink {
             pubkey_hex: requester,
-            node_name: request.label.clone().unwrap_or_default(),
-            approval_request: request,
+            bootstrap,
         });
     }
 

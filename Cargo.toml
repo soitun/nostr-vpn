@@ -57,7 +57,7 @@ nostr-pubsub-social-graph = "0.1.5"
 nostr-pubsub-relay = "0.1.4"
 nostr-social-graph = "0.1.2"
 nostr-social-memory = "0.1.1"
-nostr-identity = "0.1.5"
+nostr-identity = "0.2.0"
 nostr-vpn-core = { version = "4.0.40", path = "crates/nostr-vpn-core" }
 nostr-vpn-wintun = { version = "4.0.40", path = "crates/nostr-vpn-wintun" }
 
