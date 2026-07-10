@@ -232,6 +232,8 @@ impl FipsPrivateTunnelConfig {
             advertise_public_endpoint: app.fips_advertise_public_endpoint,
             stun_servers: app.nat.stun_servers.clone(),
             nostr_relays: app.nostr.relays.clone(),
+            nostr_pubsub: app.nostr.pubsub.clone(),
+            control_pubsub_store_path: PathBuf::new(),
             share_local_candidates: app.lan_discovery_enabled,
             peers,
             endpoint_peers,
@@ -416,6 +418,8 @@ fn fips_tunnel_requires_endpoint_restart(
         || current.advertise_public_endpoint != next.advertise_public_endpoint
         || current.stun_servers != next.stun_servers
         || current.nostr_relays != next.nostr_relays
+        || current.nostr_pubsub != next.nostr_pubsub
+        || current.control_pubsub_store_path != next.control_pubsub_store_path
         || current.nostr_discovery_enabled != next.nostr_discovery_enabled
         || current.share_local_candidates != next.share_local_candidates
         || current.nostr_discovery_policy != next.nostr_discovery_policy
@@ -441,6 +445,7 @@ fn endpoint_transport_ipv4_host(addr: &str) -> Option<Ipv4Addr> {
 pub(crate) struct FipsPrivateTunnelRuntime {
     iface: String,
     mesh: Arc<FipsPrivateMeshRuntime>,
+    control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
     config: FipsPrivateTunnelConfig,
     _tun: Arc<SystemTun>,
     fips_host: Option<crate::fips_host_tunnel::FipsHostTunnelRuntime>,

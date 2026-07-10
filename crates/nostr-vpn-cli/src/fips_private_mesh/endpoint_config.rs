@@ -514,6 +514,8 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) advertise_public_endpoint: bool,
     pub(crate) stun_servers: Vec<String>,
     pub(crate) nostr_relays: Vec<String>,
+    pub(crate) nostr_pubsub: nostr_vpn_core::config::NostrPubsubConfig,
+    pub(crate) control_pubsub_store_path: PathBuf,
     pub(crate) share_local_candidates: bool,
     pub(crate) peers: Vec<FipsMeshPeerConfig>,
     pub(crate) endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,

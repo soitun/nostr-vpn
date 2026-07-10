@@ -1,5 +1,5 @@
 impl FipsPrivateMeshRuntime {
-    async fn bind_with_config_scoped(
+    pub(crate) async fn bind_with_config_scoped(
         identity_nsec: impl Into<String>,
         scope: Option<String>,
         peers: Vec<FipsMeshPeerConfig>,

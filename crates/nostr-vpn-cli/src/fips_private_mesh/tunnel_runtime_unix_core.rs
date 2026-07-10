@@ -82,6 +82,13 @@ impl FipsPrivateTunnelRuntime {
         ensure_linux_tun_permissions(&config.iface)?;
         #[cfg(feature = "paid-exit")]
         mesh.set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
+        let control_pubsub = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start(
+            Arc::clone(mesh.endpoint()),
+            config.nostr_pubsub.clone(),
+            config.nostr_relays.clone(),
+            Some(config.control_pubsub_store_path.clone()),
+        )
+        .await?;
         let tun = Arc::new(
             SystemTun::new(&config.iface)
                 .with_context(|| fips_tun_create_context(&config.iface))?
@@ -98,6 +105,7 @@ impl FipsPrivateTunnelRuntime {
         let mut runtime = Self {
             iface,
             mesh,
+            control_pubsub,
             config: config.clone(),
             _tun: tun,
             fips_host: None,
@@ -209,6 +217,9 @@ impl FipsPrivateTunnelRuntime {
             handle.cleanup().await;
         }
         runtime.stop_fips_host_runtime().await;
+        if let Some(control_pubsub) = runtime.control_pubsub.take() {
+            control_pubsub.stop().await;
+        }
         stop_tun_send_worker(runtime.tun_send_worker).await;
         stop_mesh_recv_worker(runtime.mesh_recv_worker, &runtime.mesh).await;
         if let Ok(mesh) = Arc::try_unwrap(runtime.mesh) {

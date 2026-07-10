@@ -10,6 +10,83 @@ use tokio_tungstenite::tungstenite::Message;
 
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
+async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
+    use nostr_sdk::prelude::{EventBuilder, Kind};
+    use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
+
+    let relay_event = EventBuilder::new(Kind::Custom(37_195), "relay advert")
+        .sign_with_keys(&Keys::generate())
+        .expect("signed relay event");
+    let relay = LocalNostrRelay::spawn_with_events(vec![
+        serde_json::to_value(&relay_event).expect("relay event JSON"),
+    ])
+    .await;
+    let endpoint = Arc::new(
+        fips_core::FipsEndpoint::builder()
+            .without_system_tun()
+            .bind()
+            .await
+            .expect("bind FIPS endpoint"),
+    );
+    let runtime = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start(
+        Arc::clone(&endpoint),
+        NostrPubsubConfig {
+            mode: NostrPubsubMode::Relay,
+            ..NostrPubsubConfig::default()
+        },
+        vec![relay.url.clone()],
+        None,
+    )
+    .await
+    .expect("start control relay bridge")
+    .expect("relay mode is enabled");
+
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if runtime
+                .events()
+                .await
+                .iter()
+                .any(|event| event.id == relay_event.id)
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("relay event reaches the control pubsub cache");
+
+    let mesh_event = EventBuilder::new(Kind::Custom(7_368), "mesh rating")
+        .sign_with_keys(&Keys::generate())
+        .expect("signed mesh event");
+    let mesh_event_id = mesh_event.id.to_hex();
+    runtime
+        .publish(mesh_event.clone())
+        .await
+        .expect("publish mesh event through relay bridge");
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if relay
+                .events()
+                .iter()
+                .any(|event| event["id"].as_str() == Some(mesh_event_id.as_str()))
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("mesh event reaches the relay");
+
+    runtime.stop().await;
+    endpoint.shutdown().await.expect("shutdown FIPS endpoint");
+    relay.stop().await;
+}
+
+#[cfg(feature = "paid-exit")]
+#[tokio::test]
 async fn paid_exit_offer_publish_and_discover_roundtrips_through_local_relay() {
     use nostr_vpn_core::paid_routes::PaidRouteMeter;
 
@@ -192,6 +269,7 @@ async fn paid_exit_rating_discovery_replays_historical_facts_from_local_relay() 
 #[cfg(feature = "paid-exit")]
 struct LocalNostrRelay {
     url: String,
+    events: Arc<Mutex<Vec<serde_json::Value>>>,
     shutdown: Option<oneshot::Sender<()>>,
     handle: tokio::task::JoinHandle<()>,
 }
@@ -209,12 +287,21 @@ impl LocalNostrRelay {
         let url = format!("ws://{}", listener.local_addr().expect("relay addr"));
         let events = Arc::new(Mutex::new(initial_events));
         let (shutdown, shutdown_rx) = oneshot::channel();
-        let handle = tokio::spawn(run_local_nostr_relay(listener, events, shutdown_rx));
+        let handle = tokio::spawn(run_local_nostr_relay(
+            listener,
+            Arc::clone(&events),
+            shutdown_rx,
+        ));
         Self {
             url,
+            events,
             shutdown: Some(shutdown),
             handle,
         }
+    }
+
+    fn events(&self) -> Vec<serde_json::Value> {
+        self.events.lock().expect("relay events lock").clone()
     }
 
     async fn stop(mut self) {

@@ -98,8 +98,11 @@ pub fn normalize_relay_urls(values: Vec<String>) -> Vec<String> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum NostrPubsubMode {
+    /// Disable the FIPS control pubsub service.
     Off,
+    /// Exchange control events over connected FIPS peers without a relay client.
     Client,
+    /// Exchange events over FIPS and bridge them to/from configured Nostr relays.
     #[default]
     Relay,
 }
@@ -137,6 +140,8 @@ impl std::str::FromStr for NostrPubsubMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NostrPubsubConfig {
+    /// `client` removes the runtime relay dependency after FIPS bootstrap;
+    /// `relay` keeps this node as a bootstrap/recovery bridge for the mesh.
     #[serde(default)]
     pub mode: NostrPubsubMode,
     #[serde(default = "default_nostr_pubsub_fanout")]
@@ -155,7 +160,7 @@ impl NostrPubsubConfig {
     pub fn normalize(&mut self) {
         self.fanout = self.fanout.clamp(1, 32);
         self.max_hops = self.max_hops.clamp(1, 10);
-        self.max_event_bytes = self.max_event_bytes.clamp(1024, 256 * 1024);
+        self.max_event_bytes = self.max_event_bytes.clamp(1024, 56 * 1024);
     }
 
     pub fn enabled(&self) -> bool {
@@ -187,7 +192,7 @@ fn default_nostr_pubsub_max_hops() -> u8 {
 }
 
 fn default_nostr_pubsub_max_event_bytes() -> usize {
-    64 * 1024
+    56 * 1024
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

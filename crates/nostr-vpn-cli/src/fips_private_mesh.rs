@@ -47,7 +47,6 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::io::{AsRawFd, RawFd};
-#[cfg(feature = "paid-exit")]
 use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
@@ -219,6 +218,12 @@ pub(crate) struct FipsPrivateMeshRuntime {
     control_fragments: Mutex<ControlFragmentBuffer>,
     #[cfg(feature = "paid-exit")]
     paid_route_accounting: Mutex<FipsPaidRouteAccounting>,
+}
+
+impl FipsPrivateMeshRuntime {
+    pub(crate) fn endpoint(&self) -> &Arc<FipsEndpoint> {
+        &self.endpoint
+    }
 }
 
 #[cfg(target_os = "linux")]

@@ -35,6 +35,13 @@ impl FipsPrivateTunnelRuntime {
         );
         #[cfg(feature = "paid-exit")]
         mesh.set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
+        let control_pubsub = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start(
+            Arc::clone(mesh.endpoint()),
+            config.nostr_pubsub.clone(),
+            config.nostr_relays.clone(),
+            Some(config.control_pubsub_store_path.clone()),
+        )
+        .await?;
         let (session, iface, interface_index) = start_windows_fips_wintun(&config)?;
         let route_targets =
             crate::windows_tunnel::apply_windows_routes(interface_index, &config.route_targets)?;
@@ -56,6 +63,7 @@ impl FipsPrivateTunnelRuntime {
         let mut runtime = Self {
             iface,
             mesh,
+            control_pubsub,
             config: config.clone(),
             session,
             stop,
@@ -163,6 +171,9 @@ impl FipsPrivateTunnelRuntime {
         // revert lands while we still have a sane working tree.
         if let Some(handle) = runtime.wg_upstream.take() {
             handle.cleanup().await;
+        }
+        if let Some(control_pubsub) = runtime.control_pubsub.take() {
+            control_pubsub.stop().await;
         }
         runtime.stop.store(true, Ordering::Relaxed);
         let _ = runtime.session.shutdown();

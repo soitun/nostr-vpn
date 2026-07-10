@@ -2,6 +2,7 @@
 pub(crate) struct FipsPrivateTunnelRuntime {
     iface: String,
     mesh: Arc<FipsPrivateMeshRuntime>,
+    control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
     config: FipsPrivateTunnelConfig,
     session: Arc<Session>,
     stop: Arc<AtomicBool>,

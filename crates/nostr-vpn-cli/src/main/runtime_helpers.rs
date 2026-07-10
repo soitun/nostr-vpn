@@ -513,6 +513,8 @@ fn fips_tunnel_config_from_app(
         recent_peers,
         live_peer_endpoints,
     )?;
+    config.control_pubsub_store_path =
+        crate::control_pubsub_runtime::control_pubsub_store_file_path(config_path);
     config.clamp_mesh_mtu_to_underlay_interface_mtu(underlay_interface_mtu);
     #[cfg(feature = "paid-exit")]
     {
