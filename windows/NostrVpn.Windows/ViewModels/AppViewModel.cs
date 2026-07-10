@@ -1,3 +1,4 @@
+using System;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -801,10 +802,23 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             {
                 return string.IsNullOrWhiteSpace(State.VpnStatus) ? "Turning on" : State.VpnStatus;
             }
+            if (DaemonStarting(State))
+            {
+                return State.VpnStatus;
+            }
             return "Off";
         }
     }
     public Brush VpnStatusBrush => State.ExitNodeBlocked ? HeaderDangerBrush : TextSecondaryBrush;
+
+    private static bool DaemonStarting(NativeAppState state) =>
+        string.IsNullOrWhiteSpace(state.Error)
+        && state.ServiceRunning
+        && string.Equals(
+            state.VpnStatus.Trim(),
+            "Background service starting",
+            StringComparison.Ordinal);
+
     public string ThisDeviceCopyValue => !string.IsNullOrWhiteSpace(State.OwnNpub) ? State.OwnNpub : State.TunnelIp;
     public Visibility NoNearbyInvitesNoticeVisibility => State.NearbyDiscoveryActive && State.LanPeers.Count == 0
         ? Visibility.Visible

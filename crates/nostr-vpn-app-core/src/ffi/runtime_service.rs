@@ -60,6 +60,23 @@ impl NativeAppRuntime {
         Ok(())
     }
 
+    fn arm_daemon_status_grace(&mut self) {
+        self.daemon_status_grace_until = Some(Instant::now() + DAEMON_STARTUP_STATUS_GRACE);
+    }
+
+    fn clear_daemon_status_grace(&mut self) {
+        self.daemon_status_grace_until = None;
+    }
+
+    fn daemon_status_grace_active(&self) -> bool {
+        self.daemon_status_grace_until
+            .is_some_and(|deadline| Instant::now() < deadline)
+    }
+
+    fn daemon_status_failure_is_startup(&self) -> bool {
+        self.service_running && !self.service_disabled && self.daemon_status_grace_active()
+    }
+
     fn invalidate_service_status(&mut self) {
         self.last_service_status_refresh_at = None;
     }

@@ -689,7 +689,16 @@ pub fn vpn_status_text(state: &NativeAppState) -> String {
             state.vpn_status.clone()
         };
     }
+    if daemon_starting_status(state) {
+        return state.vpn_status.clone();
+    }
     "Off".to_string()
+}
+
+fn daemon_starting_status(state: &NativeAppState) -> bool {
+    state.error.trim().is_empty()
+        && state.service_running
+        && state.vpn_status.trim() == "Background service starting"
 }
 
 fn device_display_name(state: &NativeAppState) -> String {

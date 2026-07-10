@@ -8,6 +8,98 @@
         dir
     }
 
+    #[cfg(unix)]
+    fn write_starting_service_fake_nvpn(dir: &Path) -> PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script_path = dir.join("nvpn");
+        fs::write(
+            &script_path,
+            r#"#!/bin/sh
+if [ "$1" = "service" ] && [ "$2" = "status" ]; then
+  cat <<'JSON'
+{"supported":true,"installed":true,"disabled":false,"loaded":true,"running":true,"pid":123,"label":"fi.siriusbusiness.nvpn.test","binary_version":"test"}
+JSON
+  exit 0
+fi
+if [ "$1" = "status" ]; then
+  echo "control socket not ready" >&2
+  exit 7
+fi
+exit 0
+"#,
+        )
+        .expect("write fake nvpn");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("fake nvpn metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make fake nvpn executable");
+        script_path
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_status_failure_during_startup_grace_is_not_ui_error() {
+        let dir = unique_service_test_dir("nvpn-app-core-daemon-starting");
+        let script_path = write_starting_service_fake_nvpn(&dir);
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Home");
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("save test config");
+        runtime.nvpn_bin = Some(script_path);
+        runtime.daemon_status_grace_until = Some(Instant::now() + DAEMON_STARTUP_STATUS_GRACE);
+
+        runtime.dispatch(NativeAppAction::Tick);
+        let state = runtime.state();
+
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(state.error.is_empty(), "{}", state.error);
+        assert!(state.service_running);
+        assert!(!state.daemon_running);
+        assert_eq!(state.vpn_status, "Background service starting");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_status_failure_after_startup_grace_surfaces_error() {
+        let dir = unique_service_test_dir("nvpn-app-core-daemon-startup-expired");
+        let script_path = write_starting_service_fake_nvpn(&dir);
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Home");
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("save test config");
+        runtime.nvpn_bin = Some(script_path);
+        runtime.daemon_status_grace_until = None;
+
+        runtime.dispatch(NativeAppAction::Tick);
+        let state = runtime.state();
+
+        assert!(
+            runtime.last_error.contains("control socket not ready"),
+            "{}",
+            runtime.last_error
+        );
+        assert!(state.error.contains("control socket not ready"), "{}", state.error);
+        assert!(state.vpn_status.contains("nvpn status failed"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn native_state_hides_reachable_peers_when_vpn_is_paused() {
         let error = anyhow!("boom");

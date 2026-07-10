@@ -53,6 +53,7 @@ use crate::state::{
 const NVPN_BIN_ENV: &str = "NVPN_CLI_PATH";
 const EXTERNAL_DAEMON_ENV: &str = "NVPN_EXTERNAL_DAEMON";
 const SERVICE_STATUS_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const DAEMON_STARTUP_STATUS_GRACE: Duration = Duration::from_secs(20);
 const MOBILE_RUNTIME_STATE_FILE: &str = "mobile-runtime-state.json";
 const MOBILE_RUNTIME_STATE_STALE_SECS: u64 = 10;
 const MOBILE_RUNTIME_STATE_MAX_FUTURE_SKEW_SECS: u64 = 2;
@@ -189,6 +190,7 @@ struct NativeAppRuntime {
     service_status_detail: String,
     service_binary_version: String,
     expected_service_binary_version: String,
+    daemon_status_grace_until: Option<Instant>,
     last_service_status_refresh_at: Option<Instant>,
     lan_pairing_worker: Option<NativeLanPairingWorker>,
     invite_broadcast_expires_at: Option<SystemTime>,

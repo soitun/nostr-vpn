@@ -130,6 +130,9 @@ final class AppManager: ObservableObject {
         if state.vpnEnabled {
             return state.vpnStatus.isEmpty ? "Turning on" : state.vpnStatus
         }
+        if Self.daemonStarting(in: state) {
+            return state.vpnStatus
+        }
         if Self.serviceUpdateRecommended(in: state) {
             return "Background service needs update"
         }
@@ -1353,6 +1356,12 @@ final class AppManager: ObservableObject {
             && !state.serviceBinaryVersion.isEmpty
             && !state.expectedServiceBinaryVersion.isEmpty
             && state.serviceBinaryVersion != state.expectedServiceBinaryVersion
+    }
+
+    private static func daemonStarting(in state: NativeAppState) -> Bool {
+        state.error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && state.serviceRunning
+            && state.vpnStatus.trimmingCharacters(in: .whitespacesAndNewlines) == "Background service starting"
     }
 
     private static func fixtureModeRequested() -> Bool {

@@ -308,6 +308,7 @@ impl NativeAppRuntime {
             self.config_path_str()?,
         ])?;
         ensure_success("nvpn start", &output)?;
+        self.arm_daemon_status_grace();
         self.refresh_status()
     }
 
@@ -404,6 +405,7 @@ impl NativeAppRuntime {
 
         match output {
             Ok(output) if output.status.success() => {
+                self.clear_daemon_status_grace();
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let json_text = extract_json_document(&stdout)?;
                 let parsed = serde_json::from_str::<CliStatusResponse>(json_text)
@@ -433,8 +435,12 @@ impl NativeAppRuntime {
             Ok(output) => {
                 self.daemon_state = None;
                 self.daemon_running = false;
-                self.vpn_enabled = false;
                 self.vpn_active = false;
+                if self.daemon_status_failure_is_startup() {
+                    self.vpn_status = "Background service starting".to_string();
+                    return Ok(());
+                }
+                self.vpn_enabled = false;
                 self.vpn_status = "Daemon status unavailable".to_string();
                 Err(command_failure("nvpn status", &output))
             }
