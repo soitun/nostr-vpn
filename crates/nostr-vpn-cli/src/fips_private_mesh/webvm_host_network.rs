@@ -301,11 +301,13 @@ async fn run_webvm_fips_dns(
             }
             continue;
         };
-        let response = exit_dns
-            .resolve(selected_exit, query)
-            .await
-            .ok()
-            .or_else(|| nostr_vpn_core::exit_dns::build_exit_dns_servfail_response(query));
+        let response = match exit_dns.resolve(selected_exit, query).await {
+            Ok(response) => Some(response),
+            Err(error) => {
+                eprintln!("webvm-guest: exit DNS request failed: {error:#}");
+                nostr_vpn_core::exit_dns::build_exit_dns_servfail_response(query)
+            }
+        };
         if let Some(response) = response {
             let _ = socket.send_to(&response, source).await;
         }

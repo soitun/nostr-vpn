@@ -222,16 +222,10 @@ fn prepare_host_config(restore: &HostRestore) -> HarnessResult<String> {
     let own_pubkey = config
         .own_nostr_pubkey_hex()
         .map_err(|_| HarnessError::new("preflight", "host-identity-unavailable"))?;
-    let active_is_admin = config
-        .networks
-        .iter()
-        .any(|network| network.enabled && network.admins.iter().any(|admin| admin == &own_pubkey));
-    if !active_is_admin {
-        let network_id = config.add_owned_network("WebVM e2e");
-        config
-            .set_network_enabled(&network_id, true)
-            .map_err(|_| HarnessError::new("preflight", "temporary-network-enable-failed"))?;
-    }
+    let network_id = config.add_owned_network("WebVM e2e");
+    config
+        .set_network_enabled(&network_id, true)
+        .map_err(|_| HarnessError::new("preflight", "temporary-network-enable-failed"))?;
     config.node.advertise_exit_node = true;
     config.connect_to_non_roster_fips_peers = true;
     config.exit_node.clear();
