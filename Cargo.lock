@@ -4085,6 +4085,7 @@ dependencies = [
  "nostr-social-memory",
  "nostr-vpn-core",
  "nostr-vpn-wintun",
+ "qrcode",
  "rand 0.9.4",
  "reqwest",
  "serde",

@@ -57,6 +57,23 @@ fn clap_parses_complete_webvm_guest_contract() {
 }
 
 #[test]
+fn clap_parses_pairing_qr_config() {
+    let cli = Cli::parse_from([
+        "nvpn",
+        "pairing-qr",
+        "--config",
+        "/var/lib/nvpn/config.toml",
+    ]);
+    let Command::PairingQr(args) = cli.command else {
+        panic!("expected pairing-qr command");
+    };
+    assert_eq!(
+        args.config.expect("config").to_string_lossy(),
+        "/var/lib/nvpn/config.toml"
+    );
+}
+
+#[test]
 fn build_reports_fips_core_component_version() {
     let version = crate::fips_core_build_version();
     assert!(!version.trim().is_empty());
@@ -74,6 +91,7 @@ fn clap_includes_tailscale_style_commands() {
         "pause",
         "resume",
         "connect",
+        "pairing-qr",
         "status",
         "set",
         "ping",

@@ -49,6 +49,7 @@ crab_nat = "0.7"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev.workspace = true
 reqwest.workspace = true
+qrcode = { version = "0.14", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 boringtun = { workspace = true, features = ["device"] }
