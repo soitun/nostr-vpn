@@ -1,5 +1,5 @@
 mod config_bootstrap;
-mod control_pubsub_runtime;
+use nvpn::control_pubsub_runtime;
 mod daemon_runtime;
 mod diagnostics;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]

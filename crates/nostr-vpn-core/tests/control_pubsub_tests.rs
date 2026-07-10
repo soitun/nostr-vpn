@@ -151,7 +151,7 @@ fn control_pubsub_codec_is_versioned_and_bounded() {
             .decode(&unsupported)
             .expect_err("unsupported version must fail")
             .to_string()
-            .contains("unsupported control pubsub version 2")
+            .contains("unsupported inv/want version 2")
     );
 
     let tiny = ControlPubsubCodec::new(encoded.len() - 1);

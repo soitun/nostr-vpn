@@ -602,7 +602,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.6.4",
+ "rand_core 0.5.1",
  "serde",
  "unicode-normalization",
 ]
@@ -3733,12 +3733,11 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "00d56c74721412db010793575c65c3c879fc54cddc81fcc2163fa2cad5ca426d"
+version = "0.1.5"
 dependencies = [
  "async-trait",
  "nostr",
+ "serde",
  "serde_json",
  "thiserror 2.0.18",
 ]
@@ -3854,6 +3853,21 @@ dependencies = [
  "tracing",
  "uuid",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "nostr-vpn-sim"
+version = "4.0.89"
+dependencies = [
+ "anyhow",
+ "fips-core",
+ "hex",
+ "nostr-sdk",
+ "nostr-vpn-core",
+ "nvpn",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -1,0 +1,22 @@
+[package]
+name = "nostr-vpn-sim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Production-backed adversarial simulations for Nostr VPN"
+publish = false
+
+[dependencies]
+anyhow.workspace = true
+fips-core = { workspace = true, features = ["sim-transport"] }
+hex.workspace = true
+nostr-sdk.workspace = true
+nostr-vpn-core.workspace = true
+nvpn = { path = "../nostr-vpn-cli" }
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true
