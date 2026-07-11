@@ -1,0 +1,320 @@
+use super::*;
+
+pub(super) struct DaemonVpnStartup {
+    pub(super) config_path: PathBuf,
+    pub(super) pid_file: PathBuf,
+    pub(super) network_override: Option<String>,
+    pub(super) participants_override: Vec<String>,
+    pub(super) app: AppConfig,
+    pub(super) network_id: String,
+    pub(super) own_pubkey: Option<String>,
+    pub(super) expected_peers: usize,
+    pub(super) state_file: PathBuf,
+    pub(super) recent_peers_path: PathBuf,
+    pub(super) recent_peers: nostr_vpn_core::recent_peers::RecentPeerEndpoints,
+    pub(super) fips_join_request_sends: HashMap<String, u64>,
+    pub(super) pending_fips_roster_recipients: HashSet<String>,
+    pub(super) fips_roster_sync_state: FipsRosterSyncState,
+    pub(super) last_fips_stale_participant_restart_at: Option<u64>,
+    pub(super) fips_pending_roster_restart_state: FipsPendingRosterRestartState,
+    pub(super) iface: String,
+    pub(super) tunnel_runtime: CliTunnelRuntime,
+    pub(super) network_snapshot: crate::diagnostics::NetworkSnapshot,
+    pub(super) network_changed_at: Option<u64>,
+    pub(super) captive_portal: Option<bool>,
+    pub(super) timeout: Duration,
+    pub(super) port_mapping_runtime: PortMappingRuntime,
+    pub(super) vpn_enabled: bool,
+    pub(super) fips_tunnel_runtime: Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
+    pub(super) last_fips_endpoint_peer_signature: EndpointPeerSignature,
+}
+
+pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpnStartup> {
+    if args.iface.trim().is_empty() {
+        return Err(anyhow!("--iface must not be empty"));
+    }
+
+    let config_path = args.config.clone().unwrap_or_else(default_config_path);
+    if args.service
+        && let Err(error) = redirect_stdio_to_daemon_log(&config_path)
+    {
+        eprintln!("daemon: failed to redirect service log: {error}");
+    }
+    if let Err(error) = compact_daemon_log_if_needed(&config_path) {
+        eprintln!("daemon: failed to compact service log: {error}");
+    }
+    #[cfg(any(target_os = "macos", test))]
+    crate::ensure_macos_connect_privileges(&config_path)?;
+    ensure_no_other_daemon_processes_for_config(&config_path, std::process::id())?;
+    #[cfg(target_os = "macos")]
+    if let Err(error) = repair_saved_network_state(&config_path) {
+        eprintln!("daemon: failed to repair saved macOS network state: {error}");
+    }
+    let pid_file = daemon_pid_file_path(&config_path);
+    if let Err(error) = write_daemon_pid_record(
+        &pid_file,
+        &DaemonPidRecord {
+            pid: std::process::id(),
+            config_path: config_path.display().to_string(),
+            started_at: unix_timestamp(),
+        },
+    ) {
+        eprintln!(
+            "daemon: failed to write pid file {}: {error}",
+            pid_file.display()
+        );
+    }
+    let network_override = args.network_id.clone();
+    let participants_override = args.devices.clone();
+    let (app, network_id) = load_config_with_overrides(
+        &config_path,
+        network_override.clone(),
+        participants_override.clone(),
+    )?;
+    let own_pubkey = app.own_nostr_pubkey_hex().ok();
+    let expected_peers = expected_peer_count(&app);
+    let state_file = daemon_state_file_path(&config_path);
+    let _ = fs::remove_file(daemon_control_file_path(&config_path));
+    let recent_peers_path = crate::recent_peers_store::recent_peers_file_path(&config_path);
+    let recent_peers =
+        match crate::recent_peers_store::load_recent_peers(&recent_peers_path, unix_timestamp()) {
+            Ok(state) => state,
+            Err(error) => {
+                eprintln!(
+                    "daemon: failed to load recent peers cache {}: {error}",
+                    recent_peers_path.display()
+                );
+                nostr_vpn_core::recent_peers::RecentPeerEndpoints::default()
+            }
+        };
+    let fips_join_request_sends = HashMap::new();
+    let pending_fips_roster_recipients = HashSet::new();
+    let fips_roster_sync_state = FipsRosterSyncState::default();
+    let last_fips_stale_participant_restart_at = None;
+    let fips_pending_roster_restart_state = FipsPendingRosterRestartState::default();
+    let iface = args.iface.clone();
+    let tunnel_runtime = CliTunnelRuntime::new(iface.clone());
+    let network_snapshot = capture_network_snapshot();
+    let network_changed_at = Some(unix_timestamp());
+    let timeout = network_probe_timeout(&app);
+    let captive_portal = detect_captive_portal(timeout).await;
+    let mut port_mapping_runtime = PortMappingRuntime::default();
+    let vpn_enabled = daemon_start_vpn_enabled(&app, args.paused);
+    if daemon_vpn_active(vpn_enabled, expected_peers) {
+        refresh_port_mapping(
+            &app,
+            &network_snapshot,
+            app.node.listen_port,
+            &mut port_mapping_runtime,
+        )
+        .await;
+    }
+    let (fips_tunnel_runtime, last_fips_endpoint_peer_signature) =
+        if fips_private_runtime_active(&app, vpn_enabled, expected_peers) {
+            let config = match fips_tunnel_config_from_app(FipsTunnelConfigInput {
+                app: &app,
+                config_path: &config_path,
+                network_id: &network_id,
+                iface: iface.clone(),
+                underlay_interface_mtu: network_snapshot.default_interface_mtu,
+                own_pubkey: own_pubkey.as_deref(),
+                recent_peers: Some(&recent_peers),
+                live_peer_endpoints: &[],
+            }) {
+                Ok(config) => config,
+                Err(error) => {
+                    let network = network_snapshot.summary(network_changed_at, captive_portal);
+                    let port_mapping = port_mapping_runtime.status();
+                    let advertised_routes = HashMap::new();
+                    let vpn_status = format!("FIPS private mesh config failed ({error})");
+                    persist_daemon_startup_failure_state(
+                        &state_file,
+                        DaemonRuntimeStateInput {
+                            app: &app,
+                            vpn_enabled,
+                            vpn_active: false,
+                            expected_peers,
+                            tunnel_runtime: &tunnel_runtime,
+                            fips_peer_statuses: &[],
+                            fips_relay_statuses: &[],
+                            fips_endpoint_peers: &[],
+                            advertised_routes_by_participant: &advertised_routes,
+                            vpn_status: &vpn_status,
+                            network: &network,
+                            port_mapping: &port_mapping,
+                        },
+                    );
+                    return Err(error);
+                }
+            };
+            let seeded_endpoint_count = config
+                .endpoint_peers
+                .iter()
+                .flat_map(|peer| peer.addresses.iter())
+                .filter(|addr| addr.seen_at_ms.is_some())
+                .count();
+            let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
+            let endpoint_peer_states =
+                daemon_endpoint_peer_states_from_signature(&endpoint_peer_signature);
+            let runtime =
+                match crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await {
+                    Ok(runtime) => runtime,
+                    Err(error) => {
+                        let network = network_snapshot.summary(network_changed_at, captive_portal);
+                        let port_mapping = port_mapping_runtime.status();
+                        let advertised_routes = HashMap::new();
+                        let vpn_status = format!("FIPS private mesh startup failed ({error})");
+                        persist_daemon_startup_failure_state(
+                            &state_file,
+                            DaemonRuntimeStateInput {
+                                app: &app,
+                                vpn_enabled,
+                                vpn_active: false,
+                                expected_peers,
+                                tunnel_runtime: &tunnel_runtime,
+                                fips_peer_statuses: &[],
+                                fips_relay_statuses: &[],
+                                fips_endpoint_peers: &endpoint_peer_states,
+                                advertised_routes_by_participant: &advertised_routes,
+                                vpn_status: &vpn_status,
+                                network: &network,
+                                port_mapping: &port_mapping,
+                            },
+                        );
+                        return Err(error);
+                    }
+                };
+            eprintln!(
+                "daemon: FIPS private mesh on {} (seeded {} recently-connected peer endpoint(s))",
+                runtime.iface(),
+                seeded_endpoint_count,
+            );
+            (Some(runtime), endpoint_peer_signature)
+        } else {
+            (None, Vec::new())
+        };
+
+    Ok(DaemonVpnStartup {
+        config_path,
+        pid_file,
+        network_override,
+        participants_override,
+        app,
+        network_id,
+        own_pubkey,
+        expected_peers,
+        state_file,
+        recent_peers_path,
+        recent_peers,
+        fips_join_request_sends,
+        pending_fips_roster_recipients,
+        fips_roster_sync_state,
+        last_fips_stale_participant_restart_at,
+        fips_pending_roster_restart_state,
+        iface,
+        tunnel_runtime,
+        network_snapshot,
+        network_changed_at,
+        captive_portal,
+        timeout,
+        port_mapping_runtime,
+        vpn_enabled,
+        fips_tunnel_runtime,
+        last_fips_endpoint_peer_signature,
+    })
+}
+
+pub(super) fn daemon_refresh_intervals(
+    args: &DaemonArgs,
+) -> (tokio::time::Interval, tokio::time::Interval) {
+    let mesh_refresh_interval = Duration::from_secs(args.mesh_refresh_interval_secs.max(5));
+    let mut announce_interval = tokio::time::interval(mesh_refresh_interval);
+    announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut recent_peer_refresh_interval = tokio::time::interval(mesh_refresh_interval);
+    recent_peer_refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    (announce_interval, recent_peer_refresh_interval)
+}
+
+pub(super) struct DaemonVpnLoopState {
+    pub(super) vpn_status: String,
+    pub(super) last_network_check_at: WallTimeJumpObserver,
+    pub(super) last_log_compact_check: Instant,
+    pub(super) last_state_persisted_at: Instant,
+    pub(super) daemon_state_persist_interval: Duration,
+    pub(super) platform_network_event_pending: bool,
+    pub(super) platform_network_event_suppressed_until: Option<Instant>,
+    pub(super) supervised_service_executable: Option<(PathBuf, ExecutableFingerprint)>,
+}
+
+pub(super) async fn initialize_daemon_vpn_loop(
+    args: &DaemonArgs,
+    startup: &DaemonVpnStartup,
+) -> Result<DaemonVpnLoopState> {
+    let vpn_status = if !daemon_vpn_active(startup.vpn_enabled, startup.expected_peers) {
+        daemon_vpn_idle_status(
+            startup.vpn_enabled,
+            startup.expected_peers,
+            startup.app.join_requests_enabled(),
+        )
+        .to_string()
+    } else {
+        "VPN on".to_string()
+    };
+    let last_network_check_at = WallTimeJumpObserver::new(unix_timestamp());
+    let last_log_compact_check = Instant::now();
+    let fips_peer_statuses = startup
+        .fips_tunnel_runtime
+        .as_ref()
+        .map(|runtime| runtime.peer_statuses())
+        .unwrap_or_default();
+    let fips_relay_statuses = current_fips_relay_statuses!(&startup.fips_tunnel_runtime).await;
+    let fips_endpoint_peer_states =
+        current_fips_endpoint_peer_states!(&startup.last_fips_endpoint_peer_signature);
+    let fips_advertised_routes =
+        current_fips_advertised_routes!(startup.fips_tunnel_runtime, &startup.app);
+    let network = startup
+        .network_snapshot
+        .summary(startup.network_changed_at, startup.captive_portal);
+    let port_mapping = startup.port_mapping_runtime.status();
+    write_daemon_state(
+        &startup.state_file,
+        &build_daemon_runtime_state(DaemonRuntimeStateInput {
+            app: &startup.app,
+            vpn_enabled: startup.vpn_enabled,
+            vpn_active: daemon_vpn_active(startup.vpn_enabled, startup.expected_peers),
+            expected_peers: startup.expected_peers,
+            tunnel_runtime: &startup.tunnel_runtime,
+            fips_peer_statuses: &fips_peer_statuses,
+            fips_relay_statuses: &fips_relay_statuses,
+            fips_endpoint_peers: &fips_endpoint_peer_states,
+            advertised_routes_by_participant: &fips_advertised_routes,
+            vpn_status: &vpn_status,
+            network: &network,
+            port_mapping: &port_mapping,
+        }),
+    )?;
+    let last_state_persisted_at = Instant::now();
+    let daemon_state_persist_interval = Duration::from_secs(DAEMON_STATE_PERSIST_INTERVAL_SECS);
+    let platform_network_event_pending = false;
+    let platform_network_event_suppressed_until = None;
+
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    let supervised_service_executable = if args.service {
+        Some(current_executable_fingerprint()?)
+    } else {
+        None
+    };
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let supervised_service_executable: Option<(PathBuf, ExecutableFingerprint)> = None;
+
+    Ok(DaemonVpnLoopState {
+        vpn_status,
+        last_network_check_at,
+        last_log_compact_check,
+        last_state_persisted_at,
+        daemon_state_persist_interval,
+        platform_network_event_pending,
+        platform_network_event_suppressed_until,
+        supervised_service_executable,
+    })
+}

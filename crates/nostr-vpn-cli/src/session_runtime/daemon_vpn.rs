@@ -1,187 +1,17 @@
 #[cfg(feature = "paid-exit")]
-const PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT: u64 = 1;
-#[cfg(feature = "paid-exit")]
-const PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT: usize = 4;
-#[cfg(feature = "paid-exit")]
-const PAID_EXIT_DAEMON_RECEIVE_PAYMENT_INTERVAL_SECS: u64 = 5;
-#[cfg(feature = "paid-exit")]
-const PAID_EXIT_DAEMON_RECEIVE_PAYMENT_DURATION_SECS: u64 = 2;
-#[cfg(feature = "paid-exit")]
-const PAID_EXIT_DAEMON_RECEIVE_PAYMENT_LIMIT: usize = 100;
+#[path = "daemon_vpn/paid_exit.rs"]
+mod daemon_vpn_paid_exit;
+#[path = "daemon_vpn/startup.rs"]
+mod daemon_vpn_startup;
 
+#[cfg(feature = "paid-exit")]
+use daemon_vpn_paid_exit::*;
+use daemon_vpn_startup::*;
 pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
-    if args.iface.trim().is_empty() {
-        return Err(anyhow!("--iface must not be empty"));
-    }
+    let startup = initialize_daemon_vpn(&args).await?;
+    let magic_dns_runtime = ConnectMagicDnsRuntime::start(&startup.app);
 
-    let config_path = args.config.clone().unwrap_or_else(default_config_path);
-    if args.service
-        && let Err(error) = redirect_stdio_to_daemon_log(&config_path)
-    {
-        eprintln!("daemon: failed to redirect service log: {error}");
-    }
-    if let Err(error) = compact_daemon_log_if_needed(&config_path) {
-        eprintln!("daemon: failed to compact service log: {error}");
-    }
-    #[cfg(any(target_os = "macos", test))]
-    crate::ensure_macos_connect_privileges(&config_path)?;
-    ensure_no_other_daemon_processes_for_config(&config_path, std::process::id())?;
-    #[cfg(target_os = "macos")]
-    if let Err(error) = repair_saved_network_state(&config_path) {
-        eprintln!("daemon: failed to repair saved macOS network state: {error}");
-    }
-    let pid_file = daemon_pid_file_path(&config_path);
-    if let Err(error) = write_daemon_pid_record(
-        &pid_file,
-        &DaemonPidRecord {
-            pid: std::process::id(),
-            config_path: config_path.display().to_string(),
-            started_at: unix_timestamp(),
-        },
-    ) {
-        eprintln!(
-            "daemon: failed to write pid file {}: {error}",
-            pid_file.display()
-        );
-    }
-    let network_override = args.network_id.clone();
-    let participants_override = args.devices.clone();
-    let (mut app, mut network_id) = load_config_with_overrides(
-        &config_path,
-        network_override.clone(),
-        participants_override.clone(),
-    )?;
-    let mut own_pubkey = app.own_nostr_pubkey_hex().ok();
-    let mut expected_peers = expected_peer_count(&app);
-    let state_file = daemon_state_file_path(&config_path);
-    let _ = fs::remove_file(daemon_control_file_path(&config_path));
-    let recent_peers_path = crate::recent_peers_store::recent_peers_file_path(&config_path);
-    let mut recent_peers =
-        match crate::recent_peers_store::load_recent_peers(&recent_peers_path, unix_timestamp()) {
-            Ok(state) => state,
-            Err(error) => {
-                eprintln!(
-                    "daemon: failed to load recent peers cache {}: {error}",
-                    recent_peers_path.display()
-                );
-                nostr_vpn_core::recent_peers::RecentPeerEndpoints::default()
-            }
-        };
-    let mut fips_join_request_sends: HashMap<String, u64> = HashMap::new();
-    let mut pending_fips_roster_recipients: HashSet<String> = HashSet::new();
-    let mut fips_roster_sync_state = FipsRosterSyncState::default();
-    let mut last_fips_stale_participant_restart_at: Option<u64> = None;
-    let mut fips_pending_roster_restart_state = FipsPendingRosterRestartState::default();
-    let iface = args.iface.clone();
-    let mut tunnel_runtime = CliTunnelRuntime::new(iface.clone());
-    let mut network_snapshot = capture_network_snapshot();
-    let mut network_changed_at = Some(unix_timestamp());
-    let timeout = network_probe_timeout(&app);
-    let mut captive_portal = detect_captive_portal(timeout).await;
-    let mut port_mapping_runtime = PortMappingRuntime::default();
-    let mut vpn_enabled = daemon_start_vpn_enabled(&app, args.paused);
-    if daemon_vpn_active(vpn_enabled, expected_peers) {
-        refresh_port_mapping(
-            &app,
-            &network_snapshot,
-            app.node.listen_port,
-            &mut port_mapping_runtime,
-        )
-        .await;
-    }
-    let (mut fips_tunnel_runtime, mut last_fips_endpoint_peer_signature) =
-        if fips_private_runtime_active(&app, vpn_enabled, expected_peers) {
-            let config = match fips_tunnel_config_from_app(
-                FipsTunnelConfigInput {
-                    app: &app,
-                    config_path: &config_path,
-                    network_id: &network_id,
-                    iface: iface.clone(),
-                    underlay_interface_mtu: network_snapshot.default_interface_mtu,
-                    own_pubkey: own_pubkey.as_deref(),
-                    recent_peers: Some(&recent_peers),
-                    live_peer_endpoints: &[],
-                },
-            ) {
-                Ok(config) => config,
-                Err(error) => {
-                    let network = network_snapshot.summary(network_changed_at, captive_portal);
-                    let port_mapping = port_mapping_runtime.status();
-                    let advertised_routes = HashMap::new();
-                    let vpn_status = format!("FIPS private mesh config failed ({error})");
-                    persist_daemon_startup_failure_state(
-                        &state_file,
-                        DaemonRuntimeStateInput {
-                            app: &app,
-                            vpn_enabled,
-                            vpn_active: false,
-                            expected_peers,
-                            tunnel_runtime: &tunnel_runtime,
-                            fips_peer_statuses: &[],
-                            fips_relay_statuses: &[],
-                            fips_endpoint_peers: &[],
-                            advertised_routes_by_participant: &advertised_routes,
-                            vpn_status: &vpn_status,
-                            network: &network,
-                            port_mapping: &port_mapping,
-                        },
-                    );
-                    return Err(error);
-                }
-            };
-            let seeded_endpoint_count = config
-                .endpoint_peers
-                .iter()
-                .flat_map(|peer| peer.addresses.iter())
-                .filter(|addr| addr.seen_at_ms.is_some())
-                .count();
-            let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
-            let endpoint_peer_states =
-                daemon_endpoint_peer_states_from_signature(&endpoint_peer_signature);
-            let runtime =
-                match crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await {
-                    Ok(runtime) => runtime,
-                    Err(error) => {
-                        let network = network_snapshot.summary(network_changed_at, captive_portal);
-                        let port_mapping = port_mapping_runtime.status();
-                        let advertised_routes = HashMap::new();
-                        let vpn_status = format!("FIPS private mesh startup failed ({error})");
-                        persist_daemon_startup_failure_state(
-                            &state_file,
-                            DaemonRuntimeStateInput {
-                                app: &app,
-                                vpn_enabled,
-                                vpn_active: false,
-                                expected_peers,
-                                tunnel_runtime: &tunnel_runtime,
-                                fips_peer_statuses: &[],
-                                fips_relay_statuses: &[],
-                                fips_endpoint_peers: &endpoint_peer_states,
-                                advertised_routes_by_participant: &advertised_routes,
-                                vpn_status: &vpn_status,
-                                network: &network,
-                                port_mapping: &port_mapping,
-                            },
-                        );
-                        return Err(error);
-                    }
-                };
-            eprintln!(
-                "daemon: FIPS private mesh on {} (seeded {} recently-connected peer endpoint(s))",
-                runtime.iface(),
-                seeded_endpoint_count,
-            );
-            (Some(runtime), endpoint_peer_signature)
-        } else {
-            (None, Vec::new())
-        };
-    let magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
-
-    let mesh_refresh_interval = Duration::from_secs(args.mesh_refresh_interval_secs.max(5));
-    let mut announce_interval = tokio::time::interval(mesh_refresh_interval);
-    announce_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut recent_peer_refresh_interval = tokio::time::interval(mesh_refresh_interval);
-    recent_peer_refresh_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let (mut announce_interval, mut recent_peer_refresh_interval) = daemon_refresh_intervals(&args);
     let mut state_interval = tokio::time::interval(Duration::from_secs(1));
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     #[cfg(feature = "paid-exit")]
@@ -211,53 +41,45 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let terminate_wait = std::future::pending::<()>();
     tokio::pin!(terminate_wait);
 
-    let mut vpn_status = if !daemon_vpn_active(vpn_enabled, expected_peers) {
-        daemon_vpn_idle_status(vpn_enabled, expected_peers, app.join_requests_enabled()).to_string()
-    } else {
-        "VPN on".to_string()
-    };
-    let mut last_network_check_at = WallTimeJumpObserver::new(unix_timestamp());
-    let mut last_log_compact_check = Instant::now();
-    let fips_peer_statuses = fips_tunnel_runtime
-        .as_ref()
-        .map(|runtime| runtime.peer_statuses())
-        .unwrap_or_default();
-    let fips_relay_statuses = current_fips_relay_statuses!(&fips_tunnel_runtime).await;
-    let fips_endpoint_peer_states =
-        current_fips_endpoint_peer_states!(&last_fips_endpoint_peer_signature);
-    let fips_advertised_routes = current_fips_advertised_routes!(fips_tunnel_runtime, &app);
-    let network = network_snapshot.summary(network_changed_at, captive_portal);
-    let port_mapping = port_mapping_runtime.status();
-    write_daemon_state(
-        &state_file,
-        &build_daemon_runtime_state(DaemonRuntimeStateInput {
-            app: &app,
-            vpn_enabled,
-            vpn_active: daemon_vpn_active(vpn_enabled, expected_peers),
-            expected_peers,
-            tunnel_runtime: &tunnel_runtime,
-            fips_peer_statuses: &fips_peer_statuses,
-            fips_relay_statuses: &fips_relay_statuses,
-            fips_endpoint_peers: &fips_endpoint_peer_states,
-            advertised_routes_by_participant: &fips_advertised_routes,
-            vpn_status: &vpn_status,
-            network: &network,
-            port_mapping: &port_mapping,
-        }),
-    )?;
-    let mut last_state_persisted_at = Instant::now();
-    let daemon_state_persist_interval = Duration::from_secs(DAEMON_STATE_PERSIST_INTERVAL_SECS);
-    let mut platform_network_event_pending = false;
-    let mut platform_network_event_suppressed_until: Option<Instant> = None;
-
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let supervised_service_executable = if args.service {
-        Some(current_executable_fingerprint()?)
-    } else {
-        None
-    };
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    let supervised_service_executable: Option<(PathBuf, ExecutableFingerprint)> = None;
+    let loop_state = initialize_daemon_vpn_loop(&args, &startup).await?;
+    let DaemonVpnStartup {
+        config_path,
+        pid_file,
+        network_override,
+        participants_override,
+        mut app,
+        mut network_id,
+        mut own_pubkey,
+        mut expected_peers,
+        state_file,
+        recent_peers_path,
+        mut recent_peers,
+        mut fips_join_request_sends,
+        mut pending_fips_roster_recipients,
+        mut fips_roster_sync_state,
+        mut last_fips_stale_participant_restart_at,
+        mut fips_pending_roster_restart_state,
+        iface,
+        mut tunnel_runtime,
+        mut network_snapshot,
+        mut network_changed_at,
+        mut captive_portal,
+        timeout,
+        mut port_mapping_runtime,
+        mut vpn_enabled,
+        mut fips_tunnel_runtime,
+        mut last_fips_endpoint_peer_signature,
+    } = startup;
+    let DaemonVpnLoopState {
+        mut vpn_status,
+        mut last_network_check_at,
+        mut last_log_compact_check,
+        mut last_state_persisted_at,
+        daemon_state_persist_interval,
+        mut platform_network_event_pending,
+        mut platform_network_event_suppressed_until,
+        supervised_service_executable,
+    } = loop_state;
 
     loop {
         tokio::select! {
@@ -1172,92 +994,4 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let _ = write_daemon_state(&state_file, &final_state);
     remove_current_daemon_pid_record(&pid_file);
     Ok(())
-}
-
-#[cfg(feature = "paid-exit")]
-fn flush_fips_paid_route_usage(
-    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
-    app: &AppConfig,
-    config_path: &Path,
-    now_unix: u64,
-    active_millis_delta: u64,
-) -> Result<bool> {
-    let store_path = paid_route_store_file_path(config_path);
-    let mut store = load_paid_route_store(&store_path)?;
-    let mut changed = false;
-    let seller_admission_routing_before = if app.paid_exit.enabled {
-        paid_route_seller_admission_routing_signature(&store.seller_admissions(
-            &app.paid_exit,
-            now_unix,
-        ))
-    } else {
-        Vec::new()
-    };
-
-    if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() {
-        let mut usage_delta = runtime.drain_paid_route_usage(&seller_pubkey)?;
-        usage_delta.active_millis = usage_delta
-            .active_millis
-            .saturating_add(active_millis_delta);
-        if !usage_delta.is_empty() {
-            changed |= store
-                .record_buyer_usage(RecordPaidRouteBuyerUsageRequest {
-                    seller_pubkey,
-                    usage_delta,
-                    now_unix,
-                })?
-                .is_some_and(|result| result.changed);
-        }
-    }
-
-    if app.paid_exit.enabled {
-        for admission in store.seller_admissions(&app.paid_exit, now_unix) {
-            let mut usage_delta = runtime.drain_paid_route_usage(&admission.buyer_pubkey)?;
-            if admission.allow_routing {
-                usage_delta.active_millis = usage_delta
-                    .active_millis
-                    .saturating_add(active_millis_delta);
-            }
-            if usage_delta.is_empty() {
-                continue;
-            }
-            changed |= store
-                .record_seller_usage(RecordPaidRouteSellerUsageRequest {
-                    buyer_pubkey: admission.buyer_pubkey,
-                    config: app.paid_exit.clone(),
-                    usage_delta,
-                    now_unix,
-                })?
-                .is_some_and(|result| result.changed);
-        }
-    }
-
-    if changed {
-        write_paid_route_store(&store_path, &store)?;
-    }
-    let seller_admission_routing_after = if changed && app.paid_exit.enabled {
-        paid_route_seller_admission_routing_signature(&store.seller_admissions(
-            &app.paid_exit,
-            now_unix,
-        ))
-    } else {
-        seller_admission_routing_before.clone()
-    };
-    Ok(seller_admission_routing_after != seller_admission_routing_before)
-}
-
-#[cfg(feature = "paid-exit")]
-fn paid_route_seller_admission_routing_signature(
-    admissions: &[nostr_vpn_core::paid_route_store::PaidRouteSellerAdmission],
-) -> Vec<(String, String, bool)> {
-    admissions
-        .iter()
-        .map(|admission| {
-            (
-                admission.buyer_pubkey.clone(),
-                admission.session_id.clone(),
-                admission.allow_routing,
-            )
-        })
-        .collect()
 }
