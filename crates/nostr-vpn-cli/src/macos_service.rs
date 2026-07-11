@@ -214,7 +214,7 @@ pub(super) fn macos_service_plist_content(
   <key>KeepAlive</key>
   <true/>
   <key>ProcessType</key>
-  <string>Background</string>
+  <string>Interactive</string>
   <key>StandardOutPath</key>
   <string>{log}</string>
   <key>StandardErrorPath</key>
