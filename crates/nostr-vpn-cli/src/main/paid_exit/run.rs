@@ -1,0 +1,354 @@
+
+struct PaidExitRunResult {
+    config_path: PathBuf,
+    store_path: PathBuf,
+    offer: PaidRouteOffer,
+    event_id: String,
+    relays: Vec<String>,
+    stored: bool,
+    publish: Option<serde_json::Value>,
+    daemon_reload_attempted: bool,
+    status: serde_json::Value,
+}
+
+async fn paid_exit_run_command(args: PaidExitRunArgs) -> Result<()> {
+    let json_output = args.json;
+    let result = paid_exit_run_once(args).await?;
+
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&paid_exit_run_result_json(&result))?
+        );
+    } else {
+        print_paid_exit_run_result(&result);
+    }
+
+    Ok(())
+}
+
+async fn paid_exit_run_once(args: PaidExitRunArgs) -> Result<PaidExitRunResult> {
+    let config_path = args.config.clone().unwrap_or_else(default_config_path);
+    let mut app = load_or_default_config(&config_path)?;
+    apply_paid_exit_run_settings(&mut app, &args)?;
+    app.ensure_defaults();
+    enable_wireguard_exit_upstream_for_paid_exit(&mut app);
+    ensure_paid_exit_advertisable(&app)?;
+    app.save(&config_path)?;
+
+    let keys = app.nostr_keys()?;
+    let relays = paid_exit_relay_urls(&app, &args.relays);
+    let offer_id = args.offer_id.unwrap_or_else(default_paid_exit_offer_id);
+    let receiver_pubkey_hex = paid_exit_spilman_receiver_pubkey_hex(&config_path, &app.paid_exit)?;
+    let signed = signed_paid_exit_offer_from_config_with_receiver(
+        offer_id,
+        &keys,
+        &app.paid_exit,
+        receiver_pubkey_hex.as_deref(),
+        Some(local_paid_exit_quality_hint()),
+        unix_timestamp(),
+    )?;
+    let offer = signed.offer()?;
+    let store_path = paid_route_store_file_path(&config_path);
+    let stored =
+        persist_paid_exit_offer_snapshot(&store_path, &signed, &relays, &offer, unix_timestamp())?;
+
+    let daemon_reload_attempted = !args.no_reload_daemon;
+    if daemon_reload_attempted {
+        maybe_reload_running_daemon(&config_path);
+    }
+
+    let publish = if args.publish {
+        Some(
+            publish_paid_exit_offer_hybrid(&app, &config_path, &signed, &relays).await?,
+        )
+    } else {
+        None
+    };
+    let store = load_paid_route_store(&store_path)?;
+    let status = paid_exit_status_snapshot_json(&app, &store_path, &store);
+
+    Ok(PaidExitRunResult {
+        config_path,
+        store_path,
+        offer,
+        event_id: signed.event.id.to_string(),
+        relays,
+        stored,
+        publish,
+        daemon_reload_attempted,
+        status,
+    })
+}
+
+fn apply_paid_exit_run_settings(app: &mut AppConfig, args: &PaidExitRunArgs) -> Result<()> {
+    app.paid_exit.enabled = true;
+    app.connect_to_non_roster_fips_peers = true;
+    app.fips_nostr_discovery_enabled = true;
+    app.fips_advertise_public_endpoint = true;
+    if let Some(value) = args.upstream.as_deref() {
+        app.paid_exit.access.upstream = value
+            .parse::<PaidExitUpstream>()
+            .map_err(|error| anyhow!(error))?;
+    }
+    if let Some(value) = args.meter.as_deref() {
+        app.paid_exit.pricing.meter = value
+            .parse::<PaidRouteMeter>()
+            .map_err(|error| anyhow!(error))?;
+    }
+    if let Some(value) = args.price_msat {
+        app.paid_exit.pricing.price_msat = value;
+    }
+    if let Some(value) = args.per_units.as_deref() {
+        app.paid_exit.pricing.per_units =
+            paid_exit_parse_pricing_units_arg(value, app.paid_exit.pricing.meter, "--per-units")?;
+    }
+    if let Some(value) = args.connection_minimum_msat_per_day {
+        app.paid_exit.pricing.connection_minimum_msat_per_day = value;
+    }
+    if let Some(mints) = paid_exit_run_accepted_mints(args)? {
+        app.paid_exit.channel.accepted_mints = mints;
+    }
+    if let Some(value) = args.country_code.as_deref() {
+        app.paid_exit.location.country_code = value.to_string();
+    }
+    if let Some(value) = args.region.as_deref() {
+        app.paid_exit.location.region = value.to_string();
+    }
+    if let Some(value) = args.asn {
+        app.paid_exit.location.asn = Some(value);
+    }
+    if let Some(value) = args.network_class.as_deref() {
+        app.paid_exit.location.network_class = value
+            .parse::<ExitNetworkClass>()
+            .map_err(|error| anyhow!(error))?;
+    }
+    if let Some(value) = args.ipv4 {
+        app.paid_exit.ip_support.ipv4 = value;
+    }
+    if let Some(value) = args.ipv6 {
+        app.paid_exit.ip_support.ipv6 = value;
+    }
+    if let Some(value) = args.max_channel_capacity_sat {
+        app.paid_exit.channel.max_channel_capacity_sat = value;
+    }
+    if let Some(value) = args.channel_expiry_secs {
+        app.paid_exit.channel.channel_expiry_secs = value;
+    }
+    if let Some(value) = args.free_probe_units.as_deref() {
+        app.paid_exit.channel.free_probe_units = paid_exit_parse_traffic_units_arg(
+            value,
+            app.paid_exit.pricing.meter,
+            "--free-probe-units",
+        )?;
+    }
+    if let Some(value) = args.grace_units.as_deref() {
+        app.paid_exit.channel.grace_units =
+            paid_exit_parse_traffic_units_arg(value, app.paid_exit.pricing.meter, "--grace-units")?;
+    }
+    app.paid_exit.normalize();
+    Ok(())
+}
+
+fn enable_wireguard_exit_upstream_for_paid_exit(app: &mut AppConfig) {
+    if app.paid_exit.access.upstream == PaidExitUpstream::WireGuardExit
+        && app.wireguard_exit.configured()
+    {
+        app.wireguard_exit.enabled = true;
+    }
+}
+
+fn paid_exit_run_accepted_mints(args: &PaidExitRunArgs) -> Result<Option<Vec<String>>> {
+    if args.accepted_mints.is_none() && args.accepted_mint.is_empty() {
+        return Ok(None);
+    }
+
+    let mut values = Vec::new();
+    if let Some(csv) = args.accepted_mints.as_deref() {
+        values.extend(parse_csv_arg(csv));
+    }
+    values.extend(args.accepted_mint.iter().cloned());
+
+    let mut normalized = Vec::new();
+    for value in values {
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        normalized.push(normalize_mint_url(value)?);
+    }
+    normalized.sort();
+    normalized.dedup();
+    Ok(Some(normalized))
+}
+
+fn paid_exit_spilman_receiver_pubkey_hex(
+    config_path: &Path,
+    paid_exit: &PaidExitConfig,
+) -> Result<Option<String>> {
+    let mut paid_exit = paid_exit.clone();
+    paid_exit.normalize();
+    if paid_exit.channel.accepted_mints.is_empty() {
+        return Ok(None);
+    }
+    let key = load_or_create_cashu_spilman_receiver_key(&paid_exit_wallet_data_dir(config_path))
+        .map_err(|error| anyhow!("{error}"))?;
+    Ok(Some(key.public_key_hex))
+}
+
+fn paid_exit_spilman_receiver_config(
+    paid_exit: &PaidExitConfig,
+) -> Option<FileSpilmanPaymentReceiverConfig> {
+    let mut paid_exit = paid_exit.clone();
+    paid_exit.normalize();
+    if paid_exit.channel.accepted_mints.is_empty() {
+        return None;
+    }
+    Some(FileSpilmanPaymentReceiverConfig {
+        accepted_mints: paid_exit.channel.accepted_mints,
+        units: vec!["sat".to_string()],
+        min_capacity: 1,
+        max_amount_per_output: 0,
+        min_expiry_seconds: 0,
+    })
+}
+
+async fn try_load_paid_exit_spilman_receiver(
+    config_path: &Path,
+    paid_exit: &PaidExitConfig,
+) -> (Option<FileSpilmanPaymentReceiver>, Option<String>) {
+    let Some(receiver_config) = paid_exit_spilman_receiver_config(paid_exit) else {
+        return (None, Some("no accepted Cashu mints configured".to_string()));
+    };
+    match FileSpilmanPaymentReceiver::load_with_keyset_refresh(
+        &paid_exit_wallet_data_dir(config_path),
+        receiver_config,
+    )
+    .await
+    {
+        Ok(receiver) => (Some(receiver), None),
+        Err(error) => (None, Some(error)),
+    }
+}
+
+fn apply_paid_route_seller_payment(
+    store: &mut PaidRouteStore,
+    request: ApplyPaidRouteSellerPaymentRequest,
+    receiver: Option<&FileSpilmanPaymentReceiver>,
+    receiver_error: Option<&str>,
+) -> Result<nostr_vpn_core::paid_route_store::ApplyPaidRouteSellerPaymentResult> {
+    match receiver {
+        Some(receiver) => {
+            if let cashu_service::StreamingRoutePaymentPayload::ChannelOpen(open) =
+                &request.envelope.payload
+            {
+                let requested_receiver = open.receiver_pubkey_hex.trim();
+                let local_receiver = receiver.receiver_pubkey_hex();
+                if !requested_receiver.eq_ignore_ascii_case(local_receiver) {
+                    return Err(anyhow!(
+                        "paid route channel receiver pubkey {} does not match local receiver {}",
+                        requested_receiver,
+                        local_receiver
+                    ));
+                }
+            }
+            let context = "{}".to_string();
+            store.apply_seller_payment_with_spilman_receiver(request, receiver, &context)
+        }
+        None => {
+            let detail = receiver_error
+                .filter(|error| !error.trim().is_empty())
+                .unwrap_or("receiver unavailable");
+            Err(anyhow!(
+                "paid exit Spilman receiver is unavailable ({detail}); refusing to apply unvalidated paid route payment"
+            ))
+        }
+    }
+}
+
+fn paid_exit_run_result_json(result: &PaidExitRunResult) -> serde_json::Value {
+    json!({
+        "config_path": result.config_path.display().to_string(),
+        "store_path": result.store_path.display().to_string(),
+        "enabled": true,
+        "offer": result.offer,
+        "event_id": result.event_id,
+        "relays": result.relays,
+        "stored": result.stored,
+        "published": result.publish.is_some(),
+        "publish": result.publish,
+        "daemon_reload_attempted": result.daemon_reload_attempted,
+        "status": result.status,
+    })
+}
+
+fn print_paid_exit_run_result(result: &PaidExitRunResult) {
+    println!("paid_exit_seller: enabled");
+    println!("config: {}", result.config_path.display());
+    println!(
+        "store: {} changed={}",
+        result.store_path.display(),
+        result.stored
+    );
+    println!("paid_exit_offer: {}", result.offer.offer_id);
+    println!("seller: {}", result.offer.seller_npub);
+    println!("event_id: {}", result.event_id);
+    println!(
+        "price: {}",
+        paid_exit_price_text(
+            result.offer.pricing.price_msat,
+            result.offer.pricing.per_units,
+            result.offer.pricing.meter,
+        )
+    );
+    println!(
+        "access: upstream={} private_vpn_access={}",
+        result.offer.access.upstream.as_str(),
+        result.offer.access.private_vpn_access.as_str()
+    );
+    println!(
+        "channel: max={} expiry={}s free_probe={} grace={} accepted_mints={}",
+        paid_exit_sat_text(result.offer.channel.max_channel_capacity_sat),
+        result.offer.channel.channel_expiry_secs,
+        paid_exit_traffic_unit_text(
+            result.offer.channel.free_probe_units,
+            result.offer.pricing.meter
+        ),
+        paid_exit_traffic_unit_text(result.offer.channel.grace_units, result.offer.pricing.meter),
+        if result.offer.channel.accepted_mints.is_empty() {
+            "none".to_string()
+        } else {
+            result.offer.channel.accepted_mints.join(", ")
+        }
+    );
+    println!(
+        "location: country={} region={} class={} asn={}",
+        display_or_none(&result.offer.location.country_code),
+        display_or_none(&result.offer.location.region),
+        result.offer.location.network_class.as_str(),
+        result
+            .offer
+            .location
+            .asn
+            .map(|asn| asn.to_string())
+            .unwrap_or_else(|| "none".to_string())
+    );
+    println!("relays: {}", result.relays.join(", "));
+    if let Some(publish) = &result.publish {
+        println!(
+            "published: {} success, {} failed",
+            publish["success_count"].as_u64().unwrap_or_default(),
+            publish["failed_count"].as_u64().unwrap_or_default()
+        );
+    } else {
+        println!("published: false");
+    }
+    println!(
+        "daemon_reload: {}",
+        if result.daemon_reload_attempted {
+            "attempted"
+        } else {
+            "skipped"
+        }
+    );
+}

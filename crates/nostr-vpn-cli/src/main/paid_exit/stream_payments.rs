@@ -1,0 +1,334 @@
+
+#[derive(Debug, Default)]
+struct PaidExitStreamPaymentUpdatesResult {
+    signed: Vec<serde_json::Value>,
+    errors: Vec<serde_json::Value>,
+    changed: bool,
+}
+
+impl PaidExitStreamPaymentUpdatesResult {
+    fn persisted_count(&self) -> usize {
+        self.signed
+            .iter()
+            .filter(|entry| entry["persisted"].as_bool().unwrap_or_default())
+            .count()
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct PaidExitDaemonStreamPaymentsResult {
+    pub(crate) total_due_count: usize,
+    pub(crate) processed_due_count: usize,
+    pub(crate) signed_count: usize,
+    pub(crate) persisted_count: usize,
+    pub(crate) error_count: usize,
+    pub(crate) changed: bool,
+}
+
+struct PaidExitStreamPaymentUpdatesRequest<'a, S: CashuSpilmanPaymentSigner> {
+    app: &'a AppConfig,
+    keys: &'a Keys,
+    store: &'a mut PaidRouteStore,
+    signer: &'a S,
+    buyer_npub: &'a str,
+    due: Vec<PaidRouteBuyerPaymentUpdateDue>,
+    relays: &'a [String],
+    publish: bool,
+    now_unix: u64,
+}
+
+async fn paid_exit_stream_payment_updates_with_signer<S: CashuSpilmanPaymentSigner>(
+    request: PaidExitStreamPaymentUpdatesRequest<'_, S>,
+) -> PaidExitStreamPaymentUpdatesResult {
+    let PaidExitStreamPaymentUpdatesRequest {
+        app,
+        keys,
+        store,
+        signer,
+        buyer_npub,
+        due,
+        relays,
+        publish,
+        now_unix,
+    } = request;
+    let mut result = PaidExitStreamPaymentUpdatesResult::default();
+
+    for update_due in due {
+        let signed_update = store.build_buyer_signed_payment_envelope_for_due(
+            signer,
+            buyer_npub,
+            &update_due,
+            now_unix,
+        );
+        let signed_update = match signed_update {
+            Ok(signed_update) => signed_update,
+            Err(error) => {
+                result.errors.push(json!({
+                    "due": update_due.clone(),
+                    "error": error.to_string(),
+                }));
+                continue;
+            }
+        };
+        let next_store = signed_update.store;
+        let payment = signed_update.payment;
+        let payment_changed = payment.changed;
+
+        let mut persisted = !publish;
+        let publish_result = if publish {
+            match gift_wrap_paid_route_payment(&payment.envelope, keys).await {
+                Ok(event) => {
+                    let event_id = event.id.to_string();
+                    match publish_paid_exit_payment_to_relays(app, &event, relays).await {
+                        Ok(publish_result) => {
+                            persisted =
+                                publish_result["success_count"].as_u64().unwrap_or_default() > 0;
+                            if !persisted {
+                                result.errors.push(json!({
+                                    "due": update_due.clone(),
+                                    "session_id": payment.session_id,
+                                    "error": "payment update was not accepted by any relay",
+                                }));
+                            }
+                            Some(json!({
+                                "event_id": event_id,
+                                "result": publish_result,
+                            }))
+                        }
+                        Err(error) => {
+                            result.errors.push(json!({
+                                "due": update_due.clone(),
+                                "session_id": payment.session_id,
+                                "error": error.to_string(),
+                            }));
+                            None
+                        }
+                    }
+                }
+                Err(error) => {
+                    result.errors.push(json!({
+                        "due": update_due.clone(),
+                        "session_id": payment.session_id,
+                        "error": error.to_string(),
+                    }));
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        if persisted {
+            result.changed |= payment_changed;
+            *store = next_store;
+        }
+        result.signed.push(json!({
+            "due": update_due,
+            "payment": payment,
+            "publish": publish_result,
+            "persisted": persisted,
+        }));
+    }
+
+    result
+}
+
+pub(crate) async fn paid_exit_stream_due_payments_for_daemon(
+    app: &AppConfig,
+    config_path: &Path,
+    min_increment_msat: u64,
+    limit: usize,
+) -> Result<PaidExitDaemonStreamPaymentsResult> {
+    if app.public_paid_exit_node_pubkey_hex().is_none() {
+        return Ok(PaidExitDaemonStreamPaymentsResult::default());
+    }
+
+    let keys = app.nostr_keys()?;
+    let buyer_npub = keys
+        .public_key()
+        .to_bech32()
+        .context("failed to encode buyer npub")?;
+    let relays = paid_exit_relay_urls(app, &[]);
+    let store_path = paid_route_store_file_path(config_path);
+    let mut store = load_paid_route_store(&store_path)?;
+    let now_unix = unix_timestamp();
+    let mut due = store.buyer_payment_updates_due(PaidRouteBuyerPaymentUpdatesDueRequest {
+        now_unix,
+        min_increment_msat,
+    });
+    let total_due_count = due.len();
+    if limit > 0 && due.len() > limit {
+        due.truncate(limit);
+    }
+    let processed_due_count = due.len();
+    if due.is_empty() {
+        return Ok(PaidExitDaemonStreamPaymentsResult {
+            total_due_count,
+            processed_due_count,
+            ..Default::default()
+        });
+    }
+    if relays.is_empty() {
+        return Err(anyhow!(
+            "no Nostr relays configured for paid exit payment publishing"
+        ));
+    }
+
+    let signer = FileSpilmanPaymentSigner::load(&paid_exit_wallet_data_dir(config_path))
+        .map_err(|error| anyhow!("{error}"))?;
+    let result = paid_exit_stream_payment_updates_with_signer(
+        PaidExitStreamPaymentUpdatesRequest {
+            app,
+            keys: &keys,
+            store: &mut store,
+            signer: &signer,
+            buyer_npub: &buyer_npub,
+            due,
+            relays: &relays,
+            publish: true,
+            now_unix,
+        },
+    )
+    .await;
+    if result.changed {
+        write_paid_route_store(&store_path, &store)?;
+    }
+
+    Ok(PaidExitDaemonStreamPaymentsResult {
+        total_due_count,
+        processed_due_count,
+        signed_count: result.signed.len(),
+        persisted_count: result.persisted_count(),
+        error_count: result.errors.len(),
+        changed: result.changed,
+    })
+}
+
+async fn paid_exit_stream_payments_command(args: PaidExitStreamPaymentsArgs) -> Result<()> {
+    let config_path = args.config.unwrap_or_else(default_config_path);
+    let app = load_or_default_config(&config_path)?;
+    let keys = app.nostr_keys()?;
+    let buyer_npub = keys
+        .public_key()
+        .to_bech32()
+        .context("failed to encode buyer npub")?;
+    let relays = if args.publish {
+        paid_exit_relay_urls(&app, &args.relays)
+    } else {
+        Vec::new()
+    };
+    if args.publish && relays.is_empty() {
+        return Err(anyhow!(
+            "no Nostr relays configured for paid exit payment publishing"
+        ));
+    }
+
+    let store_path = paid_route_store_file_path(&config_path);
+    let mut store = load_paid_route_store(&store_path)?;
+    let now_unix = unix_timestamp();
+    let mut due = store.buyer_payment_updates_due(PaidRouteBuyerPaymentUpdatesDueRequest {
+        now_unix,
+        min_increment_msat: args.min_increment_msat,
+    });
+    let total_due_count = due.len();
+    if args.limit > 0 && due.len() > args.limit {
+        due.truncate(args.limit);
+    }
+    let selected_due_count = due.len();
+
+    let result = if due.is_empty() {
+        PaidExitStreamPaymentUpdatesResult::default()
+    } else {
+        let signer = FileSpilmanPaymentSigner::load(&paid_exit_wallet_data_dir(&config_path))
+            .map_err(|error| anyhow!("{error}"))?;
+        paid_exit_stream_payment_updates_with_signer(
+            PaidExitStreamPaymentUpdatesRequest {
+                app: &app,
+                keys: &keys,
+                store: &mut store,
+                signer: &signer,
+                buyer_npub: &buyer_npub,
+                due,
+                relays: &relays,
+                publish: args.publish,
+                now_unix,
+            },
+        )
+        .await
+    };
+    let changed = result.changed;
+
+    if changed {
+        write_paid_route_store(&store_path, &store)?;
+    }
+
+    if args.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "store_path": store_path.display().to_string(),
+                "wallet_sign": {
+                    "source": "spilman-client-store",
+                    "data_dir": paid_exit_wallet_data_dir(&config_path).display().to_string(),
+                },
+                "publish_requested": args.publish,
+                "relays": relays,
+                "total_due_count": total_due_count,
+                "processed_due_count": selected_due_count,
+                "signed_count": result.signed.len(),
+                "persisted_count": result.persisted_count(),
+                "error_count": result.errors.len(),
+                "changed": changed,
+                "signed": result.signed,
+                "errors": result.errors,
+            }))?
+        );
+    } else {
+        println!(
+            "paid_exit_stream_payments: signed={} errors={} due={} changed={}",
+            result.signed.len(),
+            result.errors.len(),
+            total_due_count,
+            changed
+        );
+        if args.publish {
+            println!("relays: {}", relays.join(", "));
+        }
+        for entry in &result.signed {
+            let payment = &entry["payment"];
+            let paid_msat = payment["paid_msat"].as_u64().unwrap_or_default();
+            let due_msat = payment["amount_due_msat"].as_u64().unwrap_or_default();
+            let unpaid_msat = payment["unpaid_msat"].as_u64().unwrap_or_default();
+            println!(
+                "session: {} seller: {} paid={} due={} unpaid={}",
+                payment["session_id"].as_str().unwrap_or_default(),
+                payment["seller_npub"].as_str().unwrap_or_default(),
+                paid_exit_msat_text(paid_msat),
+                paid_exit_msat_text(due_msat),
+                paid_exit_msat_text(unpaid_msat)
+            );
+            println!(
+                "persisted: {}",
+                entry["persisted"].as_bool().unwrap_or_default()
+            );
+            println!(
+                "envelope: {}",
+                serde_json::to_string(&payment["envelope"])
+                    .context("failed to encode paid route payment envelope")?
+            );
+            if let Some(event_id) = entry["publish"]["event_id"].as_str() {
+                println!("published_event: {event_id}");
+            }
+        }
+        for entry in &result.errors {
+            println!(
+                "error: session={} {}",
+                entry["due"]["session_id"].as_str().unwrap_or_default(),
+                entry["error"].as_str().unwrap_or_default()
+            );
+        }
+        println!("store: {}", store_path.display());
+    }
+
+    Ok(())
+}
