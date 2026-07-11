@@ -1,0 +1,676 @@
+use super::*;
+
+pub fn paid_route_store_file_path(config_path: &Path) -> PathBuf {
+    let parent = config_path
+        .parent()
+        .map_or_else(|| Path::new(".").to_path_buf(), PathBuf::from);
+    parent.join("paid-routes.json")
+}
+
+pub fn load_paid_route_store(path: &Path) -> Result<PaidRouteStore> {
+    let raw = match fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(PaidRouteStore::default()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read paid route store {}", path.display()));
+        }
+    };
+
+    let mut store = match serde_json::from_str::<PaidRouteStore>(&raw) {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!(
+                "discarding unreadable paid route store {}: {error}",
+                path.display()
+            );
+            return Ok(PaidRouteStore::default());
+        }
+    };
+    store.retain_valid();
+    Ok(store)
+}
+
+pub fn write_paid_route_store(path: &Path, store: &PaidRouteStore) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    let raw = serde_json::to_string_pretty(store)
+        .with_context(|| format!("failed to serialize paid route store {}", path.display()))?;
+    let mut tmp = path.to_path_buf();
+    let mut name = tmp
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| std::ffi::OsString::from("paid-routes.json"));
+    name.push(".tmp");
+    tmp.set_file_name(name);
+
+    fs::write(&tmp, raw)
+        .with_context(|| format!("failed to write paid route temp {}", tmp.display()))?;
+    if let Err(error) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(io::Error::new(
+            error.kind(),
+            format!(
+                "failed to rename paid route store {} -> {}: {error}",
+                tmp.display(),
+                path.display()
+            ),
+        )
+        .into());
+    }
+    Ok(())
+}
+
+pub fn upsert_paid_route_offer(
+    path: &Path,
+    signed_offer: SignedPaidRouteOffer,
+    relay_urls: Vec<String>,
+    seen_at_unix: u64,
+) -> Result<bool> {
+    let mut store = load_paid_route_store(path)?;
+    let changed = store.upsert_signed_offer(signed_offer, relay_urls, seen_at_unix)?;
+    if changed {
+        write_paid_route_store(path, &store)?;
+    }
+    Ok(changed)
+}
+
+pub fn paid_route_offer_store_key(seller_npub: &str, offer_id: &str) -> String {
+    format!("{}:{}", seller_npub.trim(), offer_id.trim())
+}
+
+pub(super) fn default_version() -> u8 {
+    CURRENT_VERSION
+}
+
+pub(super) fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+pub(super) fn paid_route_offer_autoselect_score(record: &PaidRouteOfferRecord) -> i64 {
+    record.rating_score.unwrap_or_default()
+}
+
+pub(super) fn normalize_relay_list(values: Vec<String>) -> Vec<String> {
+    let mut values = values
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
+}
+
+pub(super) fn merge_sorted_strings(left: &[String], right: Vec<String>) -> Vec<String> {
+    let mut out = left.to_vec();
+    out.extend(right);
+    normalize_relay_list(out)
+}
+
+pub(super) fn upsert_record<T: PartialEq>(
+    records: &mut BTreeMap<String, T>,
+    key: String,
+    record: T,
+) -> bool {
+    if records
+        .get(&key)
+        .is_some_and(|existing| existing == &record)
+    {
+        return false;
+    }
+    records.insert(key, record);
+    true
+}
+
+pub(super) fn select_buyer_mint(
+    offer: &PaidRouteOffer,
+    wallet: &PaidRouteWalletState,
+    requested: Option<&str>,
+) -> Result<String> {
+    let accepted_mints = normalize_mint_list(&offer.channel.accepted_mints);
+    if let Some(requested) = requested.map(str::trim).filter(|value| !value.is_empty()) {
+        if !accepted_mints.is_empty() && !accepted_mints.iter().any(|mint| mint == requested) {
+            return Err(anyhow!(
+                "Cashu mint {requested} is not accepted by paid route offer {}",
+                offer.offer_id
+            ));
+        }
+        return Ok(requested.to_string());
+    }
+
+    let default_mint = wallet.default_mint.trim();
+    if !default_mint.is_empty()
+        && (accepted_mints.is_empty() || accepted_mints.iter().any(|mint| mint == default_mint))
+    {
+        return Ok(default_mint.to_string());
+    }
+
+    if let Some(wallet_mint) = wallet.mints.iter().find(|wallet_mint| {
+        let url = wallet_mint.url.trim();
+        !url.is_empty()
+            && (accepted_mints.is_empty() || accepted_mints.iter().any(|mint| mint == url))
+    }) {
+        return Ok(wallet_mint.url.trim().to_string());
+    }
+
+    if let Some(first_accepted) = accepted_mints.first() {
+        return Ok(first_accepted.clone());
+    }
+
+    if !paid_route_offer_requires_payment(offer) {
+        return Ok(String::new());
+    }
+
+    Err(anyhow!(
+        "paid route offer {} has no accepted Cashu mint",
+        offer.offer_id
+    ))
+}
+
+pub(super) fn requested_channel_capacity(
+    offer: &PaidRouteOffer,
+    requested: Option<u64>,
+) -> Result<u64> {
+    let max_capacity = offer.channel.max_channel_capacity_sat.max(1);
+    let capacity = requested.unwrap_or(max_capacity);
+    if capacity == 0 {
+        return Err(anyhow!(
+            "paid route channel capacity must be greater than zero"
+        ));
+    }
+    if capacity > max_capacity {
+        return Err(anyhow!(
+            "paid route channel capacity {capacity} sat exceeds offer maximum {max_capacity} sat"
+        ));
+    }
+    Ok(capacity)
+}
+
+pub(super) fn paid_route_offer_requires_payment(offer: &PaidRouteOffer) -> bool {
+    offer.pricing.price_msat > 0 || offer.pricing.connection_minimum_msat_per_day > 0
+}
+
+pub(super) fn paid_route_offer_requires_payment_before_routing(offer: &PaidRouteOffer) -> bool {
+    paid_route_offer_requires_payment(offer) && offer.channel.free_probe_units == 0
+}
+
+pub(super) fn paid_exit_config_requires_payment(config: &PaidExitConfig) -> bool {
+    config.pricing.price_msat > 0 || config.pricing.connection_minimum_msat_per_day > 0
+}
+
+pub(super) fn initial_buyer_session_status(
+    offer: &PaidRouteOffer,
+    initial_paid_msat: u64,
+) -> PaidRouteLifecycleStatus {
+    if !paid_route_offer_requires_payment(offer) || initial_paid_msat > 0 {
+        PaidRouteLifecycleStatus::Active
+    } else if offer.channel.free_probe_units > 0 {
+        PaidRouteLifecycleStatus::Probing
+    } else {
+        PaidRouteLifecycleStatus::Opening
+    }
+}
+
+pub(super) fn initial_seller_session_status(
+    config: &PaidExitConfig,
+    paid_msat: u64,
+) -> PaidRouteLifecycleStatus {
+    if !paid_exit_config_requires_payment(config) || paid_msat > 0 {
+        PaidRouteLifecycleStatus::Active
+    } else if config.channel.free_probe_units > 0 {
+        PaidRouteLifecycleStatus::Probing
+    } else {
+        PaidRouteLifecycleStatus::Opening
+    }
+}
+
+pub(super) fn paid_route_lifecycle_allows_routing(status: PaidRouteLifecycleStatus) -> bool {
+    matches!(
+        status,
+        PaidRouteLifecycleStatus::Opening
+            | PaidRouteLifecycleStatus::Probing
+            | PaidRouteLifecycleStatus::Active
+    )
+}
+
+pub(super) fn paid_route_session_has_payment_material(
+    session: &PaidRouteSession,
+    channel: &PaidRouteChannelRecord,
+) -> bool {
+    match session.payment.mode {
+        PaidRoutePaymentMode::CashuSpilman => {
+            session.payment.cashu_spilman_payment.is_some()
+                || channel.payment.cashu_spilman_payment.is_some()
+        }
+        PaidRoutePaymentMode::CashuTokenLease => {
+            session.payment.cashu_token_lease.is_some()
+                || channel.payment.cashu_token_lease.is_some()
+        }
+    }
+}
+
+pub(super) fn preserve_terminal_status(
+    current: PaidRouteLifecycleStatus,
+    incoming: PaidRouteLifecycleStatus,
+) -> PaidRouteLifecycleStatus {
+    match current {
+        PaidRouteLifecycleStatus::Closing
+        | PaidRouteLifecycleStatus::Closed
+        | PaidRouteLifecycleStatus::Expired
+        | PaidRouteLifecycleStatus::Failed => current,
+        _ => incoming,
+    }
+}
+
+pub(super) fn ensure_open_buyer_channel(
+    channel: &PaidRouteChannelRecord,
+    lease: &PaidRouteLeaseRecord,
+) -> Result<()> {
+    if matches!(
+        channel.status,
+        PaidRouteLifecycleStatus::Closed
+            | PaidRouteLifecycleStatus::Closing
+            | PaidRouteLifecycleStatus::Expired
+            | PaidRouteLifecycleStatus::Failed
+    ) {
+        return Err(anyhow!(
+            "paid route buyer channel {} is not open",
+            channel.channel_id
+        ));
+    }
+    if matches!(
+        lease.status,
+        PaidRouteLifecycleStatus::Closed
+            | PaidRouteLifecycleStatus::Closing
+            | PaidRouteLifecycleStatus::Expired
+            | PaidRouteLifecycleStatus::Failed
+    ) {
+        return Err(anyhow!(
+            "paid route buyer lease {} is not open",
+            lease.lease.lease_id
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn seller_admission_preferred(
+    candidate: &PaidRouteSellerAdmission,
+    existing: &PaidRouteSellerAdmission,
+) -> bool {
+    match (candidate.allow_routing, existing.allow_routing) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => candidate.updated_at_unix > existing.updated_at_unix,
+    }
+}
+
+pub(super) fn validate_seller_open_payment(
+    config: &PaidExitConfig,
+    _seller_pubkey_hex: &str,
+    channel_id: &str,
+    open: &cashu_service::StreamingRouteChannelOpen,
+) -> Result<()> {
+    let mint_url = open.mint_url.trim();
+    if paid_exit_config_requires_payment(config) {
+        let accepted_mints = normalize_mint_list(&config.channel.accepted_mints);
+        if accepted_mints.is_empty() {
+            return Err(anyhow!(
+                "paid exit seller config must accept at least one Cashu mint"
+            ));
+        }
+        if !accepted_mints.iter().any(|mint| mint == mint_url) {
+            return Err(anyhow!(
+                "Cashu mint {mint_url} is not accepted by this paid exit"
+            ));
+        }
+    }
+
+    let capacity_sat = paid_route_channel_capacity_sat(&open.unit, open.capacity)?;
+    if capacity_sat == 0 {
+        return Err(anyhow!(
+            "paid route channel capacity must be greater than zero"
+        ));
+    }
+    if capacity_sat > config.channel.max_channel_capacity_sat {
+        return Err(anyhow!(
+            "paid route channel capacity {capacity_sat} sat exceeds seller maximum {} sat",
+            config.channel.max_channel_capacity_sat
+        ));
+    }
+    validate_paid_route_payment_progress(
+        "paid route opening balance",
+        open.paid_msat,
+        0,
+        capacity_sat,
+    )?;
+    validate_streaming_route_cashu_payment_claim(
+        &open.payment,
+        channel_id,
+        &open.unit,
+        open.paid_msat,
+        capacity_sat,
+        true,
+    )
+    .map_err(|error| anyhow!("{error}"))?;
+    if open.receiver_pubkey_hex.trim().is_empty() {
+        return Err(anyhow!("paid route channel receiver pubkey is empty"));
+    }
+    normalize_paid_route_receiver_pubkey(open.receiver_pubkey_hex.trim())
+        .map_err(|error| anyhow!("invalid paid route channel receiver pubkey: {error}"))?;
+    Ok(())
+}
+
+pub(super) fn paid_route_offer_receiver_pubkey_hex(
+    offer: &PaidRouteOffer,
+    seller_pubkey: &PublicKey,
+) -> Result<String> {
+    if offer.receiver_pubkey_hex.trim().is_empty() {
+        return Ok(seller_pubkey.to_hex());
+    }
+    normalize_paid_route_receiver_pubkey(&offer.receiver_pubkey_hex)
+}
+
+pub(super) fn normalize_paid_route_receiver_pubkey(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    let hex = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    if hex.len() == 66
+        && matches!(&hex[..2], "02" | "03")
+        && hex.chars().all(|ch| ch.is_ascii_hexdigit())
+    {
+        return Ok(hex.to_ascii_lowercase());
+    }
+    if hex.len() == 64 && hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Ok(hex.to_ascii_lowercase());
+    }
+    Err(anyhow!("invalid paid route receiver pubkey"))
+}
+
+pub(super) fn validate_seller_token_lease(
+    config: &PaidExitConfig,
+    token_lease: &StreamingRouteCashuTokenLease,
+    now_unix: u64,
+) -> Result<()> {
+    let normalized =
+        create_streaming_route_cashu_token_lease(StreamingRouteCashuTokenLeaseRequest {
+            channel_id: token_lease.channel_id.clone(),
+            mint_url: token_lease.mint_url.clone(),
+            unit: token_lease.unit.clone(),
+            amount: token_lease.amount,
+            paid_msat: Some(token_lease.paid_msat),
+            expires_unix: token_lease.expires_unix,
+            token: token_lease.token.clone(),
+        })
+        .map_err(|error| anyhow!("{error}"))?;
+    if normalized.expires_unix <= now_unix {
+        return Err(anyhow!("paid route token lease is already expired"));
+    }
+
+    let mint_url = normalized.mint_url.trim();
+    if paid_exit_config_requires_payment(config) {
+        let accepted_mints = normalize_mint_list(&config.channel.accepted_mints);
+        if accepted_mints.is_empty() {
+            return Err(anyhow!(
+                "paid exit seller config must accept at least one Cashu mint"
+            ));
+        }
+        if !accepted_mints.iter().any(|mint| mint == mint_url) {
+            return Err(anyhow!(
+                "Cashu mint {mint_url} is not accepted by this paid exit"
+            ));
+        }
+    }
+
+    let capacity_sat = paid_route_channel_capacity_sat(&normalized.unit, normalized.amount)?;
+    if capacity_sat == 0 {
+        return Err(anyhow!(
+            "paid route token lease amount must be greater than zero"
+        ));
+    }
+    if capacity_sat > config.channel.max_channel_capacity_sat {
+        return Err(anyhow!(
+            "paid route token lease amount {capacity_sat} sat exceeds seller maximum {} sat",
+            config.channel.max_channel_capacity_sat
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn paid_route_channel_capacity_sat(unit: &str, capacity: u64) -> Result<u64> {
+    streaming_route_cashu_capacity_sat(unit, capacity).map_err(|error| anyhow!("{error}"))
+}
+
+pub(super) fn paid_route_payment_cashu_unit(payment: &PaidRoutePaymentState) -> String {
+    let unit = payment.cashu_unit.trim();
+    if unit.is_empty() {
+        "sat".to_string()
+    } else {
+        unit.to_string()
+    }
+}
+
+pub(super) fn cashu_payment_balance_msat(unit: &str, balance: u64) -> Result<u64> {
+    streaming_route_cashu_balance_msat(unit, balance).map_err(|error| anyhow!("{error}"))
+}
+
+pub(super) fn cashu_payment_target_msat(unit: &str, paid_msat: u64) -> Result<u64> {
+    let balance = streaming_route_cashu_balance_for_msat(unit, paid_msat)
+        .map_err(|error| anyhow!("{error}"))?;
+    cashu_payment_balance_msat(unit, balance)
+}
+
+pub(super) fn validate_cashu_spilman_payment_claim(
+    payment: &CashuSpilmanPayment,
+    channel_id: &str,
+    unit: &str,
+    paid_msat: u64,
+    capacity_sat: u64,
+    require_funding: bool,
+) -> Result<()> {
+    validate_streaming_route_cashu_payment_claim(
+        payment,
+        channel_id,
+        unit,
+        paid_msat,
+        capacity_sat,
+        require_funding,
+    )
+    .map(|_| ())
+    .map_err(|error| anyhow!("{error}"))
+}
+
+pub(super) fn cashu_channel_capacity_for_unit(capacity_sat: u64, unit: &str) -> Result<u64> {
+    streaming_route_cashu_capacity_for_sat(unit, capacity_sat).map_err(|error| anyhow!("{error}"))
+}
+
+pub(super) fn validate_paid_route_payment_progress(
+    label: &str,
+    paid_msat: u64,
+    previous_paid_msat: u64,
+    capacity_sat: u64,
+) -> Result<()> {
+    validate_streaming_route_cashu_payment_progress(
+        label,
+        paid_msat,
+        previous_paid_msat,
+        capacity_sat,
+    )
+    .map(|_| ())
+    .map_err(|error| anyhow!("{error}"))
+}
+
+pub(super) fn seller_channel_open_expiry(
+    now_unix: u64,
+    configured_expiry_secs: u64,
+    requested_expires_unix: u64,
+) -> Result<u64> {
+    let configured = now_unix.saturating_add(configured_expiry_secs.max(1));
+    let expires_at_unix = if requested_expires_unix == 0 {
+        configured
+    } else {
+        configured.min(requested_expires_unix)
+    };
+    if expires_at_unix <= now_unix {
+        return Err(anyhow!("paid route channel opening is already expired"));
+    }
+    Ok(expires_at_unix)
+}
+
+pub(super) fn seller_quote_id_for_lease(lease_id: &str) -> String {
+    format!("seller-quote-{}", sanitize_id_component(lease_id))
+}
+
+pub(super) fn seller_session_id_for_lease(lease_id: &str) -> String {
+    format!("seller-session-{}", sanitize_id_component(lease_id))
+}
+
+pub(super) fn paid_route_payment_payload_type(
+    payload: &StreamingRoutePaymentPayload,
+) -> &'static str {
+    match payload {
+        StreamingRoutePaymentPayload::ChannelOpen(_) => "channel_open",
+        StreamingRoutePaymentPayload::BalanceUpdate(_) => "balance_update",
+        StreamingRoutePaymentPayload::CooperativeClose(_) => "cooperative_close",
+        StreamingRoutePaymentPayload::CooperativeCloseAck(_) => "cooperative_close_ack",
+        StreamingRoutePaymentPayload::CashuTokenLease(_) => "cashu_token_lease",
+    }
+}
+
+pub(super) fn trimmed_required(value: &str, label: &str) -> Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        Err(anyhow!("{label} is empty"))
+    } else {
+        Ok(value.to_string())
+    }
+}
+
+pub(super) fn normalize_optional_probe_string(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+pub(super) fn normalize_optional_country_code(value: Option<String>) -> Option<String> {
+    normalize_optional_probe_string(value).map(|value| value.to_ascii_uppercase())
+}
+
+pub(super) fn ensure_seller_channel_matches(
+    channel: &PaidRouteChannelRecord,
+    service_id: &str,
+    buyer_npub: &str,
+) -> Result<()> {
+    if channel.role != PaidRouteChannelRole::Seller {
+        return Err(anyhow!(
+            "paid route channel {} is not a seller channel",
+            channel.channel_id
+        ));
+    }
+    if channel.offer_id != service_id {
+        return Err(anyhow!(
+            "paid route channel {} belongs to service {}, not {}",
+            channel.channel_id,
+            channel.offer_id,
+            service_id
+        ));
+    }
+    if normalize_paid_route_npub(&channel.counterparty_npub, "buyer")? != buyer_npub {
+        return Err(anyhow!(
+            "paid route payment buyer does not match channel counterparty"
+        ));
+    }
+    Ok(())
+}
+
+pub(super) fn apply_delivered_units_for_meter(
+    usage: &mut PaidRouteUsage,
+    meter: PaidRouteMeter,
+    delivered_units: u64,
+) {
+    match meter {
+        PaidRouteMeter::Milliseconds => {
+            usage.active_millis = usage.active_millis.max(delivered_units);
+        }
+        PaidRouteMeter::Bytes => {
+            usage.billable_bytes = usage.billable_bytes.max(delivered_units);
+        }
+        PaidRouteMeter::Packets => {
+            usage.billable_packets = usage.billable_packets.max(delivered_units);
+        }
+    }
+}
+
+pub(super) fn paid_route_amount_due_for_delivered_units(
+    config: &PaidExitConfig,
+    usage: &PaidRouteUsage,
+    delivered_units: u64,
+) -> u64 {
+    let mut usage = usage.clone();
+    apply_delivered_units_for_meter(&mut usage, config.pricing.meter, delivered_units);
+    config.amount_due_msat(&usage)
+}
+
+pub(super) fn apply_usage_delta(usage: &mut PaidRouteUsage, delta: &PaidRouteUsage) {
+    usage.add_assign(delta);
+}
+
+pub(super) fn paid_route_buyer_session_id_suffix(
+    offer_key: &str,
+    offer_id: &str,
+    now_unix: u64,
+) -> String {
+    let mut hasher = DefaultHasher::new();
+    offer_key.hash(&mut hasher);
+    offer_id.hash(&mut hasher);
+    now_unix.hash(&mut hasher);
+    let readable = sanitize_id_component(offer_id);
+    format!("{readable}-{now_unix}-{:016x}", hasher.finish())
+}
+
+pub(super) fn sanitize_id_component(value: &str) -> String {
+    let mut out = value
+        .trim()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while out.contains("--") {
+        out = out.replace("--", "-");
+    }
+    out = out.trim_matches('-').to_string();
+    if out.is_empty() {
+        "route".to_string()
+    } else if out.len() > 48 {
+        out.chars().take(48).collect()
+    } else {
+        out
+    }
+}
+
+pub(super) fn normalize_mint_list(values: &[String]) -> Vec<String> {
+    let mut values = values
+        .iter()
+        .flat_map(|value| value.split([',', '\n', '\r', '\t']))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    values.sort();
+    values.dedup();
+    values
+}
+
+pub(super) fn normalize_paid_route_npub(value: &str, role: &str) -> Result<String> {
+    let public_key = PublicKey::parse(value.trim())
+        .map_err(|error| anyhow!("invalid paid route {role} npub: {error}"))?;
+    public_key
+        .to_bech32()
+        .context("failed to encode paid route npub")
+}
