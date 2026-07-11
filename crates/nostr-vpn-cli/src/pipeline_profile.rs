@@ -348,20 +348,6 @@ pub(crate) fn record_tun_write_would_block() {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-pub(crate) fn record_direct_endpoint_sink_batch(runs: usize, packets: usize, queue_depth: usize) {
-    if packets == 0 || !enabled() {
-        return;
-    }
-    increment_counter_by(Counter::DirectEndpointSinkBatches, 1);
-    increment_counter_by(Counter::DirectEndpointSinkRuns, runs as u64);
-    increment_counter_by(Counter::DirectEndpointSinkPackets, packets as u64);
-    if queue_depth > 0 {
-        COUNTERS[Counter::DirectEndpointSinkMaxQueueDepth as usize]
-            .fetch_max(queue_depth as u64, Relaxed);
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub(crate) fn record_direct_endpoint_rx_batch(runs: usize, packets: usize) {
     if packets == 0 || !enabled() {
         return;

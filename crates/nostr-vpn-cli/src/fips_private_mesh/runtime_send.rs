@@ -8,9 +8,6 @@ impl FipsPrivateMeshRuntime {
         local_tunnel_ips: Vec<IpAddr>,
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) -> Result<Self> {
-        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        let (direct_endpoint_sink, direct_endpoint_rx) = fips_direct_endpoint_queue_pair();
-
         let mut endpoint_builder = FipsEndpoint::builder()
             .config(config)
             .identity_nsec(identity_nsec)
@@ -20,10 +17,12 @@ impl FipsPrivateMeshRuntime {
             endpoint_builder = endpoint_builder.discovery_scope(scope);
         }
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-        let endpoint = Arc::new(endpoint_builder
-            .bind_with_direct_sink(direct_endpoint_sink)
+        let (endpoint, direct_endpoint_rx) = endpoint_builder
+            .bind_with_direct_receiver()
             .await
-            .context("failed to bind embedded FIPS endpoint")?);
+            .context("failed to bind embedded FIPS endpoint")?;
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+        let endpoint = Arc::new(endpoint);
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
         let endpoint = Arc::new(endpoint_builder
             .bind()
@@ -325,12 +324,11 @@ pub(crate) async fn bind_local_ethernet_shared_endpoint(
     discovery_scope: &str,
 ) -> Result<FipsSharedEndpoint> {
     let config = local_ethernet_only_endpoint_config(interface, discovery_scope);
-    let (direct_endpoint_sink, direct_endpoint_rx) = fips_direct_endpoint_queue_pair();
-    let endpoint = FipsEndpoint::builder()
+    let (endpoint, direct_endpoint_rx) = FipsEndpoint::builder()
         .config(config)
         .identity_nsec(identity_nsec)
         .without_system_tun()
-        .bind_with_direct_sink(direct_endpoint_sink)
+        .bind_with_direct_receiver()
         .await
         .context("failed to bind shared local-Ethernet FIPS endpoint")?;
     Ok(FipsSharedEndpoint {

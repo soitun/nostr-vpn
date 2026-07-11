@@ -8,9 +8,8 @@ use fips_endpoint::{
 };
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use fips_endpoint::{
-    FIPS_ENDPOINT_DIRECT_PACKET_QUEUE_MAX_PACKETS, FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS,
-    FipsEndpointDirectDeliveryError, FipsEndpointDirectPacketBatch, FipsEndpointDirectPacketRun,
-    FipsEndpointDirectSink,
+    FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS, FipsEndpointDirectPacketRun,
+    FipsEndpointDirectReceiver,
 };
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
@@ -40,8 +39,6 @@ use nostr_vpn_core::paid_routes::PaidExitConfig;
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_routes::PaidRouteUsage;
 use sha2::{Digest, Sha256};
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-use std::collections::VecDeque;
 use std::collections::{HashMap, HashSet};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io;
@@ -51,8 +48,6 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-use std::sync::Condvar;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::sync::{Mutex, RwLock};
@@ -205,7 +200,7 @@ use crate::fips_host_tunnel::FipsHostTunnelConfig;
 pub(crate) struct FipsPrivateMeshRuntime {
     endpoint: Arc<FipsEndpoint>,
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-    direct_endpoint_rx: FipsDirectEndpointDataRx,
+    direct_endpoint_rx: FipsEndpointDirectReceiver,
     local_tunnel_ips: HashSet<IpAddr>,
     mesh: ArcSwap<FipsMeshRuntime>,
     mesh_generation: AtomicU64,
@@ -229,7 +224,7 @@ impl FipsPrivateMeshRuntime {
 #[cfg(target_os = "linux")]
 pub(crate) struct FipsSharedEndpoint {
     endpoint: Arc<FipsEndpoint>,
-    direct_endpoint_rx: FipsDirectEndpointDataRx,
+    direct_endpoint_rx: FipsEndpointDirectReceiver,
 }
 
 #[cfg(target_os = "linux")]
@@ -239,7 +234,6 @@ impl FipsSharedEndpoint {
     }
 }
 
-include!("fips_private_mesh/direct_endpoint_queue.rs");
 include!("fips_private_mesh/types_and_mtu.rs");
 include!("fips_private_mesh/mtu_and_policy.rs");
 include!("fips_private_mesh/peer_status_and_events.rs");

@@ -170,7 +170,7 @@
         let initial_len = events.len();
         let runs = match runtime
             .direct_endpoint_rx
-            .try_recv_limited(FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS)
+            .try_recv(FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS)
         {
             Ok(runs) => runs,
             Err(std::sync::mpsc::TryRecvError::Empty) => return Ok(0),

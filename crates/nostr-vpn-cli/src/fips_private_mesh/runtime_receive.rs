@@ -21,7 +21,7 @@ impl FipsPrivateMeshRuntime {
                         if stop.load(Ordering::Acquire) {
                             return Ok(None);
                         }
-                        match self.direct_endpoint_rx.recv_source_batch_timeout(
+                        match self.direct_endpoint_rx.recv_timeout(
                             Duration::from_millis(100),
                             FIPS_MESH_RECV_BURST,
                         ) {
@@ -35,7 +35,7 @@ impl FipsPrivateMeshRuntime {
                 } else {
                     match self
                         .direct_endpoint_rx
-                        .try_recv_limited(FIPS_MESH_RECV_BURST.saturating_sub(received))
+                        .try_recv(FIPS_MESH_RECV_BURST.saturating_sub(received))
                     {
                         Ok(runs) => runs,
                         Err(std::sync::mpsc::TryRecvError::Empty) => break,
@@ -46,6 +46,10 @@ impl FipsPrivateMeshRuntime {
                 if turn_start.is_none() {
                     turn_start = crate::pipeline_profile::stamp();
                 }
+                crate::pipeline_profile::record_direct_endpoint_rx_batch(
+                    runs.len(),
+                    runs.iter().map(FipsEndpointDirectPacketRun::len).sum(),
+                );
                 let mesh = mesh.get_or_insert_with(|| self.stable_mesh_snapshot().1);
                 packet_outputs.set_admission_mesh(Arc::clone(mesh));
 
