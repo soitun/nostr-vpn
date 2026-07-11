@@ -182,9 +182,7 @@ fn network_should_reimport_invite(
     let Some(own_pubkey) = own_pubkey else {
         return false;
     };
-    let invite_secret = invite.invite_secret.trim();
-    !invite_secret.is_empty()
-        && network.invite_secret.trim() == invite_secret
+    !invite.invite_secret.trim().is_empty()
         && network.shared_roster_updated_at == 0
         && network.shared_roster_signed_by.trim().is_empty()
         && !network

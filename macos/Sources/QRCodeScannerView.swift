@@ -1,6 +1,7 @@
 import AVFoundation
 import AppKit
 import SwiftUI
+import Vision
 
 struct QRCodeScannerSheet: View {
     let onCode: (String) -> Void
@@ -57,12 +58,17 @@ struct QRCodeScannerView: NSViewRepresentable {
         coordinator.stop()
     }
 
-    final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
+    final class Coordinator: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
         private let onCode: (String) -> Void
         private let onError: (String) -> Void
         private let sessionQueue = DispatchQueue(label: "fi.siriusbusiness.nvpn.qrscanner")
         private var session: AVCaptureSession?
         private var didEmitCode = false
+        private lazy var barcodeRequest: VNDetectBarcodesRequest = {
+            let request = VNDetectBarcodesRequest()
+            request.symbologies = [.qr]
+            return request
+        }()
 
         init(onCode: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
             self.onCode = onCode
@@ -97,25 +103,33 @@ struct QRCodeScannerView: NSViewRepresentable {
             }
         }
 
-        func metadataOutput(
-            _ output: AVCaptureMetadataOutput,
-            didOutput metadataObjects: [AVMetadataObject],
+        func captureOutput(
+            _ output: AVCaptureOutput,
+            didOutput sampleBuffer: CMSampleBuffer,
             from connection: AVCaptureConnection
         ) {
-            guard !didEmitCode else {
+            guard !didEmitCode,
+                  let imageBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
                 return
             }
-            for object in metadataObjects {
-                guard let code = object as? AVMetadataMachineReadableCodeObject,
-                      code.type == .qr,
-                      let value = code.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines),
-                      !value.isEmpty else {
-                    continue
-                }
-                didEmitCode = true
-                stop()
-                onCode(value)
+
+            let handler = VNImageRequestHandler(cvPixelBuffer: imageBuffer, orientation: .up)
+            guard (try? handler.perform([barcodeRequest])) != nil,
+                  let value = barcodeRequest.results?
+                    .first(where: { $0.symbology == .qr })?
+                    .payloadStringValue?
+                    .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !value.isEmpty else {
                 return
+            }
+
+            didEmitCode = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+                self.stop()
+                self.onCode(value)
             }
         }
 
@@ -127,7 +141,8 @@ struct QRCodeScannerView: NSViewRepresentable {
 
             do {
                 let input = try AVCaptureDeviceInput(device: device)
-                let output = AVCaptureMetadataOutput()
+                let output = AVCaptureVideoDataOutput()
+                output.alwaysDiscardsLateVideoFrames = true
                 let nextSession = AVCaptureSession()
                 nextSession.beginConfiguration()
                 guard nextSession.canAddInput(input), nextSession.canAddOutput(output) else {
@@ -143,12 +158,7 @@ struct QRCodeScannerView: NSViewRepresentable {
                 }
                 nextSession.addOutput(output)
                 nextSession.commitConfiguration()
-                guard output.availableMetadataObjectTypes.contains(.qr) else {
-                    onError("QR scanning is unavailable for this camera.")
-                    return
-                }
-                output.setMetadataObjectsDelegate(self, queue: .main)
-                output.metadataObjectTypes = [.qr]
+                output.setSampleBufferDelegate(self, queue: sessionQueue)
                 view.attach(session: nextSession)
                 session = nextSession
                 sessionQueue.async {
