@@ -49,7 +49,9 @@ pub(crate) fn apply_network_invite_to_active_network(
         config.networks.iter().find(|network| {
             normalize_runtime_network_id(&network.network_id) == normalized_invite_network_id
         }) {
-        if network_should_adopt_invite(existing, own_pubkey.as_deref()) {
+        if network_should_adopt_invite(existing, own_pubkey.as_deref())
+            || network_should_reimport_invite(existing, own_pubkey.as_deref(), invite)
+        {
             (existing.id.clone(), true)
         } else {
             return Err(anyhow!(
@@ -170,6 +172,26 @@ pub(crate) fn apply_network_invite_to_active_network(
     }
 
     Ok(())
+}
+
+fn network_should_reimport_invite(
+    network: &NetworkConfig,
+    own_pubkey: Option<&str>,
+    invite: &NetworkInvite,
+) -> bool {
+    let Some(own_pubkey) = own_pubkey else {
+        return false;
+    };
+    let invite_secret = invite.invite_secret.trim();
+    !invite_secret.is_empty()
+        && network.invite_secret.trim() == invite_secret
+        && network.shared_roster_updated_at == 0
+        && network.shared_roster_signed_by.trim().is_empty()
+        && !network
+            .devices
+            .iter()
+            .chain(network.admins.iter())
+            .any(|member| member == own_pubkey)
 }
 
 fn reusable_placeholder_network(

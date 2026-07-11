@@ -12,6 +12,20 @@ fn wireguard_exit_status_json(app: &AppConfig) -> serde_json::Value {
     })
 }
 
+fn apply_cached_active_network_roster(app: &mut AppConfig, path: &Path) -> Result<bool> {
+    let Some(network) = app.active_network_opt() else {
+        return Ok(false);
+    };
+    let network_id = network.network_id.clone();
+    let Some(signed_roster) = load_signed_rosters(&signed_rosters_file_path(path))?
+        .latest_for(&network_id)
+        .cloned()
+    else {
+        return Ok(false);
+    };
+    app.apply_verified_admin_signed_shared_roster(&signed_roster)
+}
+
 fn runtime_local_tunnel_ip(app: &AppConfig, network_id: &str) -> String {
     if let Ok(own_pubkey) = app.own_nostr_pubkey_hex()
         && let Some(tunnel_ip) = derive_mesh_tunnel_ip(network_id, &own_pubkey)

@@ -226,6 +226,9 @@ fn load_config_with_overrides(
     participants: Vec<String>,
 ) -> Result<(AppConfig, String)> {
     let mut app = load_or_default_config(path)?;
+    if apply_cached_active_network_roster(&mut app, path)? {
+        app.save(path)?;
+    }
     apply_participants_override(&mut app, participants)?;
     if let Some(network_id) = network_id {
         app.set_active_network_id(&network_id)?;
