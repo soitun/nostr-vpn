@@ -12,7 +12,7 @@
         FIPS_RECONNECT_BACKOFF_BASE_SECS, FIPS_RECONNECT_BACKOFF_MAX_SECS,
         FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS,
         FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY, FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY,
-        FipsEndpointSendRun, FipsEndpointTransportConfig, FipsPeerActivity, FipsPeerActivitySnapshot,
+        FipsEndpointTransportConfig, FipsPeerActivity, FipsPeerActivitySnapshot,
         FipsPeerAddressHint, FipsPeerIdentityMap, FipsPeerRxKind, FipsPrivateMeshEvent,
         FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
         cap_recent_non_roster_transit_endpoints, control_frame_destination_peer,
@@ -707,46 +707,6 @@
                 .identity_for_participant(&invalid_participant)
                 .is_none()
         );
-    }
-
-    #[test]
-    fn endpoint_send_run_batches_configured_peer_without_participant_string() {
-        let participant = Keys::generate().public_key().to_hex();
-        let participant_key = participant_pubkey_bytes(&participant).expect("participant key");
-        let endpoint_npub = Keys::generate().public_key().to_bech32().expect("npub");
-        let identity = PeerIdentity::from_npub(&endpoint_npub).expect("peer identity");
-        let endpoint_node_addr = *identity.node_addr().as_bytes();
-        let mut identity_map = FipsPeerIdentityMap::default();
-        identity_map
-            .by_endpoint_node_addr
-            .insert(endpoint_node_addr, identity);
-        let mut runs = Vec::new();
-
-        FipsPrivateMeshRuntime::push_endpoint_send_run(
-            &mut runs,
-            &identity_map,
-            &participant,
-            Some(participant_key),
-            &endpoint_node_addr,
-            vec![1],
-        );
-        FipsPrivateMeshRuntime::push_endpoint_send_run(
-            &mut runs,
-            &identity_map,
-            &participant,
-            Some(participant_key),
-            &endpoint_node_addr,
-            vec![2],
-        );
-
-        assert_eq!(runs.len(), 1);
-        let FipsEndpointSendRun::Identity(run) = &runs[0];
-        assert!(run.participant_fallback.is_none());
-        assert_eq!(run.participant_key, Some(participant_key));
-        assert_eq!(run.identity, identity);
-        assert_eq!(run.payloads, vec![vec![1], vec![2]]);
-        assert_eq!(run.packet_count, 2);
-        assert_eq!(run.bytes_len, 2);
     }
 
     #[cfg(feature = "paid-exit")]

@@ -304,16 +304,6 @@ struct FipsEndpointIdentitySendRun {
     participant_key: Option<ParticipantPubkeyBytes>,
     identity: PeerIdentity,
     payloads: Vec<Vec<u8>>,
-    packet_count: usize,
-    bytes_len: usize,
-}
-
-struct FipsEndpointIdentitySendParts {
-    participant_fallback: Option<String>,
-    participant_key: Option<ParticipantPubkeyBytes>,
-    identity: PeerIdentity,
-    payloads: Vec<Vec<u8>>,
-    packet_count: usize,
     bytes_len: usize,
 }
 
@@ -329,7 +319,6 @@ impl FipsEndpointIdentitySendRun {
             participant_key,
             identity,
             payloads: Vec::new(),
-            packet_count: 0,
             bytes_len: 0,
         };
         run.push_payload(payload);
@@ -339,19 +328,7 @@ impl FipsEndpointIdentitySendRun {
     fn push_payload(&mut self, payload: Vec<u8>) {
         let bytes_len = payload.len();
         self.payloads.push(payload);
-        self.packet_count = self.packet_count.saturating_add(1);
         self.bytes_len = self.bytes_len.saturating_add(bytes_len);
-    }
-
-    fn into_send_parts(self) -> FipsEndpointIdentitySendParts {
-        FipsEndpointIdentitySendParts {
-            participant_fallback: self.participant_fallback,
-            participant_key: self.participant_key,
-            identity: self.identity,
-            payloads: self.payloads,
-            packet_count: self.packet_count,
-            bytes_len: self.bytes_len,
-        }
     }
 
     fn matches(
@@ -384,11 +361,6 @@ impl FipsEndpointIdentitySendRun {
         self.identity.node_addr().as_bytes() == endpoint_node_addr
             && self.matches_participant(participant_key, participant)
     }
-}
-
-#[derive(Debug)]
-enum FipsEndpointSendRun {
-    Identity(FipsEndpointIdentitySendRun),
 }
 
 #[derive(Debug, Clone, Default)]

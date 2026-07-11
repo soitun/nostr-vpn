@@ -95,7 +95,7 @@ impl FipsPrivateMeshRuntime {
         &self,
         packets: Vec<Vec<u8>>,
         turn_capacity: usize,
-        runs: &mut Vec<FipsEndpointSendRun>,
+        runs: &mut Vec<FipsEndpointIdentitySendRun>,
     ) -> Result<usize> {
         if packets.is_empty() {
             return Ok(0);
@@ -151,7 +151,7 @@ impl FipsPrivateMeshRuntime {
         &self,
         packets: I,
         turn_capacity: usize,
-        runs: &mut Vec<FipsEndpointSendRun>,
+        runs: &mut Vec<FipsEndpointIdentitySendRun>,
     ) -> Result<usize>
     where
         I: IntoIterator<Item = TunPipelinePacket>,
@@ -167,7 +167,7 @@ impl FipsPrivateMeshRuntime {
         &self,
         packets: I,
         turn_capacity: usize,
-        runs: &mut Vec<FipsEndpointSendRun>,
+        runs: &mut Vec<FipsEndpointIdentitySendRun>,
     ) -> Result<()>
     where
         I: IntoIterator<Item = TunPipelinePacket>,
@@ -247,14 +247,14 @@ impl FipsPrivateMeshRuntime {
     }
 
     fn push_endpoint_send_run(
-        runs: &mut Vec<FipsEndpointSendRun>,
+        runs: &mut Vec<FipsEndpointIdentitySendRun>,
         peer_identities: &FipsPeerIdentityMap,
         participant_pubkey: &str,
         participant_key: Option<ParticipantPubkeyBytes>,
         endpoint_node_addr: &[u8; 16],
         payload: Vec<u8>,
     ) {
-        if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
+        if let Some(run) = runs.last_mut()
             && run.matches_endpoint(endpoint_node_addr, participant_key, participant_pubkey)
         {
             run.push_payload(payload);
@@ -266,7 +266,7 @@ impl FipsPrivateMeshRuntime {
             participant_key.as_ref(),
             endpoint_node_addr,
         ) {
-            if let Some(FipsEndpointSendRun::Identity(run)) = runs.last_mut()
+            if let Some(run) = runs.last_mut()
                 && run.matches(identity, participant_key, participant_pubkey)
             {
                 run.push_payload(payload);
@@ -281,36 +281,31 @@ impl FipsPrivateMeshRuntime {
                 identity,
                 payload,
             );
-            runs.push(FipsEndpointSendRun::Identity(run));
+            runs.push(run);
         }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn blocking_send_endpoint_send_runs<I>(&self, runs: I) -> Result<usize>
     where
-        I: IntoIterator<Item = FipsEndpointSendRun>,
+        I: IntoIterator<Item = FipsEndpointIdentitySendRun>,
     {
         let mut sent = 0usize;
         for run in runs {
-            match run {
-                FipsEndpointSendRun::Identity(run) => {
-                    let parts = run.into_send_parts();
-                    self.endpoint
-                        .blocking_send_batch_to_peer(parts.identity, parts.payloads)
-                        .with_context(|| {
-                            format!(
-                                "failed to send {} private packets over FIPS endpoint data",
-                                parts.packet_count
-                            )
-                        })?;
-                    self.note_tx(
-                        parts.participant_fallback.as_deref(),
-                        parts.participant_key.as_ref(),
-                        parts.bytes_len,
-                    )?;
-                    sent += parts.packet_count;
-                }
-            }
+            let packet_count = run.payloads.len();
+            self.endpoint
+                .blocking_send_batch_to_peer(run.identity, run.payloads)
+                .with_context(|| {
+                    format!(
+                        "failed to send {packet_count} private packets over FIPS endpoint data"
+                    )
+                })?;
+            self.note_tx(
+                run.participant_fallback.as_deref(),
+                run.participant_key.as_ref(),
+                run.bytes_len,
+            )?;
+            sent += packet_count;
         }
 
         Ok(sent)

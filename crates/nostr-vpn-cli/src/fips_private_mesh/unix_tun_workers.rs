@@ -191,7 +191,7 @@ fn send_mesh_packet_batch_blocking_or_log(
     mesh: &FipsPrivateMeshRuntime,
     tun_fd: BorrowedTunFd,
     packets: &mut TunPipelineBatch,
-    send_runs: &mut Vec<FipsEndpointSendRun>,
+    send_runs: &mut Vec<FipsEndpointIdentitySendRun>,
     stop: &AtomicBool,
 ) {
     let packet_count = packets.len();
