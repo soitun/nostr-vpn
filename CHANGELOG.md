@@ -6,9 +6,8 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- Pending native-app join requests now receive and apply signed approvals from
-  the approval relay, so accepted iPhone and Android devices automatically gain
-  the network roster instead of remaining on the join screen.
+- Network invites once again queue the existing FIPS join request, and accepted
+  devices receive the admin-signed nVPN roster as application data over FIPS.
 - macOS now describes manual pairing as a supported pairing path instead of
   incorrectly labeling it as legacy.
 - Learned private-LAN mobile endpoint hints now regain their private-path

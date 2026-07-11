@@ -205,7 +205,7 @@ fn spawn_blocking_mesh_recv_worker(
                 match received {
                     Ok(Some(drained)) => {
                         if let Err(error) =
-                            mesh.finalize_direct_endpoint_tun_batch_blocking(&mut packet_batch)
+                            mesh.finalize_direct_endpoint_tun_batch_blocking(&packet_batch)
                         {
                             packet_batch.clear();
                             eprintln!("fips: failed to finalize tunnel packet batch: {error}");
@@ -237,7 +237,7 @@ fn spawn_blocking_mesh_recv_worker(
                     }
                     Ok(None) => {
                         if let Err(error) =
-                            mesh.finalize_direct_endpoint_tun_batch_blocking(&mut packet_batch)
+                            mesh.finalize_direct_endpoint_tun_batch_blocking(&packet_batch)
                         {
                             packet_batch.clear();
                             eprintln!("fips: failed to finalize tunnel packet batch: {error}");
@@ -253,7 +253,7 @@ fn spawn_blocking_mesh_recv_worker(
                     }
                     Err(error) => {
                         if let Err(error) =
-                            mesh.finalize_direct_endpoint_tun_batch_blocking(&mut packet_batch)
+                            mesh.finalize_direct_endpoint_tun_batch_blocking(&packet_batch)
                         {
                             packet_batch.clear();
                             eprintln!("fips: failed to finalize tunnel packet batch: {error}");

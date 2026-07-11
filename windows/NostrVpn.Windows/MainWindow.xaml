@@ -176,10 +176,10 @@
             <Border Style="{StaticResource Card}" Visibility="{Binding ShowNetworkSetupJoin, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <DockPanel LastChildFill="True" Margin="0,0,0,10">
-                  <Button DockPanel.Dock="Right" Content="{Binding JoinRequestBroadcastButtonText}" Command="{Binding ToggleJoinRequestBroadcastCommand}" />
-                  <TextBlock Text="Nearby join request" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                  <Button DockPanel.Dock="Right" Content="{Binding NearbyDiscoveryButtonText}" Command="{Binding ToggleNearbyDiscoveryCommand}" />
+                  <TextBlock Text="Nearby network invites" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </DockPanel>
-                <TextBlock Text="Advertise this device's join request to nearby admins." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" />
+                <TextBlock Text="Find network invites shared by nearby admins." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
           </StackPanel>
@@ -464,10 +464,10 @@
             <Border Style="{StaticResource Card}" Visibility="{Binding ShowNetworkSetupJoin, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <DockPanel LastChildFill="True" Margin="0,0,0,10">
-                  <Button DockPanel.Dock="Right" Content="{Binding JoinRequestBroadcastButtonText}" Command="{Binding ToggleJoinRequestBroadcastCommand}" />
-                  <TextBlock Text="Nearby join request" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                  <Button DockPanel.Dock="Right" Content="{Binding NearbyDiscoveryButtonText}" Command="{Binding ToggleNearbyDiscoveryCommand}" />
+                  <TextBlock Text="Nearby network invites" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </DockPanel>
-                <TextBlock Text="Advertise this device's join request to nearby admins." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" />
+                <TextBlock Text="Find network invites shared by nearby admins." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" />
               </StackPanel>
             </Border>
           </StackPanel>
@@ -476,8 +476,8 @@
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <DockPanel LastChildFill="True" Margin="0,0,0,10">
-                  <Button DockPanel.Dock="Right" Content="{Binding NearbyDiscoveryButtonText}" Command="{Binding ToggleNearbyDiscoveryCommand}" />
-                  <TextBlock Text="Nearby join requests" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
+                  <Button DockPanel.Dock="Right" Content="{Binding JoinRequestBroadcastButtonText}" Command="{Binding ToggleJoinRequestBroadcastCommand}" />
+                  <TextBlock Text="Network invite" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
                 </DockPanel>
                 <ItemsControl ItemsSource="{Binding State.LanPeers}">
                   <ItemsControl.ItemTemplate>
@@ -492,11 +492,13 @@
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>
                 </ItemsControl>
-                <TextBlock Text="No nearby join requests yet" Foreground="{StaticResource TextSecondary}" Visibility="{Binding NoNearbyInvitesNoticeVisibility}" />
+                <TextBlock Text="Share this network invite nearby, or copy it for the joining device. The join request and signed roster travel over FIPS." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <TextBox Text="{Binding State.ActiveNetworkInvite}" IsReadOnly="True" TextWrapping="Wrap" Margin="0,0,0,8" />
+                <Button Content="Copy invite" Tag="{Binding State.ActiveNetworkInvite}" Click="CopyPeer_Click" HorizontalAlignment="Left" />
               </StackPanel>
             </Border>
 
-            <Border Style="{StaticResource Card}" Visibility="{Binding ShowLinkDeviceCard, Converter={StaticResource BoolToVisibility}}">
+            <Border Style="{StaticResource Card}" Visibility="Collapsed">
               <StackPanel>
                 <TextBlock Text="Link Device" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4" />
                 <TextBlock Text="Paste the joiner's request to open confirmation automatically, or add their Device ID below." Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />

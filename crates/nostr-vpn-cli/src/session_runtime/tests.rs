@@ -100,11 +100,10 @@ mod tests {
             assert_eq!(refresh, FipsLinkEventRefresh::RefreshPaths);
         }
 
-        for refresh in [
+        assert_eq!(
             fips_link_event_refresh(true, false, false, false),
-        ] {
-            assert_eq!(refresh, FipsLinkEventRefresh::None);
-        }
+            FipsLinkEventRefresh::None
+        );
     }
     #[test]
     fn stale_participant_path_refresh_targets_only_matching_endpoint_peers() {

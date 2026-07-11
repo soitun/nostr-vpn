@@ -283,6 +283,8 @@ const FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
+/// nVPN's application-level control envelope, carried as opaque payload data
+/// by a FIPS endpoint. This is not a FIPS protocol message or wire extension.
 pub enum FipsControlFrame {
     Ping {
         network_id: String,

@@ -223,19 +223,6 @@ struct RootView: View {
         .sheet(isPresented: $addDevicePresented) {
             if let network = shownNetwork, network.enabled {
                 addDeviceSheetContent(network)
-                    .alert("Add device?", isPresented: pendingJoinRequestPresented, presenting: pendingJoinRequest) { pending in
-                        Button("Cancel", role: .cancel) {
-                            pendingJoinRequest = nil
-                        }
-                        Button("Add") {
-                            manager.importJoinRequest(pending.request)
-                            joinRequestInput = ""
-                            pendingJoinRequest = nil
-                            addDevicePresented = false
-                        }
-                    } message: { pending in
-                        Text("Add the device from this join request to \(pending.networkName)?")
-                    }
             }
         }
     }
@@ -299,8 +286,7 @@ struct RootView: View {
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    joinRequestInputSection(network)
-                    nearbyJoinRequestsSection
+                    networkInviteSection(network)
                     manualPairingInfoSection(network)
                     addByDeviceIdSection(network)
                 }
@@ -308,6 +294,34 @@ struct RootView: View {
             }
         }
         .frame(width: 560, height: 620)
+    }
+
+    /// Manual pairing path for directly sharing the signed-roster values.
+    private func networkInviteSection(_ network: NativeNetworkState) -> some View {
+        let invite = network.enabled ? state.activeNetworkInvite : ""
+        return surface {
+            sectionHeader("Network Invite", systemImage: "qrcode")
+            Text("Scan this invite on the joining device. Its join request and the signed roster travel over FIPS.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            InviteQRCodeView(invite: invite)
+                .frame(width: 240, height: 240)
+                .frame(maxWidth: .infinity, alignment: .center)
+            HStack(spacing: 8) {
+                Button {
+                    manager.copy(invite)
+                } label: {
+                    Label("Copy Invite", systemImage: "doc.on.doc")
+                }
+                .disabled(invite.isEmpty)
+                Button {
+                    manager.share(invite)
+                } label: {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                .disabled(invite.isEmpty)
+            }
+        }
     }
 
     /// Manual pairing path for directly sharing the signed-roster values.

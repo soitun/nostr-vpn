@@ -246,7 +246,7 @@
     }
 
     #[test]
-    fn invite_import_adopts_network_without_queueing_join_request() {
+    fn invite_import_queues_fips_join_request() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -278,7 +278,14 @@
             .expect("import invite");
 
         let network = runtime.config.active_network();
-        assert!(network.outbound_join_request.is_none());
+        let request = network
+            .outbound_join_request
+            .as_ref()
+            .expect("invite queues a FIPS join request");
+        assert_eq!(
+            request.recipient,
+            normalize_nostr_pubkey(&admin_npub).expect("normalize admin")
+        );
         assert!(network.devices.is_empty());
         assert_eq!(
             runtime.config.fips_peer_endpoints.get(&admin_npub),
@@ -290,233 +297,6 @@
 
         let _ = fs::remove_dir_all(&dir);
     }
-    #[test]
-    #[allow(clippy::too_many_lines)]
-    fn compact_join_bootstrap_is_added_by_admin_without_request_event() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let admin_dir =
-            std::env::temp_dir().join(format!("nvpn-app-core-admin-join-request-{nonce}"));
-        let joiner_dir =
-            std::env::temp_dir().join(format!("nvpn-app-core-joiner-request-link-{nonce}"));
-        fs::create_dir_all(&admin_dir).expect("create admin test dir");
-        fs::create_dir_all(&joiner_dir).expect("create joiner test dir");
-
-        let error = anyhow!("boom");
-        let mut admin = NativeAppRuntime::from_startup_error(&error);
-        admin.startup_error = None;
-        admin.last_error.clear();
-        admin.mobile_runtime = true;
-        admin.config_path = admin_dir.join("config.toml");
-        admin.config.node_name = "Admin Mac".to_string();
-        let admin_pubkey = admin
-            .config
-            .own_nostr_pubkey_hex()
-            .expect("admin pubkey");
-        let admin_network_id = create_test_network(&mut admin, "Home");
-        admin.config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
-        admin.config.networks[0].admins = vec![admin_pubkey.clone()];
-
-        let mut joiner = NativeAppRuntime::from_startup_error(&error);
-        joiner.startup_error = None;
-        joiner.mobile_runtime = true;
-        joiner.config_path = joiner_dir.join("config.toml");
-        joiner.config.node_name = "Pixel Phone".to_string();
-        joiner.config.clear_pending_nostr_join_request();
-        let joiner_pubkey = joiner
-            .config
-            .own_nostr_pubkey_hex()
-            .expect("joiner pubkey");
-        joiner
-            .config
-            .ensure_pending_nostr_join_request(1_778_998_000)
-            .expect("joiner request");
-        let pending = joiner
-            .config
-            .pending_nostr_join_request
-            .as_ref()
-            .expect("pending request");
-        let request_keys = pending.request_keys().expect("request keys");
-        let request_secret = pending.request.request_secret.clone();
-        let request_pubkey = pending.request.request_pubkey.clone();
-        let bootstrap = nostr_vpn_core::identity_bridge::nostr_identity_device_approval_bootstrap(
-            &pending.request,
-        )
-        .expect("joiner request bootstrap");
-        let join_request = joiner
-            .config
-            .pending_nostr_join_request_link(crate::join_request_link::JOIN_REQUEST_LINK_PREFIX)
-            .expect("joiner request link");
-        assert!(join_request.starts_with("nvpn://join-request/"));
-        let parsed_bootstrap =
-            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_bootstrap(
-                &join_request,
-                &[crate::join_request_link::JOIN_REQUEST_LINK_PREFIX],
-            )
-            .expect("parse compact join request")
-            .expect("join request bootstrap");
-        assert_eq!(parsed_bootstrap, bootstrap);
-        assert_eq!(
-            nostr_vpn_core::config::normalize_nostr_pubkey(&parsed_bootstrap.device_app_key_npub)
-                .expect("stable AppKey"),
-            joiner_pubkey
-        );
-        assert_eq!(parsed_bootstrap.request_secret, request_secret);
-        assert_ne!(
-            nostr_vpn_core::config::normalize_nostr_pubkey(&parsed_bootstrap.request_npub)
-                .expect("request key"),
-            joiner_pubkey
-        );
-
-        admin
-            .import_join_request(&join_request)
-            .expect("import compact join request");
-
-        assert!(admin.last_error.is_empty(), "{}", admin.last_error);
-        assert_eq!(admin.published_join_approval_events.len(), 5);
-        let canonical_admin =
-            nostr_vpn_core::identity_bridge::parse_roster_app_key_sidecar_event(
-                &admin.published_join_approval_events[0],
-            )
-            .expect("parse canonical admin genesis")
-            .expect("canonical admin identity");
-        assert_eq!(canonical_admin.facet.pubkey, admin_pubkey);
-        assert_eq!(canonical_admin.role, nostr_vpn_core::identity_bridge::RosterAppKeyRole::Admin);
-        let roster_identity =
-            nostr_vpn_core::identity_bridge::parse_roster_app_key_sidecar_event(
-                &admin.published_join_approval_events[1],
-            )
-            .expect("parse roster sidecar")
-            .expect("roster sidecar identity");
-        assert_eq!(roster_identity.facet.pubkey, joiner_pubkey);
-        let receipt =
-            nostr_identity::parse_nostr_identity_device_approval_receipt_event_for_bootstrap(
-                &admin.published_join_approval_events[3],
-                &request_keys,
-                &parsed_bootstrap,
-            )
-            .expect("decrypt approval receipt");
-        assert_eq!(receipt.request_pubkey, request_pubkey);
-        assert_eq!(receipt.device_app_key_pubkey, joiner_pubkey);
-        assert_eq!(receipt.approved_by_pubkey, admin.config.own_nostr_pubkey_hex().unwrap());
-        assert_eq!(receipt.request_secret, request_secret);
-        let roster_op_event_id = admin.published_join_approval_events[1].id.to_hex();
-        assert_eq!(
-            receipt.roster_op_id.as_deref(),
-            Some(roster_op_event_id.as_str())
-        );
-        let receipt_roster_op =
-            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_receipt_roster_op(
-                &receipt,
-            )
-            .expect("receipt embeds roster op");
-        assert_eq!(receipt_roster_op.op_id, roster_op_event_id);
-        assert!(
-            !admin.published_join_approval_events[3]
-                .content
-                .contains(&request_secret)
-        );
-        let vpn_context =
-            nostr_vpn_core::identity_bridge::parse_nostr_vpn_join_approval_context_event(
-                &admin.published_join_approval_events[4],
-                &request_keys,
-            )
-            .expect("decrypt Nostr VPN approval context");
-        assert_eq!(vpn_context.request_pubkey, request_pubkey);
-        assert_eq!(vpn_context.device_app_key_pubkey, joiner_pubkey);
-        assert_eq!(
-            vpn_context.approved_by_pubkey,
-            admin.config.own_nostr_pubkey_hex().unwrap()
-        );
-        assert_eq!(vpn_context.request_secret, request_secret);
-        assert_eq!(vpn_context.mesh_network_id, "8d4f34f5425bc50e");
-        assert_eq!(vpn_context.network_name.as_deref(), Some("Home"));
-        assert_eq!(vpn_context.roster_op_id.as_deref(), Some(roster_op_event_id.as_str()));
-        assert!(
-            !admin.published_join_approval_events[4]
-                .content
-                .contains(&request_secret)
-        );
-        assert!(
-            !admin.published_join_approval_events[4]
-                .content
-                .contains("8d4f34f5425bc50e")
-        );
-        assert!(admin.config.networks[0].devices.contains(&joiner_pubkey));
-        assert!(admin.config.networks[0].inbound_join_requests.is_empty());
-        assert_eq!(
-            admin.config.peer_alias(&joiner_pubkey).as_deref(),
-            Some("pixel-phone")
-        );
-        let imported = admin
-            .state()
-            .networks
-            .into_iter()
-            .find(|network| network.id == admin_network_id)
-            .expect("admin network");
-        assert!(imported.inbound_join_requests.is_empty());
-        assert!(imported.join_request_qr_code_or_link.is_empty());
-        assert!(admin.state().join_request_qr_code_or_link.is_empty());
-
-        assert!(
-            joiner
-                .apply_fetched_join_approval_events(&admin.published_join_approval_events)
-                .expect("apply fetched approval events"),
-            "joiner should apply the accepted network"
-        );
-        assert!(joiner.config.pending_nostr_join_request.is_none());
-        assert_eq!(joiner.config.active_network().network_id, "8d4f34f5425bc50e");
-        assert!(joiner.config.active_network_has_confirmed_local_identity());
-        let persisted_joiner = AppConfig::load(&joiner.config_path).expect("reload joined iPhone");
-        assert!(persisted_joiner.pending_nostr_join_request.is_none());
-        assert_eq!(
-            persisted_joiner.active_network().network_id,
-            "8d4f34f5425bc50e"
-        );
-
-        let _ = fs::remove_dir_all(&admin_dir);
-        let _ = fs::remove_dir_all(&joiner_dir);
-    }
-
-    #[test]
-    fn unsupported_compact_join_request_is_rejected_without_adding_device() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-compact-join-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
-
-        let error = anyhow!("boom");
-        let mut admin = NativeAppRuntime::from_startup_error(&error);
-        admin.startup_error = None;
-        admin.mobile_runtime = true;
-        admin.config_path = dir.join("config.toml");
-        let admin_pubkey = admin
-            .config
-            .own_nostr_pubkey_hex()
-            .expect("admin pubkey");
-        create_test_network(&mut admin, "Home");
-        admin.config.networks[0].admins = vec![admin_pubkey];
-
-        let joiner_pubkey = Keys::generate().public_key().to_hex();
-        let compact = format!("nvpn://join-request?app_key={joiner_pubkey}");
-
-        admin.dispatch(NativeAppAction::ImportJoinRequest { request: compact });
-
-        assert!(
-            admin.last_error.contains("unsupported join request link"),
-            "{}",
-            admin.last_error
-        );
-        assert!(!admin.config.networks[0].devices.contains(&joiner_pubkey));
-        assert!(admin.published_join_approval_events.is_empty());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
     #[test]
     fn invite_import_reuses_inactive_default_network_placeholder() {
         let nonce = SystemTime::now()
@@ -554,7 +334,7 @@
         assert_eq!(network.id, "network-1");
         assert_eq!(network.name, "Network 1");
         assert_eq!(network.network_id, "8d4f34f5425bc50e");
-        assert!(network.outbound_join_request.is_none());
+        assert!(network.outbound_join_request.is_some());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -598,7 +378,7 @@
         assert_eq!(network.network_id, "7a6014835d404cb0");
         assert_eq!(network.admins, vec![admin_hex.clone()]);
         assert_eq!(network.invite_inviter, admin_hex);
-        assert!(network.outbound_join_request.is_none());
+        assert!(network.outbound_join_request.is_some());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -699,6 +479,10 @@
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
         runtime.config_path = dir.join("config.toml");
+        let network_id = create_test_network(&mut runtime, "Home");
+        let own_pubkey = runtime.config.own_nostr_pubkey_hex().expect("own pubkey");
+        runtime.config.networks[0].admins = vec![own_pubkey];
+        runtime.config.set_network_enabled(&network_id, true).expect("enable network");
 
         runtime.dispatch(NativeAppAction::StartInviteBroadcast);
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
@@ -732,7 +516,7 @@
     }
 
     #[test]
-    fn joined_device_does_not_advertise_nearby_join_request() {
+    fn non_admin_device_does_not_advertise_network_invite() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -752,7 +536,7 @@
         assert!(
             runtime
                 .last_error
-                .contains("nearby join request advertising is only available"),
+                .contains("nearby invite sharing requires an administered network"),
             "{}",
             runtime.last_error
         );

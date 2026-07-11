@@ -219,7 +219,7 @@ impl FipsPrivateTunnelRuntime {
             let config = self.config.clone();
             self.reconcile_macos_endpoint_bypass_for_config(&config)
                 .await?;
-            return Ok(());
+            Ok(())
         }
     }
 

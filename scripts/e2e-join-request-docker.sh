@@ -131,6 +131,31 @@ wait_for_inbound_join_request() {
   exit 1
 }
 
+wait_for_signed_roster() {
+  local service="$1"
+  local admin="$2"
+  local signed=""
+
+  for _ in $(seq 1 90); do
+    signed="$("${COMPOSE[@]}" exec -T \
+      -e ADMIN="$admin" \
+      "$service" perl -0ne '
+  my $admin = $ENV{ADMIN};
+  if (/^shared_roster_signed_by\s*=\s*"\Q$admin\E"\s*$/m
+    && !/^\[networks\.outbound_join_request\]\s*$/m) {
+    print "yes";
+  }
+' /root/.config/nvpn/config.toml || true)"
+    if [[ "$signed" == "yes" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "join-request docker e2e failed: requester never applied admin-signed roster" >&2
+  exit 1
+}
+
 cleanup
 
 "${COMPOSE[@]}" build >/dev/null
@@ -174,4 +199,7 @@ start_daemon_open_discovery node-c
 
 wait_for_inbound_join_request node-a "$REQUESTER_NPUB" "$REQUESTER_NAME"
 
-echo "join request from $REQUESTER_NAME was persisted on admin"
+"${COMPOSE[@]}" exec -T node-a nvpn add-device --device "$REQUESTER_NPUB" >/dev/null
+wait_for_signed_roster node-c "$ADMIN_NPUB"
+
+echo "join request and admin-signed roster completed over FIPS for $REQUESTER_NAME"

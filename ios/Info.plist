@@ -42,7 +42,7 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Scan Nostr VPN join request QR codes.</string>
+	<string>Scan Nostr VPN network invite and device QR codes.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_fips._udp</string>
@@ -50,7 +50,7 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Connect directly to nearby Nostr VPN devices on your local network.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Select Nostr VPN join request QR images to add devices.</string>
+	<string>Select Nostr VPN network invite and device QR images.</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

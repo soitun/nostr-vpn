@@ -77,9 +77,6 @@ enum Command {
     /// Run the Ethernet-only guest runtime used by WebVM.
     #[command(name = "webvm-guest")]
     WebvmGuest(WebvmGuestArgs),
-    /// Print the pending device-approval QR code and URI.
-    #[command(name = "pairing-qr")]
-    PairingQr(PairingQrArgs),
     /// Show local and discovered peer status.
     Status(StatusArgs),
     /// Update persisted node/network settings.
@@ -138,13 +135,6 @@ enum Command {
 }
 
 #[derive(Debug, Clone, Args)]
-struct PairingQrArgs {
-    /// nvpn configuration containing the pending device-approval request.
-    #[arg(long)]
-    config: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone, Args)]
 struct WebvmGuestArgs {
     /// Persistent nvpn configuration path.
     #[arg(long)]
@@ -155,12 +145,6 @@ struct WebvmGuestArgs {
     /// Ethernet beacon scope shared with the browser FIPS host.
     #[arg(long)]
     discovery_scope: String,
-    /// Authenticated FSP service port for targeted approval pubsub.
-    #[arg(long)]
-    join_pubsub_port: u16,
-    /// Atomically updated file containing the pending pairing bootstrap URI.
-    #[arg(long)]
-    pairing_uri_file: PathBuf,
     /// Guest TUN interface used after approval.
     #[arg(long)]
     tun_interface: String,

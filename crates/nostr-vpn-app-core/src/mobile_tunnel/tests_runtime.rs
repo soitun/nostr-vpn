@@ -447,7 +447,8 @@
     }
 
     #[tokio::test]
-    async fn mobile_join_request_sends_and_records_over_real_fips_endpoint() {
+    #[allow(clippy::too_many_lines)]
+    async fn mobile_pairing_roundtrip_sends_request_and_signed_roster_over_real_fips() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -474,8 +475,8 @@
             admin_mobile_join_request_config(admin_nsec, &network_id, available_udp_port());
         let admin_endpoint = bind_local_mobile_endpoint(&scope, &admin_mobile).await;
         let requester_mobile = requester_mobile_join_request_config(
-            requester_nsec,
-            admin_pubkey,
+            requester_nsec.clone(),
+            admin_pubkey.clone(),
             admin_mobile.listen_port,
             available_udp_port(),
             &network_id,
@@ -515,6 +516,99 @@
             saved.networks[0].inbound_join_requests[0].requester,
             requester_pubkey
         );
+
+        let signed_roster = SignedRoster::sign(
+            network_id.clone(),
+            NetworkRoster {
+                network_name: "Home".to_string(),
+                devices: vec![requester_pubkey.clone()],
+                admins: vec![admin_pubkey.clone()],
+                aliases: HashMap::new(),
+                signed_at: requested_at + 1,
+            },
+            &admin_keys,
+        )
+        .expect("sign approved roster");
+        let roster_frame = FipsControlFrame::Roster {
+            network_id: network_id.clone(),
+            roster: signed_roster.roster().expect("roster body"),
+            signed_roster: Some(Box::new(signed_roster)),
+        };
+        let encoded_roster = encode_fips_control_frame(&roster_frame).expect("encode roster");
+        let requester_peer = PeerIdentity::from_npub(requester_endpoint.npub())
+            .expect("requester endpoint identity");
+        let mut roster_messages = Vec::with_capacity(1);
+        let roster_message = loop {
+            admin_endpoint
+                .send_batch_to_peer(requester_peer, vec![encoded_roster.clone()])
+                .await
+                .expect("send signed roster over FIPS");
+            if let Ok(Some(received)) = tokio::time::timeout(
+                Duration::from_millis(200),
+                requester_endpoint.recv_batch_into(&mut roster_messages, 1),
+            )
+            .await
+                && received > 0
+            {
+                break roster_messages.remove(0);
+            }
+        };
+        let received_roster = match decode_fips_control_frame(roster_message.data.as_slice())
+            .expect("decode roster frame")
+            .expect("roster control frame")
+        {
+            FipsControlFrame::Roster { signed_roster, .. } => {
+                signed_roster.expect("signed roster payload")
+            }
+            other => panic!("expected roster frame, got {other:?}"),
+        };
+
+        let mut requester_app = AppConfig::generated();
+        requester_app.nostr.secret_key = requester_nsec;
+        requester_app.nostr.public_key = requester_pubkey.clone();
+        requester_app.networks = vec![NetworkConfig {
+            id: "test".to_string(),
+            name: "Home".to_string(),
+            enabled: true,
+            network_id: network_id.clone(),
+            invite_secret: "join-secret".to_string(),
+            devices: Vec::new(),
+            admins: vec![admin_pubkey.clone()],
+            listen_for_join_requests: true,
+            invite_inviter: admin_pubkey.clone(),
+            outbound_join_request: Some(
+                nostr_vpn_core::config::PendingOutboundJoinRequest {
+                    recipient: admin_pubkey.clone(),
+                    requested_at,
+                },
+            ),
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        }];
+        requester_app.ensure_defaults();
+        let requester_config_path = dir.join("requester.toml");
+        let requester_app = Arc::new(RwLock::new(requester_app));
+        let requester_dirty = AtomicBool::new(false);
+        assert!(
+            apply_mobile_roster(
+                &requester_app,
+                &requester_dirty,
+                Some(&requester_config_path),
+                Some(&received_roster),
+            )
+            .expect("apply roster delivered over FIPS")
+            .is_some()
+        );
+        {
+            let joined = requester_app.read().expect("requester config");
+            assert!(joined.active_network_has_confirmed_local_identity());
+            assert!(joined.active_network().outbound_join_request.is_none());
+            assert_eq!(
+                joined.active_network().shared_roster_signed_by,
+                admin_pubkey
+            );
+        }
 
         requester_endpoint
             .shutdown()

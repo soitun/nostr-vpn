@@ -35,10 +35,6 @@ fn clap_parses_complete_webvm_guest_contract() {
         "eth0",
         "--discovery-scope",
         "fips-overlay-v1",
-        "--join-pubsub-port",
-        "7368",
-        "--pairing-uri-file",
-        "/run/nvpn/pairing-uri",
         "--tun-interface",
         "nvpn0",
     ]);
@@ -48,29 +44,7 @@ fn clap_parses_complete_webvm_guest_contract() {
     assert_eq!(args.config.to_string_lossy(), "/etc/nvpn/webvm.toml");
     assert_eq!(args.ethernet_interface, "eth0");
     assert_eq!(args.discovery_scope, "fips-overlay-v1");
-    assert_eq!(args.join_pubsub_port, 7_368);
-    assert_eq!(
-        args.pairing_uri_file.to_string_lossy(),
-        "/run/nvpn/pairing-uri"
-    );
     assert_eq!(args.tun_interface, "nvpn0");
-}
-
-#[test]
-fn clap_parses_pairing_qr_config() {
-    let cli = Cli::parse_from([
-        "nvpn",
-        "pairing-qr",
-        "--config",
-        "/var/lib/nvpn/config.toml",
-    ]);
-    let Command::PairingQr(args) = cli.command else {
-        panic!("expected pairing-qr command");
-    };
-    assert_eq!(
-        args.config.expect("config").to_string_lossy(),
-        "/var/lib/nvpn/config.toml"
-    );
 }
 
 #[test]
@@ -91,7 +65,6 @@ fn clap_includes_tailscale_style_commands() {
         "pause",
         "resume",
         "connect",
-        "pairing-qr",
         "status",
         "set",
         "ping",
