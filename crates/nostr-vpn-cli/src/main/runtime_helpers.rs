@@ -364,8 +364,8 @@ fn endpoint_hint_refresh_participant(
     network_id: &str,
     capabilities: &PeerCapabilities,
 ) -> Option<String> {
-    let network_matches = active_network_id
-        .is_some_and(|active| active == normalize_runtime_network_id(network_id));
+    let network_matches =
+        active_network_id.is_some_and(|active| active == normalize_runtime_network_id(network_id));
     (network_matches
         && roster_participants.contains(sender_pubkey)
         && !capabilities.endpoint_hints.is_empty())
@@ -445,8 +445,7 @@ fn drain_fips_mesh_events(
                     &sender_pubkey,
                     &network_id,
                     &capabilities,
-                )
-                {
+                ) {
                     drained.endpoint_hint_participants.push(participant);
                 }
             }
@@ -464,18 +463,16 @@ async fn refresh_fips_tunnel_config(
     underlay_interface_mtu: Option<u32>,
     own_pubkey: Option<&str>,
 ) -> Result<()> {
-    let config = fips_tunnel_config_from_app_async(
-        FipsTunnelConfigInput {
-            app,
-            config_path,
-            network_id,
-            iface: runtime.iface().to_string(),
-            underlay_interface_mtu,
-            own_pubkey,
-            recent_peers: None,
-            live_peer_endpoints: &runtime.peer_endpoint_hints(),
-        },
-    )
+    let config = fips_tunnel_config_from_app_async(FipsTunnelConfigInput {
+        app,
+        config_path,
+        network_id,
+        iface: runtime.iface().to_string(),
+        underlay_interface_mtu,
+        own_pubkey,
+        recent_peers: None,
+        live_peer_endpoints: &runtime.peer_endpoint_hints(),
+    })
     .await?;
     runtime.apply_config(config).await
 }
@@ -573,16 +570,12 @@ fn fips_paid_route_accounting_peers(
             )
         })
         .collect();
-    peers.extend(
-        admissions
-            .iter()
-            .filter_map(|admission| {
-                crate::fips_private_mesh::FipsPaidRouteAccountingPeer::parse(
-                    &admission.participant_pubkey,
-                    crate::fips_private_mesh::FipsPaidRouteAccountingRole::LocalSeller,
-                )
-            }),
-    );
+    peers.extend(admissions.iter().filter_map(|admission| {
+        crate::fips_private_mesh::FipsPaidRouteAccountingPeer::parse(
+            &admission.participant_pubkey,
+            crate::fips_private_mesh::FipsPaidRouteAccountingRole::LocalSeller,
+        )
+    }));
     peers.sort_by(|left, right| {
         left.participant_pubkey
             .cmp(&right.participant_pubkey)
@@ -684,18 +677,16 @@ async fn sync_fips_private_runtime(
         .as_ref()
         .map(|runtime| runtime.peer_endpoint_hints())
         .unwrap_or_default();
-    let config = fips_tunnel_config_from_app_async(
-        FipsTunnelConfigInput {
-            app: context.app,
-            config_path: context.config_path,
-            network_id: context.network_id,
-            iface: config_iface,
-            underlay_interface_mtu: context.underlay_interface_mtu,
-            own_pubkey: context.own_pubkey,
-            recent_peers: None,
-            live_peer_endpoints: &live_peer_endpoints,
-        },
-    )
+    let config = fips_tunnel_config_from_app_async(FipsTunnelConfigInput {
+        app: context.app,
+        config_path: context.config_path,
+        network_id: context.network_id,
+        iface: config_iface,
+        underlay_interface_mtu: context.underlay_interface_mtu,
+        own_pubkey: context.own_pubkey,
+        recent_peers: None,
+        live_peer_endpoints: &live_peer_endpoints,
+    })
     .await?;
 
     let restart = runtime
@@ -995,50 +986,3 @@ fn desired_fips_endpoint_hint_recipients(app: &AppConfig) -> HashSet<String> {
         .filter(|participant| own_pubkey.as_deref() != Some(participant.as_str()))
         .collect()
 }
-async fn publish_fips_active_network_roster_to(
-    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
-    app: &AppConfig,
-    config_path: &Path,
-    extra_recipients: &[String],
-    pending_recipients: &mut HashSet<String>,
-) -> Result<usize> {
-    if app.active_network_opt().is_none() {
-        return Ok(0);
-    }
-    let own_pubkey = match app.own_nostr_pubkey_hex() {
-        Ok(pubkey) => pubkey,
-        Err(_) => return Ok(0),
-    };
-
-    let Some(signed_roster) = active_signed_roster_for_sync(app, config_path, false)? else {
-        return Ok(0);
-    };
-    let mut recipients = app.active_network_signal_pubkeys_hex();
-    recipients.extend(extra_recipients.iter().cloned());
-    recipients.extend(pending_recipients.drain());
-    recipients.retain(|recipient| recipient != &own_pubkey);
-    recipients.sort();
-    recipients.dedup();
-
-    let (ready_recipients, mut retry) = split_ready_fips_roster_recipients(recipients);
-    let mut sent = 0usize;
-    for recipient in ready_recipients {
-        match runtime.send_roster(&recipient, signed_roster.clone()).await {
-            Ok(()) => sent += 1,
-            Err(error) => {
-                eprintln!("fips: roster send to {recipient} failed: {error}");
-                retry.insert(recipient);
-            }
-        }
-    }
-    *pending_recipients = retry;
-    Ok(sent)
-}
-fn split_ready_fips_roster_recipients(recipients: Vec<String>) -> (Vec<String>, HashSet<String>) {
-    // Do not gate roster sends on nvpn presence. A stale-roster peer may drop
-    // Ping/Pong from newly added peers as unknown until this signed roster
-    // reaches it, while FIPS can still route/discover the control message.
-    (recipients, HashSet::new())
-}
-
-include!("runtime_endpoint_helpers.rs");
