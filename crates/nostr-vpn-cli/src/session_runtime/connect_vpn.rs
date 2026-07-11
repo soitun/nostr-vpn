@@ -10,8 +10,12 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
     if let Err(error) = repair_saved_network_state(&config_path) {
         eprintln!("connect: failed to repair saved macOS network state: {error}");
     }
-    let (mut app, mut network_id) =
-        load_config_with_overrides(&config_path, args.network_id, args.devices)?;
+    let (mut app, mut network_id) = load_config_with_overrides(
+        &config_path,
+        args.network_id,
+        args.devices,
+        ConfigLoadMode::Persist,
+    )?;
     let configured_participants = app.participant_pubkeys_hex();
     if configured_participants.is_empty() {
         return Err(anyhow!(

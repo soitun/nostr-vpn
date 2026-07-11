@@ -309,6 +309,17 @@ pub(crate) fn load_or_default_config(path: &Path) -> Result<AppConfig> {
     Ok(config)
 }
 
+pub(crate) fn load_config_read_only(path: &Path) -> Result<AppConfig> {
+    if path
+        .try_exists()
+        .with_context(|| format!("failed to inspect config {}", path.display()))?
+    {
+        AppConfig::load(path)
+    } else {
+        Ok(AppConfig::generated())
+    }
+}
+
 pub(crate) fn apply_devices_override(config: &mut AppConfig, devices: Vec<String>) -> Result<()> {
     if devices.is_empty() {
         return Ok(());

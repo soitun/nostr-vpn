@@ -220,13 +220,24 @@ struct DaemonReloadConfig {
     own_pubkey: Option<String>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ConfigLoadMode {
+    ReadOnly,
+    Persist,
+}
+
 fn load_config_with_overrides(
     path: &Path,
     network_id: Option<String>,
     participants: Vec<String>,
+    mode: ConfigLoadMode,
 ) -> Result<(AppConfig, String)> {
-    let mut app = load_or_default_config(path)?;
-    if apply_cached_active_network_roster(&mut app, path)? {
+    let mut app = if mode == ConfigLoadMode::ReadOnly {
+        load_config_read_only(path)?
+    } else {
+        load_or_default_config(path)?
+    };
+    if apply_cached_active_network_roster(&mut app, path)? && mode == ConfigLoadMode::Persist {
         app.save(path)?;
     }
     apply_participants_override(&mut app, participants)?;

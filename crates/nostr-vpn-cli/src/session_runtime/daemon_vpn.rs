@@ -762,6 +762,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         &config_path,
                                         network_override.clone(),
                                         participants_override.clone(),
+                                        ConfigLoadMode::Persist,
                                     ) {
                                         Ok((reloaded_app, reloaded_network_id)) => {
                                             let reload = build_daemon_reload_config(

@@ -70,6 +70,7 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
         &config_path,
         network_override.clone(),
         participants_override.clone(),
+        ConfigLoadMode::Persist,
     )?;
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
     let expected_peers = expected_peer_count(&app);

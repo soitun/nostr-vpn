@@ -109,6 +109,7 @@ async fn start_session(args: StartArgs) -> Result<()> {
         &config_path,
         args.network_id.clone(),
         args.devices.clone(),
+        ConfigLoadMode::Persist,
     )?;
     if args.connect {
         persist_desired_daemon_vpn_enabled(&config_path, true)?;

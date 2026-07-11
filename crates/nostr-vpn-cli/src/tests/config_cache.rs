@@ -659,9 +659,13 @@ fn config_overrides_set_the_active_network_mesh_id() {
     config.ensure_defaults();
     config.save(&config_path).expect("save temp config");
 
-    let (loaded, network_id) =
-        load_config_with_overrides(&config_path, Some("mesh-override".to_string()), Vec::new())
-            .expect("load config with override");
+    let (loaded, network_id) = load_config_with_overrides(
+        &config_path,
+        Some("mesh-override".to_string()),
+        Vec::new(),
+        ConfigLoadMode::Persist,
+    )
+    .expect("load config with override");
 
     assert_eq!(network_id, "mesh-override");
     assert_eq!(loaded.effective_network_id(), "mesh-override");

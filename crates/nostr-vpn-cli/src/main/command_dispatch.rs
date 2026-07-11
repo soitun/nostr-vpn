@@ -102,8 +102,12 @@ async fn run_command(command: Command) -> Result<()> {
         }
         Command::Status(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
-            let (app, network_id) =
-                load_config_with_overrides(&config_path, args.network_id, args.devices)?;
+            let (app, network_id) = load_config_with_overrides(
+                &config_path,
+                args.network_id,
+                args.devices,
+                ConfigLoadMode::ReadOnly,
+            )?;
             let daemon = daemon_status(&config_path)?;
 
             let daemon_peers: Option<Vec<DaemonPeerState>> = if daemon.running {
@@ -578,8 +582,12 @@ async fn run_command(command: Command) -> Result<()> {
         }
         Command::Ping(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
-            let (app, network_id) =
-                load_config_with_overrides(&config_path, args.network_id, args.devices)?;
+            let (app, network_id) = load_config_with_overrides(
+                &config_path,
+                args.network_id,
+                args.devices,
+                ConfigLoadMode::ReadOnly,
+            )?;
             let peers = configured_fips_peer_announcements(&app, &network_id);
 
             let target = resolve_ping_target(&args.target, &peers).ok_or_else(|| {
@@ -593,8 +601,12 @@ async fn run_command(command: Command) -> Result<()> {
         }
         Command::Ip(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
-            let (app, network_id) =
-                load_config_with_overrides(&config_path, args.network_id, args.devices)?;
+            let (app, network_id) = load_config_with_overrides(
+                &config_path,
+                args.network_id,
+                args.devices,
+                ConfigLoadMode::ReadOnly,
+            )?;
 
             if !args.peer {
                 let tunnel_ip = runtime_local_tunnel_ip(&app, &network_id);
@@ -623,8 +635,12 @@ async fn run_command(command: Command) -> Result<()> {
         }
         Command::Whois(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
-            let (app, network_id) =
-                load_config_with_overrides(&config_path, args.network_id, args.devices)?;
+            let (app, network_id) = load_config_with_overrides(
+                &config_path,
+                args.network_id,
+                args.devices,
+                ConfigLoadMode::ReadOnly,
+            )?;
             let peers = configured_fips_peer_announcements(&app, &network_id);
 
             let found = peers

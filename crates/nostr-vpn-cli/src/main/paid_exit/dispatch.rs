@@ -26,7 +26,7 @@ async fn run_paid_exit_command(args: PaidExitArgs) -> Result<()> {
 
 fn paid_exit_status_command(args: PaidExitStatusArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
-    let app = load_or_default_config(&config_path)?;
+    let app = load_config_read_only(&config_path)?;
     let store_path = paid_route_store_file_path(&config_path);
     let store = load_paid_route_store(&store_path)?;
 
