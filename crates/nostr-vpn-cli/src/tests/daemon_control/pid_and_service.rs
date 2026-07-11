@@ -218,6 +218,20 @@ fn unix_process_stat_treats_exiting_and_dead_states_as_not_running() {
 }
 
 #[test]
+fn linux_proc_fields_preserve_full_daemon_command_and_reject_zombies() {
+    let command = crate::linux_proc_cmdline_to_command(
+        b"nvpn\0daemon\0--service\0--config\0/var/lib/nvpn/config.toml\0",
+    )
+    .expect("command");
+    assert!(crate::daemon_command_matches_config(
+        &command,
+        Path::new("/var/lib/nvpn/config.toml")
+    ));
+    assert!(crate::linux_proc_stat_counts_as_running("123 (nvpn) S 1 2 3"));
+    assert!(!crate::linux_proc_stat_counts_as_running("123 (nvpn) Z 1 2 3"));
+}
+
+#[test]
 fn default_cli_install_path_uses_nvpn_filename() {
     let path = default_cli_install_path();
     assert_eq!(

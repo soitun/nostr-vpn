@@ -14,7 +14,15 @@ pub(crate) fn read_daemon_log_tail(path: &Path, max_lines: usize) -> String {
     lines.join("\n")
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
+pub(crate) fn is_process_running(pid: u32) -> bool {
+    let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
+        return false;
+    };
+    linux_proc_stat_counts_as_running(&stat)
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
 pub(crate) fn is_process_running(pid: u32) -> bool {
     ProcessCommand::new("ps")
         .arg("-p")
@@ -48,7 +56,14 @@ pub(crate) fn is_process_running(_pid: u32) -> bool {
     false
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
+pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) -> bool {
+    is_process_running(pid)
+        && linux_proc_command(pid)
+            .is_some_and(|command| daemon_command_matches_config(&command, config_path))
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
 pub(crate) fn daemon_pid_record_counts_as_running(pid: u32, config_path: &Path) -> bool {
     if !is_process_running(pid) {
         return false;
@@ -80,7 +95,26 @@ pub(crate) fn daemon_pid_record_counts_as_running(_pid: u32, _config_path: &Path
     false
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
+pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
+    let Ok(entries) = fs::read_dir("/proc") else {
+        return Vec::new();
+    };
+    let mut pids = entries
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<u32>().ok())
+        .filter(|pid| is_process_running(*pid))
+        .filter(|pid| {
+            linux_proc_command(*pid)
+                .is_some_and(|command| daemon_command_matches_config(&command, config_path))
+        })
+        .collect::<Vec<_>>();
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
+#[cfg(all(unix, not(target_os = "linux")))]
 pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
     let output = ProcessCommand::new("ps")
         .arg("ax")
@@ -95,6 +129,32 @@ pub(crate) fn find_daemon_pids_by_config(config_path: &Path) -> Vec<u32> {
     }
 
     daemon_pids_from_ps_output(&String::from_utf8_lossy(&output.stdout), config_path)
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_proc_cmdline_to_command(cmdline: &[u8]) -> Option<String> {
+    let args = cmdline
+        .split(|byte| *byte == 0)
+        .filter(|arg| !arg.is_empty())
+        .map(|arg| String::from_utf8_lossy(arg))
+        .collect::<Vec<_>>();
+    (!args.is_empty()).then(|| args.join(" "))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_proc_command(pid: u32) -> Option<String> {
+    linux_proc_cmdline_to_command(&fs::read(format!("/proc/{pid}/cmdline")).ok()?)
+}
+
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn linux_proc_stat_counts_as_running(stat: &str) -> bool {
+    let Some((_, fields)) = stat.rsplit_once(") ") else {
+        return false;
+    };
+    fields
+        .chars()
+        .next()
+        .is_some_and(|state| !matches!(state, 'Z' | 'X'))
 }
 
 #[cfg(windows)]
@@ -122,7 +182,7 @@ pub(crate) fn find_daemon_pids_by_config(_config_path: &Path) -> Vec<u32> {
     Vec::new()
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(all(unix, not(target_os = "linux")), test))]
 pub(crate) fn daemon_pids_from_ps_output(ps_output: &str, config_path: &Path) -> Vec<u32> {
     let mut pids = Vec::new();
 
@@ -169,7 +229,7 @@ pub(crate) fn daemon_pids_from_ps_output(ps_output: &str, config_path: &Path) ->
     pids
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(all(unix, not(target_os = "linux")), test))]
 pub(crate) fn unix_process_stat_counts_as_running(stat: &str) -> bool {
     let trimmed = stat.trim();
     if trimmed.is_empty() {
@@ -184,7 +244,7 @@ pub(crate) fn unix_process_stat_counts_as_running(stat: &str) -> bool {
     !trimmed.contains('E')
 }
 
-#[cfg(any(unix, test))]
+#[cfg(any(all(unix, not(target_os = "linux")), test))]
 fn unix_ps_field_looks_like_stat(field: &str) -> bool {
     let trimmed = field.trim();
     !trimmed.is_empty()
