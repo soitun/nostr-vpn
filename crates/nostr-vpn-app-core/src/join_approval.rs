@@ -1,12 +1,9 @@
 use anyhow::{Context, Result, anyhow};
-use futures::future::join_all;
 use nostr_identity::{
     ApproveNostrIdentityDeviceApprovalBootstrapOptions, NostrIdentityCapabilities,
     approve_nostr_identity_device_approval_bootstrap, parse_nostr_identity_roster_op_event,
 };
-use nostr_pubsub::{EventBus, EventSource, VerifiedEvent};
-use nostr_pubsub_relay::RelayEventBus;
-use nostr_sdk::prelude::{Client, Event, JsonUtil};
+use nostr_sdk::prelude::{Event, JsonUtil};
 use nostr_vpn_core::config::{
     AppConfig, SharedNetworkRoster, normalize_nostr_pubkey, normalize_runtime_network_id,
 };
@@ -17,7 +14,7 @@ use nostr_vpn_core::identity_bridge::{
     build_device_approval_sidecar_from_bootstrap_approval,
     build_nostr_vpn_join_approval_context_event, build_roster_app_key_sidecar_event,
 };
-use nostr_vpn_core::join_requests::{AppliedNostrJoinApproval, NOSTR_VPN_JOIN_APPROVAL_RELAY};
+use nostr_vpn_core::join_requests::AppliedNostrJoinApproval;
 
 #[derive(Debug, Clone)]
 pub struct PreparedJoinApproval {
@@ -185,40 +182,6 @@ pub fn apply_join_approval_events(
     now: u64,
 ) -> Result<Option<AppliedNostrJoinApproval>> {
     config.apply_nostr_join_approval_events(events, now)
-}
-
-pub async fn publish_join_approval_events(config: &AppConfig, events: &[Event]) -> Result<()> {
-    let client = Client::new(config.nostr_keys()?);
-    let provider = RelayEventBus::with_client(
-        client,
-        [NOSTR_VPN_JOIN_APPROVAL_RELAY],
-        std::time::Duration::from_secs(10),
-    )
-    .await
-    .map_err(|error| anyhow!("failed to initialize join approval pubsub provider: {error}"))?;
-    let events = events
-        .iter()
-        .cloned()
-        .map(VerifiedEvent::try_from)
-        .collect::<std::result::Result<Vec<_>, _>>()
-        .context("join request approval event failed signature verification")?;
-    let publishes = events
-        .into_iter()
-        .map(|event| provider.publish(event, EventSource::local_index("nostr-vpn-join-approval")));
-    let reports =
-        tokio::time::timeout(std::time::Duration::from_secs(30), join_all(publishes)).await;
-    provider.client().disconnect().await;
-    let reports = reports.context("join request approval pubsub batch timed out")?;
-    for report in reports {
-        let report = report
-            .map_err(|error| anyhow!("failed to publish join request approval event: {error}"))?;
-        if !report.accepted {
-            return Err(anyhow!(
-                "join request approval pubsub provider rejected a verified event"
-            ));
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

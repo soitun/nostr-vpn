@@ -110,7 +110,12 @@ fn fips_peer_config_from_hint(
         .flatten()
         .map(|hint| {
             let (transport, addr) = split_peer_transport_addr(&hint.addr);
-            let mut addr = PeerAddress::with_priority(transport, addr, hint.priority);
+            let priority = if hint.priority == FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY {
+                mobile_fips_endpoint_hint_priority(&hint.addr, hint.priority)
+            } else {
+                hint.priority
+            };
+            let mut addr = PeerAddress::with_priority(transport, addr, priority);
             if let Some(seen_at_ms) = hint.seen_at_ms {
                 addr = addr.learned().with_seen_at_ms(seen_at_ms);
             }

@@ -310,12 +310,11 @@ struct RootView: View {
         .frame(width: 560, height: 620)
     }
 
-    /// Legacy compatibility path for cases where join-request linking is not
-    /// available. It exposes the signed-roster values used by older clients.
+    /// Manual pairing path for directly sharing the signed-roster values.
     private func manualPairingInfoSection(_ network: NativeNetworkState) -> some View {
         surface {
-            sectionHeader("Legacy Manual Pairing", systemImage: "keyboard")
-            Text("Use this only when join-request linking isn't available. Share these values with the other device, then add its Device ID below to keep the compatible signed roster in sync.")
+            sectionHeader("Manual Pairing", systemImage: "keyboard")
+            Text("Share these values with the other device, then add its Device ID below to keep the signed roster in sync.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             detailValueRow("Your Device ID", state.ownNpub)
@@ -1356,9 +1355,9 @@ struct RootView: View {
         let mesh = manualJoinMeshId.trimmingCharacters(in: .whitespacesAndNewlines)
         let adminInvalid = !admin.isEmpty && !isValidDeviceId(admin)
         let canSubmit = !admin.isEmpty && !mesh.isEmpty && !adminInvalid
-        return DisclosureGroup("Legacy manual join", isExpanded: $manualJoinExpanded) {
+        return DisclosureGroup("Manual join", isExpanded: $manualJoinExpanded) {
             VStack(alignment: .leading, spacing: 6) {
-                Text("Use this only when join-request linking isn't available. Enter the admin's Device ID and network ID, then give the admin your Device ID shown above.")
+                Text("Enter the admin's Device ID and network ID, then give the admin your Device ID shown above.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 TextField("Admin Device ID", text: $manualJoinAdminId)

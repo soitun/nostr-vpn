@@ -3,6 +3,7 @@ pub mod c_abi;
 mod ffi;
 mod invite;
 pub mod join_approval;
+mod join_approval_transport;
 pub mod join_request_link;
 pub mod lan_pairing;
 mod mobile_tunnel;

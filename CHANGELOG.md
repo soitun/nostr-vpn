@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Pending native-app join requests now receive and apply signed approvals from
+  the approval relay, so accepted iPhone and Android devices automatically gain
+  the network roster instead of remaining on the join screen.
+- macOS now describes manual pairing as a supported pairing path instead of
+  incorrectly labeling it as legacy.
+- Learned private-LAN mobile endpoint hints now regain their private-path
+  priority without overriding the explicit priority of static peer hints.
+
 ## 4.0.91 - 2026-07-11
 
 ### Changed

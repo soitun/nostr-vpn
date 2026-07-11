@@ -24,6 +24,8 @@ impl NativeAppRuntime {
 
         match action {
             NativeAppAction::GetState | NativeAppAction::Tick => {
+                #[cfg(not(test))]
+                self.refresh_pending_join_approval();
                 if self.mobile_runtime {
                     self.refresh_mobile_status()
                 } else {
@@ -431,7 +433,7 @@ impl NativeAppRuntime {
             .enable_all()
             .build()
             .context("failed to start join request approval publisher")?;
-        runtime.block_on(crate::join_approval::publish_join_approval_events(
+        runtime.block_on(crate::join_approval_transport::publish_join_approval_events(
             &self.config,
             events,
         ))

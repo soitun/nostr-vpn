@@ -460,6 +460,22 @@
         assert!(imported.join_request_qr_code_or_link.is_empty());
         assert!(admin.state().join_request_qr_code_or_link.is_empty());
 
+        assert!(
+            joiner
+                .apply_fetched_join_approval_events(&admin.published_join_approval_events)
+                .expect("apply fetched approval events"),
+            "joiner should apply the accepted network"
+        );
+        assert!(joiner.config.pending_nostr_join_request.is_none());
+        assert_eq!(joiner.config.active_network().network_id, "8d4f34f5425bc50e");
+        assert!(joiner.config.active_network_has_confirmed_local_identity());
+        let persisted_joiner = AppConfig::load(&joiner.config_path).expect("reload joined iPhone");
+        assert!(persisted_joiner.pending_nostr_join_request.is_none());
+        assert_eq!(
+            persisted_joiner.active_network().network_id,
+            "8d4f34f5425bc50e"
+        );
+
         let _ = fs::remove_dir_all(&admin_dir);
         let _ = fs::remove_dir_all(&joiner_dir);
     }
