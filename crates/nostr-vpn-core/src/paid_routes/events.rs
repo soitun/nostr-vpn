@@ -1,0 +1,685 @@
+use super::*;
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaidRouteOffer {
+    pub offer_id: String,
+    pub seller_npub: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub receiver_pubkey_hex: String,
+    #[serde(default)]
+    pub service: PaidRouteServiceKind,
+    #[serde(default)]
+    pub access: PaidRouteAccessPolicy,
+    #[serde(default)]
+    pub pricing: PaidRoutePricing,
+    #[serde(default)]
+    pub channel: PaidRouteChannelTerms,
+    #[serde(default)]
+    pub location: PaidRouteLocationHint,
+    #[serde(default)]
+    pub ip_support: PaidRouteIpSupport,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<PaidRouteQualityMetrics>,
+}
+
+impl PaidRouteOffer {
+    pub fn from_paid_exit_config(
+        offer_id: impl Into<String>,
+        seller_npub: impl Into<String>,
+        config: &PaidExitConfig,
+        quality: Option<PaidRouteQualityMetrics>,
+    ) -> Self {
+        Self::from_paid_exit_config_with_receiver(offer_id, seller_npub, config, None, quality)
+    }
+
+    pub fn from_paid_exit_config_with_receiver(
+        offer_id: impl Into<String>,
+        seller_npub: impl Into<String>,
+        config: &PaidExitConfig,
+        receiver_pubkey_hex: Option<&str>,
+        quality: Option<PaidRouteQualityMetrics>,
+    ) -> Self {
+        let mut config = config.clone();
+        config.normalize();
+        Self {
+            offer_id: offer_id.into(),
+            seller_npub: seller_npub.into(),
+            receiver_pubkey_hex: receiver_pubkey_hex
+                .map(normalize_receiver_pubkey_hex_lossy)
+                .unwrap_or_default(),
+            service: PaidRouteServiceKind::InternetExit,
+            access: config.access.clone(),
+            pricing: config.pricing.clone(),
+            channel: config.channel.clone(),
+            location: config.location.clone(),
+            ip_support: config.ip_support.clone(),
+            quality,
+        }
+    }
+}
+
+pub fn signed_paid_exit_offer_from_config(
+    offer_id: impl Into<String>,
+    keys: &Keys,
+    config: &PaidExitConfig,
+    quality: Option<PaidRouteQualityMetrics>,
+    signed_at: u64,
+) -> Result<SignedPaidRouteOffer> {
+    signed_paid_exit_offer_from_config_with_receiver(
+        offer_id, keys, config, None, quality, signed_at,
+    )
+}
+
+pub fn signed_paid_exit_offer_from_config_with_receiver(
+    offer_id: impl Into<String>,
+    keys: &Keys,
+    config: &PaidExitConfig,
+    receiver_pubkey_hex: Option<&str>,
+    quality: Option<PaidRouteQualityMetrics>,
+    signed_at: u64,
+) -> Result<SignedPaidRouteOffer> {
+    if !config.enabled {
+        return Err(anyhow!("paid exit selling is disabled"));
+    }
+    let mut normalized_config = config.clone();
+    normalized_config.normalize();
+    if (normalized_config.pricing.price_msat > 0
+        || normalized_config.pricing.connection_minimum_msat_per_day > 0)
+        && normalized_config.channel.accepted_mints.is_empty()
+    {
+        return Err(anyhow!(
+            "paid exit offers with non-zero pricing require at least one accepted Cashu mint"
+        ));
+    }
+
+    let receiver_pubkey_hex = receiver_pubkey_hex
+        .map(normalize_receiver_pubkey_hex)
+        .transpose()?;
+    let offer = PaidRouteOffer::from_paid_exit_config_with_receiver(
+        offer_id,
+        public_key_npub(&keys.public_key())?,
+        &normalized_config,
+        receiver_pubkey_hex.as_deref(),
+        quality,
+    );
+    SignedPaidRouteOffer::sign(offer, keys, signed_at)
+}
+
+pub fn paid_route_offer_filter(limit: usize, since_unix: Option<u64>) -> Filter {
+    let mut filter = Filter::new().kind(Kind::Custom(PAID_ROUTE_OFFER_KIND));
+    if limit > 0 {
+        filter = filter.limit(limit);
+    }
+    if let Some(since_unix) = since_unix {
+        filter = filter.since(Timestamp::from(since_unix));
+    }
+    filter
+}
+
+pub fn paid_route_payment_filter(
+    recipient: PublicKey,
+    limit: usize,
+    since_unix: Option<u64>,
+) -> Filter {
+    let mut filter = Filter::new().kind(Kind::GiftWrap).pubkey(recipient);
+    if limit > 0 {
+        filter = filter.limit(limit);
+    }
+    if let Some(since_unix) = since_unix {
+        filter = filter.since(Timestamp::from(since_unix));
+    }
+    filter
+}
+
+#[cfg(feature = "paid-exit")]
+pub async fn gift_wrap_paid_route_payment(
+    envelope: &StreamingRoutePaymentEnvelope,
+    keys: &Keys,
+) -> Result<Event> {
+    let buyer_npub = normalize_npub(&envelope.buyer, "buyer")?;
+    let local_npub = public_key_npub(&keys.public_key())?;
+    if buyer_npub != local_npub {
+        return Err(anyhow!(
+            "paid route payment buyer does not match local signer"
+        ));
+    }
+
+    let seller = PublicKey::parse(&envelope.seller)
+        .map_err(|error| anyhow!("invalid paid route payment seller npub: {error}"))?;
+    let content =
+        serde_json::to_string(envelope).context("failed to encode paid route payment envelope")?;
+    EventBuilder::private_msg(
+        keys,
+        seller,
+        content,
+        paid_route_payment_rumor_tags(envelope)?,
+    )
+    .await
+    .map_err(|error| anyhow!("failed to gift-wrap paid route payment: {error}"))
+}
+
+#[cfg(feature = "paid-exit")]
+pub async fn unwrap_paid_route_payment(
+    event: &Event,
+    keys: &Keys,
+) -> Result<StreamingRoutePaymentEnvelope> {
+    if event.kind != Kind::GiftWrap {
+        return Err(anyhow!("paid route payment event is not a gift wrap"));
+    }
+
+    let unwrapped = nostr_sdk::prelude::nip59::extract_rumor(keys, event)
+        .await
+        .map_err(|error| anyhow!("failed to unwrap paid route payment: {error}"))?;
+    if unwrapped.rumor.kind != Kind::PrivateDirectMessage {
+        return Err(anyhow!("paid route payment rumor is not a private message"));
+    }
+    validate_paid_route_payment_rumor_tags(unwrapped.rumor.tags.as_slice())?;
+
+    let envelope: StreamingRoutePaymentEnvelope = serde_json::from_str(&unwrapped.rumor.content)
+        .context("failed to decode paid route payment envelope")?;
+    let sender_npub = public_key_npub(&unwrapped.sender)?;
+    let buyer_npub = normalize_npub(&envelope.buyer, "buyer")?;
+    if sender_npub != buyer_npub {
+        return Err(anyhow!(
+            "paid route payment buyer does not match gift-wrap sender"
+        ));
+    }
+
+    let local_npub = public_key_npub(&keys.public_key())?;
+    let seller_npub = normalize_npub(&envelope.seller, "seller")?;
+    if seller_npub != local_npub {
+        return Err(anyhow!(
+            "paid route payment seller does not match local recipient"
+        ));
+    }
+
+    Ok(envelope)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SignedPaidRouteOffer {
+    pub event: Event,
+}
+
+impl SignedPaidRouteOffer {
+    pub fn sign(offer: PaidRouteOffer, keys: &Keys, signed_at: u64) -> Result<Self> {
+        validate_paid_route_offer(&offer)?;
+        let content = serde_json::to_string(&offer).context("failed to encode paid route offer")?;
+        let event = EventBuilder::new(Kind::Custom(PAID_ROUTE_OFFER_KIND), content)
+            .tags(paid_route_offer_tags(&offer)?)
+            .custom_created_at(Timestamp::from(signed_at))
+            .sign_with_keys(keys)
+            .map_err(|error| anyhow!("failed to sign paid route offer: {error}"))?;
+        let signed = Self { event };
+        signed.verify()?;
+        Ok(signed)
+    }
+
+    pub fn from_event(event: Event) -> Result<Self> {
+        let signed = Self { event };
+        signed.verify()?;
+        Ok(signed)
+    }
+
+    pub fn verify(&self) -> Result<()> {
+        if u16::from(self.event.kind) != PAID_ROUTE_OFFER_KIND {
+            return Err(anyhow!(
+                "unexpected paid route offer event kind {}",
+                u16::from(self.event.kind)
+            ));
+        }
+        self.event
+            .verify()
+            .map_err(|error| anyhow!("invalid paid route offer signature: {error}"))?;
+        let offer = self.offer()?;
+        validate_paid_route_offer(&offer)?;
+        let signer_npub = public_key_npub(&self.event.pubkey)?;
+        let offer_seller_npub = normalize_npub(&offer.seller_npub, "seller")?;
+        if signer_npub != offer_seller_npub {
+            return Err(anyhow!(
+                "paid route offer seller does not match event signer"
+            ));
+        }
+        validate_paid_route_offer_tags(self.event.tags.as_slice(), &offer)?;
+        Ok(())
+    }
+
+    pub fn offer(&self) -> Result<PaidRouteOffer> {
+        serde_json::from_str(&self.event.content).context("failed to decode paid route offer")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaidRouteQuote {
+    pub quote_id: String,
+    pub offer_id: String,
+    #[serde(default)]
+    pub payment_mode: PaidRoutePaymentMode,
+    pub channel_capacity_sat: u64,
+    pub expires_at_unix: u64,
+    pub receiver_pubkey_hex: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaidRouteLease {
+    pub lease_id: String,
+    pub offer_id: String,
+    pub quote_id: String,
+    pub buyer_npub: String,
+    pub starts_at_unix: u64,
+    pub expires_at_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct PaidRoutePaymentState {
+    #[serde(default)]
+    pub mode: PaidRoutePaymentMode,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub channel_id: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub cashu_unit: String,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub capacity_sat: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub paid_msat: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub updated_at_unix: u64,
+    #[cfg(feature = "paid-exit")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cashu_spilman_payment: Option<CashuSpilmanPayment>,
+    #[cfg(feature = "paid-exit")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cashu_token_lease: Option<StreamingRouteCashuTokenLease>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaidRouteSession {
+    pub session_id: String,
+    pub lease_id: String,
+    #[serde(default)]
+    pub usage: PaidRouteUsage,
+    #[serde(default)]
+    pub payment: PaidRoutePaymentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub realized_exit_ip: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_country_code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observed_asn: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality: Option<PaidRouteQualityMetrics>,
+}
+
+impl PaidRouteSession {
+    pub fn routing_decision(&self, config: &PaidExitConfig) -> PaidRouteRoutingDecision {
+        config.routing_decision(&self.usage, self.payment.paid_msat)
+    }
+
+    pub fn can_continue_routing(&self, config: &PaidExitConfig) -> bool {
+        self.routing_decision(config).allow_routing
+    }
+}
+
+pub(super) fn paid_route_offer_tags(offer: &PaidRouteOffer) -> Result<Vec<Tag>> {
+    let mut tags = vec![
+        Tag::identifier(offer.offer_id.trim().to_string()),
+        paid_route_tag(&["app", PAID_ROUTE_OFFER_APP])?,
+        paid_route_tag(&["v", PAID_ROUTE_OFFER_VERSION])?,
+        paid_route_tag(&["service", offer.service.as_str()])?,
+        paid_route_tag(&["payment", PaidRoutePaymentMode::CashuSpilman.as_str()])?,
+        paid_route_tag(&["meter", offer.pricing.meter.as_str()])?,
+        paid_route_owned_tag(vec![
+            "price_msat".to_string(),
+            offer.pricing.price_msat.to_string(),
+        ])?,
+        paid_route_owned_tag(vec![
+            "per_units".to_string(),
+            offer.pricing.per_units.to_string(),
+        ])?,
+        paid_route_owned_tag(vec![
+            "connection_minimum_msat_per_day".to_string(),
+            offer.pricing.connection_minimum_msat_per_day.to_string(),
+        ])?,
+        paid_route_owned_tag(vec![
+            "max_channel_capacity_sat".to_string(),
+            offer.channel.max_channel_capacity_sat.to_string(),
+        ])?,
+        paid_route_owned_tag(vec![
+            "channel_expiry_secs".to_string(),
+            offer.channel.channel_expiry_secs.to_string(),
+        ])?,
+        paid_route_number_tag("free_probe_units", offer.channel.free_probe_units)?,
+        paid_route_number_tag("grace_units", offer.channel.grace_units)?,
+        paid_route_tag(&["upstream", offer.access.upstream.as_str()])?,
+        paid_route_tag(&[
+            "private_vpn_access",
+            offer.access.private_vpn_access.as_str(),
+        ])?,
+    ];
+
+    if !offer.receiver_pubkey_hex.trim().is_empty() {
+        tags.push(paid_route_owned_tag(vec![
+            "receiver_pubkey".to_string(),
+            normalize_receiver_pubkey_hex(&offer.receiver_pubkey_hex)?,
+        ])?);
+    }
+
+    for mint in normalize_string_list(&offer.channel.accepted_mints) {
+        tags.push(paid_route_owned_tag(vec!["mint".to_string(), mint])?);
+    }
+    if !offer.location.country_code.trim().is_empty() {
+        tags.push(paid_route_tag(&[
+            "country",
+            offer.location.country_code.trim(),
+        ])?);
+    }
+    if !offer.location.region.trim().is_empty() {
+        tags.push(paid_route_tag(&["region", offer.location.region.trim()])?);
+    }
+    if let Some(asn) = offer.location.asn {
+        tags.push(paid_route_owned_tag(vec![
+            "asn".to_string(),
+            asn.to_string(),
+        ])?);
+    }
+    if offer.location.network_class != ExitNetworkClass::Unknown {
+        tags.push(paid_route_tag(&[
+            "network_class",
+            offer.location.network_class.as_str(),
+        ])?);
+    }
+    if offer.ip_support.ipv4 {
+        tags.push(paid_route_tag(&["ip", "ipv4"])?);
+    }
+    if offer.ip_support.ipv6 {
+        tags.push(paid_route_tag(&["ip", "ipv6"])?);
+    }
+    if let Some(quality) = &offer.quality {
+        if let Some(latency_ms) = quality.latency_ms {
+            tags.push(paid_route_number_tag("latency_ms", latency_ms)?);
+        }
+        if let Some(jitter_ms) = quality.jitter_ms {
+            tags.push(paid_route_number_tag("jitter_ms", jitter_ms)?);
+        }
+        if let Some(packet_loss_ppm) = quality.packet_loss_ppm {
+            tags.push(paid_route_number_tag("packet_loss_ppm", packet_loss_ppm)?);
+        }
+        if let Some(down_bps) = quality.down_bps {
+            tags.push(paid_route_number_tag("down_bps", down_bps)?);
+        }
+        if let Some(up_bps) = quality.up_bps {
+            tags.push(paid_route_number_tag("up_bps", up_bps)?);
+        }
+        if let Some(uptime_secs) = quality.uptime_secs {
+            tags.push(paid_route_number_tag("uptime_secs", uptime_secs)?);
+        }
+        if let Some(last_seen_unix) = quality.last_seen_unix {
+            tags.push(paid_route_number_tag("last_seen_unix", last_seen_unix)?);
+        }
+    }
+
+    Ok(tags)
+}
+
+fn paid_route_number_tag(name: &str, value: impl ToString) -> Result<Tag> {
+    paid_route_owned_tag(vec![name.to_string(), value.to_string()])
+}
+
+pub(super) fn paid_route_tag(parts: &[&str]) -> Result<Tag> {
+    Tag::parse(parts.iter().copied())
+        .map_err(|error| anyhow!("failed to build paid route tag: {error}"))
+}
+
+fn paid_route_owned_tag(parts: Vec<String>) -> Result<Tag> {
+    Tag::parse(parts).map_err(|error| anyhow!("failed to build paid route tag: {error}"))
+}
+
+#[cfg(feature = "paid-exit")]
+fn paid_route_payment_rumor_tags(envelope: &StreamingRoutePaymentEnvelope) -> Result<Vec<Tag>> {
+    Ok(vec![
+        paid_route_tag(&["app", PAID_ROUTE_PAYMENT_APP])?,
+        paid_route_tag(&["v", PAID_ROUTE_PAYMENT_VERSION])?,
+        paid_route_tag(&["service", envelope.service_id.as_str()])?,
+        paid_route_tag(&["lease", envelope.lease_id.as_str()])?,
+        paid_route_tag(&["channel", envelope.channel_id()])?,
+    ])
+}
+
+#[cfg(feature = "paid-exit")]
+fn validate_paid_route_payment_rumor_tags(tags: &[Tag]) -> Result<()> {
+    let mut app_ok = false;
+    let mut version_ok = false;
+    for tag in tags {
+        let parts = tag.as_slice();
+        let Some(kind) = parts.first().map(String::as_str) else {
+            continue;
+        };
+        match kind {
+            "app" => {
+                app_ok |= parts
+                    .get(1)
+                    .is_some_and(|value| value == PAID_ROUTE_PAYMENT_APP)
+            }
+            "v" => {
+                version_ok |= parts
+                    .get(1)
+                    .is_some_and(|value| value == PAID_ROUTE_PAYMENT_VERSION)
+            }
+            _ => {}
+        }
+    }
+
+    if !app_ok {
+        return Err(anyhow!("paid route payment rumor is missing app tag"));
+    }
+    if !version_ok {
+        return Err(anyhow!("paid route payment rumor is missing version tag"));
+    }
+    Ok(())
+}
+
+fn validate_paid_route_offer(offer: &PaidRouteOffer) -> Result<()> {
+    if offer.offer_id.trim().is_empty() {
+        return Err(anyhow!("paid route offer id is empty"));
+    }
+    let _ = normalize_npub(&offer.seller_npub, "seller")?;
+    if offer.access.private_vpn_access != PaidRoutePrivateVpnAccess::Denied {
+        return Err(anyhow!(
+            "paid public exit offers must deny private VPN access"
+        ));
+    }
+    if offer.service != PaidRouteServiceKind::InternetExit {
+        return Err(anyhow!("unsupported paid route service"));
+    }
+    if offer.pricing.per_units == 0 {
+        return Err(anyhow!(
+            "paid route price denominator must be greater than zero"
+        ));
+    }
+    if offer.channel.max_channel_capacity_sat == 0 {
+        return Err(anyhow!(
+            "paid route max channel capacity must be greater than zero"
+        ));
+    }
+    if offer.channel.channel_expiry_secs == 0 {
+        return Err(anyhow!(
+            "paid route channel expiry must be greater than zero"
+        ));
+    }
+    Ok(())
+}
+
+fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Result<()> {
+    let mut app_ok = false;
+    let mut version_ok = false;
+    let mut id_ok = false;
+    let mut service_ok = false;
+    let mut payment_ok = false;
+    let mut meter_ok = false;
+    let mut upstream_ok = false;
+    let mut access_ok = false;
+    let mut receiver_ok = offer.receiver_pubkey_hex.trim().is_empty();
+    let offer_receiver_pubkey_hex = if offer.receiver_pubkey_hex.trim().is_empty() {
+        String::new()
+    } else {
+        normalize_receiver_pubkey_hex(&offer.receiver_pubkey_hex)?
+    };
+
+    for tag in tags {
+        let parts = tag.as_slice();
+        let Some(kind) = parts.first().map(String::as_str) else {
+            continue;
+        };
+        match kind {
+            "d" => id_ok |= parts.get(1).is_some_and(|value| value == &offer.offer_id),
+            "app" => {
+                app_ok |= parts
+                    .get(1)
+                    .is_some_and(|value| value == PAID_ROUTE_OFFER_APP)
+            }
+            "v" => {
+                version_ok |= parts
+                    .get(1)
+                    .is_some_and(|value| value == PAID_ROUTE_OFFER_VERSION)
+            }
+            "service" => {
+                let Some(value) = parts.get(1) else {
+                    return Err(anyhow!("paid route offer event has empty service tag"));
+                };
+                if value != offer.service.as_str() {
+                    return Err(anyhow!(
+                        "paid route offer event service tag does not match content"
+                    ));
+                }
+                service_ok = true;
+            }
+            "payment" => {
+                let Some(value) = parts.get(1) else {
+                    return Err(anyhow!("paid route offer event has empty payment tag"));
+                };
+                if value != PaidRoutePaymentMode::CashuSpilman.as_str() {
+                    return Err(anyhow!(
+                        "paid route offer event payment tag does not match default mode"
+                    ));
+                }
+                payment_ok = true;
+            }
+            "meter" => {
+                let Some(value) = parts.get(1) else {
+                    return Err(anyhow!("paid route offer event has empty meter tag"));
+                };
+                if value != offer.pricing.meter.as_str() {
+                    return Err(anyhow!(
+                        "paid route offer event meter tag does not match content"
+                    ));
+                }
+                meter_ok = true;
+            }
+            "upstream" => {
+                let Some(value) = parts.get(1) else {
+                    return Err(anyhow!("paid route offer event has empty upstream tag"));
+                };
+                if value != offer.access.upstream.as_str() {
+                    return Err(anyhow!(
+                        "paid route offer event upstream tag does not match content"
+                    ));
+                }
+                upstream_ok = true;
+            }
+            "private_vpn_access" => {
+                let Some(value) = parts.get(1) else {
+                    return Err(anyhow!(
+                        "paid route offer event has empty private access tag"
+                    ));
+                };
+                if value != "denied" {
+                    return Err(anyhow!(
+                        "paid route offer event advertises private VPN access"
+                    ));
+                }
+                access_ok = true;
+            }
+            "receiver_pubkey" => {
+                let Some(value) = parts.get(1) else {
+                    return Err(anyhow!(
+                        "paid route offer event has empty receiver pubkey tag"
+                    ));
+                };
+                let tag_receiver_pubkey_hex = normalize_receiver_pubkey_hex(value)?;
+                if tag_receiver_pubkey_hex != offer_receiver_pubkey_hex {
+                    return Err(anyhow!(
+                        "paid route offer event receiver pubkey tag does not match content"
+                    ));
+                }
+                receiver_ok = true;
+            }
+            _ => {}
+        }
+    }
+
+    if !id_ok {
+        return Err(anyhow!("paid route offer event is missing matching d tag"));
+    }
+    if !app_ok {
+        return Err(anyhow!("paid route offer event is missing app tag"));
+    }
+    if !version_ok {
+        return Err(anyhow!("paid route offer event is missing version tag"));
+    }
+    if !service_ok {
+        return Err(anyhow!("paid route offer event is missing service tag"));
+    }
+    if !payment_ok {
+        return Err(anyhow!("paid route offer event is missing payment tag"));
+    }
+    if !meter_ok {
+        return Err(anyhow!("paid route offer event is missing meter tag"));
+    }
+    if !upstream_ok {
+        return Err(anyhow!("paid route offer event is missing upstream tag"));
+    }
+    if !access_ok {
+        return Err(anyhow!(
+            "paid route offer event is missing private access denial tag"
+        ));
+    }
+    if !receiver_ok {
+        return Err(anyhow!(
+            "paid route offer event is missing matching receiver pubkey tag"
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_receiver_pubkey_hex(value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    let hex = trimmed.strip_prefix("0x").unwrap_or(trimmed);
+    if hex.len() == 64 && hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Ok(format!("02{}", hex.to_ascii_lowercase()));
+    }
+    if hex.len() == 66
+        && matches!(&hex[..2], "02" | "03")
+        && hex.chars().all(|ch| ch.is_ascii_hexdigit())
+    {
+        return Ok(hex.to_ascii_lowercase());
+    }
+    Err(anyhow!("invalid paid route receiver pubkey"))
+}
+
+fn normalize_receiver_pubkey_hex_lossy(value: &str) -> String {
+    normalize_receiver_pubkey_hex(value).unwrap_or_default()
+}
+
+fn normalize_npub(value: &str, role: &str) -> Result<String> {
+    let public_key = PublicKey::parse(value.trim())
+        .map_err(|error| anyhow!("invalid paid route {role} npub: {error}"))?;
+    public_key
+        .to_bech32()
+        .context("failed to encode paid route npub")
+}
+
+fn public_key_npub(public_key: &PublicKey) -> Result<String> {
+    public_key
+        .to_bech32()
+        .context("failed to encode paid route event signer npub")
+}
