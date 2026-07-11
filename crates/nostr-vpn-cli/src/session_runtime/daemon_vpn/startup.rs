@@ -247,7 +247,7 @@ pub(super) struct DaemonVpnLoopState {
 }
 
 pub(super) async fn initialize_daemon_vpn_loop(
-    args: &DaemonArgs,
+    _args: &DaemonArgs,
     startup: &DaemonVpnStartup,
 ) -> Result<DaemonVpnLoopState> {
     let vpn_status = if !daemon_vpn_active(startup.vpn_enabled, startup.expected_peers) {
@@ -299,7 +299,7 @@ pub(super) async fn initialize_daemon_vpn_loop(
     let platform_network_event_suppressed_until = None;
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
-    let supervised_service_executable = if args.service {
+    let supervised_service_executable = if _args.service {
         Some(current_executable_fingerprint()?)
     } else {
         None
