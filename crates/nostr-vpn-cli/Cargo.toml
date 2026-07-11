@@ -9,7 +9,7 @@ repository.workspace = true
 readme = "README.md"
 
 [features]
-default = []
+default = ["paid-exit"]
 paid-exit = [
   "dep:cashu-service",
   "nostr-vpn-core/paid-exit",

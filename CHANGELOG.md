@@ -14,6 +14,8 @@ All notable changes to this project are documented in this file.
   the bounded latest root to FIPS peers that connect after publication.
 - Bumped to FIPS Core 0.3.88 and Endpoint 0.3.57, with simpler direct endpoint
   receive and send batching while preserving the FIPS protocol surface.
+- Enabled the paid-exit marketplace in default CLI, daemon, and native-app
+  builds; sharing internet as a seller remains opt-in.
 
 ## 4.0.90 - 2026-07-10
 

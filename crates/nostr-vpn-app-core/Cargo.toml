@@ -13,7 +13,7 @@ name = "nostr_vpn_app_core"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
-default = []
+default = ["paid-exit"]
 paid-exit = ["nostr-vpn-core/paid-exit"]
 
 [dependencies]
