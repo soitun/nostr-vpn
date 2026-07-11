@@ -1,10 +1,12 @@
 use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
+use fips_endpoint::EthernetConfig;
 use fips_endpoint::{
-    Config, ConnectPolicy, EthernetConfig, FipsEndpoint, FipsEndpointData, FipsEndpointMessage,
-    FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
-    PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
+    Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointMessage, FipsEndpointPeer,
+    NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode,
+    TransportInstances, UdpConfig,
 };
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use fips_endpoint::{
@@ -23,12 +25,12 @@ use nostr_vpn_core::fips_control::{
     is_fips_control_frame,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+use nostr_vpn_core::fips_mesh::RoutedFipsPeer;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use nostr_vpn_core::fips_mesh::packet_endpoints;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use nostr_vpn_core::fips_mesh::{FipsEndpointAdmissionCache, FipsEndpointSourceAdmitter};
-use nostr_vpn_core::fips_mesh::{
-    FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission, RoutedFipsPeer,
-};
+use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission};
 use nostr_vpn_core::join_requests::MeshJoinRequest;
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_route_accounting::PaidRouteTrafficAccountant;
@@ -199,6 +201,7 @@ pub(crate) struct FipsPrivateMeshRuntime {
     endpoint: Arc<FipsEndpoint>,
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     direct_endpoint_rx: FipsEndpointDirectReceiver,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     local_tunnel_ips: HashSet<IpAddr>,
     mesh: ArcSwap<FipsMeshRuntime>,
     mesh_generation: AtomicU64,

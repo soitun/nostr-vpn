@@ -169,6 +169,7 @@ fn tun_error_to_io(error: boringtun::device::Error) -> io::Error {
 
 include!("unix_tun_workers.rs");
 include!("unix_tun_write.rs");
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 include!("unix_tun_debug.rs");
 
 #[cfg(target_os = "windows")]

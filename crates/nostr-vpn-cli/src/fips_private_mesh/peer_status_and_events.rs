@@ -248,6 +248,7 @@ fn local_private_ipv4_route_subnets(_interface_subnets: &[Ipv4Subnet]) -> Vec<Ip
     Vec::new()
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn private_route_gateway_is_local(gateway: Ipv4Addr, interface_subnets: &[Ipv4Subnet]) -> bool {
     interface_subnets
         .iter()

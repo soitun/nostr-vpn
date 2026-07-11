@@ -5,6 +5,7 @@ impl FipsPrivateMeshRuntime {
         peers: Vec<FipsMeshPeerConfig>,
         config: Config,
         local_allowed_ips: Vec<String>,
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         local_tunnel_ips: Vec<IpAddr>,
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) -> Result<Self> {
@@ -34,6 +35,7 @@ impl FipsPrivateMeshRuntime {
             local_allowed_ips,
             paid_route_admissions,
         );
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let local_tunnel_ips = local_tunnel_ips.into_iter().collect();
         let peer_activity = peer_activity_map(&mesh.peer_pubkeys(), None);
 
@@ -41,6 +43,7 @@ impl FipsPrivateMeshRuntime {
             endpoint,
             #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
             direct_endpoint_rx,
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             local_tunnel_ips,
             mesh: ArcSwap::from_pointee(mesh),
             mesh_generation: AtomicU64::new(0),
@@ -332,6 +335,7 @@ pub(crate) async fn bind_local_ethernet_shared_endpoint(
     })
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 struct RoutedTunPipelinePacket<'a> {
     participant_pubkey: &'a str,
     participant_pubkey_bytes: Option<ParticipantPubkeyBytes>,
@@ -339,6 +343,7 @@ struct RoutedTunPipelinePacket<'a> {
     bytes: Vec<u8>,
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl<'a> From<nostr_vpn_core::fips_mesh::RoutedFipsPacket<'a>>
     for RoutedTunPipelinePacket<'a>
 {
@@ -352,6 +357,7 @@ impl<'a> From<nostr_vpn_core::fips_mesh::RoutedFipsPacket<'a>>
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn cached_tun_destination_route<'a>(
     mesh: &'a FipsMeshRuntime,
     cached: &mut Option<(IpAddr, RoutedFipsPeer<'a>)>,

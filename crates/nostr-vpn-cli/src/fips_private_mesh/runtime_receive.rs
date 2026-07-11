@@ -82,7 +82,7 @@ impl FipsPrivateMeshRuntime {
         }
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn wake_blocking_mesh_recv(&self) {
         self.direct_endpoint_rx.interrupt();
     }

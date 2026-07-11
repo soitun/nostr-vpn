@@ -232,6 +232,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
     config
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn fips_endpoint_config_for_local_ethernet(
     peers: &[FipsEndpointPeerTransportConfig],
     ethernet: &FipsLocalEthernetUnderlayConfig,
@@ -512,6 +513,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) control_pubsub_store_path: PathBuf,
     pub(crate) share_local_candidates: bool,
     pub(crate) peers: Vec<FipsMeshPeerConfig>,
+    #[cfg(any(target_os = "linux", target_os = "macos", test))]
     pub(crate) active_roster_endpoint_npubs: Vec<String>,
     pub(crate) endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
     pub(crate) route_targets: Vec<String>,

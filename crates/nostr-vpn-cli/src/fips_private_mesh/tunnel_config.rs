@@ -24,12 +24,15 @@ impl FipsPrivateTunnelConfig {
         let mut peers = Vec::new();
         let mut route_targets = Vec::new();
         let participants = app.participant_pubkeys_hex();
+        #[cfg(any(target_os = "linux", target_os = "macos", test))]
         let mut active_roster_endpoint_npubs = participants
             .iter()
             .filter(|participant| Some(participant.as_str()) != own_pubkey)
             .map(|participant| normalize_fips_endpoint_npub(participant))
             .collect::<Vec<_>>();
+        #[cfg(any(target_os = "linux", target_os = "macos", test))]
         active_roster_endpoint_npubs.sort();
+        #[cfg(any(target_os = "linux", target_os = "macos", test))]
         active_roster_endpoint_npubs.dedup();
         let mut route_by_participant = HashMap::<String, Vec<String>>::new();
         for participant in participants {
@@ -244,6 +247,7 @@ impl FipsPrivateTunnelConfig {
             control_pubsub_store_path: PathBuf::new(),
             share_local_candidates: app.lan_discovery_enabled,
             peers,
+            #[cfg(any(target_os = "linux", target_os = "macos", test))]
             active_roster_endpoint_npubs,
             endpoint_peers,
             route_targets,
@@ -329,6 +333,7 @@ impl FipsPrivateTunnelConfig {
         routes
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn interface_addresses(&self) -> Vec<String> {
         let mut addresses = vec![self.local_address.clone()];
         addresses.sort();
@@ -336,6 +341,7 @@ impl FipsPrivateTunnelConfig {
         addresses
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn local_tunnel_ips(&self) -> Vec<IpAddr> {
         let mut ips = self
             .interface_addresses()
@@ -347,6 +353,7 @@ impl FipsPrivateTunnelConfig {
         ips
     }
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn exit_dns_service_enabled(&self) -> bool {
         self.local_advertised_routes
             .iter()
