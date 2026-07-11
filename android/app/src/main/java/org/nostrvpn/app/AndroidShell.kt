@@ -259,7 +259,7 @@ internal fun NostrVpnApp(
         AddDevicesDialog(
             state = state,
             network = network,
-            qrJson = qrJson,
+            scanDeviceQr = scanDeviceQr,
             dispatch = dispatch,
             onDismiss = { showAddDevice = false },
         )
@@ -625,7 +625,7 @@ private fun NetworkSetupCard(
     var setupMode by remember { mutableStateOf<NetworkSetupMode?>(null) }
     var networkName by remember { mutableStateOf("My Network") }
     var inviteInput by remember { mutableStateOf("") }
-    var inviteExpanded by remember { mutableStateOf(true) }
+    var inviteExpanded by remember { mutableStateOf(false) }
     var manualExpanded by remember { mutableStateOf(false) }
     var manualAdminId by remember { mutableStateOf("") }
     var manualNetworkId by remember { mutableStateOf("") }
@@ -633,6 +633,7 @@ private fun NetworkSetupCard(
     val clipboard = remember(context) {
         context.getSystemService(android.content.ClipboardManager::class.java)
     }
+    val joinRequestQrCodeOrLink = state.joinRequestQrCodeOrLink
     fun importInviteIfPresent(value: String): Boolean {
         val trimmed = value.trim()
         if (!trimmed.startsWith("nvpn://invite/", ignoreCase = true)) {
@@ -720,8 +721,23 @@ private fun NetworkSetupCard(
                     }
                     NetworkSetupMode.Join -> {
                         SetupChoiceCard("Join Network", Color(0xFF2563EB)) {
+                            if (joinRequestQrCodeOrLink.isNotBlank()) {
+                                BoxWithConstraints(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    val qrSide = maxWidth.coerceAtMost(220.dp)
+                                    QrCode(
+                                        invite = joinRequestQrCodeOrLink,
+                                        qrJson = qrJson,
+                                        side = qrSide,
+                                    )
+                                }
+                                CopyButton(joinRequestQrCodeOrLink, "Copy request")
+                            }
+
                             TextButton(onClick = { inviteExpanded = !inviteExpanded }) {
-                                Text(if (inviteExpanded) "Network invite ▴" else "Network invite ▾")
+                                Text(if (inviteExpanded) "Invite link ▴" else "Invite link ▾")
                             }
                             if (inviteExpanded) {
                                 OutlinedTextField(
@@ -892,15 +908,25 @@ private fun AddNetworkDialog(
     )
 }
 
-/// Admin-only sheet for sharing a network invite or pairing manually.
+/// Admin-only sheet for adding a device to YOUR network. The admin scans or
+/// pastes the joiner's request/Device ID; joining someone else's network and
+/// finding nearby networks belong to Add Network, not here.
 @Composable
 private fun AddDevicesDialog(
     state: AppState,
     network: NetworkState,
-    qrJson: (String) -> JSONObject,
+    scanDeviceQr: (String) -> Unit,
     dispatch: (JSONObject) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    var joinRequestInput by remember(network.id) { mutableStateOf("") }
+    var pendingJoinRequest by remember(network.id) { mutableStateOf<String?>(null) }
+    fun stageJoinRequest(value: String) {
+        val trimmed = value.trim()
+        if (looksLikeJoinRequestQrOrLink(trimmed)) {
+            pendingJoinRequest = trimmed
+        }
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Device") },
@@ -909,30 +935,33 @@ private fun AddDevicesDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Network invite", style = MaterialTheme.typography.titleMedium)
+                Text("Add join request", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Scan this invite on the joining device. It sends its join request over FIPS; approval returns the signed roster over FIPS.",
+                    "Scan or paste the joiner's join request. Valid links open confirmation automatically.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Muted,
                 )
-                if (state.activeNetworkInvite.isNotBlank()) {
-                    BoxWithConstraints(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        val qrSide = maxWidth.coerceAtMost(220.dp)
-                        QrCode(
-                            invite = state.activeNetworkInvite,
-                            qrJson = qrJson,
-                            side = qrSide,
-                        )
-                    }
-                    CopyButton(state.activeNetworkInvite, "Copy invite")
+                OutlinedTextField(
+                    value = joinRequestInput,
+                    onValueChange = {
+                        joinRequestInput = it
+                        stageJoinRequest(it)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Join request") },
+                )
+                Button(
+                    onClick = { scanDeviceQr(network.id) },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Scan QR")
                 }
+                NearbyCard(state, dispatch)
                 Spacer(modifier = Modifier.height(8.dp))
-                Text("Manual Pairing", style = MaterialTheme.typography.titleMedium)
+                Text("For manual join", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Share these two values. They'll enter them under Join Network → Add manually. You still need to add their Device ID below.",
+                    "If join-request linking isn't available, share these two values. They'll enter them under Join Network -> Add manually. You still need to add their Device ID below.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Muted,
                 )
@@ -957,6 +986,30 @@ private fun AddDevicesDialog(
             }
         },
     )
+    pendingJoinRequest?.let { request ->
+        AlertDialog(
+            onDismissRequest = { pendingJoinRequest = null },
+            title = { Text("Add device?") },
+            text = { Text("Add the device from this join request to ${network.name.ifBlank { "this network" }}?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        dispatch(NativeActions.importJoinRequest(request))
+                        joinRequestInput = ""
+                        pendingJoinRequest = null
+                        onDismiss()
+                    },
+                ) {
+                    Text("Add")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingJoinRequest = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.internetPage(

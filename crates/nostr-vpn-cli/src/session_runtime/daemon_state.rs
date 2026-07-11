@@ -132,6 +132,86 @@ pub(crate) fn set_windows_service_status(
         .with_context(|| format!("failed to update Windows service status to {state:?}"))
 }
 
+pub(crate) fn daemon_peer_state_from_fips_status(
+    network_id: &str,
+    participant: &str,
+    status: Option<&MeshPeerStatus>,
+    advertised_routes: Vec<String>,
+    now: u64,
+    vpn_active: bool,
+) -> DaemonPeerState {
+    let last_seen_at =
+        status.and_then(|status| credible_daemon_peer_timestamp(now, status.last_seen_at));
+    let last_control_seen_at = status
+        .and_then(|status| credible_daemon_peer_timestamp(now, status.last_control_seen_at));
+    let last_data_seen_at =
+        status.and_then(|status| credible_daemon_peer_timestamp(now, status.last_data_seen_at));
+    let reachable = vpn_active && status.is_some_and(|status| status.connected);
+    let fips_transport_addr = status.and_then(|status| status.transport_addr.clone());
+    DaemonPeerState {
+        participant_pubkey: participant.to_string(),
+        node_id: String::new(),
+        tunnel_ip: derive_mesh_tunnel_ip(network_id, participant).unwrap_or_default(),
+        endpoint: "fips".to_string(),
+        runtime_endpoint: fips_transport_addr
+            .clone()
+            .or_else(|| reachable.then(|| "fips".to_string())),
+        fips_endpoint_npub: status
+            .map(|status| status.endpoint_npub.clone())
+            .unwrap_or_default(),
+        fips_transport_addr: fips_transport_addr.unwrap_or_default(),
+        fips_transport_type: status
+            .and_then(|status| status.transport_type.clone())
+            .unwrap_or_default(),
+        fips_srtt_ms: status.and_then(|status| status.srtt_ms),
+        fips_srtt_age_ms: status.and_then(|status| status.srtt_age_ms),
+        fips_packets_sent: status.map(|status| status.link_packets_sent).unwrap_or(0),
+        fips_packets_recv: status.map(|status| status.link_packets_recv).unwrap_or(0),
+        fips_bytes_sent: status.map(|status| status.link_bytes_sent).unwrap_or(0),
+        fips_bytes_recv: status.map(|status| status.link_bytes_recv).unwrap_or(0),
+        fips_rekey_in_progress: status.is_some_and(|status| status.rekey_in_progress),
+        fips_rekey_draining: status.is_some_and(|status| status.rekey_draining),
+        fips_current_k_bit: status.and_then(|status| status.current_k_bit),
+        fips_last_outbound_route: status
+            .and_then(|status| status.last_outbound_route.clone())
+            .unwrap_or_default(),
+        direct_probe_pending: status.is_some_and(|status| status.direct_probe_pending),
+        direct_probe_after_ms: status.and_then(|status| status.direct_probe_after_ms),
+        direct_probe_retry_count: status
+            .map(|status| status.direct_probe_retry_count)
+            .unwrap_or(0),
+        direct_probe_auto_reconnect: status
+            .is_some_and(|status| status.direct_probe_auto_reconnect),
+        direct_probe_expires_at_ms: status.and_then(|status| status.direct_probe_expires_at_ms),
+        fips_nostr_traversal_failures: status
+            .map(|status| status.nostr_traversal_consecutive_failures)
+            .unwrap_or(0),
+        fips_nostr_traversal_in_cooldown: status
+            .is_some_and(|status| status.nostr_traversal_in_cooldown),
+        fips_nostr_traversal_cooldown_until_ms: status
+            .and_then(|status| status.nostr_traversal_cooldown_until_ms),
+        fips_nostr_traversal_last_observed_skew_ms: status
+            .and_then(|status| status.nostr_traversal_last_observed_skew_ms),
+        tx_bytes: status.map(|status| status.tx_bytes).unwrap_or(0),
+        rx_bytes: status.map(|status| status.rx_bytes).unwrap_or(0),
+        public_key: String::new(),
+        advertised_routes,
+        last_mesh_seen_at: last_seen_at.unwrap_or(0),
+        last_fips_seen_at: last_seen_at,
+        last_fips_control_seen_at: last_control_seen_at,
+        last_fips_data_seen_at: last_data_seen_at,
+        reachable,
+        last_handshake_at: last_seen_at,
+        error: if reachable {
+            None
+        } else {
+            status
+                .and_then(|status| status.error.clone())
+                .or_else(|| Some("fips link pending".to_string()))
+        },
+    }
+}
+
 pub(crate) fn build_daemon_runtime_state(input: DaemonRuntimeStateInput<'_>) -> DaemonRuntimeState {
     let DaemonRuntimeStateInput {
         app,
@@ -178,80 +258,17 @@ pub(crate) fn build_daemon_runtime_state(input: DaemonRuntimeStateInput<'_>) -> 
         } else {
             None
         };
-        let last_seen_at =
-            status.and_then(|status| credible_daemon_peer_timestamp(now, status.last_seen_at));
-        let last_control_seen_at = status
-            .and_then(|status| credible_daemon_peer_timestamp(now, status.last_control_seen_at));
-        let last_data_seen_at =
-            status.and_then(|status| credible_daemon_peer_timestamp(now, status.last_data_seen_at));
-        let reachable = vpn_active && status.is_some_and(|status| status.connected);
-        let fips_transport_addr = status.and_then(|status| status.transport_addr.clone());
-        let tunnel_ip = derive_mesh_tunnel_ip(&network_id, participant).unwrap_or_default();
-        peers.push(DaemonPeerState {
-            participant_pubkey: participant.clone(),
-            node_id: String::new(),
-            tunnel_ip,
-            endpoint: "fips".to_string(),
-            runtime_endpoint: fips_transport_addr
-                .clone()
-                .or_else(|| reachable.then(|| "fips".to_string())),
-            fips_endpoint_npub: status
-                .map(|status| status.endpoint_npub.clone())
-                .unwrap_or_default(),
-            fips_transport_addr: fips_transport_addr.unwrap_or_default(),
-            fips_transport_type: status
-                .and_then(|status| status.transport_type.clone())
-                .unwrap_or_default(),
-            fips_srtt_ms: status.and_then(|status| status.srtt_ms),
-            fips_srtt_age_ms: status.and_then(|status| status.srtt_age_ms),
-            fips_packets_sent: status.map(|status| status.link_packets_sent).unwrap_or(0),
-            fips_packets_recv: status.map(|status| status.link_packets_recv).unwrap_or(0),
-            fips_bytes_sent: status.map(|status| status.link_bytes_sent).unwrap_or(0),
-            fips_bytes_recv: status.map(|status| status.link_bytes_recv).unwrap_or(0),
-            fips_rekey_in_progress: status.is_some_and(|status| status.rekey_in_progress),
-            fips_rekey_draining: status.is_some_and(|status| status.rekey_draining),
-            fips_current_k_bit: status.and_then(|status| status.current_k_bit),
-            fips_last_outbound_route: status
-                .and_then(|status| status.last_outbound_route.clone())
-                .unwrap_or_default(),
-            direct_probe_pending: status.is_some_and(|status| status.direct_probe_pending),
-            direct_probe_after_ms: status.and_then(|status| status.direct_probe_after_ms),
-            direct_probe_retry_count: status
-                .map(|status| status.direct_probe_retry_count)
-                .unwrap_or(0),
-            direct_probe_auto_reconnect: status
-                .is_some_and(|status| status.direct_probe_auto_reconnect),
-            direct_probe_expires_at_ms: status.and_then(|status| status.direct_probe_expires_at_ms),
-            fips_nostr_traversal_failures: status
-                .map(|status| status.nostr_traversal_consecutive_failures)
-                .unwrap_or(0),
-            fips_nostr_traversal_in_cooldown: status
-                .is_some_and(|status| status.nostr_traversal_in_cooldown),
-            fips_nostr_traversal_cooldown_until_ms: status
-                .and_then(|status| status.nostr_traversal_cooldown_until_ms),
-            fips_nostr_traversal_last_observed_skew_ms: status
-                .and_then(|status| status.nostr_traversal_last_observed_skew_ms),
-            tx_bytes: status.map(|status| status.tx_bytes).unwrap_or(0),
-            rx_bytes: status.map(|status| status.rx_bytes).unwrap_or(0),
-            public_key: String::new(),
-            advertised_routes: advertised_routes_by_participant
+        peers.push(daemon_peer_state_from_fips_status(
+            &network_id,
+            participant,
+            status,
+            advertised_routes_by_participant
                 .get(participant)
                 .cloned()
                 .unwrap_or_default(),
-            last_mesh_seen_at: last_seen_at.unwrap_or(0),
-            last_fips_seen_at: last_seen_at,
-            last_fips_control_seen_at: last_control_seen_at,
-            last_fips_data_seen_at: last_data_seen_at,
-            reachable,
-            last_handshake_at: last_seen_at,
-            error: if reachable {
-                None
-            } else {
-                status
-                    .and_then(|status| status.error.clone())
-                    .or_else(|| Some("fips link pending".to_string()))
-            },
-        });
+            now,
+            vpn_active,
+        ));
     }
 
     let connected_peer_count = if !vpn_active {

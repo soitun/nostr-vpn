@@ -8,9 +8,11 @@ mod daemon_vpn_startup;
 use daemon_vpn_paid_exit::*;
 use daemon_vpn_startup::*;
 pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
+    if let Some(webvm_args) = crate::webvm_guest::args_from_daemon(&args)? {
+        return crate::webvm_guest::run_daemon(webvm_args, args.service).await;
+    }
     let startup = initialize_daemon_vpn(&args).await?;
     let magic_dns_runtime = ConnectMagicDnsRuntime::start(&startup.app);
-
     let (mut announce_interval, mut recent_peer_refresh_interval) = daemon_refresh_intervals(&args);
     let mut state_interval = tokio::time::interval(Duration::from_secs(1));
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);

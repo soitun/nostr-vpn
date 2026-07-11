@@ -75,7 +75,7 @@
             Some(second)
         );
         assert_peer_data_activity(&runtime, &participant_pubkey, expected_endpoint_data_bytes);
-        runtime.shutdown().await.expect("shutdown");
+        runtime.endpoint().shutdown().await.expect("shutdown");
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -164,7 +164,7 @@
             .collect();
         assert_eq!(packets, vec![first, second]);
         assert_peer_data_activity(&runtime, &participant_pubkey, expected_endpoint_data_bytes);
-        runtime.shutdown().await.expect("shutdown");
+        runtime.endpoint().shutdown().await.expect("shutdown");
     }
 
     #[tokio::test]
@@ -228,5 +228,5 @@
             })
             .collect();
         assert_eq!(received_packets, expected_packets);
-        runtime.shutdown().await.expect("shutdown");
+        runtime.endpoint().shutdown().await.expect("shutdown");
     }

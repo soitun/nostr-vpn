@@ -1074,18 +1074,53 @@
           <div class="modal-section">
             <div class="section-heading">
               <div>
-                <h3>Network Invite</h3>
+                <h3>Link Device</h3>
                 <p>{shownNetwork.name}</p>
               </div>
             </div>
-            <p class="muted-copy">Scan this invite on the joining device. Its join request and the signed roster travel over FIPS.</p>
-            {#if state.activeNetworkInvite}
-              <div class="qr-card">
-                <QRCode data={state.activeNetworkInvite} size={320} />
-              </div>
-              <CopyButton value={state.activeNetworkInvite} label="Network invite" on:copied={handleCopied} />
-            {/if}
-          </div>
+            <label>
+              <span>Join request</span>
+              <textarea
+                bind:value={joinerInput}
+                rows="4"
+                placeholder="Paste a join request to continue"
+                on:input={(event) => stageJoinRequest((event.currentTarget as HTMLTextAreaElement).value)}
+              ></textarea>
+            </label>
+	          </div>
+
+	          <div class="modal-section">
+	            <div class="section-heading">
+	              <div>
+	                <h3>Nearby join requests</h3>
+	                <p>{state.lanPeers.length}</p>
+	              </div>
+	              <button type="button" class="small-button" on:click={toggleNearbyDiscovery}>
+	                {state.nearbyDiscoveryActive
+	                  ? `Finding nearby · ${remainingText(state.nearbyDiscoveryRemainingSecs)}`
+	                  : 'Find nearby'}
+	              </button>
+	            </div>
+	            {#if state.lanPeers.length === 0}
+	              <div class="empty-state">No nearby join requests yet</div>
+	            {:else}
+	              <div class="stack">
+	                {#each state.lanPeers as peer, index (index)}
+	                  <div class="request-row">
+	                    <div>
+	                      <strong>{peer.nodeName || peer.networkName || 'Nearby device'}</strong>
+	                      <span>{peer.lastSeenText ?? ''}</span>
+	                    </div>
+	                    {#if peer.invite}
+	                      <button type="button" class="small-button" on:click={() => (pendingJoinRequest = peer.invite ?? '')}>
+	                        Add
+	                      </button>
+	                    {/if}
+	                  </div>
+	                {/each}
+	              </div>
+	            {/if}
+	          </div>
 
 	          <div class="modal-section">
             <div class="section-heading">

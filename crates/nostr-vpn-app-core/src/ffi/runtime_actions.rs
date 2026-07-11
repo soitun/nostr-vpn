@@ -24,6 +24,8 @@ impl NativeAppRuntime {
 
         match action {
             NativeAppAction::GetState | NativeAppAction::Tick => {
+                #[cfg(not(test))]
+                self.refresh_pending_join_approval();
                 if self.mobile_runtime {
                     self.refresh_mobile_status()
                 } else {
@@ -183,7 +185,7 @@ impl NativeAppRuntime {
                 self.import_network_invite(&invite)?;
                 Ok(())
             }
-            NativeAppAction::ImportJoinRequest { request } => Self::import_join_request(&request),
+            NativeAppAction::ImportJoinRequest { request } => self.import_join_request(&request),
             NativeAppAction::ManualAddNetwork {
                 admin_npub,
                 mesh_network_id,
@@ -392,14 +394,24 @@ impl NativeAppRuntime {
     fn import_network_invite(&mut self, invite: &str) -> Result<()> {
         let parsed = parse_network_invite(invite)?;
         apply_network_invite_to_active_network(&mut self.config, &parsed)?;
-        let network_id = self
-            .config
-            .active_network_opt()
-            .ok_or_else(|| anyhow!("network not found"))?
-            .id
-            .clone();
-        self.queue_network_join_request(&network_id)?;
         self.config.clear_pending_nostr_join_request();
+        self.save_reload_and_refresh()
+    }
+
+    fn import_join_request(&mut self, request: &str) -> Result<()> {
+        let parsed = parse_join_request_qr_code_or_link(request)?;
+        self.import_parsed_join_request(&parsed.bootstrap)
+    }
+
+    fn import_parsed_join_request(
+        &mut self,
+        bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
+    ) -> Result<()> {
+        let network_id = self.active_admin_network_id()?;
+        let prepared =
+            prepare_join_approval(&self.config, &network_id, bootstrap, unix_timestamp())?;
+        self.publish_join_request_approval_events(&prepared.events)?;
+        self.config = prepared.updated_config;
         self.save_reload_and_refresh()?;
         if !self.vpn_enabled {
             self.connect_vpn()?;
@@ -407,11 +419,39 @@ impl NativeAppRuntime {
         Ok(())
     }
 
-    fn import_join_request(request: &str) -> Result<()> {
-        let _ = request;
-        Err(anyhow!(
-            "device join-request links are no longer used; scan the admin's network invite on the joining device"
+    #[cfg(test)]
+    #[allow(clippy::unnecessary_wraps)]
+    fn publish_join_request_approval_events(&mut self, events: &[Event]) -> Result<()> {
+        self.published_join_approval_events
+            .extend(events.iter().cloned());
+        Ok(())
+    }
+
+    #[cfg(not(test))]
+    fn publish_join_request_approval_events(&self, events: &[Event]) -> Result<()> {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("failed to start join request approval publisher")?;
+        runtime.block_on(crate::join_approval_transport::publish_join_approval_events(
+            &self.config,
+            events,
         ))
+    }
+
+    fn active_admin_network_id(&self) -> Result<String> {
+        let own_pubkey = self.config.own_nostr_pubkey_hex().ok();
+        self.config
+            .networks
+            .iter()
+            .find(|network| {
+                network.enabled
+                    && own_pubkey.as_deref().is_some_and(|own_pubkey| {
+                        network.admins.iter().any(|admin| admin == own_pubkey)
+                    })
+            })
+            .map(|network| network.id.clone())
+            .ok_or_else(|| anyhow!("active network is not administered by this device"))
     }
 
     fn add_join_requester_to_network(
@@ -547,7 +587,7 @@ impl NativeAppRuntime {
         let announcement = self.build_lan_pairing_announcement()?;
         if announcement.invite.trim().is_empty() {
             return Err(anyhow!(
-                "nearby invite sharing requires an administered network"
+                "nearby join request advertising is only available before this device has joined a network"
             ));
         }
         let expires_at = lan_pairing_deadline();
@@ -611,13 +651,9 @@ impl NativeAppRuntime {
     fn build_lan_pairing_announcement(&self) -> Result<LanPairingAnnouncement> {
         let own_npub = to_npub(&self.config.own_nostr_pubkey_hex()?);
         let invite = if self.config.networks.iter().any(|network| network.enabled) {
-            active_network_invite_code_with_endpoints(
-                &self.config,
-                &self.live_inviter_endpoints(),
-            )
-            .unwrap_or_default()
-        } else {
             String::new()
+        } else {
+            own_join_request_qr_code_or_link(&self.config).unwrap_or_default()
         };
         let endpoint = self
             .daemon_state

@@ -16,6 +16,7 @@ mod macos_network;
 #[cfg(any(target_os = "macos", test))]
 mod macos_service;
 mod network_signaling;
+mod pairing_qr;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 mod pipeline_profile;
 mod platform_routing;

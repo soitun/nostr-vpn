@@ -77,21 +77,28 @@ enum Command {
     /// Run the Ethernet-only guest runtime used by WebVM.
     #[command(name = "webvm-guest")]
     WebvmGuest(WebvmGuestArgs),
+    /// Show this device's join-request link and QR, then wait for approval.
+    #[command(name = "join-request")]
+    JoinRequest(JoinRequestArgs),
     /// Show local and discovered peer status.
     Status(StatusArgs),
     /// Update persisted node/network settings.
     Set(SetArgs),
     /// Emit a full `nvpn://invite/...` code for the active network.
+    #[command(hide = true)]
     CreateInvite(CreateInviteArgs),
     /// Import a full `nvpn://invite/...` code into the active network config.
+    #[command(hide = true)]
     ImportInvite(ImportInviteArgs),
     /// Broadcast the active network's invite over LAN multicast so nearby
     /// devices running `nvpn discover` can pair without copy/pasting a code.
     /// Runs in the foreground; Ctrl-C stops broadcasting.
+    #[command(hide = true)]
     InviteBroadcast(InviteBroadcastArgs),
     /// Listen for nearby LAN invite broadcasts and print what's found. With
     /// `--accept`, import the first valid invite seen (queues a join request
     /// to the broadcaster, same as `nvpn import-invite`).
+    #[command(hide = true)]
     Discover(DiscoverArgs),
     /// Add one or more devices to the active network roster.
     #[command(alias = "add-participant")]
@@ -135,6 +142,22 @@ enum Command {
 }
 
 #[derive(Debug, Clone, Args)]
+struct JoinRequestArgs {
+    /// nvpn configuration containing the device identity and approval state.
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Print the request and current reachability without waiting for approval.
+    #[arg(long)]
+    no_wait: bool,
+    /// Print only the link, without the terminal QR code.
+    #[arg(long)]
+    no_qr: bool,
+    /// Replace the still-pending request, invalidating previously shared links.
+    #[arg(long)]
+    reset: bool,
+}
+
+#[derive(Debug, Clone, Args)]
 struct WebvmGuestArgs {
     /// Persistent nvpn configuration path.
     #[arg(long)]
@@ -145,6 +168,12 @@ struct WebvmGuestArgs {
     /// Ethernet beacon scope shared with the browser FIPS host.
     #[arg(long)]
     discovery_scope: String,
+    /// Authenticated FSP service port for targeted approval pubsub.
+    #[arg(long)]
+    join_pubsub_port: u16,
+    /// Atomically updated file containing the pending pairing bootstrap URI.
+    #[arg(long)]
+    pairing_uri_file: PathBuf,
     /// Guest TUN interface used after approval.
     #[arg(long)]
     tun_interface: String,
@@ -353,6 +382,12 @@ struct DaemonArgs {
     paused: bool,
     #[arg(long, hide = true, default_value_t = false)]
     service: bool,
+    /// Layer-2-only Ethernet interface used by a WebVM guest.
+    #[arg(long, hide = true, requires = "webvm_discovery_scope")]
+    webvm_ethernet_interface: Option<String>,
+    /// Ethernet discovery scope shared with the WebVM browser host.
+    #[arg(long, hide = true, requires = "webvm_ethernet_interface")]
+    webvm_discovery_scope: Option<String>,
 }
 
 #[derive(Debug, Args)]

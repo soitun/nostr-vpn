@@ -100,6 +100,9 @@ async fn run_command(command: Command) -> Result<()> {
         Command::WebvmGuest(args) => {
             webvm_guest::run(args).await?;
         }
+        Command::JoinRequest(args) => {
+            pairing_qr::run_join_request(args).await?;
+        }
         Command::Status(args) => {
             let config_path = args.config.unwrap_or_else(default_config_path);
             let (app, network_id) = load_config_with_overrides(

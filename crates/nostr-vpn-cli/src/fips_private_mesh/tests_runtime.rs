@@ -288,8 +288,16 @@
         };
         assert_eq!(received, bob_to_alice);
 
-        alice_runtime.shutdown().await.expect("shutdown alice");
-        bob_runtime.shutdown().await.expect("shutdown bob");
+        alice_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown alice");
+        bob_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown bob");
     }
 
     #[tokio::test]
@@ -460,9 +468,21 @@
         assert!(carol_status.connected);
         assert_eq!(carol_status.transport_addr, None);
 
-        alice_runtime.shutdown().await.expect("shutdown alice");
-        bob_runtime.shutdown().await.expect("shutdown bob");
-        carol_runtime.shutdown().await.expect("shutdown carol");
+        alice_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown alice");
+        bob_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown bob");
+        carol_runtime
+            .endpoint()
+            .shutdown()
+            .await
+            .expect("shutdown carol");
     }
 
     #[test]

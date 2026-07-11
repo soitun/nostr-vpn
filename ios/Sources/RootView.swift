@@ -656,7 +656,7 @@ private struct CreateNetworkCard: View {
 private struct JoinNetworkCard: View {
     @ObservedObject var model: AppModel
     @State private var inviteInput = ""
-    @State private var inviteExpanded = true
+    @State private var inviteExpanded = false
     @State private var manualExpanded = false
     @State private var manualAdminId = ""
     @State private var manualNetworkId = ""
@@ -672,9 +672,47 @@ private struct JoinNetworkCard: View {
         return !admin.isEmpty && !mesh.isEmpty && isValidDeviceId(admin)
     }
 
+    private var requestNetwork: NetworkState? {
+        model.activeNetwork ?? model.state.networks.first { network in
+            !network.joinRequestQrCodeOrLink.isEmpty
+        }
+    }
+
+    private var joinRequestQrCodeOrLink: String {
+        if !model.state.joinRequestQrCodeOrLink.isEmpty {
+            return model.state.joinRequestQrCodeOrLink
+        }
+        return requestNetwork?.joinRequestQrCodeOrLink ?? ""
+    }
+
     var body: some View {
         SetupCard(title: "Join Network", systemImage: "arrow.down.circle.fill", tint: AppColors.join) {
-            DisclosureGroup("Network invite", isExpanded: $inviteExpanded) {
+            if !joinRequestQrCodeOrLink.isEmpty {
+                Pill("Join request", tint: .orange)
+                VStack(alignment: .leading, spacing: 8) {
+                    QrCodeView(matrix: model.qrMatrix(for: joinRequestQrCodeOrLink))
+                        .aspectRatio(1, contentMode: .fit)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    HStack(spacing: 10) {
+                        Button {
+                            model.copy(joinRequestQrCodeOrLink)
+                        } label: {
+                            Label("Copy Request", systemImage: model.copiedValue == joinRequestQrCodeOrLink ? "checkmark" : "doc.on.doc")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        if let requestUrl = URL(string: joinRequestQrCodeOrLink) {
+                            ShareLink(item: requestUrl) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+            }
+
+            DisclosureGroup("Invite link", isExpanded: $inviteExpanded) {
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("nvpn://invite/…", text: $inviteInput)
                         .textInputAutocapitalization(.never)
@@ -750,7 +788,9 @@ private struct JoinNetworkCard: View {
     }
 }
 
-/// Admin-only sheet for sharing a network invite or pairing manually.
+/// Admin-only sheet for linking a device to YOUR network. The preferred path
+/// is scanning or pasting the joining device's join request; direct Device ID
+/// entry remains for compatible signed-roster clients.
 private struct AddDeviceSheet: View {
     @ObservedObject var model: AppModel
     let network: NetworkState
@@ -764,7 +804,20 @@ private struct AddDeviceSheet: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
-                NetworkInviteCard(model: model)
+                ScanJoinerDeviceCard(
+                    requestInput: $joinRequestInput,
+                    scanError: scanError,
+                    scan: { qrScannerPresented = true },
+                    paste: {
+                        if let text = UIPasteboard.general.string {
+                            importJoinerValue(text)
+                        }
+                    },
+                    inputChanged: { value in
+                        stageJoinRequest(value)
+                    }
+                )
+                NearbyCard(model: model)
                 ManualPairingInfoCard(model: model, network: network)
                 AddDeviceCard(network: network) { npub, alias in
                     model.dispatch(
@@ -875,42 +928,6 @@ private struct AddDeviceSheet: View {
             networkName: network.name.isEmpty ? "this network" : network.name,
             request: request
         )
-    }
-}
-
-private struct NetworkInviteCard: View {
-    @ObservedObject var model: AppModel
-
-    var body: some View {
-        let invite = model.state.activeNetworkInvite
-        AppCard {
-            Text("Network Invite")
-                .font(.headline)
-            Text("Scan this invite on the joining device. Its join request and the signed roster travel over FIPS.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            if !invite.isEmpty {
-                QrCodeView(matrix: model.qrMatrix(for: invite))
-                    .aspectRatio(1, contentMode: .fit)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                HStack(spacing: 10) {
-                    Button {
-                        model.copy(invite)
-                    } label: {
-                        Label("Copy Invite", systemImage: model.copiedValue == invite ? "checkmark" : "doc.on.doc")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    if let inviteUrl = URL(string: invite) {
-                        ShareLink(item: inviteUrl) {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                }
-            }
-        }
     }
 }
 
