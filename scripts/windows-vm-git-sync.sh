@@ -19,7 +19,7 @@ run_ps() {
   local script="$1"
   local encoded
   local -a ssh_cmd
-  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64)"
+  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64 | tr -d '\n')"
   ssh_cmd=(ssh -o BatchMode=yes)
   if [[ -n "$SSH_PROXY_COMMAND" ]]; then
     ssh_cmd+=(-o "ProxyCommand=$SSH_PROXY_COMMAND")

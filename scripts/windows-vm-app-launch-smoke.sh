@@ -16,7 +16,7 @@ mkdir -p "$ARTIFACT_ROOT"
 run_ps() {
   local script="$1"
   local encoded
-  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64)"
+  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64 | tr -d '\n')"
   ssh "$SSH_HOST" powershell.exe -NoProfile -EncodedCommand "$encoded"
 }
 

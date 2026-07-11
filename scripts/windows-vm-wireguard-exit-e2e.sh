@@ -10,7 +10,7 @@ GUEST_FIPS_REPO="${NVPN_WINDOWS_GUEST_FIPS_REPO_PATH:-C:\\src\\fips}"
 run_ps() {
   local script="$1"
   local encoded
-  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64)"
+  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64 | tr -d '\n')"
   ssh "$SSH_HOST" powershell.exe -NoProfile -EncodedCommand "$encoded"
 }
 

@@ -24,7 +24,7 @@ mkdir -p "$ARTIFACT_ROOT"
 run_ps() {
   local script="$1"
   local encoded
-  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64)"
+  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64 | tr -d '\n')"
   ssh "$SSH_HOST" powershell.exe -NoProfile -EncodedCommand "$encoded"
 }
 
@@ -49,7 +49,7 @@ pull_guest_file() {
   local local_path="$2"
   local encoded script
   script="[Console]::Out.Write([Convert]::ToBase64String([IO.File]::ReadAllBytes($(ps_single_quote "$guest_path"))))"
-  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64)"
+  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64 | tr -d '\n')"
   mkdir -p "$(dirname "$local_path")"
   ssh "$SSH_HOST" powershell.exe -NoProfile -EncodedCommand "$encoded" | decode_base64_to_file "$local_path"
 }
