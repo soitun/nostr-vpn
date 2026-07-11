@@ -41,16 +41,27 @@ fn validate_args(args: &WebvmGuestArgs) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "linux", test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WebvmGuestMode {
+    FipsOnly,
+    Vpn,
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn webvm_guest_mode(app: &AppConfig) -> WebvmGuestMode {
+    if app.active_network_opt().is_some() {
+        WebvmGuestMode::Vpn
+    } else {
+        WebvmGuestMode::FipsOnly
+    }
+}
+
 #[cfg(target_os = "linux")]
 async fn run_linux(args: WebvmGuestArgs) -> Result<()> {
     validate_ethernet_underlay_is_layer2_only(args.ethernet_interface.trim())?;
     let app = load_or_initialize_config(&args.config)?;
-    if app.active_network_opt().is_none() {
-        return Err(anyhow!(
-            "WebVM guest has no network; import a normal nvpn://invite with `nvpn import-invite --config {}` first",
-            args.config.display()
-        ));
-    }
+    let mode = webvm_guest_mode(&app);
     let shared = crate::fips_private_mesh::bind_local_ethernet_shared_endpoint(
         app.nostr.secret_key.clone(),
         args.ethernet_interface.trim(),
@@ -68,7 +79,29 @@ async fn run_linux(args: WebvmGuestArgs) -> Result<()> {
                 return Err(error);
             }
         };
+    if mode == WebvmGuestMode::FipsOnly {
+        return run_fips_only(shared, host_network).await;
+    }
     run_tunnel(&args, app, shared, host_network).await
+}
+
+#[cfg(target_os = "linux")]
+async fn run_fips_only(
+    shared: crate::fips_private_mesh::FipsSharedEndpoint,
+    host_network: crate::fips_private_mesh::WebvmFipsHostNetworkRuntime,
+) -> Result<()> {
+    let endpoint = Arc::clone(shared.endpoint());
+    println!("webvm-guest: waiting for a Nostr VPN invite; .fips remains active");
+    let run_result = tokio::signal::ctrl_c()
+        .await
+        .context("failed to wait for WebVM guest shutdown");
+    let host_result = host_network.stop().await;
+    let endpoint_result = endpoint.shutdown().await;
+    drop(shared);
+
+    run_result?;
+    host_result.context("failed to stop WebVM .fips host network")?;
+    endpoint_result.context("failed to stop WebVM FIPS endpoint")
 }
 
 #[cfg(target_os = "linux")]
@@ -365,6 +398,8 @@ mod tests {
         assert!(second.networks.is_empty());
         assert!(first.pending_nostr_join_request.is_none());
         assert!(second.pending_nostr_join_request.is_none());
+        assert_eq!(webvm_guest_mode(&first), WebvmGuestMode::FipsOnly);
+        assert_eq!(webvm_guest_mode(&second), WebvmGuestMode::FipsOnly);
 
         AppConfig::delete_persisted_secrets_for_path(&path).expect("delete secrets");
         let _ = fs::remove_file(path);
