@@ -88,7 +88,7 @@ impl WebvmFipsHostNetworkRuntime {
         let outbound_task = tokio::spawn(async move {
             while let Some(packet) = tun_outbound_rx.recv().await {
                 if let Err(error) = outbound_endpoint.send_ip_packet(packet).await {
-                    eprintln!("webvm-guest: failed to send .fips IPv6 packet: {error}");
+                    eprintln!("webvm: failed to send .fips IPv6 packet: {error}");
                     break;
                 }
             }
@@ -109,7 +109,7 @@ impl WebvmFipsHostNetworkRuntime {
             dns_exit_peer,
         ));
 
-        println!("webvm-guest: .fips IPv6 and DNS active on {iface} before pairing");
+        println!("webvm: .fips IPv6 and DNS active on {iface} before approval");
         Ok(Self {
             stop,
             exit_peer,
@@ -228,7 +228,7 @@ fn spawn_webvm_fips_tun_reader(
                     Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
                     Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                     Err(error) => {
-                        eprintln!("webvm-guest: .fips TUN read failed: {error}");
+                        eprintln!("webvm: .fips TUN read failed: {error}");
                         return;
                     }
                 }
@@ -286,7 +286,7 @@ async fn run_webvm_fips_dns(
                 // TODO(fips): replace this route-seeding payload with a public
                 // FipsEndpoint::register_identity API once FIPS exposes one.
                 if let Err(error) = endpoint.send_batch_to_peer(remote, vec![Vec::new()]).await {
-                    eprintln!("webvm-guest: .fips identity discovery failed: {error}");
+                    eprintln!("webvm: .fips identity discovery failed: {error}");
                 }
             }
             let _ = socket.send_to(&response, source).await;
@@ -304,7 +304,7 @@ async fn run_webvm_fips_dns(
         let response = match exit_dns.resolve(selected_exit, query).await {
             Ok(response) => Some(response),
             Err(error) => {
-                eprintln!("webvm-guest: exit DNS request failed: {error:#}");
+                eprintln!("webvm: exit DNS request failed: {error:#}");
                 nostr_vpn_core::exit_dns::build_exit_dns_servfail_response(query)
             }
         };
@@ -332,7 +332,7 @@ impl WebvmResolverGuard {
             fs::read(path).with_context(|| format!("failed to read {WEBVM_RESOLV_CONF}"))?;
         if let Err(error) = fs::write(
             path,
-            b"# Managed by nvpn webvm-guest\nnameserver 127.0.0.1\noptions timeout:1 attempts:2\n",
+            b"# Managed by nvpn WebVM FIPS\nnameserver 127.0.0.1\noptions timeout:1 attempts:2\n",
         ) {
             let _ = fs::write(path, &previous);
             return Err(error).with_context(|| format!("failed to configure {WEBVM_RESOLV_CONF}"));

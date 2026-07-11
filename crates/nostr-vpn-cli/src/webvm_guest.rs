@@ -443,7 +443,7 @@ async fn pair_over_fips(
     write_pairing_uri(&args.pairing_uri_file, &pairing_uri)?;
 
     println!(
-        "webvm-guest: awaiting approval receipts over Ethernet FIPS service {}",
+        "webvm: awaiting approval receipts over Ethernet FIPS service {}",
         args.join_pubsub_port
     );
     let mut client = NostrJoinFipsPubsubClient::new(app)?;
@@ -502,7 +502,7 @@ async fn wait_for_approval(
                         destination_port: datagram.destination_port,
                         payload: datagram.data.as_ref().to_vec(),
                     };
-                    println!("webvm-guest: received approval candidate over FIPS");
+                    println!("webvm: received approval candidate over FIPS");
                     let mut candidate = app.clone();
                     if let Some(applied) = client.ingest_datagram(
                         &mut candidate,
@@ -515,7 +515,7 @@ async fn wait_for_approval(
                         })?;
                         *app = candidate;
                         println!(
-                            "webvm-guest: approval applied for network {} by {}",
+                            "webvm: approval applied for network {} by {}",
                             applied.network_id,
                             applied.approved_by_pubkey,
                         );
@@ -660,7 +660,7 @@ async fn run_tunnel(
         return Err(error);
     }
     println!(
-        "webvm-guest: Nostr VPN tunnel {} over Ethernet {}",
+        "webvm: Nostr VPN tunnel {} over Ethernet {}",
         runtime.iface(),
         args.ethernet_interface
     );
@@ -678,10 +678,10 @@ async fn run_tunnel(
             _ = heartbeat.tick() => {
                 let network_id = app.effective_network_id();
                 if let Err(error) = runtime.ping_peers(&network_id, unix_timestamp()).await {
-                    eprintln!("webvm-guest: FIPS peer ping failed: {error}");
+                    eprintln!("webvm: FIPS peer ping failed: {error}");
                 }
                 if let Err(error) = runtime.refresh_link_statuses().await {
-                    eprintln!("webvm-guest: FIPS link snapshot failed: {error}");
+                    eprintln!("webvm: FIPS link snapshot failed: {error}");
                 }
                 match drain_fips_mesh_events(
                     &mut runtime,
@@ -699,10 +699,10 @@ async fn run_tunnel(
                         }
                     }
                     Ok(_) => {}
-                    Err(error) => eprintln!("webvm-guest: FIPS event handling failed: {error}"),
+                    Err(error) => eprintln!("webvm: FIPS event handling failed: {error}"),
                 }
                 if let Err(error) = runtime.refresh_peer_dependent_routes().await {
-                    eprintln!("webvm-guest: route refresh failed: {error}");
+                    eprintln!("webvm: route refresh failed: {error}");
                 }
             }
         }

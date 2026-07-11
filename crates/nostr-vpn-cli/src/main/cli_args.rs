@@ -75,7 +75,7 @@ enum Command {
     /// Run a FIPS private mesh session from config.
     Connect(ConnectArgs),
     /// Run the Ethernet-only guest runtime used by WebVM.
-    #[command(name = "webvm-guest")]
+    #[command(name = "webvm-guest", hide = true)]
     WebvmGuest(WebvmGuestArgs),
     /// Show this device's join-request link and QR, then wait for approval.
     #[command(name = "join-request")]
