@@ -33,7 +33,7 @@ fn unique_temp_config_path(name: &str) -> std::path::PathBuf {
 
 fn pending_joiner() -> AppConfig {
     let mut config = AppConfig::generated_without_networks();
-    config.node_name = "Pixel Phone".to_string();
+    config.node_name = "Pixel 10 Pro Device".to_string();
     config
         .ensure_pending_nostr_join_request(REQUESTED_AT)
         .expect("create pending join request");
@@ -149,6 +149,7 @@ fn pending_join_request_is_secure_and_stable_across_reload() {
         .as_ref()
         .expect("pending request")
         .clone();
+    assert_eq!(pending.request.label.as_deref(), Some("Pixel 10 Pro Dev"));
 
     config.save(&path).expect("save config");
     let raw = fs::read_to_string(&path).expect("read persisted config");

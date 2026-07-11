@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use nostr_identity::{
-    NostrIdentityDeviceApprovalReceipt, nostr_identity_device_approval_relay_resource,
-    nostr_identity_device_approval_request_relays,
+    NOSTR_IDENTITY_DEVICE_APPROVAL_LABEL_MAX_BYTES, NostrIdentityDeviceApprovalReceipt,
+    nostr_identity_device_approval_relay_resource, nostr_identity_device_approval_request_relays,
     parse_nostr_identity_device_approval_receipt_event_for_bootstrap,
 };
 use nostr_sdk::prelude::{Event, JsonUtil, Keys};
@@ -125,7 +125,7 @@ impl AppConfig {
         }
         let requested_at =
             i64::try_from(requested_at).context("pending join request timestamp overflows i64")?;
-        let node_name = self.node_name.trim();
+        let node_name = bounded_device_approval_label(&self.node_name);
         let local = create_nostr_identity_device_approval_request(
             &device_keys,
             CreateNostrIdentityDeviceApprovalRequestOptions {
@@ -142,7 +142,7 @@ impl AppConfig {
                 expires_at: None,
                 profile_id: self.nostr.identity_profile_id,
                 admin_app_key_pubkey: None,
-                label: (!node_name.is_empty()).then(|| node_name.to_string()),
+                label: node_name,
             },
         )
         .map_err(|error| anyhow!("failed to create pending join request: {error}"))?;
@@ -254,6 +254,20 @@ impl AppConfig {
         };
         Ok((updated, applied))
     }
+}
+
+fn bounded_device_approval_label(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return None;
+    }
+    let mut end = value
+        .len()
+        .min(NOSTR_IDENTITY_DEVICE_APPROVAL_LABEL_MAX_BYTES);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    Some(value[..end].trim_end().to_string())
 }
 
 fn verify_nostr_join_approval_events(
