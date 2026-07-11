@@ -59,7 +59,11 @@ public partial class App : System.Windows.Application
             {
                 currentVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "0.0.0";
             }
-            var check = await service.CheckAsync(currentVersion);
+            var configPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "Nostr VPN",
+                "config.toml");
+            var check = await service.CheckAsync(currentVersion, configPath);
             string? downloadedPath = null;
             long? downloadedBytes = null;
             if (install)
@@ -68,7 +72,7 @@ public partial class App : System.Windows.Application
                 {
                     throw new InvalidOperationException("no Windows update asset selected");
                 }
-                downloadedPath = await service.DownloadWithCoreAsync(currentVersion);
+                downloadedPath = await service.DownloadWithCoreAsync(currentVersion, configPath);
                 downloadedBytes = new FileInfo(downloadedPath).Length;
             }
             ok = true;

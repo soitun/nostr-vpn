@@ -103,7 +103,9 @@ fn run_update_e2e(install: bool) -> Result<serde_json::Value, String> {
         .ok()
         .filter(|value| !value.trim().is_empty())
         .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
-    let check = updater::check_blocking(&current_version)?;
+    let config_path = PathBuf::from(default_data_dir()).join("config.toml");
+    let config_path = config_path.to_string_lossy();
+    let check = updater::check_blocking(&current_version, &config_path)?;
     let mut downloaded_path = None;
     let mut executable = None;
     if install {
@@ -111,7 +113,7 @@ fn run_update_e2e(install: bool) -> Result<serde_json::Value, String> {
             .asset
             .as_ref()
             .ok_or_else(|| "no Linux update asset selected".to_string())?;
-        let path = updater::download_blocking(asset)?;
+        let path = updater::download_blocking(asset, &config_path)?;
         executable = std::fs::metadata(&path).ok().map(|metadata| {
             #[cfg(unix)]
             {

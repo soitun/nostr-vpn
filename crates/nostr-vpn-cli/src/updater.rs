@@ -4,11 +4,11 @@ use std::process::Command;
 
 use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::updater::{
-    ProductUpdateMode, ProductUpdateResult, ProductUpdateSource, check_product_update,
-    download_product_update,
+    ProductUpdateMode, ProductUpdateResult, ProductUpdateSource, check_product_update_with_cache,
+    download_product_update_with_cache, update_event_cache_path,
 };
 
-use super::{PRODUCT_VERSION, UpdateArgs, UpdateSource};
+use super::{PRODUCT_VERSION, UpdateArgs, UpdateSource, default_config_path};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum UpdateMode {
@@ -39,14 +39,27 @@ impl UpdateMode {
 pub(crate) async fn run_update(args: UpdateArgs) -> Result<()> {
     let mode = UpdateMode::from_args(&args);
     let source = core_source(args.source);
+    let event_cache_path = update_event_cache_path(&default_config_path());
 
     if args.check {
-        let check = check_product_update(PRODUCT_VERSION, mode.core(), source).await?;
+        let check = check_product_update_with_cache(
+            PRODUCT_VERSION,
+            mode.core(),
+            source,
+            Some(&event_cache_path),
+        )
+        .await?;
         print_update_check(mode, &check, args.json)?;
         return Ok(());
     }
 
-    let check = check_product_update(PRODUCT_VERSION, mode.core(), source).await?;
+    let check = check_product_update_with_cache(
+        PRODUCT_VERSION,
+        mode.core(),
+        source,
+        Some(&event_cache_path),
+    )
+    .await?;
     if !check.available && !args.force {
         print_up_to_date(mode, &check, args.json)?;
         return Ok(());
@@ -54,9 +67,14 @@ pub(crate) async fn run_update(args: UpdateArgs) -> Result<()> {
 
     let temp_dir = create_temp_dir("nvpn-update")?;
     let download_parent = args.download_dir.as_deref().unwrap_or(&temp_dir);
-    let download =
-        download_product_update(PRODUCT_VERSION, mode.core(), source, Some(download_parent))
-            .await?;
+    let download = download_product_update_with_cache(
+        PRODUCT_VERSION,
+        mode.core(),
+        source,
+        Some(download_parent),
+        Some(&event_cache_path),
+    )
+    .await?;
     let archive_path = download
         .path
         .as_deref()

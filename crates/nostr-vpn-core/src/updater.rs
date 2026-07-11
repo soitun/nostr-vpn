@@ -6,13 +6,19 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use hashtree_updater::{
     ProductAssetPolicy, SecureNostrBlossomConfig, SecureNostrBlossomSelection, UpdateAsset,
-    UpdateManifest, build_secure_nostr_blossom_updater, current_archive_target, dedupe_nonempty,
+    UpdateManifest, build_secure_nostr_blossom_updater,
+    build_secure_nostr_blossom_updater_with_events, current_archive_target, dedupe_nonempty,
     download_product_selection, env_csv, platform_app_asset_suffixes,
     preferred_app_asset_for_suffixes, preferred_cli_asset_for_target, select_product_update,
     selected_download_path as shared_selected_download_path, update_ref_from_override,
 };
-pub use hashtree_updater::{ProductUpdateMode, SECURE_SOURCE_NAME, UpdateAutoCheckPolicy};
+pub use hashtree_updater::{
+    ProductUpdateMode, SECURE_SOURCE_NAME, UpdateAutoCheckPolicy, UpdateRef,
+};
+use nostr_sdk::prelude::{Event, PublicKey, TagStandard};
 use serde::{Deserialize, Serialize};
+
+use crate::control_pubsub::{HASHTREE_LEGACY_ROOT_KIND, HASHTREE_ROOT_KIND};
 
 pub const GITHUB_LATEST_RELEASE_URL: &str =
     "https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest";
@@ -92,11 +98,25 @@ pub fn check_product_update_blocking(
     mode: ProductUpdateMode,
     source: ProductUpdateSource,
 ) -> Result<ProductUpdateResult> {
+    check_product_update_blocking_with_cache(current_version, mode, source, None)
+}
+
+pub fn check_product_update_blocking_with_cache(
+    current_version: &str,
+    mode: ProductUpdateMode,
+    source: ProductUpdateSource,
+    event_cache_path: Option<&Path>,
+) -> Result<ProductUpdateResult> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to start update runtime")?;
-    runtime.block_on(check_product_update(current_version, mode, source))
+    runtime.block_on(check_product_update_with_cache(
+        current_version,
+        mode,
+        source,
+        event_cache_path,
+    ))
 }
 
 pub async fn check_product_update(
@@ -104,7 +124,16 @@ pub async fn check_product_update(
     mode: ProductUpdateMode,
     source: ProductUpdateSource,
 ) -> Result<ProductUpdateResult> {
-    let selection = select_update(current_version, mode, source).await?;
+    check_product_update_with_cache(current_version, mode, source, None).await
+}
+
+pub async fn check_product_update_with_cache(
+    current_version: &str,
+    mode: ProductUpdateMode,
+    source: ProductUpdateSource,
+    event_cache_path: Option<&Path>,
+) -> Result<ProductUpdateResult> {
+    let selection = select_update(current_version, mode, source, event_cache_path).await?;
     Ok(result_from_selection(current_version, &selection, None))
 }
 
@@ -114,15 +143,26 @@ pub fn download_product_update_blocking(
     source: ProductUpdateSource,
     download_dir: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
+    download_product_update_blocking_with_cache(current_version, mode, source, download_dir, None)
+}
+
+pub fn download_product_update_blocking_with_cache(
+    current_version: &str,
+    mode: ProductUpdateMode,
+    source: ProductUpdateSource,
+    download_dir: Option<&Path>,
+    event_cache_path: Option<&Path>,
+) -> Result<ProductUpdateResult> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .context("failed to start update runtime")?;
-    runtime.block_on(download_product_update(
+    runtime.block_on(download_product_update_with_cache(
         current_version,
         mode,
         source,
         download_dir,
+        event_cache_path,
     ))
 }
 
@@ -132,7 +172,17 @@ pub async fn download_product_update(
     source: ProductUpdateSource,
     download_dir: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
-    let selection = select_update(current_version, mode, source).await?;
+    download_product_update_with_cache(current_version, mode, source, download_dir, None).await
+}
+
+pub async fn download_product_update_with_cache(
+    current_version: &str,
+    mode: ProductUpdateMode,
+    source: ProductUpdateSource,
+    download_dir: Option<&Path>,
+    event_cache_path: Option<&Path>,
+) -> Result<ProductUpdateResult> {
+    let selection = select_update(current_version, mode, source, event_cache_path).await?;
     let destination = download_selection(&selection, download_dir).await?;
     Ok(result_from_selection(
         current_version,
@@ -145,12 +195,13 @@ async fn select_update(
     current_version: &str,
     mode: ProductUpdateMode,
     source: ProductUpdateSource,
+    event_cache_path: Option<&Path>,
 ) -> Result<UpdateSelection> {
     if !should_use_secure_hashtree(source) {
         return legacy_selection(current_version, source, mode).map(UpdateSelection::Legacy);
     }
 
-    let secure = secure_selection(current_version, mode).await;
+    let secure = secure_selection(current_version, mode, event_cache_path).await;
     let selection = match secure {
         Ok(selection) => selection,
         Err(error) if should_try_github_fallback(source, false) => {
@@ -205,10 +256,10 @@ fn result_from_selection(
 async fn secure_selection(
     current_version: &str,
     mode: ProductUpdateMode,
+    event_cache_path: Option<&Path>,
 ) -> Result<SecureNostrBlossomSelection> {
-    let updater = build_secure_updater().await?;
-    let reference = update_ref_from_override(None, Some("NVPN_UPDATE_HTREE_REF"), HTREE_UPDATE_REF)
-        .context("invalid update hashtree ref")?;
+    let reference = configured_update_ref()?;
+    let updater = build_secure_updater(event_cache_path, &reference).await?;
     select_product_update(updater, reference, current_version, mode, &asset_policy())
         .await
         .with_context(|| {
@@ -219,9 +270,74 @@ async fn secure_selection(
         })
 }
 
-async fn build_secure_updater() -> Result<hashtree_updater::SecureNostrBlossomUpdater> {
-    build_secure_nostr_blossom_updater(SecureNostrBlossomConfig {
-        relays: update_relays(),
+pub fn configured_update_ref() -> Result<UpdateRef> {
+    update_ref_from_override(None, Some("NVPN_UPDATE_HTREE_REF"), HTREE_UPDATE_REF)
+        .context("invalid update hashtree ref")
+}
+
+#[must_use]
+pub fn update_event_cache_path(config_path: &Path) -> PathBuf {
+    config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("control-pubsub-events.json")
+}
+
+#[derive(Deserialize)]
+struct CachedPubsubEvents {
+    events: Vec<Event>,
+}
+
+fn load_cached_update_root_events(path: &Path, reference: &UpdateRef) -> Result<Vec<Event>> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let cached: CachedPubsubEvents = serde_json::from_slice(&bytes)
+        .with_context(|| format!("failed to decode {}", path.display()))?;
+    let author = PublicKey::parse(&reference.npub)
+        .with_context(|| format!("invalid update publisher {}", reference.npub))?;
+    let latest = cached
+        .events
+        .into_iter()
+        .filter(|event| event.verify().is_ok())
+        .filter(|event| {
+            matches!(
+                u16::from(event.kind),
+                HASHTREE_ROOT_KIND | HASHTREE_LEGACY_ROOT_KIND
+            ) && event.pubkey == author
+                && event.tags.iter().any(|tag| {
+                    matches!(
+                        tag.as_standardized(),
+                        Some(TagStandard::Identifier(identifier))
+                            if identifier == &reference.tree_name
+                    )
+                })
+        })
+        .max_by_key(|event| (event.created_at, event.id));
+    Ok(latest.into_iter().collect())
+}
+
+async fn build_secure_updater(
+    event_cache_path: Option<&Path>,
+    reference: &UpdateRef,
+) -> Result<hashtree_updater::SecureNostrBlossomUpdater> {
+    let cached_events = match event_cache_path {
+        Some(path) => load_cached_update_root_events(path, reference).unwrap_or_else(|error| {
+            tracing::warn!(%error, path = %path.display(), "ignored invalid update-root pubsub cache");
+            Vec::new()
+        }),
+        None => Vec::new(),
+    };
+    let config = SecureNostrBlossomConfig {
+        relays: if cached_events.is_empty() {
+            update_relays()
+        } else {
+            Vec::new()
+        },
         manifest_timeout: Duration::from_secs(
             UPDATE_MANIFEST_TIMEOUT_SECS.parse::<u64>().unwrap_or(8),
         ),
@@ -229,9 +345,16 @@ async fn build_secure_updater() -> Result<hashtree_updater::SecureNostrBlossomUp
             UPDATE_DOWNLOAD_TIMEOUT_SECS.parse::<u64>().unwrap_or(180),
         ),
         blossom_read_servers: blossom_read_servers(),
-    })
-    .await
-    .context("failed to connect to Nostr release relays")
+    };
+    if cached_events.is_empty() {
+        build_secure_nostr_blossom_updater(config)
+            .await
+            .context("failed to connect to Nostr release relays")
+    } else {
+        build_secure_nostr_blossom_updater_with_events(config, cached_events)
+            .await
+            .context("failed to load decentralized update-root events")
+    }
 }
 
 fn legacy_selection(
@@ -515,6 +638,7 @@ fn version_parts(value: &str) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr_sdk::prelude::{EventBuilder, Keys, Kind, Tag, TagKind, ToBech32};
 
     #[test]
     fn auto_source_checks_htree_before_github() {
@@ -558,5 +682,60 @@ mod tests {
             ),
             "https://example.invalid/latest/assets/nvpn.tgz"
         );
+    }
+
+    #[test]
+    fn cached_pubsub_roots_are_verified_filtered_and_replaceable() {
+        let publisher = Keys::generate();
+        let other = Keys::generate();
+        let reference = UpdateRef {
+            npub: publisher.public_key().to_bech32().expect("npub"),
+            tree_name: "releases/test-app".to_string(),
+            path: Some("latest".to_string()),
+        };
+        let root = |keys: &Keys, created_at: u64, hash: &str| {
+            EventBuilder::new(Kind::Custom(HASHTREE_ROOT_KIND), "")
+                .tags([
+                    Tag::identifier("releases/test-app"),
+                    Tag::custom(TagKind::Custom("l".into()), ["hashtree"]),
+                    Tag::custom(TagKind::Custom("hash".into()), [hash]),
+                ])
+                .custom_created_at(nostr_sdk::Timestamp::from_secs(created_at))
+                .sign_with_keys(keys)
+                .expect("signed root")
+        };
+        let older = root(
+            &publisher,
+            1_700_000_000,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        let newer = root(
+            &publisher,
+            1_700_000_001,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+        let unrelated = root(
+            &other,
+            1_700_000_002,
+            "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        );
+        let directory =
+            std::env::temp_dir().join(format!("nvpn-update-roots-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("cache directory");
+        let path = directory.join("control-pubsub-events.json");
+        std::fs::write(
+            &path,
+            serde_json::to_vec(&serde_json::json!({
+                "version": 1,
+                "events": [older, unrelated, newer],
+            }))
+            .expect("cache JSON"),
+        )
+        .expect("write cache");
+
+        let events = load_cached_update_root_events(&path, &reference).expect("load roots");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].created_at.as_secs(), 1_700_000_001);
+        let _ = std::fs::remove_dir_all(directory);
     }
 }

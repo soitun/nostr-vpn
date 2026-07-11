@@ -113,6 +113,20 @@ fn control_pubsub_rejects_non_control_event_kinds() {
 }
 
 #[test]
+fn control_pubsub_accepts_hashtree_update_root_kinds() {
+    let peers = [peer("peer")];
+    for kind in [30_064, 30_078] {
+        let mut mesh = ControlPubsubMesh::new(ControlPubsubOptions::default());
+        assert_eq!(
+            mesh.publish(signed_event(kind, "hashtree root"), &peers, 1_000)
+                .expect("update roots belong on the control mesh")
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
 fn relay_echo_does_not_reannounce_an_event() {
     let mut mesh = ControlPubsubMesh::new(ControlPubsubOptions::default());
     let event = signed_event(37_195, "peer advert");

@@ -122,7 +122,7 @@ fn drain_tray_commands(app: &AppRef) {
 }
 
 fn check_updates(app: &AppRef, manual: bool) {
-    let (current_version, sender) = {
+    let (current_version, config_path, sender) = {
         let mut model = app.borrow_mut();
         if model.update.checking || model.update.downloading {
             return;
@@ -136,10 +136,14 @@ fn check_updates(app: &AppRef, manual: bool) {
         if manual {
             model.update.status = "Checking for updates".to_string();
         }
-        (model.state.app_version.clone(), model.update_sender.clone())
+        (
+            model.state.app_version.clone(),
+            model.state.config_path.clone(),
+            model.update_sender.clone(),
+        )
     };
     render(app);
-    updater::check(current_version, manual, sender);
+    updater::check(current_version, config_path, manual, sender);
 }
 
 fn check_updates_if_due(app: &AppRef) {
@@ -153,7 +157,7 @@ fn check_updates_if_due(app: &AppRef) {
 }
 
 fn download_update(app: &AppRef) {
-    let (asset, sender) = {
+    let (asset, config_path, sender) = {
         let mut model = app.borrow_mut();
         if model.update.checking || model.update.downloading {
             return;
@@ -165,10 +169,14 @@ fn download_update(app: &AppRef) {
         };
         model.update.downloading = true;
         model.update.status = format!("Downloading {}", model.update.version);
-        (asset, model.update_sender.clone())
+        (
+            asset,
+            model.state.config_path.clone(),
+            model.update_sender.clone(),
+        )
     };
     render(app);
-    updater::download(asset, sender);
+    updater::download(asset, config_path, sender);
 }
 
 fn drain_update_events(app: &AppRef) {

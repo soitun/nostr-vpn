@@ -6,9 +6,9 @@ public sealed class UpdateService
 {
     public static bool SkipOpen => Environment.GetEnvironmentVariable("NVPN_UPDATE_SKIP_OPEN") == "1";
 
-    public async Task<UpdateResult> CheckAsync(string currentVersion)
+    public async Task<UpdateResult> CheckAsync(string currentVersion, string configPath)
     {
-        var update = await Task.Run(() => AppCoreClient.CheckUpdate(currentVersion));
+        var update = await Task.Run(() => AppCoreClient.CheckUpdate(currentVersion, configPath));
         var assetUrl = string.IsNullOrWhiteSpace(update.Url) ? null : new Uri(update.Url);
         var hasAsset = !string.IsNullOrWhiteSpace(update.Asset);
         var installable = update.Available && hasAsset && update.Verified;
@@ -30,7 +30,7 @@ public sealed class UpdateService
             UseCoreDownload: installable);
     }
 
-    public async Task<string> DownloadWithCoreAsync(string currentVersion)
+    public async Task<string> DownloadWithCoreAsync(string currentVersion, string configPath)
     {
         var downloadDir = Environment.GetEnvironmentVariable("NVPN_UPDATE_DOWNLOAD_DIR");
         if (string.IsNullOrWhiteSpace(downloadDir))
@@ -39,7 +39,7 @@ public sealed class UpdateService
         }
         Directory.CreateDirectory(downloadDir);
 
-        var update = await Task.Run(() => AppCoreClient.DownloadUpdate(currentVersion, downloadDir));
+        var update = await Task.Run(() => AppCoreClient.DownloadUpdate(currentVersion, downloadDir, configPath));
         if (!update.Verified)
         {
             throw new InvalidOperationException($"Refusing to install unverified update from {update.Source}");

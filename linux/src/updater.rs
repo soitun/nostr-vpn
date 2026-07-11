@@ -6,8 +6,8 @@ use std::sync::mpsc::Sender;
 use std::thread;
 
 use nostr_vpn_core::updater::{
-    check_product_update_blocking, download_product_update_blocking, ProductUpdateMode,
-    ProductUpdateSource,
+    ProductUpdateMode, ProductUpdateSource, check_product_update_blocking_with_cache,
+    download_product_update_blocking_with_cache, update_event_cache_path,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -47,25 +47,33 @@ pub struct UpdateCheck {
     pub verified: bool,
 }
 
-pub fn check(current_version: String, manual: bool, sender: Sender<UpdateEvent>) {
+pub fn check(
+    current_version: String,
+    config_path: String,
+    manual: bool,
+    sender: Sender<UpdateEvent>,
+) {
     thread::spawn(move || {
-        let result = check_blocking(&current_version).map_err(|error| error.to_string());
+        let result =
+            check_blocking(&current_version, &config_path).map_err(|error| error.to_string());
         let _ = sender.send(UpdateEvent::Checked { manual, result });
     });
 }
 
-pub fn download(asset: ReleaseAsset, sender: Sender<UpdateEvent>) {
+pub fn download(asset: ReleaseAsset, config_path: String, sender: Sender<UpdateEvent>) {
     thread::spawn(move || {
-        let result = download_blocking(&asset).map_err(|error| error.to_string());
+        let result = download_blocking(&asset, &config_path).map_err(|error| error.to_string());
         let _ = sender.send(UpdateEvent::Downloaded(result));
     });
 }
 
-pub fn check_blocking(current_version: &str) -> Result<UpdateCheck, String> {
-    let result = check_product_update_blocking(
+pub fn check_blocking(current_version: &str, config_path: &str) -> Result<UpdateCheck, String> {
+    let event_cache_path = update_event_cache_path(Path::new(config_path));
+    let result = check_product_update_blocking_with_cache(
         current_version,
         ProductUpdateMode::App,
         ProductUpdateSource::Auto,
+        Some(&event_cache_path),
     )
     .map_err(|error| error.to_string())?;
     let source = result.source.clone();
@@ -85,7 +93,7 @@ pub fn check_blocking(current_version: &str) -> Result<UpdateCheck, String> {
     })
 }
 
-pub fn download_blocking(asset: &ReleaseAsset) -> Result<PathBuf, String> {
+pub fn download_blocking(asset: &ReleaseAsset, config_path: &str) -> Result<PathBuf, String> {
     if !asset.verified {
         return Err(format!(
             "Refusing to install unverified update from {}",
@@ -93,11 +101,13 @@ pub fn download_blocking(asset: &ReleaseAsset) -> Result<PathBuf, String> {
         ));
     }
     let download_dir = update_download_dir();
-    let result = download_product_update_blocking(
+    let event_cache_path = update_event_cache_path(Path::new(config_path));
+    let result = download_product_update_blocking_with_cache(
         "0.0.0",
         ProductUpdateMode::App,
         ProductUpdateSource::Auto,
         Some(&download_dir),
+        Some(&event_cache_path),
     )
     .map_err(|error| error.to_string())?;
     if !result.verified {

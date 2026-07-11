@@ -14,6 +14,11 @@ pub const CONTROL_PUBSUB_MAX_EVENT_BYTES: usize = 56 * 1024;
 pub const FIPS_PEER_ADVERT_KIND: u16 = 37_195;
 pub const PAID_EXIT_OFFER_KIND: u16 = 37_196;
 pub const RATING_FACT_KIND: u16 = 7_368;
+pub const HASHTREE_ROOT_KIND: u16 = 30_064;
+pub const HASHTREE_LEGACY_ROOT_KIND: u16 = 30_078;
+pub const NVPN_UPDATE_PUBLISHER_NPUB: &str =
+    "npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm";
+pub const NVPN_UPDATE_TREE_NAME: &str = "releases/nostr-vpn";
 
 const DEFAULT_ROUTE_TTL_MS: u64 = 2 * 60 * 1_000;
 const DEFAULT_EVENT_TTL_MS: u64 = 10 * 60 * 1_000;
@@ -83,6 +88,8 @@ impl Default for ControlPubsubOptions {
                 FIPS_PEER_ADVERT_KIND,
                 PAID_EXIT_OFFER_KIND,
                 RATING_FACT_KIND,
+                HASHTREE_ROOT_KIND,
+                HASHTREE_LEGACY_ROOT_KIND,
             ]),
         }
     }
@@ -136,5 +143,14 @@ impl ControlPubsubMesh {
 
     pub fn dismiss_peer_frame(&mut self, peer_id: &str, event_id: &str) {
         self.inner.dismiss_frame(peer_id, event_id);
+    }
+
+    pub fn replay_to_peer(
+        &mut self,
+        event: Event,
+        peer_id: &str,
+        now_ms: u64,
+    ) -> Result<Vec<ControlPubsubAction>> {
+        self.inner.replay_to_peer(event, peer_id, now_ms)
     }
 }

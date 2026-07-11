@@ -1152,8 +1152,13 @@ final class AppManager: ObservableObject {
     }
 
     private func fetchUpdateCheck() async throws -> UpdateCheck {
-        let currentVersion = await MainActor.run { self.state.appVersion }
-        let result = try await runCoreUpdateCheck(currentVersion: currentVersion)
+        let (currentVersion, configPath) = await MainActor.run {
+            (self.state.appVersion, self.state.configPath)
+        }
+        let result = try await runCoreUpdateCheck(
+            currentVersion: currentVersion,
+            configPath: configPath
+        )
         let asset = result.asset.isEmpty ? nil : ReleaseAsset(name: result.asset, path: result.url ?? "")
         return UpdateCheck(
             manifest: ReleaseManifest(tag: result.tag, assets: asset.map { [$0] } ?? []),
@@ -1203,10 +1208,13 @@ final class AppManager: ObservableObject {
             do {
                 let downloadDir = FileManager.default.temporaryDirectory
                     .appendingPathComponent("NostrVpnDownloads", isDirectory: true)
-                let currentVersion = await MainActor.run { self.state.appVersion }
+                let (currentVersion, configPath) = await MainActor.run {
+                    (self.state.appVersion, self.state.configPath)
+                }
                 let result = try await runCoreUpdateDownload(
                     currentVersion: currentVersion,
-                    downloadDir: downloadDir
+                    downloadDir: downloadDir,
+                    configPath: configPath
                 )
                 guard result.verified else {
                     throw UpdateError.unverifiedSource(result.source)
@@ -2416,53 +2424,63 @@ private func moveDownloadedUpdate(_ downloadedUrl: URL, from assetUrl: URL) thro
     return destination
 }
 
-@_silgen_name("nostr_vpn_update_check_json")
-private func nostrVpnUpdateCheckJson(
-    _ currentVersion: UnsafePointer<CChar>?,
-    _ mode: UnsafePointer<CChar>?,
-    _ source: UnsafePointer<CChar>?
-) -> UnsafeMutablePointer<CChar>?
-
-@_silgen_name("nostr_vpn_update_download_json")
-private func nostrVpnUpdateDownloadJson(
+@_silgen_name("nostr_vpn_update_check_with_config_json")
+private func nostrVpnUpdateCheckWithConfigJson(
     _ currentVersion: UnsafePointer<CChar>?,
     _ mode: UnsafePointer<CChar>?,
     _ source: UnsafePointer<CChar>?,
-    _ downloadDir: UnsafePointer<CChar>?
+    _ configPath: UnsafePointer<CChar>?
+) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("nostr_vpn_update_download_with_config_json")
+private func nostrVpnUpdateDownloadWithConfigJson(
+    _ currentVersion: UnsafePointer<CChar>?,
+    _ mode: UnsafePointer<CChar>?,
+    _ source: UnsafePointer<CChar>?,
+    _ downloadDir: UnsafePointer<CChar>?,
+    _ configPath: UnsafePointer<CChar>?
 ) -> UnsafeMutablePointer<CChar>?
 
 @_silgen_name("nostr_vpn_string_free")
 private func nostrVpnStringFree(_ value: UnsafeMutablePointer<CChar>?)
 
-private func runCoreUpdateCheck(currentVersion: String) async throws -> CoreUpdateResult {
+private func runCoreUpdateCheck(currentVersion: String, configPath: String) async throws -> CoreUpdateResult {
     try await Task.detached {
-        try runCoreUpdateCheckBlocking(currentVersion: currentVersion)
+        try runCoreUpdateCheckBlocking(currentVersion: currentVersion, configPath: configPath)
     }.value
 }
 
-private func runCoreUpdateDownload(currentVersion: String, downloadDir: URL) async throws -> CoreUpdateResult {
+private func runCoreUpdateDownload(currentVersion: String, downloadDir: URL, configPath: String) async throws -> CoreUpdateResult {
     try await Task.detached {
-        try runCoreUpdateDownloadBlocking(currentVersion: currentVersion, downloadDir: downloadDir)
+        try runCoreUpdateDownloadBlocking(
+            currentVersion: currentVersion,
+            downloadDir: downloadDir,
+            configPath: configPath
+        )
     }.value
 }
 
-private func runCoreUpdateCheckBlocking(currentVersion: String) throws -> CoreUpdateResult {
+private func runCoreUpdateCheckBlocking(currentVersion: String, configPath: String) throws -> CoreUpdateResult {
     let json = try currentVersion.withCString { current in
         try "app".withCString { mode in
             try "auto".withCString { source in
-                try takeRustString(nostrVpnUpdateCheckJson(current, mode, source))
+                try configPath.withCString { config in
+                    try takeRustString(nostrVpnUpdateCheckWithConfigJson(current, mode, source, config))
+                }
             }
         }
     }
     return try decodeCoreUpdateResult(json)
 }
 
-private func runCoreUpdateDownloadBlocking(currentVersion: String, downloadDir: URL) throws -> CoreUpdateResult {
+private func runCoreUpdateDownloadBlocking(currentVersion: String, downloadDir: URL, configPath: String) throws -> CoreUpdateResult {
     let json = try currentVersion.withCString { current in
         try "app".withCString { mode in
             try "auto".withCString { source in
                 try downloadDir.path.withCString { dir in
-                    try takeRustString(nostrVpnUpdateDownloadJson(current, mode, source, dir))
+                    try configPath.withCString { config in
+                        try takeRustString(nostrVpnUpdateDownloadWithConfigJson(current, mode, source, dir, config))
+                    }
                 }
             }
         }

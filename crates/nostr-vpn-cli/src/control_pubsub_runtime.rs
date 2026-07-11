@@ -10,14 +10,18 @@ use fips_core::{
 };
 use nostr_pubsub::{EventSource, MeshPeer, MeshPeerPolicy, PolicyDecision};
 use nostr_pubsub_fips::{FipsPubsubPolicy, FipsPubsubPolicyOptions};
-use nostr_sdk::prelude::{Client, Event, Filter, Keys, Kind, RelayPoolNotification};
+use nostr_sdk::prelude::{
+    Alphabet, Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification, SingleLetterTag,
+    TagStandard,
+};
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::control_pubsub::{
     CONTROL_PUBSUB_FIPS_SERVICE_PORT, CONTROL_PUBSUB_MAX_EVENT_BYTES,
     CONTROL_PUBSUB_MAX_WIRE_BYTES, ControlPubsubAction, ControlPubsubCodec, ControlPubsubMesh,
-    ControlPubsubOptions, ControlPubsubWireMessage, FIPS_PEER_ADVERT_KIND, PAID_EXIT_OFFER_KIND,
-    RATING_FACT_KIND,
+    ControlPubsubOptions, ControlPubsubWireMessage, FIPS_PEER_ADVERT_KIND,
+    HASHTREE_LEGACY_ROOT_KIND, HASHTREE_ROOT_KIND, PAID_EXIT_OFFER_KIND, RATING_FACT_KIND,
 };
+use nostr_vpn_core::updater::configured_update_ref;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -163,8 +167,52 @@ struct ControlEventStore {
     order: VecDeque<String>,
 }
 
+#[derive(Clone, Debug)]
+struct UpdateRootSubscription {
+    author: PublicKey,
+    tree_name: String,
+}
+
+impl UpdateRootSubscription {
+    fn configured() -> Result<Self> {
+        let reference = configured_update_ref()?;
+        let author = PublicKey::parse(&reference.npub)
+            .with_context(|| format!("invalid update publisher {}", reference.npub))?;
+        Ok(Self {
+            author,
+            tree_name: reference.tree_name,
+        })
+    }
+
+    fn filter(&self) -> Filter {
+        Filter::new()
+            .kinds([
+                Kind::Custom(HASHTREE_ROOT_KIND),
+                Kind::Custom(HASHTREE_LEGACY_ROOT_KIND),
+            ])
+            .author(self.author)
+            .custom_tag(
+                SingleLetterTag::lowercase(Alphabet::D),
+                self.tree_name.clone(),
+            )
+    }
+
+    fn matches(&self, event: &Event) -> bool {
+        matches!(
+            u16::from(event.kind),
+            HASHTREE_ROOT_KIND | HASHTREE_LEGACY_ROOT_KIND
+        ) && event.pubkey == self.author
+            && event.tags.iter().any(|tag| {
+                matches!(
+                    tag.as_standardized(),
+                    Some(TagStandard::Identifier(identifier)) if identifier == &self.tree_name
+                )
+            })
+    }
+}
+
 impl ControlEventStore {
-    fn load(path: Option<PathBuf>) -> Result<Self> {
+    fn load(path: Option<PathBuf>, update_root: &UpdateRootSubscription) -> Result<Self> {
         let Some(path) = path else {
             return Ok(Self {
                 path: None,
@@ -194,35 +242,61 @@ impl ControlEventStore {
             ));
         }
         for event in saved.events {
-            if event.verify().is_ok() && is_control_kind(u16::from(event.kind)) {
-                store.insert_memory(event);
+            if event.verify().is_ok() && is_control_event(&event, update_root) {
+                let _ = store.insert_memory(event);
             }
         }
         Ok(store)
     }
 
     fn insert(&mut self, event: Event) -> Result<bool> {
-        if self.events.contains_key(&event.id.to_hex()) {
+        if !self.insert_memory(event) {
             return Ok(false);
         }
-        self.insert_memory(event);
         self.persist()?;
         Ok(true)
     }
 
-    fn insert_memory(&mut self, event: Event) {
+    fn insert_memory(&mut self, event: Event) -> bool {
         let event_id = event.id.to_hex();
         if self.events.contains_key(&event_id) {
-            return;
+            return false;
+        }
+        if is_update_root_kind(u16::from(event.kind)) {
+            if self.events.values().any(|stored| {
+                same_replaceable_update_root(stored, &event)
+                    && (stored.created_at, stored.id) >= (event.created_at, event.id)
+            }) {
+                return false;
+            }
+            let replaced = self
+                .events
+                .iter()
+                .filter(|(_, stored)| same_replaceable_update_root(stored, &event))
+                .map(|(event_id, _)| event_id.clone())
+                .collect::<std::collections::HashSet<_>>();
+            self.events
+                .retain(|stored_id, _| !replaced.contains(stored_id));
+            self.order.retain(|stored_id| !replaced.contains(stored_id));
         }
         while self.events.len() >= STORE_MAX_EVENTS {
-            let Some(oldest) = self.order.pop_front() else {
+            let remove_index = self
+                .order
+                .iter()
+                .position(|stored_id| {
+                    self.events
+                        .get(stored_id)
+                        .is_some_and(|stored| !is_update_root_kind(u16::from(stored.kind)))
+                })
+                .unwrap_or(0);
+            let Some(oldest) = self.order.remove(remove_index) else {
                 break;
             };
             self.events.remove(&oldest);
         }
         self.order.push_back(event_id.clone());
         self.events.insert(event_id, event);
+        true
     }
 
     fn snapshot(&self) -> Vec<Event> {
@@ -276,7 +350,7 @@ impl ControlPubsubFipsRuntime {
         if config.mode == NostrPubsubMode::Off {
             return Ok(None);
         }
-        Self::start_inner(endpoint, config, relays, store_path, None).await
+        Self::start_inner(endpoint, config, relays, store_path, None, None).await
     }
 
     pub async fn start_with_peer_policy(
@@ -286,7 +360,15 @@ impl ControlPubsubFipsRuntime {
         store_path: Option<PathBuf>,
         peer_policy: Arc<dyn MeshPeerPolicy>,
     ) -> Result<Option<Self>> {
-        Self::start_inner(endpoint, config, relays, store_path, Some(peer_policy)).await
+        Self::start_inner(
+            endpoint,
+            config,
+            relays,
+            store_path,
+            Some(peer_policy),
+            None,
+        )
+        .await
     }
 
     async fn start_inner(
@@ -295,6 +377,7 @@ impl ControlPubsubFipsRuntime {
         relays: Vec<String>,
         store_path: Option<PathBuf>,
         mut peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
+        update_root_override: Option<UpdateRootSubscription>,
     ) -> Result<Option<Self>> {
         if config.mode == NostrPubsubMode::Off {
             return Ok(None);
@@ -303,12 +386,16 @@ impl ControlPubsubFipsRuntime {
             .register_service_receiver(CONTROL_PUBSUB_FIPS_SERVICE_PORT)
             .await
             .context("failed to register the FIPS control pubsub service")?;
-        let bridge = RelayBridge::start(config.mode, relays).await?;
+        let update_root = match update_root_override {
+            Some(update_root) => update_root,
+            None => UpdateRootSubscription::configured()?,
+        };
+        let bridge = RelayBridge::start(config.mode, relays, &update_root).await?;
         let relay_client = bridge.as_ref().map(|bridge| bridge.client.clone());
         let outbox_path = store_path
             .as_deref()
             .map(control_pubsub_outbox_directory_from_store_path);
-        let event_store = ControlEventStore::load(store_path)?;
+        let event_store = ControlEventStore::load(store_path, &update_root)?;
         let stored_events = event_store.snapshot();
         let pubsub_policy = FipsPubsubPolicy::new(
             Arc::clone(&endpoint),
@@ -330,6 +417,7 @@ impl ControlPubsubFipsRuntime {
                     events: task_events,
                     peer_policy,
                     pubsub_policy,
+                    update_root,
                 },
                 receiver,
                 outbox_path,
@@ -384,7 +472,11 @@ struct RelayBridge {
 }
 
 impl RelayBridge {
-    async fn start(mode: NostrPubsubMode, relays: Vec<String>) -> Result<Option<Self>> {
+    async fn start(
+        mode: NostrPubsubMode,
+        relays: Vec<String>,
+        update_root: &UpdateRootSubscription,
+    ) -> Result<Option<Self>> {
         if mode != NostrPubsubMode::Relay || relays.is_empty() {
             return Ok(None);
         }
@@ -401,6 +493,10 @@ impl RelayBridge {
             .subscribe(Filter::new().kinds(control_kinds()), None)
             .await
             .context("failed to subscribe to control pubsub relays")?;
+        client
+            .subscribe(update_root.filter(), None)
+            .await
+            .context("failed to subscribe to Hashtree update roots")?;
         Ok(Some(Self {
             client,
             notifications,
@@ -421,6 +517,7 @@ struct PubsubRunState {
     events: Arc<Mutex<ControlEventStore>>,
     peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
     pubsub_policy: FipsPubsubPolicy,
+    update_root: UpdateRootSubscription,
 }
 
 #[derive(Clone, Copy)]
@@ -430,6 +527,7 @@ struct PublishContext<'a> {
     bridge: Option<&'a RelayBridge>,
     events: &'a Arc<Mutex<ControlEventStore>>,
     peer_policy: Option<&'a dyn MeshPeerPolicy>,
+    update_root: &'a UpdateRootSubscription,
 }
 
 async fn run(
@@ -445,6 +543,7 @@ async fn run(
         events,
         peer_policy,
         mut pubsub_policy,
+        update_root,
     } = state;
     let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
     let options = ControlPubsubOptions {
@@ -457,6 +556,7 @@ async fn run(
     let codec = ControlPubsubCodec::new(CONTROL_PUBSUB_MAX_WIRE_BYTES);
     let mut datagrams = Vec::with_capacity(RECEIVE_BATCH);
     let mut retries = RetryState::default();
+    let mut replayed_update_roots = HashMap::<String, String>::new();
     let mut retry_tick = tokio::time::interval(RETRY_TICK_INTERVAL);
     retry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
@@ -473,6 +573,7 @@ async fn run(
                         bridge: bridge.as_ref(),
                         events: &events,
                         peer_policy: peer_policy.as_deref(),
+                        update_root: &update_root,
                     },
                     &mut mesh,
                     &mut retries,
@@ -490,6 +591,7 @@ async fn run(
                         bridge: bridge.as_ref(),
                         events: &events,
                         peer_policy: peer_policy.as_deref(),
+                        update_root: &update_root,
                     },
                     &mut mesh,
                     &mut retries,
@@ -520,6 +622,12 @@ async fn run(
                         if let Err(error) = event.verify() {
                             mesh.record_invalid_peer_message(&source);
                             tracing::debug!(%error, %source, "ignored invalid signed control pubsub event");
+                            continue;
+                        }
+                        if !is_control_event(event, &update_root) {
+                            mesh.record_invalid_peer_message(&source);
+                            mesh.dismiss_peer_frame(&source, event_id);
+                            tracing::debug!(%source, event_id, "ignored event outside control pubsub subscriptions");
                             continue;
                         }
                         if !event_is_admitted(
@@ -554,6 +662,9 @@ async fn run(
             }
             notification = relay_notification(&mut bridge) => {
                 let Some((relay_url, event)) = notification else { continue; };
+                if !is_control_event(&event, &update_root) {
+                    continue;
+                }
                 if !event_is_admitted(
                     &pubsub_policy,
                     &event,
@@ -594,15 +705,80 @@ async fn run(
                         bridge: bridge.as_ref(),
                         events: &events,
                         peer_policy: peer_policy.as_deref(),
+                        update_root: &update_root,
                     },
                     &mut mesh,
                     &mut retries,
                     &mut pubsub_policy,
                 )
                 .await;
+                replay_update_root_to_connected_peers(
+                    PublishContext {
+                        endpoint: &endpoint,
+                        codec: &codec,
+                        bridge: bridge.as_ref(),
+                        events: &events,
+                        peer_policy: peer_policy.as_deref(),
+                        update_root: &update_root,
+                    },
+                    &mut mesh,
+                    &mut retries,
+                    &mut replayed_update_roots,
+                )
+                .await;
             }
         }
     }
+}
+
+async fn replay_update_root_to_connected_peers(
+    context: PublishContext<'_>,
+    mesh: &mut ControlPubsubMesh,
+    retries: &mut RetryState,
+    replayed: &mut HashMap<String, String>,
+) {
+    let PublishContext {
+        endpoint,
+        codec,
+        events,
+        peer_policy,
+        update_root,
+        ..
+    } = context;
+    let peers = connected_peers(endpoint, peer_policy).await;
+    let connected = peers
+        .iter()
+        .map(|peer| peer.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    replayed.retain(|peer_id, _| connected.contains(peer_id.as_str()));
+
+    let event = events
+        .lock()
+        .await
+        .snapshot()
+        .into_iter()
+        .filter(|event| update_root.matches(event))
+        .max_by_key(|event| (event.created_at, event.id));
+    let Some(event) = event else {
+        return;
+    };
+    let event_id = event.id.to_hex();
+    let mut actions = Vec::new();
+    for peer in peers {
+        if replayed.get(&peer.id) == Some(&event_id) {
+            continue;
+        }
+        match mesh.replay_to_peer(event.clone(), &peer.id, now_ms()) {
+            Ok(mut replay) => {
+                actions.append(&mut replay);
+                replayed.insert(peer.id, event_id.clone());
+            }
+            Err(error) => {
+                tracing::warn!(%error, event_id, "failed to prepare cached update-root replay");
+            }
+        }
+    }
+    execute_actions(endpoint, codec, None, events, retries, None, actions).await;
 }
 
 async fn publish_local(
@@ -618,7 +794,11 @@ async fn publish_local(
         bridge,
         events,
         peer_policy,
+        update_root,
     } = context;
+    if !is_control_event(&event, update_root) {
+        anyhow::bail!("event is outside control pubsub subscriptions");
+    }
     let peers = connected_peers(endpoint, peer_policy).await;
     if peers.is_empty() && bridge.is_none() {
         return Ok(false);
@@ -896,13 +1076,33 @@ fn control_kinds() -> [Kind; 3] {
     ]
 }
 
-fn is_control_kind(kind: u16) -> bool {
-    [
-        FIPS_PEER_ADVERT_KIND,
-        PAID_EXIT_OFFER_KIND,
-        RATING_FACT_KIND,
-    ]
-    .contains(&kind)
+fn is_control_event(event: &Event, update_root: &UpdateRootSubscription) -> bool {
+    match u16::from(event.kind) {
+        FIPS_PEER_ADVERT_KIND | PAID_EXIT_OFFER_KIND | RATING_FACT_KIND => true,
+        HASHTREE_ROOT_KIND | HASHTREE_LEGACY_ROOT_KIND => update_root.matches(event),
+        _ => false,
+    }
+}
+
+fn is_update_root_kind(kind: u16) -> bool {
+    matches!(kind, HASHTREE_ROOT_KIND | HASHTREE_LEGACY_ROOT_KIND)
+}
+
+fn same_replaceable_update_root(left: &Event, right: &Event) -> bool {
+    is_update_root_kind(u16::from(left.kind))
+        && is_update_root_kind(u16::from(right.kind))
+        && left.pubkey == right.pubkey
+        && event_identifier(left) == event_identifier(right)
+}
+
+fn event_identifier(event: &Event) -> Option<&str> {
+    event
+        .tags
+        .iter()
+        .find_map(|tag| match tag.as_standardized() {
+            Some(TagStandard::Identifier(identifier)) => Some(identifier.as_str()),
+            _ => None,
+        })
 }
 
 fn now_ms() -> u64 {
@@ -923,10 +1123,7 @@ fn temporary_store_path(path: &Path) -> PathBuf {
 }
 
 pub fn control_pubsub_store_file_path(config_path: &Path) -> PathBuf {
-    config_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join("control-pubsub-events.json")
+    nostr_vpn_core::updater::update_event_cache_path(config_path)
 }
 
 fn control_pubsub_outbox_directory_from_store_path(store_path: &Path) -> PathBuf {
@@ -971,8 +1168,9 @@ fn validate_control_pubsub_event(event: &Event) -> Result<()> {
         .verify()
         .map_err(|error| anyhow!("invalid signed control pubsub event: {error}"))?;
     let kind = u16::from(event.kind);
-    if !is_control_kind(kind) {
-        anyhow::bail!("unsupported control pubsub event kind {kind}");
+    let update_root = UpdateRootSubscription::configured()?;
+    if !is_control_event(event, &update_root) {
+        anyhow::bail!("unsupported control pubsub event kind or filter {kind}");
     }
     let bytes = serde_json::to_vec(event).context("failed to encode control pubsub event")?;
     if bytes.len() > CONTROL_PUBSUB_MAX_EVENT_BYTES {
@@ -1010,7 +1208,12 @@ fn control_pubsub_outbox_event_paths(directory: &Path) -> Vec<PathBuf> {
 
 #[cfg(any(feature = "paid-exit", test))]
 pub fn load_control_pubsub_events(config_path: &Path) -> Result<Vec<Event>> {
-    Ok(ControlEventStore::load(Some(control_pubsub_store_file_path(config_path)))?.snapshot())
+    let update_root = UpdateRootSubscription::configured()?;
+    Ok(ControlEventStore::load(
+        Some(control_pubsub_store_file_path(config_path)),
+        &update_root,
+    )?
+    .snapshot())
 }
 
 #[cfg(test)]
@@ -1022,7 +1225,7 @@ mod tests {
     use fips_endpoint::{
         Config, ConnectPolicy, PeerConfig, RoutingMode, TransportInstances, UdpConfig,
     };
-    use nostr_sdk::prelude::{EventBuilder, ToBech32};
+    use nostr_sdk::prelude::{EventBuilder, Tag, TagKind, ToBech32};
 
     #[test]
     fn retry_state_is_acknowledged_and_bounded_per_peer() {
@@ -1140,7 +1343,9 @@ mod tests {
         let event = EventBuilder::new(Kind::Custom(FIPS_PEER_ADVERT_KIND), "advert")
             .sign_with_keys(&Keys::generate())
             .expect("signed advert");
-        let mut store = ControlEventStore::load(Some(store_path)).expect("empty store");
+        let update_root = UpdateRootSubscription::configured().expect("update root");
+        let mut store =
+            ControlEventStore::load(Some(store_path), &update_root).expect("empty store");
 
         assert!(store.insert(event.clone()).expect("first insert"));
         assert!(!store.insert(event.clone()).expect("duplicate insert"));
@@ -1159,6 +1364,41 @@ mod tests {
         );
 
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn control_event_store_coalesces_replaceable_update_roots() {
+        let publisher = Keys::generate();
+        let root = |created_at, hash: &str| {
+            EventBuilder::new(Kind::Custom(HASHTREE_ROOT_KIND), "")
+                .tags([
+                    Tag::identifier("releases/test-app"),
+                    Tag::custom(TagKind::Custom("hash".into()), [hash]),
+                ])
+                .custom_created_at(nostr_sdk::Timestamp::from_secs(created_at))
+                .sign_with_keys(&publisher)
+                .expect("signed update root")
+        };
+        let older = root(
+            1_700_000_000,
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        let newer = root(
+            1_700_000_001,
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        );
+        let newer_id = newer.id;
+        let mut store = ControlEventStore {
+            path: None,
+            events: HashMap::new(),
+            order: VecDeque::new(),
+        };
+
+        assert!(store.insert(older.clone()).expect("older root"));
+        assert!(store.insert(newer).expect("newer root"));
+        assert!(!store.insert(older).expect("stale root"));
+        assert_eq!(store.snapshot().len(), 1);
+        assert_eq!(store.snapshot()[0].id, newer_id);
     }
 
     #[tokio::test]
@@ -1323,5 +1563,154 @@ mod tests {
         bob_endpoint.shutdown().await.expect("shutdown Bob");
         carol_endpoint.shutdown().await.expect("shutdown Carol");
         let _ = fs::remove_dir_all(directory);
+    }
+
+    #[tokio::test]
+    async fn late_fips_peer_replays_cached_update_root_without_relays() {
+        let alice = Keys::generate();
+        let bob = Keys::generate();
+        let carol = Keys::generate();
+        let publisher = Keys::generate();
+        let alice_npub = alice.public_key().to_bech32().expect("alice npub");
+        let bob_npub = bob.public_key().to_bech32().expect("bob npub");
+        let carol_npub = carol.public_key().to_bech32().expect("carol npub");
+        let alice_port = available_udp_port();
+        let bob_port = available_udp_port();
+        let carol_port = available_udp_port();
+
+        let alice_endpoint = endpoint(
+            &alice,
+            endpoint_config(alice_port, &[(&bob_npub, bob_port, true)]),
+        )
+        .await;
+        let bob_endpoint = endpoint(
+            &bob,
+            endpoint_config(bob_port, &[(&alice_npub, alice_port, true)]),
+        )
+        .await;
+        wait_connected(&alice_endpoint, &bob_npub).await;
+        wait_connected(&bob_endpoint, &alice_npub).await;
+
+        let update_root = UpdateRootSubscription {
+            author: publisher.public_key(),
+            tree_name: "releases/test-app".to_string(),
+        };
+        let config = NostrPubsubConfig {
+            mode: NostrPubsubMode::Client,
+            fanout: 8,
+            max_hops: 4,
+            max_event_bytes: 60 * 1024,
+        };
+        let alice_pubsub = ControlPubsubFipsRuntime::start_inner(
+            Arc::clone(&alice_endpoint),
+            config.clone(),
+            Vec::new(),
+            None,
+            None,
+            Some(update_root.clone()),
+        )
+        .await
+        .expect("start Alice pubsub")
+        .expect("Alice pubsub enabled");
+        let bob_pubsub = ControlPubsubFipsRuntime::start_inner(
+            Arc::clone(&bob_endpoint),
+            config.clone(),
+            Vec::new(),
+            None,
+            None,
+            Some(update_root.clone()),
+        )
+        .await
+        .expect("start Bob pubsub")
+        .expect("Bob pubsub enabled");
+        let root_event = EventBuilder::new(Kind::Custom(HASHTREE_ROOT_KIND), "")
+            .tags([
+                Tag::identifier("releases/test-app"),
+                Tag::custom(TagKind::Custom("l".into()), ["hashtree"]),
+                Tag::custom(
+                    TagKind::Custom("hash".into()),
+                    ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+                ),
+            ])
+            .sign_with_keys(&publisher)
+            .expect("signed update root");
+        let root_event_id = root_event.id;
+        assert!(
+            alice_pubsub
+                .publish(root_event)
+                .await
+                .expect("publish update root")
+        );
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if bob_pubsub
+                    .events()
+                    .await
+                    .iter()
+                    .any(|event| event.id == root_event_id)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("Bob caches root before Carol connects");
+        let carol_endpoint = endpoint(
+            &carol,
+            endpoint_config(carol_port, &[(&bob_npub, bob_port, true)]),
+        )
+        .await;
+        let carol_pubsub = ControlPubsubFipsRuntime::start_inner(
+            Arc::clone(&carol_endpoint),
+            config,
+            Vec::new(),
+            None,
+            None,
+            Some(update_root),
+        )
+        .await
+        .expect("start Carol pubsub")
+        .expect("Carol pubsub enabled");
+        bob_endpoint
+            .update_peers(vec![
+                PeerConfig::new(&alice_npub, "udp", format!("127.0.0.1:{alice_port}")),
+                PeerConfig::new(&carol_npub, "udp", format!("127.0.0.1:{carol_port}")),
+            ])
+            .await
+            .expect("connect Bob to Carol");
+        carol_endpoint
+            .update_peers(vec![PeerConfig::new(
+                &bob_npub,
+                "udp",
+                format!("127.0.0.1:{bob_port}"),
+            )])
+            .await
+            .expect("connect Carol to Bob");
+        wait_connected(&bob_endpoint, &carol_npub).await;
+        wait_connected(&carol_endpoint, &bob_npub).await;
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if carol_pubsub
+                    .events()
+                    .await
+                    .iter()
+                    .any(|event| event.id == root_event_id)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("late Carol receives Bob's cached root without a relay");
+
+        alice_pubsub.stop().await;
+        bob_pubsub.stop().await;
+        carol_pubsub.stop().await;
+        alice_endpoint.shutdown().await.expect("shutdown Alice");
+        bob_endpoint.shutdown().await.expect("shutdown Bob");
+        carol_endpoint.shutdown().await.expect("shutdown Carol");
     }
 }

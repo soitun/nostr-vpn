@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Desktop and CLI update checks consume the latest signed Hashtree release root
+  from the shared FIPS/relay pubsub cache before opening a direct relay path.
+- Relay bridges subscribe to the exact update publisher/tree, and nodes replay
+  the bounded latest root to FIPS peers that connect after publication.
+
 ## 4.0.90 - 2026-07-10
 
 ### Added

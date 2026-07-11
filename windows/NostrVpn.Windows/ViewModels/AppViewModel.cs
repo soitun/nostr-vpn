@@ -1351,7 +1351,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         }
         try
         {
-            var result = await _updateService.CheckAsync(State.AppVersion);
+            var result = await _updateService.CheckAsync(State.AppVersion, State.ConfigPath);
             UpdateAvailable = result.Available;
             UpdateVersion = result.Tag;
             _updateAssetUrl = result.Available ? result.AssetUrl : null;
@@ -1402,7 +1402,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         UpdateStatus = $"Downloading {UpdateVersion}";
         try
         {
-            var path = await _updateService.DownloadWithCoreAsync(State.AppVersion);
+            var path = await _updateService.DownloadWithCoreAsync(State.AppVersion, State.ConfigPath);
             UpdateStatus = $"Downloaded {Path.GetFileName(path)}";
             if (!UpdateService.SkipOpen)
             {
