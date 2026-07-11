@@ -17,8 +17,6 @@ fn spawn_tun_send_worker(
                     break;
                 }
                 batch.clear();
-                #[cfg(target_os = "macos")]
-                let mut coalesce_deadline = None;
                 let mut drained = 0;
                 let mut drained_bytes = 0usize;
                 let mut sleep_after_error = false;
@@ -36,11 +34,6 @@ fn spawn_tun_send_worker(
                         }
                         Ok(packet_count) => {
                             debug_assert_eq!(batch.len(), before_len + packet_count);
-                            #[cfg(target_os = "macos")]
-                            if packet_count > 0 && coalesce_deadline.is_none() {
-                                coalesce_deadline =
-                                    Some(Instant::now() + MACOS_TUN_READ_COALESCE_MAX_WAIT);
-                            }
                             if pipeline_profile_enabled {
                                 for packet in &batch[before_len..] {
                                     drained_bytes =
@@ -53,17 +46,6 @@ fn spawn_tun_send_worker(
                             }
                         }
                         Err(error) if temporary_tun_read_error(&error) => {
-                            #[cfg(target_os = "macos")]
-                            if drained > 0
-                                && drained < FIPS_TUN_READ_BURST
-                                && wait_fd_readable_until(
-                                    tun_fd.as_raw_fd(),
-                                    coalesce_deadline,
-                                    &thread_stop,
-                                )
-                            {
-                                continue;
-                            }
                             break;
                         }
                         Err(error) => {
@@ -132,58 +114,6 @@ fn wait_fd_readable_blocking(fd: RawFd, stop: &AtomicBool) -> bool {
         eprintln!("fips: tunnel read poll failed: {error}");
         return false;
     }
-    false
-}
-
-#[cfg(target_os = "macos")]
-fn wait_fd_readable_until(fd: RawFd, deadline: Option<Instant>, stop: &AtomicBool) -> bool {
-    let Some(deadline) = deadline else {
-        return false;
-    };
-    if stop.load(Ordering::Acquire) {
-        return false;
-    }
-    let timeout = deadline.saturating_duration_since(Instant::now());
-    if timeout.is_zero() {
-        return false;
-    }
-    wait_fd_readable_for(fd, timeout, stop)
-}
-
-#[cfg(target_os = "macos")]
-fn wait_fd_readable_for(fd: RawFd, timeout: Duration, stop: &AtomicBool) -> bool {
-    if stop.load(Ordering::Acquire) {
-        return false;
-    }
-    if fd < 0 || fd >= libc::FD_SETSIZE as RawFd {
-        return false;
-    }
-    let mut readfds = unsafe { std::mem::zeroed::<libc::fd_set>() };
-    unsafe {
-        libc::FD_ZERO(&mut readfds);
-        libc::FD_SET(fd, &mut readfds);
-    }
-    let mut timeout = libc::timeval {
-        tv_sec: timeout.as_secs() as libc::time_t,
-        tv_usec: timeout.subsec_micros() as libc::suseconds_t,
-    };
-    let result = unsafe {
-        libc::select(
-            fd + 1,
-            &mut readfds,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-            &mut timeout,
-        )
-    };
-    if result > 0 {
-        return unsafe { libc::FD_ISSET(fd, &readfds) };
-    }
-    let error = io::Error::last_os_error();
-    if result == 0 || error.kind() == io::ErrorKind::Interrupted {
-        return false;
-    }
-    eprintln!("fips: tunnel read coalesce poll failed: {error}");
     false
 }
 
