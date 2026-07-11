@@ -1,0 +1,118 @@
+
+    #[cfg(feature = "paid-exit")]
+    #[test]
+    fn paid_route_admissions_seed_configured_endpoint_peers() {
+        use nostr_vpn_core::fips_mesh::FipsPaidRouteAdmission;
+
+        let buyer_keys = Keys::generate();
+        let buyer_pubkey = buyer_keys.public_key().to_hex();
+        let buyer_npub = buyer_keys.public_key().to_bech32().expect("buyer npub");
+        let endpoint_peers = super::fips_endpoint_peers_with_paid_route_admissions(
+            Vec::new(),
+            &[FipsPaidRouteAdmission {
+                participant_pubkey: buyer_pubkey,
+                session_id: "seller-session-1".to_string(),
+                allowed_ips: vec!["10.44.1.2/32".to_string()],
+                destination_allowed_ips: vec!["0.0.0.0/0".to_string()],
+                allow_routing: true,
+                state: nostr_vpn_core::paid_routes::PaidRouteAccessState::Paid,
+                amount_due_msat: 1_000,
+                paid_msat: 1_000,
+                unpaid_msat: 0,
+                expires_at_unix: 200,
+                updated_at_unix: 100,
+            }],
+        );
+
+        assert_eq!(endpoint_peers.len(), 1);
+        assert_eq!(endpoint_peers[0].npub, buyer_npub);
+        assert!(endpoint_peers[0].addresses.is_empty());
+        assert!(endpoint_peers[0].auto_reconnect);
+        assert!(!endpoint_peers[0].discovery_fallback_transit);
+    }
+
+    /// Pin the open-discovery / closed-data-plane invariant.
+    ///
+    /// FIPS handshake is `Open` so any nvpn node we see on relays may
+    /// connect to us (this is what enables transit through friend-of-a-friend
+    /// peers). The data plane MUST stay closed: a packet whose FIPS source
+    /// npub doesn't own its inner-source IP per the local roster is dropped
+    /// before it reaches the tun. This test wires both halves together so a
+    /// future "fix" that opens ambient discovery OR loosens the roster gate
+    /// will fail loudly.
+    ///
+    /// The cross-platform integration variants (T1: live handshake, T4:
+    /// transit through non-roster peer) live in the FIPS docker continuity
+    /// suite — they need a real endpoint pair and can't run as unit tests.
+    #[test]
+    fn open_discovery_does_not_loosen_tun_roster_gate() {
+        let roster_peer = Keys::generate();
+        let stranger = Keys::generate();
+        let roster_pubkey = roster_peer.public_key().to_hex();
+        let roster_npub = roster_peer.public_key().to_bech32().expect("roster npub");
+        let stranger_npub = stranger.public_key().to_bech32().expect("stranger npub");
+        let roster_node_addr = *PeerIdentity::from_npub(&roster_npub)
+            .expect("roster endpoint identity")
+            .node_addr()
+            .as_bytes();
+        let stranger_node_addr = *PeerIdentity::from_npub(&stranger_npub)
+            .expect("stranger endpoint identity")
+            .node_addr()
+            .as_bytes();
+
+        let mesh_peer = FipsMeshPeerConfig::from_participant_pubkey(
+            &roster_pubkey,
+            vec!["10.44.1.2/32".to_string()],
+        )
+        .expect("roster peer config");
+        let endpoint_peers =
+            fips_endpoint_peers_from_mesh(std::slice::from_ref(&mesh_peer), Vec::new(), Vec::new());
+        let config = fips_endpoint_config_with_open_discovery_limit(
+            &endpoint_peers,
+            None,
+            super::resolve_private_mesh_mtu(None, None, None),
+            NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        );
+
+        assert_eq!(
+            config.node.discovery.nostr.policy,
+            fips_endpoint::NostrDiscoveryPolicy::Open,
+            "open FIPS discovery must not loosen private roster traffic admission",
+        );
+
+        let mesh = FipsMeshRuntime::new(vec![mesh_peer.clone()]);
+
+        // The roster peer's own packet is admitted.
+        let mut packet = vec![0_u8; 28];
+        packet[0] = 0x45;
+        packet[2..4].copy_from_slice(&28_u16.to_be_bytes());
+        packet[8] = 64;
+        packet[9] = 17;
+        packet[12..16].copy_from_slice(&[10, 44, 1, 2]);
+        packet[16..20].copy_from_slice(&[10, 44, 1, 1]);
+        assert!(
+            mesh.receive_endpoint_data_owned_with_source_node_addr(
+                &roster_node_addr,
+                packet.clone()
+            )
+            .is_some(),
+            "roster peer's owned source IP must be admitted",
+        );
+
+        // A stranger that successfully completed the open FIPS handshake
+        // still cannot inject anything onto our tun, regardless of inner
+        // source IP.
+        assert!(
+            mesh.endpoint_source_admitter(&stranger_node_addr).is_none(),
+            "non-roster peer must not inject packets onto the tun",
+        );
+
+        let mut spoofed = packet.clone();
+        spoofed[12..16].copy_from_slice(&[203, 0, 113, 9]);
+        assert!(
+            mesh.receive_endpoint_data_owned_with_source_node_addr(&stranger_node_addr, spoofed)
+                .is_none(),
+            "non-roster peer must not inject packets onto the tun (spoofed source)",
+        );
+    }
