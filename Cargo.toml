@@ -28,8 +28,8 @@ boringtun = "0.7"
 cashu-service = { version = "0.2.57", default-features = false }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = { version = "0.3.57", path = "../fips/crates/fips-endpoint" }
-fips-core = { version = "0.3.88", path = "../fips/crates/fips-core", features = ["webrtc-transport"] }
+fips-endpoint = { version = "0.3.58", path = "../fips/crates/fips-endpoint" }
+fips-core = { version = "0.3.89", path = "../fips/crates/fips-core", features = ["webrtc-transport"] }
 futures = "0.3"
 hashtree-updater = "0.2.78"
 hex = "0.4"

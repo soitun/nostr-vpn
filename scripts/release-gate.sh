@@ -188,7 +188,8 @@ cargo fmt --check
 prepare_release_cargo_config
 run_local_fips_regression_tests
 release_cargo clippy "${release_cargo_lock_args[@]}" --workspace --all-targets -- -D warnings
-release_cargo test "${release_cargo_lock_args[@]}" --workspace
+export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
+release_cargo test "${release_cargo_lock_args[@]}" --workspace -- --test-threads=1
 # Mobile VPN basics run in the blocking gate without requiring a device/emulator:
 # join request over FIPS, MagicDNS from a TUN packet, and Android WG socket
 # startup ordering before VpnService.protect(fd).

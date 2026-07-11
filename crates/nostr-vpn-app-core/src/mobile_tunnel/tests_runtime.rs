@@ -444,8 +444,24 @@
         (admin_app_config, app_config_dirty)
     }
 
-    #[tokio::test]
-    async fn mobile_join_request_sends_and_records_over_real_fips_endpoint() {
+    #[test]
+    fn mobile_join_request_sends_and_records_over_real_fips_endpoint() {
+        std::thread::Builder::new()
+            .name("mobile-join-fips".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("mobile join test runtime")
+                    .block_on(mobile_join_request_roundtrip());
+            })
+            .expect("spawn mobile join test")
+            .join()
+            .expect("mobile join test thread");
+    }
+
+    async fn mobile_join_request_roundtrip() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock is after epoch")
