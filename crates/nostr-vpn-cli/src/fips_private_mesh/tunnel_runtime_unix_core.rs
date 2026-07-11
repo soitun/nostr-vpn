@@ -245,13 +245,15 @@ impl FipsPrivateTunnelRuntime {
         if let Some(control_pubsub) = runtime.control_pubsub.take() {
             control_pubsub.stop().await;
         }
+        runtime.event_rx.close();
         stop_tun_send_worker(runtime.tun_send_worker).await;
         stop_mesh_recv_worker(runtime.mesh_recv_worker, &runtime.mesh).await;
-        if let Ok(mesh) = Arc::try_unwrap(runtime.mesh) {
-            mesh.shutdown()
-                .await
-                .context("failed to stop FIPS endpoint")?;
-        }
+        runtime
+            .mesh
+            .endpoint()
+            .shutdown()
+            .await
+            .context("failed to stop FIPS endpoint")?;
         Ok(())
     }
 

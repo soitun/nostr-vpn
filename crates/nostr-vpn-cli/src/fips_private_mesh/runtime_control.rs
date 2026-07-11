@@ -300,10 +300,6 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
-    pub(crate) async fn shutdown(self) -> Result<(), FipsEndpointError> {
-        self.endpoint.shutdown().await
-    }
-
     /// Hand the latest peer roster to fips without restarting the endpoint.
     ///
     /// The wrapper translates nvpn's intermediate hint shape

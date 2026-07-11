@@ -291,14 +291,16 @@ impl FipsPrivateTunnelRuntime {
         {
             eprintln!("fips: failed to remove Windows endpoint bypass routes: {error}");
         }
+        runtime.event_rx.close();
         let _ = runtime.tun_read_thread.join();
         runtime.mesh_recv_task.abort();
         let _ = runtime.mesh_recv_task.await;
-        if let Ok(mesh) = Arc::try_unwrap(runtime.mesh) {
-            mesh.shutdown()
-                .await
-                .context("failed to stop FIPS endpoint")?;
-        }
+        runtime
+            .mesh
+            .endpoint()
+            .shutdown()
+            .await
+            .context("failed to stop FIPS endpoint")?;
         Ok(())
     }
 }

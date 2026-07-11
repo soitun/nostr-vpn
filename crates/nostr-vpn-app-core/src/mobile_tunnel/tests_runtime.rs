@@ -90,9 +90,7 @@
         if let Some(wg) = wg_upstream {
             wg.shutdown().await;
         }
-        if let Ok(endpoint) = Arc::try_unwrap(endpoint) {
-            let _ = endpoint.shutdown().await;
-        }
+        let _ = endpoint.shutdown().await;
     }
 
     fn local_mobile_fips_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig {

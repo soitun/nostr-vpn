@@ -629,9 +629,7 @@ impl Drop for MobileTunnel {
             if let Some(wg) = wg_upstream {
                 wg.shutdown().await;
             }
-            if let Some(endpoint) = endpoint
-                && let Ok(endpoint) = Arc::try_unwrap(endpoint)
-            {
+            if let Some(endpoint) = endpoint {
                 let _ = endpoint.shutdown().await;
             }
         });
