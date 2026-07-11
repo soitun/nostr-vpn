@@ -42,6 +42,9 @@ class DeviceQrParserTest {
     @Test
     fun looksLikeJoinRequestQrOrLinkAcceptsSharedRequestUrls() {
         assertEquals(true, looksLikeJoinRequestQrOrLink("nvpn://join-request/abc123"))
+        assertEquals(true, looksLikeJoinRequestQrOrLink("NVPN://JOIN-REQUEST/abc123"))
+        assertEquals(false, looksLikeJoinRequestQrOrLink("nvpn://join-request/"))
+        assertEquals(false, looksLikeJoinRequestQrOrLink("nvpn://join-request"))
         assertEquals(
             false,
             looksLikeJoinRequestQrOrLink(

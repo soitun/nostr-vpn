@@ -499,15 +499,8 @@
             <Border Style="{StaticResource Card}" Visibility="{Binding ShowLinkDeviceCard, Converter={StaticResource BoolToVisibility}}">
               <StackPanel>
                 <TextBlock Text="Link Device" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,4" />
-                <TextBlock Text="Import the joiner's join request, or add their Device ID below." Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
-                <Grid>
-                  <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                  </Grid.ColumnDefinitions>
-                  <TextBox Text="{Binding JoinRequestInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Join request or Device ID" Margin="0,0,8,0" />
-                  <Button Grid.Column="1" Content="Import" Command="{Binding ImportJoinRequestCommand}" />
-                </Grid>
+                <TextBlock Text="Paste the joiner's request to open confirmation automatically, or add their Device ID below." Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <TextBox Text="{Binding JoinRequestInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Join request" />
                 <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                   <Button Content="Import join request QR file" Command="{Binding ImportJoinRequestQrImageCommand}" Margin="0,0,8,0" />
                 </StackPanel>

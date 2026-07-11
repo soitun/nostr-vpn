@@ -927,20 +927,6 @@ private fun AddDevicesDialog(
             pendingJoinRequest = trimmed
         }
     }
-    fun importJoinerValue(value: String) {
-        val trimmed = value.trim()
-        if (trimmed.isEmpty()) return
-        if (looksLikeJoinRequestQrOrLink(trimmed)) {
-            stageJoinRequest(trimmed)
-            return
-        }
-        val scanned = parseScannedDeviceLinkQr(trimmed)
-        if (scanned != null) {
-            dispatch(NativeActions.addParticipant(network.id, scanned.deviceId, scanned.alias))
-            return
-        }
-        dispatch(NativeActions.importJoinRequest(trimmed))
-    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Device") },
@@ -951,7 +937,7 @@ private fun AddDevicesDialog(
             ) {
                 Text("Add join request", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "Scan or paste the joiner's join request or Device ID.",
+                    "Scan or paste the joiner's join request. Valid links open confirmation automatically.",
                     style = MaterialTheme.typography.bodySmall,
                     color = Muted,
                 )
@@ -963,18 +949,8 @@ private fun AddDevicesDialog(
                     },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    label = { Text("Join request or Device ID") },
+                    label = { Text("Join request") },
                 )
-                Button(
-                    enabled = joinRequestInput.trim().isNotEmpty(),
-                    onClick = {
-                        importJoinerValue(joinRequestInput)
-                        joinRequestInput = ""
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Text("Import request")
-                }
                 Button(
                     onClick = { scanDeviceQr(network.id) },
                     modifier = Modifier.fillMaxWidth(),

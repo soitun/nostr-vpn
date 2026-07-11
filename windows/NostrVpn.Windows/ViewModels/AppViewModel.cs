@@ -137,7 +137,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         ImportInviteCommand = new AsyncRelayCommand(_ => ImportInviteAsync(InviteInput), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(InviteInput));
         PasteInviteCommand = new RelayCommand(_ => PasteInviteFromClipboard(), _ => !ActionInFlight);
         ImportJoinRequestQrImageCommand = new AsyncRelayCommand(_ => ImportJoinRequestQrImageAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true);
-        ImportJoinRequestCommand = new AsyncRelayCommand(_ => ImportJoinRequestAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true && !string.IsNullOrWhiteSpace(JoinRequestInput));
         ToggleNearbyDiscoveryCommand = new AsyncRelayCommand(_ => DispatchAsync(State.NearbyDiscoveryActive ? NativeActions.StopNearbyDiscovery() : NativeActions.StartNearbyDiscovery(), "Finding nearby"));
         ToggleJoinRequestBroadcastCommand = new AsyncRelayCommand(_ => DispatchAsync(State.InviteBroadcastActive ? NativeActions.StopJoinRequestBroadcast() : NativeActions.StartJoinRequestBroadcast(), State.InviteBroadcastActive ? "Stopping nearby" : "Advertising nearby"));
         AddParticipantCommand = new AsyncRelayCommand(_ => AddParticipantAsync(), _ => !ActionInFlight && ActiveNetwork is { LocalIsAdmin: true, Enabled: true } && !string.IsNullOrWhiteSpace(ParticipantInput) && !ParticipantInputInvalid);
@@ -912,7 +911,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand ImportInviteCommand { get; }
     public ICommand PasteInviteCommand { get; }
     public ICommand ImportJoinRequestQrImageCommand { get; }
-    public ICommand ImportJoinRequestCommand { get; }
     public ICommand ToggleNearbyDiscoveryCommand { get; }
     public ICommand ToggleJoinRequestBroadcastCommand { get; }
     public ICommand AddParticipantCommand { get; }
@@ -1507,7 +1505,10 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         => value.StartsWith("nvpn://invite/", StringComparison.OrdinalIgnoreCase);
 
     private static bool LooksLikeJoinRequest(string value)
-        => value.StartsWith("nvpn://join-request", StringComparison.OrdinalIgnoreCase);
+    {
+        const string prefix = "nvpn://join-request/";
+        return value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && value.Length > prefix.Length;
+    }
 
     private const string Bech32BodyCharset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 
@@ -1524,30 +1525,6 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             if (Bech32BodyCharset.IndexOf(trimmed[i]) < 0) return false;
         }
         return true;
-    }
-
-    private async Task ImportJoinRequestAsync()
-    {
-        var request = (JoinRequestInput ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(request))
-        {
-            return;
-        }
-        if (LooksLikeJoinRequest(request))
-        {
-            await ConfirmAndImportJoinRequestAsync(request);
-            return;
-        }
-        var network = ActiveNetwork;
-        if (IsValidDeviceId(request) && network?.LocalIsAdmin == true)
-        {
-            await DispatchAsync(NativeActions.AddParticipant(network.Id, request, null), "Adding device");
-        }
-        else
-        {
-            await DispatchAsync(NativeActions.ImportJoinRequest(request), "Adding device");
-        }
-        JoinRequestInput = "";
     }
 
     private async Task ConfirmAndImportJoinRequestAsync(string request)

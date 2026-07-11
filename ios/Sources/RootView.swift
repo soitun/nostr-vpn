@@ -815,10 +815,6 @@ private struct AddDeviceSheet: View {
                     },
                     inputChanged: { value in
                         stageJoinRequest(value)
-                    },
-                    submit: {
-                        importJoinerValue(joinRequestInput)
-                        joinRequestInput = ""
                     }
                 )
                 NearbyCard(model: model)
@@ -941,35 +937,26 @@ private struct ScanJoinerDeviceCard: View {
     let scan: () -> Void
     let paste: () -> Void
     let inputChanged: (String) -> Void
-    let submit: () -> Void
 
     var body: some View {
         AppCard {
             Text("Add join request")
                 .font(.headline)
-            Text("Scan or paste the joining device's join request or Device ID.")
+            Text("Scan or paste the joining device's join request. Valid links open confirmation automatically.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            TextField("Join request or Device ID", text: $requestInput)
+            TextField("Join request", text: $requestInput)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder)
                 .onChange(of: requestInput) { _, value in
                     inputChanged(value)
                 }
-            HStack(spacing: 10) {
-                Button(action: paste) {
-                    Label("Paste", systemImage: "doc.on.clipboard")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                Button(action: submit) {
-                    Label("Import", systemImage: "arrow.down.doc")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.bordered)
-                .disabled(requestInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button(action: paste) {
+                Label("Paste", systemImage: "doc.on.clipboard")
+                    .frame(maxWidth: .infinity)
             }
+            .buttonStyle(.bordered)
             Button(action: scan) {
                 Label("Scan QR", systemImage: "camera.viewfinder")
                     .frame(maxWidth: .infinity)
@@ -2794,8 +2781,8 @@ private struct PendingJoinRequest: Identifiable {
 }
 
 private func looksLikeJoinRequestQrOrLink(_ value: String) -> Bool {
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.lowercased().hasPrefix("nvpn://join-request")
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return trimmed.hasPrefix("nvpn://join-request/") && trimmed.count > "nvpn://join-request/".count
 }
 
 private func parseScannedDeviceLinkQr(_ value: String) -> ScannedDeviceLink? {

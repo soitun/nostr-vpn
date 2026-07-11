@@ -348,7 +348,8 @@
 
   function looksLikeJoinRequest(value: string): boolean {
     const trimmed = value.trim().toLowerCase();
-    return trimmed.startsWith('nvpn://join-request');
+    const prefix = 'nvpn://join-request/';
+    return trimmed.startsWith(prefix) && trimmed.length > prefix.length;
   }
 
   function stageJoinRequest(value: string) {
@@ -686,34 +687,6 @@
       },
       'Removing device',
     );
-  }
-
-  async function importJoinerValue() {
-    if (!shownNetwork) {
-      return;
-    }
-    const value = joinerInput.trim();
-    if (!value) {
-      return;
-    }
-    if (looksLikeJoinRequest(value)) {
-      stageJoinRequest(value);
-      return;
-    }
-    const ok = isValidDeviceId(value)
-      ? await run(
-          '/api/add_participant',
-          {
-            networkId: shownNetwork.id,
-            npub: value,
-            alias: null,
-          },
-          'Adding device',
-        )
-      : await run('/api/import_join_request', { request: value }, 'Adding device');
-    if (ok) {
-      joinerInput = '';
-    }
   }
 
   async function confirmPendingJoinRequest() {
@@ -1098,7 +1071,7 @@
 
       {#if addDeviceOpen && shownNetwork}
         <Modal title="Add Device" titleId="add-device-title" on:close={() => (addDeviceOpen = false)}>
-          <form class="modal-section" on:submit|preventDefault={importJoinerValue}>
+          <div class="modal-section">
             <div class="section-heading">
               <div>
                 <h3>Link Device</h3>
@@ -1106,19 +1079,15 @@
               </div>
             </div>
             <label>
-              <span>Join request or Device ID</span>
+              <span>Join request</span>
               <textarea
                 bind:value={joinerInput}
                 rows="4"
+                placeholder="Paste a join request to continue"
                 on:input={(event) => stageJoinRequest((event.currentTarget as HTMLTextAreaElement).value)}
               ></textarea>
             </label>
-            <div class="button-row">
-              <button class="secondary-button" type="submit" disabled={Boolean(busyAction) || !joinerInput.trim()}>
-                Import
-              </button>
-            </div>
-	          </form>
+	          </div>
 
 	          <div class="modal-section">
 	            <div class="section-heading">

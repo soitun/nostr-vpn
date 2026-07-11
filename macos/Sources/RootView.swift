@@ -1111,10 +1111,9 @@ struct RootView: View {
     }
 
     private func joinRequestInputSection(_ network: NativeNetworkState) -> some View {
-        let trimmedJoinRequest = joinRequestInput.trimmingCharacters(in: .whitespacesAndNewlines)
         return surface {
             sectionHeader("Add Join Request", systemImage: "camera.viewfinder")
-            Text("Scan the joining device's request QR, or paste its join request or Device ID.")
+            Text("Scan the joining device's request QR, or paste its join request. Valid links open confirmation automatically.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
@@ -1125,18 +1124,11 @@ struct RootView: View {
                     Label("Scan QR", systemImage: "camera.viewfinder")
                 }
                 .disabled(manager.actionInFlight)
-                TextField("nvpn://join-request… or npub1…", text: $joinRequestInput)
+                TextField("nvpn://join-request/…", text: $joinRequestInput)
                     .textFieldStyle(.roundedBorder)
                     .onChange(of: joinRequestInput) { _, value in
                         stageJoinRequest(value, network: network)
                     }
-                Button {
-                    importJoinRequestOrAddDevice(trimmedJoinRequest, network: network)
-                    joinRequestInput = ""
-                } label: {
-                    Label("Import", systemImage: "tray.and.arrow.down")
-                }
-                .disabled(trimmedJoinRequest.isEmpty || manager.actionInFlight)
             }
         }
     }
@@ -4086,7 +4078,7 @@ private struct PendingJoinRequest: Identifiable {
 
 private func looksLikeJoinRequestQrOrLink(_ value: String) -> Bool {
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    return trimmed.hasPrefix("nvpn://join-request")
+    return trimmed.hasPrefix("nvpn://join-request/") && trimmed.count > "nvpn://join-request/".count
 }
 
 private struct LocalSearchScope<Content: View>: View {
