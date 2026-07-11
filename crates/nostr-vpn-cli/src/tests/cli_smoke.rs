@@ -5,6 +5,18 @@ use crate::PaidExitCommand;
 use crate::{Cli, Command, PubsubCommand};
 
 #[test]
+fn explicit_config_path_environment_value_is_preserved() {
+    assert_eq!(
+        crate::config_bootstrap::configured_config_path(Some("/var/lib/nvpn/config.toml".into())),
+        Some("/var/lib/nvpn/config.toml".into())
+    );
+    assert_eq!(
+        crate::config_bootstrap::configured_config_path(Some("".into())),
+        None
+    );
+}
+
+#[test]
 fn clap_binary_name_is_nvpn() {
     let command = Cli::command();
     assert_eq!(command.get_name(), "nvpn");

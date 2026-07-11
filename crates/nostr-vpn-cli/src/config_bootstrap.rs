@@ -1,5 +1,7 @@
 use super::*;
 
+const CONFIG_PATH_ENV: &str = "NVPN_CONFIG_PATH";
+
 pub(crate) fn install_cli(args: InstallCliArgs) -> Result<()> {
     let destination = args.path.unwrap_or_else(default_cli_install_path);
     install_cli_to_path(&destination, args.force)
@@ -214,6 +216,10 @@ fn default_windows_cli_install_dir() -> Option<PathBuf> {
 }
 
 pub(crate) fn default_config_path() -> PathBuf {
+    if let Some(path) = configured_config_path(std::env::var_os(CONFIG_PATH_ENV)) {
+        return path;
+    }
+
     if let Some(dir) = dirs::config_dir() {
         #[cfg(target_os = "windows")]
         {
@@ -244,6 +250,10 @@ pub(crate) fn default_config_path() -> PathBuf {
     }
 
     PathBuf::from("nvpn.toml")
+}
+
+pub(crate) fn configured_config_path(value: Option<std::ffi::OsString>) -> Option<PathBuf> {
+    value.filter(|value| !value.is_empty()).map(PathBuf::from)
 }
 
 #[cfg(target_os = "windows")]

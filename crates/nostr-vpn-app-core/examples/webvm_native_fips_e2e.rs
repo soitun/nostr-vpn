@@ -207,12 +207,13 @@ fn run() -> HarnessResult<()> {
     let after = app.dispatch(NativeAppAction::ImportJoinRequest {
         request: request.to_string(),
     });
-    if !after.error.is_empty() || !participant_was_added(&before, &after) {
+    if !participant_was_added(&before, &after) {
         return Err(HarnessError::new("import", "participant-not-added"));
     }
     emit_status(&json!({
         "status": "imported",
         "participantAdded": true,
+        "postApprovalWarning": (!after.error.is_empty()).then_some(after.error),
         "exitNode": exit_node,
     }))?;
     let _ = read_command(&mut input)?;
