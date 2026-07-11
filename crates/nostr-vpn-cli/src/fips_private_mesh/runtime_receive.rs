@@ -47,6 +47,7 @@ impl FipsPrivateMeshRuntime {
                     turn_start = crate::pipeline_profile::stamp();
                 }
                 let mesh = mesh.get_or_insert_with(|| self.stable_mesh_snapshot().1);
+                packet_outputs.set_admission_mesh(Arc::clone(mesh));
 
                 let (received_packets, accepted_packets) = self
                     .admit_direct_endpoint_packet_runs_blocking(
@@ -85,18 +86,20 @@ impl FipsPrivateMeshRuntime {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn finalize_direct_endpoint_tun_batch_blocking(
         &self,
-        packet_outputs: &mut DirectTunWriteBatch,
+        packet_outputs: &DirectTunWriteBatch,
     ) -> Result<()> {
         let _t = crate::pipeline_profile::Timer::start(
             crate::pipeline_profile::Stage::DirectEndpointFinalize,
         );
         if packet_outputs.is_empty() {
-            packet_outputs.clear();
             return Ok(());
         }
+        let mesh = packet_outputs
+            .admission_mesh()
+            .ok_or_else(|| anyhow!("FIPS direct TUN batch missing admission snapshot"))?;
         #[cfg(feature = "paid-exit")]
-        self.note_paid_route_inbound_batch(packet_outputs)?;
-        self.note_data_rx_batch(&mut packet_outputs.data_rx_notes, None)
+        self.note_paid_route_inbound_batch(mesh, packet_outputs)?;
+        self.note_data_rx_batch(mesh, &packet_outputs.runs, None)
     }
 
     fn endpoint_message_to_mesh_event_outcome(
@@ -218,30 +221,28 @@ impl FipsPrivateMeshRuntime {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn note_data_rx_batch(
         &self,
-        notes: &mut FipsDataRxBatchNotes,
+        mesh: &FipsMeshRuntime,
+        runs: &[FipsEndpointDirectPacketRun],
         now: Option<u64>,
     ) -> Result<()> {
-        if notes.is_empty() {
+        if runs.is_empty() {
             return Ok(());
         }
         let now = now.unwrap_or_else(unix_timestamp);
         let peer_activity = self.peer_activity.load();
-        let mut presence_notes = Vec::new();
-        for note in notes.drain() {
-            if let Some(participant_key) = note.participant_key {
-                if let Some(activity) = peer_activity.get(&participant_key) {
-                    activity.note_rx(note.bytes, now, FipsPeerRxKind::Data);
-                    continue;
-                }
-                presence_notes.push((hex::encode(participant_key), note.bytes));
-                continue;
-            }
-            if let Some(participant) = note.participant {
-                presence_notes.push((participant, note.bytes));
+        let mut presence_needed = false;
+        for run in runs {
+            let admitter = direct_run_admitter(mesh, run)?;
+            if let Some(activity) = admitter
+                .source_pubkey_bytes()
+                .and_then(|key| peer_activity.get(key))
+            {
+                activity.note_rx(run.packet_bytes(), now, FipsPeerRxKind::Data);
+            } else {
+                presence_needed = true;
             }
         }
-        drop(peer_activity);
-        if presence_notes.is_empty() {
+        if !presence_needed {
             return Ok(());
         }
 
@@ -249,15 +250,24 @@ impl FipsPrivateMeshRuntime {
             .presence
             .write()
             .map_err(|_| anyhow!("FIPS mesh presence lock poisoned"))?;
-        for (participant, bytes) in presence_notes {
-            if let Some(entry) = presence.get_mut(&participant) {
+        for run in runs {
+            let admitter = direct_run_admitter(mesh, run)?;
+            if admitter
+                .source_pubkey_bytes()
+                .is_some_and(|key| peer_activity.contains_key(key))
+            {
+                continue;
+            }
+            let participant = admitter.source_pubkey();
+            let bytes = run.packet_bytes();
+            if let Some(entry) = presence.get_mut(participant) {
                 entry.last_seen_at = Some(now);
                 entry.last_data_seen_at = Some(now);
                 entry.rx_bytes = entry.rx_bytes.saturating_add(bytes as u64);
                 entry.error = None;
             } else {
                 presence.insert(
-                    participant,
+                    participant.to_string(),
                     FipsPeerPresence {
                         last_seen_at: Some(now),
                         last_data_seen_at: Some(now),
@@ -322,27 +332,18 @@ impl FipsPrivateMeshRuntime {
                 current_admitter = mesh.endpoint_source_admitter(&source_node_addr);
                 current_admission_cache = FipsEndpointAdmissionCache::default();
             }
-            let (accepted_count, endpoint_bytes) =
-                self.admit_direct_endpoint_packet_run_blocking(
-                    current_admitter.as_ref(),
-                    run,
-                    &mut current_admission_cache,
-                    batch_outputs,
-                    event_tx,
-                    &mut control_events_open,
-                )?;
+            let accepted_count = self.admit_direct_endpoint_packet_run_blocking(
+                current_admitter.as_ref(),
+                run,
+                &mut current_admission_cache,
+                batch_outputs,
+                event_tx,
+                &mut control_events_open,
+            )?;
             if accepted_count == 0 {
                 continue;
             }
-
-            if let Some(admitter) = current_admitter.as_ref() {
-                accepted = accepted.saturating_add(accepted_count);
-                batch_outputs.data_rx_notes.push(FipsDataRxNote::new(
-                    admitter.source_pubkey(),
-                    admitter.source_pubkey_bytes(),
-                    endpoint_bytes,
-                ));
-            }
+            accepted = accepted.saturating_add(accepted_count);
         }
         Ok((received, accepted))
     }
@@ -356,7 +357,7 @@ impl FipsPrivateMeshRuntime {
         batch_outputs: &mut DirectTunWriteBatch,
         event_tx: &mpsc::Sender<FipsPrivateMeshEvent>,
         control_events_open: &mut bool,
-    ) -> Result<(usize, usize)> {
+    ) -> Result<usize> {
         let source_peer = *run.source_peer();
         let enqueued_at_ms = run.enqueued_at_ms();
         let mut control_now = None;
@@ -416,12 +417,8 @@ impl FipsPrivateMeshRuntime {
         }
         let accepted_count = run.len();
         if accepted_count == 0 {
-            return Ok((0, 0));
+            return Ok(0);
         }
-        let Some(admitter) = admitter else {
-            return Ok((0, 0));
-        };
-        let endpoint_bytes = run.packet_bytes();
 
         if fips_tun_packet_debug_enabled() {
             for packet in run.packet_slices() {
@@ -432,12 +429,19 @@ impl FipsPrivateMeshRuntime {
                 );
             }
         }
-        batch_outputs.push_run(
-            run,
-            FipsPacketSource::new(admitter.source_pubkey_bytes()),
-        );
-        Ok((accepted_count, endpoint_bytes))
+        batch_outputs.push_run(run);
+        Ok(accepted_count)
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+fn direct_run_admitter<'a>(
+    mesh: &'a FipsMeshRuntime,
+    run: &FipsEndpointDirectPacketRun,
+) -> Result<FipsEndpointSourceAdmitter<'a>> {
+    let source_node_addr = run.source_peer().node_addr().as_bytes();
+    mesh.endpoint_source_admitter(source_node_addr)
+        .ok_or_else(|| anyhow!("accepted FIPS direct packet run lost admission source"))
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

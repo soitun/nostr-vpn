@@ -279,14 +279,7 @@ unsafe impl Send for LinuxVnetWritePreparer {}
 
 trait LinuxVnetPacketBatch {
     fn packet_count(&self) -> usize;
-    fn packet_slice(&self, index: usize) -> &[u8];
-
-    fn append_packet_refs(&self, refs: &mut Vec<LinuxVnetPacketRef>) {
-        refs.reserve(self.packet_count());
-        for index in 0..self.packet_count() {
-            refs.push(LinuxVnetPacketRef::new(self.packet_slice(index)));
-        }
-    }
+    fn append_packet_refs(&self, refs: &mut Vec<LinuxVnetPacketRef>);
 }
 
 impl<P: AsRef<[u8]>> LinuxVnetPacketBatch for [P] {
@@ -294,8 +287,9 @@ impl<P: AsRef<[u8]>> LinuxVnetPacketBatch for [P] {
         self.len()
     }
 
-    fn packet_slice(&self, index: usize) -> &[u8] {
-        self[index].as_ref()
+    fn append_packet_refs(&self, refs: &mut Vec<LinuxVnetPacketRef>) {
+        refs.reserve(self.len());
+        refs.extend(self.iter().map(|packet| LinuxVnetPacketRef::new(packet.as_ref())));
     }
 }
 
@@ -304,19 +298,14 @@ impl<P: AsRef<[u8]>> LinuxVnetPacketBatch for Vec<P> {
         self.len()
     }
 
-    fn packet_slice(&self, index: usize) -> &[u8] {
-        self[index].as_ref()
+    fn append_packet_refs(&self, refs: &mut Vec<LinuxVnetPacketRef>) {
+        self.as_slice().append_packet_refs(refs);
     }
 }
 
 impl LinuxVnetPacketBatch for DirectTunWriteBatch {
     fn packet_count(&self) -> usize {
         self.len()
-    }
-
-    fn packet_slice(&self, index: usize) -> &[u8] {
-        self.packet_slice(index)
-            .expect("prepared Linux vnet direct packet index must exist")
     }
 
     fn append_packet_refs(&self, refs: &mut Vec<LinuxVnetPacketRef>) {

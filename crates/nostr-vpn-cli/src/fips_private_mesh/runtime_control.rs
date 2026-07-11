@@ -279,7 +279,11 @@ impl FipsPrivateMeshRuntime {
         feature = "paid-exit",
         any(target_os = "linux", target_os = "macos", target_os = "windows")
     ))]
-    fn note_paid_route_inbound_batch(&self, packets: &DirectTunWriteBatch) -> Result<()> {
+    fn note_paid_route_inbound_batch(
+        &self,
+        mesh: &FipsMeshRuntime,
+        packets: &DirectTunWriteBatch,
+    ) -> Result<()> {
         if packets.is_empty() {
             return Ok(());
         }
@@ -287,14 +291,11 @@ impl FipsPrivateMeshRuntime {
             .paid_route_accounting
             .lock()
             .map_err(|_| anyhow!("FIPS paid route accounting lock poisoned"))?;
-        for index in 0..packets.len() {
-            let Some(packet) = packets.packet_slice(index) else {
-                continue;
-            };
-            let Some(source) = packets.packet_source(index) else {
-                continue;
-            };
-            accounting.record_inbound(None, source.participant_key.as_ref(), packet);
+        for run in &packets.runs {
+            let admitter = direct_run_admitter(mesh, run)?;
+            for packet in run.packet_slices() {
+                accounting.record_inbound(None, admitter.source_pubkey_bytes(), packet);
+            }
         }
         Ok(())
     }

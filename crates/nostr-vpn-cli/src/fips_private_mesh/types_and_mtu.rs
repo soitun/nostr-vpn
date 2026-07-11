@@ -40,11 +40,7 @@ type TunPipelineBatch = Vec<TunPipelinePacket>;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 struct DirectTunWriteBatch {
     runs: Vec<FipsEndpointDirectPacketRun>,
-    packet_ends: Vec<usize>,
-    #[cfg(feature = "paid-exit")]
-    packet_sources: Vec<FipsPacketSource>,
-    bytes: usize,
-    data_rx_notes: FipsDataRxBatchNotes,
+    admission_mesh: Option<Arc<FipsMeshRuntime>>,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -52,103 +48,47 @@ impl DirectTunWriteBatch {
     fn with_capacity(capacity: usize) -> Self {
         Self {
             runs: Vec::with_capacity(capacity),
-            packet_ends: Vec::with_capacity(capacity),
-            #[cfg(feature = "paid-exit")]
-            packet_sources: Vec::with_capacity(capacity),
-            bytes: 0,
-            data_rx_notes: FipsDataRxBatchNotes::default(),
+            admission_mesh: None,
         }
     }
 
     fn clear(&mut self) {
         self.runs.clear();
-        self.packet_ends.clear();
-        #[cfg(feature = "paid-exit")]
-        self.packet_sources.clear();
-        self.bytes = 0;
-        self.data_rx_notes.clear();
+        self.admission_mesh = None;
     }
 
     fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.runs.is_empty()
     }
 
     fn len(&self) -> usize {
-        self.packet_ends.last().copied().unwrap_or(0)
+        self.runs.iter().map(FipsEndpointDirectPacketRun::len).sum()
     }
 
     fn bytes(&self) -> usize {
-        self.bytes
+        self.runs
+            .iter()
+            .map(FipsEndpointDirectPacketRun::packet_bytes)
+            .sum()
     }
 
-    fn push_run(&mut self, run: FipsEndpointDirectPacketRun, source: FipsPacketSource) {
+    fn set_admission_mesh(&mut self, mesh: Arc<FipsMeshRuntime>) {
+        self.admission_mesh = Some(mesh);
+    }
+
+    fn admission_mesh(&self) -> Option<&FipsMeshRuntime> {
+        self.admission_mesh.as_deref()
+    }
+
+    fn push_run(&mut self, run: FipsEndpointDirectPacketRun) {
         if run.is_empty() {
             return;
         }
-        let packet_count = run.len();
-        self.bytes = self.bytes.saturating_add(run.packet_bytes());
-        let previous = self.len();
-        self.packet_ends
-            .push(previous.saturating_add(packet_count));
-        #[cfg(feature = "paid-exit")]
-        self.packet_sources
-            .extend(std::iter::repeat_n(source, packet_count));
-        #[cfg(not(feature = "paid-exit"))]
-        let _ = source;
         self.runs.push(run);
-    }
-
-    #[cfg(any(feature = "paid-exit", target_os = "linux"))]
-    fn packet_slice(&self, index: usize) -> Option<&[u8]> {
-        if index >= self.len() {
-            return None;
-        }
-        let run_index = self.packet_ends.partition_point(|end| *end <= index);
-        let previous_end = run_index
-            .checked_sub(1)
-            .and_then(|previous| self.packet_ends.get(previous).copied())
-            .unwrap_or(0);
-        self.runs
-            .get(run_index)
-            .and_then(|run| run.packet_slice(index - previous_end))
-    }
-
-    #[cfg(feature = "paid-exit")]
-    fn packet_source(&self, index: usize) -> Option<FipsPacketSource> {
-        self.packet_sources.get(index).copied()
     }
 
     fn run_slices(&self) -> impl Iterator<Item = &[u8]> {
         self.runs.iter().flat_map(|run| run.packet_slices())
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-#[derive(Clone, Copy, Debug)]
-#[cfg(feature = "paid-exit")]
-struct FipsPacketSource {
-    participant_key: Option<ParticipantPubkeyBytes>,
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-#[derive(Clone, Copy, Debug)]
-#[cfg(not(feature = "paid-exit"))]
-struct FipsPacketSource;
-
-#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
-impl FipsPacketSource {
-    fn new(participant_key: Option<&ParticipantPubkeyBytes>) -> Self {
-        #[cfg(feature = "paid-exit")]
-        {
-            Self {
-                participant_key: participant_key.copied(),
-            }
-        }
-        #[cfg(not(feature = "paid-exit"))]
-        {
-            let _ = participant_key;
-            Self
-        }
     }
 }
 
@@ -355,60 +295,6 @@ impl FipsEndpointMessageOutcome {
             event: None,
             reply: None,
         }
-    }
-}
-
-struct FipsDataRxNote {
-    participant: Option<String>,
-    participant_key: Option<ParticipantPubkeyBytes>,
-    bytes: usize,
-}
-
-impl FipsDataRxNote {
-    fn new(
-        participant: &str,
-        participant_key: Option<&ParticipantPubkeyBytes>,
-        bytes: usize,
-    ) -> Self {
-        let participant_key = participant_key.copied();
-        Self {
-            participant: participant_key.is_none().then(|| participant.to_string()),
-            participant_key,
-            bytes,
-        }
-    }
-}
-
-#[derive(Default)]
-struct FipsDataRxBatchNotes {
-    entries: Vec<FipsDataRxNote>,
-}
-
-impl FipsDataRxBatchNotes {
-    fn push(&mut self, note: FipsDataRxNote) {
-        if let Some(entry) = self.entries.iter_mut().find(|entry| {
-            match (entry.participant_key, note.participant_key) {
-                (Some(left), Some(right)) => left == right,
-                (None, None) => entry.participant == note.participant,
-                _ => false,
-            }
-        }) {
-            entry.bytes = entry.bytes.saturating_add(note.bytes);
-            return;
-        }
-        self.entries.push(note);
-    }
-
-    fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    fn clear(&mut self) {
-        self.entries.clear();
-    }
-
-    fn drain(&mut self) -> impl Iterator<Item = FipsDataRxNote> + '_ {
-        self.entries.drain(..)
     }
 }
 
