@@ -941,30 +941,6 @@ private fun AddDevicesDialog(
         }
         dispatch(NativeActions.importJoinRequest(trimmed))
     }
-    pendingJoinRequest?.let { request ->
-        AlertDialog(
-            onDismissRequest = { pendingJoinRequest = null },
-            title = { Text("Add device?") },
-            text = { Text("Add the device from this join request to ${network.name.ifBlank { "this network" }}?") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        dispatch(NativeActions.importJoinRequest(request))
-                        joinRequestInput = ""
-                        pendingJoinRequest = null
-                        onDismiss()
-                    },
-                ) {
-                    Text("Add")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingJoinRequest = null }) {
-                    Text("Cancel")
-                }
-            },
-        )
-    }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Add Device") },
@@ -1034,6 +1010,30 @@ private fun AddDevicesDialog(
             }
         },
     )
+    pendingJoinRequest?.let { request ->
+        AlertDialog(
+            onDismissRequest = { pendingJoinRequest = null },
+            title = { Text("Add device?") },
+            text = { Text("Add the device from this join request to ${network.name.ifBlank { "this network" }}?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        dispatch(NativeActions.importJoinRequest(request))
+                        joinRequestInput = ""
+                        pendingJoinRequest = null
+                        onDismiss()
+                    },
+                ) {
+                    Text("Add")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingJoinRequest = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.internetPage(

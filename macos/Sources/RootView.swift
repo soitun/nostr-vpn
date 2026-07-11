@@ -84,6 +84,7 @@ struct RootView: View {
     @State private var diagnosticsExpanded = false
     @State private var showingQrScanner = false
     @State private var scanningJoinRequest = false
+    @State private var scannedQrCode: String?
     @State private var selectedSidebarItem: SidebarItem? = RootView.initialSidebarItem()
     @State private var shownNetworkId: String?
     @State private var addNetworkPresented = false
@@ -210,12 +211,9 @@ struct RootView: View {
                 addNetworkMode = nil
             }
         }
-        .sheet(isPresented: $showingQrScanner) {
+        .sheet(isPresented: $showingQrScanner, onDismiss: qrScannerDismissed) {
             QRCodeScannerSheet { code in
-                if scanningJoinRequest, let network = shownNetwork {
-                    importJoinRequestOrAddDevice(code, network: network)
-                }
-                scanningJoinRequest = false
+                scannedQrCode = code
                 showingQrScanner = false
             }
         }
@@ -225,20 +223,20 @@ struct RootView: View {
         .sheet(isPresented: $addDevicePresented) {
             if let network = shownNetwork, network.enabled {
                 addDeviceSheetContent(network)
+                    .alert("Add device?", isPresented: pendingJoinRequestPresented, presenting: pendingJoinRequest) { pending in
+                        Button("Cancel", role: .cancel) {
+                            pendingJoinRequest = nil
+                        }
+                        Button("Add") {
+                            manager.importJoinRequest(pending.request)
+                            joinRequestInput = ""
+                            pendingJoinRequest = nil
+                            addDevicePresented = false
+                        }
+                    } message: { pending in
+                        Text("Add the device from this join request to \(pending.networkName)?")
+                    }
             }
-        }
-        .alert("Add device?", isPresented: pendingJoinRequestPresented, presenting: pendingJoinRequest) { pending in
-            Button("Cancel", role: .cancel) {
-                pendingJoinRequest = nil
-            }
-            Button("Add") {
-                manager.importJoinRequest(pending.request)
-                joinRequestInput = ""
-                pendingJoinRequest = nil
-                addDevicePresented = false
-            }
-        } message: { pending in
-            Text("Add the device from this join request to \(pending.networkName)?")
         }
     }
 
@@ -251,6 +249,21 @@ struct RootView: View {
                 }
             }
         )
+    }
+
+    private func qrScannerDismissed() {
+        let code = scannedQrCode
+        let network = shownNetwork
+        let shouldImport = scanningJoinRequest
+        scannedQrCode = nil
+        scanningJoinRequest = false
+
+        guard shouldImport, let code, let network else {
+            return
+        }
+        DispatchQueue.main.async {
+            importJoinRequestOrAddDevice(code, network: network)
+        }
     }
 
     private var addNetworkSheetContent: some View {

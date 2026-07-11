@@ -796,6 +796,7 @@ private struct AddDeviceSheet: View {
     let network: NetworkState
     @Environment(\.dismiss) private var dismiss
     @State private var qrScannerPresented = false
+    @State private var scannedQrCode: String?
     @State private var scanError = ""
     @State private var joinRequestInput = ""
     @State private var pendingJoinRequest: PendingJoinRequest?
@@ -833,9 +834,9 @@ private struct AddDeviceSheet: View {
         }
         .safeAreaPadding(.bottom, 92)
         .background(AppColors.background)
-        .sheet(isPresented: $qrScannerPresented) {
+        .sheet(isPresented: $qrScannerPresented, onDismiss: qrScannerDismissed) {
             QRCodeScannerSheet { code in
-                handleScannedJoinerCode(code)
+                scannedQrCode = code
                 qrScannerPresented = false
             }
         }
@@ -863,6 +864,16 @@ private struct AddDeviceSheet: View {
                 }
             }
         )
+    }
+
+    private func qrScannerDismissed() {
+        guard let code = scannedQrCode else {
+            return
+        }
+        scannedQrCode = nil
+        DispatchQueue.main.async {
+            handleScannedJoinerCode(code)
+        }
     }
 
     private func importJoinRequest(_ value: String) {
