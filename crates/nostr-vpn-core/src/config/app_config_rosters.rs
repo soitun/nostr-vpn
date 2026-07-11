@@ -1,4 +1,15 @@
 impl AppConfig {
+    pub fn active_network_has_confirmed_local_identity(&self) -> bool {
+        let Some(network) = self.active_network_opt() else {
+            return false;
+        };
+        let Ok(own_pubkey) = self.own_nostr_pubkey_hex() else {
+            return false;
+        };
+
+        local_identity_was_confirmed(network, &own_pubkey)
+    }
+
     pub fn shared_network_roster(&self, network_id: &str) -> Result<SharedNetworkRoster> {
         let network = self
             .network_by_id(network_id)
@@ -99,13 +110,7 @@ impl AppConfig {
                 .any(|member| member == own_pubkey)
         });
         let own_in_previous_roster = own_pubkey.as_deref().is_some_and(|own_pubkey| {
-            let network = &self.networks[network_index];
-            network
-                .devices
-                .iter()
-                .chain(network.admins.iter())
-                .filter_map(|member| normalize_nostr_pubkey(member).ok())
-                .any(|member| member == own_pubkey)
+            local_identity_was_confirmed(&self.networks[network_index], own_pubkey)
         });
 
         if own_pubkey.is_some() && own_in_previous_roster && !own_in_shared_roster {
@@ -204,4 +209,20 @@ impl AppConfig {
         })
     }
 
+}
+
+fn local_identity_was_confirmed(network: &NetworkConfig, own_pubkey: &str) -> bool {
+    if network
+        .devices
+        .iter()
+        .chain(network.admins.iter())
+        .filter_map(|member| normalize_nostr_pubkey(member).ok())
+        .any(|member| member == own_pubkey)
+    {
+        return true;
+    }
+
+    network.outbound_join_request.is_none()
+        && network.shared_roster_updated_at > 0
+        && !network.shared_roster_signed_by.is_empty()
 }

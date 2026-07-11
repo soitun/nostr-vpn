@@ -259,8 +259,27 @@ fn apply_admin_signed_shared_roster_drops_network_when_own_key_is_evicted() {
     config.nostr.public_key = own_hex.clone();
     config.networks[0].network_id = "mesh-home".to_string();
     config.networks[0].admins = vec![current_admin_hex.clone()];
-    config.networks[0].devices = vec![own_hex.clone(), other_member_hex.clone()];
+    config.networks[0].shared_roster_updated_at = 0;
+    config.networks[0].shared_roster_signed_by.clear();
+    config.networks[0].enabled = true;
+    config.networks[0].outbound_join_request = Some(PendingOutboundJoinRequest {
+        recipient: current_admin_hex.clone(),
+        requested_at: 1_725_999_999,
+    });
     config.ensure_defaults();
+
+    config
+        .apply_admin_signed_shared_roster(admin_signed_roster_update(
+            "mesh-home",
+            "Home",
+            vec![own_hex, other_member_hex.clone()],
+            vec![current_admin_hex.clone()],
+            std::collections::HashMap::new(),
+            1_726_000_000,
+            &current_admin_hex,
+        ))
+        .expect("apply accepted roster");
+    assert!(config.active_network_has_confirmed_local_identity());
 
     let changed = config
         .apply_admin_signed_shared_roster(admin_signed_roster_update(
@@ -269,7 +288,7 @@ fn apply_admin_signed_shared_roster_drops_network_when_own_key_is_evicted() {
             vec![current_admin_hex.clone(), other_member_hex],
             vec![current_admin_hex.clone()],
             std::collections::HashMap::new(),
-            1_726_000_000,
+            1_726_000_001,
             &current_admin_hex,
         ))
         .expect("apply removal roster");

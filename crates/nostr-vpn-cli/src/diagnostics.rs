@@ -323,9 +323,6 @@ pub(crate) fn build_health_issues(
 }
 
 fn local_identity_missing_from_active_roster(app: &AppConfig) -> bool {
-    let Ok(own_pubkey) = app.own_nostr_pubkey_hex() else {
-        return false;
-    };
     let Some(network) = app.active_network_opt() else {
         return false;
     };
@@ -333,9 +330,7 @@ fn local_identity_missing_from_active_roster(app: &AppConfig) -> bool {
         return false;
     }
 
-    !app.active_network_signal_pubkeys_hex()
-        .iter()
-        .any(|participant| participant == &own_pubkey)
+    !app.active_network_has_confirmed_local_identity()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -541,7 +536,8 @@ mod tests {
     use super::{
         CaptivePortalEndpoint, NetworkSnapshot, build_health_issues,
         captive_portal_interface_name_needs_detection, check_captive_portal_endpoint,
-        mapping_varies_by_dest_ip, parse_http_response, prefer_nonempty_network_snapshot,
+        local_identity_missing_from_active_roster, mapping_varies_by_dest_ip, parse_http_response,
+        prefer_nonempty_network_snapshot,
     };
     use nostr_sdk::prelude::Keys;
     use nostr_vpn_core::config::{AppConfig, PendingOutboundJoinRequest};
@@ -830,9 +826,10 @@ mod tests {
     fn health_issues_flag_local_identity_missing_from_active_roster() {
         let mut app = AppConfig::generated();
         let own_pubkey = app.own_nostr_pubkey_hex().expect("own pubkey");
+        let admin = Keys::generate().public_key().to_hex();
         app.networks[0].enabled = true;
         app.networks[0].devices = vec![Keys::generate().public_key().to_hex()];
-        app.networks[0].admins = vec![Keys::generate().public_key().to_hex()];
+        app.networks[0].admins = vec![admin.clone()];
         app.ensure_defaults();
         let network = NetworkSnapshot {
             default_interface: Some("en0".to_string()),
@@ -856,6 +853,10 @@ mod tests {
                 .iter()
                 .any(|participant| participant == &own_pubkey)
         );
+
+        app.networks[0].shared_roster_updated_at = 123;
+        app.networks[0].shared_roster_signed_by = admin;
+        assert!(!local_identity_missing_from_active_roster(&app));
     }
 
     #[test]
