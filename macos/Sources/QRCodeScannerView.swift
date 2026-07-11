@@ -60,6 +60,7 @@ struct QRCodeScannerView: NSViewRepresentable {
     final class Coordinator: NSObject, AVCaptureMetadataOutputObjectsDelegate {
         private let onCode: (String) -> Void
         private let onError: (String) -> Void
+        private let sessionQueue = DispatchQueue(label: "fi.siriusbusiness.nvpn.qrscanner")
         private var session: AVCaptureSession?
         private var didEmitCode = false
 
@@ -87,8 +88,13 @@ struct QRCodeScannerView: NSViewRepresentable {
         }
 
         func stop() {
-            session?.stopRunning()
+            let currentSession = session
             session = nil
+            sessionQueue.async {
+                if currentSession?.isRunning == true {
+                    currentSession?.stopRunning()
+                }
+            }
         }
 
         func metadataOutput(
@@ -130,13 +136,22 @@ struct QRCodeScannerView: NSViewRepresentable {
                     return
                 }
                 nextSession.addInput(input)
+                if #available(macOS 26.0, *) {
+                    // QR recognition does not use Cinematic Video. AVFoundation throws an
+                    // Objective-C exception if QR-only metadata is selected while this is on.
+                    input.isCinematicVideoCaptureEnabled = false
+                }
                 nextSession.addOutput(output)
                 nextSession.commitConfiguration()
+                guard output.availableMetadataObjectTypes.contains(.qr) else {
+                    onError("QR scanning is unavailable for this camera.")
+                    return
+                }
                 output.setMetadataObjectsDelegate(self, queue: .main)
                 output.metadataObjectTypes = [.qr]
                 view.attach(session: nextSession)
                 session = nextSession
-                DispatchQueue.global(qos: .userInitiated).async {
+                sessionQueue.async {
                     nextSession.startRunning()
                 }
             } catch {
