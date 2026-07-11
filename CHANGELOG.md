@@ -4,12 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.91 - 2026-07-11
+
 ### Changed
 
 - Desktop and CLI update checks consume the latest signed Hashtree release root
   from the shared FIPS/relay pubsub cache before opening a direct relay path.
 - Relay bridges subscribe to the exact update publisher/tree, and nodes replay
   the bounded latest root to FIPS peers that connect after publication.
+- Bumped to FIPS Core 0.3.88 and Endpoint 0.3.57, with simpler direct endpoint
+  receive and send batching while preserving the FIPS protocol surface.
 
 ## 4.0.90 - 2026-07-10
 
