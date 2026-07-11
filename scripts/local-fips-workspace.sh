@@ -49,9 +49,9 @@ nvpn_prepare_local_fips_workspace() {
   NVPN_LOCAL_FIPS_ENDPOINT_PATH="$fips_path/crates/fips-endpoint" \
   NVPN_LOCAL_FIPS_IDENTITY_PATH="$fips_path/crates/fips-identity" \
     perl -0pi -e '
-      s#fips-core = \{ version = "([^"]+)", path = "[^"]*" \}#fips-core = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_CORE_PATH}" }#;
-      s#fips-endpoint = \{ version = "([^"]+)", path = "[^"]*" \}#fips-endpoint = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_ENDPOINT_PATH}" }#;
-      s#fips-identity = \{ version = "([^"]+)", path = "[^"]*" \}#fips-identity = { version = "$1", path = "$ENV{NVPN_LOCAL_FIPS_IDENTITY_PATH}" }#;
+      s#(fips-core\s*=\s*\{[^\n}]*\bpath\s*=\s*)"[^"]*"#$1"$ENV{NVPN_LOCAL_FIPS_CORE_PATH}"#g;
+      s#(fips-endpoint\s*=\s*\{[^\n}]*\bpath\s*=\s*)"[^"]*"#$1"$ENV{NVPN_LOCAL_FIPS_ENDPOINT_PATH}"#g;
+      s#(fips-identity\s*=\s*\{[^\n}]*\bpath\s*=\s*)"[^"]*"#$1"$ENV{NVPN_LOCAL_FIPS_IDENTITY_PATH}"#g;
     ' "$NVPN_LOCAL_FIPS_ROOT/Cargo.toml"
 
   NVPN_LOCAL_FIPS_PREPARED=1

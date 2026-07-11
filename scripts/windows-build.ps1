@@ -20,6 +20,7 @@ $CargoLock = Join-Path $Root "Cargo.lock"
 $CargoConfigArgs = @()
 $CargoLockArgs = @("--locked")
 $LockSnapshot = $null
+$ManifestSnapshot = $null
 
 Set-Location $Root
 
@@ -134,11 +135,14 @@ function Test-FilesDiffer {
 }
 
 function Prepare-CargoLockRestore {
-  if ($script:LockSnapshot) {
-    return
+  if (!$script:LockSnapshot) {
+    $script:LockSnapshot = [System.IO.Path]::GetTempFileName()
+    Copy-Item -Force $CargoLock $script:LockSnapshot
   }
-  $script:LockSnapshot = [System.IO.Path]::GetTempFileName()
-  Copy-Item -Force $CargoLock $script:LockSnapshot
+  if (!$script:ManifestSnapshot) {
+    $script:ManifestSnapshot = [System.IO.Path]::GetTempFileName()
+    Copy-Item -Force $WorkspaceCargoToml $script:ManifestSnapshot
+  }
 }
 
 function Restore-CargoLock {
@@ -151,6 +155,15 @@ function Restore-CargoLock {
   }
   Remove-Item -Force $script:LockSnapshot -ErrorAction SilentlyContinue
   $script:LockSnapshot = $null
+
+  if ($script:ManifestSnapshot -and (Test-Path $script:ManifestSnapshot)) {
+    if (Test-FilesDiffer $script:ManifestSnapshot $WorkspaceCargoToml) {
+      Copy-Item -Force $script:ManifestSnapshot $WorkspaceCargoToml
+      Write-Host "restored Cargo.toml after local-FIPS cargo run"
+    }
+    Remove-Item -Force $script:ManifestSnapshot -ErrorAction SilentlyContinue
+    $script:ManifestSnapshot = $null
+  }
 }
 
 function Convert-ToCargoPath {
@@ -164,6 +177,8 @@ function Prepare-LocalFipsPatch {
   }
 
   $FipsRoot = (Resolve-Path $env:NVPN_FIPS_REPO_PATH).Path
+  Prepare-CargoLockRestore
+  $ManifestText = Get-Content -Raw -Path $WorkspaceCargoToml
   foreach ($CrateName in @("fips-core", "fips-endpoint", "fips-identity")) {
     $CrateDir = Join-Path $FipsRoot "crates\$CrateName"
     if (!(Test-Path (Join-Path $CrateDir "Cargo.toml"))) {
@@ -171,9 +186,19 @@ function Prepare-LocalFipsPatch {
     }
     $CargoPath = Convert-ToCargoPath $CrateDir
     $script:CargoConfigArgs += @("--config", "patch.crates-io.$CrateName.path='$CargoPath'")
+    $EscapedName = [regex]::Escape($CrateName)
+    $Pattern = "(?m)($EscapedName\s*=\s*\{[^\r\n}]*\bpath\s*=\s*)`"[^`"]*`""
+    $ManifestText = [regex]::Replace($ManifestText, $Pattern, {
+      param($Match)
+      $Match.Groups[1].Value + '"' + $CargoPath + '"'
+    })
   }
+  [System.IO.File]::WriteAllText(
+    $WorkspaceCargoToml,
+    $ManifestText,
+    [System.Text.UTF8Encoding]::new($false)
+  )
 
-  Prepare-CargoLockRestore
   $script:CargoLockArgs = @()
   Write-Host "using local FIPS crates from $FipsRoot"
 }
