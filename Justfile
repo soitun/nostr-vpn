@@ -54,7 +54,7 @@ info:
     @echo "  just mobile-test-kit-rust"
     @echo "  just mobile-test-kit-sim"
     @echo "  just mobile-test-kit-device"
-    @echo "  just check-rust-file-lines"
+    @echo "  just check-source-file-lines"
     @echo "  just dataplane-safety-fast [suites...]"
     @echo "  just dataplane-host-pair-comparison-dry-run"
     @echo "  just dataplane-host-pair-comparison"
@@ -205,8 +205,8 @@ release-promote:
 test:
     cargo test
 
-check-rust-file-lines:
-    ./scripts/check-rust-file-lines.sh
+check-source-file-lines:
+    ./scripts/check-source-file-lines.sh
 
 dataplane-safety-fast *suites:
     ./scripts/test-dataplane-safety-fast.sh {{suites}}
