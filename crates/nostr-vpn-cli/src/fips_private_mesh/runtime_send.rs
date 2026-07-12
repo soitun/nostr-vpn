@@ -5,7 +5,6 @@ impl FipsPrivateMeshRuntime {
         peers: Vec<FipsMeshPeerConfig>,
         config: Config,
         local_allowed_ips: Vec<String>,
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
         local_tunnel_ips: Vec<IpAddr>,
         paid_route_admissions: Vec<FipsPaidRouteAdmission>,
     ) -> Result<Self> {
@@ -37,6 +36,8 @@ impl FipsPrivateMeshRuntime {
         );
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         let local_tunnel_ips = local_tunnel_ips.into_iter().collect();
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let _ = local_tunnel_ips;
         let peer_activity = peer_activity_map(&mesh.peer_pubkeys(), None);
 
         Ok(Self {

@@ -449,7 +449,7 @@ fn fips_tunnel_requires_endpoint_restart(
         || current.local_ethernet_underlay != next.local_ethernet_underlay
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn endpoint_transport_ipv4_host(addr: &str) -> Option<Ipv4Addr> {
     if let Ok(socket_addr) = addr.parse::<SocketAddr>() {
         return match socket_addr.ip() {

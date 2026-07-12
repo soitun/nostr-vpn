@@ -29,6 +29,7 @@ impl FipsPrivateTunnelRuntime {
                 config.peers.clone(),
                 endpoint_config,
                 config.local_allowed_ips(),
+                Vec::new(),
                 config.paid_route_admissions.clone(),
             )
             .await?,
