@@ -1,4 +1,9 @@
 use super::*;
+use nostr_vpn_core::paid_routes::PaidRouteUsage;
+
+#[path = "paid_exit/automatic.rs"]
+mod automatic;
+pub(crate) use automatic::*;
 
 pub(super) const PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT: u64 = 1;
 pub(super) const PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT: usize = 4;
@@ -9,7 +14,7 @@ pub(super) fn flush_fips_paid_route_usage(
     config_path: &Path,
     now_unix: u64,
     active_millis_delta: u64,
-) -> Result<bool> {
+) -> Result<PaidExitUsageFlush> {
     let store_path = paid_route_store_file_path(config_path);
     let mut store = load_paid_route_store(&store_path)?;
     let mut changed = false;
@@ -21,11 +26,13 @@ pub(super) fn flush_fips_paid_route_usage(
         Vec::new()
     };
 
+    let mut buyer_delta = PaidRouteUsage::default();
     if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() {
         let mut usage_delta = runtime.drain_paid_route_usage(&seller_pubkey)?;
         usage_delta.active_millis = usage_delta
             .active_millis
             .saturating_add(active_millis_delta);
+        buyer_delta = usage_delta.clone();
         if !usage_delta.is_empty() {
             changed |= store
                 .record_buyer_usage(RecordPaidRouteBuyerUsageRequest {
@@ -69,7 +76,10 @@ pub(super) fn flush_fips_paid_route_usage(
     } else {
         seller_admission_routing_before.clone()
     };
-    Ok(seller_admission_routing_after != seller_admission_routing_before)
+    Ok(PaidExitUsageFlush {
+        seller_admission_changed: seller_admission_routing_after != seller_admission_routing_before,
+        buyer_delta,
+    })
 }
 
 fn paid_route_seller_admission_routing_signature(

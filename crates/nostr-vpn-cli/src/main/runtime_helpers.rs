@@ -209,7 +209,9 @@ fn fips_private_runtime_active(app: &AppConfig, vpn_enabled: bool, expected_peer
 pub(crate) fn paid_exit_fips_runtime_active(app: &AppConfig) -> bool {
     #[cfg(feature = "paid-exit")]
     {
-        app.paid_exit.enabled || app.public_paid_exit_node_pubkey_hex().is_some()
+        app.paid_exit.enabled
+            || app.internet_source == nostr_vpn_core::config::InternetSource::PaidAutomatic
+            || app.public_paid_exit_node_pubkey_hex().is_some()
     }
     #[cfg(not(feature = "paid-exit"))]
     {
