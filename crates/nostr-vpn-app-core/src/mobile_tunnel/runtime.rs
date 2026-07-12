@@ -1,5 +1,7 @@
 impl MobileTunnel {
     pub(crate) fn start(config_json: &str) -> Result<Self> {
+        const MOBILE_TUNNEL_WORKER_STACK_SIZE: usize = 4 * 1024 * 1024;
+
         mobile_debug_log("MobileTunnel::start parse begin");
         let config: MobileTunnelConfig =
             serde_json::from_str(config_json).context("invalid mobile tunnel config JSON")?;
@@ -26,10 +28,15 @@ impl MobileTunnel {
         let runtime = RuntimeBuilder::new_multi_thread()
             .enable_all()
             .thread_name("nvpn-mobile-fips")
+            .thread_stack_size(MOBILE_TUNNEL_WORKER_STACK_SIZE)
             .build()
             .context("failed to start mobile FIPS runtime")?;
         mobile_debug_log("MobileTunnel::start entering start_async");
-        let started = runtime.block_on(Self::start_async(config, app_config))?;
+        let started = runtime.block_on(async move {
+            tokio::spawn(Self::start_async(config, app_config))
+                .await
+                .context("mobile FIPS startup task failed")?
+        })?;
         mobile_debug_log("MobileTunnel::start start_async returned");
         Ok(Self {
             runtime,

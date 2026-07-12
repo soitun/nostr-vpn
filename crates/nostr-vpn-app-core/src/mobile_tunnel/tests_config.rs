@@ -453,6 +453,47 @@
     }
 
     #[test]
+    fn mobile_tunnel_start_is_safe_from_network_extension_sized_stack() {
+        let own_keys = Keys::generate();
+        let own_pubkey = own_keys.public_key().to_hex();
+        let mut app = AppConfig::generated();
+        app.nostr.secret_key = own_keys.secret_key().to_bech32().expect("test nsec");
+        app.networks = vec![NetworkConfig {
+            id: "ios-stack".to_string(),
+            name: "iOS stack".to_string(),
+            enabled: true,
+            network_id: "ios-stack".to_string(),
+            invite_secret: "test-secret".to_string(),
+            devices: std::iter::once(own_pubkey.clone())
+                .chain((0..3).map(|_| Keys::generate().public_key().to_hex()))
+                .collect(),
+            admins: vec![own_pubkey],
+            listen_for_join_requests: false,
+            invite_inviter: String::new(),
+            outbound_join_request: None,
+            inbound_join_requests: Vec::new(),
+            shared_roster_updated_at: 0,
+            shared_roster_signed_by: String::new(),
+        }];
+        app.ensure_defaults();
+        let mut config = MobileTunnelConfig::from_app(&app).expect("mobile config");
+        config.webrtc_enabled = false;
+        config.listen_port = 0;
+        let config_json = serde_json::to_string(&config).expect("mobile config JSON");
+
+        let tunnel = std::thread::Builder::new()
+            .name("network-extension-stack-fixture".to_string())
+            .stack_size(512 * 1024)
+            .spawn(move || MobileTunnel::start(&config_json))
+            .expect("spawn NetworkExtension-sized caller")
+            .join()
+            .expect("mobile tunnel caller should not overflow")
+            .expect("mobile tunnel should start");
+
+        drop(tunnel);
+    }
+
+    #[test]
     fn wg_upstream_excluded_route_is_ipv4_only() {
         assert_eq!(
             wg_upstream_excluded_route_for_addr("198.51.100.20:51820".parse().unwrap()),
