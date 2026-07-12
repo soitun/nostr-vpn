@@ -10,10 +10,12 @@ use fips_core::{
 };
 use nostr_pubsub::{EventSource, MeshPeer, MeshPeerPolicy, PolicyDecision};
 use nostr_pubsub_fips::{FipsPubsubPolicy, FipsPubsubPolicyOptions};
+use nostr_pubsub_social_graph::{PEER_RATING_MAX_AGE, PEER_RATING_MAX_FUTURE_SKEW};
 use nostr_sdk::prelude::{
     Alphabet, Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification, SingleLetterTag,
     TagStandard,
 };
+use nostr_social_memory::rating_from_event;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::control_pubsub::{
     CONTROL_PUBSUB_FIPS_SERVICE_PORT, CONTROL_PUBSUB_MAX_EVENT_BYTES,
@@ -656,6 +658,14 @@ async fn publish_policy_maintenance(
     pubsub_policy: &mut FipsPubsubPolicy,
 ) {
     let now = now_ms();
+    if let Err(error) = context
+        .events
+        .lock()
+        .await
+        .prune_expired_ratings(now / 1_000)
+    {
+        tracing::warn!(%error, "failed to prune expired control pubsub ratings");
+    }
     let events = match pubsub_policy.maintenance_events(now).await {
         Ok(events) => events,
         Err(error) => {
