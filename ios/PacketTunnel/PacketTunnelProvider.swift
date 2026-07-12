@@ -7,11 +7,14 @@ private let appGroupIdentifier = Bundle.main.object(
 private let defaultMobileMtu = 1150
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
+    private static let appMessageChunkSize = 3_072
     private var tunnelHandle: OpaquePointer?
     private var tunnelRunning = false
     private var tunnelGeneration: UInt64 = 0
     private var activeTunnelCalls = 0
     private let tunnelCondition = NSCondition()
+    private let appMessageSnapshotLock = NSLock()
+    private var runtimeStateSnapshot = Data()
 
     override func startTunnel(
         options: [String: NSObject]?,
@@ -184,11 +187,30 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     ) {
         let message = String(data: messageData, encoding: .utf8) ?? ""
         switch message {
+        case "runtimeStateBegin":
+            let data = runtimeStateData()
+            appMessageSnapshotLock.lock()
+            runtimeStateSnapshot = data
+            appMessageSnapshotLock.unlock()
+            completionHandler?(String(data.count).data(using: .utf8))
+        case let chunkRequest where chunkRequest.hasPrefix("runtimeStateChunk:"):
+            let offsetText = chunkRequest.dropFirst("runtimeStateChunk:".count)
+            guard let offset = Int(offsetText), offset >= 0 else {
+                completionHandler?(nil)
+                return
+            }
+            appMessageSnapshotLock.lock()
+            let end = min(runtimeStateSnapshot.count, offset + Self.appMessageChunkSize)
+            let chunk = offset <= end && offset < runtimeStateSnapshot.count
+                ? runtimeStateSnapshot.subdata(in: offset..<end)
+                : Data()
+            if end == runtimeStateSnapshot.count {
+                runtimeStateSnapshot.removeAll(keepingCapacity: false)
+            }
+            appMessageSnapshotLock.unlock()
+            completionHandler?(chunk)
         case "runtimeState":
-            let json = withTunnelHandle { handle in
-                consumeCString(nostr_vpn_mobile_tunnel_runtime_state_json(handle))
-            } ?? #"{"error":"mobile tunnel stopped"}"#
-            completionHandler?(json.data(using: .utf8))
+            completionHandler?(runtimeStateData())
         case "takeAppConfig":
             let toml = withTunnelHandle { handle in
                 consumeCString(nostr_vpn_mobile_tunnel_take_app_config_toml(handle))
@@ -197,6 +219,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         default:
             completionHandler?(nil)
         }
+    }
+
+    private func runtimeStateData() -> Data {
+        let json = withTunnelHandle { handle in
+            consumeCString(nostr_vpn_mobile_tunnel_runtime_state_json(handle))
+        } ?? #"{"error":"mobile tunnel stopped"}"#
+        return json.data(using: .utf8) ?? Data()
     }
 
     private func iosDnsConfig(

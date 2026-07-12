@@ -102,7 +102,28 @@ final class PacketTunnelController {
     }
 
     func runtimeStateJson() async -> String? {
-        await providerMessage("runtimeState")
+        guard let sizeData = await providerMessageData("runtimeStateBegin"),
+              let sizeText = String(data: sizeData, encoding: .utf8),
+              let expectedSize = Int(sizeText),
+              expectedSize >= 0,
+              expectedSize <= 1_048_576
+        else {
+            return await providerMessage("runtimeState")
+        }
+        var response = Data()
+        response.reserveCapacity(expectedSize)
+        while response.count < expectedSize {
+            guard let chunk = await providerMessageData("runtimeStateChunk:\(response.count)"),
+                  !chunk.isEmpty
+            else {
+                return nil
+            }
+            response.append(chunk)
+        }
+        guard response.count == expectedSize else {
+            return nil
+        }
+        return String(data: response, encoding: .utf8)
     }
 
     func takeAppConfigToml() async -> String? {
@@ -110,6 +131,13 @@ final class PacketTunnelController {
     }
 
     private func providerMessage(_ message: String) async -> String? {
+        guard let response = await providerMessageData(message) else {
+            return nil
+        }
+        return String(data: response, encoding: .utf8)
+    }
+
+    private func providerMessageData(_ message: String) async -> Data? {
         do {
             guard let manager = try await loadExistingManager() else {
                 debugLog("providerMessage \(message) skipped: no existing manager")
@@ -126,11 +154,7 @@ final class PacketTunnelController {
             return try await withCheckedThrowingContinuation { continuation in
                 do {
                     try session.sendProviderMessage(data) { response in
-                        guard let response, let json = String(data: response, encoding: .utf8) else {
-                            continuation.resume(returning: nil)
-                            return
-                        }
-                        continuation.resume(returning: json)
+                        continuation.resume(returning: response)
                     }
                 } catch {
                     continuation.resume(throwing: error)
