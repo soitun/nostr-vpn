@@ -4,23 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.91 - 2026-07-13
+
 ### Changed
 
 - Simplified the native wallet on every platform: zero balances no longer
   clutter navigation, fiat display controls live in Settings and remain
-  default-on, pasted or scanned tokens import immediately, and Lightning
-  receive/send now requires a configured mint instead of silently choosing one.
+  default-on, and Lightning receive/send requires a configured mint instead of
+  silently choosing one. Pasted or scanned Cashu tokens are parsed locally and
+  reviewed with their amount and mint before redemption; failed redemption
+  keeps or follows the confirmation with the mint error.
 - Exit routes now force public DNS through a local fail-closed stub backed by
   authenticated DNS-over-HTTPS on Linux, macOS, Windows, Android, iOS, and
   WebVM. MagicDNS stays local, and configured exit or underlay resolvers are no
   longer exposed to or trusted through the exit path.
-- Updated to FIPS Core 0.3.92 and Endpoint 0.3.59 so busy relays retain the
+- Updated to FIPS Core 0.3.93 and Endpoint 0.3.60 so busy relays retain the
   first authenticated application packet until session ownership is installed.
-
-## 4.0.91 - 2026-07-11
-
-### Changed
-
 - Desktop and CLI update checks consume the latest signed Hashtree release root
   from the shared FIPS/relay pubsub cache before opening a direct relay path.
 - Relay bridges subscribe to the exact update publisher/tree, and nodes replay
