@@ -88,6 +88,21 @@ Route targets come from the active network roster and local node settings. FIPS 
 
 Exit-node behavior is represented in config and UI state. A node can optionally use a local WireGuard upstream while offering FIPS exit-node service. The provider routes its own default internet traffic and forwarded member exit traffic through that upstream, while peers still see only the normal FIPS exit-node route advertisement. WireGuard is not a mesh data plane and nostr-vpn does not announce or signal WireGuard peers through its old relay model.
 
+## Exit DNS privacy
+
+When a default exit route is active, the platform resolver points only at
+nostr-vpn's local DNS stub. MagicDNS names are answered locally. Public queries
+are sent as DNS wire messages over authenticated HTTPS to Cloudflare's DoH
+service, using fixed bootstrap addresses so resolving the DoH hostname cannot
+itself leak through plaintext DNS. Plain HTTP, redirects, system proxies, and
+plaintext DNS fallback are disabled; an unavailable or invalid DoH response
+returns `SERVFAIL`.
+
+This prevents the exit operator from reading or spoofing DNS questions and
+answers. It is not anonymity: Cloudflare can process the DNS question, and the
+exit can still observe destination IP addresses, traffic timing and volume, and
+possibly TLS hostnames when the destination connection does not use ECH.
+
 ## Canonical Source
 
 If this document and the code diverge, the code wins. The main protocol implementations currently live in:

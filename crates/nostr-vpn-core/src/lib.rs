@@ -6,7 +6,6 @@ pub mod control;
 pub mod control_pubsub;
 pub mod data_plane;
 pub mod diagnostics;
-pub mod exit_dns;
 pub mod fips_control;
 pub mod fips_mesh;
 pub mod identity_bridge;
@@ -27,6 +26,8 @@ pub mod paths;
 pub mod platform_paths;
 pub mod process_ext;
 pub mod recent_peers;
+#[cfg(feature = "secure-dns")]
+pub mod secure_dns;
 pub mod signed_rosters;
 #[cfg(feature = "updater")]
 pub mod updater;

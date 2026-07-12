@@ -71,33 +71,20 @@ impl FipsPrivateTunnelRuntime {
             local_tunnel_ips,
             config.paid_route_admissions.clone(),
         ));
-        // The WebVM host network owns the exit-DNS service receiver before
-        // pairing on this shared endpoint.
+        // The WebVM host network owns its local secure DNS listener.
         Self::start_with_mesh(config, mesh, false).await
     }
 
     async fn start_with_mesh(
         config: FipsPrivateTunnelConfig,
         mesh: Arc<FipsPrivateMeshRuntime>,
-        register_exit_dns: bool,
+        manage_host_dns: bool,
     ) -> Result<Self> {
         crate::pipeline_profile::maybe_spawn_reporter();
         #[cfg(target_os = "linux")]
         ensure_linux_tun_permissions(&config.iface)?;
         #[cfg(feature = "paid-exit")]
         mesh.set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
-        let exit_dns = if register_exit_dns {
-            Some(
-                crate::exit_dns_runtime::ExitDnsFipsRuntime::start_tunnel(
-                    Arc::clone(mesh.endpoint()),
-                    config.exit_dns_service_enabled(),
-                    &config.active_roster_endpoint_npubs,
-                )
-                .await?,
-            )
-        } else {
-            None
-        };
         let control_pubsub = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start(
             Arc::clone(mesh.endpoint()),
             config.nostr_pubsub.clone(),
@@ -122,7 +109,8 @@ impl FipsPrivateTunnelRuntime {
             iface,
             mesh,
             control_pubsub,
-            exit_dns,
+            secure_dns: None,
+            manages_secure_dns: manage_host_dns,
             config: config.clone(),
             _tun: tun,
             fips_host: None,
@@ -143,7 +131,9 @@ impl FipsPrivateTunnelRuntime {
             #[cfg(target_os = "macos")]
             wg_upstream: None,
         };
+        runtime.prepare_secure_dns(&config).await?;
         runtime.apply_interface_config(&config).await?;
+        runtime.finish_secure_dns(&config).await;
         runtime
             .reconcile_fips_host_runtime(config.fips_host.clone())
             .await?;
@@ -173,12 +163,11 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) async fn apply_config(&mut self, config: FipsPrivateTunnelConfig) -> Result<()> {
-        self.mesh
-            .replace_peers(
-                config.peers.clone(),
-                config.local_allowed_ips(),
-                config.paid_route_admissions.clone(),
-            )?;
+        self.mesh.replace_peers(
+            config.peers.clone(),
+            config.local_allowed_ips(),
+            config.paid_route_admissions.clone(),
+        )?;
         #[cfg(feature = "paid-exit")]
         self.mesh
             .set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
@@ -188,13 +177,9 @@ impl FipsPrivateTunnelRuntime {
         if self.config.nostr_relays != config.nostr_relays {
             self.mesh.update_relays(&config.nostr_relays).await?;
         }
-        if let Some(exit_dns) = self.exit_dns.as_ref() {
-            exit_dns.reconfigure(
-                config.exit_dns_service_enabled(),
-                &config.active_roster_endpoint_npubs,
-            );
-        }
+        self.prepare_secure_dns(&config).await?;
         self.apply_interface_config(&config).await?;
+        self.finish_secure_dns(&config).await;
         self.reconcile_fips_host_runtime(config.fips_host.clone())
             .await?;
         self.config = config;
@@ -239,10 +224,10 @@ impl FipsPrivateTunnelRuntime {
         if let Some(handle) = runtime.wg_upstream.take() {
             handle.cleanup().await;
         }
-        runtime.stop_fips_host_runtime().await;
-        if let Some(exit_dns) = runtime.exit_dns.take() {
-            exit_dns.stop().await;
+        if let Some(secure_dns) = runtime.secure_dns.take() {
+            secure_dns.stop().await;
         }
+        runtime.stop_fips_host_runtime().await;
         if let Some(control_pubsub) = runtime.control_pubsub.take() {
             control_pubsub.stop().await;
         }
@@ -256,6 +241,31 @@ impl FipsPrivateTunnelRuntime {
             .await
             .context("failed to stop FIPS endpoint")?;
         Ok(())
+    }
+
+    async fn prepare_secure_dns(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
+        if self.manages_secure_dns && config.secure_dns_required() && self.secure_dns.is_none() {
+            self.secure_dns = Some(
+                crate::secure_dns_runtime::SecureDnsRuntime::start(
+                    &self.iface,
+                    None,
+                    config.magic_dns_records.clone(),
+                )
+                .await?,
+            );
+        }
+        if let Some(secure_dns) = self.secure_dns.as_ref() {
+            secure_dns.update_records(config.magic_dns_records.clone());
+        }
+        Ok(())
+    }
+
+    async fn finish_secure_dns(&mut self, config: &FipsPrivateTunnelConfig) {
+        if (!self.manages_secure_dns || !config.secure_dns_required())
+            && let Some(secure_dns) = self.secure_dns.take()
+        {
+            secure_dns.stop().await;
+        }
     }
 
     async fn apply_interface_config(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
@@ -622,7 +632,6 @@ impl FipsPrivateTunnelRuntime {
 
         self.exit_node_runtime = crate::MacosExitNodeRuntime::default();
     }
-
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -733,11 +742,7 @@ impl FipsPrivateTunnelRuntime {
     }
 
     #[cfg(feature = "paid-exit")]
-    pub(crate) async fn send_paid_route_payment_ack(
-        &self,
-        buyer: &str,
-        id: String,
-    ) -> Result<()> {
+    pub(crate) async fn send_paid_route_payment_ack(&self, buyer: &str, id: String) -> Result<()> {
         self.mesh.send_paid_route_payment_ack(buyer, id).await
     }
 

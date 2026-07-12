@@ -44,7 +44,7 @@ cashu-service = { workspace = true, optional = true, features = [
   "spilman-configurable-host-reqwest",
 ] }
 
-nostr-vpn-core = { workspace = true, features = ["updater"] }
+nostr-vpn-core = { workspace = true, features = ["updater", "secure-dns"] }
 crab_nat = "0.7"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev.workspace = true
@@ -81,6 +81,7 @@ path = "tests/paid_exit_cli.rs"
 required-features = ["paid-exit"]
 
 [dev-dependencies]
+async-trait.workspace = true
 futures-util = "0.3"
 nostr-sdk.workspace = true
 nostr-social-graph.workspace = true

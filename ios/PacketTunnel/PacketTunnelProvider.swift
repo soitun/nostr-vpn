@@ -102,14 +102,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             )
         }
 
-        // DNS resolvers — Mullvad/Proton ship their own (e.g.
-        // 10.64.0.1) which lives behind the tunnel. Without
-        // `dnsSettings` here, iOS falls back to whatever the
-        // underlying Wi-Fi provided — which doesn't help once
-        // 0.0.0.0/0 is on the tun, because every DNS query goes into
-        // utun and toward Mullvad's WG endpoint, which doesn't run a
-        // resolver. The Rust side falls back to public resolvers when
-        // the user's config didn't include DNS.
+        // The Rust tunnel owns DNS whenever an exit is active. It answers
+        // MagicDNS locally and sends public queries only through authenticated
+        // DNS-over-HTTPS. Never allow iOS to fall back to underlay DNS.
         let dnsConfig = iosDnsConfig(
             from: parsedConfig.dnsServers,
             magicDnsServer: parsedConfig.magicDnsServer
@@ -117,15 +112,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
         if !dnsConfig.servers.isEmpty {
             let dns = NEDNSSettings(servers: dnsConfig.servers)
             dns.matchDomains = dnsConfig.matchDomains
-            if dnsConfig.allowFailover {
-                if #available(iOS 26.0, *) {
-                    dns.allowFailover = true
-                }
-            }
             settings.dnsSettings = dns
             NSLog(
                 "nvpn-pkt: dns servers=\(dnsConfig.servers) "
-                    + "match=\(dnsConfig.matchDomains) failover=\(dnsConfig.allowFailover)"
+                    + "match=\(dnsConfig.matchDomains) failover=false"
             )
         }
 
@@ -231,21 +221,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private func iosDnsConfig(
         from servers: [String],
         magicDnsServer: String
-    ) -> (servers: [String], matchDomains: [String], allowFailover: Bool) {
+    ) -> (servers: [String], matchDomains: [String]) {
         let normalized = servers
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
         let magicDnsServer = magicDnsServer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !magicDnsServer.isEmpty else {
-            return (normalized, [""], false)
+            return (normalized, [""])
         }
         guard normalized.contains(magicDnsServer) else {
-            return (normalized, [""], false)
+            return (normalized, [""])
         }
-        if #available(iOS 26.0, *) {
-            return ([magicDnsServer], [""], true)
-        }
-        return (normalized, [""], false)
+        return ([magicDnsServer], [""])
     }
 
     private func beginRustTunnelStart() -> UInt64 {

@@ -34,6 +34,7 @@ use nostr_vpn_core::fips_mesh::packet_endpoints;
 use nostr_vpn_core::fips_mesh::{FipsEndpointAdmissionCache, FipsEndpointSourceAdmitter};
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission};
 use nostr_vpn_core::join_requests::MeshJoinRequest;
+use nostr_vpn_core::magic_dns::build_magic_dns_records;
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_route_accounting::PaidRouteTrafficAccountant;
 #[cfg(feature = "paid-exit")]

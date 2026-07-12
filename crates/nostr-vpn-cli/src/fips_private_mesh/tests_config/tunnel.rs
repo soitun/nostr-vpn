@@ -97,6 +97,7 @@
         assert_eq!(seller.addresses[0].addr, "203.0.113.44:51821");
         assert_eq!(seller.addresses[0].seen_at_ms, Some(123_000));
         assert!(config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
+        assert!(config.secure_dns_required());
         assert_eq!(
             config.endpoint_hint_ipv4_hosts(),
             vec!["203.0.113.44".parse::<std::net::Ipv4Addr>().unwrap()]
@@ -124,6 +125,7 @@
         .expect("pending paid exit tunnel config");
 
         assert!(config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
+        assert!(config.secure_dns_required());
         assert!(
             config
                 .peers

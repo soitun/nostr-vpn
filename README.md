@@ -77,7 +77,7 @@ Use `just run-macos` or `just run-linux` when you want a specific desktop target
 - Stores multiple named networks with one active network at a time
 - Brings up [FIPS] private mesh tunnels for private network traffic
 - Routes private traffic directly when possible and through [FIPS] neighbors when direct UDP is blocked
-- Supports MagicDNS, route advertisement, exit-node selection, and WireGuard upstream egress
+- Supports MagicDNS, authenticated DNS-over-HTTPS for exit routes, route advertisement, exit-node selection, and WireGuard upstream egress
 - Exposes native desktop apps, JSON status, network diagnostics, doctor bundles, desktop updates, and Linux-focused Docker e2e coverage
 
 ## Platform Status

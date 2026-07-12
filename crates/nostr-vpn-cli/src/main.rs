@@ -2,10 +2,6 @@ mod config_bootstrap;
 use nvpn::control_pubsub_runtime;
 mod daemon_runtime;
 mod diagnostics;
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
-mod exit_dns_resolver;
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
-mod exit_dns_runtime;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod fips_host_tunnel;
 mod fips_private_mesh;
@@ -21,6 +17,8 @@ mod pairing_qr;
 mod pipeline_profile;
 mod platform_routing;
 mod recent_peers_store;
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+mod secure_dns_runtime;
 mod service_management;
 mod session_runtime;
 mod updater;

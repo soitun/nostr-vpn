@@ -347,20 +347,16 @@
         assert_eq!(config.excluded_routes, vec!["198.51.100.20/32"]);
         assert_eq!(
             config.dns_servers,
-            vec![nostr_vpn_core::MESH_MAGIC_DNS_SERVER, "10.64.0.1"]
+            vec![nostr_vpn_core::MESH_MAGIC_DNS_SERVER]
         );
         assert_eq!(
             config.magic_dns_server,
             nostr_vpn_core::MESH_MAGIC_DNS_SERVER
         );
-        assert!(
-            mobile_magic_dns_forwarders_for_config(&config).is_empty(),
-            "WireGuard exits must not forward MagicDNS fallback queries on raw underlay sockets"
-        );
     }
 
     #[test]
-    fn mobile_config_wireguard_exit_preserves_custom_dns_with_magic_dns() {
+    fn mobile_config_wireguard_exit_replaces_plaintext_dns_with_secure_local_stub() {
         let mut app = AppConfig::generated();
         app.ensure_defaults();
         let own = app.own_nostr_pubkey_hex().expect("own pubkey");
@@ -395,52 +391,12 @@
 
         assert_eq!(
             config.dns_servers,
-            vec![nostr_vpn_core::MESH_MAGIC_DNS_SERVER, "94.140.14.14"]
+            vec![nostr_vpn_core::MESH_MAGIC_DNS_SERVER]
         );
         assert_eq!(
             config.magic_dns_server,
             nostr_vpn_core::MESH_MAGIC_DNS_SERVER
         );
-    }
-
-    #[test]
-    fn mobile_wireguard_exit_dns_forwarders_prefer_configured_tunnel_dns() {
-        let platform_dns = vec!["1.1.1.1".to_string()];
-        let tunnel_dns = vec![
-            nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string(),
-            "94.140.14.14".to_string(),
-        ];
-
-        let forwarders = mobile_magic_dns_forwarders(
-            &platform_dns,
-            &tunnel_dns,
-            nostr_vpn_core::MESH_MAGIC_DNS_SERVER,
-        );
-
-        assert_eq!(
-            forwarders,
-            vec![
-                "94.140.14.14:53".parse::<std::net::SocketAddr>().unwrap(),
-                "1.1.1.1:53".parse::<std::net::SocketAddr>().unwrap(),
-                "9.9.9.9:53".parse::<std::net::SocketAddr>().unwrap(),
-            ]
-        );
-    }
-
-    #[test]
-    fn mobile_magic_dns_forwarders_are_empty_for_default_route_config() {
-        let mobile = MobileTunnelConfig {
-            route_targets: vec!["0.0.0.0/0".to_string()],
-            dns_servers: vec![
-                nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string(),
-                "94.140.14.14".to_string(),
-            ],
-            dns_forwarders: vec!["1.1.1.1".to_string()],
-            magic_dns_server: nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string(),
-            ..empty_config()
-        };
-
-        assert!(mobile_magic_dns_forwarders_for_config(&mobile).is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

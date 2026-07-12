@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Exit routes now force public DNS through a local fail-closed stub backed by
+  authenticated DNS-over-HTTPS on Linux, macOS, Windows, Android, iOS, and
+  WebVM. MagicDNS stays local, and configured exit or underlay resolvers are no
+  longer exposed to or trusted through the exit path.
 - Updated to FIPS Core 0.3.92 and Endpoint 0.3.59 so busy relays retain the
   first authenticated application packet until session ownership is installed.
 

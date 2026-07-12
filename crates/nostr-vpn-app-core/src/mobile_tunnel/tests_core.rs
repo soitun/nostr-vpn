@@ -201,10 +201,6 @@
             config.magic_dns_server,
             nostr_vpn_core::MESH_MAGIC_DNS_SERVER
         );
-        assert!(
-            !mobile_magic_dns_forwarders_for_config(&config).is_empty(),
-            "split-tunnel MagicDNS can use configured raw fallback forwarders"
-        );
     }
 
     #[test]
@@ -255,15 +251,11 @@
         assert_eq!(config.mtu, nostr_vpn_core::MESH_TUNNEL_MTU);
         assert_eq!(
             config.dns_servers,
-            vec![nostr_vpn_core::MESH_MAGIC_DNS_SERVER, "1.1.1.1", "9.9.9.9"]
+            vec![nostr_vpn_core::MESH_MAGIC_DNS_SERVER]
         );
         assert_eq!(
             config.magic_dns_server,
             nostr_vpn_core::MESH_MAGIC_DNS_SERVER
-        );
-        assert!(
-            mobile_magic_dns_forwarders_for_config(&config).is_empty(),
-            "selected peer exits must not forward MagicDNS fallback queries on raw underlay sockets"
         );
     }
 
@@ -413,7 +405,7 @@
 
         let response = runtime
             .block_on(mobile_magic_dns_response_packet(
-                &query, &app, &[], dns_server,
+                &query, &app, None, dns_server,
             ))
             .expect("dns response packet");
 
@@ -432,7 +424,7 @@
     }
 
     #[test]
-    fn mobile_magic_dns_without_forwarders_returns_server_failure_for_unknown_query() {
+    fn mobile_dns_without_secure_resolver_returns_server_failure_for_unknown_query() {
         let mut app = AppConfig::generated();
         app.ensure_defaults();
         let app = Arc::new(RwLock::new(app));
@@ -453,11 +445,79 @@
 
         let response = runtime
             .block_on(mobile_magic_dns_response_packet(
-                &query, &app, &[], dns_server,
+                &query, &app, None, dns_server,
             ))
             .expect("dns response packet");
 
         assert_eq!(response[31] & 0x0f, 2, "DNS rcode should be SERVFAIL");
+    }
+
+    #[test]
+    fn mobile_public_dns_uses_authenticated_resolver_response() {
+        struct FixtureSecureDns;
+
+        #[async_trait::async_trait]
+        impl SecureDnsLookup for FixtureSecureDns {
+            async fn resolve(
+                &self,
+                query: &[u8],
+            ) -> std::result::Result<Vec<u8>, nostr_vpn_core::secure_dns::SecureDnsError> {
+                use hickory_proto::op::{Message, MessageType};
+                use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
+
+                let request = Message::from_vec(query).expect("fixture query");
+                let mut response = Message::new(
+                    request.id,
+                    MessageType::Response,
+                    request.metadata.op_code,
+                );
+                response.metadata.recursion_available = true;
+                for query in request.queries {
+                    response.add_query(query);
+                }
+                let mut packet = Vec::new();
+                response
+                    .emit(&mut BinEncoder::new(&mut packet))
+                    .expect("fixture response");
+                Ok(packet)
+            }
+        }
+
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        let app = Arc::new(RwLock::new(app));
+        let source = Ipv4Addr::new(10, 44, 206, 222);
+        let dns_server =
+            parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).expect("local dns server");
+        let query = ipv4_udp_packet(
+            source,
+            dns_server,
+            53000,
+            53,
+            &dns_query("example.com", 1),
+        );
+        let runtime = RuntimeBuilder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+
+        let resolver = FixtureSecureDns;
+        let response = runtime
+            .block_on(mobile_magic_dns_response_packet(
+                &query,
+                &app,
+                Some(&resolver),
+                dns_server,
+            ))
+            .expect("DNS response packet");
+
+        let dns = hickory_proto::op::Message::from_vec(&response[28..]).expect("DNS response");
+        assert_eq!(dns.id, 0x1234);
+        assert_eq!(
+            dns.metadata.message_type,
+            hickory_proto::op::MessageType::Response
+        );
+        assert_eq!(dns.queries[0].name.to_ascii(), "example.com.");
     }
 
     #[test]

@@ -227,6 +227,56 @@ ping_until_success() {
   return 1
 }
 
+assert_secure_exit_dns() {
+  local dns_result doh_capture_status doh_packets doh_pid no53_capture_status no53_packets no53_pid resolver_nameservers
+
+  "${COMPOSE[@]}" exec -T node-b sh -lc \
+    "rm -f /tmp/nvpn-secure-dns-no53.pcap /tmp/nvpn-secure-dns-doh.pcap"
+  "${COMPOSE[@]}" exec -T node-b sh -lc \
+    "timeout 6 tcpdump -ni any -U -w /tmp/nvpn-secure-dns-no53.pcap 'port 53 and not host 127.0.0.1' >/tmp/nvpn-secure-dns-no53.log 2>&1" &
+  no53_pid=$!
+  "${COMPOSE[@]}" exec -T node-b sh -lc \
+    "timeout 6 tcpdump -ni any -U -c 1 -w /tmp/nvpn-secure-dns-doh.pcap 'tcp port 443 and (host 1.1.1.1 or host 1.0.0.1)' >/tmp/nvpn-secure-dns-doh.log 2>&1" &
+  doh_pid=$!
+  sleep 1
+
+  dns_result="$("${COMPOSE[@]}" exec -T node-b dig +short +time=4 +tries=1 example.com A | tr -d '\r')"
+  doh_capture_status=0
+  wait "$doh_pid" || doh_capture_status=$?
+  no53_capture_status=0
+  wait "$no53_pid" || no53_capture_status=$?
+  doh_packets="$("${COMPOSE[@]}" exec -T node-b sh -lc \
+    "tcpdump -nn -r /tmp/nvpn-secure-dns-doh.pcap 2>/dev/null" | tr -d '\r')"
+  no53_packets="$("${COMPOSE[@]}" exec -T node-b sh -lc \
+    "tcpdump -nn -r /tmp/nvpn-secure-dns-no53.pcap 2>/dev/null" | tr -d '\r')"
+  resolver_nameservers="$("${COMPOSE[@]}" exec -T node-b sh -lc \
+    "awk '/^nameserver[[:space:]]/ { print \$2 }' /etc/resolv.conf" | tr -d '\r')"
+
+  if [[ -z "$dns_result" ]]; then
+    echo "exit-node docker e2e failed: secure DNS did not resolve example.com" >&2
+    exit 1
+  fi
+  if [[ "$resolver_nameservers" != "127.0.0.1" ]]; then
+    echo "exit-node docker e2e failed: buyer resolver was not pinned exclusively to localhost" >&2
+    printf '%s\n' "$resolver_nameservers" >&2
+    exit 1
+  fi
+  if [[ "$doh_capture_status" -ne 0 || -z "$doh_packets" ]]; then
+    echo "exit-node docker e2e failed: buyer DNS did not use the authenticated DoH bootstrap" >&2
+    "${COMPOSE[@]}" exec -T node-b sh -lc \
+      "cat /tmp/nvpn-secure-dns-doh.log 2>/dev/null || true" >&2
+    exit 1
+  fi
+  if [[ "$no53_capture_status" -ne 124 || -n "$no53_packets" ]]; then
+    echo "exit-node docker e2e failed: buyer leaked plaintext DNS outside loopback" >&2
+    printf '%s\n' "$no53_packets" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$dns_result" >/tmp/nvpn-exit-node-secure-dns.log
+  printf '%s\n' "$doh_packets" >>/tmp/nvpn-exit-node-secure-dns.log
+}
+
 truthy() {
   case "${1:-}" in
     1|true|TRUE|True|yes|YES|Yes|on|ON|On) return 0 ;;
@@ -642,6 +692,7 @@ if ! wait "$TCPDUMP_PID"; then
   exit 1
 fi
 grep -q "$NODE_A_PUBLIC_IP" "$REALIZED_IP_LOG"
+assert_secure_exit_dns
 
 if truthy "$PAID_EXIT_MODE"; then
   if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
@@ -773,6 +824,8 @@ echo "--- Public internet route ---"
 echo "$PUBLIC_ROUTE"
 echo "--- Public internet ping ---"
 cat /tmp/nvpn-exit-node-public-ping.log
+echo "--- Secure DNS through paid exit ---"
+cat /tmp/nvpn-exit-node-secure-dns.log
 echo "--- Realized exit IP capture ---"
 cat "$REALIZED_IP_LOG"
 if [[ -n "$PAID_EXIT_PROBE_JSON" ]]; then
@@ -785,9 +838,9 @@ assert_idle_cpu_below node-b
 
 if truthy "$PAID_EXIT_MODE"; then
   if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
-    echo "paid-exit docker e2e passed: Spilman channel-open and signed balance-update payments allowed paid tunnel traffic and the public target observed exit IP $NODE_A_PUBLIC_IP"
+    echo "paid-exit docker e2e passed: Spilman channel-open and signed balance-update payments allowed paid tunnel traffic, secure DNS used authenticated HTTPS without plaintext port 53, and the public target observed exit IP $NODE_A_PUBLIC_IP"
   else
-    echo "paid-exit docker e2e passed: token-lease admission allowed paid tunnel traffic and the public target observed exit IP $NODE_A_PUBLIC_IP"
+    echo "paid-exit docker e2e passed: token-lease admission allowed paid tunnel traffic, secure DNS used authenticated HTTPS without plaintext port 53, and the public target observed exit IP $NODE_A_PUBLIC_IP"
   fi
 else
   echo "exit-node docker e2e passed: tunnel traffic reached the selected exit node, the default route switched into the tunnel, and the public target observed exit IP $NODE_A_PUBLIC_IP"

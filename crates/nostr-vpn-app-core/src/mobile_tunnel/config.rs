@@ -43,9 +43,6 @@ const MOBILE_TUN_OUTBOUND_BATCH_CHANNEL_CAPACITY: usize =
 const MOBILE_TUN_INBOUND_BATCH_CHANNEL_CAPACITY: usize =
     TUNNEL_CHANNEL_CAPACITY / MOBILE_FIPS_RECV_BATCH;
 const MOBILE_EXIT_NODE_DEFAULT_ROUTES: &[&str] = &["0.0.0.0/0"];
-const MOBILE_EXIT_NODE_DNS_SERVERS: &[&str] = &["1.1.1.1", "9.9.9.9"];
-const MOBILE_MAGIC_DNS_FORWARDERS: &[&str] = &["1.1.1.1:53", "9.9.9.9:53"];
-const MOBILE_MAGIC_DNS_FORWARD_TIMEOUT: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct MobileTunCounters {
@@ -79,19 +76,15 @@ impl MobileTunAtomicCounters {
     #[cfg(any(target_os = "android", target_os = "ios"))]
     fn note_read(&self, len: usize) {
         self.packets_read.fetch_add(1, Ordering::Relaxed);
-        self.bytes_read.fetch_add(
-            u64::try_from(len).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
+        self.bytes_read
+            .fetch_add(u64::try_from(len).unwrap_or(u64::MAX), Ordering::Relaxed);
     }
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
     fn note_write(&self, len: usize) {
         self.packets_written.fetch_add(1, Ordering::Relaxed);
-        self.bytes_written.fetch_add(
-            u64::try_from(len).unwrap_or(u64::MAX),
-            Ordering::Relaxed,
-        );
+        self.bytes_written
+            .fetch_add(u64::try_from(len).unwrap_or(u64::MAX), Ordering::Relaxed);
     }
 
     #[cfg(any(target_os = "android", target_os = "ios"))]
@@ -160,18 +153,12 @@ pub(crate) struct MobileTunnelConfig {
     ///     instead, see `MobileTunnel::wg_upstream_socket_fd`).
     #[serde(default)]
     pub(crate) excluded_routes: Vec<String>,
-    /// DNS resolvers to install on the OS-side tunnel. Mullvad and
-    /// Proton ship configs with their own DNS (e.g. `10.64.0.1`); on
-    /// iOS this becomes `NEDNSSettings`. Without it, name resolution
-    /// silently fails even though TCP transits the tunnel.
+    /// Local in-tunnel DNS address installed on the OS-side tunnel. Public
+    /// queries are resolved through authenticated DNS-over-HTTPS by Rust.
     #[serde(default)]
     pub(crate) dns_servers: Vec<String>,
-    /// Resolvers the in-tunnel `MagicDNS` responder uses for non-.nvpn
-    /// queries. Android injects the active network DNS before starting
-    /// the native tunnel; other mobile hosts use public fallback DNS.
-    #[serde(default)]
-    dns_forwarders: Vec<String>,
-    /// In-tunnel `MagicDNS` responder address. Empty when `MagicDNS` is disabled.
+    /// In-tunnel local DNS responder. Empty only when neither an exit nor
+    /// `MagicDNS` requires nvpn to own DNS resolution.
     #[serde(default)]
     pub(crate) magic_dns_server: String,
     /// The WG upstream config to drive boringtun against. None when
@@ -319,7 +306,7 @@ impl MobileTunnelConfig {
         // ask the host platform to keep the WG endpoint outside the
         // tunnel via `excluded_routes`.
         let selected_peer_exit = route_targets.iter().any(|route| route == "0.0.0.0/0");
-        let (wireguard_exit, excluded_routes, mut dns_servers) =
+        let (wireguard_exit, excluded_routes) =
             if app.wireguard_exit.enabled && app.wireguard_exit.configured() {
                 let mut excluded = Vec::new();
                 if let Some(ip) = wireguard_endpoint_host_ip(&app.wireguard_exit.endpoint) {
@@ -330,19 +317,6 @@ impl MobileTunnelConfig {
                 }
                 route_targets.sort();
                 route_targets.dedup();
-                // Fall back to Mullvad's resolver if the user's WG
-                // config didn't carry DNS. Mullvad hijacks port 53 to
-                // public resolvers (1.1.1.1 / 9.9.9.9), so even
-                // though those DNS responses transit the tunnel they
-                // come back signed as from the wrong source and iOS'
-                // resolver discards them. 10.64.0.1 is Mullvad's
-                // own DNS endpoint inside the tunnel and is the
-                // safe default for both Mullvad and Proton.
-                let dns = if app.wireguard_exit.dns.is_empty() {
-                    vec!["10.64.0.1".to_string()]
-                } else {
-                    app.wireguard_exit.dns.clone()
-                };
                 // Force a 25s persistent keepalive on mobile so
                 // boringtun keeps its session fresh against Mullvad's
                 // server-side timeouts even when the device is idle.
@@ -353,27 +327,19 @@ impl MobileTunnelConfig {
                 if wg.persistent_keepalive_secs == 0 {
                     wg.persistent_keepalive_secs = 25;
                 }
-                (Some(wg), excluded, dns)
-            } else if selected_peer_exit {
-                (
-                    None,
-                    Vec::new(),
-                    MOBILE_EXIT_NODE_DNS_SERVERS
-                        .iter()
-                        .map(|server| (*server).to_string())
-                        .collect(),
-                )
+                (Some(wg), excluded)
             } else {
-                (None, Vec::new(), Vec::new())
+                (None, Vec::new())
             };
-        let magic_dns_server = if app.magic_dns_suffix.trim().is_empty() {
-            String::new()
+        let local_dns_required = wireguard_exit.is_some()
+            || selected_peer_exit
+            || !app.magic_dns_suffix.trim().is_empty();
+        let (dns_servers, magic_dns_server) = if local_dns_required {
+            let server = nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string();
+            (vec![server.clone()], server)
         } else {
-            dns_servers.retain(|server| server.trim() != nostr_vpn_core::MESH_MAGIC_DNS_SERVER);
-            dns_servers.insert(0, nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string());
-            nostr_vpn_core::MESH_MAGIC_DNS_SERVER.to_string()
+            (Vec::new(), String::new())
         };
-        dns_servers.dedup();
         let (pending_join_request_recipient, pending_join_invite_secret, pending_join_requested_at) =
             app.active_network_opt()
                 .and_then(|network| {
@@ -412,7 +378,6 @@ impl MobileTunnelConfig {
             webrtc_enabled: app.fips_webrtc_enabled,
             excluded_routes,
             dns_servers,
-            dns_forwarders: Vec::new(),
             magic_dns_server,
             wireguard_exit,
             join_requests_enabled: app.join_requests_enabled(),

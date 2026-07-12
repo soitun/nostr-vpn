@@ -195,7 +195,7 @@ release_cargo test "${release_cargo_lock_args[@]}" --workspace -- --test-threads
 # startup ordering before VpnService.protect(fd).
 release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_join_request_sends_and_records_over_real_fips_endpoint
 release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_magic_dns_answers_peer_name_from_tun_packet
-release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_wireguard_exit_dns_forwarders_prefer_configured_tunnel_dns
+release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_config_wireguard_exit_replaces_plaintext_dns_with_secure_local_stub
 release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_wireguard_start_returns_before_handshake_watchdog
 release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_fips_exit_node_routes_default_traffic_to_selected_member
 # Shared userspace WG dataplane, including the mpsc channel path used by

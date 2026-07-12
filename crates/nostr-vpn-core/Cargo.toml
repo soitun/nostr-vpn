@@ -15,6 +15,7 @@ updater = [
   "dep:hashtree-updater",
   "hashtree-updater/secure-nostr-blossom",
 ]
+secure-dns = ["dep:reqwest"]
 
 [dependencies]
 anyhow.workspace = true
@@ -42,6 +43,7 @@ hostname.workspace = true
 hashtree-updater = { workspace = true, optional = true }
 netdev.workspace = true
 socket2.workspace = true
+reqwest = { workspace = true, optional = true }
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]
 security-framework = "2"
@@ -65,3 +67,5 @@ windows-sys = { version = "0.61", features = [
 ] }
 
 [dev-dependencies]
+rcgen = "0.13"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }

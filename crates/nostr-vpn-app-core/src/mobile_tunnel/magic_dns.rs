@@ -9,7 +9,7 @@ struct MobileDnsQuery<'a> {
 async fn mobile_magic_dns_response_packet(
     packet: &[u8],
     app_config: &Arc<RwLock<AppConfig>>,
-    forwarders: &[SocketAddr],
+    secure_dns: Option<&dyn SecureDnsLookup>,
     magic_dns_server: Ipv4Addr,
 ) -> Option<Vec<u8>> {
     let query = parse_mobile_magic_dns_query(packet, magic_dns_server)?;
@@ -20,8 +20,16 @@ async fn mobile_magic_dns_response_packet(
     };
     let response = match response {
         Some(response) => response,
-        None if forwarders.is_empty() => build_magic_dns_server_failure_response(query.payload)?,
-        None => forward_mobile_dns_query(query.payload, forwarders).await?,
+        None => match secure_dns {
+            Some(resolver) => match resolver.resolve(query.payload).await {
+                Ok(response) => response,
+                Err(error) => {
+                    tracing::debug!(%error, "mobile secure DNS resolution failed closed");
+                    build_servfail_response(query.payload)?
+                }
+            },
+            None => build_magic_dns_server_failure_response(query.payload)?,
+        },
     };
     build_mobile_dns_response_packet(&query, &response)
 }
@@ -111,94 +119,6 @@ fn ipv4_header_checksum(header: &[u8]) -> u16 {
     !u16::try_from(sum).expect("folded IPv4 checksum fits in u16")
 }
 
-async fn forward_mobile_dns_query(query: &[u8], forwarders: &[SocketAddr]) -> Option<Vec<u8>> {
-    for forwarder in forwarders {
-        let bind_addr = if forwarder.is_ipv6() {
-            "[::]:0"
-        } else {
-            "0.0.0.0:0"
-        };
-        let Ok(socket) = tokio::net::UdpSocket::bind(bind_addr).await else {
-            continue;
-        };
-        if socket.send_to(query, forwarder).await.is_err() {
-            continue;
-        }
-        let mut buffer = vec![0_u8; 4096];
-        let Ok(Ok((len, _))) = tokio::time::timeout(
-            MOBILE_MAGIC_DNS_FORWARD_TIMEOUT,
-            socket.recv_from(&mut buffer),
-        )
-        .await
-        else {
-            continue;
-        };
-        buffer.truncate(len);
-        return Some(buffer);
-    }
-    None
-}
-
-fn mobile_magic_dns_forwarders(
-    configured: &[String],
-    tunnel_dns_servers: &[String],
-    magic_dns_server: &str,
-) -> Vec<SocketAddr> {
-    let mut seen = HashSet::new();
-    tunnel_dns_servers
-        .iter()
-        .filter(|server| server.trim() != magic_dns_server.trim())
-        .filter_map(|server| parse_dns_forwarder(server))
-        .chain(
-            configured
-                .iter()
-                .filter_map(|server| parse_dns_forwarder(server)),
-        )
-        .chain(
-            MOBILE_MAGIC_DNS_FORWARDERS
-                .iter()
-                .filter_map(|server| parse_dns_forwarder(server)),
-        )
-        .filter(|server| seen.insert(*server))
-        .collect()
-}
-
-fn mobile_magic_dns_forwarders_for_config(config: &MobileTunnelConfig) -> Vec<SocketAddr> {
-    if !mobile_magic_dns_raw_forwarding_allowed(config) {
-        return Vec::new();
-    }
-    mobile_magic_dns_forwarders(
-        &config.dns_forwarders,
-        &config.dns_servers,
-        &config.magic_dns_server,
-    )
-}
-
-fn mobile_magic_dns_raw_forwarding_allowed(config: &MobileTunnelConfig) -> bool {
-    config.wireguard_exit.is_none()
-        && !config
-            .route_targets
-            .iter()
-            .any(|route| mobile_route_is_default(route))
-}
-
-fn mobile_route_is_default(route: &str) -> bool {
-    matches!(route.trim(), "0.0.0.0/0" | "::/0")
-}
-
-fn parse_dns_forwarder(value: &str) -> Option<SocketAddr> {
-    let value = value.trim();
-    if value.is_empty() {
-        return None;
-    }
-    value.parse::<SocketAddr>().ok().or_else(|| {
-        value
-            .parse::<IpAddr>()
-            .ok()
-            .map(|ip| SocketAddr::new(ip, 53))
-    })
-}
-
 fn ipv4_is_lan_endpoint_hint(ip: Ipv4Addr) -> bool {
     ip.is_private() && !ipv4_is_mesh_tunnel_ip(ip)
 }
@@ -256,7 +176,6 @@ fn empty_config() -> MobileTunnelConfig {
         webrtc_enabled: false,
         excluded_routes: Vec::new(),
         dns_servers: Vec::new(),
-        dns_forwarders: Vec::new(),
         magic_dns_server: String::new(),
         wireguard_exit: None,
         join_requests_enabled: false,

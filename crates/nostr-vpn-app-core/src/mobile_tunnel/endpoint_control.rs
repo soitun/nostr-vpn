@@ -330,7 +330,10 @@ async fn reply_mobile_ping(
         replied_at: unix_timestamp(),
     };
     let encoded = encode_fips_control_frame(&reply)?;
-    if let Err(error) = endpoint.send_batch_to_peer(source_peer, vec![encoded]).await {
+    if let Err(error) = endpoint
+        .send_batch_to_peer(source_peer, vec![encoded])
+        .await
+    {
         tracing::warn!(?error, "mobile: failed to reply to FIPS peer ping");
     }
     Ok(())
@@ -534,7 +537,7 @@ async fn dispatch_mobile_outbound_packets(
     mesh_addr: Option<Ipv4Addr>,
     inbound_tx_for_dns: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
     app_config_for_dns: &Arc<RwLock<AppConfig>>,
-    dns_forwarders: &[SocketAddr],
+    secure_dns: Option<&SecureDnsResolver>,
     magic_dns_server: Option<Ipv4Addr>,
     packets: Vec<Vec<u8>>,
 ) -> bool {
@@ -550,7 +553,7 @@ async fn dispatch_mobile_outbound_packets(
             && let Some(response) = mobile_magic_dns_response_packet(
                 &packet,
                 app_config_for_dns,
-                dns_forwarders,
+                secure_dns.map(|resolver| resolver as &dyn SecureDnsLookup),
                 magic_dns_server,
             )
             .await

@@ -209,8 +209,11 @@ impl MobileTunnel {
             let mesh_addr = mesh_ipv4;
             let inbound_tx_for_dns = inbound_tx.clone();
             let app_config_for_dns = Arc::clone(&app_config);
-            let dns_forwarders = mobile_magic_dns_forwarders_for_config(&config);
             let magic_dns_server = parse_ipv4(&config.magic_dns_server);
+            let secure_dns = magic_dns_server
+                .map(|_| SecureDnsResolver::new())
+                .transpose()
+                .context("failed to initialize mobile secure DNS")?;
             tokio::spawn(async move {
                 while let Some(packets) = outbound_rx.recv().await {
                     if !dispatch_mobile_outbound_packets(
@@ -222,7 +225,7 @@ impl MobileTunnel {
                         mesh_addr,
                         &inbound_tx_for_dns,
                         &app_config_for_dns,
-                        &dns_forwarders,
+                        secure_dns.as_ref(),
                         magic_dns_server,
                         packets,
                     )
@@ -237,8 +240,9 @@ impl MobileTunnel {
 
         let join_request_active = Arc::new(AtomicBool::new(false));
         if let Some((recipient_npub, frame)) = pending_mobile_join_request_frame(&config)? {
-            let recipient_peer = PeerIdentity::from_npub(&recipient_npub)
-                .with_context(|| format!("invalid mobile join request endpoint npub {recipient_npub}"))?;
+            let recipient_peer = PeerIdentity::from_npub(&recipient_npub).with_context(|| {
+                format!("invalid mobile join request endpoint npub {recipient_npub}")
+            })?;
             let endpoint = Arc::clone(&endpoint);
             let join_request_active_for_task = Arc::clone(&join_request_active);
             join_request_active.store(true, Ordering::Relaxed);
@@ -572,7 +576,6 @@ impl MobileTunnel {
             }
         }
     }
-
 }
 
 async fn push_mobile_wg_inbound_batch(

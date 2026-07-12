@@ -516,10 +516,9 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) control_pubsub_store_path: PathBuf,
     pub(crate) share_local_candidates: bool,
     pub(crate) peers: Vec<FipsMeshPeerConfig>,
-    #[cfg(any(target_os = "linux", target_os = "macos", test))]
-    pub(crate) active_roster_endpoint_npubs: Vec<String>,
     pub(crate) endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
     pub(crate) route_targets: Vec<String>,
+    pub(crate) magic_dns_records: HashMap<String, Ipv4Addr>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fips_host: Option<FipsHostTunnelConfig>,
     pub(crate) local_advertised_routes: Vec<String>,

@@ -18,14 +18,12 @@ import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.util.Log
-import org.json.JSONArray
 import org.json.JSONObject
 import org.nostrvpn.app.MainActivity
 import org.nostrvpn.app.R
 import org.nostrvpn.app.appCoreDataDir
 import org.nostrvpn.app.core.NativeCore
 import org.nostrvpn.app.seedMobileConfig
-import java.net.Inet4Address
 import java.util.concurrent.atomic.AtomicBoolean
 
 class NostrVpnService : VpnService() {
@@ -129,7 +127,6 @@ class NostrVpnService : VpnService() {
                 "Android VPN lockdown is active without a default internet route; non-nvpn internet will be blocked",
             )
         }
-        config.put("dnsForwarders", currentUnderlyingDnsServers())
         val tunnelConfigJson = config.toString()
 
         stopTunnel()
@@ -284,19 +281,6 @@ class NostrVpnService : VpnService() {
                 capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN) &&
                 !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
         }.toTypedArray()
-    }
-
-    private fun currentUnderlyingDnsServers(): JSONArray {
-        val servers = JSONArray()
-        val connectivity = getSystemService(ConnectivityManager::class.java) ?: return servers
-        currentUnderlyingNetworks().forEach { network ->
-            connectivity.getLinkProperties(network)?.dnsServers.orEmpty()
-                .filterIsInstance<Inet4Address>()
-                .mapNotNull { it.hostAddress }
-                .filter { it.isNotBlank() }
-                .forEach { servers.put(it) }
-        }
-        return servers
     }
 
     private fun excludeOwnProcess(builder: Builder) {

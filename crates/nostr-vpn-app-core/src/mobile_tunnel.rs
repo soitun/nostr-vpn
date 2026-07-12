@@ -41,6 +41,7 @@ use nostr_vpn_core::magic_dns::{
     build_magic_dns_records, build_magic_dns_response_if_handled,
     build_magic_dns_server_failure_response,
 };
+use nostr_vpn_core::secure_dns::{SecureDnsLookup, SecureDnsResolver, build_servfail_response};
 use nostr_vpn_core::signed_rosters::{signed_rosters_file_path, upsert_signed_roster};
 use nostr_vpn_core::wg_upstream::{DAEMON_WG_UPSTREAM_HANDSHAKE_TIMEOUT, WgUpstreamRuntime};
 use serde::{Deserialize, Serialize};

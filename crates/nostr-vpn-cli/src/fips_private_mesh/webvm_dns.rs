@@ -12,7 +12,7 @@ fn webvm_dns_query_is_fips(query: &[u8]) -> bool {
 }
 
 fn webvm_public_dns_refused_response(query: &[u8]) -> Option<Vec<u8>> {
-    nostr_vpn_core::exit_dns::build_exit_dns_refused_response(query)
+    nostr_vpn_core::secure_dns::build_refused_response(query)
 }
 
 fn webvm_iris_localhost_dns_response(query: &[u8]) -> Option<Vec<u8>> {

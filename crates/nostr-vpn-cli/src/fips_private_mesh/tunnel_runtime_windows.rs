@@ -43,10 +43,8 @@ impl FipsPrivateTunnelRuntime {
         )
         .await?;
         let (session, iface, interface_index) = start_windows_fips_wintun(&config)?;
-        let endpoint_bypass_routes = windows_fips_endpoint_bypass_targets(
-            &config.endpoint_peers,
-            &config.route_targets,
-        );
+        let endpoint_bypass_routes =
+            windows_fips_endpoint_bypass_targets(&config.endpoint_peers, &config.route_targets);
         let endpoint_bypass_underlay = if endpoint_bypass_routes.is_empty() {
             None
         } else {
@@ -58,6 +56,18 @@ impl FipsPrivateTunnelRuntime {
             )
             .context("failed to apply Windows FIPS endpoint bypass routes")?;
             Some(underlay)
+        };
+        let secure_dns = if config.secure_dns_required() {
+            Some(
+                crate::secure_dns_runtime::SecureDnsRuntime::start(
+                    &iface,
+                    Some(interface_index),
+                    config.magic_dns_records.clone(),
+                )
+                .await?,
+            )
+        } else {
+            None
         };
         let route_targets = match crate::windows_tunnel::apply_windows_routes(
             interface_index,
@@ -77,11 +87,8 @@ impl FipsPrivateTunnelRuntime {
 
         let stop = Arc::new(AtomicBool::new(false));
         let (event_tx, event_rx) = mpsc::channel::<FipsPrivateMeshEvent>(1024);
-        let tun_read_thread = spawn_windows_fips_tun_read_thread(
-            stop.clone(),
-            session.clone(),
-            Arc::clone(&mesh),
-        );
+        let tun_read_thread =
+            spawn_windows_fips_tun_read_thread(stop.clone(), session.clone(), Arc::clone(&mesh));
         let mesh_recv_task = spawn_windows_fips_mesh_recv_task(
             stop.clone(),
             Arc::clone(&mesh),
@@ -93,6 +100,7 @@ impl FipsPrivateTunnelRuntime {
             iface,
             mesh,
             control_pubsub,
+            secure_dns,
             config: config.clone(),
             session,
             stop,
@@ -122,12 +130,11 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) async fn apply_config(&mut self, config: FipsPrivateTunnelConfig) -> Result<()> {
-        self.mesh
-            .replace_peers(
-                config.peers.clone(),
-                config.local_allowed_ips(),
-                config.paid_route_admissions.clone(),
-            )?;
+        self.mesh.replace_peers(
+            config.peers.clone(),
+            config.local_allowed_ips(),
+            config.paid_route_admissions.clone(),
+        )?;
         #[cfg(feature = "paid-exit")]
         self.mesh
             .set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
@@ -137,7 +144,25 @@ impl FipsPrivateTunnelRuntime {
         if self.config.nostr_relays != config.nostr_relays {
             self.mesh.update_relays(&config.nostr_relays).await?;
         }
+        if config.secure_dns_required() && self.secure_dns.is_none() {
+            self.secure_dns = Some(
+                crate::secure_dns_runtime::SecureDnsRuntime::start(
+                    &self.iface,
+                    Some(self.interface_index),
+                    config.magic_dns_records.clone(),
+                )
+                .await?,
+            );
+        }
+        if let Some(secure_dns) = self.secure_dns.as_ref() {
+            secure_dns.update_records(config.magic_dns_records.clone());
+        }
         self.apply_windows_route_config(&config)?;
+        if !config.secure_dns_required()
+            && let Some(secure_dns) = self.secure_dns.take()
+        {
+            secure_dns.stop().await;
+        }
         self.reconcile_windows_wg_upstream(&config.wireguard_exit)
             .await;
         self.config = config;
@@ -149,10 +174,8 @@ impl FipsPrivateTunnelRuntime {
     }
 
     fn apply_windows_route_config(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
-        let desired_endpoint_routes = windows_fips_endpoint_bypass_targets(
-            &config.endpoint_peers,
-            &config.route_targets,
-        );
+        let desired_endpoint_routes =
+            windows_fips_endpoint_bypass_targets(&config.endpoint_peers, &config.route_targets);
         let added_endpoint_routes = desired_endpoint_routes
             .iter()
             .filter(|route| !self.endpoint_bypass_routes.contains(*route))
@@ -291,6 +314,9 @@ impl FipsPrivateTunnelRuntime {
         {
             eprintln!("fips: failed to remove Windows endpoint bypass routes: {error}");
         }
+        if let Some(secure_dns) = runtime.secure_dns.take() {
+            secure_dns.stop().await;
+        }
         runtime.event_rx.close();
         let _ = runtime.tun_read_thread.join();
         runtime.mesh_recv_task.abort();
@@ -403,8 +429,7 @@ mod windows_endpoint_bypass_tests {
             vec!["65.109.48.91/32"]
         );
         assert!(
-            windows_fips_endpoint_bypass_targets(&peers, &["10.44.0.2/32".to_string()])
-                .is_empty()
+            windows_fips_endpoint_bypass_targets(&peers, &["10.44.0.2/32".to_string()]).is_empty()
         );
     }
 }

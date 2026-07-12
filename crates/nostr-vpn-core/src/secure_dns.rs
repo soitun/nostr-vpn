@@ -1,0 +1,395 @@
+use std::net::SocketAddr;
+use std::time::Duration;
+
+use hickory_proto::op::{Message, MessageType, ResponseCode};
+use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use thiserror::Error;
+
+const DOH_ENDPOINT: &str = "https://cloudflare-dns.com/dns-query";
+const DOH_HOST: &str = "cloudflare-dns.com";
+const DOH_CONTENT_TYPE: &str = "application/dns-message";
+const DOH_TIMEOUT: Duration = Duration::from_secs(3);
+const DOH_BOOTSTRAP: &[&str] = &["1.1.1.1:443", "1.0.0.1:443"];
+pub const SECURE_DNS_MAX_MESSAGE_BYTES: usize = 4_096;
+
+#[derive(Clone)]
+pub struct SecureDnsResolver {
+    client: reqwest::Client,
+    endpoint: &'static str,
+}
+
+#[async_trait::async_trait]
+pub trait SecureDnsLookup: Send + Sync {
+    async fn resolve(&self, query: &[u8]) -> Result<Vec<u8>, SecureDnsError>;
+}
+
+impl SecureDnsResolver {
+    pub fn new() -> Result<Self, SecureDnsError> {
+        let bootstrap = DOH_BOOTSTRAP
+            .iter()
+            .map(|address| address.parse::<SocketAddr>())
+            .collect::<Result<Vec<_>, _>>()
+            .expect("built-in DoH bootstrap addresses are valid");
+        Self::with_bootstrap(&bootstrap)
+    }
+
+    fn with_bootstrap(bootstrap: &[SocketAddr]) -> Result<Self, SecureDnsError> {
+        let client = reqwest::Client::builder()
+            .https_only(true)
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(DOH_TIMEOUT)
+            .timeout(DOH_TIMEOUT)
+            .http2_adaptive_window(true)
+            .resolve_to_addrs(DOH_HOST, bootstrap)
+            .build()
+            .map_err(SecureDnsError::ClientBuild)?;
+        Ok(Self {
+            client,
+            endpoint: DOH_ENDPOINT,
+        })
+    }
+
+    async fn resolve_query(&self, query: &[u8]) -> Result<Vec<u8>, SecureDnsError> {
+        let request = validated_query(query)?;
+        let mut response = self
+            .client
+            .post(self.endpoint)
+            .header(ACCEPT, DOH_CONTENT_TYPE)
+            .header(CONTENT_TYPE, DOH_CONTENT_TYPE)
+            .body(query.to_vec())
+            .send()
+            .await
+            .map_err(SecureDnsError::Request)?;
+
+        if !response.status().is_success() {
+            return Err(SecureDnsError::HttpStatus(response.status().as_u16()));
+        }
+        let content_type = response
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.split(';').next())
+            .map(str::trim);
+        if content_type != Some(DOH_CONTENT_TYPE) {
+            return Err(SecureDnsError::ContentType);
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > SECURE_DNS_MAX_MESSAGE_BYTES as u64)
+        {
+            return Err(SecureDnsError::ResponseTooLarge);
+        }
+
+        let mut packet = Vec::with_capacity(512);
+        while let Some(chunk) = response.chunk().await.map_err(SecureDnsError::Request)? {
+            if packet.len().saturating_add(chunk.len()) > SECURE_DNS_MAX_MESSAGE_BYTES {
+                return Err(SecureDnsError::ResponseTooLarge);
+            }
+            packet.extend_from_slice(&chunk);
+        }
+        validated_response(&request, &packet)?;
+        Ok(packet)
+    }
+
+    #[cfg(test)]
+    fn with_test_endpoint(client: reqwest::Client, endpoint: &'static str) -> Self {
+        Self { client, endpoint }
+    }
+}
+
+#[async_trait::async_trait]
+impl SecureDnsLookup for SecureDnsResolver {
+    async fn resolve(&self, query: &[u8]) -> Result<Vec<u8>, SecureDnsError> {
+        self.resolve_query(query).await
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum SecureDnsError {
+    #[error("failed to build secure DNS client: {0}")]
+    ClientBuild(reqwest::Error),
+    #[error("invalid DNS query")]
+    InvalidQuery,
+    #[error("secure DNS request failed: {0}")]
+    Request(reqwest::Error),
+    #[error("secure DNS returned HTTP status {0}")]
+    HttpStatus(u16),
+    #[error("secure DNS returned an invalid content type")]
+    ContentType,
+    #[error("secure DNS response exceeded the message limit")]
+    ResponseTooLarge,
+    #[error("secure DNS returned an invalid or unrelated response")]
+    InvalidResponse,
+}
+
+fn validated_query(packet: &[u8]) -> Result<Message, SecureDnsError> {
+    if !(12..=SECURE_DNS_MAX_MESSAGE_BYTES).contains(&packet.len()) {
+        return Err(SecureDnsError::InvalidQuery);
+    }
+    let message = Message::from_vec(packet).map_err(|_| SecureDnsError::InvalidQuery)?;
+    if message.metadata.message_type != MessageType::Query || message.queries.is_empty() {
+        return Err(SecureDnsError::InvalidQuery);
+    }
+    Ok(message)
+}
+
+fn validated_response(request: &Message, packet: &[u8]) -> Result<Message, SecureDnsError> {
+    let response = Message::from_vec(packet).map_err(|_| SecureDnsError::InvalidResponse)?;
+    if response.metadata.message_type != MessageType::Response
+        || response.id != request.id
+        || response.metadata.op_code != request.metadata.op_code
+        || response.queries != request.queries
+    {
+        return Err(SecureDnsError::InvalidResponse);
+    }
+    Ok(response)
+}
+
+pub fn build_servfail_response(query: &[u8]) -> Option<Vec<u8>> {
+    build_error_response(query, ResponseCode::ServFail)
+}
+
+pub fn build_refused_response(query: &[u8]) -> Option<Vec<u8>> {
+    build_error_response(query, ResponseCode::Refused)
+}
+
+fn build_error_response(query: &[u8], response_code: ResponseCode) -> Option<Vec<u8>> {
+    let request = validated_query(query).ok()?;
+    let mut response = Message::new(request.id, MessageType::Response, request.metadata.op_code);
+    response.metadata.recursion_desired = request.metadata.recursion_desired;
+    response.metadata.recursion_available = true;
+    response.metadata.response_code = response_code;
+    for query in request.queries {
+        response.add_query(query);
+    }
+    let mut packet = Vec::new();
+    response.emit(&mut BinEncoder::new(&mut packet)).ok()?;
+    Some(packet)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hickory_proto::op::{OpCode, Query};
+    use hickory_proto::rr::{Name, RecordType};
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    fn dns_query(id: u16) -> Vec<u8> {
+        let mut message = Message::new(id, MessageType::Query, OpCode::Query);
+        message.metadata.recursion_desired = true;
+        message.add_query(Query::query(
+            Name::from_ascii("secure.example.").expect("query name"),
+            RecordType::A,
+        ));
+        encode(message)
+    }
+
+    fn dns_response(query: &[u8], id: u16) -> Vec<u8> {
+        let request = Message::from_vec(query).expect("query");
+        let mut message = Message::new(id, MessageType::Response, request.metadata.op_code);
+        for query in request.queries {
+            message.add_query(query);
+        }
+        encode(message)
+    }
+
+    fn encode(message: Message) -> Vec<u8> {
+        let mut packet = Vec::new();
+        message
+            .emit(&mut BinEncoder::new(&mut packet))
+            .expect("encode DNS message");
+        packet
+    }
+
+    #[test]
+    fn response_must_match_transaction_and_questions() {
+        let query = dns_query(41);
+        let request = validated_query(&query).expect("valid query");
+        assert!(validated_response(&request, &dns_response(&query, 41)).is_ok());
+        assert!(matches!(
+            validated_response(&request, &dns_response(&query, 42)),
+            Err(SecureDnsError::InvalidResponse)
+        ));
+
+        let unrelated = dns_query(41);
+        let mut unrelated = Message::from_vec(&unrelated).expect("query");
+        unrelated.queries.clear();
+        unrelated.add_query(Query::query(
+            Name::from_ascii("spoofed.example.").expect("query name"),
+            RecordType::A,
+        ));
+        unrelated.metadata.message_type = MessageType::Response;
+        assert!(matches!(
+            validated_response(&request, &encode(unrelated)),
+            Err(SecureDnsError::InvalidResponse)
+        ));
+    }
+
+    #[test]
+    fn malformed_queries_fail_closed_with_correlated_servfail() {
+        assert!(build_servfail_response(&[0; 11]).is_none());
+        let query = dns_query(77);
+        let response = build_servfail_response(&query).expect("SERVFAIL");
+        let response = Message::from_vec(&response).expect("response");
+        assert_eq!(response.id, 77);
+        assert_eq!(response.metadata.response_code, ResponseCode::ServFail);
+        assert_eq!(response.queries.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn production_client_rejects_plain_http() {
+        let resolver = SecureDnsResolver::new().expect("resolver");
+        let resolver =
+            SecureDnsResolver::with_test_endpoint(resolver.client, "http://127.0.0.1:9/dns-query");
+        assert!(matches!(
+            SecureDnsLookup::resolve(&resolver, &dns_query(9)).await,
+            Err(SecureDnsError::Request(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn doh_uses_post_dns_message_and_validates_reply() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("fixture listener");
+        let address = listener.local_addr().expect("fixture address");
+        let query = dns_query(912);
+        let expected_query = query.clone();
+        let response_packet = dns_response(&query, 912);
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("fixture connection");
+            let mut request = Vec::new();
+            let header_end = loop {
+                let mut chunk = [0_u8; 512];
+                let length = stream.read(&mut chunk).await.expect("fixture request");
+                assert!(length > 0, "request ended before HTTP headers");
+                request.extend_from_slice(&chunk[..length]);
+                if let Some(offset) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    break offset + 4;
+                }
+            };
+            let headers = String::from_utf8_lossy(&request[..header_end]).to_ascii_lowercase();
+            assert!(headers.starts_with("post /dns-query http/1.1\r\n"));
+            assert!(headers.contains("content-type: application/dns-message\r\n"));
+            assert!(headers.contains("accept: application/dns-message\r\n"));
+            let content_length = headers
+                .lines()
+                .find_map(|line| line.strip_prefix("content-length:"))
+                .and_then(|length| length.trim().parse::<usize>().ok())
+                .expect("content length");
+            while request.len() - header_end < content_length {
+                let mut chunk = [0_u8; 512];
+                let length = stream.read(&mut chunk).await.expect("fixture body");
+                assert!(length > 0, "request ended before DNS body");
+                request.extend_from_slice(&chunk[..length]);
+            }
+            assert_eq!(
+                &request[header_end..header_end + content_length],
+                expected_query.as_slice()
+            );
+            let response_headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/dns-message\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                response_packet.len()
+            );
+            stream
+                .write_all(response_headers.as_bytes())
+                .await
+                .expect("fixture response headers");
+            stream
+                .write_all(&response_packet)
+                .await
+                .expect("fixture response body");
+        });
+        let endpoint = Box::leak(format!("http://{address}/dns-query").into_boxed_str());
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .expect("fixture client");
+        let resolver = SecureDnsResolver::with_test_endpoint(client, endpoint);
+
+        let response = resolver.resolve_query(&query).await.expect("DoH response");
+        assert_eq!(Message::from_vec(&response).expect("DNS response").id, 912);
+        server.await.expect("fixture task");
+    }
+
+    #[tokio::test]
+    async fn redirected_bootstrap_cannot_downgrade_doh_to_plaintext() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("spoof listener");
+        let address = listener.local_addr().expect("spoof address");
+        let attacker = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("spoof connection");
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
+                .await
+                .ok();
+        });
+        let resolver = SecureDnsResolver::with_bootstrap(&[address]).expect("resolver");
+
+        assert!(matches!(
+            resolver.resolve_query(&dns_query(444)).await,
+            Err(SecureDnsError::Request(_))
+        ));
+        attacker.await.expect("spoof task");
+    }
+
+    #[tokio::test]
+    async fn forged_certificate_cannot_spoof_doh_response() {
+        use rcgen::{CertifiedKey, generate_simple_self_signed};
+        use tokio_rustls::TlsAcceptor;
+        use tokio_rustls::rustls::ServerConfig;
+        use tokio_rustls::rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+
+        let CertifiedKey { cert, key_pair } =
+            generate_simple_self_signed(vec![DOH_HOST.to_string()]).expect("attacker certificate");
+        let server_config = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.der().clone()],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_pair.serialize_der())),
+            )
+            .expect("attacker TLS config");
+        let acceptor = TlsAcceptor::from(std::sync::Arc::new(server_config));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("spoof TLS listener");
+        let address = listener.local_addr().expect("spoof TLS address");
+        let attacker = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.expect("spoof TLS connection");
+            assert!(
+                acceptor.accept(stream).await.is_err(),
+                "client must reject the untrusted certificate"
+            );
+        });
+        let resolver = SecureDnsResolver::with_bootstrap(&[address]).expect("resolver");
+
+        assert!(matches!(
+            resolver.resolve_query(&dns_query(445)).await,
+            Err(SecureDnsError::Request(_))
+        ));
+        attacker.await.expect("spoof TLS task");
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Internet access to the production DoH endpoint"]
+    async fn live_doh_resolves_over_authenticated_tls() {
+        let resolver = SecureDnsResolver::new().expect("resolver");
+        let mut query = Message::new(700, MessageType::Query, OpCode::Query);
+        query.add_query(Query::query(
+            Name::from_ascii("example.com.").expect("query name"),
+            RecordType::A,
+        ));
+        let response = resolver
+            .resolve_query(&encode(query))
+            .await
+            .expect("authenticated live DoH response");
+        let response = Message::from_vec(&response).expect("DNS response");
+        assert_eq!(response.id, 700);
+        assert_eq!(response.metadata.message_type, MessageType::Response);
+        assert!(!response.answers.is_empty());
+    }
+}
