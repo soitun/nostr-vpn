@@ -202,8 +202,24 @@
         );
     }
 
-    #[tokio::test]
-    async fn two_local_endpoints_exchange_raw_packets_over_fips() {
+    #[test]
+    fn two_local_endpoints_exchange_raw_packets_over_fips() {
+        std::thread::Builder::new()
+            .name("two-local-fips-endpoints".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("local FIPS endpoint test runtime")
+                    .block_on(two_local_endpoints_exchange_raw_packets_over_fips_run());
+            })
+            .expect("spawn local FIPS endpoint test")
+            .join()
+            .expect("local FIPS endpoint test thread");
+    }
+
+    async fn two_local_endpoints_exchange_raw_packets_over_fips_run() {
         let _local_udp_guard = LOCAL_UDP_ENDPOINT_TEST_LOCK.lock().await;
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
