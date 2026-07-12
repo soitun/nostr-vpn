@@ -238,7 +238,9 @@ fn paid_exit_wallet_mint(store: &PaidRouteStore, explicit: Option<&str>) -> Resu
     if !store.wallet.default_mint.trim().is_empty() {
         return normalize_mint_url(&store.wallet.default_mint);
     }
-    normalize_mint_url(DEFAULT_PAID_EXIT_WALLET_MINT)
+    Err(anyhow!(
+        "No mint configured; add a mint or pass --mint before using Lightning receive or send"
+    ))
 }
 
 fn ensure_paid_exit_wallet_mint(
@@ -494,5 +496,19 @@ fn print_paid_exit_wallet(store: &PaidRouteStore) {
             balance,
             mint.last_checked_unix
         );
+    }
+}
+
+#[cfg(test)]
+mod paid_exit_wallet_tests {
+    use super::*;
+
+    #[test]
+    fn wallet_operations_require_an_explicit_or_configured_mint() {
+        let store = PaidRouteStore::default();
+
+        let error = paid_exit_wallet_mint(&store, None).expect_err("missing mint");
+
+        assert!(error.to_string().contains("No mint configured"));
     }
 }

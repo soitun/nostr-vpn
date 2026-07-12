@@ -9,6 +9,11 @@ enum PaidRouteWalletFlow: String, Identifiable {
     var id: String { rawValue }
 }
 
+private func isLikelyCashuToken(_ value: String) -> Bool {
+    let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return token.count > 12 && token.lowercased().hasPrefix("cashu")
+}
+
 extension RootView {
     var paidRouteWalletSettings: some View {
         let market = state.paidRouteMarket
@@ -76,29 +81,10 @@ extension RootView {
             }
             .controlSize(.large)
 
-            Toggle("Show exchange rate", isOn: Binding(
-                get: { state.walletFiatEnabled },
-                set: { manager.setWalletFiatEnabled($0) }
-            ))
-            .disabled(manager.actionInFlight)
-
             if state.walletFiatEnabled {
-                HStack(spacing: 10) {
-                    Picker("Currency", selection: Binding(
-                        get: { state.walletFiatCurrency },
-                        set: { manager.setWalletFiatCurrency($0) }
-                    )) {
-                        ForEach(["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF"], id: \.self) {
-                            Text($0).tag($0)
-                        }
-                    }
-                    .frame(width: 180)
-
-                    if !wallet.fiatBalanceText.isEmpty {
-                        Text(wallet.fiatBalanceText)
-                            .font(.headline)
-                    }
-                    Spacer(minLength: 8)
+                if !wallet.fiatBalanceText.isEmpty {
+                    Text(wallet.fiatBalanceText)
+                        .font(.headline)
                 }
 
                 if !wallet.exchangeRateText.isEmpty {
@@ -155,33 +141,52 @@ extension RootView {
 
             if flow == .receive {
                 GroupBox("Lightning") {
-                    HStack(spacing: 8) {
-                        TextField("Amount in sats", text: $paidRouteTopupAmount)
-                        Button("Create Invoice") {
-                            manager.topUpPaidRouteWallet(mintUrl: nil, amountSat: paidRouteTopupAmount)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if wallet.defaultMint.isEmpty {
+                            Text("Add a mint before using Lightning.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        .disabled(manager.actionInFlight || parsePositiveUInt64(paidRouteTopupAmount) == nil)
+                        HStack(spacing: 8) {
+                            TextField("Amount in sats", text: $paidRouteTopupAmount)
+                            Button("Create Invoice") {
+                                manager.topUpPaidRouteWallet(mintUrl: nil, amountSat: paidRouteTopupAmount)
+                            }
+                            .disabled(manager.actionInFlight || wallet.defaultMint.isEmpty || parsePositiveUInt64(paidRouteTopupAmount) == nil)
+                        }
                     }
                     .padding(6)
                 }
                 GroupBox("Token") {
                     HStack(spacing: 8) {
                         TextField("Paste token", text: $paidRouteReceiveToken)
-                        Button("Import") {
-                            manager.receivePaidRouteWalletToken(paidRouteReceiveToken)
+                            .onChange(of: paidRouteReceiveToken) { _, value in
+                                autoReceivePaidRouteWalletToken(value)
+                            }
+                        Button {
+                            showingWalletTokenScanner = true
+                        } label: {
+                            Label("Scan QR", systemImage: "camera.viewfinder")
                         }
-                        .disabled(manager.actionInFlight || paidRouteReceiveToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(manager.actionInFlight)
                     }
                     .padding(6)
                 }
             } else {
                 GroupBox("Lightning") {
-                    HStack(spacing: 8) {
-                        TextField("Invoice", text: $paidRouteWithdrawInvoice)
-                        Button("Pay") {
-                            manager.withdrawPaidRouteWalletLightning(mintUrl: nil, invoice: paidRouteWithdrawInvoice)
+                    VStack(alignment: .leading, spacing: 8) {
+                        if wallet.defaultMint.isEmpty {
+                            Text("Add a mint before using Lightning.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        .disabled(manager.actionInFlight || paidRouteWithdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        HStack(spacing: 8) {
+                            TextField("Invoice", text: $paidRouteWithdrawInvoice)
+                            Button("Pay") {
+                                manager.withdrawPaidRouteWalletLightning(mintUrl: nil, invoice: paidRouteWithdrawInvoice)
+                            }
+                            .disabled(manager.actionInFlight || wallet.defaultMint.isEmpty || paidRouteWithdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        }
                     }
                     .padding(6)
                 }
@@ -191,7 +196,7 @@ extension RootView {
                         Button("Export") {
                             manager.sendPaidRouteWalletToken(mintUrl: nil, amountSat: paidRouteSendAmount)
                         }
-                        .disabled(manager.actionInFlight || parsePositiveUInt64(paidRouteSendAmount) == nil)
+                        .disabled(manager.actionInFlight || wallet.defaultMint.isEmpty || parsePositiveUInt64(paidRouteSendAmount) == nil)
                     }
                     .padding(6)
                 }
@@ -201,6 +206,24 @@ extension RootView {
         }
         .padding(22)
         .frame(width: 520)
+        .sheet(isPresented: $showingWalletTokenScanner) {
+            QRCodeScannerSheet { value in
+                receivePaidRouteWalletToken(value)
+            }
+        }
+    }
+
+    func autoReceivePaidRouteWalletToken(_ value: String) {
+        guard isLikelyCashuToken(value) else { return }
+        receivePaidRouteWalletToken(value)
+    }
+
+    func receivePaidRouteWalletToken(_ value: String) {
+        let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !token.isEmpty else { return }
+        paidRouteReceiveToken = ""
+        showingWalletTokenScanner = false
+        manager.receivePaidRouteWalletToken(token)
     }
 
     @ViewBuilder

@@ -585,11 +585,6 @@ func parsePositivePaidRouteAmount(_ value: String) -> UInt64? {
     return amount
 }
 
-func optionalPaidRouteMintUrl(_ value: String) -> String? {
-    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-    return trimmed.isEmpty ? nil : trimmed
-}
-
 func formatPaidRouteMsat(_ msat: UInt64) -> String {
     if msat == 0 {
         return "0 sat"

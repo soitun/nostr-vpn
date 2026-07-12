@@ -127,36 +127,6 @@ struct PaidRouteWalletPage: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                AppCard {
-                    Toggle("Show fiat value", isOn: Binding(
-                        get: { model.state.walletFiatEnabled },
-                        set: { enabled in
-                            model.dispatch(
-                                NativeActions.updateSettings(["walletFiatEnabled": enabled]),
-                                status: "Saving wallet display"
-                            )
-                        }
-                    ))
-                    if model.state.walletFiatEnabled {
-                        Text("Rates from Coinbase and Kraken")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                        Picker("Currency", selection: Binding(
-                            get: { model.state.walletFiatCurrency },
-                            set: { currency in
-                                model.dispatch(
-                                    NativeActions.updateSettings(["walletFiatCurrency": currency]),
-                                    status: "Saving wallet currency"
-                                )
-                            }
-                        )) {
-                            ForEach(["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF"], id: \.self) {
-                                Text($0).tag($0)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                    }
-                }
                 PaidRouteMarketCard(model: model, mode: .wallet)
             }
             .padding()
@@ -178,6 +148,11 @@ private enum PaidRouteWalletFlow: String, Identifiable {
     var id: String { rawValue }
 }
 
+private func isLikelyCashuToken(_ value: String) -> Bool {
+    let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return token.count > 12 && token.lowercased().hasPrefix("cashu")
+}
+
 struct PaidRouteMarketCard: View {
     @ObservedObject var model: AppModel
     let mode: PaidRouteCardMode
@@ -187,6 +162,7 @@ struct PaidRouteMarketCard: View {
     @State private var sendAmount = ""
     @State private var withdrawInvoice = ""
     @State private var walletFlow: PaidRouteWalletFlow?
+    @State private var walletTokenScannerPresented = false
     @State private var filterCountry = ""
     @State private var filterNetworkClass = ""
     @State private var filterRequireIpv4 = false
@@ -370,17 +346,22 @@ struct PaidRouteMarketCard: View {
         NavigationStack {
             Form {
                 Section("Lightning") {
+                    if market.wallet.defaultMint.isEmpty {
+                        Text("Add a mint before using Lightning.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
                     if flow == .receive {
                         TextField("Amount in sats", text: $topUpAmount)
                             .keyboardType(.numberPad)
                         Button("Create Invoice") {
                             guard let amount = parsePositivePaidRouteAmount(topUpAmount) else { return }
                             model.dispatch(
-                                NativeActions.topUpPaidRouteWallet(mintUrl: optionalPaidRouteMintUrl(mintUrl), amountSat: amount),
+                                NativeActions.topUpPaidRouteWallet(mintUrl: nil, amountSat: amount),
                                 status: "Creating invoice"
                             )
                         }
-                        .disabled(model.actionInFlight || parsePositivePaidRouteAmount(topUpAmount) == nil)
+                        .disabled(model.actionInFlight || market.wallet.defaultMint.isEmpty || parsePositivePaidRouteAmount(topUpAmount) == nil)
                     } else {
                         TextField("Invoice", text: $withdrawInvoice)
                             .textInputAutocapitalization(.never)
@@ -388,11 +369,11 @@ struct PaidRouteMarketCard: View {
                         Button("Pay") {
                             let trimmed = withdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines)
                             model.dispatch(
-                                NativeActions.withdrawPaidRouteWalletLightning(mintUrl: optionalPaidRouteMintUrl(mintUrl), invoice: trimmed),
+                                NativeActions.withdrawPaidRouteWalletLightning(mintUrl: nil, invoice: trimmed),
                                 status: "Paying invoice"
                             )
                         }
-                        .disabled(model.actionInFlight || withdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(model.actionInFlight || market.wallet.defaultMint.isEmpty || withdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
 
@@ -401,25 +382,26 @@ struct PaidRouteMarketCard: View {
                         TextField("Paste token", text: $token)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
-                        Button("Import") {
-                            let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-                            model.dispatch(
-                                NativeActions.receivePaidRouteWalletToken(token: trimmed),
-                                status: "Receiving token"
-                            )
+                            .onChange(of: token) { _, value in
+                                autoReceiveWalletToken(value)
+                            }
+                        Button {
+                            walletTokenScannerPresented = true
+                        } label: {
+                            Label("Scan QR", systemImage: "camera.viewfinder")
                         }
-                        .disabled(model.actionInFlight || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(model.actionInFlight)
                     } else {
                         TextField("Amount in sats", text: $sendAmount)
                             .keyboardType(.numberPad)
                         Button("Export") {
                             guard let amount = parsePositivePaidRouteAmount(sendAmount) else { return }
                             model.dispatch(
-                                NativeActions.sendPaidRouteWalletToken(mintUrl: optionalPaidRouteMintUrl(mintUrl), amountSat: amount),
+                                NativeActions.sendPaidRouteWalletToken(mintUrl: nil, amountSat: amount),
                                 status: "Creating token"
                             )
                         }
-                        .disabled(model.actionInFlight || parsePositivePaidRouteAmount(sendAmount) == nil)
+                        .disabled(model.actionInFlight || market.wallet.defaultMint.isEmpty || parsePositivePaidRouteAmount(sendAmount) == nil)
                     }
                 }
 
@@ -432,6 +414,27 @@ struct PaidRouteMarketCard: View {
                 }
             }
         }
+        .sheet(isPresented: $walletTokenScannerPresented) {
+            QRCodeScannerSheet { value in
+                receiveWalletToken(value)
+            }
+        }
+    }
+
+    private func autoReceiveWalletToken(_ value: String) {
+        guard isLikelyCashuToken(value) else { return }
+        receiveWalletToken(value)
+    }
+
+    private func receiveWalletToken(_ value: String) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        token = ""
+        walletTokenScannerPresented = false
+        model.dispatch(
+            NativeActions.receivePaidRouteWalletToken(token: trimmed),
+            status: "Receiving token"
+        )
     }
 
     private var walletMintList: some View {

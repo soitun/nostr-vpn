@@ -53,6 +53,7 @@ internal fun PaidRouteMarketCard(
     var sendAmount by remember { mutableStateOf("") }
     var withdrawInvoice by remember { mutableStateOf("") }
     var walletFlow by remember { mutableStateOf<PaidRouteWalletFlow?>(null) }
+    var walletTokenScannerVisible by remember { mutableStateOf(false) }
     var filterCountry by remember { mutableStateOf(market.filter.countryCode) }
     var filterNetwork by remember { mutableStateOf(market.filter.networkClass) }
     var filterIpv4 by remember { mutableStateOf(market.filter.requireIpv4) }
@@ -280,12 +281,16 @@ internal fun PaidRouteMarketCard(
     }
 
     walletFlow?.let { flow ->
+        val hasMint = market.wallet.defaultMint.isNotBlank()
         AlertDialog(
             onDismissRequest = { walletFlow = null },
             title = { Text(if (flow == PaidRouteWalletFlow.Receive) "Receive" else "Send") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Lightning", style = MaterialTheme.typography.titleSmall)
+                    if (!hasMint) {
+                        Text("Add a mint before using Lightning.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    }
                     if (flow == PaidRouteWalletFlow.Receive) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             OutlinedTextField(
@@ -296,10 +301,10 @@ internal fun PaidRouteMarketCard(
                                 label = { Text("Amount in sats") },
                             )
                             Button(
-                                enabled = parsePositivePaidRouteAmount(topUpAmount) != null,
+                                enabled = hasMint && parsePositivePaidRouteAmount(topUpAmount) != null,
                                 onClick = {
                                     val amount = parsePositivePaidRouteAmount(topUpAmount) ?: return@Button
-                                    dispatch(NativeActions.topUpPaidRouteWallet(optionalPaidRouteMintUrl(mintUrl), amount))
+                                    dispatch(NativeActions.topUpPaidRouteWallet(null, amount))
                                 },
                             ) { Text("Invoice") }
                         }
@@ -313,9 +318,9 @@ internal fun PaidRouteMarketCard(
                                 label = { Text("Invoice") },
                             )
                             Button(
-                                enabled = withdrawInvoice.trim().isNotEmpty(),
+                                enabled = hasMint && withdrawInvoice.trim().isNotEmpty(),
                                 onClick = {
-                                    dispatch(NativeActions.withdrawPaidRouteWalletLightning(optionalPaidRouteMintUrl(mintUrl), withdrawInvoice.trim()))
+                                    dispatch(NativeActions.withdrawPaidRouteWalletLightning(null, withdrawInvoice.trim()))
                                 },
                             ) { Text("Pay") }
                         }
@@ -326,15 +331,21 @@ internal fun PaidRouteMarketCard(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             OutlinedTextField(
                                 value = token,
-                                onValueChange = { token = it },
+                                onValueChange = { value ->
+                                    token = value
+                                    if (isLikelyCashuToken(value)) {
+                                        val pastedToken = value.trim()
+                                        token = ""
+                                        dispatch(NativeActions.receivePaidRouteWalletToken(pastedToken))
+                                    }
+                                },
                                 modifier = Modifier.weight(1f),
                                 singleLine = true,
                                 label = { Text("Paste token") },
                             )
-                            Button(
-                                enabled = token.trim().isNotEmpty(),
-                                onClick = { dispatch(NativeActions.receivePaidRouteWalletToken(token.trim())) },
-                            ) { Text("Import") }
+                            Button(onClick = { walletTokenScannerVisible = true }) {
+                                Text("Scan QR")
+                            }
                         }
                     } else {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -346,10 +357,10 @@ internal fun PaidRouteMarketCard(
                                 label = { Text("Amount in sats") },
                             )
                             Button(
-                                enabled = parsePositivePaidRouteAmount(sendAmount) != null,
+                                enabled = hasMint && parsePositivePaidRouteAmount(sendAmount) != null,
                                 onClick = {
                                     val amount = parsePositivePaidRouteAmount(sendAmount) ?: return@Button
-                                    dispatch(NativeActions.sendPaidRouteWalletToken(optionalPaidRouteMintUrl(mintUrl), amount))
+                                    dispatch(NativeActions.sendPaidRouteWalletToken(null, amount))
                                 },
                             ) { Text("Export") }
                         }
@@ -362,6 +373,27 @@ internal fun PaidRouteMarketCard(
             },
         )
     }
+    if (walletTokenScannerVisible) {
+        QrScannerDialog(
+            onDismiss = { walletTokenScannerVisible = false },
+            onScanned = { value ->
+                val scannedToken = value.trim()
+                if (!isLikelyCashuToken(scannedToken)) {
+                    "Not a Cashu token."
+                } else {
+                    walletTokenScannerVisible = false
+                    token = ""
+                    dispatch(NativeActions.receivePaidRouteWalletToken(scannedToken))
+                    null
+                }
+            },
+        )
+    }
+}
+
+private fun isLikelyCashuToken(value: String): Boolean {
+    val token = value.trim()
+    return token.length > 12 && token.startsWith("cashu", ignoreCase = true)
 }
 
 @Composable
@@ -803,11 +835,6 @@ private fun paidRouteSessionCanCloseChannel(session: PaidRouteSessionState): Boo
 
 private fun parsePositivePaidRouteAmount(value: String): Long? =
     value.trim().toLongOrNull()?.takeIf { it > 0 }
-
-private fun optionalPaidRouteMintUrl(value: String): String? {
-    val trimmed = value.trim()
-    return if (trimmed.isEmpty()) null else trimmed
-}
 
 internal fun formatPaidRouteMsat(msat: Long): String {
     if (msat <= 0) return "0 sat"

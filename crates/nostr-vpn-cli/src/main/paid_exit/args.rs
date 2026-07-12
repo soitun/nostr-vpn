@@ -594,7 +594,7 @@ struct PaidExitWalletShowArgs {
 struct PaidExitWalletTopupArgs {
     /// Amount to mint, in sats.
     amount_sat: u64,
-    /// Cashu mint URL. Defaults to the wallet default mint, then Minibits.
+    /// Cashu mint URL. Defaults to the configured wallet default mint.
     #[arg(long)]
     mint: Option<String>,
 }
@@ -611,7 +611,7 @@ struct PaidExitWalletReceiveArgs {
 struct PaidExitWalletSendArgs {
     /// Amount to send, in sats.
     amount_sat: u64,
-    /// Cashu mint URL. Defaults to the wallet default mint, then Minibits.
+    /// Cashu mint URL. Defaults to the configured wallet default mint.
     #[arg(long)]
     mint: Option<String>,
 }
@@ -620,7 +620,7 @@ struct PaidExitWalletSendArgs {
 struct PaidExitWalletWithdrawArgs {
     /// BOLT11 invoice to pay.
     invoice: String,
-    /// Cashu mint URL. Defaults to the wallet default mint, then Minibits.
+    /// Cashu mint URL. Defaults to the configured wallet default mint.
     #[arg(long)]
     mint: Option<String>,
 }

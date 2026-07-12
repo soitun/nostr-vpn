@@ -11,6 +11,9 @@ struct SettingsPage: View {
             LazyVStack(spacing: 14) {
                 DeviceSettingsCard(model: model)
                 GeneralSettingsCard(model: model)
+                if model.state.paidRouteMarket.supported {
+                    WalletDisplaySettingsCard(model: model)
+                }
                 FipsSettingsCard(model: model)
                 PubsubSettingsCard(model: model)
                 RelaySettingsCard(model: model)
@@ -19,6 +22,45 @@ struct SettingsPage: View {
             .padding()
         }
         .background(AppColors.background)
+    }
+}
+
+struct WalletDisplaySettingsCard: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        AppCard {
+            Text("Wallet")
+                .font(.headline)
+            Toggle("Show fiat value", isOn: Binding(
+                get: { model.state.walletFiatEnabled },
+                set: { enabled in
+                    model.dispatch(
+                        NativeActions.updateSettings(["walletFiatEnabled": enabled]),
+                        status: "Saving wallet display"
+                    )
+                }
+            ))
+            if model.state.walletFiatEnabled {
+                Text("Rates from Coinbase and Kraken")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                Picker("Currency", selection: Binding(
+                    get: { model.state.walletFiatCurrency },
+                    set: { currency in
+                        model.dispatch(
+                            NativeActions.updateSettings(["walletFiatCurrency": currency]),
+                            status: "Saving wallet currency"
+                        )
+                    }
+                )) {
+                    ForEach(["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF"], id: \.self) {
+                        Text($0).tag($0)
+                    }
+                }
+                .pickerStyle(.menu)
+            }
+        }
     }
 }
 struct ParticipantRow: View {

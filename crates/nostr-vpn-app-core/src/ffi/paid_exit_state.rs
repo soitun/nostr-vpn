@@ -620,7 +620,7 @@ fn paid_route_wallet_state(
         } else {
             "unknown".to_string()
         },
-        navigation_balance_text: if balance_known {
+        navigation_balance_text: if balance_known && total_balance_msat > 0 {
             compact_wallet_balance_text(total_balance_msat)
         } else {
             String::new()

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using Microsoft.Win32;
 using NostrVpn.Windows.Core;
 
 namespace NostrVpn.Windows.ViewModels;
@@ -110,7 +111,7 @@ public sealed partial class AppViewModel
         return amount is null
             ? Task.CompletedTask
             : DispatchAsync(
-                NativeActions.TopUpPaidRouteWallet(OptionalTrimmed(PaidRouteMintUrl), amount.Value),
+                NativeActions.TopUpPaidRouteWallet(null, amount.Value),
                 "Creating top-up invoice");
     }
 
@@ -125,13 +126,46 @@ public sealed partial class AppViewModel
         PaidRouteReceiveToken = "";
     }
 
+    public Task AutoReceivePaidRouteWalletTokenAsync()
+    {
+        return !ActionInFlight && LooksLikeCashuToken(PaidRouteReceiveToken)
+            ? ReceivePaidRouteWalletTokenAsync()
+            : Task.CompletedTask;
+    }
+
+    public async Task ScanPaidRouteWalletTokenAsync()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif|All files|*.*",
+            Multiselect = false,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+        var result = await Task.Run(() => _core.DecodeQrImage(dialog.FileName));
+        if (!string.IsNullOrWhiteSpace(result.Error))
+        {
+            Notice = result.Error;
+            return;
+        }
+        var token = result.Value.Trim();
+        if (!LooksLikeCashuToken(token))
+        {
+            Notice = "QR does not contain a Cashu token";
+            return;
+        }
+        await DispatchAsync(NativeActions.ReceivePaidRouteWalletToken(token), "Importing token");
+    }
+
     public Task SendPaidRouteWalletTokenAsync()
     {
         var amount = ParsePositiveUInt64(PaidRouteSendAmount);
         return amount is null
             ? Task.CompletedTask
             : DispatchAsync(
-                NativeActions.SendPaidRouteWalletToken(OptionalTrimmed(PaidRouteMintUrl), amount.Value),
+                NativeActions.SendPaidRouteWalletToken(null, amount.Value),
                 "Exporting token");
     }
 
@@ -141,8 +175,14 @@ public sealed partial class AppViewModel
         return string.IsNullOrWhiteSpace(invoice)
             ? Task.CompletedTask
             : DispatchAsync(
-                NativeActions.WithdrawPaidRouteWalletLightning(OptionalTrimmed(PaidRouteMintUrl), invoice),
+                NativeActions.WithdrawPaidRouteWalletLightning(null, invoice),
                 "Paying invoice");
+    }
+
+    private static bool LooksLikeCashuToken(string value)
+    {
+        var token = value.Trim();
+        return token.Length > 12 && token.StartsWith("cashu", StringComparison.OrdinalIgnoreCase);
     }
 
     public Task BuyPaidRouteOfferAsync(NativePaidRouteOfferState offer) =>

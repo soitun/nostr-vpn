@@ -59,6 +59,13 @@ pub(super) fn build_paid_route_wallet_card(app: &AppRef, page: &gtk::Box, state:
     card.append(&transfer_switcher);
 
     let receive = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let has_mint = !wallet.default_mint.trim().is_empty();
+    if !has_mint {
+        let notice = gtk::Label::new(Some("Add a mint before using Lightning."));
+        notice.set_xalign(0.0);
+        notice.add_css_class("dim-label");
+        receive.append(&notice);
+    }
     wallet_amount_row(
         app,
         &receive,
@@ -66,11 +73,18 @@ pub(super) fn build_paid_route_wallet_card(app: &AppRef, page: &gtk::Box, state:
         "Create Invoice",
         "go-down-symbolic",
         WalletAction::TopUp,
+        has_mint,
     );
     wallet_token_row(app, &receive);
     transfer_stack.add_titled(&receive, Some("receive"), "Receive");
 
     let send = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    if !has_mint {
+        let notice = gtk::Label::new(Some("Add a mint before sending."));
+        notice.set_xalign(0.0);
+        notice.add_css_class("dim-label");
+        send.append(&notice);
+    }
     wallet_withdraw_row(app, &send);
     wallet_amount_row(
         app,
@@ -79,6 +93,7 @@ pub(super) fn build_paid_route_wallet_card(app: &AppRef, page: &gtk::Box, state:
         "Export",
         "document-send-symbolic",
         WalletAction::Send,
+        has_mint,
     );
     transfer_stack.add_titled(&send, Some("send"), "Send");
     card.append(&transfer_stack);
@@ -143,6 +158,7 @@ fn wallet_amount_row(
     button: &str,
     icon: &str,
     action: WalletAction,
+    has_mint: bool,
 ) {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let value = {
@@ -168,19 +184,17 @@ fn wallet_amount_row(
         });
     }
     let submit = icon_text_button(button, icon);
+    submit.set_sensitive(has_mint);
     {
         let app = app.clone();
         submit.connect_clicked(move |_| {
-            let (mint_url, amount) = {
+            let amount = {
                 let model = app.borrow();
                 let amount_text = match action {
                     WalletAction::TopUp => &model.drafts.paid_route_top_up_amount,
                     WalletAction::Send => &model.drafts.paid_route_send_amount,
                 };
-                (
-                    optional_trimmed(&model.drafts.paid_route_mint_url),
-                    parse_positive_u64(amount_text),
-                )
+                parse_positive_u64(amount_text)
             };
             let Some(amount_sat) = amount else {
                 return;
@@ -189,11 +203,11 @@ fn wallet_amount_row(
                 &app,
                 match action {
                     WalletAction::TopUp => NativeAppAction::TopUpPaidRouteWallet {
-                        mint_url,
+                        mint_url: None,
                         amount_sat,
                     },
                     WalletAction::Send => NativeAppAction::SendPaidRouteWalletToken {
-                        mint_url,
+                        mint_url: None,
                         amount_sat,
                     },
                 },
@@ -211,22 +225,54 @@ fn wallet_token_row(app: &AppRef, parent: &gtk::Box) {
     {
         let app = app.clone();
         input.connect_changed(move |entry| {
-            app.borrow_mut().drafts.paid_route_token = entry.text().to_string();
-        });
-    }
-    let import = icon_text_button("Import", "document-open-symbolic");
-    {
-        let app = app.clone();
-        import.connect_clicked(move |_| {
-            let token = app.borrow().drafts.paid_route_token.trim().to_string();
-            if !token.is_empty() {
+            let value = entry.text().to_string();
+            app.borrow_mut().drafts.paid_route_token = value.clone();
+            if is_likely_cashu_token(&value) {
+                let token = value.trim().to_string();
+                app.borrow_mut().drafts.paid_route_token.clear();
+                entry.set_text("");
                 dispatch(&app, NativeAppAction::ReceivePaidRouteWalletToken { token });
             }
         });
     }
+    let scan = icon_text_button("Scan QR", "camera-photo-symbolic");
+    {
+        let app_for_click = app.clone();
+        scan.connect_clicked(move |button| {
+            let parent = button
+                .root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok());
+            let app_for_result = app_for_click.clone();
+            let app_for_error = app_for_click.clone();
+            qr_scan::open_scanner(
+                parent.as_ref(),
+                move |value| {
+                    if is_likely_cashu_token(&value) {
+                        dispatch(
+                            &app_for_result,
+                            NativeAppAction::ReceivePaidRouteWalletToken {
+                                token: value.trim().to_string(),
+                            },
+                        );
+                    } else {
+                        set_notice(&app_for_result, "Not a Cashu token".to_string());
+                    }
+                },
+                move |error| set_notice(&app_for_error, error),
+            );
+        });
+    }
     row.append(&input);
-    row.append(&import);
+    row.append(&scan);
     parent.append(&row);
+}
+
+fn is_likely_cashu_token(value: &str) -> bool {
+    let token = value.trim();
+    token.len() > 12
+        && token
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("cashu"))
 }
 
 fn wallet_withdraw_row(app: &AppRef, parent: &gtk::Box) {
@@ -242,20 +288,29 @@ fn wallet_withdraw_row(app: &AppRef, parent: &gtk::Box) {
         });
     }
     let withdraw = icon_text_button("Withdraw", "go-down-symbolic");
+    withdraw.set_sensitive(
+        !app.borrow()
+            .state
+            .paid_route_market
+            .wallet
+            .default_mint
+            .trim()
+            .is_empty(),
+    );
     {
         let app = app.clone();
         withdraw.connect_clicked(move |_| {
-            let (mint_url, invoice) = {
+            let invoice = {
                 let model = app.borrow();
-                (
-                    optional_trimmed(&model.drafts.paid_route_mint_url),
-                    model.drafts.paid_route_withdraw_invoice.trim().to_string(),
-                )
+                model.drafts.paid_route_withdraw_invoice.trim().to_string()
             };
             if !invoice.is_empty() {
                 dispatch(
                     &app,
-                    NativeAppAction::WithdrawPaidRouteWalletLightning { mint_url, invoice },
+                    NativeAppAction::WithdrawPaidRouteWalletLightning {
+                        mint_url: None,
+                        invoice,
+                    },
                 );
             }
         });

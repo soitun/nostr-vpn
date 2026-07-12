@@ -36,10 +36,11 @@ struct RootView: View {
     @State var paidExitNetworkClass = "unknown"
     @State var paidExitIpv4 = true
     @State var paidExitIpv6 = false
-    @State var paidRouteMintUrl = "https://mint.minibits.cash/Bitcoin"
+    @State var paidRouteMintUrl = ""
     @State var paidRouteWalletFlow: PaidRouteWalletFlow?
     @State var paidRouteTopupAmount = "1000"
     @State var paidRouteReceiveToken = ""
+    @State var showingWalletTokenScanner = false
     @State var paidRouteSendAmount = "1000"
     @State var paidRouteWithdrawInvoice = ""
     @State var paidExitAdvancedTermsExpanded = RootView.initialPaidExitAdvancedTermsExpanded()

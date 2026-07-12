@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Simplified the native wallet on every platform: zero balances no longer
+  clutter navigation, fiat display controls live in Settings and remain
+  default-on, pasted or scanned tokens import immediately, and Lightning
+  receive/send now requires a configured mint instead of silently choosing one.
 - Exit routes now force public DNS through a local fail-closed stub backed by
   authenticated DNS-over-HTTPS on Linux, macOS, Windows, Android, iOS, and
   WebVM. MagicDNS stays local, and configured exit or underlay resolvers are no

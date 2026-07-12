@@ -88,11 +88,13 @@ public sealed partial class AppViewModel
     public bool CanTopUpPaidRouteWallet =>
         PaidRouteMarketVisible
         && !ActionInFlight
+        && HasPaidRouteWalletMint
         && ParsePositiveUInt64(PaidRouteTopUpAmount) is not null;
 
     public bool CanSendPaidRouteWalletToken =>
         PaidRouteMarketVisible
         && !ActionInFlight
+        && HasPaidRouteWalletMint
         && ParsePositiveUInt64(PaidRouteSendAmount) is not null;
 
     public bool CanReceivePaidRouteWalletToken =>
@@ -103,7 +105,11 @@ public sealed partial class AppViewModel
     public bool CanWithdrawPaidRouteWalletLightning =>
         PaidRouteMarketVisible
         && !ActionInFlight
+        && HasPaidRouteWalletMint
         && !string.IsNullOrWhiteSpace(PaidRouteWithdrawInvoice);
+
+    public bool HasPaidRouteWalletMint =>
+        !string.IsNullOrWhiteSpace(State.PaidRouteMarket.Wallet.DefaultMint);
 
     public bool PaidRouteMarketVisible => State.PaidRouteMarket.Supported;
 

@@ -73,6 +73,56 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     }
     page.append(&general);
 
+    if state.paid_route_market.supported {
+        let wallet = card();
+        section_header(&wallet, "Wallet", "");
+        switch_row(
+            app,
+            &wallet,
+            "Show fiat value",
+            state.wallet_fiat_enabled,
+            |enabled| NativeAppAction::UpdateSettings {
+                patch: SettingsPatch {
+                    wallet_fiat_enabled: Some(enabled),
+                    ..SettingsPatch::default()
+                },
+            },
+        );
+        if state.wallet_fiat_enabled {
+            let source = gtk::Label::new(Some("Rates from Coinbase and Kraken"));
+            source.set_xalign(0.0);
+            source.add_css_class("dim-label");
+            wallet.append(&source);
+            const CURRENCIES: [&str; 7] = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF"];
+            let currency = gtk::DropDown::from_strings(&CURRENCIES);
+            currency.set_selected(
+                CURRENCIES
+                    .iter()
+                    .position(|value| *value == state.wallet_fiat_currency)
+                    .unwrap_or_default() as u32,
+            );
+            {
+                let app = app.clone();
+                currency.connect_selected_notify(move |dropdown| {
+                    let Some(value) = CURRENCIES.get(dropdown.selected() as usize) else {
+                        return;
+                    };
+                    dispatch(
+                        &app,
+                        NativeAppAction::UpdateSettings {
+                            patch: SettingsPatch {
+                                wallet_fiat_currency: Some((*value).to_string()),
+                                ..SettingsPatch::default()
+                            },
+                        },
+                    );
+                });
+            }
+            wallet.append(&currency);
+        }
+        page.append(&wallet);
+    }
+
     let fips = card();
     section_header(&fips, "FIPS", "");
     switch_row(

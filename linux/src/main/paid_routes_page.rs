@@ -26,52 +26,6 @@ fn build_paid_route_wallet_page(app: &AppRef, page: &gtk::Box, state: &NativeApp
     explanation.set_xalign(0.0);
     explanation.add_css_class("dim-label");
     page.append(&explanation);
-    let display = card();
-    switch_row(
-        app,
-        &display,
-        "Show fiat value",
-        state.wallet_fiat_enabled,
-        |enabled| NativeAppAction::UpdateSettings {
-            patch: SettingsPatch {
-                wallet_fiat_enabled: Some(enabled),
-                ..SettingsPatch::default()
-            },
-        },
-    );
-    if state.wallet_fiat_enabled {
-        let source = gtk::Label::new(Some("Rates from Coinbase and Kraken"));
-        source.set_xalign(0.0);
-        source.add_css_class("dim-label");
-        display.append(&source);
-        const CURRENCIES: [&str; 7] = ["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF"];
-        let currency = gtk::DropDown::from_strings(&CURRENCIES);
-        let selected = CURRENCIES
-            .iter()
-            .position(|value| *value == state.wallet_fiat_currency)
-            .unwrap_or_default();
-        currency.set_selected(selected as u32);
-        {
-            let app = app.clone();
-            currency.connect_selected_notify(move |dropdown| {
-                let selected = dropdown.selected() as usize;
-                let Some(value) = CURRENCIES.get(selected) else {
-                    return;
-                };
-                dispatch(
-                    &app,
-                    NativeAppAction::UpdateSettings {
-                        patch: SettingsPatch {
-                            wallet_fiat_currency: Some((*value).to_string()),
-                            ..SettingsPatch::default()
-                        },
-                    },
-                );
-            });
-        }
-        display.append(&currency);
-    }
-    page.append(&display);
     paid_routes_wallet::build_paid_route_wallet_card(app, page, state);
 }
 
@@ -973,13 +927,4 @@ fn format_paid_route_msat(msat: u64) -> String {
 
 fn parse_positive_u64(value: &str) -> Option<u64> {
     value.trim().parse::<u64>().ok().filter(|value| *value > 0)
-}
-
-fn optional_trimmed(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
 }

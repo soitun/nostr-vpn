@@ -7,6 +7,9 @@ extension RootView {
         VStack(alignment: .leading, spacing: 14) {
             deviceSettings
             generalSettings
+            if state.paidRouteMarket.supported {
+                walletDisplaySettings
+            }
             fipsSettings
             publicFipsSettings
             pubsubSettings
@@ -14,6 +17,30 @@ extension RootView {
             networkSettings
             systemSettings
             diagnosticsSection
+        }
+    }
+
+    var walletDisplaySettings: some View {
+        surface {
+            sectionHeader("Wallet", systemImage: "creditcard.fill")
+            settingsToggleRow("Show fiat value", isOn: Binding(
+                get: { state.walletFiatEnabled },
+                set: { manager.setWalletFiatEnabled($0) }
+            ))
+            if state.walletFiatEnabled {
+                Picker("Currency", selection: Binding(
+                    get: { state.walletFiatCurrency },
+                    set: { manager.setWalletFiatCurrency($0) }
+                )) {
+                    ForEach(["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF"], id: \.self) {
+                        Text($0).tag($0)
+                    }
+                }
+                .frame(maxWidth: 220, alignment: .leading)
+                Text("Rates from Coinbase and Kraken")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -560,4 +587,3 @@ extension RootView {
         }
     }
 }
-

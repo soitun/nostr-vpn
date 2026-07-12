@@ -1,21 +1,27 @@
 package org.nostrvpn.app
 
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 import org.nostrvpn.app.core.AppState
+import org.nostrvpn.app.core.NativeActions
 import org.nostrvpn.app.core.NetworkState
 import org.nostrvpn.app.update.AndroidSelfUpdateState
 
@@ -28,12 +34,55 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.settingsPage(
 ) {
     item { DeviceSettingsCard(state, dispatch) }
     item { GeneralSettingsCard(state, dispatch) }
+    if (state.paidRouteMarket.supported) {
+        item { WalletDisplaySettingsCard(state, dispatch) }
+    }
     item { FipsSettingsCard(state, dispatch) }
     item { RelaySettingsCard(state, dispatch) }
     if (selfUpdateState.supported) {
         item { SelfUpdateCard(selfUpdateState, selfUpdateActions) }
     }
     item { DiagnosticsCard(state) }
+}
+
+@Composable
+private fun WalletDisplaySettingsCard(state: AppState, dispatch: (JSONObject) -> Unit) {
+    AppCard {
+        Text("Wallet", style = MaterialTheme.typography.titleMedium)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Switch(
+                checked = state.walletFiatEnabled,
+                onCheckedChange = { enabled ->
+                    dispatch(NativeActions.updateSettings("walletFiatEnabled" to enabled))
+                },
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("Show fiat value")
+        }
+        if (state.walletFiatEnabled) {
+            Text("Rates from Coinbase and Kraken", color = Muted, style = MaterialTheme.typography.bodySmall)
+            var currencyMenuExpanded by remember { mutableStateOf(false) }
+            Box {
+                Button(onClick = { currencyMenuExpanded = true }) {
+                    Text("Currency ${state.walletFiatCurrency}")
+                }
+                DropdownMenu(
+                    expanded = currencyMenuExpanded,
+                    onDismissRequest = { currencyMenuExpanded = false },
+                ) {
+                    listOf("USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF").forEach { currency ->
+                        DropdownMenuItem(
+                            text = { Text(currency) },
+                            onClick = {
+                                currencyMenuExpanded = false
+                                dispatch(NativeActions.updateSettings("walletFiatCurrency" to currency))
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

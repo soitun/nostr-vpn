@@ -97,7 +97,7 @@ private fun QrScannerHost(
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             hasPermission = granted
             if (!granted) {
-                error = "Camera permission is needed to scan invites."
+                error = "Camera permission is needed to scan QR codes."
             }
         }
 

@@ -780,6 +780,18 @@
               </StackPanel>
             </Border>
 
+            <Border Style="{StaticResource Card}" Visibility="{Binding PaidRouteMarketVisible, Converter={StaticResource BoolToVisibility}}">
+              <StackPanel>
+                <TextBlock Text="Wallet" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />
+                <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Show fiat value" IsChecked="{Binding State.WalletFiatEnabled, Mode=OneWay}" Click="WalletFiatEnabled_Click" />
+                <TextBlock Text="Rates from Coinbase and Kraken" Foreground="{StaticResource TextSecondary}" Margin="0,8,0,0" Visibility="{Binding State.WalletFiatEnabled, Converter={StaticResource BoolToVisibility}}" />
+                <ComboBox SelectedValue="{Binding State.WalletFiatCurrency, Mode=OneWay}" SelectedValuePath="Content" SelectionChanged="WalletFiatCurrency_Changed" Margin="0,10,0,0" Visibility="{Binding State.WalletFiatEnabled, Converter={StaticResource BoolToVisibility}}">
+                  <ComboBoxItem Content="USD" /><ComboBoxItem Content="EUR" /><ComboBoxItem Content="GBP" />
+                  <ComboBoxItem Content="CAD" /><ComboBoxItem Content="AUD" /><ComboBoxItem Content="JPY" /><ComboBoxItem Content="CHF" />
+                </ComboBox>
+              </StackPanel>
+            </Border>
+
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <TextBlock Text="Relays" FontSize="18" FontWeight="SemiBold" Margin="0,0,0,10" />

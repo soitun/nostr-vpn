@@ -14,24 +14,6 @@ public partial class WalletView : UserControl
 
     private AppViewModel ViewModel => (AppViewModel)DataContext;
 
-    private async void WalletFiatEnabled_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is CheckBox checkBox)
-        {
-            await ViewModel.SetWalletFiatEnabledAsync(checkBox.IsChecked == true);
-        }
-    }
-
-    private async void WalletFiatCurrency_Changed(object sender, SelectionChangedEventArgs e)
-    {
-        if (sender is ComboBox { SelectedItem: ComboBoxItem item }
-            && item.Content is string currency
-            && !string.Equals(currency, ViewModel.State.WalletFiatCurrency, StringComparison.Ordinal))
-        {
-            await ViewModel.SetWalletFiatCurrencyAsync(currency);
-        }
-    }
-
     private async void RefreshPaidRouteWallet_Click(object sender, RoutedEventArgs e) =>
         await ViewModel.RefreshPaidRouteWalletAsync();
 
@@ -41,8 +23,16 @@ public partial class WalletView : UserControl
     private async void TopUpPaidRouteWallet_Click(object sender, RoutedEventArgs e) =>
         await ViewModel.TopUpPaidRouteWalletAsync();
 
-    private async void ReceivePaidRouteWalletToken_Click(object sender, RoutedEventArgs e) =>
-        await ViewModel.ReceivePaidRouteWalletTokenAsync();
+    private async void PaidRouteReceiveToken_Changed(object sender, TextChangedEventArgs e)
+    {
+        if (DataContext is AppViewModel viewModel)
+        {
+            await viewModel.AutoReceivePaidRouteWalletTokenAsync();
+        }
+    }
+
+    private async void ScanPaidRouteWalletToken_Click(object sender, RoutedEventArgs e) =>
+        await ViewModel.ScanPaidRouteWalletTokenAsync();
 
     private async void SendPaidRouteWalletToken_Click(object sender, RoutedEventArgs e) =>
         await ViewModel.SendPaidRouteWalletTokenAsync();
