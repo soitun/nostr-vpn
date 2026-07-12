@@ -300,8 +300,24 @@
             .expect("shutdown bob");
     }
 
-    #[tokio::test]
-    async fn relayed_control_ping_marks_peer_present_without_direct_link() {
+    #[test]
+    fn relayed_control_ping_marks_peer_present_without_direct_link() {
+        std::thread::Builder::new()
+            .name("relayed-control-presence".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("relayed control test runtime")
+                    .block_on(relayed_control_ping_marks_peer_present_without_direct_link_run());
+            })
+            .expect("spawn relayed control test")
+            .join()
+            .expect("relayed control test thread");
+    }
+
+    async fn relayed_control_ping_marks_peer_present_without_direct_link_run() {
         let _local_udp_guard = LOCAL_UDP_ENDPOINT_TEST_LOCK.lock().await;
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();

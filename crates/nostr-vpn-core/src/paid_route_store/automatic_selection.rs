@@ -95,10 +95,7 @@ impl PaidRouteStore {
         })
     }
 
-    fn trusted_mint_and_capacity(
-        &self,
-        offer: &PaidRouteOffer,
-    ) -> Option<(String, u64)> {
+    fn trusted_mint_and_capacity(&self, offer: &PaidRouteOffer) -> Option<(String, u64)> {
         let accepted = normalize_mint_list(&offer.channel.accepted_mints);
         let default = self.wallet.default_mint.trim();
         let mut wallet_mints = self

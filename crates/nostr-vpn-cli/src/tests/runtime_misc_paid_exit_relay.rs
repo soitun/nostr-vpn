@@ -585,6 +585,7 @@ async fn paid_exit_create_payment_command_updates_buyer_session() {
         .expect("buyer npub");
     let store_path = paid_route_store_file_path(&config_path);
     let mut store = PaidRouteStore::default();
+    store.upsert_wallet_mint("https://mint.example", "Example", None, 122);
     store
         .upsert_signed_offer(signed_offer, vec!["wss://relay.example".to_string()], 124)
         .expect("store offer");
@@ -692,6 +693,7 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
             .expect("sign offer");
 
     let mut store = PaidRouteStore::default();
+    store.upsert_wallet_mint("https://mint.example", "Example", None, 122);
     store
         .upsert_signed_offer(signed_offer, vec!["wss://relay.example".to_string()], 124)
         .expect("store offer");
@@ -840,6 +842,7 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
             .expect("sign offer");
 
     let mut store = PaidRouteStore::default();
+    store.upsert_wallet_mint("https://mint.example", "Example", None, 122);
     store
         .upsert_signed_offer(signed_offer, vec!["wss://relay.example".to_string()], 124)
         .expect("store offer");

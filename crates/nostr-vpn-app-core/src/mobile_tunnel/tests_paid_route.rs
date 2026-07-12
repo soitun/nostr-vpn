@@ -66,6 +66,9 @@ async fn send_control_messages_until_received(
             Ok(Some(count)) if count > 0 => {
                 for message in batch.drain(..) {
                     if message.source_peer.npub() == sender.npub()
+                        && encoded.iter().any(|expected| {
+                            expected.as_slice() == message.data.as_slice()
+                        })
                         && !received.iter().any(|existing: &FipsEndpointMessage| {
                             existing.data.as_slice() == message.data.as_slice()
                         })
