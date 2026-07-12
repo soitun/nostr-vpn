@@ -608,16 +608,20 @@
     }
 
     #[test]
-    fn mobile_config_seeds_bootstrap_transit_peers() {
+    fn mobile_config_uses_only_operator_supplied_bootstrap_transit_peers() {
         let mut app = AppConfig::generated();
         app.connect_to_non_roster_fips_peers = true;
         app.fips_bootstrap_enabled = true;
+        app.set_fips_bootstrap_peers(std::collections::HashMap::from([(
+            "npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8"
+                .to_string(),
+            vec!["tcp:45.79.10.10:443".to_string()],
+        )]));
         app.ensure_defaults();
         let mobile = MobileTunnelConfig::from_app(&app).expect("mobile config");
         let config = fips_endpoint_config("nostr-vpn:test", &mobile);
 
-        let bootstrap_count = nostr_vpn_core::config::DEFAULT_FIPS_BOOTSTRAP_PEERS.len();
-        assert_eq!(config.peers.len(), bootstrap_count);
+        assert_eq!(config.peers.len(), 1);
         assert!(
             config
                 .peers

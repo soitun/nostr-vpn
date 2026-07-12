@@ -1,28 +1,8 @@
 pub const DEFAULT_RELAYS: &[&str] = &[];
 
-/// Built-in public FIPS bootstrap nodes, used to seed the editable peer list
-/// (`fips_bootstrap_peers`). Dialed as fallback transit so peers can reach each
-/// other when direct NAT traversal and relays fail. Addresses are transport
-/// tagged (`udp:` / `tcp:`); the TCP entries let clients on networks that
-/// block UDP outright still reach the overlay. (`tor:` endpoints are omitted —
-/// no Tor transport.) Keyed by npub.
-pub const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
-    // fips1 / lnvps
-    (
-        "npub1uf4ua9n0hm2x4ct8sqcyqfh7w0s9n5qej9gpjjqjf9z0lsmh3jtsqyduhs",
-        &[
-            "udp:185.18.221.232:2121",
-            "udp:[2a13:2c0::f6a2:e727:9b98:d22c]:2121",
-            "tcp:185.18.221.232:8443",
-            "tcp:[2a13:2c0::f6a2:e727:9b98:d22c]:8443",
-        ],
-    ),
-    // fips2 / osiris
-    (
-        "npub1pdwpuzkxkyurukrezseu3ny5w6x2d3xevsq3s6sly2vfz2925xasewk5g4",
-        &["udp:65.109.48.91:2121", "tcp:65.109.48.91:8443"],
-    ),
-];
+/// No identity is privileged as a built-in FIPS gateway. New configs discover
+/// peers over Nostr; operators can still add explicit bootstrap/transit peers.
+pub const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[];
 
 /// The default bootstrap peer list as an owned map, used to seed configs and to
 /// power "reset to defaults".
@@ -271,14 +251,12 @@ pub struct AppConfig {
     /// the list is kept but not dialed.
     #[serde(
         default = "default_fips_bootstrap_enabled",
-        skip_serializing_if = "is_true"
+        skip_serializing_if = "is_false"
     )]
     pub fips_bootstrap_enabled: bool,
-    /// Editable transit/bootstrap peers (npub -> transport-tagged addresses),
-    /// seeded from `DEFAULT_FIPS_BOOTSTRAP_PEERS`. This is the single list that
-    /// holds both the built-in nodes and any custom peers the user adds. Always
-    /// serialized so edits (including clearing it) persist across loads; "reset
-    /// to defaults" restores the built-in set.
+    /// Editable operator-supplied transit/bootstrap peers (npub ->
+    /// transport-tagged addresses). New configs leave this empty so Nostr
+    /// discovery, rather than a privileged identity, chooses peers.
     #[serde(default = "default_fips_bootstrap_peers")]
     pub fips_bootstrap_peers: HashMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -25,9 +25,9 @@ impl AppConfig {
             .any(|endpoints| endpoints.iter().any(|endpoint| !endpoint.trim().is_empty()))
     }
 
-    /// The configured transit/bootstrap peers as `(npub, [addr])`, sorted. Empty
-    /// when the bootstrap master switch is off. Our own identity is filtered out
-    /// so a node that happens to be a bootstrap server does not dial itself.
+    /// The operator-configured transit/bootstrap peers as `(npub, [addr])`,
+    /// sorted. Empty when the bootstrap master switch is off. Our own identity
+    /// is filtered out so a node does not dial itself.
     pub fn fips_bootstrap_peer_endpoints(&self) -> Vec<(String, Vec<String>)> {
         if !self.fips_bootstrap_enabled {
             return Vec::new();
@@ -51,7 +51,7 @@ impl AppConfig {
         peers
     }
 
-    /// Restore the bootstrap/transit peer list to the built-in defaults.
+    /// Clear the bootstrap/transit peer list back to its identity-neutral default.
     pub fn reset_fips_bootstrap_peers(&mut self) {
         self.fips_bootstrap_peers = default_fips_bootstrap_peers();
     }

@@ -119,56 +119,22 @@ mesh_tunnel_mtu = 1290
     assert!(!encoded.contains("mesh_tunnel_mtu"));
 }
 
-const LNVPS_BOOTSTRAP_NPUB: &str =
-    "npub1uf4ua9n0hm2x4ct8sqcyqfh7w0s9n5qej9gpjjqjf9z0lsmh3jtsqyduhs";
-const LNVPS_BOOTSTRAP_ADDRS: &[&str] = &[
-    "udp:185.18.221.232:2121",
-    "udp:[2a13:2c0::f6a2:e727:9b98:d22c]:2121",
-    "tcp:185.18.221.232:8443",
-    "tcp:[2a13:2c0::f6a2:e727:9b98:d22c]:8443",
-];
-const OSIRIS_BOOTSTRAP_NPUB: &str =
-    "npub1pdwpuzkxkyurukrezseu3ny5w6x2d3xevsq3s6sly2vfz2925xasewk5g4";
-const OSIRIS_BOOTSTRAP_ADDRS: &[&str] = &["udp:65.109.48.91:2121", "tcp:65.109.48.91:8443"];
-
 #[test]
-fn fips_discovery_and_bootstrap_default_on() {
+fn fips_discovery_defaults_on_without_privileged_bootstrap_peers() {
     let config = AppConfig::generated();
 
     assert!(config.fips_nostr_discovery_enabled);
-    assert!(config.fips_bootstrap_enabled);
-
-    let bootstrap = config
-        .fips_bootstrap_peer_endpoints()
-        .into_iter()
-        .collect::<std::collections::HashMap<_, _>>();
-    assert_eq!(bootstrap.len(), 2);
-    let lnvps_addrs = LNVPS_BOOTSTRAP_ADDRS
-        .iter()
-        .map(|addr| (*addr).to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        bootstrap.get(LNVPS_BOOTSTRAP_NPUB),
-        Some(&lnvps_addrs)
-    );
-    let osiris_addrs = OSIRIS_BOOTSTRAP_ADDRS
-        .iter()
-        .map(|addr| (*addr).to_string())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        bootstrap.get(OSIRIS_BOOTSTRAP_NPUB),
-        Some(&osiris_addrs)
-    );
+    assert!(!config.fips_bootstrap_enabled);
+    assert!(config.fips_bootstrap_peers.is_empty());
+    assert!(config.fips_bootstrap_peer_endpoints().is_empty());
 }
 
 #[test]
-fn fips_bootstrap_peers_are_seeded_editable_and_resettable() {
+fn fips_bootstrap_peers_are_empty_editable_and_resettable() {
     let mut config = AppConfig::generated();
-    // Seeded from the built-in defaults.
-    assert_eq!(
-        config.fips_bootstrap_peers.len(),
-        DEFAULT_FIPS_BOOTSTRAP_PEERS.len()
-    );
+    assert!(DEFAULT_FIPS_BOOTSTRAP_PEERS.is_empty());
+    assert!(config.fips_bootstrap_peers.is_empty());
+    config.fips_bootstrap_enabled = true;
 
     // Editable: replacing the list normalizes keys to npub, keeps non-empty
     // addresses, and drops entries with an invalid pubkey key.
@@ -192,12 +158,9 @@ fn fips_bootstrap_peers_are_seeded_editable_and_resettable() {
     let decoded: AppConfig = toml::from_str(&encoded).expect("parse");
     assert_eq!(decoded.fips_bootstrap_peers.len(), 1);
 
-    // Resettable to the built-in defaults.
+    // Resettable to the identity-neutral empty default.
     config.reset_fips_bootstrap_peers();
-    assert_eq!(
-        config.fips_bootstrap_peers.len(),
-        DEFAULT_FIPS_BOOTSTRAP_PEERS.len()
-    );
+    assert!(config.fips_bootstrap_peers.is_empty());
 }
 
 #[test]
@@ -220,7 +183,7 @@ fn fips_discovery_off_and_bootstrap_opt_in_round_trip() {
 
     let encoded = toml::to_string(&config).expect("serialize config");
     assert!(encoded.contains("fips_nostr_discovery_enabled = false"));
-    assert!(!encoded.contains("fips_bootstrap_enabled"));
+    assert!(encoded.contains("fips_bootstrap_enabled = true"));
 
     let decoded: AppConfig = toml::from_str(&encoded).expect("parse config");
     assert!(!decoded.fips_nostr_discovery_enabled);
@@ -235,7 +198,7 @@ fn fips_bootstrap_opt_out_round_trip() {
     };
 
     let encoded = toml::to_string(&config).expect("serialize config");
-    assert!(encoded.contains("fips_bootstrap_enabled = false"));
+    assert!(!encoded.contains("fips_bootstrap_enabled"));
 
     let decoded: AppConfig = toml::from_str(&encoded).expect("parse config");
     assert!(!decoded.fips_bootstrap_enabled);
@@ -243,11 +206,11 @@ fn fips_bootstrap_opt_out_round_trip() {
 }
 
 #[test]
-fn fips_discovery_and_bootstrap_default_on_when_missing() {
+fn fips_discovery_defaults_on_and_bootstrap_off_when_missing() {
     let config: AppConfig = toml::from_str("").expect("parse empty config");
 
     assert!(config.fips_nostr_discovery_enabled);
-    assert!(config.fips_bootstrap_enabled);
+    assert!(!config.fips_bootstrap_enabled);
     assert!(!config.connect_to_non_roster_fips_peers);
 }
 

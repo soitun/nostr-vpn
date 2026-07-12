@@ -476,7 +476,7 @@ pub struct NativeAppState {
     pub fips_bootstrap_enabled: bool,
     /// Editable bootstrap/transit peers (npub -> transport-tagged addresses).
     pub fips_bootstrap_peers: HashMap<String, Vec<String>>,
-    /// Built-in bootstrap defaults, so the UI can offer "reset to defaults".
+    /// Identity-neutral bootstrap defaults, so the UI can clear operator overrides.
     pub fips_bootstrap_peer_defaults: HashMap<String, Vec<String>>,
     pub fips_host_inbound_tcp_ports: String,
     pub magic_dns_suffix: String,
