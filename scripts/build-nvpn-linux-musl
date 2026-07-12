@@ -11,6 +11,10 @@ CASHU_SERVICE_REPO_PATH=${NVPN_CASHU_SERVICE_REPO_PATH:-}
 CDK_SPILMAN_REPO_PATH=${NVPN_CDK_SPILMAN_REPO_PATH:-${NVPN_CASHU_SPILMAN_REPO_PATH:-}}
 DOCKER_ENV=()
 
+if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
+  DOCKER_ENV+=(-e NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES=1)
+fi
+
 source "$WORKSPACE/scripts/release_common.sh"
 enable_deterministic_build_env "$WORKSPACE"
 
@@ -230,7 +234,13 @@ path.write_text(text.replace(old, new))
 PATCH
 fi
 
-cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}" -p nvpn --bin nvpn --release --target "$TARGET"
+cargo_feature_args=()
+if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
+  cargo_feature_args+=(--no-default-features)
+fi
+
+cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}" "${cargo_feature_args[@]}" \
+  -p nvpn --bin nvpn --release --target "$TARGET"
 CONTAINER
 
 BIN="$TARGET_DIR/$TARGET/release/nvpn"
