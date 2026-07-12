@@ -76,13 +76,8 @@ final class AppModel: ObservableObject {
             }
         }
         let launchAutomationHandled = runLaunchAutomationIfRequested()
-        if !launchAutomationHandled, state.autoconnect, !state.vpnEnabled, activeNetwork != nil {
-            debugLog("autoconnect starting PacketTunnel")
-            if UserDefaults.standard.bool(forKey: Self.vpnDisclosureAcceptedKey) {
-                setVpnEnabled(true)
-            } else {
-                requireVpnDisclosureReview()
-            }
+        if !launchAutomationHandled {
+            ensureAutoconnectPacketTunnel(reason: "startup")
         }
     }
 
@@ -91,8 +86,12 @@ final class AppModel: ObservableObject {
             state.rev += 1
             return
         }
+        let hadActiveNetwork = activeNetwork != nil
         state = core.refresh()
         refreshTunnelSidecarState()
+        if !hadActiveNetwork, activeNetwork != nil {
+            ensureAutoconnectPacketTunnel(reason: "network joined")
+        }
     }
 
     func dispatch(_ action: [String: Any], status: String = "") {
@@ -132,6 +131,35 @@ final class AppModel: ObservableObject {
         if statusMessage == Self.vpnDisclosurePromptMessage {
             statusMessage = ""
         }
+    }
+
+    private func ensureAutoconnectPacketTunnel(reason: String) {
+        guard state.autoconnect, activeNetwork != nil else {
+            return
+        }
+        guard UserDefaults.standard.bool(forKey: Self.vpnDisclosureAcceptedKey) else {
+            requireVpnDisclosureReview()
+            return
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            let status = await vpnController.statusRawValue()
+            guard Self.packetTunnelNeedsStart(statusRawValue: status) else {
+                debugLog("autoconnect skipped reason=\(reason) tunnelStatus=\(status ?? -1)")
+                return
+            }
+            debugLog("autoconnect starting PacketTunnel reason=\(reason) tunnelStatus=\(status ?? -1)")
+            setVpnEnabled(true, force: true)
+        }
+    }
+
+    static func packetTunnelNeedsStart(statusRawValue: Int?) -> Bool {
+        guard let statusRawValue else {
+            return true
+        }
+        // NEVPNStatus: invalid=0, disconnected=1, connecting=2,
+        // connected=3, reasserting=4, disconnecting=5.
+        return statusRawValue <= 1 || statusRawValue == 5
     }
 
     private func setVpnEnabled(_ enabled: Bool, force: Bool = false) {

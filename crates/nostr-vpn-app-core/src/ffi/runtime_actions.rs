@@ -683,6 +683,17 @@ impl NativeAppRuntime {
 
     fn refresh_lan_pairing(&mut self) {
         let now = SystemTime::now();
+        let existing_peer_keys = self
+            .lan_peers
+            .iter()
+            .filter_map(|(key, record)| {
+                self.lan_signal_is_existing_peer(&record.signal)
+                    .then(|| key.clone())
+            })
+            .collect::<Vec<_>>();
+        for key in existing_peer_keys {
+            self.lan_peers.remove(&key);
+        }
         if self
             .invite_broadcast_expires_at
             .is_some_and(|expires_at| expires_at <= now)

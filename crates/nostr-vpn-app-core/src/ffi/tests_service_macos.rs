@@ -141,3 +141,62 @@ exit 0
         assert!(command.starts_with("'/Applications/Nostr VPN.app/Contents/Resources/nvpn' "));
         assert!(command.contains(" 'service' 'install' '--force'"));
     }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_config_apply_failure_does_not_request_administrator_privileges() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        #[derive(Debug)]
+        struct CountingPrivilegedRunner {
+            calls: Arc<AtomicUsize>,
+        }
+
+        impl PrivilegedCommandRunner for CountingPrivilegedRunner {
+            fn run(&self, _executable: String, _args: Vec<String>) -> PrivilegedCommandOutput {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                PrivilegedCommandOutput {
+                    success: true,
+                    cancelled: false,
+                    stdout: Vec::new(),
+                    stderr: Vec::new(),
+                }
+            }
+        }
+
+        let dir = unique_service_test_dir("nvpn-app-core-config-no-admin");
+        let script_path = dir.join("nvpn");
+        fs::write(&script_path, "#!/bin/sh\necho daemon unavailable >&2\nexit 1\n")
+            .expect("write fake nvpn");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("fake nvpn metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make fake nvpn executable");
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.config_path = dir.join("config.toml");
+        runtime.nvpn_bin = Some(script_path);
+        runtime.service_installed = true;
+        runtime.privileged_command_runner = Some(PrivilegedCommandRunnerHandle(Arc::new(
+            CountingPrivilegedRunner {
+                calls: Arc::clone(&calls),
+            },
+        )));
+
+        let error = runtime
+            .apply_macos_config_source(&dir.join("staged.toml"))
+            .expect_err("daemon failure should be surfaced");
+
+        assert!(
+            error.to_string().contains("background service"),
+            "{error:#}"
+        );
+        assert_eq!(calls.load(Ordering::Relaxed), 0);
+
+        let _ = fs::remove_dir_all(&dir);
+    }

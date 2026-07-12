@@ -577,25 +577,14 @@ impl NativeAppRuntime {
             ])
             .and_then(|output| ensure_success("nvpn apply-config-daemon", &output));
 
-        if daemon_result.is_ok() {
-            return Ok(());
-        }
-
-        if self.service_installed || self.service_running {
-            let daemon_error = daemon_result.err().map_or_else(
-                || "daemon apply failed".to_string(),
-                |error| format!("{error:#}"),
-            );
-            let output = self.run_nvpn_service_action_with_macos_admin([
-                "apply-config",
-                "--source",
-                source_arg,
-                "--config",
-                config_arg,
-            ])?;
-            ensure_success("nvpn apply-config", &output)
-                .with_context(|| format!("daemon config apply failed first: {daemon_error}"))?;
-            return Ok(());
+        match daemon_result {
+            Ok(()) => return Ok(()),
+            Err(error) if self.service_installed || self.service_running => {
+                return Err(error).context(
+                    "background service could not apply the configuration; restart or update the service and retry",
+                );
+            }
+            Err(_) => {}
         }
 
         self.config.save(&self.config_path)

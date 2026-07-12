@@ -762,6 +762,44 @@
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn nearby_join_request_disappears_after_device_is_added() {
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        let network_id = create_test_network(&mut runtime, "Home");
+        let peer_keys = Keys::generate();
+        let peer_hex = peer_keys.public_key().to_hex();
+        let peer_npub = peer_keys
+            .public_key()
+            .to_bech32()
+            .expect("peer npub");
+        let key = format!("{peer_npub}:{peer_npub}");
+        runtime.lan_peers.insert(
+            key,
+            LanPeerRecord {
+                signal: LanPairingSignal {
+                    npub: peer_npub,
+                    node_name: "Nearby phone".to_string(),
+                    endpoint: String::new(),
+                    network_name: "Join request".to_string(),
+                    network_id: peer_hex.clone(),
+                    invite: "nvpn://join-request/test".to_string(),
+                },
+                last_seen: SystemTime::now(),
+            },
+        );
+        assert_eq!(runtime.lan_peer_states().len(), 1);
+
+        runtime
+            .config
+            .add_participant_to_network(&network_id, &peer_hex)
+            .expect("add nearby peer");
+        runtime.refresh_lan_pairing();
+
+        assert!(runtime.lan_peer_states().is_empty());
+    }
+
     #[cfg(unix)]
     #[test]
     fn enabling_join_requests_starts_background_fips_listener() {

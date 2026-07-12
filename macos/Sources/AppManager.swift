@@ -348,7 +348,11 @@ final class AppManager: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
-        dispatch(.importJoinRequest(request: trimmed), status: "Adding device")
+        dispatch(
+            .importJoinRequest(request: trimmed),
+            status: "Adding device",
+            successStatus: "Device added"
+        )
     }
 
     func chooseWireGuardConfigFile() {
