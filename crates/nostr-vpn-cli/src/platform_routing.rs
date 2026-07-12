@@ -22,7 +22,7 @@ use netdev::interface::interface::Interface as NetworkInterface;
 #[cfg(target_os = "linux")]
 use nostr_vpn_core::config::AppConfig;
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 use crate::MacosRouteSpec;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::run_checked;
