@@ -266,6 +266,21 @@ impl MobileTunnelConfig {
         {
             route_targets.push(MESH_TUNNEL_IPV4_CIDR.to_string());
         }
+        if app.exit_node.trim().is_empty()
+            && app.exit_node_leak_protection
+            && matches!(
+                app.internet_source,
+                InternetSource::PrivateVpn
+                    | InternetSource::PaidAutomatic
+                    | InternetSource::PaidManual
+            )
+        {
+            route_targets.extend(
+                MOBILE_EXIT_NODE_DEFAULT_ROUTES
+                    .iter()
+                    .map(|route| (*route).to_string()),
+            );
+        }
         peers.sort_by(|left, right| left.participant_pubkey.cmp(&right.participant_pubkey));
         peers.dedup_by(|left, right| left.participant_pubkey == right.participant_pubkey);
         route_targets.sort();

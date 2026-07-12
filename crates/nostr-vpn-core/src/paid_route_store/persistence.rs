@@ -7,6 +7,21 @@ pub fn paid_route_store_file_path(config_path: &Path) -> PathBuf {
     parent.join("paid-routes.json")
 }
 
+pub fn paid_route_payment_outbox_directory(config_path: &Path) -> PathBuf {
+    paid_route_store_file_path(config_path)
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("paid-exit-payment-outbox")
+}
+
+pub fn paid_route_payment_id(envelope: &StreamingRoutePaymentEnvelope) -> Result<String> {
+    use sha2::{Digest, Sha256};
+
+    let encoded =
+        serde_json::to_vec(envelope).context("failed to encode paid route payment envelope")?;
+    Ok(hex::encode(Sha256::digest(encoded)))
+}
+
 pub fn load_paid_route_store(path: &Path) -> Result<PaidRouteStore> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
@@ -61,6 +76,61 @@ pub fn write_paid_route_store(path: &Path, store: &PaidRouteStore) -> Result<()>
         .into());
     }
     Ok(())
+}
+
+pub fn apply_paid_route_seller_payment_file(
+    path: &Path,
+    request: ApplyPaidRouteSellerPaymentRequest,
+) -> Result<ApplyPaidRouteSellerPaymentResult> {
+    let mut store = load_paid_route_store(path)?;
+    let result = store.apply_seller_payment(request)?;
+    if result.changed {
+        write_paid_route_store(path, &store)?;
+    }
+    Ok(result)
+}
+
+pub fn acknowledge_paid_route_payment_outbox(
+    config_path: &Path,
+    seller_pubkey: &str,
+    id: &str,
+) -> Result<bool> {
+    if !valid_paid_route_payment_id(id) {
+        return Err(anyhow!("invalid paid route payment acknowledgment id"));
+    }
+    let path = paid_route_payment_outbox_directory(config_path).join(format!("{id}.json"));
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", path.display()));
+        }
+    };
+    let envelope: StreamingRoutePaymentEnvelope = serde_json::from_slice(&bytes)
+        .with_context(|| format!("failed to decode {}", path.display()))?;
+    let expected_seller = normalize_nostr_pubkey(&envelope.seller)
+        .context("invalid paid route payment outbox seller")?;
+    let authenticated_seller = normalize_nostr_pubkey(seller_pubkey)
+        .context("invalid paid route payment acknowledgment source")?;
+    if authenticated_seller != expected_seller {
+        return Err(anyhow!(
+            "paid route payment acknowledgment source does not match seller"
+        ));
+    }
+    if paid_route_payment_id(&envelope)? != id {
+        return Err(anyhow!(
+            "paid route payment acknowledgment id does not match outbox envelope"
+        ));
+    }
+    fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
+    Ok(true)
+}
+
+fn valid_paid_route_payment_id(id: &str) -> bool {
+    id.len() == 64
+        && id
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 pub fn upsert_paid_route_offer(

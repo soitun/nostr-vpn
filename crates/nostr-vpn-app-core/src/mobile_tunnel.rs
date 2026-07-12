@@ -24,7 +24,7 @@ use fips_endpoint::{
 };
 use nostr_sdk::prelude::PublicKey;
 use nostr_vpn_core::config::{
-    AppConfig, MESH_TUNNEL_IPV4_CIDR, WireGuardExitConfig, derive_mesh_tunnel_ip,
+    AppConfig, InternetSource, MESH_TUNNEL_IPV4_CIDR, WireGuardExitConfig, derive_mesh_tunnel_ip,
     maybe_autoconfigure_node, normalize_nostr_pubkey, normalize_runtime_network_id,
     split_peer_transport_addr,
 };
@@ -64,5 +64,6 @@ include!("mobile_tunnel/magic_dns.rs");
 mod tests {
     include!("mobile_tunnel/tests_core.rs");
     include!("mobile_tunnel/tests_runtime.rs");
+    include!("mobile_tunnel/tests_paid_route.rs");
     include!("mobile_tunnel/tests_config.rs");
 }

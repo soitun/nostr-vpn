@@ -108,8 +108,12 @@ async fn handle_mobile_control_frame(
     control_fragments: &mut FipsControlFragmentBuffer,
     message: &FipsEndpointMessage,
 ) -> Result<bool> {
-    let Some(frame) = decode_mobile_control_frame(control_fragments, message)? else {
+    let (is_control, frame) = decode_mobile_control_frame(control_fragments, message)?;
+    if !is_control {
         return Ok(false);
+    }
+    let Some(frame) = frame else {
+        return Ok(true);
     };
     if !control_frame_network_matches(control.network_id, &frame) {
         return Ok(true);
@@ -171,9 +175,86 @@ async fn handle_mobile_control_frame(
         FipsControlFrame::Pong { sent_at, .. } => {
             note_mobile_peer_pong(control.presence, &source_pubkey, sent_at);
         }
+        #[cfg(feature = "paid-exit")]
+        payment @ FipsControlFrame::PaidRoutePayment { .. } => {
+            handle_mobile_paid_route_payment(control, message.source_peer, &source_pubkey, payment)
+                .await?;
+        }
+        #[cfg(feature = "paid-exit")]
+        FipsControlFrame::PaidRoutePaymentAck { id } => {
+            handle_mobile_paid_route_payment_ack(control, &source_pubkey, &id)?;
+        }
         FipsControlFrame::Fragment { .. } => {}
     }
     Ok(true)
+}
+
+#[cfg(feature = "paid-exit")]
+async fn handle_mobile_paid_route_payment(
+    control: &MobileEndpointReceiveContext<'_>,
+    source_peer: PeerIdentity,
+    source_pubkey: &str,
+    frame: FipsControlFrame,
+) -> Result<()> {
+    let FipsControlFrame::PaidRoutePayment { id, envelope } = frame else {
+        return Err(anyhow!("mobile paid route payment frame unavailable"));
+    };
+    if nostr_vpn_core::paid_route_store::paid_route_payment_id(&envelope)? != id {
+        return Err(anyhow!("paid route payment id does not match envelope"));
+    }
+    let buyer_pubkey =
+        normalize_nostr_pubkey(&envelope.buyer).context("invalid paid route payment buyer")?;
+    if buyer_pubkey != source_pubkey {
+        return Err(anyhow!(
+            "paid route payment buyer does not match authenticated FIPS source"
+        ));
+    }
+    let config_path = control
+        .config_path
+        .ok_or_else(|| anyhow!("mobile paid route config path unavailable"))?;
+    let paid_exit = {
+        let app = control
+            .app_config
+            .read()
+            .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+        if !app.paid_exit.enabled {
+            return Err(anyhow!("paid exit selling is disabled"));
+        }
+        app.paid_exit.clone()
+    };
+    let store_path = nostr_vpn_core::paid_route_store::paid_route_store_file_path(config_path);
+    nostr_vpn_core::paid_route_store::apply_paid_route_seller_payment_file(
+        &store_path,
+        nostr_vpn_core::paid_route_store::ApplyPaidRouteSellerPaymentRequest {
+            envelope,
+            seller_npub: control.endpoint.npub().to_string(),
+            config: paid_exit,
+            now_unix: unix_timestamp(),
+        },
+    )?;
+    let ack = FipsControlFrame::PaidRoutePaymentAck { id };
+    control
+        .endpoint
+        .send_batch_to_peer(source_peer, encode_fips_control_messages(&ack)?)
+        .await
+        .context("failed to acknowledge mobile paid route payment")
+}
+
+#[cfg(feature = "paid-exit")]
+fn handle_mobile_paid_route_payment_ack(
+    control: &MobileEndpointReceiveContext<'_>,
+    source_pubkey: &str,
+    id: &str,
+) -> Result<()> {
+    let config_path = control
+        .config_path
+        .ok_or_else(|| anyhow!("mobile paid route config path unavailable"))?;
+    nostr_vpn_core::paid_route_store::acknowledge_paid_route_payment_outbox(
+        config_path,
+        source_pubkey,
+        id,
+    )?;
+    Ok(())
 }
 
 async fn apply_mobile_roster_frame(
@@ -267,15 +348,17 @@ fn mobile_control_source_pubkey(
 fn decode_mobile_control_frame(
     control_fragments: &mut FipsControlFragmentBuffer,
     message: &FipsEndpointMessage,
-) -> Result<Option<FipsControlFrame>> {
+) -> Result<(bool, Option<FipsControlFrame>)> {
     let Some(frame) = decode_fips_control_frame(message.data.as_slice())? else {
-        return Ok(None);
+        return Ok((false, None));
     };
     let FipsControlFrame::Fragment { .. } = frame else {
-        return Ok(Some(frame));
+        return Ok((true, Some(frame)));
     };
     let source_key = endpoint_source_key(message.source_peer);
-    control_fragments.decode(&source_key, message.data.as_slice(), unix_timestamp())
+    control_fragments
+        .decode(&source_key, message.data.as_slice(), unix_timestamp())
+        .map(|frame| (true, frame))
 }
 
 fn control_frame_network_matches(expected_network_id: &str, frame: &FipsControlFrame) -> bool {
@@ -285,6 +368,9 @@ fn control_frame_network_matches(expected_network_id: &str, frame: &FipsControlF
         | FipsControlFrame::Roster { network_id, .. }
         | FipsControlFrame::Capabilities { network_id, .. } => network_id,
         FipsControlFrame::JoinRequest { request, .. } => &request.network_id,
+        #[cfg(feature = "paid-exit")]
+        FipsControlFrame::PaidRoutePayment { .. }
+        | FipsControlFrame::PaidRoutePaymentAck { .. } => return true,
         FipsControlFrame::Fragment { .. } => return false,
     };
     normalize_runtime_network_id(expected_network_id)
@@ -298,8 +384,11 @@ fn control_frame_source_pubkey(
 ) -> Option<String> {
     mesh.participant_for_endpoint_node_addr(source_peer.node_addr().as_bytes())
         .or_else(|| {
-            matches!(frame, FipsControlFrame::JoinRequest { .. })
-                .then(|| source_peer.pubkey().to_string())
+            let allow_unknown = matches!(frame, FipsControlFrame::JoinRequest { .. });
+            #[cfg(feature = "paid-exit")]
+            let allow_unknown =
+                allow_unknown || matches!(frame, FipsControlFrame::PaidRoutePayment { .. });
+            allow_unknown.then(|| source_peer.pubkey().to_string())
         })
 }
 

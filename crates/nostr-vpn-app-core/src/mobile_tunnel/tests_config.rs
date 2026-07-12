@@ -73,6 +73,48 @@
     }
 
     #[test]
+    fn mobile_config_keeps_default_route_during_protected_exit_selection() {
+        for internet_source in [
+            InternetSource::PrivateVpn,
+            InternetSource::PaidAutomatic,
+            InternetSource::PaidManual,
+        ] {
+            let mut app = AppConfig::generated();
+            app.ensure_defaults();
+            app.internet_source = internet_source;
+            app.exit_node.clear();
+            app.exit_node_leak_protection = true;
+
+            let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
+
+            assert!(
+                config.route_targets.iter().any(|route| route == "0.0.0.0/0"),
+                "{internet_source:?} must capture traffic while exit selection is pending"
+            );
+            assert!(
+                config
+                    .peers
+                    .iter()
+                    .all(|peer| !peer.allowed_ips.iter().any(|route| route == "0.0.0.0/0")),
+                "pending selection must not assign the default route to a peer"
+            );
+        }
+    }
+
+    #[test]
+    fn mobile_config_does_not_capture_pending_exit_without_leak_protection() {
+        let mut app = AppConfig::generated();
+        app.ensure_defaults();
+        app.internet_source = InternetSource::PaidAutomatic;
+        app.exit_node.clear();
+        app.exit_node_leak_protection = false;
+
+        let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
+
+        assert!(!config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
+    }
+
+    #[test]
     fn mobile_peer_ping_due_recovers_from_future_timestamps() {
         assert!(!mobile_peer_ping_due(Some(122), Some(115), 120));
         assert!(!mobile_peer_ping_due(Some(180), Some(1), 120));

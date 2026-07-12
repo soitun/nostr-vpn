@@ -513,8 +513,10 @@ pub use automatic_selection::{
 };
 use persistence::{default_version, is_zero};
 pub use persistence::{
-    load_paid_route_store, paid_route_offer_store_key, paid_route_store_file_path,
-    upsert_paid_route_offer, write_paid_route_store,
+    acknowledge_paid_route_payment_outbox, apply_paid_route_seller_payment_file,
+    load_paid_route_store, paid_route_offer_store_key, paid_route_payment_id,
+    paid_route_payment_outbox_directory, paid_route_store_file_path, upsert_paid_route_offer,
+    write_paid_route_store,
 };
 
 #[cfg(test)]
