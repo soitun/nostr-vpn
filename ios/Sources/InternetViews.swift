@@ -163,6 +163,8 @@ struct PaidRouteMarketCard: View {
     @State private var withdrawInvoice = ""
     @State private var walletFlow: PaidRouteWalletFlow?
     @State private var walletTokenScannerPresented = false
+    @State private var pendingWalletToken = ""
+    @State private var walletTokenReviewPresented = false
     @State private var filterCountry = ""
     @State private var filterNetworkClass = ""
     @State private var filterRequireIpv4 = false
@@ -416,25 +418,74 @@ struct PaidRouteMarketCard: View {
         }
         .sheet(isPresented: $walletTokenScannerPresented) {
             QRCodeScannerSheet { value in
-                receiveWalletToken(value)
+                previewWalletToken(value)
             }
+        }
+        .sheet(isPresented: $walletTokenReviewPresented) {
+            walletTokenReview
         }
     }
 
     private func autoReceiveWalletToken(_ value: String) {
         guard isLikelyCashuToken(value) else { return }
-        receiveWalletToken(value)
+        previewWalletToken(value)
     }
 
-    private func receiveWalletToken(_ value: String) {
+    private func previewWalletToken(_ value: String) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         token = ""
         walletTokenScannerPresented = false
+        pendingWalletToken = trimmed
+        walletTokenReviewPresented = true
         model.dispatch(
-            NativeActions.receivePaidRouteWalletToken(token: trimmed),
-            status: "Receiving token"
+            NativeActions.previewPaidRouteWalletToken(token: trimmed),
+            status: "Checking token"
         )
+    }
+
+    private var walletTokenReview: some View {
+        let preview = market.wallet.lastAction
+        let ready = preview.kind == "preview" && preview.tokenRedeemable
+        let checked = preview.kind == "preview"
+        let reviewStatus = !model.state.error.isEmpty
+            ? "Could not inspect token: \(model.state.error)"
+            : (checked ? preview.statusText : "Checking…")
+        return NavigationStack {
+            Form {
+                Section("Token") {
+                    LabeledContent("Amount", value: checked ? preview.amountText : "Checking…")
+                    if checked {
+                        LabeledContent("Mint", value: preview.mintUrl)
+                        if !preview.tokenMemo.isEmpty {
+                            LabeledContent("Memo", value: preview.tokenMemo)
+                        }
+                    }
+                    LabeledContent("Status", value: reviewStatus)
+                }
+                Section {
+                    Button("Redeem") {
+                        let token = pendingWalletToken
+                        walletTokenReviewPresented = false
+                        pendingWalletToken = ""
+                        model.dispatch(
+                            NativeActions.receivePaidRouteWalletToken(token: token),
+                            status: "Redeeming token"
+                        )
+                    }
+                    .disabled(model.actionInFlight || !ready)
+                }
+            }
+            .navigationTitle("Redeem token?")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        walletTokenReviewPresented = false
+                        pendingWalletToken = ""
+                    }
+                }
+            }
+        }
     }
 
     private var walletMintList: some View {

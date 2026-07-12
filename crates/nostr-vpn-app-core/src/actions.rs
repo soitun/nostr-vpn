@@ -123,6 +123,9 @@ pub enum NativeAppAction {
     ReceivePaidRouteWalletToken {
         token: String,
     },
+    PreviewPaidRouteWalletToken {
+        token: String,
+    },
     SendPaidRouteWalletToken {
         mint_url: Option<String>,
         amount_sat: u64,
@@ -417,6 +420,14 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&receive).expect("serialize receive"),
             r#"{"type":"receive_paid_route_wallet_token","token":"cashuAexample"}"#
+        );
+
+        let preview = NativeAppAction::PreviewPaidRouteWalletToken {
+            token: "cashuAexample".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_string(&preview).expect("serialize preview"),
+            r#"{"type":"preview_paid_route_wallet_token","token":"cashuAexample"}"#
         );
 
         let send = NativeAppAction::SendPaidRouteWalletToken {

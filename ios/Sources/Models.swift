@@ -443,6 +443,9 @@ struct PaidRouteWalletActionState: Decodable, Equatable {
     var operationId = ""
     var expiresAtUnix: UInt64 = 0
     var preimage = ""
+    var tokenState = ""
+    var tokenRedeemable = false
+    var tokenMemo = ""
 
     init() {}
 }

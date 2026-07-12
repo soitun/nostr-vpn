@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Windows;
 using Microsoft.Win32;
 using NostrVpn.Windows.Core;
 
@@ -122,8 +123,8 @@ public sealed partial class AppViewModel
         {
             return;
         }
-        await DispatchAsync(NativeActions.ReceivePaidRouteWalletToken(token), "Importing token");
         PaidRouteReceiveToken = "";
+        await PreviewAndConfirmPaidRouteWalletTokenAsync(token);
     }
 
     public Task AutoReceivePaidRouteWalletTokenAsync()
@@ -156,7 +157,28 @@ public sealed partial class AppViewModel
             Notice = "QR does not contain a Cashu token";
             return;
         }
-        await DispatchAsync(NativeActions.ReceivePaidRouteWalletToken(token), "Importing token");
+        await PreviewAndConfirmPaidRouteWalletTokenAsync(token);
+    }
+
+    private async Task PreviewAndConfirmPaidRouteWalletTokenAsync(string token)
+    {
+        await DispatchAsync(NativeActions.PreviewPaidRouteWalletToken(token), "Checking token");
+        var preview = State.PaidRouteMarket.Wallet.LastAction;
+        if (preview.Kind != "preview")
+        {
+            return;
+        }
+        var memo = string.IsNullOrWhiteSpace(preview.TokenMemo) ? "" : $"\nMemo: {preview.TokenMemo}";
+        var message = $"Amount: {preview.AmountText}\nMint: {preview.MintUrl}{memo}\nStatus: {preview.StatusText}";
+        if (!preview.TokenRedeemable)
+        {
+            MessageBox.Show(message, "Cashu token", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (MessageBox.Show(message + "\n\nRedeem this token?", "Redeem token?", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
+        {
+            await DispatchAsync(NativeActions.ReceivePaidRouteWalletToken(token), "Redeeming token");
+        }
     }
 
     public Task SendPaidRouteWalletTokenAsync()

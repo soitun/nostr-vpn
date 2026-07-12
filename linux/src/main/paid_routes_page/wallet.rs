@@ -231,7 +231,7 @@ fn wallet_token_row(app: &AppRef, parent: &gtk::Box) {
                 let token = value.trim().to_string();
                 app.borrow_mut().drafts.paid_route_token.clear();
                 entry.set_text("");
-                dispatch(&app, NativeAppAction::ReceivePaidRouteWalletToken { token });
+                preview_and_confirm_wallet_token(&app, token);
             }
         });
     }
@@ -248,11 +248,9 @@ fn wallet_token_row(app: &AppRef, parent: &gtk::Box) {
                 parent.as_ref(),
                 move |value| {
                     if is_likely_cashu_token(&value) {
-                        dispatch(
+                        preview_and_confirm_wallet_token(
                             &app_for_result,
-                            NativeAppAction::ReceivePaidRouteWalletToken {
-                                token: value.trim().to_string(),
-                            },
+                            value.trim().to_string(),
                         );
                     } else {
                         set_notice(&app_for_result, "Not a Cashu token".to_string());
@@ -265,6 +263,52 @@ fn wallet_token_row(app: &AppRef, parent: &gtk::Box) {
     row.append(&input);
     row.append(&scan);
     parent.append(&row);
+}
+
+fn preview_and_confirm_wallet_token(app: &AppRef, token: String) {
+    let state = dispatch(
+        app,
+        NativeAppAction::PreviewPaidRouteWalletToken {
+            token: token.clone(),
+        },
+    );
+    if !state.error.is_empty() {
+        return;
+    }
+    let preview = &state.paid_route_market.wallet.last_action;
+    if preview.kind != "preview" {
+        return;
+    }
+    let memo = if preview.token_memo.is_empty() {
+        String::new()
+    } else {
+        format!("\nMemo: {}", preview.token_memo)
+    };
+    let body = format!(
+        "Amount: {}\nMint: {}{}\nStatus: {}",
+        preview.amount_text, preview.mint_url, memo, preview.status_text
+    );
+    let dialog = adw::AlertDialog::new(Some("Redeem token?"), Some(&body));
+    if preview.token_redeemable {
+        dialog.add_responses(&[("cancel", "Cancel"), ("redeem", "Redeem")]);
+        dialog.set_close_response("cancel");
+        dialog.set_default_response(Some("redeem"));
+        let app = app.clone();
+        dialog.connect_response(Some("redeem"), move |_, _| {
+            dispatch(
+                &app,
+                NativeAppAction::ReceivePaidRouteWalletToken {
+                    token: token.clone(),
+                },
+            );
+        });
+    } else {
+        dialog.add_response("done", "Done");
+        dialog.set_close_response("done");
+        dialog.set_default_response(Some("done"));
+    }
+    let window = app.borrow().window.clone();
+    dialog.present(Some(&window));
 }
 
 fn is_likely_cashu_token(value: &str) -> bool {

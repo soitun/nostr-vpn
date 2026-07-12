@@ -208,22 +208,65 @@ extension RootView {
         .frame(width: 520)
         .sheet(isPresented: $showingWalletTokenScanner) {
             QRCodeScannerSheet { value in
-                receivePaidRouteWalletToken(value)
+                previewPaidRouteWalletToken(value)
             }
+        }
+        .sheet(isPresented: $showingWalletTokenReview) {
+            paidRouteWalletTokenReview(wallet: state.paidRouteMarket.wallet)
         }
     }
 
     func autoReceivePaidRouteWalletToken(_ value: String) {
         guard isLikelyCashuToken(value) else { return }
-        receivePaidRouteWalletToken(value)
+        previewPaidRouteWalletToken(value)
     }
 
-    func receivePaidRouteWalletToken(_ value: String) {
+    func previewPaidRouteWalletToken(_ value: String) {
         let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !token.isEmpty else { return }
         paidRouteReceiveToken = ""
         showingWalletTokenScanner = false
-        manager.receivePaidRouteWalletToken(token)
+        pendingWalletToken = token
+        showingWalletTokenReview = true
+        manager.previewPaidRouteWalletToken(token)
+    }
+
+    func paidRouteWalletTokenReview(wallet: NativePaidRouteWalletState) -> some View {
+        let preview = wallet.lastAction
+        let checked = !manager.actionInFlight && preview.kind == "preview"
+        let ready = checked && preview.tokenRedeemable
+        let reviewStatus = !state.error.isEmpty
+            ? "Could not inspect token: \(state.error)"
+            : (checked ? preview.statusText : "Checking…")
+        return VStack(alignment: .leading, spacing: 16) {
+            Text("Redeem token?")
+                .font(.title2.weight(.semibold))
+            LabeledContent("Amount", value: checked ? preview.amountText : "Checking…")
+            if checked {
+                LabeledContent("Mint", value: preview.mintUrl)
+                if !preview.tokenMemo.isEmpty {
+                    LabeledContent("Memo", value: preview.tokenMemo)
+                }
+            }
+            LabeledContent("Status", value: reviewStatus)
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    showingWalletTokenReview = false
+                    pendingWalletToken = ""
+                }
+                Button("Redeem") {
+                    let token = pendingWalletToken
+                    showingWalletTokenReview = false
+                    pendingWalletToken = ""
+                    manager.receivePaidRouteWalletToken(token)
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(manager.actionInFlight || !ready)
+            }
+        }
+        .padding(22)
+        .frame(width: 480)
     }
 
     @ViewBuilder

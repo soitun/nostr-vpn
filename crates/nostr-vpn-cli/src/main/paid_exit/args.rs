@@ -567,6 +567,8 @@ enum PaidExitWalletCommand {
     /// Receive/import a Cashu token into the wallet.
     #[command(alias = "import")]
     Receive(PaidExitWalletReceiveArgs),
+    /// Inspect a Cashu token and check whether its proofs are spendable.
+    Inspect(PaidExitWalletReceiveArgs),
     /// Send/export a Cashu token from the wallet.
     #[command(alias = "export")]
     Send(PaidExitWalletSendArgs),

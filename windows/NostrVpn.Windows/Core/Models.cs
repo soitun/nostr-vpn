@@ -205,6 +205,9 @@ public sealed class NativePaidRouteWalletActionState
     public string OperationId { get; set; } = "";
     public ulong ExpiresAtUnix { get; set; }
     public string Preimage { get; set; } = "";
+    public string TokenState { get; set; } = "";
+    public bool TokenRedeemable { get; set; }
+    public string TokenMemo { get; set; } = "";
     public string DisplayStatusText => string.IsNullOrWhiteSpace(StatusText)
         ? NativeDisplayText.WalletActionTitle(Kind)
         : StatusText;

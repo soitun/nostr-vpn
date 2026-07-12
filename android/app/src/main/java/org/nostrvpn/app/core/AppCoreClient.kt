@@ -75,6 +75,9 @@ object NativeActions {
     fun receivePaidRouteWalletToken(token: String) =
         action("receive_paid_route_wallet_token", "token" to token)
 
+    fun previewPaidRouteWalletToken(token: String) =
+        action("preview_paid_route_wallet_token", "token" to token)
+
     fun sendPaidRouteWalletToken(mintUrl: String?, amountSat: Long) =
         action("send_paid_route_wallet_token", "mintUrl" to mintUrl, "amountSat" to amountSat)
 

@@ -36,6 +36,7 @@ public static class NativeActions
     public static string RefreshPaidRouteWallet(bool refresh = true) => AppCoreClient.Action(new { type = "refresh_paid_route_wallet", refresh });
     public static string TopUpPaidRouteWallet(string? mintUrl, ulong amountSat) => AppCoreClient.Action(new { type = "top_up_paid_route_wallet", mintUrl, amountSat });
     public static string ReceivePaidRouteWalletToken(string token) => AppCoreClient.Action(new { type = "receive_paid_route_wallet_token", token });
+    public static string PreviewPaidRouteWalletToken(string token) => AppCoreClient.Action(new { type = "preview_paid_route_wallet_token", token });
     public static string SendPaidRouteWalletToken(string? mintUrl, ulong amountSat) => AppCoreClient.Action(new { type = "send_paid_route_wallet_token", mintUrl, amountSat });
     public static string WithdrawPaidRouteWalletLightning(string? mintUrl, string invoice) => AppCoreClient.Action(new { type = "withdraw_paid_route_wallet_lightning", mintUrl, invoice });
     public static string BuyPaidRouteOffer(string offerKey, string? mintUrl = null, ulong? channelCapacitySat = null) => AppCoreClient.Action(new { type = "buy_paid_route_offer", offerKey, mintUrl, channelCapacitySat });

@@ -3914,6 +3914,7 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "boringtun",
+ "cashu",
  "cashu-service",
  "clap",
  "crab_nat",

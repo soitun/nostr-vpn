@@ -194,6 +194,12 @@ extension AppManager {
         dispatch(.receivePaidRouteWalletToken(token: trimmed), status: "Receiving token")
     }
 
+    func previewPaidRouteWalletToken(_ token: String) {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        dispatch(.previewPaidRouteWalletToken(token: trimmed), status: "Checking token")
+    }
+
     func sendPaidRouteWalletToken(mintUrl: String?, amountSat: String) {
         guard let amount = Self.parsePositiveUInt64(amountSat) else { return }
         dispatch(

@@ -272,6 +272,9 @@ impl NativeAppRuntime {
             NativeAppAction::ReceivePaidRouteWalletToken { token } => {
                 self.receive_paid_route_wallet_token(&token)
             }
+            NativeAppAction::PreviewPaidRouteWalletToken { token } => {
+                self.preview_paid_route_wallet_token(&token)
+            }
             NativeAppAction::SendPaidRouteWalletToken {
                 mint_url,
                 amount_sat,

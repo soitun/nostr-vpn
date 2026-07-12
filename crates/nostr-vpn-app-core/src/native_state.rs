@@ -235,6 +235,9 @@ pub struct NativePaidRouteWalletActionState {
     pub operation_id: String,
     pub expires_at_unix: u64,
     pub preimage: String,
+    pub token_state: String,
+    pub token_redeemable: bool,
+    pub token_memo: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

@@ -11,6 +11,7 @@ readme = "README.md"
 [features]
 default = ["paid-exit"]
 paid-exit = [
+  "dep:cashu",
   "dep:cashu-service",
   "nostr-vpn-core/paid-exit",
 ]
@@ -43,6 +44,7 @@ cashu-service = { workspace = true, optional = true, features = [
   "spilman-wallet-http",
   "spilman-configurable-host-reqwest",
 ] }
+cashu = { workspace = true, optional = true }
 
 nostr-vpn-core = { workspace = true, features = ["updater", "secure-dns"] }
 crab_nat = "0.7"

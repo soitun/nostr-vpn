@@ -1,6 +1,17 @@
 
 const DEFAULT_PAID_EXIT_WALLET_MINT: &str = "https://mint.minibits.cash/Bitcoin";
 
+#[derive(Debug, Clone, Serialize)]
+struct PaidExitWalletTokenPreview {
+    mint_url: String,
+    unit: String,
+    amount_sat: u64,
+    memo: String,
+    state: &'static str,
+    status_text: String,
+    redeemable: bool,
+}
+
 async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let data_dir = paid_exit_wallet_data_dir(&config_path);
@@ -120,6 +131,23 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
             }
             return Ok(());
         }
+        PaidExitWalletCommand::Inspect(inspect) => {
+            let token = read_paid_exit_wallet_token(inspect.token, inspect.token_stdin)?;
+            let preview = inspect_paid_exit_wallet_token(&token).await?;
+
+            if json_output {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({ "token_preview": preview }))?
+                );
+            } else {
+                println!("amount: {}", paid_exit_sat_text(preview.amount_sat));
+                println!("mint: {}", preview.mint_url);
+                println!("state: {}", preview.state);
+                println!("status: {}", preview.status_text);
+            }
+            return Ok(());
+        }
         PaidExitWalletCommand::Send(send) => {
             let mint = paid_exit_wallet_mint(&store, send.mint.as_deref())?;
             let payment = send_payment_token(&data_dir, &mint, send.amount_sat).await?;
@@ -223,6 +251,133 @@ async fn paid_exit_wallet_command(args: PaidExitWalletArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn inspect_paid_exit_wallet_token(token_text: &str) -> Result<PaidExitWalletTokenPreview> {
+    use cashu::dhke::hash_to_curve;
+    use cashu::nuts::{CheckStateRequest, CheckStateResponse, CurrencyUnit, Token};
+    use std::str::FromStr;
+
+    let token = Token::from_str(token_text).context("invalid Cashu token")?;
+    let mint_url = token
+        .mint_url()
+        .context("Cashu token must contain proofs from one mint")?
+        .to_string();
+    let unit = token.unit().unwrap_or_default();
+    if unit != CurrencyUnit::Sat {
+        return Err(anyhow!("Cashu token unit must be sat, got {unit}"));
+    }
+    let amount_sat = token.value().context("invalid Cashu token amount")?.to_u64();
+    let memo = token.memo().clone().unwrap_or_default();
+    let ys = token
+        .token_secrets()
+        .into_iter()
+        .map(|secret| hash_to_curve(secret.as_bytes()).context("invalid Cashu proof secret"))
+        .collect::<Result<Vec<_>>>()?;
+    if ys.is_empty() {
+        return Err(anyhow!("Cashu token contains no proofs"));
+    }
+
+    let proof_count = ys.len();
+    let check_url = format!("{}/v1/checkstate", mint_url.trim_end_matches('/'));
+    let checked = async {
+        let response = reqwest::Client::builder()
+            .timeout(Duration::from_secs(10))
+            .build()?
+            .post(check_url)
+            .json(&CheckStateRequest { ys })
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<CheckStateResponse>()
+            .await?;
+        Ok::<_, reqwest::Error>(response)
+    }
+    .await;
+
+    let (state, status_text, redeemable) = match checked {
+        Ok(response) => summarize_cashu_proof_states(
+            response.states.iter().map(|proof| proof.state),
+            proof_count,
+        ),
+        Err(error) => (
+            "unknown",
+            format!("Could not verify token: {error}"),
+            false,
+        ),
+    };
+
+    Ok(PaidExitWalletTokenPreview {
+        mint_url,
+        unit: unit.to_string(),
+        amount_sat,
+        memo,
+        state,
+        status_text,
+        redeemable,
+    })
+}
+
+fn summarize_cashu_proof_states(
+    states: impl IntoIterator<Item = cashu::nuts::State>,
+    expected_count: usize,
+) -> (&'static str, String, bool) {
+    use cashu::nuts::State;
+
+    let states = states.into_iter().collect::<Vec<_>>();
+    if states.iter().any(|state| *state == State::Spent) {
+        return ("spent", "Already redeemed".to_string(), false);
+    }
+    if states.iter().any(|state| {
+        matches!(state, State::Pending | State::Reserved | State::PendingSpent)
+    }) {
+        return ("pending", "Redemption pending".to_string(), false);
+    }
+    if states.len() == expected_count
+        && expected_count > 0
+        && states.iter().all(|state| *state == State::Unspent)
+    {
+        return ("unspent", "Ready to redeem".to_string(), true);
+    }
+    (
+        "unknown",
+        "Mint returned an incomplete proof state".to_string(),
+        false,
+    )
+}
+
+#[cfg(test)]
+mod wallet_token_preview_tests {
+    use super::summarize_cashu_proof_states;
+    use cashu::nuts::State;
+
+    #[test]
+    fn token_preview_only_allows_a_complete_unspent_response() {
+        assert_eq!(
+            summarize_cashu_proof_states([State::Unspent, State::Unspent], 2),
+            ("unspent", "Ready to redeem".to_string(), true)
+        );
+        assert_eq!(
+            summarize_cashu_proof_states([State::Unspent], 2),
+            (
+                "unknown",
+                "Mint returned an incomplete proof state".to_string(),
+                false
+            )
+        );
+    }
+
+    #[test]
+    fn token_preview_reports_spent_and_pending_proofs() {
+        assert_eq!(
+            summarize_cashu_proof_states([State::Unspent, State::Spent], 2),
+            ("spent", "Already redeemed".to_string(), false)
+        );
+        assert_eq!(
+            summarize_cashu_proof_states([State::Pending], 1),
+            ("pending", "Redemption pending".to_string(), false)
+        );
+    }
 }
 
 fn paid_exit_wallet_data_dir(config_path: &Path) -> PathBuf {

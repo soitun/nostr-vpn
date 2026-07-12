@@ -212,6 +212,10 @@ enum NativeActions {
         ["type": "receive_paid_route_wallet_token", "token": token]
     }
 
+    static func previewPaidRouteWalletToken(token: String) -> [String: Any] {
+        ["type": "preview_paid_route_wallet_token", "token": token]
+    }
+
     static func sendPaidRouteWalletToken(mintUrl: String?, amountSat: UInt64) -> [String: Any] {
         ["type": "send_paid_route_wallet_token", "mintUrl": jsonValue(mintUrl), "amountSat": amountSat]
     }

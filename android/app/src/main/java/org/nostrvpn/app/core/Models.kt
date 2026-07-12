@@ -233,6 +233,9 @@ data class PaidRouteWalletActionState(
     val operationId: String = "",
     val expiresAtUnix: Long = 0,
     val preimage: String = "",
+    val tokenState: String = "",
+    val tokenRedeemable: Boolean = false,
+    val tokenMemo: String = "",
 )
 
 data class PaidRoutePaymentActionState(
@@ -664,6 +667,9 @@ private fun JSONObject?.toPaidRouteWalletActionState(): PaidRouteWalletActionSta
         operationId = optString("operationId"),
         expiresAtUnix = optLong("expiresAtUnix"),
         preimage = optString("preimage"),
+        tokenState = optString("tokenState"),
+        tokenRedeemable = optBoolean("tokenRedeemable"),
+        tokenMemo = optString("tokenMemo"),
     )
 }
 

@@ -124,6 +124,41 @@ impl NativeAppRuntime {
         Ok(())
     }
 
+    pub(super) fn preview_paid_route_wallet_token(&mut self, token: &str) -> Result<()> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err(anyhow!("Token is empty"));
+        }
+        self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
+            kind: "preview_checking".to_string(),
+            status_text: "Checking token".to_string(),
+            ..NativePaidRouteWalletActionState::default()
+        };
+        let value = self.run_paid_route_wallet_json_with_stdin(
+            vec!["inspect".to_string(), "--token-stdin".to_string()],
+            token.as_bytes(),
+        )?;
+        let preview = value
+            .get("token_preview")
+            .ok_or_else(|| anyhow!("wallet inspect output is missing token preview"))?;
+        let amount_sat = json_u64(preview, "amount_sat");
+        self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
+            kind: "preview".to_string(),
+            status_text: json_string(preview, "status_text"),
+            mint_url: json_string(preview, "mint_url"),
+            amount_sat,
+            amount_text: paid_route_sat_text(amount_sat),
+            token_state: json_string(preview, "state"),
+            token_redeemable: preview
+                .get("redeemable")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false),
+            token_memo: json_string(preview, "memo"),
+            ..NativePaidRouteWalletActionState::default()
+        };
+        Ok(())
+    }
+
     pub(super) fn send_paid_route_wallet_token(
         &mut self,
         mint_url: Option<&str>,

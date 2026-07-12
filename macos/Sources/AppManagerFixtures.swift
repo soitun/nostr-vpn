@@ -481,7 +481,10 @@ extension AppManager {
                         token: "",
                         operationId: "",
                         expiresAtUnix: 1_780_653_600,
-                        preimage: ""
+                        preimage: "",
+                        tokenState: "",
+                        tokenRedeemable: false,
+                        tokenMemo: ""
                     )
                 ),
                 lastPaymentAction: NativePaidRoutePaymentActionState(
@@ -716,4 +719,3 @@ extension AppManager {
         )
     }
 }
-
