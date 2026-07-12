@@ -56,7 +56,9 @@ case "$(uname -s)" in
   Linux)
     launch_with_open=0
     (cd "$ROOT/linux" && cargo build -q)
-    APP_EXE="$ROOT/linux/target/debug/nostr-vpn"
+    LINUX_TARGET="$(cd "$ROOT/linux" && cargo metadata --no-deps --format-version 1 \
+      | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')"
+    APP_EXE="$LINUX_TARGET/debug/nostr-vpn"
     ;;
   *)
     echo "desktop roster e2e supports macOS and Linux; use scripts/e2e-desktop-roster-join.ps1 on Windows" >&2
