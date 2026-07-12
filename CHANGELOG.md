@@ -19,6 +19,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Removed debug-only desktop and mobile UI gates that hid the paid-exit market,
+  wallet, and seller controls from release builds despite backend support being
+  enabled by default.
 - Restored joining-device request links and QR approval as the onboarding flow;
   legacy network-invite commands remain hidden for migration compatibility.
 - The normal daemon now accepts WebVM's Ethernet-only FIPS transport and reports

@@ -28,30 +28,6 @@ public enum AppPage
     Settings,
 }
 
-internal static class PaidInternetFeature
-{
-    public static bool Enabled
-    {
-        get
-        {
-#if DEBUG
-            return EnabledFlag(Environment.GetEnvironmentVariable("NVPN_ENABLE_PAID_INTERNET"))
-                || Environment.GetCommandLineArgs().Any(argument =>
-                    string.Equals(argument, "--nvpn-enable-paid-internet", StringComparison.OrdinalIgnoreCase)
-                    || string.Equals(argument, "/nvpn-enable-paid-internet", StringComparison.OrdinalIgnoreCase));
-#else
-            return false;
-#endif
-        }
-    }
-
-    private static bool EnabledFlag(string? value) =>
-        string.Equals(value?.Trim(), "1", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(value?.Trim(), "true", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(value?.Trim(), "yes", StringComparison.OrdinalIgnoreCase)
-        || string.Equals(value?.Trim(), "on", StringComparison.OrdinalIgnoreCase);
-}
-
 public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly AppCoreClient _core;
@@ -492,9 +468,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         && !ActionInFlight
         && !string.IsNullOrWhiteSpace(PaidRouteWithdrawInvoice);
 
-    public bool PaidRouteMarketVisible => PaidInternetFeature.Enabled && State.PaidRouteMarket.Supported;
+    public bool PaidRouteMarketVisible => State.PaidRouteMarket.Supported;
 
-    public bool PaidExitSellerVisible => PaidInternetFeature.Enabled && State.PaidExitSeller.Supported;
+    public bool PaidExitSellerVisible => State.PaidExitSeller.Supported;
 
     // Bullet-style radio indicators next to each exit-node row.
     public string DirectExitMarker =>

@@ -4,29 +4,6 @@ import SwiftUI
 
 private let searchVisibilityThreshold = 7
 
-private enum PaidInternetFeature {
-    static var enabled: Bool {
-        #if DEBUG
-        let arguments = Set(CommandLine.arguments)
-        if arguments.contains("--nvpn-enable-paid-internet") {
-            return true
-        }
-        return enabledFlag(ProcessInfo.processInfo.environment["NVPN_ENABLE_PAID_INTERNET"])
-        #else
-        return false
-        #endif
-    }
-
-    private static func enabledFlag(_ value: String?) -> Bool {
-        switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "1", "true", "yes", "on":
-            return true
-        default:
-            return false
-        }
-    }
-}
-
 private enum AddNetworkMode {
     case create
     case join
@@ -117,16 +94,14 @@ struct RootView: View {
 
     private static func initialSidebarItem() -> SidebarItem {
         let arguments = Set(CommandLine.arguments)
-        if PaidInternetFeature.enabled {
-            if arguments.contains("--nvpn-screenshot-paid-seller") {
-                return .sellExit
-            }
-            if arguments.contains("--nvpn-screenshot-paid-market") {
-                return .publicExits
-            }
-            if arguments.contains("--nvpn-screenshot-paid-wallet") {
-                return .wallet
-            }
+        if arguments.contains("--nvpn-screenshot-paid-seller") {
+            return .sellExit
+        }
+        if arguments.contains("--nvpn-screenshot-paid-market") {
+            return .publicExits
+        }
+        if arguments.contains("--nvpn-screenshot-paid-wallet") {
+            return .wallet
         }
         if arguments.contains("--nvpn-screenshot-exit-nodes")
             || arguments.contains("--nvpn-screenshot-upstream") {
@@ -155,11 +130,11 @@ struct RootView: View {
     }
 
     private var paidRouteMarketAvailable: Bool {
-        PaidInternetFeature.enabled && state.paidRouteMarket.supported
+        state.paidRouteMarket.supported
     }
 
     private var paidExitSellerAvailable: Bool {
-        PaidInternetFeature.enabled && state.paidExitSeller.supported
+        state.paidExitSeller.supported
     }
 
     private var paidInternetAvailable: Bool {

@@ -3,29 +3,6 @@ import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
-private enum PaidInternetFeature {
-    static var enabled: Bool {
-        #if DEBUG
-        let arguments = Set(ProcessInfo.processInfo.arguments)
-        if arguments.contains("--nvpn-enable-paid-internet") {
-            return true
-        }
-        return enabledFlag(ProcessInfo.processInfo.environment["NVPN_ENABLE_PAID_INTERNET"])
-        #else
-        return false
-        #endif
-    }
-
-    private static func enabledFlag(_ value: String?) -> Bool {
-        switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "1", "true", "yes", "on":
-            return true
-        default:
-            return false
-        }
-    }
-}
-
 struct RootView: View {
     @ObservedObject var model: AppModel
     @AppStorage(AppModel.vpnDisclosureAcceptedKey) private var vpnDisclosureAccepted = false
@@ -44,7 +21,7 @@ struct RootView: View {
     }
 
     private var paidRouteMarketAvailable: Bool {
-        PaidInternetFeature.enabled && model.state.paidRouteMarket.supported
+        model.state.paidRouteMarket.supported
     }
 
     var body: some View {
@@ -193,9 +170,9 @@ struct RootView: View {
         case "internet", "exit", "exit-node", "exit-nodes", "routes", "routing":
             return .internet
         case "public-exits", "paid-exits", "paid-market", "market":
-            return PaidInternetFeature.enabled ? .publicExits : .devices
+            return .publicExits
         case "wallet", "paid-wallet":
-            return PaidInternetFeature.enabled ? .wallet : .devices
+            return .wallet
         case "settings", "diagnostics":
             return .settings
         default:
@@ -1110,7 +1087,7 @@ private struct InternetPage: View {
                         }
                     ))
                 }
-                if PaidInternetFeature.enabled {
+                if model.state.paidExitSeller.supported {
                     PaidExitSellerStatusCard(state: model.state)
                 }
                 WireGuardSettingsCard(model: model)
