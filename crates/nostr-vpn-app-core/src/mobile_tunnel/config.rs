@@ -28,7 +28,9 @@ const MOBILE_RUNTIME_STATE_FILE: &str = "mobile-runtime-state.json";
 const MOBILE_PEER_ONLINE_GRACE_SECS: u64 = 45;
 const MOBILE_PEER_MAX_FUTURE_SKEW_SECS: u64 = 2;
 const MOBILE_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 10;
-const MOBILE_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 120;
+// Nostr subscriptions and minute-cadence LAN scans provide the fast paths;
+// this is only the battery-safe fallback for peers that remain offline.
+const MOBILE_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 300;
 const MOBILE_CONTROL_RTT_MAX_ACCEPT_MS: u128 = 10_000;
 const MOBILE_HANDSHAKE_RESEND_INTERVAL_MS: u64 = 300;
 const MOBILE_HANDSHAKE_RESEND_BACKOFF: f64 = 1.5;

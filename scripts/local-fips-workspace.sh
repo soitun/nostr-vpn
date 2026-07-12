@@ -45,14 +45,11 @@ nvpn_prepare_local_fips_workspace() {
   cp -p "$NVPN_LOCAL_FIPS_ROOT/Cargo.toml" "$NVPN_LOCAL_FIPS_MANIFEST_SNAPSHOT"
   trap nvpn_restore_local_fips_workspace EXIT
 
-  NVPN_LOCAL_FIPS_CORE_PATH="$fips_path/crates/fips-core" \
-  NVPN_LOCAL_FIPS_ENDPOINT_PATH="$fips_path/crates/fips-endpoint" \
-  NVPN_LOCAL_FIPS_IDENTITY_PATH="$fips_path/crates/fips-identity" \
-    perl -0pi -e '
-      s#(fips-core\s*=\s*\{[^\n}]*\bpath\s*=\s*)"[^"]*"#$1"$ENV{NVPN_LOCAL_FIPS_CORE_PATH}"#g;
-      s#(fips-endpoint\s*=\s*\{[^\n}]*\bpath\s*=\s*)"[^"]*"#$1"$ENV{NVPN_LOCAL_FIPS_ENDPOINT_PATH}"#g;
-      s#(fips-identity\s*=\s*\{[^\n}]*\bpath\s*=\s*)"[^"]*"#$1"$ENV{NVPN_LOCAL_FIPS_IDENTITY_PATH}"#g;
-    ' "$NVPN_LOCAL_FIPS_ROOT/Cargo.toml"
+  printf '\n[patch.crates-io]\nfips-core = { path = "%s" }\nfips-endpoint = { path = "%s" }\nfips-identity = { path = "%s" }\n' \
+    "$fips_path/crates/fips-core" \
+    "$fips_path/crates/fips-endpoint" \
+    "$fips_path/crates/fips-identity" \
+    >>"$NVPN_LOCAL_FIPS_ROOT/Cargo.toml"
 
   NVPN_LOCAL_FIPS_PREPARED=1
   printf 'using local FIPS crates from %s\n' "$fips_path"

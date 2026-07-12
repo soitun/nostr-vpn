@@ -52,7 +52,7 @@ fn fips_peer_configs_from_mesh(
             &peer.endpoint_npub,
             peer_hints.get(&peer.participant_pubkey),
             !peer.advertises_default_route(),
-            FIPS_ROSTER_AUTO_RECONNECT,
+            FIPS_MOBILE_AUTO_RECONNECT,
         ));
     }
 
@@ -71,7 +71,7 @@ fn fips_peer_configs_from_mesh(
                 &peer.endpoint_npub,
                 Some(hints),
                 true,
-                FIPS_TRANSIT_AUTO_RECONNECT,
+                FIPS_MOBILE_AUTO_RECONNECT,
             ));
             included.insert(participant.clone());
         }
@@ -88,7 +88,7 @@ fn fips_peer_configs_from_mesh(
                 &peer.endpoint_npub,
                 Some(hints),
                 true,
-                FIPS_TRANSIT_AUTO_RECONNECT,
+                FIPS_MOBILE_AUTO_RECONNECT,
             ));
             included.insert(participant.clone());
         }

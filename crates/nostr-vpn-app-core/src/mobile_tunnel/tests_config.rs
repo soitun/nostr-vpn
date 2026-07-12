@@ -118,6 +118,12 @@
     }
 
     #[test]
+    fn offline_peer_probe_uses_battery_safe_fallback_interval() {
+        assert!(!mobile_peer_ping_due(None, Some(0), 299));
+        assert!(mobile_peer_ping_due(None, Some(0), 300));
+    }
+
+    #[test]
     fn mobile_connected_roster_peers_rejects_far_future_presence() {
         let mut app = AppConfig::generated();
         app.ensure_defaults();
@@ -709,6 +715,10 @@
             vec![PeerEndpointHint::udp("192.168.50.22:51820")]
         );
         assert_eq!(config.peers.len(), 1);
+        assert!(
+            !config.peers[0].auto_reconnect,
+            "mobile roster peers should use bounded FIPS retries"
+        );
         // Mobile peer caps are clamped well below fips's defaults so Open
         // discovery doesn't burn battery on ambient connections.
         assert_eq!(config.node.limits.max_peers, MOBILE_MAX_FIPS_PEERS);

@@ -81,6 +81,7 @@ EOF
   cat >"$stubbin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+grep -Fq "fips-core = { path = \"$NVPN_TEST_FIPS_REPO_PATH/crates/fips-core\" }" "$NVPN_TEST_CARGO_MANIFEST"
 printf '\n# mutated by fake iOS cargo\n' >> "$NVPN_TEST_CARGO_LOCK"
 exit 42
 EOF
@@ -93,6 +94,8 @@ EOF
       NVPN_TEST_XCODE_ROOT="$dir/xcode" \
       NVPN_TEST_SDK_ROOT="$dir/sdk" \
       NVPN_TEST_CARGO_LOCK="$ROOT/Cargo.lock" \
+      NVPN_TEST_CARGO_MANIFEST="$ROOT/Cargo.toml" \
+      NVPN_TEST_FIPS_REPO_PATH="$fips" \
       NVPN_FIPS_REPO_PATH="$fips" \
       "$ROOT/tools/run-ios" rust
 
@@ -110,6 +113,7 @@ test_run_android_restores_lock_after_failed_local_fips_gradle() {
   cat >"$stubbin/gradle" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+grep -Fq "fips-core = { path = \"$NVPN_TEST_FIPS_REPO_PATH/crates/fips-core\" }" "$NVPN_TEST_CARGO_MANIFEST"
 printf '\n# mutated by fake Android Gradle task\n' >> "$NVPN_TEST_CARGO_LOCK"
 exit 43
 EOF
@@ -121,6 +125,8 @@ EOF
       PATH="$stubbin:$PATH" \
       HOME="$dir/home" \
       NVPN_TEST_CARGO_LOCK="$ROOT/Cargo.lock" \
+      NVPN_TEST_CARGO_MANIFEST="$ROOT/Cargo.toml" \
+      NVPN_TEST_FIPS_REPO_PATH="$fips" \
       NVPN_FIPS_REPO_PATH="$fips" \
       "$ROOT/tools/run-android" build
 

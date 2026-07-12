@@ -9,8 +9,10 @@ struct FipsPeerAddressHint {
 const FIPS_STATIC_PEER_ENDPOINT_PRIORITY: u8 = 10;
 const FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 100;
 const FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY: u8 = 200;
-const FIPS_ROSTER_AUTO_RECONNECT: bool = true;
-const FIPS_TRANSIT_AUTO_RECONNECT: bool = false;
+// Mobile probes offline roster peers on its own bounded cadence. Let FIPS
+// exhaust each connection attempt so dormant devices cannot keep the packet
+// tunnel awake in a permanent fast-reconnect loop.
+const FIPS_MOBILE_AUTO_RECONNECT: bool = false;
 
 fn default_fips_peer_address_priority() -> u8 {
     FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY
