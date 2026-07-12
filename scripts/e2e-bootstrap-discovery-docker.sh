@@ -202,12 +202,19 @@ accept_join_request_through_gui_api() {
     fi
     sleep 1
   done
-  "${COMPOSE[@]}" exec -T \
+  local http_code=""
+  http_code="$("${COMPOSE[@]}" exec -T \
     -e NETWORK_ID="$network_id" \
     -e REQUESTER="$requester" \
-    "$service" sh -lc 'curl -fsS -X POST -H "content-type: application/json" \
+    "$service" sh -lc 'curl -sS -o /tmp/accept-join-response.json -w "%{http_code}" -X POST -H "content-type: application/json" \
       --data "{\"networkId\":\"$NETWORK_ID\",\"requesterNpub\":\"$REQUESTER\"}" \
-      http://127.0.0.1:8081/api/accept_join_request >/tmp/accept-join-response.json'
+      http://127.0.0.1:8081/api/accept_join_request')"
+  if [[ "$http_code" != "200" ]]; then
+    echo "bootstrap-discovery docker e2e failed: GUI accept returned HTTP $http_code" >&2
+    "${COMPOSE[@]}" exec -T "$service" sh -lc \
+      'cat /tmp/accept-join-response.json; tail -n 100 /tmp/nvpn-web.log' >&2 || true
+    exit 1
+  fi
 }
 
 cleanup
