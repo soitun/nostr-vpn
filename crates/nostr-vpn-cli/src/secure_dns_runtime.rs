@@ -15,7 +15,12 @@ use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::Semaphore;
 use tokio::task::{JoinHandle, JoinSet};
 
-const SECURE_DNS_BIND: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 53));
+#[cfg(target_os = "macos")]
+const SECURE_DNS_PORT: u16 = 1053;
+#[cfg(not(target_os = "macos"))]
+const SECURE_DNS_PORT: u16 = 53;
+const SECURE_DNS_BIND: SocketAddr =
+    SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, SECURE_DNS_PORT));
 const SECURE_DNS_MAX_IN_FLIGHT: usize = 64;
 const SECURE_DNS_CLIENT_IDLE: Duration = Duration::from_secs(10);
 type SharedResolver = Arc<dyn SecureDnsLookup>;
@@ -270,11 +275,8 @@ impl SystemDnsGuard {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("failed to create {}", parent.display()))?;
             }
-            std::fs::write(
-                &resolver_path,
-                "# Managed by nvpn\ndomain .\nnameserver 127.0.0.1\noptions timeout:1 attempts:1\n",
-            )
-            .with_context(|| format!("failed to install {}", resolver_path.display()))?;
+            std::fs::write(&resolver_path, macos_secure_dns_resolver_config())
+                .with_context(|| format!("failed to install {}", resolver_path.display()))?;
             return Ok(Self { resolver_path });
         }
 
@@ -290,6 +292,13 @@ impl SystemDnsGuard {
         #[allow(unreachable_code)]
         Err(anyhow!("secure system DNS is unsupported on this platform"))
     }
+}
+
+#[cfg(target_os = "macos")]
+fn macos_secure_dns_resolver_config() -> String {
+    format!(
+        "# Managed by nvpn\ndomain .\nnameserver 127.0.0.1\nport {SECURE_DNS_PORT}\noptions timeout:1 attempts:1\n"
+    )
 }
 
 impl Drop for SystemDnsGuard {
@@ -423,6 +432,19 @@ mod tests {
             .emit(&mut BinEncoder::new(&mut packet))
             .expect("query packet");
         packet
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_secure_dns_uses_explicit_unicast_resolver_port() {
+        assert_eq!(
+            SECURE_DNS_BIND,
+            "127.0.0.1:1053".parse::<SocketAddr>().unwrap()
+        );
+        let resolver = macos_secure_dns_resolver_config();
+        assert!(resolver.contains("nameserver 127.0.0.1\n"));
+        assert!(resolver.contains("port 1053\n"));
+        assert!(resolver.contains("domain .\n"));
     }
 
     #[test]
