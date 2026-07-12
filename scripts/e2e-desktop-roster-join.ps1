@@ -61,7 +61,9 @@ try {
     $Process.Refresh()
     if ($Process.HasExited) { throw "Windows app exited before accepting the join request" }
   }
-  if (Test-Path $Trace) { Get-Content $Trace | Write-Error }
+  if (Test-Path $Trace) { Get-Content $Trace | Write-Host }
+  $Process.Refresh()
+  Write-Host "WPF process: id=$($Process.Id) session=$($Process.SessionId) responding=$($Process.Responding) title='$($Process.MainWindowTitle)'"
   throw "Windows GUI did not persist the accepted device within 30 seconds"
 } finally {
   if (!$Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }

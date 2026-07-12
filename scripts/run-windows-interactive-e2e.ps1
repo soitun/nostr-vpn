@@ -24,7 +24,7 @@ $QuotedResult = $ResultPath.Replace("'", "''")
 $QuotedLog = $LogPath.Replace("'", "''")
 @"
 `$ErrorActionPreference = 'Continue'
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$QuotedScript' *>&1 | Out-File -FilePath '$QuotedLog' -Encoding utf8
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File '$QuotedScript' *> '$QuotedLog'
 `$ExitCode = if (`$LASTEXITCODE -is [int]) { `$LASTEXITCODE } else { 1 }
 Set-Content -Path '$QuotedResult' -Value `$ExitCode
 exit `$ExitCode
