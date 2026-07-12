@@ -280,6 +280,7 @@ impl FipsPrivateTunnelConfig {
             #[cfg(target_os = "linux")]
             exit_node_leak_protection: app.exit_node_leak_protection,
             nostr_discovery_enabled: app.fips_nostr_discovery_enabled,
+            webrtc_enabled: app.fips_webrtc_enabled,
             nostr_discovery_policy,
             open_discovery_max_pending,
             mesh_mtu: private_mesh_mtu_from_app(Some(app)),

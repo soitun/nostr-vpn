@@ -253,6 +253,7 @@ fn empty_config() -> MobileTunnelConfig {
         share_local_candidates: false,
         connect_to_non_roster_fips_peers: false,
         nostr_discovery_enabled: true,
+        webrtc_enabled: false,
         excluded_routes: Vec::new(),
         dns_servers: Vec::new(),
         dns_forwarders: Vec::new(),

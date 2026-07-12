@@ -2248,6 +2248,12 @@ private struct FipsSettingsCard: View {
                     model.dispatch(NativeActions.updateSettings(["fipsNostrDiscoveryEnabled": value]), status: "Saving")
                 }
             ))
+            Toggle("Enable WebRTC transport", isOn: Binding(
+                get: { model.state.fipsWebrtcEnabled },
+                set: { value in
+                    model.dispatch(NativeActions.updateSettings(["fipsWebrtcEnabled": value]), status: "Saving")
+                }
+            ))
             Toggle("Use bootstrap servers", isOn: Binding(
                 get: { model.state.fipsBootstrapEnabled },
                 set: { value in

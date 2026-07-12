@@ -501,6 +501,7 @@ impl NativeAppRuntime {
                 && self.config.connect_to_non_roster_fips_peers,
             fips_nostr_discovery_enabled: !config_unavailable
                 && self.config.fips_nostr_discovery_enabled,
+            fips_webrtc_enabled: !config_unavailable && self.config.fips_webrtc_enabled,
             fips_bootstrap_enabled: !config_unavailable && self.config.fips_bootstrap_enabled,
             fips_bootstrap_peers: if config_unavailable {
                 std::collections::HashMap::new()

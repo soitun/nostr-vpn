@@ -65,6 +65,7 @@ enum ScreenshotFixtures {
         state.autoconnect = true
         state.connectToNonRosterFipsPeers = true
         state.fipsNostrDiscoveryEnabled = true
+        state.fipsWebrtcEnabled = false
         state.fipsBootstrapEnabled = false
         state.inviteBroadcastActive = false
         state.nearbyDiscoveryActive = true
@@ -605,6 +606,9 @@ enum ScreenshotFixtures {
         }
         if let fipsNostrDiscoveryEnabled = patch["fipsNostrDiscoveryEnabled"] as? Bool {
             state.fipsNostrDiscoveryEnabled = fipsNostrDiscoveryEnabled
+        }
+        if let fipsWebrtcEnabled = patch["fipsWebrtcEnabled"] as? Bool {
+            state.fipsWebrtcEnabled = fipsWebrtcEnabled
         }
         if let fipsBootstrapEnabled = patch["fipsBootstrapEnabled"] as? Bool {
             state.fipsBootstrapEnabled = fipsBootstrapEnabled

@@ -142,6 +142,10 @@ pub(crate) struct MobileTunnelConfig {
     /// relays for endpoint discovery or advertising.
     #[serde(default = "default_true")]
     pub(crate) nostr_discovery_enabled: bool,
+    /// Browser-compatible WebRTC is opt-in on native/mobile. Relay discovery
+    /// still discovers UDP/TCP endpoints while this is false.
+    #[serde(default)]
+    pub(crate) webrtc_enabled: bool,
     /// When the user has WG upstream enabled + configured, the OS-side
     /// (`NEPacketTunnelProvider` on iOS, `VpnService` on Android) is
     /// expected to:
@@ -368,6 +372,7 @@ impl MobileTunnelConfig {
             share_local_candidates: app.lan_discovery_enabled,
             connect_to_non_roster_fips_peers: app.connect_to_non_roster_fips_peers,
             nostr_discovery_enabled: app.fips_nostr_discovery_enabled,
+            webrtc_enabled: app.fips_webrtc_enabled,
             excluded_routes,
             dns_servers,
             dns_forwarders: Vec::new(),

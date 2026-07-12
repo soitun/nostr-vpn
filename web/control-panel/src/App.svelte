@@ -74,7 +74,8 @@
     fipsHostTunnelEnabled: false,
     connectToNonRosterFipsPeers: true,
     fipsNostrDiscoveryEnabled: true,
-    fipsBootstrapEnabled: true,
+    fipsWebrtcEnabled: false,
+    fipsBootstrapEnabled: false,
     fipsBootstrapPeers: '',
     fipsHostInboundTcpPorts: '',
     autoconnect: false,
@@ -210,6 +211,7 @@
       fipsHostTunnelEnabled: next.fipsHostTunnelEnabled,
       connectToNonRosterFipsPeers: next.connectToNonRosterFipsPeers,
       fipsNostrDiscoveryEnabled: next.fipsNostrDiscoveryEnabled,
+      fipsWebrtcEnabled: next.fipsWebrtcEnabled,
       fipsBootstrapEnabled: next.fipsBootstrapEnabled,
       fipsBootstrapPeers: bootstrapPeersToText(next.fipsBootstrapPeers),
       fipsHostInboundTcpPorts: next.fipsHostInboundTcpPorts,
@@ -873,6 +875,7 @@
         fipsHostTunnelEnabled: settingsDraft.fipsHostTunnelEnabled,
         connectToNonRosterFipsPeers: settingsDraft.connectToNonRosterFipsPeers,
         fipsNostrDiscoveryEnabled: settingsDraft.fipsNostrDiscoveryEnabled,
+        fipsWebrtcEnabled: settingsDraft.fipsWebrtcEnabled,
         fipsBootstrapEnabled: settingsDraft.fipsBootstrapEnabled,
         fipsBootstrapPeers: textToBootstrapPeers(settingsDraft.fipsBootstrapPeers),
         fipsHostInboundTcpPorts: settingsDraft.fipsHostInboundTcpPorts,
@@ -1893,6 +1896,15 @@
                 <input
                   type="checkbox"
                   bind:checked={settingsDraft.fipsBootstrapEnabled}
+                  on:change={() => (settingsDirty = true)}
+                />
+              </label>
+
+              <label class="switch-row">
+                <span>Enable WebRTC transport</span>
+                <input
+                  type="checkbox"
+                  bind:checked={settingsDraft.fipsWebrtcEnabled}
                   on:change={() => (settingsDirty = true)}
                 />
               </label>

@@ -271,12 +271,14 @@ fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig 
             .stun_servers
             .clone_from(&mobile.stun_servers);
     }
-    configure_mobile_webrtc_transport(
-        &mut config,
-        nostr_enabled,
-        &mobile.nostr_relays,
-        &mobile.stun_servers,
-    );
+    if mobile.webrtc_enabled {
+        configure_mobile_webrtc_transport(
+            &mut config,
+            nostr_enabled,
+            &mobile.nostr_relays,
+            &mobile.stun_servers,
+        );
+    }
     config.transports.udp = TransportInstances::Single(UdpConfig {
         bind_addr: Some(mobile_udp_bind_addr(mobile.listen_port)),
         outbound_only: Some(false),
@@ -559,6 +561,7 @@ mod endpoint_config_tests {
             peers: vec![test_peer()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
+            webrtc_enabled: true,
             ..empty_config()
         };
         let config = fips_endpoint_config("nostr-vpn:test", &mobile);
@@ -593,5 +596,21 @@ mod endpoint_config_tests {
 
         assert!(!config.node.discovery.nostr.enabled);
         assert!(config.transports.webrtc.is_empty());
+    }
+
+    #[test]
+    fn mobile_endpoint_config_keeps_nostr_discovery_without_webrtc_by_default() {
+        let mobile = MobileTunnelConfig {
+            peers: vec![test_peer()],
+            nostr_discovery_enabled: true,
+            webrtc_enabled: false,
+            ..empty_config()
+        };
+        let config = fips_endpoint_config("nostr-vpn:test", &mobile);
+
+        assert!(config.node.discovery.nostr.enabled);
+        assert!(config.node.discovery.nostr.advertise);
+        assert!(config.transports.webrtc.is_empty());
+        assert!(!config.transports.udp.is_empty());
     }
 }

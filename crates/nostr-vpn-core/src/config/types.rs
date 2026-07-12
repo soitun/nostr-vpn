@@ -247,6 +247,13 @@ pub struct AppConfig {
         skip_serializing_if = "is_true"
     )]
     pub fips_nostr_discovery_enabled: bool,
+    /// Enable the browser-compatible FIPS WebRTC transport. Nostr discovery
+    /// remains available to UDP/TCP transports when this is false.
+    #[serde(
+        default = "default_fips_webrtc_enabled",
+        skip_serializing_if = "is_false"
+    )]
+    pub fips_webrtc_enabled: bool,
     /// Master switch for dialing the bootstrap/transit peer list below. When off,
     /// the list is kept but not dialed.
     #[serde(
@@ -841,6 +848,7 @@ impl Default for AppConfig {
             fips_host_tunnel_enabled: default_fips_host_tunnel_enabled(),
             connect_to_non_roster_fips_peers: default_connect_to_non_roster_fips_peers(),
             fips_nostr_discovery_enabled: default_fips_nostr_discovery_enabled(),
+            fips_webrtc_enabled: default_fips_webrtc_enabled(),
             fips_bootstrap_enabled: default_fips_bootstrap_enabled(),
             fips_bootstrap_peers: default_fips_bootstrap_peers(),
             fips_host_inbound_tcp_ports: Vec::new(),

@@ -55,6 +55,7 @@ struct AppState: Decodable {
     var paidRouteMarket = PaidRouteMarketState()
     var connectToNonRosterFipsPeers = true
     var fipsNostrDiscoveryEnabled = true
+    var fipsWebrtcEnabled = false
     var fipsBootstrapEnabled = true
     var magicDnsSuffix = ""
     var magicDnsStatus = ""
@@ -89,7 +90,7 @@ struct AppState: Decodable {
         case wireguardExitMtu, wireguardExitPersistentKeepaliveSecs, wireguardExitConfig
         case paidExitSeller, paidRouteMarket
         case connectToNonRosterFipsPeers
-        case fipsNostrDiscoveryEnabled, fipsBootstrapEnabled
+        case fipsNostrDiscoveryEnabled, fipsWebrtcEnabled, fipsBootstrapEnabled
         case magicDnsSuffix, magicDnsStatus, autoconnect
         case inviteBroadcastActive, inviteBroadcastRemainingSecs
         case nearbyDiscoveryActive, nearbyDiscoveryRemainingSecs, configPath
@@ -154,6 +155,7 @@ struct AppState: Decodable {
         paidRouteMarket = (try? container.decodeIfPresent(PaidRouteMarketState.self, forKey: .paidRouteMarket)) ?? PaidRouteMarketState()
         connectToNonRosterFipsPeers = container.bool(.connectToNonRosterFipsPeers, default: true)
         fipsNostrDiscoveryEnabled = container.bool(.fipsNostrDiscoveryEnabled, default: true)
+        fipsWebrtcEnabled = container.bool(.fipsWebrtcEnabled)
         fipsBootstrapEnabled = container.bool(.fipsBootstrapEnabled, default: true)
         magicDnsSuffix = container.string(.magicDnsSuffix)
         magicDnsStatus = container.string(.magicDnsStatus)

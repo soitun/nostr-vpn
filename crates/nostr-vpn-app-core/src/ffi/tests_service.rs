@@ -768,7 +768,7 @@ exit 0
     }
 
     #[test]
-    fn settings_patch_persists_fips_host_controls() {
+    fn settings_patch_persists_fips_controls() {
         let dir = unique_service_test_dir("nvpn-app-core-fips-host");
 
         let error = anyhow!("boom");
@@ -781,6 +781,7 @@ exit 0
             patch: SettingsPatch {
                 fips_host_tunnel_enabled: Some(false),
                 connect_to_non_roster_fips_peers: Some(false),
+                fips_webrtc_enabled: Some(true),
                 fips_host_inbound_tcp_ports: Some("443, 22, 22".to_string()),
                 ..SettingsPatch::default()
             },
@@ -790,11 +791,13 @@ exit 0
         let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
         assert!(!saved.fips_host_tunnel_enabled);
         assert!(!saved.connect_to_non_roster_fips_peers);
+        assert!(saved.fips_webrtc_enabled);
         assert_eq!(saved.fips_host_inbound_tcp_ports, vec![22, 443]);
 
         let state = runtime.state();
         assert!(!state.fips_host_tunnel_enabled);
         assert!(!state.connect_to_non_roster_fips_peers);
+        assert!(state.fips_webrtc_enabled);
         assert_eq!(state.fips_host_inbound_tcp_ports, "22, 443");
 
         let _ = fs::remove_dir_all(&dir);

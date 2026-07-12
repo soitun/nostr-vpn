@@ -573,6 +573,8 @@ struct SetArgs {
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     fips_nostr_discovery_enabled: Option<bool>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+    fips_webrtc_enabled: Option<bool>,
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     fips_bootstrap_enabled: Option<bool>,
     #[arg(long)]
     fips_host_inbound_tcp_ports: Option<String>,

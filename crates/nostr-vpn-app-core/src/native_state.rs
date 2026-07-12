@@ -473,6 +473,7 @@ pub struct NativeAppState {
     pub fips_host_tunnel_enabled: bool,
     pub connect_to_non_roster_fips_peers: bool,
     pub fips_nostr_discovery_enabled: bool,
+    pub fips_webrtc_enabled: bool,
     pub fips_bootstrap_enabled: bool,
     /// Editable bootstrap/transit peers (npub -> transport-tagged addresses).
     pub fips_bootstrap_peers: HashMap<String, Vec<String>>,

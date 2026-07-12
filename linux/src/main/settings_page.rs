@@ -111,6 +111,18 @@ fn build_settings_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             },
         },
     );
+    switch_row(
+        app,
+        &fips,
+        "Enable WebRTC transport",
+        state.fips_webrtc_enabled,
+        |enabled| NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                fips_webrtc_enabled: Some(enabled),
+                ..SettingsPatch::default()
+            },
+        },
+    );
     page.append(&fips);
 
     let public_fips = card();

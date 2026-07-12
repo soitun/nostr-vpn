@@ -15,6 +15,7 @@ impl FipsPrivateTunnelRuntime {
             advertised_endpoint: config.advertised_endpoint.clone(),
             advertise_public_endpoint: config.advertise_public_endpoint,
             nostr_discovery_enabled: config.nostr_discovery_enabled,
+            webrtc_enabled: config.webrtc_enabled,
             stun_servers: config.stun_servers.clone(),
             nostr_relays: config.nostr_relays.clone(),
             share_local_candidates: config.share_local_candidates,

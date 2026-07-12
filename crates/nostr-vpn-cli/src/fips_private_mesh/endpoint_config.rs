@@ -7,6 +7,7 @@ struct FipsEndpointTransportConfig {
     /// only configured static/bootstrap peers and does not enable ambient
     /// relay, LAN, or same-host endpoint discovery.
     nostr_discovery_enabled: bool,
+    webrtc_enabled: bool,
     stun_servers: Vec<String>,
     nostr_relays: Vec<String>,
     share_local_candidates: bool,
@@ -174,13 +175,15 @@ fn fips_endpoint_config_with_open_discovery_limit(
             config.node.discovery.nostr.advert_relays = transport.nostr_relays.clone();
             config.node.discovery.nostr.dm_relays = transport.nostr_relays.clone();
         }
-        configure_fips_webrtc_transport(
-            &mut config,
-            advertise_on_nostr,
-            &transport.nostr_relays,
-            &transport.stun_servers,
-            mesh_mtu.underlay_udp,
-        );
+        if transport.webrtc_enabled {
+            configure_fips_webrtc_transport(
+                &mut config,
+                advertise_on_nostr,
+                &transport.nostr_relays,
+                &transport.stun_servers,
+                mesh_mtu.underlay_udp,
+            );
+        }
     }
     config.transports.udp = TransportInstances::Single(UdpConfig {
         bind_addr,
@@ -537,6 +540,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     #[cfg(target_os = "linux")]
     pub(crate) exit_node_leak_protection: bool,
     nostr_discovery_enabled: bool,
+    webrtc_enabled: bool,
     nostr_discovery_policy: NostrDiscoveryPolicy,
     open_discovery_max_pending: usize,
     mesh_mtu: MeshMtu,
@@ -556,12 +560,16 @@ mod endpoint_config_tests {
             .expect("peer config")
     }
 
-    fn test_transport(nostr_discovery_enabled: bool) -> FipsEndpointTransportConfig {
+    fn test_transport(
+        nostr_discovery_enabled: bool,
+        webrtc_enabled: bool,
+    ) -> FipsEndpointTransportConfig {
         FipsEndpointTransportConfig {
             listen_port: 51820,
             advertised_endpoint: "192.168.50.20:51820".to_string(),
             advertise_public_endpoint: false,
             nostr_discovery_enabled,
+            webrtc_enabled,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
             share_local_candidates: true,
@@ -572,7 +580,7 @@ mod endpoint_config_tests {
     fn endpoint_config_configures_webrtc_when_nostr_discovery_on() {
         let peer = test_peer();
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
-        let transport = test_transport(true);
+        let transport = test_transport(true, true);
         let mesh_mtu = resolve_private_mesh_mtu(None, None, None);
         let config = fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
@@ -606,7 +614,7 @@ mod endpoint_config_tests {
     fn endpoint_config_leaves_webrtc_empty_when_nostr_discovery_off() {
         let peer = test_peer();
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
-        let transport = test_transport(false);
+        let transport = test_transport(false, true);
         let config = fips_endpoint_config_with_open_discovery_limit(
             &endpoint_peers,
             Some(&transport),
@@ -617,6 +625,25 @@ mod endpoint_config_tests {
 
         assert!(!config.node.discovery.nostr.enabled);
         assert!(config.transports.webrtc.is_empty());
+    }
+
+    #[test]
+    fn endpoint_config_keeps_nostr_discovery_without_webrtc_by_default() {
+        let peer = test_peer();
+        let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
+        let transport = test_transport(true, false);
+        let config = fips_endpoint_config_with_open_discovery_limit(
+            &endpoint_peers,
+            Some(&transport),
+            resolve_private_mesh_mtu(None, None, None),
+            NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        );
+
+        assert!(config.node.discovery.nostr.enabled);
+        assert!(config.node.discovery.nostr.advertise);
+        assert!(config.transports.webrtc.is_empty());
+        assert!(!config.transports.udp.is_empty());
     }
 
     #[test]

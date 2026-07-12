@@ -124,9 +124,29 @@ fn fips_discovery_defaults_on_without_privileged_bootstrap_peers() {
     let config = AppConfig::generated();
 
     assert!(config.fips_nostr_discovery_enabled);
+    assert!(!config.fips_webrtc_enabled);
     assert!(!config.fips_bootstrap_enabled);
     assert!(config.fips_bootstrap_peers.is_empty());
     assert!(config.fips_bootstrap_peer_endpoints().is_empty());
+}
+
+#[test]
+fn fips_webrtc_is_explicitly_opt_in_and_round_trips() {
+    let default_config: AppConfig = toml::from_str("").expect("parse empty config");
+    assert!(!default_config.fips_webrtc_enabled);
+    assert!(!toml::to_string(&default_config)
+        .expect("serialize default config")
+        .contains("fips_webrtc_enabled"));
+
+    let enabled = AppConfig {
+        fips_webrtc_enabled: true,
+        ..AppConfig::default()
+    };
+    let encoded = toml::to_string(&enabled).expect("serialize enabled config");
+    assert!(encoded.contains("fips_webrtc_enabled = true"));
+    let decoded: AppConfig = toml::from_str(&encoded).expect("parse enabled config");
+    assert!(decoded.fips_webrtc_enabled);
+    assert!(decoded.fips_nostr_discovery_enabled);
 }
 
 #[test]

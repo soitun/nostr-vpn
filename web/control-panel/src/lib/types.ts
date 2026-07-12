@@ -148,6 +148,7 @@ export type UiState = {
   fipsHostTunnelEnabled: boolean;
   connectToNonRosterFipsPeers: boolean;
   fipsNostrDiscoveryEnabled: boolean;
+  fipsWebrtcEnabled: boolean;
   fipsBootstrapEnabled: boolean;
   fipsBootstrapPeers: Record<string, string[]>;
   fipsBootstrapPeerDefaults: Record<string, string[]>;

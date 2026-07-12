@@ -561,6 +561,15 @@ internal fun FipsSettingsCard(state: AppState, dispatch: (JSONObject) -> Unit) {
             )
             Text("Use bootstrap servers")
         }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = state.fipsWebrtcEnabled,
+                onCheckedChange = { enabled ->
+                    dispatch(NativeActions.updateSettings("fipsWebrtcEnabled" to enabled))
+                },
+            )
+            Text("Enable WebRTC transport")
+        }
     }
 }
 

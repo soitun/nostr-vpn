@@ -3209,6 +3209,10 @@ struct RootView: View {
                     get: { state.fipsNostrDiscoveryEnabled },
                     set: { manager.setFipsNostrDiscoveryEnabled($0) }
                 ))
+                settingsToggleRow("Enable WebRTC transport", isOn: Binding(
+                    get: { state.fipsWebrtcEnabled },
+                    set: { manager.setFipsWebrtcEnabled($0) }
+                ))
                 settingsToggleRow("Use bootstrap servers", isOn: Binding(
                     get: { state.fipsBootstrapEnabled },
                     set: { manager.setFipsBootstrapEnabled($0) }

@@ -189,6 +189,9 @@ impl NativeAppRuntime {
         if let Some(value) = patch.fips_nostr_discovery_enabled {
             self.config.fips_nostr_discovery_enabled = value;
         }
+        if let Some(value) = patch.fips_webrtc_enabled {
+            self.config.fips_webrtc_enabled = value;
+        }
         if let Some(value) = patch.fips_bootstrap_enabled {
             self.config.fips_bootstrap_enabled = value;
         }

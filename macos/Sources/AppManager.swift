@@ -896,6 +896,10 @@ final class AppManager: ObservableObject {
         dispatch(.updateSettings(patch: settingsPatch(fipsNostrDiscoveryEnabled: enabled)), status: "Saving FIPS option")
     }
 
+    func setFipsWebrtcEnabled(_ enabled: Bool) {
+        dispatch(.updateSettings(patch: settingsPatch(fipsWebrtcEnabled: enabled)), status: "Saving FIPS option")
+    }
+
     func setFipsBootstrapEnabled(_ enabled: Bool) {
         dispatch(.updateSettings(patch: settingsPatch(fipsBootstrapEnabled: enabled)), status: "Saving FIPS option")
     }
@@ -1983,6 +1987,7 @@ final class AppManager: ObservableObject {
             fipsHostTunnelEnabled: false,
             connectToNonRosterFipsPeers: true,
             fipsNostrDiscoveryEnabled: true,
+            fipsWebrtcEnabled: false,
             fipsBootstrapEnabled: false,
             fipsBootstrapPeers: [:],
             fipsBootstrapPeerDefaults: [:],
@@ -2649,6 +2654,7 @@ func settingsPatch(
     fipsHostTunnelEnabled: Bool? = nil,
     connectToNonRosterFipsPeers: Bool? = nil,
     fipsNostrDiscoveryEnabled: Bool? = nil,
+    fipsWebrtcEnabled: Bool? = nil,
     fipsBootstrapEnabled: Bool? = nil,
     fipsBootstrapPeers: [String: [String]]? = nil,
     fipsHostInboundTcpPorts: String? = nil,
@@ -2706,6 +2712,7 @@ func settingsPatch(
         fipsHostTunnelEnabled: fipsHostTunnelEnabled,
         connectToNonRosterFipsPeers: connectToNonRosterFipsPeers,
         fipsNostrDiscoveryEnabled: fipsNostrDiscoveryEnabled,
+        fipsWebrtcEnabled: fipsWebrtcEnabled,
         fipsBootstrapEnabled: fipsBootstrapEnabled,
         fipsBootstrapPeers: fipsBootstrapPeers,
         fipsHostInboundTcpPorts: fipsHostInboundTcpPorts,
