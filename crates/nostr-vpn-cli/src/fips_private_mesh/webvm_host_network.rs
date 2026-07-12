@@ -367,7 +367,20 @@ async fn answer_webvm_fips_dns(
         }
         return Some(response);
     }
-    if !vpn_dns_enabled.load(Ordering::Acquire) {
+    answer_webvm_public_dns(
+        query,
+        secure_dns,
+        vpn_dns_enabled.load(Ordering::Acquire),
+    )
+    .await
+}
+
+async fn answer_webvm_public_dns(
+    query: &[u8],
+    secure_dns: &nostr_vpn_core::secure_dns::SecureDnsResolver,
+    vpn_dns_enabled: bool,
+) -> Option<Vec<u8>> {
+    if !vpn_dns_enabled {
         return webvm_public_dns_refused_response(query);
     }
     match nostr_vpn_core::secure_dns::SecureDnsLookup::resolve(secure_dns, query).await {
@@ -376,6 +389,50 @@ async fn answer_webvm_fips_dns(
             eprintln!("webvm: secure DNS request failed: {error:#}");
             nostr_vpn_core::secure_dns::build_servfail_response(query)
         }
+    }
+}
+
+#[cfg(test)]
+mod webvm_host_dns_tests {
+    use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
+    use hickory_proto::rr::{Name, RecordType};
+    use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
+
+    use super::*;
+
+    fn query(name: &str) -> Vec<u8> {
+        let mut query = Message::new(73, MessageType::Query, OpCode::Query);
+        query.add_query(hickory_proto::op::Query::query(
+            Name::from_ascii(name).expect("query name"),
+            RecordType::A,
+        ));
+        let mut packet = Vec::new();
+        query
+            .emit(&mut BinEncoder::new(&mut packet))
+            .expect("query packet");
+        packet
+    }
+
+    #[tokio::test]
+    async fn webvm_public_dns_refuses_until_exit_is_approved() {
+        let resolver = nostr_vpn_core::secure_dns::SecureDnsResolver::new().expect("resolver");
+        let response = answer_webvm_public_dns(&query("example.com."), &resolver, false)
+            .await
+            .expect("refused response");
+        let response = Message::from_vec(&response).expect("DNS response");
+        assert_eq!(response.metadata.response_code, ResponseCode::Refused);
+    }
+
+    #[tokio::test]
+    #[ignore = "requires live authenticated DNS-over-HTTPS"]
+    async fn webvm_public_dns_resolves_over_live_authenticated_doh() {
+        let resolver = nostr_vpn_core::secure_dns::SecureDnsResolver::new().expect("resolver");
+        let response = answer_webvm_public_dns(&query("example.com."), &resolver, true)
+            .await
+            .expect("DoH response");
+        let response = Message::from_vec(&response).expect("DNS response");
+        assert_eq!(response.metadata.response_code, ResponseCode::NoError);
+        assert!(!response.answers.is_empty());
     }
 }
 
