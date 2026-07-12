@@ -147,7 +147,21 @@ wait_for_roster_member() {
   local member="$2"
   local description="$3"
   for _ in $(seq 1 80); do
-    if [[ "$(config_array_contains "$service" participants "$member" || true)" == "yes" ]]; then
+    if [[ "$(config_array_contains "$service" devices "$member" || true)" == "yes" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "bootstrap-discovery docker e2e failed: $description" >&2
+  exit 1
+}
+
+wait_for_join_acceptance() {
+  local service="$1"
+  local description="$2"
+  for _ in $(seq 1 80); do
+    if ! "${COMPOSE[@]}" exec -T "$service" sh -lc \
+      "grep -q '^\\[networks.outbound_join_request\\]' /root/.config/nvpn/config.toml"; then
       return 0
     fi
     sleep 1
@@ -279,7 +293,7 @@ accept_join_request_through_gui_api node-a "$REQUESTER_NPUB"
 wait_for_roster_member node-a "$REQUESTER_NPUB" "GUI acceptance did not persist the phone in the admin roster"
 "${COMPOSE[@]}" exec -T node-a nvpn reload >/dev/null
 
-wait_for_roster_member node-c "$REQUESTER_NPUB" "phone never applied the accepted roster"
+wait_for_join_acceptance node-c "phone never applied the accepted roster"
 wait_for_connected_peer node-a "desktop never reported the accepted phone online"
 wait_for_connected_peer node-c "phone never reported the desktop online"
 
