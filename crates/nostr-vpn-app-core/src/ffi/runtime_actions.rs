@@ -413,9 +413,9 @@ impl NativeAppRuntime {
         let network_id = self.active_admin_network_id()?;
         let prepared =
             prepare_join_approval(&self.config, &network_id, bootstrap, unix_timestamp())?;
-        self.publish_join_request_approval_events(&prepared.events)?;
         self.config = prepared.updated_config;
         self.save_reload_and_refresh()?;
+        self.queue_direct_join_request_approval(bootstrap, &prepared.events)?;
         if !self.vpn_enabled {
             self.connect_vpn()?;
         }
@@ -424,22 +424,29 @@ impl NativeAppRuntime {
 
     #[cfg(test)]
     #[allow(clippy::unnecessary_wraps)]
-    fn publish_join_request_approval_events(&mut self, events: &[Event]) -> Result<()> {
+    fn queue_direct_join_request_approval(
+        &mut self,
+        _bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
+        events: &[Event],
+    ) -> Result<()> {
         self.published_join_approval_events
             .extend(events.iter().cloned());
         Ok(())
     }
 
     #[cfg(not(test))]
-    fn publish_join_request_approval_events(&self, events: &[Event]) -> Result<()> {
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("failed to start join request approval publisher")?;
-        runtime.block_on(crate::join_approval_transport::publish_join_approval_events(
-            &self.config,
+    fn queue_direct_join_request_approval(
+        &self,
+        bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
+        events: &[Event],
+    ) -> Result<()> {
+        nostr_vpn_core::join_pubsub::queue_direct_join_approval(
+            &self.config_path,
+            &bootstrap.device_app_key_npub,
+            &bootstrap.request_npub,
             events,
-        ))
+        )?;
+        Ok(())
     }
 
     fn active_admin_network_id(&self) -> Result<String> {

@@ -14,6 +14,8 @@ use nostr_vpn_core::identity_bridge::{
 };
 use nostr_vpn_core::join_pubsub::{
     NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, NostrJoinFipsPubsubClient, NostrJoinFipsPubsubDatagram,
+    delivered_approval_event_datagram, direct_join_approval_outbox_directory,
+    load_direct_join_approvals, queue_direct_join_approval,
 };
 use nostr_vpn_core::join_requests::MAX_NOSTR_JOIN_APPROVAL_AGE_SECS;
 
@@ -314,6 +316,45 @@ fn fips_pubsub_sends_only_receipt_subscription_and_auto_applies_approval() {
         .expect("approval applied");
     assert_eq!(applied.profile_id, profile_id);
     assert!(joiner.pending_nostr_join_request.is_none());
+}
+
+#[test]
+fn direct_fips_approval_outbox_delivers_without_a_relay_subscription() {
+    let path = unique_temp_config_path("direct-join-approval");
+    let mut joiner = pending_joiner();
+    let pending = joiner
+        .pending_nostr_join_request
+        .as_ref()
+        .expect("pending request")
+        .clone();
+    let recipient = joiner.own_nostr_pubkey_hex().expect("joiner pubkey");
+    let admin = Keys::generate();
+    let profile_id = NostrIdentityId::new_v4();
+    let events = approval_events(&joiner, &admin, &pending.request.request_secret, profile_id);
+
+    let queued_path =
+        queue_direct_join_approval(&path, &recipient, &pending.request.request_pubkey, &events)
+            .expect("queue direct approval");
+    let queued = load_direct_join_approvals(&path);
+    assert_eq!(queued.len(), 1);
+    assert_eq!(queued[0].0, queued_path);
+    assert_eq!(queued[0].1.recipient_npub, recipient);
+    assert_eq!(queued[0].1.events.len(), 2);
+
+    let mut client = NostrJoinFipsPubsubClient::new(&joiner).expect("pubsub client");
+    let mut applied = None;
+    for event in &queued[0].1.events {
+        let datagram = delivered_approval_event_datagram(&pending.request.request_pubkey, event)
+            .expect("direct FIPS approval datagram");
+        applied = client
+            .ingest_datagram(&mut joiner, &datagram, APPROVED_AT + 1)
+            .expect("ingest direct approval")
+            .or(applied);
+    }
+    assert_eq!(applied.expect("approval applied").profile_id, profile_id);
+    assert!(joiner.pending_nostr_join_request.is_none());
+
+    let _ = fs::remove_dir_all(direct_join_approval_outbox_directory(&path));
 }
 
 #[test]

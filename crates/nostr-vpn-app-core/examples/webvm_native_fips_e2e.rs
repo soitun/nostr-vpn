@@ -5,7 +5,7 @@ use std::io::{self, BufRead, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Child, Command, ExitCode, Stdio};
 
 use nostr_vpn_app_core::{FfiApp, NativeAppAction, NativeAppState};
 use nostr_vpn_core::config::AppConfig;
@@ -20,6 +20,37 @@ const IMPORT_COMMAND_PREFIX: &str = "import ";
 struct Args {
     config_path: PathBuf,
     nvpn_bin: PathBuf,
+}
+
+struct IsolatedAdminDaemon(Child);
+
+impl IsolatedAdminDaemon {
+    fn spawn(args: &Args) -> HarnessResult<Self> {
+        let child = Command::new(&args.nvpn_bin)
+            .arg("daemon")
+            .arg("--config")
+            .arg(&args.config_path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|_| HarnessError::new("preflight", "admin-daemon-start-failed"))?;
+        Ok(Self(child))
+    }
+
+    fn require_running(&mut self) -> HarnessResult<()> {
+        match self.0.try_wait() {
+            Ok(None) => Ok(()),
+            Ok(Some(_)) => Err(HarnessError::new("runtime", "admin-daemon-exited")),
+            Err(_) => Err(HarnessError::new("runtime", "admin-daemon-status-failed")),
+        }
+    }
+}
+
+impl Drop for IsolatedAdminDaemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -177,6 +208,7 @@ fn run() -> HarnessResult<()> {
     }
     let args = Args::parse()?;
     let exit_node = prepare_admin_config(&args.config_path)?;
+    let mut daemon = IsolatedAdminDaemon::spawn(&args)?;
     let app = FfiApp::new_with_config_path(
         args.config_path,
         env!("CARGO_PKG_VERSION").to_string(),
@@ -210,6 +242,7 @@ fn run() -> HarnessResult<()> {
     if !participant_was_added(&before, &after) {
         return Err(HarnessError::new("import", "participant-not-added"));
     }
+    daemon.require_running()?;
     emit_status(&json!({
         "status": "imported",
         "participantAdded": true,

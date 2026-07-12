@@ -1,8 +1,11 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
+#[cfg(test)]
 use futures::future::join_all;
-use nostr_pubsub::{EventBus, EventSource, QueryOptions, VerifiedEvent};
+use nostr_pubsub::{EventBus, QueryOptions};
+#[cfg(test)]
+use nostr_pubsub::{EventSource, VerifiedEvent};
 use nostr_pubsub_relay::RelayEventBus;
 use nostr_sdk::prelude::{
     Alphabet, Client, Event, Filter, Kind, PublicKey, RelayPoolNotification, SingleLetterTag,
@@ -12,11 +15,7 @@ use nostr_vpn_core::config::AppConfig;
 #[cfg(not(test))]
 use nostr_vpn_core::join_requests::NOSTR_VPN_JOIN_APPROVAL_RELAY;
 
-#[cfg(not(test))]
-pub async fn publish_join_approval_events(config: &AppConfig, events: &[Event]) -> Result<()> {
-    publish_join_approval_events_to_relay(config, events, NOSTR_VPN_JOIN_APPROVAL_RELAY).await
-}
-
+#[cfg(test)]
 async fn publish_join_approval_events_to_relay(
     config: &AppConfig,
     events: &[Event],

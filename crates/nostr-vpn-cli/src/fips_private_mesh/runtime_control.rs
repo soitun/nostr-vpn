@@ -31,6 +31,34 @@ impl FipsPrivateMeshRuntime {
         .await
     }
 
+    pub(crate) async fn send_join_approval_event(
+        &self,
+        participant: &str,
+        request_pubkey: &str,
+        event: &nostr_sdk::Event,
+    ) -> Result<()> {
+        let participant_key = participant_pubkey_bytes(participant);
+        let destination = {
+            let mesh = self.mesh.load();
+            let peer_identities = self.peer_identities.load();
+            control_frame_destination_peer(&mesh, &peer_identities, participant)?
+        };
+        let datagram = delivered_approval_event_datagram(request_pubkey, event)?;
+        let sent_len = datagram.payload.len();
+        self.endpoint
+            .send_datagram_batch_to_peer(
+                destination,
+                vec![FipsEndpointOutboundDatagram::new(
+                    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
+                    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
+                    datagram.payload,
+                )],
+            )
+            .await
+            .with_context(|| format!("failed to send direct FIPS join approval to {participant}"))?;
+        self.note_tx(Some(participant), participant_key.as_ref(), sent_len)
+    }
+
     pub(crate) async fn send_roster(
         &self,
         participant: &str,

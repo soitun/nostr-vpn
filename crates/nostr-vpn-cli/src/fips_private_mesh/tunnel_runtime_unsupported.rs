@@ -89,6 +89,15 @@ impl FipsPrivateTunnelRuntime {
         Ok(())
     }
 
+    pub(crate) async fn send_join_approval_event(
+        &self,
+        _participant: &str,
+        _request_pubkey: &str,
+        _event: &nostr_sdk::Event,
+    ) -> Result<()> {
+        Err(anyhow!("direct FIPS join approval is unsupported on this platform"))
+    }
+
     pub(crate) async fn send_roster(
         &self,
         _participant: &str,

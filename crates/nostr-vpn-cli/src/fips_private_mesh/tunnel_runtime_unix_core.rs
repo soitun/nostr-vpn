@@ -742,6 +742,17 @@ impl FipsPrivateTunnelRuntime {
             .await
     }
 
+    pub(crate) async fn send_join_approval_event(
+        &self,
+        participant: &str,
+        request_pubkey: &str,
+        event: &nostr_sdk::Event,
+    ) -> Result<()> {
+        self.mesh
+            .send_join_approval_event(participant, request_pubkey, event)
+            .await
+    }
+
     pub(crate) async fn send_roster(
         &self,
         participant: &str,

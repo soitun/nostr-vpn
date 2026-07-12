@@ -1,5 +1,7 @@
 #[path = "daemon_vpn/heartbeat.rs"]
 mod daemon_vpn_heartbeat;
+#[path = "daemon_vpn/join_approval.rs"]
+mod daemon_vpn_join_approval;
 #[cfg(feature = "paid-exit")]
 #[path = "daemon_vpn/paid_exit.rs"]
 mod daemon_vpn_paid_exit;
@@ -7,6 +9,7 @@ mod daemon_vpn_paid_exit;
 mod daemon_vpn_startup;
 
 use daemon_vpn_heartbeat::*;
+use daemon_vpn_join_approval::*;
 #[cfg(feature = "paid-exit")]
 use daemon_vpn_paid_exit::*;
 use daemon_vpn_startup::*;
@@ -152,6 +155,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         join_request_sends: &mut fips_join_request_sends,
                     })
                     .await;
+                    if let Some(runtime) = fips_tunnel_runtime.as_ref() {
+                        flush_direct_join_approval_outbox(runtime, &app, &config_path).await;
+                    }
                 }
                 if !vpn_active {
                     continue;

@@ -2,6 +2,7 @@ use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 #[cfg(feature = "paid-exit")]
 use cashu_service::StreamingRoutePaymentEnvelope;
+use fips_core::FipsEndpointOutboundDatagram;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use fips_endpoint::EthernetConfig;
@@ -33,6 +34,9 @@ use nostr_vpn_core::fips_mesh::packet_endpoints;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use nostr_vpn_core::fips_mesh::{FipsEndpointAdmissionCache, FipsEndpointSourceAdmitter};
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission};
+use nostr_vpn_core::join_pubsub::{
+    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, delivered_approval_event_datagram,
+};
 use nostr_vpn_core::join_requests::MeshJoinRequest;
 use nostr_vpn_core::magic_dns::build_magic_dns_records;
 #[cfg(feature = "paid-exit")]

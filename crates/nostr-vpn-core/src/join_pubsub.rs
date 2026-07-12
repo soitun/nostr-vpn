@@ -1,8 +1,15 @@
-use anyhow::{Context, Result, anyhow};
-use nostr_pubsub::{Filter, FipsPubsubWireCodec, FipsPubsubWireMessage, PublicKey, SubscriptionId};
-use nostr_sdk::prelude::{Alphabet, Event, Kind, SingleLetterTag, Timestamp};
+use std::fs;
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
 
-use crate::config::AppConfig;
+use anyhow::{Context, Result, anyhow};
+use nostr_pubsub::{
+    Filter, FipsPubsubWireCodec, FipsPubsubWireMessage, PublicKey, SubscriptionId, VerifiedEvent,
+};
+use nostr_sdk::prelude::{Alphabet, Event, Kind, SingleLetterTag, Timestamp};
+use serde::{Deserialize, Serialize};
+
+use crate::config::{AppConfig, normalize_nostr_pubkey};
 use crate::identity_bridge::{
     NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE, NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE,
 };
@@ -12,6 +19,16 @@ use crate::join_requests::{AppliedNostrJoinApproval, is_valid_nostr_join_approva
 pub const NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT: u16 = 7_368;
 pub const NOSTR_JOIN_PUBSUB_INITIAL_EVENT_LIMIT: usize = 8;
 const MAX_BUFFERED_APPROVAL_EVENTS: usize = 4;
+const DIRECT_APPROVAL_OUTBOX_VERSION: u8 = 1;
+const MAX_DIRECT_APPROVAL_EVENTS: usize = 4;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueuedNostrJoinApproval {
+    pub version: u8,
+    pub recipient_npub: String,
+    pub request_pubkey: String,
+    pub events: Vec<Event>,
+}
 
 /// One port-addressed FSP DataPacket payload.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +46,159 @@ impl NostrJoinFipsPubsubDatagram {
             payload,
         }
     }
+}
+
+pub fn delivered_approval_event_datagram(
+    request_pubkey: &str,
+    event: &Event,
+) -> Result<NostrJoinFipsPubsubDatagram> {
+    let request_pubkey = normalize_nostr_pubkey(request_pubkey)
+        .context("invalid Nostr join approval request pubkey")?;
+    if !is_targeted_approval_event(event, &request_pubkey) {
+        return Err(anyhow!("event is not a targeted Nostr join approval"));
+    }
+    event
+        .verify()
+        .map_err(|error| anyhow!("invalid signed Nostr join approval event: {error}"))?;
+    let subscription_suffix = request_pubkey
+        .get(..16)
+        .ok_or_else(|| anyhow!("Nostr join approval request pubkey is too short"))?;
+    let subscription_id = SubscriptionId::new(format!("nvpn-join-{subscription_suffix}"));
+    let event = VerifiedEvent::try_from(event.clone())
+        .map_err(|error| anyhow!("invalid signed Nostr join approval event: {error}"))?;
+    let payload = FipsPubsubWireCodec::default()
+        .encode_frame(&FipsPubsubWireMessage::deliver(subscription_id, event))?;
+    Ok(NostrJoinFipsPubsubDatagram::new(payload))
+}
+
+pub fn direct_join_approval_outbox_directory(config_path: &Path) -> PathBuf {
+    config_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("join-approval-outbox")
+}
+
+pub fn queue_direct_join_approval(
+    config_path: &Path,
+    recipient_npub: &str,
+    request_pubkey: &str,
+    events: &[Event],
+) -> Result<PathBuf> {
+    let recipient_npub =
+        normalize_nostr_pubkey(recipient_npub).context("invalid direct join approval recipient")?;
+    let request_pubkey = normalize_nostr_pubkey(request_pubkey)
+        .context("invalid direct join approval request pubkey")?;
+    let events = events
+        .iter()
+        .filter(|event| is_targeted_approval_event(event, &request_pubkey))
+        .cloned()
+        .collect::<Vec<_>>();
+    if events.is_empty() || events.len() > MAX_DIRECT_APPROVAL_EVENTS {
+        return Err(anyhow!(
+            "direct join approval requires 1..={MAX_DIRECT_APPROVAL_EVENTS} targeted events"
+        ));
+    }
+    for event in &events {
+        delivered_approval_event_datagram(&request_pubkey, event)?;
+    }
+    let queued = QueuedNostrJoinApproval {
+        version: DIRECT_APPROVAL_OUTBOX_VERSION,
+        recipient_npub,
+        request_pubkey: request_pubkey.clone(),
+        events,
+    };
+    let directory = direct_join_approval_outbox_directory(config_path);
+    fs::create_dir_all(&directory)
+        .with_context(|| format!("failed to create {}", directory.display()))?;
+    let event_id = queued
+        .events
+        .last()
+        .map(|event| event.id.to_hex())
+        .ok_or_else(|| anyhow!("direct join approval has no event id"))?;
+    let destination = directory.join(format!("{request_pubkey}-{event_id}.json"));
+    if destination.exists() {
+        return Ok(destination);
+    }
+    let temporary = directory.join(format!(
+        ".{request_pubkey}-{}-{event_id}.tmp",
+        std::process::id()
+    ));
+    let bytes = serde_json::to_vec(&queued).context("failed to encode direct join approval")?;
+    write_private_file(&temporary, &bytes)?;
+    if let Err(error) = fs::rename(&temporary, &destination) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).with_context(|| format!("failed to queue {}", destination.display()));
+    }
+    Ok(destination)
+}
+
+pub fn load_direct_join_approvals(config_path: &Path) -> Vec<(PathBuf, QueuedNostrJoinApproval)> {
+    let directory = direct_join_approval_outbox_directory(config_path);
+    let entries = match fs::read_dir(&directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Vec::new(),
+        Err(error) => {
+            eprintln!("failed to scan {}: {error}", directory.display());
+            return Vec::new();
+        }
+    };
+    let mut paths = entries
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .collect::<Vec<_>>();
+    paths.sort();
+    paths.truncate(8);
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            match fs::read(&path)
+                .with_context(|| format!("failed to read {}", path.display()))
+                .and_then(|bytes| {
+                    serde_json::from_slice::<QueuedNostrJoinApproval>(&bytes)
+                        .with_context(|| format!("failed to decode {}", path.display()))
+                }) {
+                Ok(queued) if queued.version == DIRECT_APPROVAL_OUTBOX_VERSION => {
+                    Some((path, queued))
+                }
+                Ok(_) => {
+                    eprintln!(
+                        "discarding unsupported direct join approval {}",
+                        path.display()
+                    );
+                    let _ = fs::remove_file(path);
+                    None
+                }
+                Err(error) => {
+                    eprintln!("discarding invalid direct join approval: {error:#}");
+                    let _ = fs::remove_file(path);
+                    None
+                }
+            }
+        })
+        .collect()
+}
+
+#[cfg(unix)]
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+        .with_context(|| format!("failed to create {}", path.display()))?;
+    file.write_all(bytes)
+        .with_context(|| format!("failed to write {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn write_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    fs::write(path, bytes).with_context(|| format!("failed to write {}", path.display()))
 }
 
 /// Join-side Nostr pubsub protocol endpoint for an FSP DataPacket transport.
@@ -177,7 +347,7 @@ impl NostrJoinFipsPubsubClient {
     }
 }
 
-fn is_targeted_approval_event(event: &Event, request_pubkey: &str) -> bool {
+pub fn is_targeted_approval_event(event: &Event, request_pubkey: &str) -> bool {
     event.kind.as_u16() == 7_368
         && event_has_tag(event, "p", request_pubkey)
         && (event_has_tag(event, "type", NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE)

@@ -7,12 +7,10 @@ pub(crate) use daemon::{args_from_daemon, run_daemon};
 #[cfg(target_os = "linux")]
 use fips_core::FipsEndpointServiceDatagram;
 #[cfg(target_os = "linux")]
-use fips_endpoint::{FipsEndpoint, PeerIdentity};
+use fips_endpoint::FipsEndpoint;
 use nostr_vpn_core::join_pubsub::NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT;
 #[cfg(target_os = "linux")]
 use nostr_vpn_core::join_pubsub::{NostrJoinFipsPubsubClient, NostrJoinFipsPubsubDatagram};
-#[cfg(target_os = "linux")]
-use std::collections::HashMap;
 #[cfg(any(target_os = "linux", test))]
 use std::io::Write as _;
 #[cfg(all(unix, any(target_os = "linux", test)))]
@@ -21,17 +19,10 @@ use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
-#[cfg(target_os = "linux")]
-use std::time::Instant;
-
 #[cfg(any(target_os = "linux", test))]
 const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
 #[cfg(target_os = "linux")]
-const MAX_BROWSER_FIPS_HOSTS: usize = 8;
-#[cfg(target_os = "linux")]
 const HOST_POLL_INTERVAL: Duration = Duration::from_millis(500);
-#[cfg(target_os = "linux")]
-const SUBSCRIBE_RETRY_INTERVAL: Duration = Duration::from_secs(10);
 #[cfg(target_os = "linux")]
 const SERVICE_RECV_BATCH: usize = 8;
 const DEFAULT_WEBVM_PAIRING_URI_PATH: &str = "/run/webvm/join-request";
@@ -443,14 +434,11 @@ async fn pair_over_fips(
     write_pairing_uri(&args.pairing_uri_file, &pairing_uri)?;
 
     println!(
-        "webvm: awaiting approval receipts over Ethernet FIPS service {}",
+        "webvm: awaiting direct approval over FIPS service {}",
         args.join_pubsub_port
     );
     let mut client = NostrJoinFipsPubsubClient::new(app)?;
-    let pairing_result =
-        wait_for_approval(endpoint, &args.config, app, &mut client, shutdown).await;
-    close_subscriptions(endpoint, &client, args.join_pubsub_port).await;
-    pairing_result?;
+    wait_for_approval(endpoint, &args.config, app, &mut client, shutdown).await?;
     remove_pairing_uri(&args.pairing_uri_file)?;
     Ok(())
 }
@@ -463,8 +451,6 @@ async fn wait_for_approval(
     client: &mut NostrJoinFipsPubsubClient,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let subscribe = client.subscribe_datagram(app)?;
-    let mut subscribed = HashMap::<String, (u64, Instant)>::new();
     let mut datagrams = Vec::<FipsEndpointServiceDatagram>::with_capacity(SERVICE_RECV_BATCH);
     let mut host_poll = tokio::time::interval(HOST_POLL_INTERVAL);
     host_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -480,11 +466,6 @@ async fn wait_for_approval(
                 if pending_join_request_changed(config_path, app)? {
                     return Err(anyhow::Error::new(WebvmReloadJoinRequest));
                 }
-                sync_connected_hosts(
-                    endpoint,
-                    &subscribe,
-                    &mut subscribed,
-                ).await?;
             }
             received = endpoint.recv_service_datagram_batch_into(
                 &mut datagrams,
@@ -494,9 +475,9 @@ async fn wait_for_approval(
                     return Err(anyhow!("WebVM pairing FIPS endpoint closed"));
                 };
                 for datagram in &datagrams {
-                    // FIPS is routed: the authenticated source can be the approval
-                    // publisher rather than the adjacent host carrying our subscription.
-                    // The signed payload and request secret authorize the approval.
+                    // FIPS is routed, so the authenticated source can be an admin
+                    // reached through a transit peer. The signed payload and request
+                    // secret still authorize the approval itself.
                     let inbound = NostrJoinFipsPubsubDatagram {
                         source_port: datagram.source_port,
                         destination_port: datagram.destination_port,
@@ -540,88 +521,6 @@ fn pending_join_request_changed(config_path: &Path, app: &AppConfig) -> Result<b
         .as_ref()
         .map(|pending| pending.request.request_pubkey.as_str());
     Ok(current != next)
-}
-
-#[cfg(target_os = "linux")]
-async fn sync_connected_hosts(
-    endpoint: &FipsEndpoint,
-    subscribe: &NostrJoinFipsPubsubDatagram,
-    subscribed: &mut HashMap<String, (u64, Instant)>,
-) -> Result<()> {
-    let mut hosts = endpoint
-        .peers()
-        .await
-        .context("failed to inspect WebVM FIPS peers")?
-        .into_iter()
-        .filter(|peer| {
-            peer.connected
-                && peer
-                    .transport_type
-                    .as_deref()
-                    .is_some_and(|transport| transport.eq_ignore_ascii_case("ethernet"))
-        })
-        .collect::<Vec<_>>();
-    hosts.sort_by(|left, right| left.npub.cmp(&right.npub));
-    if hosts.len() > MAX_BROWSER_FIPS_HOSTS {
-        return Err(anyhow!(
-            "too many browser FIPS hosts in discovery scope ({} > {MAX_BROWSER_FIPS_HOSTS})",
-            hosts.len()
-        ));
-    }
-    let connected = hosts
-        .iter()
-        .map(|peer| peer.npub.clone())
-        .collect::<std::collections::HashSet<_>>();
-    subscribed.retain(|npub, _| connected.contains(npub));
-
-    for host in hosts {
-        let resend = subscribed.get(&host.npub).is_none_or(|(link_id, sent_at)| {
-            *link_id != host.link_id || sent_at.elapsed() >= SUBSCRIBE_RETRY_INTERVAL
-        });
-        if !resend {
-            continue;
-        }
-        let remote = PeerIdentity::from_npub(&host.npub)
-            .with_context(|| format!("invalid browser FIPS host npub {}", host.npub))?;
-        endpoint
-            .send_datagram(
-                remote,
-                subscribe.source_port,
-                subscribe.destination_port,
-                subscribe.payload.clone(),
-            )
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to subscribe for approval receipts through FIPS host {}",
-                    host.npub
-                )
-            })?;
-        subscribed.insert(host.npub, (host.link_id, Instant::now()));
-    }
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-async fn close_subscriptions(
-    endpoint: &FipsEndpoint,
-    client: &NostrJoinFipsPubsubClient,
-    service_port: u16,
-) {
-    let Ok(close) = client.close_datagram() else {
-        return;
-    };
-    let Ok(peers) = endpoint.peers().await else {
-        return;
-    };
-    for peer in peers.into_iter().filter(|peer| peer.connected) {
-        let Ok(remote) = PeerIdentity::from_npub(&peer.npub) else {
-            continue;
-        };
-        let _ = endpoint
-            .send_datagram(remote, service_port, service_port, close.payload.clone())
-            .await;
-    }
 }
 
 #[cfg(target_os = "linux")]
