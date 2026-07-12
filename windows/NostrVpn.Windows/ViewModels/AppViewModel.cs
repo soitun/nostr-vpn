@@ -1481,11 +1481,14 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         // so showing it for ~50ms shifts the entire content below — that's what
         // looked like a flicker on the Share page when toggling broadcast/listen.
         using var noticeCts = new CancellationTokenSource();
-        _ = Task.Delay(TimeSpan.FromMilliseconds(250), noticeCts.Token).ContinueWith(
-            _ => Notice = status,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnRanToCompletion,
-            TaskScheduler.FromCurrentSynchronizationContext());
+        if (SynchronizationContext.Current is not null)
+        {
+            _ = Task.Delay(TimeSpan.FromMilliseconds(250), noticeCts.Token).ContinueWith(
+                _ => Notice = status,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnRanToCompletion,
+                TaskScheduler.FromCurrentSynchronizationContext());
+        }
         try
         {
             var state = await Task.Run(() => _core.Dispatch(actionJson));
