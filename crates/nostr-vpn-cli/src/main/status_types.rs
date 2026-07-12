@@ -384,6 +384,18 @@ impl ConnectMagicDnsRuntime {
     }
 }
 
+fn secure_exit_dns_required(app: &AppConfig) -> bool {
+    !app.internet_source.is_direct()
+}
+
+fn start_split_magic_dns(app: &AppConfig) -> Option<ConnectMagicDnsRuntime> {
+    if secure_exit_dns_required(app) {
+        None
+    } else {
+        ConnectMagicDnsRuntime::start(app)
+    }
+}
+
 impl Drop for ConnectMagicDnsRuntime {
     fn drop(&mut self) {
         if self.resolver_installed

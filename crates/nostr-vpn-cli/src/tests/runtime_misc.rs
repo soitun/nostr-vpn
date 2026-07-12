@@ -13,6 +13,21 @@ fn daemon_vpn_requires_remote_participants_to_be_active() {
 }
 
 #[test]
+fn split_magic_dns_yields_port_53_to_secure_dns_for_every_exit_source() {
+    let mut app = AppConfig::generated();
+    assert!(!secure_exit_dns_required(&app));
+    for source in [
+        InternetSource::PrivateVpn,
+        InternetSource::PaidAutomatic,
+        InternetSource::PaidManual,
+        InternetSource::WireGuard,
+    ] {
+        app.set_internet_source(source);
+        assert!(secure_exit_dns_required(&app), "source={source:?}");
+    }
+}
+
+#[test]
 fn daemon_vpn_idle_status_distinguishes_waiting_from_paused() {
     assert_eq!(
         daemon_vpn_idle_status(true, 0, false),

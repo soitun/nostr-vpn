@@ -52,7 +52,7 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
         println!("connect: FIPS private mesh on {}", runtime.iface());
         (Some(runtime), endpoint_peer_signature)
     };
-    let magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
+    let magic_dns_runtime = start_split_magic_dns(&app);
 
     println!(
         "connect: network {network_id} using FIPS private mesh; waiting for {expected_peers} configured peer(s)"

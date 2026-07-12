@@ -15,7 +15,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         return crate::webvm_guest::run_daemon(webvm_args, args.service).await;
     }
     let startup = initialize_daemon_vpn(&args).await?;
-    let magic_dns_runtime = ConnectMagicDnsRuntime::start(&startup.app);
+    let mut magic_dns_runtime = start_split_magic_dns(&startup.app);
     let (mut announce_interval, mut recent_peer_refresh_interval) = daemon_refresh_intervals(&args);
     let mut state_interval = tokio::time::interval(Duration::from_secs(1));
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -757,6 +757,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                             network_id = reload.network_id;
                                             expected_peers = reload.expected_peers;
                                             own_pubkey = reload.own_pubkey;
+                                            if secure_exit_dns_required(&app) {
+                                                magic_dns_runtime.take();
+                                            }
                                             if let Some(rt) = magic_dns_runtime.as_ref() {
                                                 rt.refresh_records(&app);
                                             }
@@ -832,7 +835,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             "fips: roster publish failed before peer-set refresh: {error}"
                         );
                     }
-                    if let Err(error) = sync_fips_private_runtime(
+                    let fips_sync_succeeded = match sync_fips_private_runtime(
                         &mut fips_tunnel_runtime,
                         SyncFipsPrivateRuntimeContext {
                             app: &app,
@@ -847,7 +850,17 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     )
                     .await
                     {
-                        vpn_status = format!("FIPS private mesh update failed ({error})");
+                        Ok(()) => true,
+                        Err(error) => {
+                            vpn_status = format!("FIPS private mesh update failed ({error})");
+                            false
+                        }
+                    };
+                    if fips_sync_succeeded
+                        && !secure_exit_dns_required(&app)
+                        && magic_dns_runtime.is_none()
+                    {
+                        magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);
                     }
                     if publish_fips_roster_after_control
                         && let Some(runtime) = fips_tunnel_runtime.as_ref()
