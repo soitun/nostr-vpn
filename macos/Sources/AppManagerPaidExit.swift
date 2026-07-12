@@ -1,0 +1,349 @@
+import AppKit
+import Darwin
+import Foundation
+import SwiftUI
+
+extension AppManager {
+    func setAdvertiseExitNode(_ enabled: Bool) {
+        dispatch(.updateSettings(patch: settingsPatch(advertiseExitNode: enabled)), status: "Saving routing")
+    }
+
+    func setPaidExitEnabled(_ enabled: Bool) {
+        dispatch(.updateSettings(patch: settingsPatch(paidExitEnabled: enabled)), status: "Saving selling")
+    }
+
+    func savePaidExitSellerSettings(
+        upstream: String,
+        meter: String,
+        priceMsat: String,
+        perUnits: String,
+        acceptedMints: String,
+        maxChannelCapacitySat: String,
+        channelExpirySecs: String,
+        freeProbeUnits: String,
+        graceUnits: String,
+        countryCode: String,
+        region: String,
+        asn: String,
+        networkClass: String,
+        ipv4: Bool,
+        ipv6: Bool
+    ) {
+        dispatch(.updateSettings(patch: settingsPatch(
+            paidExitUpstream: upstream,
+            paidExitMeter: meter,
+            paidExitPriceMsat: UInt64(priceMsat.trimmingCharacters(in: .whitespacesAndNewlines)),
+            paidExitPerUnits: Self.parsePaidExitPricingUnits(perUnits, meter: meter),
+            paidExitAcceptedMints: acceptedMints,
+            paidExitMaxChannelCapacitySat: UInt64(maxChannelCapacitySat.trimmingCharacters(in: .whitespacesAndNewlines)),
+            paidExitChannelExpirySecs: Self.parsePaidExitDurationSeconds(channelExpirySecs),
+            paidExitFreeProbeUnits: Self.parsePaidExitTrafficUnits(freeProbeUnits, meter: meter),
+            paidExitGraceUnits: Self.parsePaidExitTrafficUnits(graceUnits, meter: meter),
+            paidExitCountryCode: countryCode,
+            paidExitRegion: region,
+            paidExitAsn: asn,
+            paidExitNetworkClass: networkClass,
+            paidExitIpv4: ipv4,
+            paidExitIpv6: ipv6
+        )), status: "Saving seller settings")
+    }
+
+    static func parsePaidExitPricingUnits(_ value: String, meter: String) -> UInt64? {
+        parsePaidExitUnits(value, meter: meter, byteScale: 1_000)
+    }
+
+    static func parsePaidExitTrafficUnits(_ value: String, meter: String) -> UInt64? {
+        parsePaidExitUnits(value, meter: meter, byteScale: 1_024)
+    }
+
+    static func parsePaidExitDurationSeconds(_ value: String) -> UInt64? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let seconds = UInt64(trimmed) {
+            return seconds
+        }
+        let lowercased = trimmed
+            .replacingOccurrences(of: ",", with: "")
+            .lowercased()
+        var numberText = ""
+        var unitText = ""
+        for character in lowercased {
+            if character.isNumber || character == "." {
+                numberText.append(character)
+            } else if !character.isWhitespace {
+                unitText.append(character)
+            }
+        }
+        guard let amount = Double(numberText), amount.isFinite, amount >= 0 else {
+            return nil
+        }
+        let multiplier: Double
+        switch unitText {
+        case "", "s", "sec", "secs", "second", "seconds":
+            multiplier = 1
+        case "m", "min", "mins", "minute", "minutes":
+            multiplier = 60
+        case "h", "hr", "hrs", "hour", "hours":
+            multiplier = 3_600
+        case "d", "day", "days":
+            multiplier = 86_400
+        default:
+            return nil
+        }
+        let seconds = (amount * multiplier).rounded()
+        guard seconds >= 0, seconds <= Double(UInt64.max) else {
+            return nil
+        }
+        return UInt64(seconds)
+    }
+
+    static func parsePaidExitUnits(_ value: String, meter: String, byteScale: Double) -> UInt64? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        if let rawUnits = UInt64(trimmed) {
+            return rawUnits
+        }
+        guard meter == "bytes" else {
+            return parsePlainUnitCount(trimmed)
+        }
+        return parseByteUnitCount(trimmed, scale: byteScale)
+    }
+
+    static func parsePlainUnitCount(_ value: String) -> UInt64? {
+        let lowercased = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let numberText = lowercased
+            .split(whereSeparator: { !$0.isNumber })
+            .first
+            .map(String.init) ?? ""
+        return UInt64(numberText)
+    }
+
+    static func parseByteUnitCount(_ value: String, scale: Double) -> UInt64? {
+        let lowercased = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: "")
+            .lowercased()
+        var numberText = ""
+        var unitText = ""
+        for character in lowercased {
+            if character.isNumber || character == "." {
+                numberText.append(character)
+            } else if !character.isWhitespace {
+                unitText.append(character)
+            }
+        }
+        guard let amount = Double(numberText), amount.isFinite, amount >= 0 else {
+            return nil
+        }
+        let multiplier: Double
+        switch unitText {
+        case "", "b", "byte", "bytes":
+            multiplier = 1
+        case "k", "kb", "kib":
+            multiplier = scale
+        case "m", "mb", "mib":
+            multiplier = pow(scale, 2)
+        case "g", "gb", "gib":
+            multiplier = pow(scale, 3)
+        case "t", "tb", "tib":
+            multiplier = pow(scale, 4)
+        default:
+            return nil
+        }
+        let units = (amount * multiplier).rounded()
+        guard units >= 0, units <= Double(UInt64.max) else {
+            return nil
+        }
+        return UInt64(units)
+    }
+
+    func addPaidRouteWalletMint(url: String, label: String?) {
+        let trimmedUrl = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedUrl.isEmpty else { return }
+        let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        dispatch(
+            .addPaidRouteWalletMint(url: trimmedUrl, label: trimmedLabel?.isEmpty == false ? trimmedLabel : nil),
+            status: "Saving wallet"
+        )
+    }
+
+    func removePaidRouteWalletMint(_ url: String) {
+        dispatch(.removePaidRouteWalletMint(url: url), status: "Saving wallet")
+    }
+
+    func setPaidRouteDefaultMint(_ url: String) {
+        dispatch(.setPaidRouteDefaultMint(url: url), status: "Saving wallet")
+    }
+
+    func refreshPaidRouteWallet() {
+        dispatch(.refreshPaidRouteWallet(refresh: true), status: "Refreshing wallet")
+    }
+
+    func topUpPaidRouteWallet(mintUrl: String?, amountSat: String) {
+        guard let amount = Self.parsePositiveUInt64(amountSat) else { return }
+        dispatch(
+            .topUpPaidRouteWallet(mintUrl: Self.optionalTrimmed(mintUrl), amountSat: amount),
+            status: "Creating invoice"
+        )
+    }
+
+    func receivePaidRouteWalletToken(_ token: String) {
+        let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        dispatch(.receivePaidRouteWalletToken(token: trimmed), status: "Receiving token")
+    }
+
+    func sendPaidRouteWalletToken(mintUrl: String?, amountSat: String) {
+        guard let amount = Self.parsePositiveUInt64(amountSat) else { return }
+        dispatch(
+            .sendPaidRouteWalletToken(mintUrl: Self.optionalTrimmed(mintUrl), amountSat: amount),
+            status: "Creating token"
+        )
+    }
+
+    func withdrawPaidRouteWalletLightning(mintUrl: String?, invoice: String) {
+        let trimmedInvoice = invoice.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedInvoice.isEmpty else { return }
+        dispatch(
+            .withdrawPaidRouteWalletLightning(
+                mintUrl: Self.optionalTrimmed(mintUrl),
+                invoice: trimmedInvoice
+            ),
+            status: "Paying invoice"
+        )
+    }
+
+    func buyPaidRouteOffer(_ offer: NativePaidRouteOfferState) {
+        dispatch(
+            .buyPaidRouteOffer(
+                offerKey: offer.key,
+                mintUrl: nil,
+                channelCapacitySat: nil
+            ),
+            status: "Buying"
+        )
+    }
+
+    func usePaidRouteSession(_ session: NativePaidRouteSessionState) {
+        dispatch(
+            .selectPaidRouteSession(sessionId: session.sessionId, connect: true),
+            status: "Connecting"
+        )
+    }
+
+    func probePaidRouteSession(_ session: NativePaidRouteSessionState) {
+        dispatch(
+            .probePaidRouteSession(
+                sessionId: session.sessionId,
+                timeoutSecs: 5
+            ),
+            status: "Checking connection"
+        )
+    }
+
+    func openPaidRouteChannelFromWallet(_ session: NativePaidRouteSessionState) {
+        dispatch(
+            .openPaidRouteChannelFromWallet(
+                sessionId: session.sessionId,
+                mintUrl: nil,
+                paidMsat: nil,
+                maxAmountPerOutput: nil,
+                keysetId: nil
+            ),
+            status: "Funding seller"
+        )
+    }
+
+    func signPaidRoutePaymentEnvelopeFromWallet(_ session: NativePaidRouteSessionState) {
+        dispatch(
+            .signPaidRoutePaymentEnvelopeFromWallet(
+                sessionId: session.sessionId,
+                kind: "balance-update",
+                deliveredUnits: nil,
+                paidMsat: nil
+            ),
+            status: "Paying seller"
+        )
+    }
+
+    func closePaidRouteChannelFromWallet(_ session: NativePaidRouteSessionState) {
+        dispatch(
+            .closePaidRouteChannelFromWallet(
+                sessionId: session.sessionId,
+                publish: true
+            ),
+            status: "Closing channel"
+        )
+    }
+
+    func sendPaidRoutePaymentEnvelope(_ envelopeJson: String) {
+        let trimmed = envelopeJson.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        dispatch(.sendPaidRoutePaymentEnvelope(envelopeJson: trimmed), status: "Sending payment")
+    }
+
+    func streamPaidRoutePayments() {
+        dispatch(
+            .streamPaidRoutePayments(publish: true, minIncrementMsat: 1, limit: 0),
+            status: "Paying for usage"
+        )
+    }
+
+    func receivePaidRoutePayments() {
+        dispatch(.receivePaidRoutePayments(durationSecs: 5), status: "Receiving payments")
+    }
+
+    func collectPaidExitChannel(_ session: NativePaidRouteSessionState) {
+        let channelId = session.channelId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !channelId.isEmpty else { return }
+        dispatch(.collectPaidExitChannel(channelId: channelId), status: "Collecting payment")
+    }
+
+    func collectDuePaidExitChannels() {
+        dispatch(.collectDuePaidExitChannels, status: "Collecting payments")
+    }
+
+    static func optionalTrimmed(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    static func emptyAllFilter(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed == "all" ? "" : trimmed
+    }
+
+    static func parsePositiveUInt64(_ value: String) -> UInt64? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let amount = UInt64(trimmed), amount > 0 else {
+            return nil
+        }
+        return amount
+    }
+
+    func publishPaidExitOffer() {
+        dispatch(.publishPaidExitOffer, status: "Advertising listing")
+    }
+
+    func setPaidRouteMarketFilter(countryCode: String, networkClass: String, sort: String) {
+        dispatch(
+            .setPaidRouteMarketFilter(
+                query: "",
+                countryCode: Self.emptyAllFilter(countryCode),
+                networkClass: Self.emptyAllFilter(networkClass),
+                mintUrl: "",
+                requireIpv4: false,
+                requireIpv6: false,
+                sort: sort.isEmpty ? "quality" : sort
+            ),
+            status: "Filtering sellers"
+        )
+    }
+
+    func discoverPaidRouteOffers() {
+        dispatch(.discoverPaidRouteOffers(durationSecs: 5), status: "Finding sellers")
+    }
+}
+

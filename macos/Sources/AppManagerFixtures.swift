@@ -1,0 +1,719 @@
+import AppKit
+import Darwin
+import Foundation
+import SwiftUI
+
+extension AppManager {
+    func clearActionStatus(after seconds: UInt64) {
+        let statusToClear = actionStatus
+        actionStatusClearTask?.cancel()
+        actionStatusClearTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+            await MainActor.run {
+                guard self?.actionStatus == statusToClear else {
+                    return
+                }
+                self?.actionStatus = ""
+            }
+        }
+    }
+
+    func maybePromptServiceUpdate(_ nextState: NativeAppState) {
+        guard Self.serviceUpdateRecommended(in: nextState), !actionInFlight else {
+            return
+        }
+        if actionStatus.isEmpty {
+            actionStatus = "Background service needs update"
+        }
+    }
+
+    static func serviceUpdateRecommended(in state: NativeAppState) -> Bool {
+        state.serviceInstalled
+            && !state.serviceBinaryVersion.isEmpty
+            && !state.expectedServiceBinaryVersion.isEmpty
+            && state.serviceBinaryVersion != state.expectedServiceBinaryVersion
+    }
+
+    static func daemonStarting(in state: NativeAppState) -> Bool {
+        state.error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && state.serviceRunning
+            && state.vpnStatus.trimmingCharacters(in: .whitespacesAndNewlines) == "Background service starting"
+    }
+
+    static func fixtureModeRequested() -> Bool {
+        let arguments = Set(CommandLine.arguments)
+        if arguments.contains("--nvpn-fixture-mode") || arguments.contains("--nvpn-screenshot-fixture") {
+            return true
+        }
+        let raw = ProcessInfo.processInfo.environment["NVPN_MACOS_FIXTURE_MODE"] ?? ""
+        return ["1", "true", "yes", "on"].contains(raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    static func screenshotFixtureState() -> NativeAppState {
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "4.0.31"
+        let selfNpub = "npub12mh8r6uetvj9fptwua9gtng0ycz8uvzn0vmxsaddk7vfegeu29ts3qngt3"
+        let macbookNpub = "npub1q0n4g9trrsyqezfgrsg6txtedmhgv0h5apur2a4yxgq4z0kgejmsjeclxl"
+        let iphoneNpub = "npub1tmhvkh3ktx7dw06fxntuzmvc9r20wxnrapzd056240s42jtpyzps645uyh"
+        let androidNpub = "npub1h988xqzvhu98t0n22ys7etjcg7ca33s78kda4mu5pfathz9xklmqxx6rg0"
+        let ubuntuNpub = "npub1dxlnwd78xjhec3hlzc8qwjuc98w47hv89khggu8yk0ynpkw4czxsuccs3u"
+        let joinNpub = "npub1xnvumr6snuvl7tcwll3kz9wny4fzjh9uwhmu4d6hc2hwuxrk6vqq8kukg4"
+        let nearbyNpub = "npub1saweqehm9a5gsn7xgcqjpmf2ungfj74wxawwvehn38s0mxtzx80qq8a5xa"
+        let selfHex = "56ee71eb995b2454856ee74a85cd0f26047e30537b366875adb7989ca33c5157"
+        let macbookHex = "03e75415631c080c89281c11a599796eee863ef4e8783576a43201513ec8ccb7"
+        let iphoneHex = "5eeecb5e3659bcd73f4934d7c16d9828d4f71a63e844d7d34aabe15549612083"
+        let androidHex = "b94e73004cbf0a75be6a5121ecae5847b1d8c61e3d9bdaef940a7abb88a6b7f6"
+        let ubuntuHex = "69bf3737c734af9c46ff160e074b9829dd5f5d872dae8470e4b3c930d9d5c08d"
+        let joinHex = "34d9cd8f509f19ff2f0effe36115d32552295cbc75f7cab757c2aeee1876d300"
+        let networkId = "demo-mesh"
+
+        let local = NativeParticipantState(
+            npub: selfNpub,
+            pubkeyHex: selfHex,
+            alias: "mini",
+            magicDnsAlias: "mini",
+            magicDnsName: "mini.nvpn",
+            tunnelIp: "10.44.195.20",
+            isAdmin: true,
+            reachable: true,
+            txBytes: 842_112,
+            rxBytes: 1_302_804,
+            advertisedRoutes: [],
+            offersExitNode: false,
+            fipsEndpointNpub: selfNpub,
+            fipsEndpointHints: [],
+            fipsTransportAddr: "192.0.2.57:51820",
+            fipsTransportType: "udp",
+            fipsSrttMs: 0,
+            fipsSrttAgeMs: 0,
+            fipsPacketsSent: 0,
+            fipsPacketsRecv: 0,
+            fipsBytesSent: 0,
+            fipsBytesRecv: 0,
+            fipsDirectProbePending: false,
+            fipsDirectProbeAfterMs: 0,
+            fipsDirectProbeRetryCount: 0,
+            fipsDirectProbeAutoReconnect: false,
+            fipsDirectProbeExpiresAtMs: 0,
+            state: "local",
+            meshState: "local",
+            statusText: "local",
+            lastFipsControlSeenText: "this device",
+            lastFipsDataSeenText: "this device",
+            lastSeenText: "self"
+        )
+        let macbook = NativeParticipantState(
+            npub: macbookNpub,
+            pubkeyHex: macbookHex,
+            alias: "macbook",
+            magicDnsAlias: "macbook",
+            magicDnsName: "macbook.nvpn",
+            tunnelIp: "10.44.178.166",
+            isAdmin: false,
+            reachable: true,
+            txBytes: 290_144,
+            rxBytes: 211_776,
+            advertisedRoutes: [],
+            offersExitNode: false,
+            fipsEndpointNpub: macbookNpub,
+            fipsEndpointHints: [],
+            fipsTransportAddr: "",
+            fipsTransportType: "mesh",
+            fipsSrttMs: 38,
+            fipsSrttAgeMs: 1_200,
+            fipsPacketsSent: 4_284,
+            fipsPacketsRecv: 4_103,
+            fipsBytesSent: 628_104,
+            fipsBytesRecv: 602_920,
+            fipsDirectProbePending: false,
+            fipsDirectProbeAfterMs: 0,
+            fipsDirectProbeRetryCount: 0,
+            fipsDirectProbeAutoReconnect: false,
+            fipsDirectProbeExpiresAtMs: 0,
+            state: "online",
+            meshState: "via mesh",
+            statusText: "via mesh, 38 ms",
+            lastFipsControlSeenText: "seen now",
+            lastFipsDataSeenText: "seen now",
+            lastSeenText: "now"
+        )
+        let iphone = NativeParticipantState(
+            npub: iphoneNpub,
+            pubkeyHex: iphoneHex,
+            alias: "iphone",
+            magicDnsAlias: "iphone",
+            magicDnsName: "iphone.nvpn",
+            tunnelIp: "10.44.181.12",
+            isAdmin: false,
+            reachable: true,
+            txBytes: 118_272,
+            rxBytes: 91_440,
+            advertisedRoutes: [],
+            offersExitNode: false,
+            fipsEndpointNpub: iphoneNpub,
+            fipsEndpointHints: [],
+            fipsTransportAddr: "192.0.2.74:52283",
+            fipsTransportType: "udp",
+            fipsSrttMs: 9,
+            fipsSrttAgeMs: 900,
+            fipsPacketsSent: 2_016,
+            fipsPacketsRecv: 1_988,
+            fipsBytesSent: 244_992,
+            fipsBytesRecv: 239_872,
+            fipsDirectProbePending: false,
+            fipsDirectProbeAfterMs: 0,
+            fipsDirectProbeRetryCount: 0,
+            fipsDirectProbeAutoReconnect: false,
+            fipsDirectProbeExpiresAtMs: 0,
+            state: "online",
+            meshState: "direct",
+            statusText: "direct, 9 ms",
+            lastFipsControlSeenText: "seen 1s ago",
+            lastFipsDataSeenText: "seen 1s ago",
+            lastSeenText: "1s ago"
+        )
+        let android = NativeParticipantState(
+            npub: androidNpub,
+            pubkeyHex: androidHex,
+            alias: "android",
+            magicDnsAlias: "android",
+            magicDnsName: "android.nvpn",
+            tunnelIp: "10.44.191.30",
+            isAdmin: false,
+            reachable: true,
+            txBytes: 76_112,
+            rxBytes: 64_928,
+            advertisedRoutes: [],
+            offersExitNode: false,
+            fipsEndpointNpub: androidNpub,
+            fipsEndpointHints: [],
+            fipsTransportAddr: "192.0.2.92:47120",
+            fipsTransportType: "udp",
+            fipsSrttMs: 18,
+            fipsSrttAgeMs: 1_100,
+            fipsPacketsSent: 1_104,
+            fipsPacketsRecv: 1_079,
+            fipsBytesSent: 130_288,
+            fipsBytesRecv: 127_416,
+            fipsDirectProbePending: false,
+            fipsDirectProbeAfterMs: 0,
+            fipsDirectProbeRetryCount: 0,
+            fipsDirectProbeAutoReconnect: false,
+            fipsDirectProbeExpiresAtMs: 0,
+            state: "online",
+            meshState: "direct",
+            statusText: "direct, 18 ms",
+            lastFipsControlSeenText: "seen 2s ago",
+            lastFipsDataSeenText: "seen 2s ago",
+            lastSeenText: "2s ago"
+        )
+        let ubuntu = NativeParticipantState(
+            npub: ubuntuNpub,
+            pubkeyHex: ubuntuHex,
+            alias: "ubuntu",
+            magicDnsAlias: "ubuntu",
+            magicDnsName: "ubuntu.nvpn",
+            tunnelIp: "10.44.202.44",
+            isAdmin: false,
+            reachable: true,
+            txBytes: 5_820_192,
+            rxBytes: 4_911_240,
+            advertisedRoutes: ["10.88.0.0/16"],
+            offersExitNode: true,
+            fipsEndpointNpub: ubuntuNpub,
+            fipsEndpointHints: [],
+            fipsTransportAddr: "203.0.113.44:51820",
+            fipsTransportType: "udp",
+            fipsSrttMs: 22,
+            fipsSrttAgeMs: 1_400,
+            fipsPacketsSent: 18_244,
+            fipsPacketsRecv: 18_031,
+            fipsBytesSent: 8_100_904,
+            fipsBytesRecv: 7_900_512,
+            fipsDirectProbePending: false,
+            fipsDirectProbeAfterMs: 0,
+            fipsDirectProbeRetryCount: 0,
+            fipsDirectProbeAutoReconnect: false,
+            fipsDirectProbeExpiresAtMs: 0,
+            state: "online",
+            meshState: "direct",
+            statusText: "direct, 22 ms",
+            lastFipsControlSeenText: "seen 3s ago",
+            lastFipsDataSeenText: "seen 3s ago",
+            lastSeenText: "3s ago"
+        )
+        let joinRequest = NativeInboundJoinRequestState(
+            requesterNpub: joinNpub,
+            requesterPubkeyHex: joinHex,
+            requesterNodeName: "ipad",
+            requestedAtText: "2m ago"
+        )
+        let network = NativeNetworkState(
+            id: "demo",
+            name: "Home Mesh",
+            enabled: true,
+            networkId: networkId,
+            localIsAdmin: true,
+            joinRequestsEnabled: true,
+            inviteInviterNpub: "",
+            adminNpubs: [selfNpub],
+            outboundJoinRequest: nil,
+            joinRequestQrCodeOrLink: "",
+            inboundJoinRequests: [joinRequest],
+            onlineCount: 5,
+            expectedCount: 5,
+            admins: [selfNpub],
+            participants: [local, macbook, iphone, android, ubuntu]
+        )
+        let sellerScreenshot = CommandLine.arguments.contains("--nvpn-screenshot-paid-seller")
+
+        return NativeAppState(
+            rev: 1,
+            platform: "macos",
+            mobile: false,
+            vpnControlSupported: true,
+            cliInstallSupported: true,
+            startupSettingsSupported: true,
+            trayBehaviorSupported: true,
+            runtimeStatusDetail: "Screenshot fixture",
+            appVersion: version,
+            configPath: "/Users/demo/Library/Application Support/nvpn/config.toml",
+            error: "",
+            cliInstalled: true,
+            serviceSupported: true,
+            serviceEnablementSupported: true,
+            serviceInstalled: true,
+            serviceDisabled: false,
+            serviceRunning: true,
+            serviceStatusDetail: "Background service running (nvpn), pid 4242",
+            daemonRunning: true,
+            vpnEnabled: true,
+            vpnActive: true,
+            vpnStatus: "Connected",
+            daemonBinaryVersion: version,
+            serviceBinaryVersion: version,
+            expectedServiceBinaryVersion: version,
+            ownNpub: selfNpub,
+            ownPubkeyHex: selfHex,
+            nodeId: "mini",
+            nodeName: "mini",
+            selfMagicDnsName: "mini.nvpn",
+            endpoint: "203.0.113.8:51820",
+            tunnelIp: "10.44.195.20",
+            listenPort: 51820,
+            relays: [
+                NativeRelayState(url: "wss://relay.damus.io", status: "connected", enabled: true),
+                NativeRelayState(url: "wss://relay.nostr.band", status: "unknown", enabled: true)
+            ],
+            nostrPubsubMode: "relay",
+            nostrPubsubFanout: 4,
+            nostrPubsubMaxHops: 2,
+            nostrPubsubMaxEventBytes: 65_536,
+            networkId: networkId,
+            activeNetworkInvite: "nvpn://invite/demo-mesh",
+            joinRequestQrCodeOrLink: "nvpn://join-request/demo",
+            internetSource: sellerScreenshot ? "direct" : "paid_manual",
+            exitNode: sellerScreenshot ? "" : "npub1paidexitfinlanddemo",
+            exitNodeLeakProtection: true,
+            exitNodeActive: !sellerScreenshot,
+            exitNodeBlocked: false,
+            exitNodeStatusText: sellerScreenshot ? "" : "Using paid internet: FI satellite",
+            advertiseExitNode: false,
+            advertisedRoutes: [],
+            effectiveAdvertisedRoutes: [],
+            wireguardExitEnabled: false,
+            wireguardExitConfigured: true,
+            wireguardExitInterface: "utun-demo",
+            wireguardExitAddress: "10.8.0.2/32",
+            wireguardExitPrivateKey: "demo-private-key",
+            wireguardExitPeerPublicKey: "demo-peer-key",
+            wireguardExitPeerPresharedKey: "",
+            wireguardExitEndpoint: "demo-wireguard.invalid:51820",
+            wireguardExitAllowedIps: "0.0.0.0/0",
+            wireguardExitDns: "1.1.1.1",
+            wireguardExitMtu: 1280,
+            wireguardExitPersistentKeepaliveSecs: 25,
+            wireguardExitConfig: "",
+            walletFiatEnabled: true,
+            walletFiatCurrency: "USD",
+            paidExitSeller: NativePaidExitSellerState(
+                supported: true,
+                enabled: true,
+                statusText: "Selling public internet",
+                upstream: "host_default",
+                privateVpnAccess: "denied",
+                internetText: "My internet",
+                publicIpText: "203.0.113.8",
+                meter: "bytes",
+                priceText: "2.500 sat / 1 MB",
+                priceMsat: 2_500,
+                perUnits: 1_000_000,
+                perUnitsText: "1 MB",
+                acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
+                maxChannelCapacitySat: 250,
+                channelExpirySecs: 86_400,
+                channelExpiryText: "1 day",
+                settlementText: "Channels end after 1 day or when you manually collect",
+                freeProbeUnits: 1_048_576,
+                freeProbeText: "1 MB",
+                graceUnits: 262_144,
+                graceText: "256 KB",
+                countryCode: "FI",
+                region: "Uusimaa",
+                asn: 12345,
+                networkClass: "satellite",
+                ipv4: true,
+                ipv6: false,
+                channelCreditMsat: 35_000,
+                channelCreditText: "35 sat",
+                channelCreditTitleText: "Pending buyer credit",
+                channelCreditHelpText: "Collect to move it into wallet",
+                currentConnectionCount: 1,
+                pastConnectionCount: 3,
+                totalBillableBytes: 48_000_000,
+                totalBillablePackets: 18_400,
+                totalTrafficText: "45.8 MB used",
+                totalPaidMsat: 92_000,
+                totalPaidText: "92 sat paid",
+                totalDueMsat: 88_000,
+                totalDueText: "88 sat due",
+                totalUnpaidMsat: 0,
+                totalUnpaidText: "",
+                channels: [
+                    NativePaidRouteChannelState(
+                        channelId: "seller-channel-demo",
+                        offerId: "internet-exit",
+                        role: "seller",
+                        status: "active",
+                        mintUrl: "https://mint.minibits.cash/Bitcoin",
+                        counterpartyNpub: "npub1buyerstreamdemo",
+                        capacitySat: 250,
+                        capacityText: "250 sat",
+                        paidMsat: 35_000,
+                        paidText: "35 sat paid",
+                        updatedAtUnix: 1_780_650_010,
+                        expiresAtUnix: 1_780_650_900,
+                        error: ""
+                    )
+                ],
+                sessions: [
+                    NativePaidRouteSessionState(
+                        sessionId: "seller-session-demo",
+                        leaseId: "seller-lease-demo",
+                        channelId: "seller-channel-demo",
+                        statusText: "Routing paid traffic",
+                        lifecycleStatus: "active",
+                        accessState: "paid",
+                        titleText: "Buyer online",
+                        detailText: "Paid, 11.4 MB used, 30 sat due",
+                        settlementText: "Ends in 15 min or when you manually collect",
+                        collectActionText: "End & Collect",
+                        collectActionHelpText: "Stop routing and move paid channel funds to wallet",
+                        paymentChannelReady: true,
+                        allowRouting: true,
+                        deliveredUnits: 12_000_000,
+                        usageText: "11.4 MB used",
+                        amountDueMsat: 30_000,
+                        amountDueText: "30 sat due",
+                        paidMsat: 35_000,
+                        paidText: "35 sat paid",
+                        unpaidMsat: 0,
+                        unpaidText: "",
+                        activeMillis: 0,
+                        bytes: 12_000_000,
+                        packets: 8_120,
+                        realizedExitIp: "203.0.113.8",
+                        claimedCountryCode: "FI",
+                        observedCountryCode: "FI",
+                        countryClaimStatus: "match",
+                        locationText: "FI",
+                        observedAsn: 12345,
+                        hasQuality: true,
+                        qualityText: "42 ms · 7 ms jitter · 0.05% loss",
+                        bandwidthText: "25 Mbps down · 5 Mbps up",
+                        latencyMs: 42,
+                        jitterMs: 7,
+                        packetLossPpm: 500,
+                        downBps: 25_000_000,
+                        upBps: 5_000_000,
+                        updatedAtUnix: 1_780_650_010,
+                        expiresAtUnix: 1_780_650_900
+                    )
+                ]
+            ),
+            paidRouteMarket: NativePaidRouteMarketState(
+                supported: true,
+                statusText: "2 internet sellers found",
+                storePath: "/Users/demo/Library/Application Support/nvpn/paid-routes.json",
+                wallet: NativePaidRouteWalletState(
+                    defaultMint: "https://mint.minibits.cash/Bitcoin",
+                    balanceKnown: true,
+                    totalBalanceMsat: 123_000,
+                    totalBalanceText: "123 sat",
+                    navigationBalanceText: "₿123",
+                    fiatCurrency: "USD",
+                    fiatBalanceText: "$0.08",
+                    exchangeRateText: "1 BTC = $63,973",
+                    exchangeRateStatus: "Coinbase · Kraken",
+                    exchangeRateSources: "coinbase,kraken",
+                    exchangeRateStale: false,
+                    exchangeRateUpdatedAtUnix: 1_780_650_000,
+                    mints: [
+                        NativePaidRouteWalletMintState(
+                            url: "https://mint.minibits.cash/Bitcoin",
+                            label: "Minibits",
+                            isDefault: true,
+                            balanceKnown: true,
+                            balanceMsat: 123_000,
+                            balanceText: "123 sat",
+                            lastCheckedUnix: 1_780_650_000
+                        )
+                    ],
+                    lastAction: NativePaidRouteWalletActionState(
+                        kind: "topup",
+                        statusText: "Invoice ready",
+                        mintUrl: "https://mint.minibits.cash/Bitcoin",
+                        amountSat: 1_000,
+                        amountText: "1000 sat",
+                        feeSat: 0,
+                        feeText: "",
+                        quoteId: "quote-demo",
+                        paymentRequest: "lnbc1000n1pdemoexamplepaidroutewalletinvoice",
+                        token: "",
+                        operationId: "",
+                        expiresAtUnix: 1_780_653_600,
+                        preimage: ""
+                    )
+                ),
+                lastPaymentAction: NativePaidRoutePaymentActionState(
+                    kind: "",
+                    statusText: "",
+                    payloadType: "",
+                    sessionId: "",
+                    leaseId: "",
+                    channelId: "",
+                    buyerNpub: "",
+                    sellerNpub: "",
+                    envelopeJson: "",
+                    paidMsat: 0,
+                    paidText: "0 sat paid",
+                    deliveredUnits: 0,
+                    deliveredUsageText: "0 units",
+                    amountDueMsat: 0,
+                    amountDueText: "0 sat due",
+                    unpaidMsat: 0,
+                    unpaidText: "",
+                    allowRouting: false
+                ),
+                filter: NativePaidRouteMarketFilterState(
+                    query: "",
+                    countryCode: "",
+                    networkClass: "",
+                    mintUrl: "",
+                    requireIpv4: false,
+                    requireIpv6: false,
+                    sort: "quality"
+                ),
+                offers: [
+                    NativePaidRouteOfferState(
+                        key: "seller-fi:internet-exit",
+                        offerId: "internet-exit",
+                        sellerNpub: "npub1paidexitfinlanddemo",
+                        statusText: "FI - satellite - 42 ms - seen 2m ago",
+                        priceText: "2.500 sat / 1 MB",
+                        meter: "bytes",
+                        priceMsat: 2_500,
+                        perUnits: 1_000_000,
+                        perUnitsText: "1 MB",
+                        acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
+                        maxChannelCapacitySat: 250,
+                        channelExpirySecs: 900,
+                        freeProbeUnits: 1_048_576,
+                        freeProbeText: "1 MB",
+                        graceUnits: 262_144,
+                        graceText: "256 KB",
+                        countryCode: "FI",
+                        region: "Uusimaa",
+                        asn: 14593,
+                        networkClass: "satellite",
+                        ipv4: true,
+                        ipv6: false,
+                        hasRating: true,
+                        ratingScore: 72,
+                        ratingUpdatedAtUnix: 1_780_649_900,
+                        hasQuality: true,
+                        qualityText: "42 ms · 7 ms jitter · 0.05% loss",
+                        bandwidthText: "25 Mbps down · 5 Mbps up",
+                        latencyMs: 42,
+                        jitterMs: 7,
+                        packetLossPpm: 500,
+                        downBps: 25_000_000,
+                        upBps: 5_000_000,
+                        uptimeSecs: 3_600,
+                        firstSeenUnix: 1_780_649_000,
+                        lastSeenUnix: 1_780_650_000,
+                        relayUrls: ["wss://relay.damus.io"]
+                    ),
+                    NativePaidRouteOfferState(
+                        key: "seller-de:internet-exit",
+                        offerId: "internet-exit",
+                        sellerNpub: "npub1paidexitgermanydemo",
+                        statusText: "DE - datacenter - 18 ms - seen 5m ago",
+                        priceText: "0.800 sat / 1 MB",
+                        meter: "bytes",
+                        priceMsat: 800,
+                        perUnits: 1_000_000,
+                        perUnitsText: "1 MB",
+                        acceptedMints: ["https://mint.minibits.cash/Bitcoin"],
+                        maxChannelCapacitySat: 500,
+                        channelExpirySecs: 900,
+                        freeProbeUnits: 1_048_576,
+                        freeProbeText: "1 MB",
+                        graceUnits: 262_144,
+                        graceText: "256 KB",
+                        countryCode: "DE",
+                        region: "Hesse",
+                        asn: 12_345,
+                        networkClass: "datacenter",
+                        ipv4: true,
+                        ipv6: true,
+                        hasRating: false,
+                        ratingScore: 0,
+                        ratingUpdatedAtUnix: 0,
+                        hasQuality: true,
+                        qualityText: "18 ms · 3 ms jitter · 0.01% loss",
+                        bandwidthText: "90 Mbps down · 20 Mbps up",
+                        latencyMs: 18,
+                        jitterMs: 3,
+                        packetLossPpm: 100,
+                        downBps: 90_000_000,
+                        upBps: 20_000_000,
+                        uptimeSecs: 86_400,
+                        firstSeenUnix: 1_780_648_000,
+                        lastSeenUnix: 1_780_649_800,
+                        relayUrls: ["wss://relay.nostr.band"]
+                    )
+                ],
+                visibleOffers: [],
+                hiddenOfferCount: 0,
+                countryOptions: ["DE", "FI"],
+                networkClassOptions: ["datacenter", "satellite"],
+                channels: [
+                    NativePaidRouteChannelState(
+                        channelId: "channel-fi-1",
+                        offerId: "internet-exit",
+                        role: "buyer",
+                        status: "active",
+                        mintUrl: "https://mint.minibits.cash/Bitcoin",
+                        counterpartyNpub: "npub1paidexitfinlanddemo",
+                        capacitySat: 250,
+                        capacityText: "250 sat",
+                        paidMsat: 25_000,
+                        paidText: "25 sat paid",
+                        updatedAtUnix: 1_780_650_000,
+                        expiresAtUnix: 1_780_650_900,
+                        error: ""
+                    )
+                ],
+                sessions: [
+                    NativePaidRouteSessionState(
+                        sessionId: "session-fi-1",
+                        leaseId: "lease-fi-1",
+                        channelId: "channel-fi-1",
+                        statusText: "Awaiting payment update",
+                        lifecycleStatus: "active",
+                        accessState: "grace",
+                        titleText: "Ready",
+                        detailText: "Grace, 2.4 MB used, 3.750 sat due",
+                        settlementText: "Channel ends in 15 min",
+                        collectActionText: "",
+                        collectActionHelpText: "",
+                        paymentChannelReady: true,
+                        allowRouting: true,
+                        deliveredUnits: 2_500_000,
+                        usageText: "2.4 MB used",
+                        amountDueMsat: 3_750,
+                        amountDueText: "3.750 sat due",
+                        paidMsat: 2_500,
+                        paidText: "2.500 sat paid",
+                        unpaidMsat: 1_250,
+                        unpaidText: "1.250 sat behind",
+                        activeMillis: 31_000,
+                        bytes: 2_500_000,
+                        packets: 1_920,
+                        realizedExitIp: "198.51.100.42",
+                        claimedCountryCode: "FI",
+                        observedCountryCode: "FI",
+                        countryClaimStatus: "match",
+                        locationText: "198.51.100.42 - FI matches claim",
+                        observedAsn: 14593,
+                        hasQuality: true,
+                        qualityText: "42 ms · 7 ms jitter · 0.05% loss",
+                        bandwidthText: "25 Mbps down · 5 Mbps up",
+                        latencyMs: 42,
+                        jitterMs: 7,
+                        packetLossPpm: 500,
+                        downBps: 25_000_000,
+                        upBps: 5_000_000,
+                        updatedAtUnix: 1_780_650_000,
+                        expiresAtUnix: 1_780_650_900
+                    )
+                ]
+            ),
+            fipsHostTunnelEnabled: false,
+            connectToNonRosterFipsPeers: true,
+            fipsNostrDiscoveryEnabled: true,
+            fipsWebrtcEnabled: false,
+            fipsBootstrapEnabled: false,
+            fipsBootstrapPeers: [:],
+            fipsBootstrapPeerDefaults: [:],
+            fipsHostInboundTcpPorts: "",
+            magicDnsSuffix: "nvpn",
+            magicDnsStatus: "Serving .nvpn names",
+            autoconnect: true,
+            inviteBroadcastActive: true,
+            inviteBroadcastRemainingSecs: 417,
+            nearbyDiscoveryActive: true,
+            nearbyDiscoveryRemainingSecs: 417,
+            launchOnStartup: true,
+            closeToTrayOnClose: true,
+            connectedPeerCount: 4,
+            expectedPeerCount: 4,
+            fipsConnectedPeerCount: 4,
+            fipsRosterPeerCount: 4,
+            nonFipsRosterPeerCount: 0,
+            meshReady: true,
+            health: [],
+            network: NativeNetworkSummary(
+                defaultInterface: "en0",
+                primaryIpv4: "192.0.2.57",
+                primaryIpv6: "",
+                gatewayIpv4: "192.0.2.1",
+                gatewayIpv6: "",
+                changedAt: 0,
+                captivePortal: "false"
+            ),
+            portMapping: NativePortMappingStatus(
+                upnp: NativeProbeStatus(state: "ok", detail: "mapped"),
+                natPmp: NativeProbeStatus(state: "unknown", detail: ""),
+                pcp: NativeProbeStatus(state: "unknown", detail: ""),
+                activeProtocol: "upnp",
+                externalEndpoint: "203.0.113.8:51820",
+                gateway: "192.0.2.1",
+                goodUntil: 0
+            ),
+            networks: [network],
+            lanPeers: [
+                NativeLanPeerState(
+                    npub: nearbyNpub,
+                    nodeName: "nearby-macbook",
+                    endpoint: "192.0.2.44:51820",
+                    networkName: "Nearby Mesh",
+                    networkId: "nearby-mesh",
+                    invite: "nvpn://invite/nearby-mesh",
+                    lastSeenText: "3s ago"
+                )
+            ]
+        )
+    }
+}
+

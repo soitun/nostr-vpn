@@ -1,0 +1,756 @@
+import AppKit
+import CoreImage
+import SwiftUI
+
+extension RootView {
+    func devicesPane(_ network: NativeNetworkState) -> some View {
+        HStack(spacing: 0) {
+            deviceListColumn(network)
+                .frame(minWidth: 290, idealWidth: 330, maxWidth: 360)
+            Divider()
+            deviceDetailColumn(network)
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    var setupPane: some View {
+        pageScroll {
+            pageTitle("Add Network", "plus.circle")
+            switch addNetworkMode {
+            case nil:
+                addNetworkChoiceSection
+            case .create:
+                addNetworkBackButton
+                createNetworkSection
+            case .join:
+                addNetworkBackButton
+                joinNetworkSection(nil)
+            }
+        }
+    }
+
+    var addNetworkChoiceSection: some View {
+        surface {
+            VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    addNetworkMode = .create
+                } label: {
+                    Label("Create Network", systemImage: "plus.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    addNetworkMode = .join
+                } label: {
+                    Label("Join Network", systemImage: "arrow.down.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    var addNetworkBackButton: some View {
+        HStack {
+            Button {
+                addNetworkMode = nil
+            } label: {
+                Label("Back", systemImage: "chevron.left")
+            }
+            Spacer()
+        }
+    }
+
+    func deviceListColumn(_ network: NativeNetworkState) -> some View {
+        LocalSearchScope { search in
+            deviceListColumn(network, search: search)
+        }
+    }
+
+    func deviceListColumn(_ network: NativeNetworkState, search: Binding<String>) -> some View {
+        let showSearch = sortedParticipants(network).count > searchVisibilityThreshold
+        return VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Devices")
+                            .font(.system(size: 24, weight: .semibold))
+                        Text(deviceAvailabilityText(network))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    deviceHeaderActions(network)
+                }
+                if showSearch {
+                    TextField("Search", text: search)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 24)
+            .padding(.bottom, 4)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    let activeSearch = showSearch ? search.wrappedValue : ""
+                    let participants = visibleParticipants(network, search: activeSearch)
+                    let selectedPubkeyHex = selectedParticipant(in: network)?.pubkeyHex
+                    if participants.isEmpty {
+                        emptyRow(
+                            activeSearch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                ? "No devices"
+                                : "No matching devices",
+                            systemImage: "circle.dotted"
+                        )
+                    } else {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(displayName(network))
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .padding(.horizontal, 10)
+                            ForEach(participants, id: \.pubkeyHex) { participant in
+                                deviceListRow(
+                                    participant,
+                                    network: network,
+                                    selected: selectedPubkeyHex == participant.pubkeyHex
+                                )
+                            }
+                        }
+                    }
+
+                }
+                .padding(.horizontal, 12)
+                .padding(.bottom, 24)
+            }
+        }
+    }
+
+    func deviceHeaderActions(_ network: NativeNetworkState) -> some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                activateNetworkButton(network)
+                addDeviceButton(network)
+            }
+            HStack(spacing: 8) {
+                activateNetworkButton(network, compact: true)
+                addDeviceButton(network, compact: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    func activateNetworkButton(_ network: NativeNetworkState, compact: Bool = false) -> some View {
+        if !network.enabled {
+            Button {
+                activateNetwork(network)
+            } label: {
+                if compact {
+                    Image(systemName: "checkmark.circle.fill")
+                } else {
+                    Label("Activate", systemImage: "checkmark.circle.fill")
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .disabled(manager.actionInFlight)
+            .help("Activate this network")
+        }
+    }
+
+    @ViewBuilder
+    func addDeviceButton(_ network: NativeNetworkState, compact: Bool = false) -> some View {
+        if network.localIsAdmin {
+            Button {
+                addDevicePresented = true
+            } label: {
+                if compact {
+                    Image(systemName: "person.badge.plus")
+                } else {
+                    Label("Link device", systemImage: "person.badge.plus")
+                }
+            }
+            .controlSize(.small)
+            .disabled(!network.enabled)
+            .help(network.enabled ? "Link device to this network" : "Activate this network first")
+        }
+    }
+
+    func deviceListRow(
+        _ participant: NativeParticipantState,
+        network: NativeNetworkState,
+        selected: Bool
+    ) -> some View {
+        Button {
+            selectedDevicePubkeyHex = participant.pubkeyHex
+        } label: {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 7) {
+                    connectivityDot(participant, size: 8)
+                    Text(deviceName(participant))
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if isSelf(participant) {
+                        badge("This device", style: selected ? .selected : .ok)
+                    }
+                    if participant.isAdmin {
+                        badge("Admin", style: selected ? .selected : .muted)
+                    }
+                    if participant.offersExitNode {
+                        badge(exitNodeBadgeText(participant), style: selected ? .selected : exitNodeBadgeStyle(participant))
+                    }
+                    if isFipsRouted(participant) {
+                        badge("via mesh", style: selected ? .selected : .muted)
+                    }
+                }
+                HStack(spacing: 6) {
+                    if !deviceSubtitle(participant).isEmpty {
+                        Text(deviceSubtitle(participant))
+                    }
+                    if !cleanIp(participant.tunnelIp).isEmpty {
+                        Text(cleanIp(participant.tunnelIp))
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(selected ? Color.white.opacity(0.78) : Color.secondary)
+                .lineLimit(1)
+            }
+            .foregroundStyle(selected ? Color.white : Color.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                selected ? Color.accentColor : Color.clear,
+                in: RoundedRectangle(cornerRadius: 7)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    func deviceDetailColumn(_ network: NativeNetworkState) -> some View {
+        ScrollView {
+            if let participant = selectedParticipant(in: network) {
+                VStack(alignment: .leading, spacing: 22) {
+                    deviceDetailHeader(participant, network: network)
+                    if network.localIsAdmin {
+                        deviceAdminSection(participant, network: network)
+                    }
+                    deviceAddressesSection(participant)
+                    deviceConnectivitySection(participant)
+                }
+                .padding(.horizontal, 22)
+                .padding(.top, 26)
+                .padding(.bottom, 30)
+                .frame(maxWidth: 640, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Devices")
+                        .font(.system(size: 24, weight: .semibold))
+                    emptyRow("No devices yet", systemImage: "circle.dotted")
+                }
+                .padding(28)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    func deviceDetailHeader(_ participant: NativeParticipantState, network: NativeNetworkState) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(deviceName(participant))
+                        .font(.system(size: 24, weight: .semibold))
+                        .lineLimit(2)
+                    if isSelf(participant) || participant.isAdmin || participant.offersExitNode || participant.reachable {
+                        HStack(spacing: 6) {
+                            if isSelf(participant) {
+                                badge("This device", style: .ok)
+                            }
+                            if participant.isAdmin {
+                                badge("Admin", style: .muted)
+                            }
+                            if participant.offersExitNode {
+                                badge(exitNodeBadgeText(participant), style: exitNodeBadgeStyle(participant))
+                            }
+                            if isDirectFipsPeer(participant) {
+                                badge("direct connection", style: .ok)
+                            } else if isFipsRouted(participant) {
+                                badge("via mesh", style: .muted)
+                            }
+                        }
+                    }
+                }
+                Spacer()
+                HStack(spacing: 7) {
+                    connectivityDot(participant, size: 8)
+                    Text(deviceStatusText(participant))
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    func deviceAdminSection(_ participant: NativeParticipantState, network: NativeNetworkState) -> some View {
+        surface {
+            sectionHeader("Manage Device", systemImage: "person.badge.key")
+
+            SyncedTextFieldRow(
+                title: "Name",
+                placeholder: "Name",
+                identity: participant.pubkeyHex,
+                value: participant.magicDnsAlias,
+                systemImage: "checkmark",
+                disabled: manager.actionInFlight
+            ) { draft in
+                manager.setParticipantAlias(
+                    npub: participant.npub,
+                    alias: draft
+                )
+            }
+
+            if !isSelf(participant) {
+                SyncedTextFieldRow(
+                    title: "Hints",
+                    placeholder: "host or host:port",
+                    identity: participant.pubkeyHex,
+                    value: participant.fipsEndpointHints.joined(separator: ", "),
+                    systemImage: "network",
+                    disabled: manager.actionInFlight
+                ) { draft in
+                    manager.setParticipantEndpointHints(
+                        npub: participant.npub,
+                        endpointHints: endpointHints(from: draft)
+                    )
+                }
+                deviceActionButtons(participant, network: network)
+            }
+        }
+    }
+
+    func deviceAddressesSection(_ participant: NativeParticipantState) -> some View {
+        surface {
+            Text("Addresses")
+                .font(.headline)
+            detailValueRow("MagicDNS", deviceMagicDnsName(participant))
+            detailValueRow("VPN IP", cleanIp(participant.tunnelIp))
+            detailValueRow("Device ID", participant.npub)
+        }
+    }
+
+    func deviceConnectivitySection(_ participant: NativeParticipantState) -> some View {
+        surface {
+            Text("Connectivity")
+                .font(.headline)
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), alignment: .leading)], alignment: .leading, spacing: 12) {
+                metric("Role", deviceRoleText(participant))
+                metric("State", deviceStatusText(participant))
+                metric("FIPS path", fipsPathText(participant))
+                metric("Latency age", participant.fipsSrttAgeMs == 0 ? "-" : formatDurationMs(participant.fipsSrttAgeMs))
+                metric("Control seen", participant.lastFipsControlSeenText.isEmpty ? "-" : participant.lastFipsControlSeenText)
+                metric("Data seen", participant.lastFipsDataSeenText.isEmpty ? "-" : participant.lastFipsDataSeenText)
+                metric("Address hints", participant.fipsEndpointHints.isEmpty ? "-" : participant.fipsEndpointHints.joined(separator: ", "))
+                metric("Last seen", participant.lastSeenText.isEmpty ? "-" : participant.lastSeenText)
+                metric("Sent", formatBytes(participant.txBytes))
+                metric("Received", formatBytes(participant.rxBytes))
+            }
+            if !participant.statusText.isEmpty {
+                Text(participant.statusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    func deviceActionButtons(_ participant: NativeParticipantState, network: NativeNetworkState) -> some View {
+        HStack(spacing: 6) {
+            Button {
+                manager.toggleAdmin(networkId: network.id, participant: participant)
+            } label: {
+                Label(
+                    participant.isAdmin ? "Remove admin" : "Make admin",
+                    systemImage: participant.isAdmin ? "star.slash" : "star"
+                )
+            }
+            .disabled(manager.actionInFlight)
+            .help(participant.isAdmin ? "Remove admin" : "Make admin")
+            Button(role: .destructive) {
+                pendingParticipantRemoval = PendingParticipantRemoval(
+                    networkId: network.id,
+                    npub: participant.npub,
+                    deviceName: deviceName(participant)
+                )
+            } label: {
+                Label("Remove", systemImage: "trash")
+            }
+            .disabled(isSelf(participant) || manager.actionInFlight)
+            .help("Remove device")
+        }
+        .controlSize(.small)
+        .confirmationDialog(
+            "Remove \(pendingParticipantRemoval?.deviceName ?? "device")?",
+            isPresented: Binding(
+                get: { pendingParticipantRemoval != nil },
+                set: { if !$0 { pendingParticipantRemoval = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Remove", role: .destructive) {
+                if let target = pendingParticipantRemoval {
+                    manager.removeParticipant(networkId: target.networkId, npub: target.npub)
+                }
+                pendingParticipantRemoval = nil
+            }
+            Button("Cancel", role: .cancel) { pendingParticipantRemoval = nil }
+        } message: {
+            Text("This removes the device from the network's roster. They keep the network locally but won't be in this roster anymore.")
+        }
+    }
+
+    func detailValueRow(_ title: String, _ value: String, displayValue customDisplayValue: String? = nil) -> some View {
+        let displayValue = value.isEmpty ? "-" : customDisplayValue ?? value
+        return VStack(alignment: .leading, spacing: 4) {
+            if value.hasPrefix("npub1") {
+                WrappingIdentifierText(
+                    value: displayValue,
+                    font: .preferredFont(forTextStyle: .subheadline),
+                    color: .labelColor
+                )
+            } else {
+                Text(displayValue)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+            HStack(spacing: 6) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !value.isEmpty {
+                    Button {
+                        manager.copy(value)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Copy")
+                }
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    func joinRequestInputSection(_ network: NativeNetworkState) -> some View {
+        return surface {
+            sectionHeader("Add Join Request", systemImage: "camera.viewfinder")
+            Text("Scan the joining device's request QR, or paste its join request. Valid links open confirmation automatically.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Button {
+                    scanningJoinRequest = true
+                    showingQrScanner = true
+                } label: {
+                    Label("Scan QR", systemImage: "camera.viewfinder")
+                }
+                .disabled(manager.actionInFlight)
+                TextField("nvpn://join-request/…", text: $joinRequestInput)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: joinRequestInput) { _, value in
+                        stageJoinRequest(value, network: network)
+                    }
+            }
+        }
+    }
+
+    func importJoinRequestOrAddDevice(_ value: String, network: NativeNetworkState) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if looksLikeJoinRequestQrOrLink(trimmed) {
+            stageJoinRequest(trimmed, network: network)
+            return
+        }
+        if isValidDeviceId(trimmed) {
+            manager.addParticipant(networkId: network.id, npub: trimmed)
+        } else {
+            manager.importJoinRequest(trimmed)
+        }
+    }
+
+    func stageJoinRequest(_ value: String, network: NativeNetworkState) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard looksLikeJoinRequestQrOrLink(trimmed) else { return }
+        pendingJoinRequest = PendingJoinRequest(
+            networkId: network.id,
+            networkName: network.name.isEmpty ? "this network" : network.name,
+            request: trimmed
+        )
+    }
+
+    func addByDeviceIdSection(_ network: NativeNetworkState) -> some View {
+        let trimmed = addByDeviceIdInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let invalid = !trimmed.isEmpty && !isValidDeviceId(trimmed)
+        return surface {
+            sectionHeader("Add by Device ID", systemImage: "plus")
+            Text("Paste the joining device's npub to add it directly. The joining device still needs your Device ID and this network ID for manual pairing.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                TextField("Device ID", text: $addByDeviceIdInput)
+                    .textFieldStyle(.roundedBorder)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.red, lineWidth: invalid ? 1 : 0)
+                    )
+                TextField("Name (optional)", text: $addByDeviceIdAlias)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 200)
+                Button {
+                    manager.addParticipant(networkId: network.id, npub: trimmed, alias: addByDeviceIdAlias)
+                    addByDeviceIdInput = ""
+                    addByDeviceIdAlias = ""
+                } label: {
+                    Label("Add to Roster", systemImage: "plus")
+                }
+                .disabled(trimmed.isEmpty || invalid || manager.actionInFlight)
+            }
+            if invalid {
+                Text("Not a valid device ID")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    var createNetworkSection: some View {
+        surface {
+            sectionHeader("Create Network", systemImage: "plus.circle")
+            HStack(spacing: 8) {
+                TextField("Network name", text: $networkNameInput)
+                    .onSubmit {
+                        addNetwork()
+                        finishCreateNetwork()
+                    }
+                Button {
+                    addNetwork(defaultName: "My Network")
+                    finishCreateNetwork()
+                } label: {
+                    Label("Create", systemImage: "plus")
+                }
+                .disabled(manager.actionInFlight)
+            }
+        }
+    }
+
+    /// Land on the new network's Devices view right after Create. The
+    /// sidebar may have been on Routing/Settings; from the Add Network
+    /// sheet we also have to dismiss. Both are no-ops if already in the
+    /// target state.
+    func finishCreateNetwork() {
+        addNetworkPresented = false
+        selectedSidebarItem = .devices
+    }
+
+    func joinNetworkSection(_ network: NativeNetworkState?) -> some View {
+        let requestNetwork = network ?? state.networks.first { candidate in
+            !candidate.joinRequestQrCodeOrLink.isEmpty
+        }
+        let joinRequestQrCodeOrLink: String
+        if state.joinRequestQrCodeOrLink.isEmpty {
+            joinRequestQrCodeOrLink = requestNetwork?.joinRequestQrCodeOrLink ?? ""
+        } else {
+            joinRequestQrCodeOrLink = state.joinRequestQrCodeOrLink
+        }
+        return surface {
+            sectionHeader("Join Network", systemImage: "arrow.down.circle")
+            if !joinRequestQrCodeOrLink.isEmpty {
+                InviteQRCodeView(invite: joinRequestQrCodeOrLink)
+                    .frame(width: 220, height: 220)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                HStack(spacing: 8) {
+                    Button {
+                        manager.copy(joinRequestQrCodeOrLink)
+                    } label: {
+                        Label("Copy Request", systemImage: "doc.on.doc")
+                    }
+                    Button {
+                        manager.share(joinRequestQrCodeOrLink)
+                    } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                }
+                .disabled(manager.actionInFlight)
+                detailValueRow("Your Device ID", state.ownNpub)
+            }
+
+            DisclosureGroup("Legacy invite link", isExpanded: $legacyInviteExpanded) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        TextField("nvpn://invite/…", text: $manager.inviteInput)
+                            .onChange(of: manager.inviteInput) { _, newValue in
+                                // Auto-import when the field becomes a valid invite —
+                                // saves the user a click. importInvite clears the
+                                // field, which prevents re-firing.
+                                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                                if trimmed.lowercased().hasPrefix("nvpn://invite/") {
+                                    manager.linkNetwork(trimmed)
+                                }
+                            }
+                            .onSubmit {
+                                manager.linkNetwork(manager.inviteInput)
+                            }
+                        Button {
+                            pasteInviteFromClipboard()
+                        } label: {
+                            Label("Paste", systemImage: "doc.on.clipboard")
+                        }
+                    }
+                }
+                .padding(.top, 6)
+            }
+
+            manualJoinDisclosure
+
+            advertiseJoinRequestSection
+        }
+    }
+
+    var advertiseJoinRequestSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Divider()
+            HStack {
+                Text("Nearby join request")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+                Button {
+                    state.inviteBroadcastActive ? manager.stopJoinRequestBroadcast() : manager.startJoinRequestBroadcast()
+                } label: {
+                    Label(
+                        state.inviteBroadcastActive
+                            ? "Advertising · \(formatRemaining(state.inviteBroadcastRemainingSecs))"
+                            : "Advertise nearby",
+                        systemImage: state.inviteBroadcastActive ? "stop.circle" : "dot.radiowaves.left.and.right"
+                    )
+                }
+                .disabled(manager.actionInFlight)
+            }
+            Text(state.inviteBroadcastActive ? "Admins nearby can add this device from its join request." : "Advertise this device's join request to nearby admins.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    var nearbyJoinRequestsSection: some View {
+        surface {
+            HStack {
+                sectionHeader("Nearby Join Requests", systemImage: "dot.radiowaves.left.and.right")
+                Spacer()
+                Button {
+                    state.nearbyDiscoveryActive ? manager.stopNearbyDiscovery() : manager.startNearbyDiscovery()
+                } label: {
+                    Label(
+                        state.nearbyDiscoveryActive
+                            ? "Finding nearby · \(formatRemaining(state.nearbyDiscoveryRemainingSecs))"
+                            : "Find nearby",
+                        systemImage: state.nearbyDiscoveryActive ? "stop.circle" : "dot.radiowaves.left.and.right"
+                    )
+                }
+                .disabled(manager.actionInFlight)
+            }
+            if state.nearbyDiscoveryActive && state.lanPeers.isEmpty {
+                emptyRow("No nearby join requests yet", systemImage: "wifi")
+            } else {
+                ForEach(state.lanPeers, id: \.invite) { peer in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(peer.nodeName.isEmpty ? peer.npub : peer.nodeName)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Text(peer.lastSeenText)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Add") {
+                            manager.importJoinRequest(peer.invite)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    var manualJoinDisclosure: some View {
+        let admin = manualJoinAdminId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mesh = manualJoinMeshId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let adminInvalid = !admin.isEmpty && !isValidDeviceId(admin)
+        let canSubmit = !admin.isEmpty && !mesh.isEmpty && !adminInvalid
+        return DisclosureGroup("Manual join", isExpanded: $manualJoinExpanded) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Enter the admin's Device ID and network ID, then give the admin your Device ID shown above.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Admin Device ID", text: $manualJoinAdminId)
+                    .textFieldStyle(.roundedBorder)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.red, lineWidth: adminInvalid ? 1 : 0)
+                    )
+                if adminInvalid {
+                    Text("Not a valid device ID")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                TextField("Network ID", text: $manualJoinMeshId)
+                    .textFieldStyle(.roundedBorder)
+                Button {
+                    manager.manualAddNetwork(adminNpub: admin, meshNetworkId: mesh)
+                    manualJoinAdminId = ""
+                    manualJoinMeshId = ""
+                    manualJoinExpanded = false
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .disabled(!canSubmit || manager.actionInFlight)
+            }
+            .padding(.top, 6)
+        }
+        .font(.subheadline)
+    }
+
+    func pasteInviteFromClipboard() {
+        if let text = NSPasteboard.general.string(forType: .string) {
+            manager.inviteInput = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+    }
+
+    func formatRemaining(_ seconds: UInt64) -> String {
+        if seconds == 0 { return "off" }
+        let days = seconds / 86_400
+        if days > 0 {
+            let hours = (seconds % 86_400) / 3_600
+            return hours == 0 ? "\(days)d" : "\(days)d \(hours)h"
+        }
+        let hours = seconds / 3_600
+        if hours > 0 {
+            let minutes = (seconds % 3_600) / 60
+            return minutes == 0 ? "\(hours)h" : "\(hours)h \(minutes)m"
+        }
+        let minutes = seconds / 60
+        if minutes == 0 { return "\(seconds)s" }
+        let secs = seconds % 60
+        return secs == 0 ? "\(minutes)m" : String(format: "%dm%02ds", minutes, secs)
+    }
+}
+
