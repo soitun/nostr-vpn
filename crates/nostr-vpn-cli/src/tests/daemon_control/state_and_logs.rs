@@ -400,6 +400,17 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
         .expect("daemon state should exist");
     assert!(state.vpn_active);
     assert_eq!(state.vpn_status, "VPN on");
+    #[cfg(unix)]
+    {
+        let count = state
+            .open_file_descriptor_count
+            .expect("daemon state should report open file descriptors");
+        let limit = state
+            .open_file_descriptor_soft_limit
+            .expect("daemon state should report the soft file descriptor limit");
+        assert!(count > 0);
+        assert!(count < limit);
+    }
     assert_eq!(state.relays.len(), 1);
     assert_eq!(state.relays[0].status, "connected");
     assert_eq!(state.fips_endpoint_peers.len(), 1);

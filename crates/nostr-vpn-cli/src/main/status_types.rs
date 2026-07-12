@@ -50,6 +50,10 @@ struct VersionInfoView {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct DaemonRuntimeState {
     updated_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    open_file_descriptor_count: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    open_file_descriptor_soft_limit: Option<u64>,
     #[serde(default)]
     binary_version: String,
     #[serde(default)]

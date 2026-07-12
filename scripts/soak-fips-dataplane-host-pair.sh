@@ -47,6 +47,8 @@ MAX_SRTT_AGE_MS="${NVPN_HOST_PAIR_MAX_SRTT_AGE_MS:-120000}"
 MAX_SRTT_DRIFT_MS="${NVPN_HOST_PAIR_MAX_SRTT_DRIFT_MS:-50}"
 MAX_SRTT_DRIFT_FACTOR="${NVPN_HOST_PAIR_MAX_SRTT_DRIFT_FACTOR:-10}"
 MAX_CPU_PERCENT="${NVPN_HOST_PAIR_MAX_CPU_PERCENT:-250}"
+MAX_OPEN_FD_GROWTH="${NVPN_HOST_PAIR_MAX_OPEN_FD_GROWTH:-32}"
+MAX_OPEN_FD_UTILIZATION_PERCENT="${NVPN_HOST_PAIR_MAX_OPEN_FD_UTILIZATION_PERCENT:-80}"
 MAX_PIPELINE_QUEUE_WAIT_P95_MS="${NVPN_HOST_PAIR_MAX_PIPELINE_QUEUE_WAIT_P95_MS:-50}"
 MAX_PIPELINE_QUEUE_WAIT_P99_MS="${NVPN_HOST_PAIR_MAX_PIPELINE_QUEUE_WAIT_P99_MS:-100}"
 MAX_PRIORITY_QUEUE_WAIT_MS="${NVPN_HOST_PAIR_MAX_PRIORITY_QUEUE_WAIT_MS:-50}"
@@ -160,6 +162,10 @@ LOCAL_DIRECT_PROBE_OVERDUE_COUNT=0
 REMOTE_DIRECT_PROBE_OVERDUE_COUNT=0
 LOCAL_CPU=""
 REMOTE_CPU=""
+LOCAL_OPEN_FD_COUNT=""
+REMOTE_OPEN_FD_COUNT=""
+LOCAL_OPEN_FD_LIMIT=""
+REMOTE_OPEN_FD_LIMIT=""
 FIPS_PIPELINE_LOCAL=""
 FIPS_PIPELINE_REMOTE=""
 NVPN_PIPELINE_LOCAL=""
@@ -547,6 +553,12 @@ daemon_log_file() {
   jq -r '.daemon.log_file // ""' <<<"$1"
 }
 
+daemon_state_field() {
+  local status="$1"
+  local field="$2"
+  jq -r --arg field "$field" '.daemon.state[$field] // ""' <<<"$status"
+}
+
 status_for_side() {
   case "$1" in
     local) local_status ;;
@@ -656,6 +668,24 @@ assert_float_drift_at_most() {
         exit 1;
       }
     }'
+}
+
+assert_open_fd_budget() {
+  local actual="$1"
+  local baseline="$2"
+  local limit="$3"
+  local label="$4"
+  [[ -z "$actual" || "$actual" == "null" || -z "$baseline" || "$baseline" == "null" ]] && return 0
+  [[ "$actual" =~ ^[0-9]+$ && "$baseline" =~ ^[0-9]+$ ]] || die "$label open file descriptor count is not numeric"
+  if (( actual > baseline + MAX_OPEN_FD_GROWTH )); then
+    die "$label open file descriptors grew by $((actual - baseline)) (actual=$actual baseline=$baseline max_growth=$MAX_OPEN_FD_GROWTH)"
+  fi
+  if [[ -n "$limit" && "$limit" != "null" ]]; then
+    [[ "$limit" =~ ^[0-9]+$ ]] || die "$label open file descriptor limit is not numeric"
+    if (( limit > 0 && actual * 100 > limit * MAX_OPEN_FD_UTILIZATION_PERCENT )); then
+      die "$label open file descriptor utilization exceeds ${MAX_OPEN_FD_UTILIZATION_PERCENT}% (actual=$actual limit=$limit)"
+    fi
+  fi
 }
 
 assert_peer_path() {
@@ -2198,6 +2228,8 @@ Common optional env:
   NVPN_HOST_PAIR_MAX_PING_P99_MS      default 750
   NVPN_HOST_PAIR_MAX_PIPELINE_QUEUE_WAIT_P95_MS default 50
   NVPN_HOST_PAIR_MAX_PIPELINE_QUEUE_WAIT_P99_MS default 100
+  NVPN_HOST_PAIR_MAX_OPEN_FD_GROWTH  fail after this many new daemon FDs (default 32)
+  NVPN_HOST_PAIR_MAX_OPEN_FD_UTILIZATION_PERCENT fail above this daemon FD limit percentage (default 80)
   NVPN_HOST_PAIR_DURATION_SECS       default 300; use 1800/3600 for soak
   NVPN_HOST_PAIR_OUTPUT_DIR          artifact directory
   NVPN_HOST_PAIR_PREFLIGHT           set 1 to write preflight.tsv and exit
@@ -2260,6 +2292,9 @@ main() {
 
   initial_local_status="$(wait_for_peer_status local "$LOCAL_PEER" "local peer")"
   initial_remote_status="$(wait_for_peer_status remote "$REMOTE_PEER" "remote peer")"
+  local baseline_local_open_fds baseline_remote_open_fds
+  baseline_local_open_fds="$(daemon_state_field "$initial_local_status" open_file_descriptor_count)"
+  baseline_remote_open_fds="$(daemon_state_field "$initial_remote_status" open_file_descriptor_count)"
   REMOTE_TUNNEL_IP="$(peer_tunnel_ip "$initial_local_status" "$LOCAL_PEER")"
   LOCAL_TUNNEL_IP="$(peer_tunnel_ip "$initial_remote_status" "$REMOTE_PEER")"
   [[ -n "$REMOTE_TUNNEL_IP" ]] || die "unable to resolve remote tunnel IP from local status"
@@ -2347,6 +2382,12 @@ main() {
     local status_after_local status_after_remote local_status_path remote_status_path
     status_after_local="$(wait_for_peer_status local "$LOCAL_PEER" "local peer")"
     status_after_remote="$(wait_for_peer_status remote "$REMOTE_PEER" "remote peer")"
+    LOCAL_OPEN_FD_COUNT="$(daemon_state_field "$status_after_local" open_file_descriptor_count)"
+    REMOTE_OPEN_FD_COUNT="$(daemon_state_field "$status_after_remote" open_file_descriptor_count)"
+    LOCAL_OPEN_FD_LIMIT="$(daemon_state_field "$status_after_local" open_file_descriptor_soft_limit)"
+    REMOTE_OPEN_FD_LIMIT="$(daemon_state_field "$status_after_remote" open_file_descriptor_soft_limit)"
+    assert_open_fd_budget "$LOCAL_OPEN_FD_COUNT" "$baseline_local_open_fds" "$LOCAL_OPEN_FD_LIMIT" "local daemon"
+    assert_open_fd_budget "$REMOTE_OPEN_FD_COUNT" "$baseline_remote_open_fds" "$REMOTE_OPEN_FD_LIMIT" "remote daemon"
     assert_peer_path "$status_after_local" "$LOCAL_PEER" "$EXPECTED_REMOTE_UNDERLAY_IP" "local"
     assert_peer_path "$status_after_remote" "$REMOTE_PEER" "$EXPECTED_LOCAL_UNDERLAY_IP" "remote"
 

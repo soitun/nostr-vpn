@@ -497,6 +497,22 @@ test_cpu_policy() {
     bash "$ROOT_DIR/scripts/soak-fips-dataplane-host-pair.sh"
 }
 
+test_open_fd_budget_policy() {
+  MAX_OPEN_FD_GROWTH=8
+  MAX_OPEN_FD_UTILIZATION_PERCENT=80
+
+  assert_open_fd_budget 28 20 256 "fixture daemon"
+  assert_open_fd_budget "" "" "" "old daemon"
+  assert_fails_with \
+    "open FD growth" \
+    "open file descriptors grew by 9" \
+    assert_open_fd_budget 29 20 256 "fixture daemon"
+  assert_fails_with \
+    "open FD utilization" \
+    "open file descriptor utilization exceeds 80%" \
+    assert_open_fd_budget 205 200 256 "fixture daemon"
+}
+
 test_cpu_stress_helpers() {
   local cmd got
 
@@ -1040,6 +1056,7 @@ test_fips_liveness_policy
 test_direct_path_policy
 test_select_peer_uses_expected_underlay_when_status_has_multiple_peers
 test_cpu_policy
+test_open_fd_budget_policy
 test_cpu_stress_helpers
 test_metadata_cpu_stress_shape
 test_preflight_rows_shape

@@ -14,6 +14,49 @@ pub(crate) struct DaemonRuntimeStateInput<'a> {
     pub(crate) port_mapping: &'a PortMappingStatus,
 }
 
+#[cfg(target_os = "linux")]
+fn open_file_descriptor_count() -> Option<u64> {
+    Some(fs::read_dir("/proc/self/fd").ok()?.count() as u64)
+}
+
+#[cfg(target_os = "macos")]
+fn open_file_descriptor_count() -> Option<u64> {
+    let entry_size = std::mem::size_of::<libc::proc_fdinfo>();
+    let capacity = usize::try_from(unsafe { libc::getdtablesize() }).ok()?;
+    let buffer_size = capacity.checked_mul(entry_size)?.min(i32::MAX as usize);
+    let mut buffer = vec![0_u8; buffer_size];
+    let bytes = unsafe {
+        libc::proc_pidinfo(
+            std::process::id() as i32,
+            libc::PROC_PIDLISTFDS,
+            0,
+            buffer.as_mut_ptr().cast(),
+            buffer_size as i32,
+        )
+    };
+    (bytes >= 0).then_some(bytes as u64 / entry_size as u64)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn open_file_descriptor_count() -> Option<u64> {
+    None
+}
+
+#[cfg(unix)]
+fn open_file_descriptor_soft_limit() -> Option<u64> {
+    let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    let current = unsafe { limit.assume_init() }.rlim_cur;
+    (current != libc::RLIM_INFINITY).then_some(current as u64)
+}
+
+#[cfg(not(unix))]
+fn open_file_descriptor_soft_limit() -> Option<u64> {
+    None
+}
+
 fn persist_daemon_startup_failure_state(
     state_file: &Path,
     input: DaemonRuntimeStateInput<'_>,
@@ -311,6 +354,8 @@ pub(crate) fn build_daemon_runtime_state(input: DaemonRuntimeStateInput<'_>) -> 
     let health = build_health_issues(app, vpn_active, mesh_ready, network, port_mapping, &peers);
     DaemonRuntimeState {
         updated_at: now,
+        open_file_descriptor_count: open_file_descriptor_count(),
+        open_file_descriptor_soft_limit: open_file_descriptor_soft_limit(),
         binary_version: PRODUCT_VERSION.to_string(),
         fips_core_version: fips_core_build_version(),
         local_endpoint,
@@ -414,6 +459,8 @@ pub(crate) fn disconnected_daemon_runtime_state(
 ) -> DaemonRuntimeState {
     DaemonRuntimeState {
         updated_at: unix_timestamp(),
+        open_file_descriptor_count: open_file_descriptor_count(),
+        open_file_descriptor_soft_limit: open_file_descriptor_soft_limit(),
         binary_version: PRODUCT_VERSION.to_string(),
         fips_core_version: fips_core_build_version(),
         local_endpoint: String::new(),
