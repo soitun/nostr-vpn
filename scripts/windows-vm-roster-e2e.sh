@@ -5,13 +5,23 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SSH_HOST="${NVPN_WINDOWS_SSH_HOST:-${1:-win11-dev}}"
+SSH_JUMP="${NVPN_WINDOWS_SSH_JUMP:-}"
+SSH_PROXY_COMMAND="${NVPN_WINDOWS_SSH_PROXY_COMMAND:-}"
 GUEST_REPO="${NVPN_WINDOWS_GUEST_REPO_PATH:-C:\src\nostr-vpn}"
 
 run_ps() {
   local script="$1"
   local encoded
+  local -a ssh_cmd
   encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64 | tr -d '\n')"
-  ssh "$SSH_HOST" powershell.exe -NoProfile -EncodedCommand "$encoded"
+  ssh_cmd=(ssh -o BatchMode=yes)
+  if [[ -n "$SSH_PROXY_COMMAND" ]]; then
+    ssh_cmd+=(-o "ProxyCommand=$SSH_PROXY_COMMAND")
+  elif [[ -n "$SSH_JUMP" ]]; then
+    ssh_cmd+=(-J "$SSH_JUMP")
+  fi
+  ssh_cmd+=("$SSH_HOST")
+  "${ssh_cmd[@]}" powershell.exe -NoProfile -EncodedCommand "$encoded"
 }
 
 "$ROOT/scripts/windows-vm-git-sync.sh" "$SSH_HOST"
