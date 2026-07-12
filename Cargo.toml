@@ -59,7 +59,7 @@ nostr-pubsub-relay = "0.1.4"
 nostr-social-graph = "0.1.2"
 nostr-social-memory = "0.1.1"
 nostr-identity = "0.3.0"
-nostr-vpn-core = { version = "4.0.40", path = "crates/nostr-vpn-core" }
+nostr-vpn-core = { version = "4.0.40", path = "crates/nostr-vpn-core", default-features = false }
 nostr-vpn-wintun = { version = "4.0.40", path = "crates/nostr-vpn-wintun" }
 
 [patch.crates-io]
