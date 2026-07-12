@@ -753,6 +753,11 @@ pub struct NetworkConfig {
     pub invite_secret: String,
     #[serde(default, alias = "participants")]
     pub devices: Vec<String>,
+    /// Locally removed members. This is deliberately not part of the shared
+    /// roster wire format: an admin keeps these tombstones so a later stale
+    /// whole-roster snapshot cannot resurrect a removed device.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub removed_devices: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub admins: Vec<String>,
     #[serde(
@@ -831,6 +836,7 @@ impl Default for AppConfig {
                 network_id: default_network_id(),
                 invite_secret: default_invite_secret(),
                 devices: Vec::new(),
+                removed_devices: Vec::new(),
                 admins: Vec::new(),
                 listen_for_join_requests: default_listen_for_join_requests(),
                 invite_inviter: String::new(),

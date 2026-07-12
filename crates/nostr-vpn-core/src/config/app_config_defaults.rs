@@ -112,6 +112,13 @@ impl AppConfig {
                 .collect();
             network.devices.sort();
             network.devices.dedup();
+            network.removed_devices = network
+                .removed_devices
+                .iter()
+                .filter_map(|participant| normalize_nostr_pubkey(participant).ok())
+                .collect();
+            network.removed_devices.sort();
+            network.removed_devices.dedup();
             network.admins = normalize_network_admins(
                 std::mem::take(&mut network.admins),
                 own_pubkey_hex.as_deref(),
@@ -154,6 +161,13 @@ impl AppConfig {
                 .collect();
             network.devices.sort();
             network.devices.dedup();
+            network.removed_devices = network
+                .removed_devices
+                .iter()
+                .filter_map(|participant| canonical_npub_key(participant))
+                .collect();
+            network.removed_devices.sort();
+            network.removed_devices.dedup();
             network.admins = network
                 .admins
                 .iter()
@@ -319,6 +333,7 @@ impl AppConfig {
             network_id: default_network_id(),
             invite_secret: default_invite_secret(),
             devices: Vec::new(),
+            removed_devices: Vec::new(),
             admins: Vec::new(),
             listen_for_join_requests: default_listen_for_join_requests(),
             invite_inviter: String::new(),

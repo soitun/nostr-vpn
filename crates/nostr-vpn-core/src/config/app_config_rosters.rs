@@ -121,14 +121,27 @@ impl AppConfig {
         }
 
         let own_join_completed = own_pubkey.is_some() && own_in_shared_roster;
-        let devices = if own_in_shared_roster {
+        let mut devices = if own_in_shared_roster {
             normalize_shared_roster_devices(devices, own_pubkey.as_deref())?
         } else {
             Vec::new()
         };
+        let removed_devices = self.networks[network_index]
+            .removed_devices
+            .iter()
+            .filter_map(|member| normalize_nostr_pubkey(member).ok())
+            .collect::<HashSet<_>>();
+        let suppressed_stale_devices = devices
+            .iter()
+            .any(|device| removed_devices.contains(device));
+        devices.retain(|device| !removed_devices.contains(device));
         let network = &mut self.networks[network_index];
-        let admins =
+        let mut admins =
             normalize_network_admins(admins, own_pubkey.as_deref(), &network.invite_inviter);
+        let suppressed_stale_admins = admins
+            .iter()
+            .any(|admin| removed_devices.contains(admin));
+        admins.retain(|admin| !removed_devices.contains(admin));
         if admins.is_empty() {
             return Err(anyhow::anyhow!(
                 "shared roster must include at least one admin"
@@ -149,6 +162,15 @@ impl AppConfig {
         }
         network.shared_roster_updated_at = signed_at;
         network.shared_roster_signed_by = normalized_signed_by;
+        if (suppressed_stale_devices || suppressed_stale_admins)
+            && own_pubkey
+                .as_deref()
+                .is_some_and(|own| network.admins.iter().any(|admin| admin == own))
+        {
+            network.shared_roster_updated_at =
+                next_shared_roster_updated_at(network.shared_roster_updated_at);
+            network.shared_roster_signed_by = own_pubkey.clone().unwrap_or_default();
+        }
         network.outbound_join_request = if own_join_completed {
             None
         } else {

@@ -156,6 +156,21 @@ wait_for_roster_member() {
   exit 1
 }
 
+wait_for_roster_member_removal() {
+  local service="$1"
+  local member="$2"
+  local description="$3"
+  for _ in $(seq 1 80); do
+    if [[ "$(config_array_contains "$service" devices "$member" || true)" != "yes" ]] \
+      && [[ "$(config_array_contains "$service" removed_devices "$member" || true)" == "yes" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "bootstrap-discovery docker e2e failed: $description" >&2
+  exit 1
+}
+
 wait_for_join_acceptance() {
   local service="$1"
   local description="$2"
@@ -198,6 +213,18 @@ ping_until_success() {
   return 1
 }
 
+ping_until_failure() {
+  local service="$1"
+  local target="$2"
+  for _ in $(seq 1 30); do
+    if ! "${COMPOSE[@]}" exec -T "$service" ping -c 1 -W 1 "$target" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 accept_join_request_through_gui_api() {
   local service="$1"
   local requester="$2"
@@ -227,6 +254,31 @@ accept_join_request_through_gui_api() {
     echo "bootstrap-discovery docker e2e failed: GUI accept for network '$network_id' returned HTTP $http_code" >&2
     "${COMPOSE[@]}" exec -T "$service" sh -lc \
       'cat /tmp/accept-join-response.json; tail -n 100 /tmp/nvpn-web.log' >&2 || true
+    exit 1
+  fi
+}
+
+remove_participant_through_gui_api() {
+  local service="$1"
+  local requester="$2"
+  local network_id=""
+  network_id="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+    "curl -fsS -X POST http://127.0.0.1:8081/api/tick | perl -0ne 'print \$1 if /\"networks\"\\s*:\\s*\\[\\s*\\{.*?\"id\"\\s*:\\s*\"([^\"]+)\"/s'" | tr -d '\r')"
+  if [[ -z "$network_id" ]]; then
+    echo "bootstrap-discovery docker e2e failed: active GUI network ID was unavailable for removal" >&2
+    exit 1
+  fi
+  local http_code=""
+  http_code="$("${COMPOSE[@]}" exec -T \
+    -e NETWORK_ID="$network_id" \
+    -e REQUESTER="$requester" \
+    "$service" sh -lc 'curl -sS -o /tmp/remove-participant-response.json -w "%{http_code}" -X POST -H "content-type: application/json" \
+      --data "{\"networkId\":\"$NETWORK_ID\",\"npub\":\"$REQUESTER\"}" \
+      http://127.0.0.1:8081/api/remove_participant')"
+  if [[ "$http_code" != "200" ]]; then
+    echo "bootstrap-discovery docker e2e failed: GUI removal for network '$network_id' returned HTTP $http_code" >&2
+    "${COMPOSE[@]}" exec -T "$service" sh -lc \
+      'cat /tmp/remove-participant-response.json; tail -n 100 /tmp/nvpn-web.log' >&2 || true
     exit 1
   fi
 }
@@ -308,4 +360,16 @@ if ! ping_until_success node-c "$ADMIN_TUNNEL_IP"; then
   exit 1
 fi
 
-echo "join request from $REQUESTER_NAME was accepted through the GUI action; desktop and phone reported each other online and passed reciprocal tunnel pings"
+# Drive removal through the same app-core endpoint as the desktop GUI. The
+# local tombstone must survive config reload and the expelled phone must lose
+# data-plane reachability; the focused core test covers a stale second admin
+# subsequently attempting to resurrect this device with a newer snapshot.
+remove_participant_through_gui_api node-a "$REQUESTER_NPUB"
+wait_for_roster_member_removal node-a "$REQUESTER_NPUB" \
+  "GUI removal did not persist the phone tombstone"
+if ! ping_until_failure node-c "$ADMIN_TUNNEL_IP"; then
+  echo "bootstrap-discovery docker e2e failed: removed phone could still reach the desktop" >&2
+  exit 1
+fi
+
+echo "join request from $REQUESTER_NAME was accepted and removed through GUI actions; online state and reciprocal tunnel reachability followed the roster"

@@ -145,6 +145,56 @@ fn apply_admin_signed_shared_roster_replaces_members_from_known_admin() {
 }
 
 #[test]
+fn newer_stale_admin_snapshot_cannot_resurrect_locally_removed_device() {
+    let own = Keys::generate();
+    let other_admin = Keys::generate();
+    let removed = Keys::generate();
+    let unrelated_addition = Keys::generate();
+    let own_hex = own.public_key().to_hex();
+    let other_admin_hex = other_admin.public_key().to_hex();
+    let removed_hex = removed.public_key().to_hex();
+    let unrelated_hex = unrelated_addition.public_key().to_hex();
+
+    let mut config = AppConfig::generated();
+    config.nostr.secret_key = own.secret_key().to_secret_hex();
+    config.nostr.public_key = own_hex.clone();
+    config.networks[0].network_id = "mesh-home".to_string();
+    config.networks[0].admins = vec![own_hex.clone(), other_admin_hex.clone()];
+    config.networks[0].devices = vec![removed_hex.clone()];
+    config.ensure_defaults();
+    let network_id = config.networks[0].id.clone();
+
+    config
+        .remove_participant_from_network(&network_id, &removed_hex)
+        .expect("remove device locally");
+    let removed_at = config.networks[0].shared_roster_updated_at;
+
+    let changed = config
+        .apply_admin_signed_shared_roster(admin_signed_roster_update(
+            "mesh-home",
+            "Home",
+            vec![
+                own_hex.clone(),
+                other_admin_hex.clone(),
+                removed_hex.clone(),
+                unrelated_hex.clone(),
+            ],
+            vec![own_hex.clone(), other_admin_hex.clone()],
+            std::collections::HashMap::new(),
+            removed_at + 1,
+            &other_admin_hex,
+        ))
+        .expect("apply newer stale snapshot");
+
+    assert!(changed);
+    assert!(!config.networks[0].devices.contains(&removed_hex));
+    assert!(config.networks[0].devices.contains(&unrelated_hex));
+    assert!(config.networks[0].removed_devices.contains(&removed_hex));
+    assert_eq!(config.networks[0].shared_roster_signed_by, own_hex);
+    assert!(config.networks[0].shared_roster_updated_at > removed_at + 1);
+}
+
+#[test]
 fn apply_verified_admin_signed_shared_roster_applies_newer_admin_event_name() {
     let own = Keys::generate();
     let current_admin = Keys::generate();

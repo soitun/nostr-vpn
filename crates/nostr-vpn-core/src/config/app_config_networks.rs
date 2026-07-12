@@ -197,6 +197,9 @@ impl AppConfig {
             let network = self
                 .network_by_id_mut(network_id)
                 .ok_or_else(|| anyhow::anyhow!("network not found"))?;
+            network
+                .removed_devices
+                .retain(|removed| removed != &normalized);
             if !network
                 .devices
                 .iter()
@@ -228,6 +231,7 @@ impl AppConfig {
         device: &str,
     ) -> Result<()> {
         let normalized = normalize_nostr_pubkey(device)?;
+        let own_pubkey = self.own_nostr_pubkey_hex().ok();
         {
             let network = self
                 .network_by_id_mut(network_id)
@@ -236,12 +240,30 @@ impl AppConfig {
             {
                 return Err(anyhow::anyhow!("cannot remove the last admin"));
             }
+            let was_member = network
+                .devices
+                .iter()
+                .chain(network.admins.iter())
+                .any(|configured| configured == &normalized);
+            let can_publish_removal = own_pubkey
+                .as_deref()
+                .is_some_and(|own| network.admins.iter().any(|admin| admin == own));
             network
                 .devices
                 .retain(|configured| configured != &normalized);
             network
                 .admins
                 .retain(|configured| configured != &normalized);
+            if was_member
+                && can_publish_removal
+                && !network
+                .removed_devices
+                .iter()
+                .any(|removed| removed == &normalized)
+            {
+                network.removed_devices.push(normalized.clone());
+                network.removed_devices.sort();
+            }
             if network.invite_inviter == normalized {
                 network.invite_inviter = network.admins.first().cloned().unwrap_or_default();
             }
