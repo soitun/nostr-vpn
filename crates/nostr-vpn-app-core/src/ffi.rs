@@ -240,12 +240,14 @@ struct LanPeerRecord {
 struct NativeJoinApprovalWorker {
     request_pubkey: String,
     receiver: mpsc::Receiver<Result<Vec<Event>, String>>,
+    cancellation: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 #[cfg(not(test))]
 impl NativeJoinApprovalWorker {
     fn spawn(config: AppConfig, request_pubkey: String) -> Self {
         let (sender, receiver) = mpsc::channel();
+        let (cancellation, cancelled) = tokio::sync::oneshot::channel();
         std::thread::spawn(move || {
             let result = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
@@ -253,7 +255,7 @@ impl NativeJoinApprovalWorker {
                 .map_err(|error| format!("failed to start join approval receiver: {error}"))
                 .and_then(|runtime| {
                     runtime
-                        .block_on(fetch_pending_join_approval_events(&config))
+                        .block_on(fetch_pending_join_approval_events(&config, cancelled))
                         .map_err(|error| error.to_string())
                 });
             let _ = sender.send(result);
@@ -261,6 +263,16 @@ impl NativeJoinApprovalWorker {
         Self {
             request_pubkey,
             receiver,
+            cancellation: Some(cancellation),
+        }
+    }
+}
+
+#[cfg(not(test))]
+impl Drop for NativeJoinApprovalWorker {
+    fn drop(&mut self) {
+        if let Some(cancellation) = self.cancellation.take() {
+            let _ = cancellation.send(());
         }
     }
 }

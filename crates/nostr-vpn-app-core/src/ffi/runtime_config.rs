@@ -508,6 +508,11 @@ impl NativeAppRuntime {
 
     fn save_reload_and_refresh(&mut self) -> Result<()> {
         self.save_config()?;
+        #[cfg(not(test))]
+        if self.config.pending_nostr_join_request.is_none() {
+            self.join_approval_worker = None;
+            self.join_approval_next_attempt_at = None;
+        }
         if self.mobile_runtime {
             self.refresh_mobile_status()
         } else {

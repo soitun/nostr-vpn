@@ -121,6 +121,9 @@ impl AppConfig {
         }
 
         let own_join_completed = own_pubkey.is_some() && own_in_shared_roster;
+        if own_join_completed {
+            self.pending_nostr_join_request = None;
+        }
         let mut devices = if own_in_shared_roster {
             normalize_shared_roster_devices(devices, own_pubkey.as_deref())?
         } else {

@@ -1,14 +1,88 @@
 #[cfg(test)]
 mod tests {
     use super::{
-        AppConfig, InternetSource, normalize_nostr_pubkey, parse_wireguard_exit_config,
-        wireguard_exit_config_text,
+        AdminSignedSharedRosterUpdate, AppConfig, InternetSource, PendingOutboundJoinRequest,
+        normalize_nostr_pubkey, parse_wireguard_exit_config, wireguard_exit_config_text,
     };
     use crate::config_defaults::generate_nostr_identity;
 
     const TEST_WG_PRIVATE_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
     const TEST_WG_PUBLIC_KEY: &str = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=";
     const TEST_WG_PRESHARED_KEY: &str = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=";
+
+    #[test]
+    fn successful_roster_join_clears_every_local_join_request() {
+        let mut config = AppConfig::generated_without_networks();
+        config
+            .ensure_pending_nostr_join_request(1_778_998_000)
+            .expect("pending link request");
+        let own_pubkey = config.own_nostr_pubkey_hex().expect("own pubkey");
+        let (_, admin_npub) = generate_nostr_identity();
+        let admin_pubkey = normalize_nostr_pubkey(&admin_npub).expect("admin pubkey");
+        let network_entry_id = config.add_network("Home");
+        let network = config
+            .network_by_id_mut(&network_entry_id)
+            .expect("imported network");
+        network.enabled = true;
+        network.network_id = "8d4f34f5425bc50e".to_string();
+        network.admins = vec![admin_pubkey.clone()];
+        network.outbound_join_request = Some(PendingOutboundJoinRequest {
+            recipient: admin_pubkey.clone(),
+            requested_at: 1_778_998_001,
+        });
+
+        assert!(
+            config
+                .apply_admin_signed_shared_roster(AdminSignedSharedRosterUpdate {
+                    network_id: "8d4f34f5425bc50e".to_string(),
+                    network_name: "Home".to_string(),
+                    devices: vec![own_pubkey],
+                    admins: vec![admin_pubkey.clone()],
+                    aliases: Default::default(),
+                    signed_at: 1_778_998_002,
+                    signed_by: admin_pubkey,
+                })
+                .expect("apply accepted roster")
+        );
+
+        assert!(config.pending_nostr_join_request.is_none());
+        assert!(config.active_network().outbound_join_request.is_none());
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn clearing_join_request_deletes_its_persisted_secret() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-cleared-join-request-secret-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("config.toml");
+        let mut config = AppConfig::generated_without_networks();
+        config
+            .ensure_pending_nostr_join_request(1_778_998_000)
+            .expect("pending request");
+
+        config.save(&path).expect("persist pending request");
+        let pending_config = std::fs::read_to_string(&path).expect("read pending config");
+        assert!(pending_config.contains("pending_nostr_join_request"));
+
+        config.clear_pending_nostr_join_request();
+        config.save(&path).expect("persist completed join");
+
+        let raw = std::fs::read_to_string(&path).expect("read completed config");
+        assert!(!raw.contains("pending_nostr_join_request"));
+        std::fs::write(&path, pending_config).expect("restore stale public request metadata");
+        let error = AppConfig::load(&path)
+            .expect_err("cleared request secret must not be recoverable")
+            .to_string();
+        assert!(error.contains("no matching secret exists"), "{error}");
+        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete persisted secrets");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn plaintext_toml_preserves_config_secrets() {

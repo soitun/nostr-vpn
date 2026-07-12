@@ -51,19 +51,41 @@ async fn publish_join_approval_events_to_relay(
 }
 
 #[cfg(not(test))]
-pub async fn fetch_pending_join_approval_events(config: &AppConfig) -> Result<Vec<Event>> {
-    fetch_pending_join_approval_events_from_relay(
+pub async fn fetch_pending_join_approval_events(
+    config: &AppConfig,
+    cancelled: tokio::sync::oneshot::Receiver<()>,
+) -> Result<Vec<Event>> {
+    fetch_pending_join_approval_events_from_relay_until_cancelled(
         config,
         NOSTR_VPN_JOIN_APPROVAL_RELAY,
         Duration::from_secs(20),
+        async {
+            let _ = cancelled.await;
+        },
     )
     .await
 }
 
+#[cfg(test)]
 async fn fetch_pending_join_approval_events_from_relay(
     config: &AppConfig,
     relay_url: &str,
     wait: Duration,
+) -> Result<Vec<Event>> {
+    fetch_pending_join_approval_events_from_relay_until_cancelled(
+        config,
+        relay_url,
+        wait,
+        std::future::pending(),
+    )
+    .await
+}
+
+async fn fetch_pending_join_approval_events_from_relay_until_cancelled(
+    config: &AppConfig,
+    relay_url: &str,
+    wait: Duration,
+    cancelled: impl std::future::Future<Output = ()>,
 ) -> Result<Vec<Event>> {
     let pending = config
         .pending_nostr_join_request
@@ -84,20 +106,34 @@ async fn fetch_pending_join_approval_events_from_relay(
         .limit(8);
 
     let client = Client::new(config.nostr_keys()?);
-    let provider = RelayEventBus::with_client(client, [relay_url], Duration::from_secs(10))
-        .await
-        .map_err(|error| anyhow!("failed to initialize join approval subscriber: {error}"))?;
+    tokio::pin!(cancelled);
+    let provider = tokio::select! {
+        () = &mut cancelled => return Err(join_approval_cancelled()),
+        result = RelayEventBus::with_client(client, [relay_url], Duration::from_secs(10)) => {
+            result.map_err(|error| anyhow!("failed to initialize join approval subscriber: {error}"))?
+        }
+    };
     let client = provider.client();
     let mut notifications = client.notifications();
-    client
-        .subscribe(filter.clone(), None)
-        .await
-        .context("failed to subscribe for join approval")?;
+    tokio::select! {
+        () = &mut cancelled => {
+            client.disconnect().await;
+            return Err(join_approval_cancelled());
+        }
+        result = client.subscribe(filter.clone(), None) => {
+            result.context("failed to subscribe for join approval")?;
+        }
+    }
 
-    let report = provider
-        .query(vec![filter], QueryOptions { limit: Some(8) })
-        .await
-        .map_err(|error| anyhow!("failed to fetch join approval events: {error}"))?;
+    let report = tokio::select! {
+        () = &mut cancelled => {
+            client.disconnect().await;
+            return Err(join_approval_cancelled());
+        }
+        result = provider.query(vec![filter], QueryOptions { limit: Some(8) }) => {
+            result.map_err(|error| anyhow!("failed to fetch join approval events: {error}"))?
+        }
+    };
     let mut events = report
         .events
         .into_iter()
@@ -113,6 +149,10 @@ async fn fetch_pending_join_approval_events_from_relay(
     tokio::pin!(timeout);
     loop {
         tokio::select! {
+            () = &mut cancelled => {
+                client.disconnect().await;
+                return Err(join_approval_cancelled());
+            }
             () = &mut timeout => break,
             notification = notifications.recv() => {
                 match notification {
@@ -134,6 +174,10 @@ async fn fetch_pending_join_approval_events_from_relay(
     }
     client.disconnect().await;
     Ok(events)
+}
+
+fn join_approval_cancelled() -> anyhow::Error {
+    anyhow!("join approval subscription cancelled")
 }
 
 fn approval_event_targets(event: &Event, request_pubkey: &str) -> bool {
@@ -171,6 +215,40 @@ mod tests {
 
     use super::*;
     use crate::join_approval::prepare_join_approval;
+
+    #[tokio::test]
+    async fn cancelled_join_request_stops_listening_on_the_relay() {
+        let mut joiner = AppConfig::generated_without_networks();
+        joiner
+            .ensure_pending_nostr_join_request(unix_timestamp())
+            .expect("pending join request");
+        let relay = LocalNostrRelay::spawn().await;
+        let relay_url = relay.url.clone();
+        let (cancel, cancelled) = oneshot::channel();
+        let fetch = tokio::spawn(async move {
+            fetch_pending_join_approval_events_from_relay_until_cancelled(
+                &joiner,
+                &relay_url,
+                Duration::from_secs(30),
+                async {
+                    let _ = cancelled.await;
+                },
+            )
+            .await
+        });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(!fetch.is_finished(), "listener stopped before cancellation");
+
+        cancel.send(()).expect("cancel join request listener");
+        let error = tokio::time::timeout(Duration::from_secs(1), fetch)
+            .await
+            .expect("listener did not stop promptly")
+            .expect("listener task panicked")
+            .expect_err("cancelled listener should not return approval events");
+
+        assert!(error.to_string().contains("cancelled"), "{error:#}");
+        relay.stop().await;
+    }
 
     #[tokio::test]
     async fn native_join_approval_round_trips_through_relay() {
