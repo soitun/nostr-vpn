@@ -109,14 +109,15 @@ impl ExchangeRateService {
         let inner = Arc::clone(&self.inner);
         match std::thread::Builder::new()
             .name("nvpn-exchange-rate".to_string())
-            .spawn(move || match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime.block_on(inner.refresh()),
-                Err(_) => inner.note_refresh_failed(),
-            })
-        {
+            .spawn(move || {
+                match tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                {
+                    Ok(runtime) => runtime.block_on(inner.refresh()),
+                    Err(_) => inner.note_refresh_failed(),
+                }
+            }) {
             Ok(_) => true,
             Err(_) => {
                 self.inner.note_refresh_failed();
