@@ -49,7 +49,7 @@ fn open_file_descriptor_soft_limit() -> Option<u64> {
         return None;
     }
     let current = unsafe { limit.assume_init() }.rlim_cur;
-    (current != libc::RLIM_INFINITY).then_some(current as u64)
+    (current != libc::RLIM_INFINITY).then_some(current)
 }
 
 #[cfg(not(unix))]

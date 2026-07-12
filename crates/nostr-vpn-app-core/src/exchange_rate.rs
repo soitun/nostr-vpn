@@ -107,7 +107,7 @@ impl ExchangeRateService {
             state.status = ExchangeRateStatus::Refreshing;
         }
         let inner = Arc::clone(&self.inner);
-        match std::thread::Builder::new()
+        if std::thread::Builder::new()
             .name("nvpn-exchange-rate".to_string())
             .spawn(move || {
                 match tokio::runtime::Builder::new_current_thread()
@@ -117,12 +117,13 @@ impl ExchangeRateService {
                     Ok(runtime) => runtime.block_on(inner.refresh()),
                     Err(_) => inner.note_refresh_failed(),
                 }
-            }) {
-            Ok(_) => true,
-            Err(_) => {
-                self.inner.note_refresh_failed();
-                false
-            }
+            })
+            .is_ok()
+        {
+            true
+        } else {
+            self.inner.note_refresh_failed();
+            false
         }
     }
 
@@ -150,11 +151,10 @@ pub(crate) fn apply_exchange_rate(
 ) {
     wallet.fiat_currency = snapshot.currency.as_str().to_string();
     wallet.exchange_rate_status = match snapshot.status {
-        ExchangeRateStatus::Unavailable => "Unavailable",
         ExchangeRateStatus::Refreshing => "Refreshing",
         ExchangeRateStatus::Ready => "Updated",
         ExchangeRateStatus::Failed if snapshot.rate.is_some() => "Using last rate",
-        ExchangeRateStatus::Failed => "Unavailable",
+        ExchangeRateStatus::Unavailable | ExchangeRateStatus::Failed => "Unavailable",
     }
     .to_string();
     wallet.exchange_rate_sources = snapshot
@@ -177,13 +177,19 @@ pub(crate) fn apply_exchange_rate(
     };
     wallet.exchange_rate_text = format!("1 BTC = {rate:.2} {}", snapshot.currency.as_str());
     if wallet.balance_known {
-        let value = wallet.total_balance_msat as f64 / 100_000_000_000.0 * rate;
+        let value = sats_as_btc(wallet.total_balance_msat / 1_000) * rate;
         wallet.fiat_balance_text = if snapshot.currency == FiatCurrency::Jpy {
             format!("{value:.0} JPY")
         } else {
             format!("{value:.2} {}", snapshot.currency.as_str())
         };
     }
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn sats_as_btc(sats: u64) -> f64 {
+    // Every satoshi in Bitcoin's maximum supply fits exactly in an f64 integer.
+    sats as f64 / 100_000_000.0
 }
 
 impl Inner {

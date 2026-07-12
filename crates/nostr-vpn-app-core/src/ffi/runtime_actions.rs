@@ -686,10 +686,8 @@ impl NativeAppRuntime {
         let existing_peer_keys = self
             .lan_peers
             .iter()
-            .filter_map(|(key, record)| {
-                self.lan_signal_is_existing_peer(&record.signal)
-                    .then(|| key.clone())
-            })
+            .filter(|(_, record)| self.lan_signal_is_existing_peer(&record.signal))
+            .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
         for key in existing_peer_keys {
             self.lan_peers.remove(&key);

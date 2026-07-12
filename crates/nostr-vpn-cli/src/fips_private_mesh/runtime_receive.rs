@@ -212,7 +212,7 @@ impl FipsPrivateMeshRuntime {
                         FipsPrivateMeshEvent::PaidRoutePayment {
                             sender_pubkey: source_pubkey,
                             id,
-                            envelope,
+                            envelope: Box::new(envelope),
                         },
                     ));
                 }

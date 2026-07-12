@@ -462,7 +462,7 @@ fn drain_fips_mesh_events(
                 envelope,
             } => drained
                 .paid_route_payments
-                .push((sender_pubkey, id, envelope)),
+                .push((sender_pubkey, id, *envelope)),
             #[cfg(feature = "paid-exit")]
             crate::fips_private_mesh::FipsPrivateMeshEvent::PaidRoutePaymentAck {
                 sender_pubkey,

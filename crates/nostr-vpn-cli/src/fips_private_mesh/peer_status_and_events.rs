@@ -736,7 +736,7 @@ pub(crate) enum FipsPrivateMeshEvent {
     PaidRoutePayment {
         sender_pubkey: String,
         id: String,
-        envelope: StreamingRoutePaymentEnvelope,
+        envelope: Box<StreamingRoutePaymentEnvelope>,
     },
     #[cfg(feature = "paid-exit")]
     PaidRoutePaymentAck {

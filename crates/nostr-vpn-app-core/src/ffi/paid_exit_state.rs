@@ -636,26 +636,7 @@ fn paid_route_wallet_state(
     }
 }
 
-fn compact_wallet_balance_text(total_balance_msat: u64) -> String {
-    let sats = total_balance_msat / 1_000;
-    if sats < 1_000 {
-        return format!("{sats}₿");
-    }
-
-    let (value, suffix) = if sats < 1_000_000 {
-        (sats as f64 / 1_000.0, "K")
-    } else {
-        (sats as f64 / 1_000_000.0, "M")
-    };
-    let formatted = if value >= 100.0 {
-        format!("{value:.0}")
-    } else if value >= 10.0 {
-        format!("{value:.1}").trim_end_matches(".0").to_string()
-    } else {
-        format!("{value:.2}").trim_end_matches('0').trim_end_matches('.').to_string()
-    };
-    format!("{formatted}{suffix}₿")
-}
+include!("paid_exit_state/wallet_balance.rs");
 
 fn paid_route_offer_state(
     key: &str,
