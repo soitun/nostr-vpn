@@ -126,6 +126,7 @@ impl FfiApp {
         })
     }
 
+    #[allow(clippy::needless_pass_by_value)]
     pub fn set_privileged_command_runner(&self, runner: Arc<dyn PrivilegedCommandRunner>) {
         self.with_runtime(|runtime| {
             #[cfg(target_os = "macos")]

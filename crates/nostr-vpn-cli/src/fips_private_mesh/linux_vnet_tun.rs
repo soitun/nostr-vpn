@@ -869,7 +869,7 @@ fn linux_vnet_gso_split(
     let hdr_len = usize::from(hdr.hdr_len);
     let payload_len = packet.len() - hdr_len;
     let gso_size = usize::from(hdr.gso_size);
-    batch.reserve((payload_len + gso_size - 1) / gso_size);
+    batch.reserve(payload_len.div_ceil(gso_size));
 
     let mut next_segment_data_at = hdr_len;
     let mut count = 0_usize;

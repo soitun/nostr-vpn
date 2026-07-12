@@ -23,7 +23,6 @@ fn flush_direct_endpoint_packet_batch_to_tun_blocking(
             vnet_write_preparer,
         );
         packet_batch.clear();
-        return;
     }
 
     #[cfg(target_os = "macos")]

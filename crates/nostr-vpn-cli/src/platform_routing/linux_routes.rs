@@ -373,13 +373,7 @@ pub(crate) fn linux_bypass_route_specs_for_hosts(
                 .arg(host.to_string()),
         )?;
         let spec = linux_route_get_spec_from_output(&output)
-            .and_then(|spec| {
-                if spec.dev == tunnel_iface {
-                    None
-                } else {
-                    Some(spec)
-                }
-            })
+            .filter(|spec| spec.dev != tunnel_iface)
             .or_else(|| {
                 original_default_route
                     .and_then(linux_route_get_spec_from_output)
@@ -431,7 +425,7 @@ pub(crate) fn macos_default_routes() -> Result<Vec<MacosRouteSpec>> {
     crate::macos_network::macos_default_routes()
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 pub(crate) fn macos_underlay_default_route_from_routes(
     routes: &[MacosRouteSpec],
 ) -> Option<MacosRouteSpec> {
