@@ -541,7 +541,7 @@ final class AppModel: ObservableObject {
             await stopFailedDebugProbeTunnel()
         }
         if let runtimeJson = await vpnController.runtimeStateJson() {
-            result["packetTunnelRuntimeStateJson"] = String(runtimeJson.prefix(4096))
+            result["packetTunnelRuntimeStateJson"] = runtimeJson
         }
         refresh()
         result["exitNode"] = state.exitNode
