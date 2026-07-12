@@ -370,7 +370,7 @@
     }
 
     #[test]
-    fn mobile_config_wireguard_exit_replaces_plaintext_dns_with_secure_local_stub() {
+    fn mobile_config_wireguard_exit_keeps_local_stub_and_uses_profile_dns_only_while_active() {
         let mut app = AppConfig::generated();
         app.ensure_defaults();
         let own = app.own_nostr_pubkey_hex().expect("own pubkey");
@@ -411,6 +411,15 @@
             config.magic_dns_server,
             nostr_vpn_core::MESH_MAGIC_DNS_SERVER
         );
+        assert_eq!(
+            active_mobile_wireguard_dns_servers(&config),
+            vec!["94.140.14.14".parse::<Ipv4Addr>().unwrap()]
+        );
+
+        app.set_internet_source(nostr_vpn_core::config::InternetSource::Direct);
+        let direct = MobileTunnelConfig::from_app(&app).expect("direct mobile config");
+        assert!(direct.wireguard_exit.is_none());
+        assert!(active_mobile_wireguard_dns_servers(&direct).is_empty());
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

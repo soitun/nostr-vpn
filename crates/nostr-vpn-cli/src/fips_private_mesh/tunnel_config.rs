@@ -353,9 +353,18 @@ impl FipsPrivateTunnelConfig {
     }
 
     fn secure_dns_required(&self) -> bool {
-        self.route_targets
-            .iter()
-            .any(|route| matches!(route.trim(), "0.0.0.0/0" | "::/0"))
+        (self.wireguard_exit.enabled && self.wireguard_exit.configured())
+            || self
+                .route_targets
+                .iter()
+                .any(|route| matches!(route.trim(), "0.0.0.0/0" | "::/0"))
+    }
+
+    fn wireguard_dns_servers(&self) -> Vec<IpAddr> {
+        if !self.wireguard_exit.enabled || !self.wireguard_exit.configured() {
+            return Vec::new();
+        }
+        self.wireguard_exit.dns_server_ips()
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", test))]

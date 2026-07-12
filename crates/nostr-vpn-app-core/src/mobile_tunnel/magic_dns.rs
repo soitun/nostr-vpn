@@ -6,12 +6,91 @@ struct MobileDnsQuery<'a> {
     payload: &'a [u8],
 }
 
-async fn mobile_magic_dns_response_packet(
+enum MobileDnsPacketAction {
+    Respond(Vec<u8>),
+    ForwardViaWireGuard,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct MobileWireGuardDnsFlow {
+    server: Ipv4Addr,
+    protocol: u8,
+    client_port: u16,
+}
+
+struct MobileWireGuardDnsNat {
+    local_dns_server: Ipv4Addr,
+    servers: Vec<Ipv4Addr>,
+    next_server: AtomicUsize,
+    flows: Mutex<HashSet<MobileWireGuardDnsFlow>>,
+}
+
+impl MobileWireGuardDnsNat {
+    fn new(local_dns_server: Ipv4Addr, servers: Vec<Ipv4Addr>) -> Option<Self> {
+        (!servers.is_empty()).then_some(Self {
+            local_dns_server,
+            servers,
+            next_server: AtomicUsize::new(0),
+            flows: Mutex::new(HashSet::new()),
+        })
+    }
+
+    fn rewrite_query(&self, packet: &mut [u8]) -> Option<Ipv4Addr> {
+        let (source, destination, source_port, destination_port, protocol) =
+            ipv4_transport_endpoints(packet)?;
+        let _ = source;
+        if destination != self.local_dns_server || destination_port != 53 {
+            return None;
+        }
+        let index = self.next_server.fetch_add(1, Ordering::Relaxed) % self.servers.len();
+        let server = self.servers[index];
+        self.flows.lock().ok()?.insert(MobileWireGuardDnsFlow {
+            server,
+            protocol,
+            client_port: source_port,
+        });
+        rewrite_ipv4_destination(packet, self.local_dns_server, server);
+        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(packet);
+        Some(server)
+    }
+
+    fn rewrite_response(&self, packet: &mut [u8]) -> bool {
+        let Some((source, _, source_port, destination_port, protocol)) =
+            ipv4_transport_endpoints(packet)
+        else {
+            return false;
+        };
+        if source_port != 53 {
+            return false;
+        }
+        let flow = MobileWireGuardDnsFlow {
+            server: source,
+            protocol,
+            client_port: destination_port,
+        };
+        let matched = self.flows.lock().is_ok_and(|mut flows| {
+            if protocol == 17 {
+                flows.remove(&flow)
+            } else {
+                flows.contains(&flow)
+            }
+        });
+        if !matched {
+            return false;
+        }
+        rewrite_ipv4_source(packet, source, self.local_dns_server);
+        nostr_vpn_core::packet_checksums::finalize_ipv4_transport_checksum(packet);
+        true
+    }
+}
+
+async fn mobile_dns_packet_action(
     packet: &[u8],
     app_config: &Arc<RwLock<AppConfig>>,
     secure_dns: Option<&dyn SecureDnsLookup>,
     magic_dns_server: Ipv4Addr,
-) -> Option<Vec<u8>> {
+    forward_public_via_wireguard: bool,
+) -> Option<MobileDnsPacketAction> {
     let query = parse_mobile_magic_dns_query(packet, magic_dns_server)?;
     let response = {
         let app = app_config.read().ok()?;
@@ -20,6 +99,9 @@ async fn mobile_magic_dns_response_packet(
     };
     let response = match response {
         Some(response) => response,
+        None if forward_public_via_wireguard => {
+            return Some(MobileDnsPacketAction::ForwardViaWireGuard);
+        }
         None => match secure_dns {
             Some(resolver) => match resolver.resolve(query.payload).await {
                 Ok(response) => response,
@@ -31,7 +113,53 @@ async fn mobile_magic_dns_response_packet(
             None => build_magic_dns_server_failure_response(query.payload)?,
         },
     };
-    build_mobile_dns_response_packet(&query, &response)
+    build_mobile_dns_response_packet(&query, &response).map(MobileDnsPacketAction::Respond)
+}
+
+#[cfg(test)]
+async fn mobile_magic_dns_response_packet(
+    packet: &[u8],
+    app_config: &Arc<RwLock<AppConfig>>,
+    secure_dns: Option<&dyn SecureDnsLookup>,
+    magic_dns_server: Ipv4Addr,
+) -> Option<Vec<u8>> {
+    match mobile_dns_packet_action(
+        packet,
+        app_config,
+        secure_dns,
+        magic_dns_server,
+        false,
+    )
+    .await?
+    {
+        MobileDnsPacketAction::Respond(response) => Some(response),
+        MobileDnsPacketAction::ForwardViaWireGuard => None,
+    }
+}
+
+fn ipv4_transport_endpoints(packet: &[u8]) -> Option<(Ipv4Addr, Ipv4Addr, u16, u16, u8)> {
+    if packet.len() < 24 || packet[0] >> 4 != 4 {
+        return None;
+    }
+    let header_len = usize::from(packet[0] & 0x0f) * 4;
+    if header_len < 20 || packet.len() < header_len + 4 || !matches!(packet[9], 6 | 17) {
+        return None;
+    }
+    let total_len = usize::from(u16::from_be_bytes([packet[2], packet[3]]));
+    if total_len < header_len + 4 || packet.len() < total_len {
+        return None;
+    }
+    let fragment = u16::from_be_bytes([packet[6], packet[7]]) & 0x3fff;
+    if fragment != 0 {
+        return None;
+    }
+    Some((
+        Ipv4Addr::new(packet[12], packet[13], packet[14], packet[15]),
+        Ipv4Addr::new(packet[16], packet[17], packet[18], packet[19]),
+        u16::from_be_bytes([packet[header_len], packet[header_len + 1]]),
+        u16::from_be_bytes([packet[header_len + 2], packet[header_len + 3]]),
+        packet[9],
+    ))
 }
 
 fn parse_mobile_magic_dns_query(

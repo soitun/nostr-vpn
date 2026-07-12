@@ -341,6 +341,17 @@ impl WireGuardExitConfig {
             && !self.peer_public_key.trim().is_empty()
             && !self.endpoint.trim().is_empty()
     }
+
+    pub fn dns_server_ips(&self) -> Vec<IpAddr> {
+        let mut servers = self
+            .dns
+            .iter()
+            .filter_map(|server| server.trim().parse::<IpAddr>().ok())
+            .collect::<Vec<_>>();
+        servers.sort_unstable();
+        servers.dedup();
+        servers
+    }
 }
 
 pub fn parse_wireguard_exit_config(raw: &str) -> Result<WireGuardExitConfig> {

@@ -4,6 +4,7 @@ use std::fs;
 use std::fs::OpenOptions;
 #[cfg(unix)]
 use std::io::Write;
+use std::net::IpAddr;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::Path;

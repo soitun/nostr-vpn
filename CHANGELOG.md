@@ -14,10 +14,11 @@ All notable changes to this project are documented in this file.
   silently choosing one. Pasted or scanned Cashu tokens are parsed locally and
   reviewed with their amount and mint before redemption; failed redemption
   keeps or follows the confirmation with the mint error.
-- Exit routes now force public DNS through a local fail-closed stub backed by
-  authenticated DNS-over-HTTPS on Linux, macOS, Windows, Android, iOS, and
-  WebVM. MagicDNS stays local, and configured exit or underlay resolvers are no
-  longer exposed to or trusted through the exit path.
+- Exit routes now force public DNS through a local fail-closed stub on Linux,
+  macOS, Windows, Android, iOS, and WebVM. MagicDNS stays local. A selected
+  WireGuard exit uses only that profile's configured DNS through the encrypted
+  WireGuard path; other exits use authenticated DNS-over-HTTPS and never expose
+  or trust underlay resolvers.
 - Updated to FIPS Core 0.3.93 and Endpoint 0.3.60 so busy relays retain the
   first authenticated application packet until session ownership is installed.
 - Desktop and CLI update checks consume the latest signed Hashtree release root

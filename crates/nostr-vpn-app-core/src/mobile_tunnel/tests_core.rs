@@ -531,6 +531,54 @@
     }
 
     #[test]
+    fn mobile_wireguard_dns_translation_stays_inside_active_wg_path() {
+        let mesh = Ipv4Addr::new(10, 44, 206, 222);
+        let local_dns = parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER).unwrap();
+        let profile_dns = [
+            Ipv4Addr::new(94, 140, 14, 14),
+            Ipv4Addr::new(9, 9, 9, 9),
+        ];
+        let dns_nat = MobileWireGuardDnsNat::new(local_dns, profile_dns.to_vec()).unwrap();
+        let mut first = ipv4_udp_packet(
+            mesh,
+            local_dns,
+            53000,
+            53,
+            &dns_query("example.com", 1),
+        );
+        let mut second = ipv4_udp_packet(
+            mesh,
+            local_dns,
+            53001,
+            53,
+            &dns_query("example.net", 1),
+        );
+
+        assert_eq!(
+            dns_nat.rewrite_query(&mut first),
+            Some(profile_dns[0])
+        );
+        assert_eq!(&first[16..20], &profile_dns[0].octets());
+        assert_eq!(
+            dns_nat.rewrite_query(&mut second),
+            Some(profile_dns[1])
+        );
+        assert_eq!(&second[16..20], &profile_dns[1].octets());
+
+        let mut response = ipv4_udp_packet(profile_dns[1], mesh, 53, 53001, b"dns response");
+        assert!(dns_nat.rewrite_response(&mut response));
+        assert_eq!(&response[12..16], &local_dns.octets());
+
+        let mut unrelated = ipv4_udp_packet(profile_dns[1], mesh, 443, 53001, b"not dns");
+        assert!(!dns_nat.rewrite_response(&mut unrelated));
+        assert_eq!(&unrelated[12..16], &profile_dns[1].octets());
+
+        let mut direct_dns = ipv4_udp_packet(profile_dns[0], mesh, 53, 54000, b"direct DNS");
+        assert!(!dns_nat.rewrite_response(&mut direct_dns));
+        assert_eq!(&direct_dns[12..16], &profile_dns[0].octets());
+    }
+
+    #[test]
     fn mobile_config_includes_static_peer_hints_from_app() {
         let mut app = AppConfig::generated();
         app.ensure_defaults();

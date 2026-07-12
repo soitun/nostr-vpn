@@ -250,17 +250,46 @@ impl FipsPrivateTunnelRuntime {
                     &self.iface,
                     None,
                     config.magic_dns_records.clone(),
+                    Vec::new(),
                 )
                 .await?,
             );
         }
-        if let Some(secure_dns) = self.secure_dns.as_ref() {
+        if let Some(secure_dns) = self.secure_dns.as_mut() {
             secure_dns.update_records(config.magic_dns_records.clone());
+            if config.wireguard_dns_servers().is_empty() {
+                secure_dns.update_config(config.magic_dns_records.clone(), Vec::new())?;
+            }
         }
         Ok(())
     }
 
     async fn finish_secure_dns(&mut self, config: &FipsPrivateTunnelConfig) {
+        if self.manages_secure_dns
+            && config.secure_dns_required()
+            && let Some(secure_dns) = self.secure_dns.as_mut()
+        {
+            let wireguard_active = {
+                #[cfg(target_os = "linux")]
+                {
+                    self.exit_node_runtime.wireguard_exit.is_some()
+                }
+                #[cfg(target_os = "macos")]
+                {
+                    self.wg_upstream.is_some()
+                }
+            };
+            let servers = if wireguard_active {
+                config.wireguard_dns_servers()
+            } else {
+                Vec::new()
+            };
+            if let Err(error) =
+                secure_dns.update_config(config.magic_dns_records.clone(), servers)
+            {
+                eprintln!("fips: failed to update exit DNS resolver: {error:#}");
+            }
+        }
         if (!self.manages_secure_dns || !config.secure_dns_required())
             && let Some(secure_dns) = self.secure_dns.take()
         {

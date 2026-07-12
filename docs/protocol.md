@@ -91,15 +91,23 @@ Exit-node behavior is represented in config and UI state. A node can optionally 
 ## Exit DNS privacy
 
 When a default exit route is active, the platform resolver points only at
-nostr-vpn's local DNS stub. MagicDNS names are answered locally. Public queries
-are sent as DNS wire messages over authenticated HTTPS to Cloudflare's DoH
-service, using fixed bootstrap addresses so resolving the DoH hostname cannot
-itself leak through plaintext DNS. Plain HTTP, redirects, system proxies, and
-plaintext DNS fallback are disabled; an unavailable or invalid DoH response
-returns `SERVFAIL`.
+nostr-vpn's local DNS stub. MagicDNS names are answered locally. When the active
+exit is a configured WireGuard profile with DNS IP addresses, the stub forwards
+public DNS wire messages to those resolvers through the WireGuard data path.
+Those resolvers become active only after the WireGuard runtime is active and
+are removed before that exit is torn down; there is no underlay DNS fallback.
 
-This prevents the exit operator from reading or spoofing DNS questions and
-answers. It is not anonymity: Cloudflare can process the DNS question, and the
+For every other exit source, public queries are sent as DNS wire messages over
+authenticated HTTPS to Cloudflare's DoH service, using fixed bootstrap
+addresses so resolving the DoH hostname cannot itself leak through plaintext
+DNS. Plain HTTP, redirects, system proxies, and plaintext DNS fallback are
+disabled; an unavailable or invalid response fails closed.
+
+With DoH, this prevents the exit operator from reading or spoofing DNS questions
+and answers. With a WireGuard profile resolver, the WireGuard provider can
+process those questions and answers, matching the profile's explicit DNS
+policy, while the underlay cannot read them outside the encrypted tunnel. This
+is not anonymity: the selected DNS provider can process the question, and the
 exit can still observe destination IP addresses, traffic timing and volume, and
 possibly TLS hostnames when the destination connection does not use ECH.
 

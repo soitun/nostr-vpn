@@ -541,37 +541,55 @@ async fn dispatch_mobile_outbound_packets(
     app_config_for_dns: &Arc<RwLock<AppConfig>>,
     secure_dns: Option<&SecureDnsResolver>,
     magic_dns_server: Option<Ipv4Addr>,
+    wireguard_dns_nat: Option<&MobileWireGuardDnsNat>,
     packets: Vec<Vec<u8>>,
 ) -> bool {
     let mut pending_run = None;
     let mut pending_dns_responses = Vec::new();
     let mut pending_wg_packets = Vec::new();
     let mesh = mesh.read().ok().map(|mesh| Arc::clone(&*mesh));
-    for packet in packets {
+    for mut packet in packets {
         // Local MagicDNS responder. The well-known DNS address is owned by this
         // tunnel instance, so answer before mesh/WG routing and never treat it
         // as a remote nvpn node.
         if let Some(magic_dns_server) = magic_dns_server
-            && let Some(response) = mobile_magic_dns_response_packet(
+            && let Some(action) = mobile_dns_packet_action(
                 &packet,
                 app_config_for_dns,
                 secure_dns.map(|resolver| resolver as &dyn SecureDnsLookup),
                 magic_dns_server,
+                wireguard_dns_nat.is_some(),
             )
             .await
         {
-            if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
-                return false;
+            match action {
+                MobileDnsPacketAction::Respond(response) => {
+                    if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
+                        return false;
+                    }
+                    if !flush_mobile_wg_packets(wg_send_tx, &mut pending_wg_packets).await {
+                        return false;
+                    }
+                    pending_dns_responses.push(response);
+                    continue;
+                }
+                MobileDnsPacketAction::ForwardViaWireGuard => {}
             }
-            if !flush_mobile_wg_packets(wg_send_tx, &mut pending_wg_packets).await {
-                return false;
-            }
-            pending_dns_responses.push(response);
-            continue;
         }
 
         if !flush_mobile_inbound_packets(inbound_tx_for_dns, &mut pending_dns_responses).await {
             return false;
+        }
+
+        if wireguard_dns_nat.is_some_and(|wireguard_dns_nat| {
+            wireguard_dns_nat.rewrite_query(&mut packet).is_some()
+        })
+        {
+            if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
+                return false;
+            }
+            push_mobile_wg_packet(&mut pending_wg_packets, packet, wg_addr, mesh_addr);
+            continue;
         }
 
         let outgoing_peer = mesh.as_ref().and_then(|mesh| {

@@ -214,6 +214,25 @@ fn serialized_mobile_internet_source(app: &AppConfig) -> Option<String> {
         .map(str::to_string)
 }
 
+fn active_mobile_wireguard_dns_servers(config: &MobileTunnelConfig) -> Vec<Ipv4Addr> {
+    let Some(wireguard) = config
+        .wireguard_exit
+        .as_ref()
+        .filter(|wireguard| wireguard.enabled && wireguard.configured())
+    else {
+        return Vec::new();
+    };
+    let local_dns = parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER);
+    wireguard
+        .dns_server_ips()
+        .into_iter()
+        .filter_map(|server| match server {
+            IpAddr::V4(server) if Some(server) != local_dns => Some(server),
+            IpAddr::V4(_) | IpAddr::V6(_) => None,
+        })
+        .collect()
+}
+
 impl MobileTunnelConfig {
     pub(crate) fn from_data_dir(data_dir: &str) -> Result<Self> {
         let config_path = native_config_path(data_dir);

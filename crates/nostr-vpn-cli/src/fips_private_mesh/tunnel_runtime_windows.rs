@@ -64,6 +64,7 @@ impl FipsPrivateTunnelRuntime {
                     &iface,
                     Some(interface_index),
                     config.magic_dns_records.clone(),
+                    Vec::new(),
                 )
                 .await?,
             )
@@ -121,6 +122,14 @@ impl FipsPrivateTunnelRuntime {
         runtime
             .reconcile_windows_wg_upstream(&config.wireguard_exit)
             .await;
+        if let Some(secure_dns) = runtime.secure_dns.as_mut() {
+            let servers = if runtime.wg_upstream.is_some() {
+                config.wireguard_dns_servers()
+            } else {
+                Vec::new()
+            };
+            secure_dns.update_config(config.magic_dns_records.clone(), servers)?;
+        }
         Ok(runtime)
     }
 
@@ -151,12 +160,16 @@ impl FipsPrivateTunnelRuntime {
                     &self.iface,
                     Some(self.interface_index),
                     config.magic_dns_records.clone(),
+                    Vec::new(),
                 )
                 .await?,
             );
         }
-        if let Some(secure_dns) = self.secure_dns.as_ref() {
+        if let Some(secure_dns) = self.secure_dns.as_mut() {
             secure_dns.update_records(config.magic_dns_records.clone());
+            if config.wireguard_dns_servers().is_empty() {
+                secure_dns.update_config(config.magic_dns_records.clone(), Vec::new())?;
+            }
         }
         self.apply_windows_route_config(&config)?;
         if !config.secure_dns_required()
@@ -166,6 +179,14 @@ impl FipsPrivateTunnelRuntime {
         }
         self.reconcile_windows_wg_upstream(&config.wireguard_exit)
             .await;
+        if let Some(secure_dns) = self.secure_dns.as_mut() {
+            let servers = if self.wg_upstream.is_some() {
+                config.wireguard_dns_servers()
+            } else {
+                Vec::new()
+            };
+            secure_dns.update_config(config.magic_dns_records.clone(), servers)?;
+        }
         self.config = config;
         Ok(())
     }

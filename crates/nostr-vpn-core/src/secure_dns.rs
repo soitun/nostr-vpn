@@ -1,15 +1,17 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::Duration;
 
 use hickory_proto::op::{Message, MessageType, ResponseCode};
 use hickory_proto::serialize::binary::{BinEncodable as _, BinEncoder};
 use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use thiserror::Error;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 const DOH_ENDPOINT: &str = "https://cloudflare-dns.com/dns-query";
 const DOH_HOST: &str = "cloudflare-dns.com";
 const DOH_CONTENT_TYPE: &str = "application/dns-message";
 const DOH_TIMEOUT: Duration = Duration::from_secs(3);
+const WIREGUARD_DNS_TIMEOUT: Duration = Duration::from_secs(3);
 const DOH_BOOTSTRAP: &[&str] = &["1.1.1.1:443", "1.0.0.1:443"];
 pub const SECURE_DNS_MAX_MESSAGE_BYTES: usize = 4_096;
 
@@ -17,6 +19,11 @@ pub const SECURE_DNS_MAX_MESSAGE_BYTES: usize = 4_096;
 pub struct SecureDnsResolver {
     client: reqwest::Client,
     endpoint: &'static str,
+}
+
+#[derive(Clone)]
+pub struct WireGuardDnsResolver {
+    servers: Vec<SocketAddr>,
 }
 
 #[async_trait::async_trait]
@@ -99,8 +106,100 @@ impl SecureDnsResolver {
     }
 }
 
+impl WireGuardDnsResolver {
+    pub fn new(servers: &[IpAddr]) -> Result<Self, SecureDnsError> {
+        Self::with_servers(
+            servers
+                .iter()
+                .copied()
+                .map(|server| SocketAddr::new(server, 53))
+                .collect(),
+        )
+    }
+
+    fn with_servers(servers: Vec<SocketAddr>) -> Result<Self, SecureDnsError> {
+        if servers.is_empty() {
+            return Err(SecureDnsError::NoWireGuardDnsServers);
+        }
+        Ok(Self { servers })
+    }
+
+    async fn resolve_query(&self, query: &[u8]) -> Result<Vec<u8>, SecureDnsError> {
+        let request = validated_query(query)?;
+        let mut last_error = None;
+        for server in &self.servers {
+            match self.resolve_via_server(*server, query, &request).await {
+                Ok(response) => return Ok(response),
+                Err(error) => last_error = Some(error),
+            }
+        }
+        Err(last_error.unwrap_or(SecureDnsError::NoWireGuardDnsServers))
+    }
+
+    async fn resolve_via_server(
+        &self,
+        server: SocketAddr,
+        query: &[u8],
+        request: &Message,
+    ) -> Result<Vec<u8>, SecureDnsError> {
+        let bind = match server {
+            SocketAddr::V4(_) => SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+            SocketAddr::V6(_) => SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+        };
+        let response = tokio::time::timeout(WIREGUARD_DNS_TIMEOUT, async {
+            let socket = tokio::net::UdpSocket::bind(bind).await?;
+            socket.connect(server).await?;
+            socket.send(query).await?;
+            let mut packet = vec![0_u8; SECURE_DNS_MAX_MESSAGE_BYTES];
+            let length = socket.recv(&mut packet).await?;
+            packet.truncate(length);
+            Ok::<_, std::io::Error>(packet)
+        })
+        .await
+        .map_err(|_| SecureDnsError::WireGuardDnsTimeout(server))?
+        .map_err(SecureDnsError::WireGuardDnsIo)?;
+        let parsed = validated_response(request, &response)?;
+        if !parsed.metadata.truncation {
+            return Ok(response);
+        }
+
+        tokio::time::timeout(WIREGUARD_DNS_TIMEOUT, async {
+            let mut stream = tokio::net::TcpStream::connect(server).await?;
+            let query_length = u16::try_from(query.len()).map_err(|_| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "DNS query too large")
+            })?;
+            stream.write_all(&query_length.to_be_bytes()).await?;
+            stream.write_all(query).await?;
+            let response_length = usize::from(stream.read_u16().await?);
+            if !(12..=SECURE_DNS_MAX_MESSAGE_BYTES).contains(&response_length) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "DNS response length is invalid",
+                ));
+            }
+            let mut response = vec![0_u8; response_length];
+            stream.read_exact(&mut response).await?;
+            Ok::<_, std::io::Error>(response)
+        })
+        .await
+        .map_err(|_| SecureDnsError::WireGuardDnsTimeout(server))?
+        .map_err(SecureDnsError::WireGuardDnsIo)
+        .and_then(|response| {
+            validated_response(request, &response)?;
+            Ok(response)
+        })
+    }
+}
+
 #[async_trait::async_trait]
 impl SecureDnsLookup for SecureDnsResolver {
+    async fn resolve(&self, query: &[u8]) -> Result<Vec<u8>, SecureDnsError> {
+        self.resolve_query(query).await
+    }
+}
+
+#[async_trait::async_trait]
+impl SecureDnsLookup for WireGuardDnsResolver {
     async fn resolve(&self, query: &[u8]) -> Result<Vec<u8>, SecureDnsError> {
         self.resolve_query(query).await
     }
@@ -122,6 +221,12 @@ pub enum SecureDnsError {
     ResponseTooLarge,
     #[error("secure DNS returned an invalid or unrelated response")]
     InvalidResponse,
+    #[error("WireGuard exit did not configure a usable DNS server")]
+    NoWireGuardDnsServers,
+    #[error("WireGuard exit DNS request to {0} timed out")]
+    WireGuardDnsTimeout(SocketAddr),
+    #[error("WireGuard exit DNS request failed: {0}")]
+    WireGuardDnsIo(std::io::Error),
 }
 
 fn validated_query(packet: &[u8]) -> Result<Message, SecureDnsError> {
@@ -174,7 +279,6 @@ mod tests {
     use super::*;
     use hickory_proto::op::{OpCode, Query};
     use hickory_proto::rr::{Name, RecordType};
-    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
     fn dns_query(id: u16) -> Vec<u8> {
         let mut message = Message::new(id, MessageType::Query, OpCode::Query);
@@ -313,6 +417,32 @@ mod tests {
         let response = resolver.resolve_query(&query).await.expect("DoH response");
         assert_eq!(Message::from_vec(&response).expect("DNS response").id, 912);
         server.await.expect("fixture task");
+    }
+
+    #[tokio::test]
+    async fn wireguard_dns_resolver_forwards_to_profile_server() {
+        let server = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("fixture DNS server");
+        let address = server.local_addr().expect("fixture DNS address");
+        let query = dns_query(913);
+        let expected_query = query.clone();
+        let response = dns_response(&query, 913);
+        let fixture = tokio::spawn(async move {
+            let mut packet = [0_u8; SECURE_DNS_MAX_MESSAGE_BYTES];
+            let (length, peer) = server.recv_from(&mut packet).await.expect("DNS query");
+            assert_eq!(&packet[..length], expected_query.as_slice());
+            server.send_to(&response, peer).await.expect("DNS response");
+        });
+        let resolver =
+            WireGuardDnsResolver::with_servers(vec![address]).expect("WireGuard DNS resolver");
+
+        let response = resolver
+            .resolve(&query)
+            .await
+            .expect("profile DNS response");
+        assert_eq!(Message::from_vec(&response).expect("DNS response").id, 913);
+        fixture.await.expect("fixture task");
     }
 
     #[tokio::test]

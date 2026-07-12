@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -9,7 +9,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::secure_dns::{
-    SECURE_DNS_MAX_MESSAGE_BYTES, SecureDnsLookup, SecureDnsResolver, build_servfail_response,
+    SECURE_DNS_MAX_MESSAGE_BYTES, SecureDnsLookup, SecureDnsResolver, WireGuardDnsResolver,
+    build_servfail_response,
 };
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::Semaphore;
@@ -24,11 +25,14 @@ const SECURE_DNS_BIND: SocketAddr =
 const SECURE_DNS_MAX_IN_FLIGHT: usize = 64;
 const SECURE_DNS_CLIENT_IDLE: Duration = Duration::from_secs(10);
 type SharedResolver = Arc<dyn SecureDnsLookup>;
+type ResolverState = Arc<RwLock<SharedResolver>>;
 
 pub(crate) struct SecureDnsRuntime {
     udp_task: JoinHandle<()>,
     tcp_task: JoinHandle<()>,
     records: Arc<RwLock<HashMap<String, Ipv4Addr>>>,
+    resolver: ResolverState,
+    wireguard_dns_servers: Vec<IpAddr>,
     _system_dns: SystemDnsGuard,
 }
 
@@ -37,6 +41,7 @@ impl SecureDnsRuntime {
         interface: &str,
         interface_index: Option<u32>,
         records: HashMap<String, Ipv4Addr>,
+        wireguard_dns_servers: Vec<IpAddr>,
     ) -> Result<Self> {
         let udp = Arc::new(
             tokio::net::UdpSocket::bind(SECURE_DNS_BIND)
@@ -46,11 +51,10 @@ impl SecureDnsRuntime {
         let tcp = tokio::net::TcpListener::bind(SECURE_DNS_BIND)
             .await
             .with_context(|| format!("failed to bind secure DNS TCP on {SECURE_DNS_BIND}"))?;
-        let resolver: SharedResolver =
-            Arc::new(SecureDnsResolver::new().context("failed to initialize secure DNS")?);
+        let resolver = Arc::new(RwLock::new(dns_resolver(&wireguard_dns_servers)?));
         let records = Arc::new(RwLock::new(records));
         let udp_task = tokio::spawn(run_udp(udp, Arc::clone(&resolver), Arc::clone(&records)));
-        let tcp_task = tokio::spawn(run_tcp(tcp, resolver, Arc::clone(&records)));
+        let tcp_task = tokio::spawn(run_tcp(tcp, Arc::clone(&resolver), Arc::clone(&records)));
         let system_dns = match SystemDnsGuard::install(interface, interface_index) {
             Ok(guard) => guard,
             Err(error) => {
@@ -63,8 +67,29 @@ impl SecureDnsRuntime {
             udp_task,
             tcp_task,
             records,
+            resolver,
+            wireguard_dns_servers,
             _system_dns: system_dns,
         })
+    }
+
+    pub(crate) fn update_config(
+        &mut self,
+        records: HashMap<String, Ipv4Addr>,
+        wireguard_dns_servers: Vec<IpAddr>,
+    ) -> Result<()> {
+        if let Ok(mut current) = self.records.write() {
+            *current = records;
+        }
+        if self.wireguard_dns_servers != wireguard_dns_servers {
+            let resolver = dns_resolver(&wireguard_dns_servers)?;
+            *self
+                .resolver
+                .write()
+                .map_err(|_| anyhow!("secure DNS resolver lock poisoned"))? = resolver;
+            self.wireguard_dns_servers = wireguard_dns_servers;
+        }
+        Ok(())
     }
 
     pub(crate) fn update_records(&self, records: HashMap<String, Ipv4Addr>) {
@@ -82,6 +107,22 @@ impl SecureDnsRuntime {
     }
 }
 
+fn dns_resolver(wireguard_dns_servers: &[IpAddr]) -> Result<SharedResolver> {
+    if wireguard_dns_servers.is_empty() {
+        return Ok(Arc::new(
+            SecureDnsResolver::new().context("failed to initialize secure DNS")?,
+        ));
+    }
+    Ok(Arc::new(
+        WireGuardDnsResolver::new(wireguard_dns_servers)
+            .context("failed to initialize WireGuard exit DNS")?,
+    ))
+}
+
+fn current_resolver(resolver: &ResolverState) -> Option<SharedResolver> {
+    resolver.read().ok().map(|resolver| Arc::clone(&*resolver))
+}
+
 impl Drop for SecureDnsRuntime {
     fn drop(&mut self) {
         self.udp_task.abort();
@@ -91,7 +132,7 @@ impl Drop for SecureDnsRuntime {
 
 async fn run_udp(
     socket: Arc<tokio::net::UdpSocket>,
-    resolver: SharedResolver,
+    resolver: ResolverState,
     records: Arc<RwLock<HashMap<String, Ipv4Addr>>>,
 ) {
     let permits = Arc::new(Semaphore::new(SECURE_DNS_MAX_IN_FLIGHT));
@@ -114,12 +155,15 @@ async fn run_udp(
                     continue;
                 };
                 let socket = Arc::clone(&socket);
-                let resolver = Arc::clone(&resolver);
+                let resolver = current_resolver(&resolver);
                 let records = Arc::clone(&records);
                 requests.spawn(async move {
                     let _permit = permit;
-                    if let Some(response) =
-                        resolve_or_servfail(resolver.as_ref(), &records, &query).await
+                    if let Some(response) = match resolver {
+                        Some(resolver) =>
+                            resolve_or_servfail(resolver.as_ref(), &records, &query).await,
+                        None => build_servfail_response(&query),
+                    }
                     {
                         let _ = socket.send_to(&response, peer).await;
                     }
@@ -132,7 +176,7 @@ async fn run_udp(
 
 async fn run_tcp(
     listener: tokio::net::TcpListener,
-    resolver: SharedResolver,
+    resolver: ResolverState,
     records: Arc<RwLock<HashMap<String, Ipv4Addr>>>,
 ) {
     let permits = Arc::new(Semaphore::new(SECURE_DNS_MAX_IN_FLIGHT));
@@ -164,7 +208,7 @@ async fn run_tcp(
 
 async fn handle_tcp(
     mut stream: tokio::net::TcpStream,
-    resolver: SharedResolver,
+    resolver: ResolverState,
     records: Arc<RwLock<HashMap<String, Ipv4Addr>>>,
 ) {
     loop {
@@ -182,7 +226,11 @@ async fn handle_tcp(
         else {
             return;
         };
-        let Some(response) = resolve_or_servfail(resolver.as_ref(), &records, &query).await else {
+        let response = match current_resolver(&resolver) {
+            Some(resolver) => resolve_or_servfail(resolver.as_ref(), &records, &query).await,
+            None => build_servfail_response(&query),
+        };
+        let Some(response) = response else {
             return;
         };
         let Ok(length) = u16::try_from(response.len()) else {
@@ -491,7 +539,8 @@ mod tests {
                 .expect("UDP server"),
         );
         let address = server.local_addr().expect("UDP address");
-        let resolver: SharedResolver = Arc::new(FixtureResolver { fail: true });
+        let resolver: ResolverState =
+            Arc::new(RwLock::new(Arc::new(FixtureResolver { fail: true })));
         let records = Arc::new(RwLock::new(HashMap::new()));
         let task = tokio::spawn(run_udp(server, resolver, records));
         let client = tokio::net::UdpSocket::bind("127.0.0.1:0")
@@ -520,7 +569,8 @@ mod tests {
             .await
             .expect("TCP server");
         let address = listener.local_addr().expect("TCP address");
-        let resolver: SharedResolver = Arc::new(FixtureResolver { fail: false });
+        let resolver: ResolverState =
+            Arc::new(RwLock::new(Arc::new(FixtureResolver { fail: false })));
         let records = Arc::new(RwLock::new(HashMap::new()));
         let task = tokio::spawn(run_tcp(listener, resolver, records));
         let mut client = tokio::net::TcpStream::connect(address)

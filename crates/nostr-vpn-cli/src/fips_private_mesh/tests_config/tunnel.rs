@@ -135,6 +135,53 @@
     }
 
     #[test]
+    fn wireguard_profile_dns_is_active_only_for_the_selected_configured_exit() {
+        let keys = Keys::generate();
+        let own_pubkey = keys.public_key().to_hex();
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = keys.secret_key().to_bech32().expect("nsec");
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = "wg-dns".to_string();
+        app.set_internet_source(InternetSource::WireGuard);
+        app.wireguard_exit.address = "10.64.70.195/32".to_string();
+        app.wireguard_exit.private_key =
+            "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=".to_string();
+        app.wireguard_exit.peer_public_key =
+            "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=".to_string();
+        app.wireguard_exit.endpoint = "198.51.100.20:51820".to_string();
+        app.wireguard_exit.allowed_ips = vec!["0.0.0.0/0".to_string()];
+        app.wireguard_exit.dns = vec!["94.140.14.14".to_string()];
+
+        let active = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "wg-dns",
+            "utun-test",
+            Some(&own_pubkey),
+            None,
+            &[],
+        )
+        .expect("active WireGuard tunnel config");
+        assert!(active.secure_dns_required());
+        assert_eq!(
+            active.wireguard_dns_servers(),
+            vec!["94.140.14.14".parse::<std::net::IpAddr>().unwrap()]
+        );
+
+        app.set_internet_source(InternetSource::Direct);
+        let direct = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "wg-dns",
+            "utun-test",
+            Some(&own_pubkey),
+            None,
+            &[],
+        )
+        .expect("direct tunnel config");
+        assert!(!direct.secure_dns_required());
+        assert!(direct.wireguard_dns_servers().is_empty());
+    }
+
+    #[test]
     fn endpoint_bypass_hosts_skip_overlay_tunnel_route_targets() {
         assert!(super::route_targets_include_ipv4_host(
             &["10.44.1.2/32".to_string()],
