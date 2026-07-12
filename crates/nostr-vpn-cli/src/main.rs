@@ -134,9 +134,8 @@ use nostr_vpn_core::paid_route_store::{
 use nostr_vpn_core::paid_routes::{
     ExitNetworkClass, PaidExitConfig, PaidExitUpstream, PaidRouteMeter, PaidRouteOffer,
     PaidRouteQualityMetrics, PaidRouteRoutingDecision, SignedPaidRouteOffer,
-    gift_wrap_paid_route_payment, paid_route_country_claim, paid_route_offer_filter,
-    paid_route_payment_filter, signed_paid_exit_offer_from_config_with_receiver,
-    unwrap_paid_route_payment,
+    paid_route_country_claim, paid_route_offer_filter,
+    signed_paid_exit_offer_from_config_with_receiver,
 };
 #[cfg(target_os = "windows")]
 use nostr_vpn_core::platform_paths::{

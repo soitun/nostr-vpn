@@ -102,28 +102,29 @@ fn seller_payment_channel_open_creates_seller_session_and_admission() {
     config.channel.grace_units = 0;
 
     let mut store = PaidRouteStore::default();
+    let request = ApplyPaidRouteSellerPaymentRequest {
+        envelope: seller_payment_envelope(
+            "internet-exit",
+            "lease-1",
+            &buyer_npub,
+            &seller_npub,
+            100,
+            StreamingRoutePaymentPayload::ChannelOpen(StreamingRouteChannelOpen {
+                mint_url: "https://mint.minibits.cash/Bitcoin".to_string(),
+                unit: "sat".to_string(),
+                capacity: 10,
+                expires_unix: 500,
+                receiver_pubkey_hex: seller.public_key().to_hex(),
+                paid_msat: 0,
+                payment: sample_spilman_payment("channel-1", 0),
+            }),
+        ),
+        seller_npub: seller_npub.clone(),
+        config: config.clone(),
+        now_unix: 100,
+    };
     let result = store
-        .apply_seller_payment(ApplyPaidRouteSellerPaymentRequest {
-            envelope: seller_payment_envelope(
-                "internet-exit",
-                "lease-1",
-                &buyer_npub,
-                &seller_npub,
-                100,
-                StreamingRoutePaymentPayload::ChannelOpen(StreamingRouteChannelOpen {
-                    mint_url: "https://mint.minibits.cash/Bitcoin".to_string(),
-                    unit: "sat".to_string(),
-                    capacity: 10,
-                    expires_unix: 500,
-                    receiver_pubkey_hex: seller.public_key().to_hex(),
-                    paid_msat: 0,
-                    payment: sample_spilman_payment("channel-1", 0),
-                }),
-            ),
-            seller_npub: seller_npub.clone(),
-            config: config.clone(),
-            now_unix: 100,
-        })
+        .apply_seller_payment(request.clone())
         .expect("apply channel open");
 
     assert!(result.changed);
@@ -131,6 +132,12 @@ fn seller_payment_channel_open_creates_seller_session_and_admission() {
     assert_eq!(result.session_id, "seller-session-lease-1");
     assert_eq!(result.state, PaidRouteAccessState::FreeProbe);
     assert!(result.allow_routing);
+    assert!(
+        !store
+            .apply_seller_payment(request)
+            .expect("replay channel open")
+            .changed
+    );
     assert_eq!(
         store.quotes["seller-quote-lease-1"].quote.offer_id,
         "internet-exit"

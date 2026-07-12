@@ -8,6 +8,7 @@ include!("paid_exit/sessions.rs");
 include!("paid_exit/probe.rs");
 include!("paid_exit/rating_events.rs");
 include!("paid_exit/create_payment.rs");
+include!("paid_exit/payment_outbox.rs");
 include!("paid_exit/stream_payments.rs");
 include!("paid_exit/settlement.rs");
 include!("paid_exit/collection.rs");

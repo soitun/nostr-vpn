@@ -10,7 +10,6 @@ const RATING_FACT_TYPE: &str = "rating";
 const RATING_FACT_SCHEMA: &str = "1";
 const PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT: usize = 500;
 const PAID_EXIT_OFFER_EVENT_CACHE_LIMIT: usize = 512;
-const PAID_EXIT_PAYMENT_EVENT_CACHE_LIMIT: usize = 512;
 
 #[derive(Debug, Subcommand)]
 enum PaidExitCommand {
@@ -50,12 +49,9 @@ enum PaidExitCommand {
     /// Apply an incoming buyer Cashu streaming payment envelope as a seller.
     #[command(name = "apply-payment")]
     ApplyPayment(PaidExitApplyPaymentArgs),
-    /// Publish a buyer payment envelope privately to the seller over Nostr.
+    /// Queue a buyer payment envelope for direct FIPS delivery to the seller.
     #[command(name = "send-payment")]
     SendPayment(PaidExitSendPaymentArgs),
-    /// Receive private buyer payment envelopes from Nostr and apply them locally.
-    #[command(name = "receive-payments")]
-    ReceivePayments(PaidExitReceivePaymentsArgs),
     /// Close a seller Cashu streaming channel and stop routing it.
     Collect(PaidExitCollectArgs),
     /// Close all expired seller Cashu streaming channels with pending credit.
@@ -467,12 +463,9 @@ struct PaidExitCreateTokenLeaseArgs {
 struct PaidExitStreamPaymentsArgs {
     #[arg(long)]
     config: Option<PathBuf>,
-    /// Override configured Nostr relays when --publish is set. Can be supplied more than once.
-    #[arg(long = "relay")]
-    relays: Vec<String>,
-    /// Publish signed balance updates privately to sellers over Nostr.
+    /// Build payment updates without queueing or changing local payment state.
     #[arg(long)]
-    publish: bool,
+    dry_run: bool,
     /// Only sign updates at least this many millisats above the last signed balance.
     #[arg(long, default_value_t = 1)]
     min_increment_msat: u64,
@@ -489,12 +482,9 @@ struct PaidExitSettleArgs {
     config: Option<PathBuf>,
     /// Buyer session id.
     session: String,
-    /// Override configured Nostr relays when publishing. Can be supplied more than once.
-    #[arg(long = "relay")]
-    relays: Vec<String>,
-    /// Do not publish the close envelope; print it for manual sending.
+    /// Build the close envelope without queueing or changing local payment state.
     #[arg(long)]
-    no_publish: bool,
+    dry_run: bool,
     #[arg(long)]
     json: bool,
 }
@@ -520,38 +510,12 @@ struct PaidExitApplyPaymentArgs {
 struct PaidExitSendPaymentArgs {
     #[arg(long)]
     config: Option<PathBuf>,
-    /// Override configured Nostr relays. Can be supplied more than once.
-    #[arg(long = "relay")]
-    relays: Vec<String>,
     /// JSON StreamingRoutePaymentEnvelope. Omit with --envelope-stdin.
     #[arg(long, required_unless_present = "envelope_stdin")]
     envelope: Option<String>,
     /// Read JSON StreamingRoutePaymentEnvelope from stdin.
     #[arg(long, conflicts_with = "envelope")]
     envelope_stdin: bool,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
-struct PaidExitReceivePaymentsArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    /// Override configured Nostr relays. Can be supplied more than once.
-    #[arg(long = "relay")]
-    relays: Vec<String>,
-    #[arg(long, default_value_t = 30)]
-    duration_secs: u64,
-    #[arg(long, default_value_t = 100)]
-    limit: usize,
-    /// Ignore payment events older than this many seconds. Defaults to no
-    /// since filter because NIP-59 gift wraps intentionally randomize
-    /// created_at into the past.
-    #[arg(long, default_value_t = 0)]
-    since_secs: u64,
-    /// Do not ask a running daemon to reload after applying payments.
-    #[arg(long)]
-    no_reload_daemon: bool,
     #[arg(long)]
     json: bool,
 }

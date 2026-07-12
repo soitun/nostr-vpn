@@ -65,6 +65,27 @@ impl FipsPrivateMeshRuntime {
         .await
     }
 
+    #[cfg(feature = "paid-exit")]
+    pub(crate) async fn send_paid_route_payment(
+        &self,
+        seller: &str,
+        id: String,
+        envelope: StreamingRoutePaymentEnvelope,
+    ) -> Result<()> {
+        self.send_control_frame(seller, &FipsControlFrame::PaidRoutePayment { id, envelope })
+            .await
+    }
+
+    #[cfg(feature = "paid-exit")]
+    pub(crate) async fn send_paid_route_payment_ack(
+        &self,
+        buyer: &str,
+        id: String,
+    ) -> Result<()> {
+        self.send_control_frame(buyer, &FipsControlFrame::PaidRoutePaymentAck { id })
+            .await
+    }
+
     async fn send_control_frame(&self, participant: &str, frame: &FipsControlFrame) -> Result<()> {
         let participant_key = participant_pubkey_bytes(participant);
         let destination = {

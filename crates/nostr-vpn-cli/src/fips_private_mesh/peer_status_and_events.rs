@@ -732,4 +732,15 @@ pub(crate) enum FipsPrivateMeshEvent {
         network_id: String,
         capabilities: PeerCapabilities,
     },
+    #[cfg(feature = "paid-exit")]
+    PaidRoutePayment {
+        sender_pubkey: String,
+        id: String,
+        envelope: StreamingRoutePaymentEnvelope,
+    },
+    #[cfg(feature = "paid-exit")]
+    PaidRoutePaymentAck {
+        sender_pubkey: String,
+        id: String,
+    },
 }

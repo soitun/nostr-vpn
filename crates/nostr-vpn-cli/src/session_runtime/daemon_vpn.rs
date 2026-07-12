@@ -18,12 +18,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     #[cfg(feature = "paid-exit")]
     let mut last_paid_exit_usage_flush_at = Instant::now();
-    #[cfg(feature = "paid-exit")]
-    let mut last_paid_exit_payment_receive_at = Instant::now()
-        .checked_sub(Duration::from_secs(
-            PAID_EXIT_DAEMON_RECEIVE_PAYMENT_INTERVAL_SECS,
-        ))
-        .unwrap_or_else(Instant::now);
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
     tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut network_interval =
@@ -575,6 +569,74 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 vpn_status =
                                     format!("FIPS endpoint hint refresh failed ({error})");
                             }
+                            #[cfg(feature = "paid-exit")]
+                            for (seller_pubkey, id) in drained.paid_route_payment_acks {
+                                match acknowledge_paid_exit_payment(
+                                    &config_path,
+                                    &seller_pubkey,
+                                    &id,
+                                ) {
+                                    Ok(true) => eprintln!(
+                                        "paid-exit: seller acknowledged direct FIPS payment {id}"
+                                    ),
+                                    Ok(false) => {}
+                                    Err(error) => eprintln!(
+                                        "paid-exit: rejected direct FIPS payment acknowledgment: {error}"
+                                    ),
+                                }
+                            }
+                            #[cfg(feature = "paid-exit")]
+                            if !drained.paid_route_payments.is_empty() {
+                                match paid_exit_apply_fips_payments(
+                                    &app,
+                                    &config_path,
+                                    drained.paid_route_payments,
+                                )
+                                .await
+                                {
+                                    Ok(result) => {
+                                        eprintln!(
+                                            "paid-exit: direct FIPS payments received={} applied={} errors={} changed={} receiver={}",
+                                            result.received_count,
+                                            result.applied_count,
+                                            result.error_count,
+                                            result.changed,
+                                            result.spilman_receiver_processing
+                                        );
+                                        if result.changed
+                                            && let Err(error) = refresh_fips_tunnel_config(
+                                                runtime,
+                                                &app,
+                                                &config_path,
+                                                &network_id,
+                                                network_snapshot.default_interface_mtu,
+                                                own_pubkey.as_deref(),
+                                            )
+                                            .await
+                                        {
+                                            vpn_status = format!(
+                                                "paid-exit payment refresh failed ({error})"
+                                            );
+                                        }
+                                        for (buyer_pubkey, id) in result.acknowledgments {
+                                            if let Err(error) = runtime
+                                                .send_paid_route_payment_ack(
+                                                    &buyer_pubkey,
+                                                    id.clone(),
+                                                )
+                                                .await
+                                            {
+                                                eprintln!(
+                                                    "paid-exit: failed to acknowledge direct FIPS payment {id}: {error}"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(error) => eprintln!(
+                                        "paid-exit: failed to apply direct FIPS payment: {error}"
+                                    ),
+                                }
+                            }
                         }
                         Err(error) => {
                             vpn_status = format!("FIPS event handling failed ({error})");
@@ -626,9 +688,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 &config_path,
                                 PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT,
                                 PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT,
-                            )
-                            .await
-                            {
+                            ) {
                                 Ok(result)
                                     if result.signed_count > 0 || result.error_count > 0 =>
                                 {
@@ -649,55 +709,13 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                     );
                                 }
                             }
-                        }
-                        if app.paid_exit.enabled
-                            && last_paid_exit_payment_receive_at.elapsed()
-                                >= Duration::from_secs(
-                                    PAID_EXIT_DAEMON_RECEIVE_PAYMENT_INTERVAL_SECS,
-                                )
-                        {
-                            last_paid_exit_payment_receive_at = Instant::now();
-                            match paid_exit_receive_payments_for_daemon(
-                                &app,
-                                &config_path,
-                                PAID_EXIT_DAEMON_RECEIVE_PAYMENT_DURATION_SECS,
-                                PAID_EXIT_DAEMON_RECEIVE_PAYMENT_LIMIT,
-                            )
-                            .await
-                            {
-                                Ok(result)
-                                    if result.applied_count > 0 || result.error_count > 0 =>
-                                {
-                                    eprintln!(
-                                        "paid-exit: received seller payments received={} applied={} errors={} changed={} receiver={}",
-                                        result.received_count,
-                                        result.applied_count,
-                                        result.error_count,
-                                        result.changed,
-                                        result.spilman_receiver_processing
-                                    );
-                                    if result.changed
-                                        && let Err(error) = refresh_fips_tunnel_config(
-                                            runtime,
-                                            &app,
-                                            &config_path,
-                                            &network_id,
-                                            network_snapshot.default_interface_mtu,
-                                            own_pubkey.as_deref(),
-                                        )
-                                        .await
-                                    {
-                                        vpn_status = format!(
-                                            "paid-exit payment refresh failed ({error})"
-                                        );
-                                    }
-                                }
-                                Ok(_) => {}
-                                Err(error) => {
-                                    eprintln!(
-                                        "paid-exit: failed to receive seller payments: {error}"
-                                    );
-                                }
+                            let flushed =
+                                flush_paid_exit_payment_outbox(runtime, &config_path).await;
+                            if flushed.sent > 0 || flushed.errors > 0 {
+                                eprintln!(
+                                    "paid-exit: direct FIPS payment outbox sent={} errors={}",
+                                    flushed.sent, flushed.errors
+                                );
                             }
                         }
                     }

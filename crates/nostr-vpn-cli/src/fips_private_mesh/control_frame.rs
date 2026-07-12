@@ -5,8 +5,11 @@ fn control_frame_source_pubkey(
 ) -> Option<String> {
     mesh.participant_for_endpoint_node_addr(source_peer.node_addr().as_bytes())
         .or_else(|| {
-            matches!(frame, FipsControlFrame::JoinRequest { .. })
-                .then(|| hex::encode(source_peer.pubkey().serialize()))
+            let allow_unknown = matches!(frame, FipsControlFrame::JoinRequest { .. });
+            #[cfg(feature = "paid-exit")]
+            let allow_unknown =
+                allow_unknown || matches!(frame, FipsControlFrame::PaidRoutePayment { .. });
+            allow_unknown.then(|| hex::encode(source_peer.pubkey().serialize()))
         })
 }
 

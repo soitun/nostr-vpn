@@ -77,17 +77,6 @@ fn paid_exit_offer_retention_policy(
     )
 }
 
-fn paid_exit_payment_retention_policy(
-    recipient: PublicKey,
-    limit: usize,
-    since_unix: Option<u64>,
-) -> nostr_pubsub::EventRetentionPolicy {
-    nostr_pubsub::EventRetentionPolicy::new(
-        paid_exit_retention_event_limit(limit, PAID_EXIT_PAYMENT_EVENT_CACHE_LIMIT),
-        vec![paid_route_payment_filter(recipient, limit, since_unix)],
-    )
-}
-
 fn paid_exit_rating_retention_policy(
     limit: usize,
     since_unix: Option<u64>,
@@ -236,60 +225,6 @@ async fn publish_paid_exit_offer_hybrid(
     output["p2p_outbox"] =
         json!(crate::control_pubsub_runtime::control_pubsub_outbox_directory(config_path));
     Ok(output)
-}
-
-async fn publish_paid_exit_payment_to_relays(
-    app: &AppConfig,
-    event: &Event,
-    relays: &[String],
-) -> Result<serde_json::Value> {
-    publish_paid_exit_payment_event_to_relays(&app.nostr_keys()?, event, relays).await
-}
-
-pub(crate) async fn publish_paid_exit_payment_event_to_relays(
-    keys: &Keys,
-    event: &Event,
-    relays: &[String],
-) -> Result<serde_json::Value> {
-    let pubsub_sources = paid_exit_pubsub_relay_sources(relays);
-    let relays = paid_exit_pubsub_relay_urls(&pubsub_sources);
-    if relays.is_empty() {
-        return Err(anyhow!(
-            "no Nostr relays configured for paid exit payment publishing"
-        ));
-    }
-
-    let client = Client::new(keys.clone());
-    for relay in &relays {
-        client
-            .add_relay(relay)
-            .await
-            .map_err(|error| anyhow!("failed to add Nostr relay {relay}: {error}"))?;
-    }
-    client.connect().await;
-    let output = client
-        .send_event_to(relays.clone(), event)
-        .await
-        .map_err(|error| anyhow!("failed to publish paid exit payment: {error}"))?;
-    client.disconnect().await;
-
-    let failed = output
-        .failed
-        .iter()
-        .map(|(relay, error)| {
-            json!({
-                "relay": relay.to_string(),
-                "error": error,
-            })
-        })
-        .collect::<Vec<_>>();
-    Ok(json!({
-        "event_id": output.val.to_string(),
-        "success_count": output.success.len(),
-        "failed_count": output.failed.len(),
-        "success_relays": output.success.iter().map(ToString::to_string).collect::<Vec<_>>(),
-        "failed_relays": failed,
-    }))
 }
 
 async fn publish_paid_exit_rating_event_to_relays(

@@ -2,9 +2,6 @@ use super::*;
 
 pub(super) const PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT: u64 = 1;
 pub(super) const PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT: usize = 4;
-pub(super) const PAID_EXIT_DAEMON_RECEIVE_PAYMENT_INTERVAL_SECS: u64 = 5;
-pub(super) const PAID_EXIT_DAEMON_RECEIVE_PAYMENT_DURATION_SECS: u64 = 2;
-pub(super) const PAID_EXIT_DAEMON_RECEIVE_PAYMENT_LIMIT: usize = 100;
 
 pub(super) fn flush_fips_paid_route_usage(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,

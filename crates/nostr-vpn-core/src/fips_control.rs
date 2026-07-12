@@ -1,6 +1,8 @@
 use crate::join_requests::MeshJoinRequest;
 use anyhow::{Context, Result, anyhow};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+#[cfg(feature = "paid-exit")]
+use cashu_service::StreamingRoutePaymentEnvelope;
 use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, Timestamp};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -308,6 +310,15 @@ pub enum FipsControlFrame {
     Capabilities {
         network_id: String,
         capabilities: PeerCapabilities,
+    },
+    #[cfg(feature = "paid-exit")]
+    PaidRoutePayment {
+        id: String,
+        envelope: StreamingRoutePaymentEnvelope,
+    },
+    #[cfg(feature = "paid-exit")]
+    PaidRoutePaymentAck {
+        id: String,
     },
     Fragment {
         id: String,

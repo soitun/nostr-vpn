@@ -3,44 +3,37 @@
 struct PaidExitSettleResult {
     payment: BuildPaidRouteBuyerPaymentEnvelopeResult,
     wallet_sign: serde_json::Value,
-    publish_requested: bool,
-    relays: Vec<String>,
-    publish: Option<serde_json::Value>,
+    dry_run: bool,
+    queued: Option<bool>,
     persisted: bool,
 }
 
 struct PaidExitSettleRequest<'a, S: CashuSpilmanPaymentSigner> {
     app: &'a AppConfig,
-    keys: &'a Keys,
+    config_path: &'a Path,
     store: &'a mut PaidRouteStore,
     signer: &'a S,
     session_id: &'a str,
-    relays: &'a [String],
-    publish: bool,
+    dry_run: bool,
     wallet_data_dir: &'a Path,
     now_unix: u64,
 }
 
-async fn paid_exit_settle_with_signer<S: CashuSpilmanPaymentSigner>(
+fn paid_exit_settle_with_signer<S: CashuSpilmanPaymentSigner>(
     request: PaidExitSettleRequest<'_, S>,
 ) -> Result<PaidExitSettleResult> {
     let PaidExitSettleRequest {
         app,
-        keys,
+        config_path,
         store,
         signer,
         session_id,
-        relays,
-        publish,
+        dry_run,
         wallet_data_dir,
         now_unix,
     } = request;
-    if publish && relays.is_empty() {
-        return Err(anyhow!(
-            "no Nostr relays configured for paid exit payment publishing"
-        ));
-    }
-    let buyer_npub = keys
+    let buyer_npub = app
+        .nostr_keys()?
         .public_key()
         .to_bech32()
         .context("failed to encode buyer npub")?;
@@ -56,30 +49,20 @@ async fn paid_exit_settle_with_signer<S: CashuSpilmanPaymentSigner>(
             now_unix,
         },
     )?;
-    let mut persisted = !publish;
-    let publish_result = if publish {
-        let event = match gift_wrap_paid_route_payment(&payment.envelope, keys).await {
-            Ok(event) => event,
-            Err(error) => {
-                *store = before;
-                return Err(error);
-            }
-        };
-        let event_id = event.id.to_string();
-        let publish_result = match publish_paid_exit_payment_to_relays(app, &event, relays).await {
-            Ok(result) => result,
-            Err(error) => {
-                *store = before;
-                return Err(error);
-            }
-        };
-        persisted = publish_result["success_count"].as_u64().unwrap_or_default() > 0;
-        Some(json!({
-            "event_id": event_id,
-            "result": publish_result,
-        }))
-    } else {
+    let mut persisted = false;
+    let queued = if dry_run {
         None
+    } else {
+        match queue_paid_exit_payment(app, config_path, &payment.envelope) {
+            Ok(created) => {
+                persisted = true;
+                Some(created)
+            }
+            Err(error) => {
+                *store = before;
+                return Err(error);
+            }
+        }
     };
     if !persisted {
         *store = before;
@@ -91,9 +74,8 @@ async fn paid_exit_settle_with_signer<S: CashuSpilmanPaymentSigner>(
             "source": "spilman-client-store",
             "data_dir": wallet_data_dir.display().to_string(),
         }),
-        publish_requested: publish,
-        relays: relays.to_vec(),
-        publish: publish_result,
+        dry_run,
+        queued,
         persisted,
     })
 }
@@ -101,19 +83,6 @@ async fn paid_exit_settle_with_signer<S: CashuSpilmanPaymentSigner>(
 async fn paid_exit_settle_command(args: PaidExitSettleArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let app = load_or_default_config(&config_path)?;
-    let keys = app.nostr_keys()?;
-    let publish = !args.no_publish;
-    let relays = if publish {
-        paid_exit_relay_urls(&app, &args.relays)
-    } else {
-        Vec::new()
-    };
-    if publish && relays.is_empty() {
-        return Err(anyhow!(
-            "no Nostr relays configured for paid exit payment publishing"
-        ));
-    }
-
     let store_path = paid_route_store_file_path(&config_path);
     let wallet_data_dir = paid_exit_wallet_data_dir(&config_path);
     let signer =
@@ -122,17 +91,15 @@ async fn paid_exit_settle_command(args: PaidExitSettleArgs) -> Result<()> {
     let result = paid_exit_settle_with_signer(
         PaidExitSettleRequest {
             app: &app,
-            keys: &keys,
+            config_path: &config_path,
             store: &mut store,
             signer: &signer,
             session_id: &args.session,
-            relays: &relays,
-            publish,
+            dry_run: args.dry_run,
             wallet_data_dir: &wallet_data_dir,
             now_unix: unix_timestamp(),
         },
-    )
-    .await?;
+    )?;
 
     let changed = result.persisted && result.payment.changed;
     if changed {
@@ -145,10 +112,10 @@ async fn paid_exit_settle_command(args: PaidExitSettleArgs) -> Result<()> {
             serde_json::to_string_pretty(&json!({
                 "store_path": store_path.display().to_string(),
                 "wallet_sign": result.wallet_sign,
-                "publish_requested": result.publish_requested,
-                "relays": result.relays,
+                "dry_run": result.dry_run,
+                "outbox": paid_exit_payment_outbox_directory(&config_path),
                 "payment": result.payment,
-                "publish": result.publish,
+                "queued": result.queued,
                 "persisted": result.persisted,
                 "changed": changed,
             }))?
@@ -171,30 +138,15 @@ async fn paid_exit_settle_command(args: PaidExitSettleArgs) -> Result<()> {
             "wallet_sign: {}",
             result.wallet_sign["source"].as_str().unwrap_or_default()
         );
-        if result.publish_requested {
-            println!("relays: {}", result.relays.join(", "));
-            if let Some(publish) = result.publish.as_ref() {
-                println!(
-                    "published: {} success, {} failed",
-                    publish["result"]["success_count"]
-                        .as_u64()
-                        .unwrap_or_default(),
-                    publish["result"]["failed_count"]
-                        .as_u64()
-                        .unwrap_or_default()
-                );
-                println!(
-                    "published_event: {}",
-                    publish["event_id"].as_str().unwrap_or_default()
-                );
-            }
-        } else {
-            println!("published: false");
+        if result.dry_run {
+            println!("delivery: dry-run");
             println!(
                 "envelope: {}",
                 serde_json::to_string(&result.payment.envelope)
                     .context("failed to encode paid route cooperative close envelope")?
             );
+        } else {
+            println!("delivery: queued for direct FIPS delivery");
         }
         println!("persisted: {}", result.persisted);
         println!("store: {} changed={}", store_path.display(), changed);
@@ -295,41 +247,33 @@ async fn paid_exit_apply_payment_command(args: PaidExitApplyPaymentArgs) -> Resu
 async fn paid_exit_send_payment_command(args: PaidExitSendPaymentArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let app = load_or_default_config(&config_path)?;
-    let relays = paid_exit_relay_urls(&app, &args.relays);
     let envelope_json = read_paid_exit_payment_envelope(args.envelope, args.envelope_stdin)?;
     let envelope: StreamingRoutePaymentEnvelope = serde_json::from_str(&envelope_json)
         .context("failed to decode paid route payment envelope JSON")?;
-    let keys = app.nostr_keys()?;
-    let event = gift_wrap_paid_route_payment(&envelope, &keys).await?;
-    let publish = publish_paid_exit_payment_to_relays(&app, &event, &relays).await?;
+    let queued = queue_paid_exit_payment(&app, &config_path, &envelope)?;
+    maybe_reload_running_daemon(&config_path);
 
     if args.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
-                "event_id": event.id.to_string(),
                 "seller": envelope.seller,
                 "buyer": envelope.buyer,
                 "service_id": envelope.service_id,
                 "lease_id": envelope.lease_id,
                 "channel_id": envelope.channel_id(),
-                "relays": relays,
-                "publish": publish,
+                "queued": queued,
+                "outbox": paid_exit_payment_outbox_directory(&config_path),
             }))?
         );
     } else {
-        println!("paid_exit_payment_sent: {}", event.id);
+        println!("paid_exit_payment_queued: {queued}");
         println!("buyer: {}", envelope.buyer);
         println!("seller: {}", envelope.seller);
         println!("service: {}", envelope.service_id);
         println!("lease: {}", envelope.lease_id);
         println!("channel: {}", envelope.channel_id());
-        println!("relays: {}", relays.join(", "));
-        println!(
-            "published: {} success, {} failed",
-            publish["success_count"].as_u64().unwrap_or_default(),
-            publish["failed_count"].as_u64().unwrap_or_default()
-        );
+        println!("delivery: direct FIPS");
     }
 
     Ok(())

@@ -709,10 +709,19 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
     };
     use serde_json::json;
 
-    let app = AppConfig::generated();
+    let mut app = AppConfig::generated();
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-paid-exit-stream-{nonce}"));
+    std::fs::create_dir_all(&dir).expect("create test dir");
+    let config_path = dir.join("config.toml");
     let buyer_keys = app.nostr_keys().expect("buyer keys");
     let buyer_npub = buyer_keys.public_key().to_bech32().expect("buyer npub");
     let seller = Keys::generate();
+    app.select_public_paid_exit_node(&seller.public_key().to_hex())
+        .expect("select seller");
     let mut offer_config = PaidExitConfig {
         enabled: true,
         ..PaidExitConfig::default()
@@ -767,16 +776,14 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
     let result =
         paid_exit_stream_payment_updates_with_signer(PaidExitStreamPaymentUpdatesRequest {
             app: &app,
-            keys: &buyer_keys,
+            config_path: &config_path,
             store: &mut store,
             signer: &RuntimeFakePaymentSigner,
             buyer_npub: &buyer_npub,
             due: std::mem::take(&mut due),
-            relays: &[],
-            publish: false,
+            queue: true,
             now_unix: 128,
-        })
-        .await;
+        });
 
     assert!(result.changed);
     assert_eq!(result.signed.len(), 1);
@@ -813,6 +820,8 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
             })
             .is_empty()
     );
+    assert_eq!(load_paid_exit_payment_outbox(&config_path).len(), 1);
+    let _ = std::fs::remove_dir_all(&dir);
 
     struct RuntimeFakePaymentSigner;
 
@@ -855,10 +864,12 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
     let dir = std::env::temp_dir().join(format!("nvpn-paid-exit-settle-{nonce}"));
     std::fs::create_dir_all(&dir).expect("create test dir");
 
-    let app = AppConfig::generated();
+    let mut app = AppConfig::generated();
     let buyer_keys = app.nostr_keys().expect("buyer keys");
     let buyer_npub = buyer_keys.public_key().to_bech32().expect("buyer npub");
     let seller = Keys::generate();
+    app.select_public_paid_exit_node(&seller.public_key().to_hex())
+        .expect("select seller");
     let mut offer_config = PaidExitConfig {
         enabled: true,
         ..PaidExitConfig::default()
@@ -904,16 +915,14 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
     let wallet_data_dir = dir.join("wallet");
     let result = paid_exit_settle_with_signer(PaidExitSettleRequest {
         app: &app,
-        keys: &buyer_keys,
+        config_path: &dir.join("config.toml"),
         store: &mut store,
         signer: &RuntimeFakePaymentSigner,
         session_id: &session.session_id,
-        relays: &[],
-        publish: false,
+        dry_run: false,
         wallet_data_dir: &wallet_data_dir,
         now_unix: 128,
     })
-    .await
     .expect("settle channel");
 
     assert!(result.payment.changed);
@@ -924,9 +933,8 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
     assert_eq!(result.payment.delivered_units, 110);
     assert_eq!(result.payment.amount_due_msat, 1_100);
     assert_eq!(result.payment.paid_msat, 2_000);
-    assert!(!result.publish_requested);
-    assert!(result.publish.is_none());
-    assert!(result.relays.is_empty());
+    assert!(!result.dry_run);
+    assert_eq!(result.queued, Some(true));
     assert!(result.persisted);
 
     let channel = store.channels.get(&session.channel_id).expect("channel");

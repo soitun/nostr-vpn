@@ -106,6 +106,25 @@ impl FipsPrivateTunnelRuntime {
         Ok(())
     }
 
+    #[cfg(feature = "paid-exit")]
+    pub(crate) async fn send_paid_route_payment(
+        &self,
+        _seller: &str,
+        _id: String,
+        _envelope: StreamingRoutePaymentEnvelope,
+    ) -> Result<()> {
+        Err(anyhow!("direct FIPS payments are unsupported on this platform"))
+    }
+
+    #[cfg(feature = "paid-exit")]
+    pub(crate) async fn send_paid_route_payment_ack(
+        &self,
+        _buyer: &str,
+        _id: String,
+    ) -> Result<()> {
+        Err(anyhow!("direct FIPS payments are unsupported on this platform"))
+    }
+
     pub(crate) fn peer_advertised_routes(&self, _participant: &str) -> Vec<String> {
         Vec::new()
     }

@@ -176,32 +176,58 @@ impl PaidRouteStore {
             now_unix: request.now_unix,
         };
 
-        match &envelope.payload {
-            StreamingRoutePaymentPayload::ChannelOpen(open) => {
-                validate_seller_open_payment(&config, &seller_pubkey_hex, &channel_id, open)?;
-                let capacity_sat = paid_route_channel_capacity_sat(&open.unit, open.capacity)?;
-                self.apply_seller_channel_open(&apply_context, open, capacity_sat)?;
-            }
-            StreamingRoutePaymentPayload::BalanceUpdate(update) => {
-                self.apply_seller_balance_update(&apply_context, update)?;
-            }
-            StreamingRoutePaymentPayload::CooperativeClose(close) => {
-                self.apply_seller_cooperative_close(
-                    &apply_context,
-                    close.final_paid_msat,
-                    &close.payment,
-                )?;
-            }
-            StreamingRoutePaymentPayload::CashuTokenLease(token_lease) => {
-                validate_seller_token_lease(&config, token_lease, request.now_unix)?;
-                return Err(anyhow!(
-                    "paid route Cashu token leases require seller-side token redemption before routing; use Cashu Spilman channel payments"
-                ));
-            }
-            StreamingRoutePaymentPayload::CooperativeCloseAck(_) => {
-                return Err(anyhow!(
-                    "seller cannot apply paid route cooperative close ack from buyer"
-                ));
+        let already_applied = self.channels.get(&channel_id).is_some_and(|channel| {
+            channel.offer_id == service_id
+                && normalize_paid_route_npub(&channel.counterparty_npub, "buyer")
+                    .is_ok_and(|counterparty| counterparty == buyer_npub)
+                && match &envelope.payload {
+                    StreamingRoutePaymentPayload::ChannelOpen(open) => {
+                        channel.payment.paid_msat == open.paid_msat
+                            && channel.payment.cashu_spilman_payment.as_ref() == Some(&open.payment)
+                    }
+                    StreamingRoutePaymentPayload::BalanceUpdate(update) => {
+                        channel.payment.paid_msat == update.paid_msat
+                            && channel.payment.cashu_spilman_payment.as_ref()
+                                == Some(&update.payment)
+                    }
+                    StreamingRoutePaymentPayload::CooperativeClose(close) => {
+                        channel.payment.paid_msat == close.final_paid_msat
+                            && channel.payment.cashu_spilman_payment.as_ref()
+                                == Some(&close.payment)
+                    }
+                    StreamingRoutePaymentPayload::CashuTokenLease(_)
+                    | StreamingRoutePaymentPayload::CooperativeCloseAck(_) => false,
+                }
+        });
+
+        if !already_applied {
+            match &envelope.payload {
+                StreamingRoutePaymentPayload::ChannelOpen(open) => {
+                    validate_seller_open_payment(&config, &seller_pubkey_hex, &channel_id, open)?;
+                    let capacity_sat = paid_route_channel_capacity_sat(&open.unit, open.capacity)?;
+                    self.apply_seller_channel_open(&apply_context, open, capacity_sat)?;
+                }
+                StreamingRoutePaymentPayload::BalanceUpdate(update) => {
+                    self.apply_seller_balance_update(&apply_context, update)?;
+                }
+                StreamingRoutePaymentPayload::CooperativeClose(close) => {
+                    self.apply_seller_cooperative_close(
+                        &apply_context,
+                        close.final_paid_msat,
+                        &close.payment,
+                    )?;
+                }
+                StreamingRoutePaymentPayload::CashuTokenLease(token_lease) => {
+                    validate_seller_token_lease(&config, token_lease, request.now_unix)?;
+                    return Err(anyhow!(
+                        "paid route Cashu token leases require seller-side token redemption before routing; use Cashu Spilman channel payments"
+                    ));
+                }
+                StreamingRoutePaymentPayload::CooperativeCloseAck(_) => {
+                    return Err(anyhow!(
+                        "seller cannot apply paid route cooperative close ack from buyer"
+                    ));
+                }
             }
         }
 
