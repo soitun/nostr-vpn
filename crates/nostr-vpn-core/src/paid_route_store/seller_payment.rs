@@ -191,7 +191,8 @@ impl PaidRouteStore {
                                 == Some(&update.payment)
                     }
                     StreamingRoutePaymentPayload::CooperativeClose(close) => {
-                        channel.payment.paid_msat == close.final_paid_msat
+                        channel.status == PaidRouteLifecycleStatus::Closing
+                            && channel.payment.paid_msat == close.final_paid_msat
                             && channel.payment.cashu_spilman_payment.as_ref()
                                 == Some(&close.payment)
                     }

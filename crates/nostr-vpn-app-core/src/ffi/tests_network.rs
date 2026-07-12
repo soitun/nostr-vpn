@@ -57,7 +57,9 @@
         runtime.config.networks[0].admins = vec![own_pubkey];
         runtime.config.exit_node_leak_protection = true;
         runtime.config.node.advertise_exit_node = false;
-        runtime.config.wireguard_exit.enabled = true;
+        runtime
+            .config
+            .set_internet_source(InternetSource::WireGuard);
         runtime.config.wireguard_exit.address = "10.64.70.195/32".to_string();
         runtime.config.wireguard_exit.private_key = "client-private".to_string();
         runtime.config.wireguard_exit.peer_public_key = "provider-public".to_string();
