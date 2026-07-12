@@ -35,7 +35,7 @@ $Action = New-ScheduledTaskAction `
   -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$RunnerPath`""
 $Principal = New-ScheduledTaskPrincipal `
   -UserId $InteractiveUser `
-  -LogonType Interactive \
+  -LogonType Interactive `
   -RunLevel Limited
 
 try {
