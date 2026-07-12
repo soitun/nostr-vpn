@@ -1,6 +1,29 @@
 import Foundation
 import NetworkExtension
 
+private actor ProviderSnapshotGate {
+    private var held = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func acquire() async {
+        if !held {
+            held = true
+            return
+        }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        if waiters.isEmpty {
+            held = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+}
+
 enum PacketTunnelControllerError: LocalizedError {
     case managerUnavailable
     case preferencesTimedOut(String)
@@ -17,6 +40,7 @@ enum PacketTunnelControllerError: LocalizedError {
 
 final class PacketTunnelController {
     private static let preferencesOperationTimeoutSeconds: TimeInterval = 10
+    private let runtimeStateGate = ProviderSnapshotGate()
     private let providerBundleIdentifier = Bundle.main.object(
         forInfoDictionaryKey: "NVPNPacketTunnelBundleIdentifier"
     ) as? String ?? "fi.siriusbusiness.nvpn.PacketTunnel"
@@ -102,6 +126,13 @@ final class PacketTunnelController {
     }
 
     func runtimeStateJson() async -> String? {
+        await runtimeStateGate.acquire()
+        let result = await readRuntimeStateJson()
+        await runtimeStateGate.release()
+        return result
+    }
+
+    private func readRuntimeStateJson() async -> String? {
         guard let sizeData = await providerMessageData("runtimeStateBegin"),
               let sizeText = String(data: sizeData, encoding: .utf8),
               let expectedSize = Int(sizeText),
