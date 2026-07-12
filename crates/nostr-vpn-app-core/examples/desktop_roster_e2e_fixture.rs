@@ -81,7 +81,7 @@ fn prepare(data_dir: &Path, result_path: &Path) -> Result<()> {
         format!("nvpn://debug/accept-join?networkId={network_id}&requesterNpub={requester_npub}");
     write_result(
         result_path,
-        json!({
+        &json!({
             "ok": true,
             "phase": "prepared",
             "configPath": config_path,
@@ -121,7 +121,7 @@ fn verify(data_dir: &Path, result_path: &Path) -> Result<()> {
     }
     write_result(
         result_path,
-        json!({
+        &json!({
             "ok": true,
             "phase": "verified",
             "configPath": config_path,
@@ -135,11 +135,11 @@ fn verify(data_dir: &Path, result_path: &Path) -> Result<()> {
     )
 }
 
-fn write_result(path: &Path, value: serde_json::Value) -> Result<()> {
+fn write_result(path: &Path, value: &serde_json::Value) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, serde_json::to_vec_pretty(&value)?)?;
+    fs::write(path, serde_json::to_vec_pretty(value)?)?;
     Ok(())
 }
 
