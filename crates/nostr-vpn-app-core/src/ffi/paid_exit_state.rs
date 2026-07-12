@@ -592,8 +592,9 @@ fn paid_route_wallet_state(
         .iter()
         .filter_map(|mint| mint.balance_msat)
         .sum();
-    let balance_known =
-        !wallet.mints.is_empty() && wallet.mints.iter().all(|mint| mint.balance_msat.is_some());
+    // An empty wallet has a known zero balance. Once mints exist, the total is
+    // only known when every mint balance is known.
+    let balance_known = wallet.mints.iter().all(|mint| mint.balance_msat.is_some());
     let mints = wallet
         .mints
         .iter()

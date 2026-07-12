@@ -394,7 +394,7 @@ enum ScreenshotFixtures {
 
         var mint = PaidRouteWalletMintState()
         mint.url = wallet.defaultMint
-        mint.label = "Minibits"
+        mint.label = ""
         mint.isDefault = true
         mint.balanceKnown = true
         mint.balanceMsat = 123_000

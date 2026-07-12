@@ -20,7 +20,7 @@ fn build_paid_routes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState)
 fn build_paid_route_wallet_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     page_title(page, "Wallet", "wallet-symbolic");
     let explanation = gtk::Label::new(Some(
-        "Use this Cashu wallet to pay for internet access and receive earnings when you sell bandwidth.",
+        "Pay for internet access and receive earnings when you sell bandwidth.",
     ));
     explanation.set_wrap(true);
     explanation.set_xalign(0.0);

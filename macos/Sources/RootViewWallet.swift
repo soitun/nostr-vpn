@@ -2,6 +2,13 @@ import AppKit
 import CoreImage
 import SwiftUI
 
+enum PaidRouteWalletFlow: String, Identifiable {
+    case receive
+    case send
+
+    var id: String { rawValue }
+}
+
 extension RootView {
     var paidRouteWalletSettings: some View {
         let market = state.paidRouteMarket
@@ -10,7 +17,7 @@ extension RootView {
                 paidRouteWalletSection(market.wallet)
             } else {
                 surface {
-                    sectionHeader("Cashu Wallet", systemImage: "creditcard.fill")
+                    sectionHeader("Wallet", systemImage: "creditcard.fill")
                     if !market.statusText.isEmpty {
                         Text(market.statusText)
                             .font(.caption)
@@ -23,22 +30,22 @@ extension RootView {
 
     func paidRouteWalletSection(_ wallet: NativePaidRouteWalletState) -> some View {
         surface {
-            Text("Use this Cashu wallet to pay for internet access and receive earnings when you sell bandwidth.")
+            Text("Pay for internet access and receive earnings when you sell bandwidth.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
-            HStack(spacing: 10) {
-                sectionHeader("Cashu Wallet", systemImage: "creditcard.fill")
-                if wallet.balanceKnown {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    sectionHeader("Wallet", systemImage: "creditcard.fill")
                     Text(fallbackText(wallet.totalBalanceText, formatPaidRouteMsat(wallet.totalBalanceMsat)))
-                        .font(.caption.weight(.medium))
-                }
-                if !wallet.defaultMint.isEmpty {
-                    Text(wallet.defaultMint)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                    if !wallet.defaultMint.isEmpty {
+                        Text(wallet.defaultMint)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
                 Spacer(minLength: 12)
                 Button {
@@ -49,6 +56,25 @@ extension RootView {
                 .help("Refresh wallet")
                 .disabled(manager.actionInFlight)
             }
+
+            HStack(spacing: 10) {
+                Button {
+                    paidRouteWalletFlow = .receive
+                } label: {
+                    Label("Receive", systemImage: "arrow.down.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    paidRouteWalletFlow = .send
+                } label: {
+                    Label("Send", systemImage: "arrow.up.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .controlSize(.large)
 
             Toggle("Show exchange rate", isOn: Binding(
                 get: { state.walletFiatEnabled },
@@ -84,58 +110,14 @@ extension RootView {
                 }
             }
 
-            VStack(spacing: 6) {
-                HStack(spacing: 8) {
-                    TextField("Mint URL", text: $paidRouteMintUrl)
-                    TextField("Label", text: $paidRouteMintLabel)
-                        .frame(width: 120)
-                    Button {
-                        manager.addPaidRouteWalletMint(url: paidRouteMintUrl, label: paidRouteMintLabel)
-                    } label: {
-                        Label("Add", systemImage: "plus.circle.fill")
-                    }
-                    .disabled(manager.actionInFlight)
+            HStack(spacing: 8) {
+                TextField("Mint URL", text: $paidRouteMintUrl)
+                Button {
+                    manager.addPaidRouteWalletMint(url: paidRouteMintUrl)
+                } label: {
+                    Label("Add", systemImage: "plus.circle.fill")
                 }
-
-                HStack(spacing: 8) {
-                    TextField("Top up sats", text: $paidRouteTopupAmount)
-                        .frame(width: 110)
-                    Button {
-                        manager.topUpPaidRouteWallet(mintUrl: nil, amountSat: paidRouteTopupAmount)
-                    } label: {
-                        Label("Top Up", systemImage: "arrow.down.circle.fill")
-                    }
-                    .disabled(manager.actionInFlight || parsePositiveUInt64(paidRouteTopupAmount) == nil)
-
-                    TextField("Send sats", text: $paidRouteSendAmount)
-                        .frame(width: 105)
-                    Button {
-                        manager.sendPaidRouteWalletToken(mintUrl: nil, amountSat: paidRouteSendAmount)
-                    } label: {
-                        Label("Export", systemImage: "paperplane.fill")
-                    }
-                    .disabled(manager.actionInFlight || parsePositiveUInt64(paidRouteSendAmount) == nil)
-                }
-
-                HStack(spacing: 8) {
-                    TextField("Cashu token", text: $paidRouteReceiveToken)
-                    Button {
-                        manager.receivePaidRouteWalletToken(paidRouteReceiveToken)
-                    } label: {
-                        Label("Receive", systemImage: "tray.and.arrow.down.fill")
-                    }
-                    .disabled(manager.actionInFlight || paidRouteReceiveToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
-
-                HStack(spacing: 8) {
-                    TextField("Lightning invoice", text: $paidRouteWithdrawInvoice)
-                    Button {
-                        manager.withdrawPaidRouteWalletLightning(mintUrl: nil, invoice: paidRouteWithdrawInvoice)
-                    } label: {
-                        Label("Withdraw", systemImage: "bolt.fill")
-                    }
-                    .disabled(manager.actionInFlight || paidRouteWithdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                }
+                .disabled(manager.actionInFlight || paidRouteMintUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
 
             if wallet.mints.isEmpty {
@@ -150,6 +132,75 @@ extension RootView {
 
             paidRouteWalletActionResult(wallet.lastAction)
         }
+        .sheet(item: $paidRouteWalletFlow) { flow in
+            paidRouteWalletFlowSheet(flow, wallet: wallet)
+        }
+    }
+
+    func paidRouteWalletFlowSheet(
+        _ flow: PaidRouteWalletFlow,
+        wallet: NativePaidRouteWalletState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(flow == .receive ? "Receive" : "Send")
+                        .font(.title2.weight(.semibold))
+                    Text(fallbackText(wallet.totalBalanceText, formatPaidRouteMsat(wallet.totalBalanceMsat)))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Done") { paidRouteWalletFlow = nil }
+            }
+
+            if flow == .receive {
+                GroupBox("Lightning") {
+                    HStack(spacing: 8) {
+                        TextField("Amount in sats", text: $paidRouteTopupAmount)
+                        Button("Create Invoice") {
+                            manager.topUpPaidRouteWallet(mintUrl: nil, amountSat: paidRouteTopupAmount)
+                        }
+                        .disabled(manager.actionInFlight || parsePositiveUInt64(paidRouteTopupAmount) == nil)
+                    }
+                    .padding(6)
+                }
+                GroupBox("Token") {
+                    HStack(spacing: 8) {
+                        TextField("Paste token", text: $paidRouteReceiveToken)
+                        Button("Import") {
+                            manager.receivePaidRouteWalletToken(paidRouteReceiveToken)
+                        }
+                        .disabled(manager.actionInFlight || paidRouteReceiveToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    .padding(6)
+                }
+            } else {
+                GroupBox("Lightning") {
+                    HStack(spacing: 8) {
+                        TextField("Invoice", text: $paidRouteWithdrawInvoice)
+                        Button("Pay") {
+                            manager.withdrawPaidRouteWalletLightning(mintUrl: nil, invoice: paidRouteWithdrawInvoice)
+                        }
+                        .disabled(manager.actionInFlight || paidRouteWithdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                    .padding(6)
+                }
+                GroupBox("Token") {
+                    HStack(spacing: 8) {
+                        TextField("Amount in sats", text: $paidRouteSendAmount)
+                        Button("Export") {
+                            manager.sendPaidRouteWalletToken(mintUrl: nil, amountSat: paidRouteSendAmount)
+                        }
+                        .disabled(manager.actionInFlight || parsePositiveUInt64(paidRouteSendAmount) == nil)
+                    }
+                    .padding(6)
+                }
+            }
+
+            paidRouteWalletActionResult(wallet.lastAction)
+        }
+        .padding(22)
+        .frame(width: 520)
     }
 
     @ViewBuilder
@@ -241,14 +292,9 @@ extension RootView {
             .buttonStyle(.plain)
             .disabled(manager.actionInFlight || mint.isDefault)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(mint.label.isEmpty ? mint.url : mint.label)
-                    .lineLimit(1)
-                Text(mint.url)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+            Text(mint.url)
+                .lineLimit(1)
+                .truncationMode(.middle)
             Spacer(minLength: 12)
             if mint.balanceKnown {
                 Text(fallbackText(mint.balanceText, formatPaidRouteMsat(mint.balanceMsat)))
@@ -265,4 +311,3 @@ extension RootView {
         }
     }
 }
-

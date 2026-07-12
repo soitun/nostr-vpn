@@ -75,6 +75,19 @@ mod paid_exit {
             );
         }
 
+        #[test]
+        fn empty_wallet_reports_a_known_zero_balance() {
+            let state = paid_route_wallet_state(
+                &PaidRouteWalletState::default(),
+                &NativePaidRouteWalletActionState::default(),
+            );
+
+            assert!(state.balance_known);
+            assert_eq!(state.total_balance_msat, 0);
+            assert_eq!(state.total_balance_text, "0 sat");
+            assert!(!state.navigation_balance_text.is_empty());
+        }
+
         fn offer(
             key: &str,
             rating_score: Option<i64>,

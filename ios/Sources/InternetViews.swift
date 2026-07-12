@@ -123,7 +123,7 @@ struct PaidRouteWalletPage: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
-                Text("Use this Cashu wallet to pay for internet access and receive earnings when you sell bandwidth.")
+                Text("Pay for internet access and receive earnings when you sell bandwidth.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -171,6 +171,13 @@ enum PaidRouteCardMode {
     case wallet
 }
 
+private enum PaidRouteWalletFlow: String, Identifiable {
+    case receive
+    case send
+
+    var id: String { rawValue }
+}
+
 struct PaidRouteMarketCard: View {
     @ObservedObject var model: AppModel
     let mode: PaidRouteCardMode
@@ -179,6 +186,7 @@ struct PaidRouteMarketCard: View {
     @State private var topUpAmount = ""
     @State private var sendAmount = ""
     @State private var withdrawInvoice = ""
+    @State private var walletFlow: PaidRouteWalletFlow?
     @State private var filterCountry = ""
     @State private var filterNetworkClass = ""
     @State private var filterRequireIpv4 = false
@@ -193,16 +201,16 @@ struct PaidRouteMarketCard: View {
         AppCard {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(mode == .wallet ? "Cashu Wallet" : "Buy Internet")
+                    Text(mode == .wallet ? "Wallet" : "Buy Internet")
                         .font(.headline)
                     if mode == .market {
                         Text("Experimental")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Text("Wallet \(fallbackText(market.wallet.totalBalanceText, formatPaidRouteMsat(market.wallet.totalBalanceMsat)))")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    Text(fallbackText(market.wallet.totalBalanceText, formatPaidRouteMsat(market.wallet.totalBalanceMsat)))
+                        .font(mode == .wallet ? .largeTitle.bold() : .footnote)
+                        .foregroundStyle(mode == .wallet ? .primary : .secondary)
                     if model.state.walletFiatEnabled && !market.wallet.fiatBalanceText.isEmpty {
                         Text("≈ \(market.wallet.fiatBalanceText)")
                             .font(.footnote)
@@ -233,7 +241,7 @@ struct PaidRouteMarketCard: View {
                     .foregroundStyle(.secondary)
             }
             if !market.supported {
-                Text(mode == .wallet ? "Cashu wallet is not supported on this platform" : "Buying internet is not supported on this platform")
+                Text(mode == .wallet ? "Wallet is not supported on this platform" : "Buying internet is not supported on this platform")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             } else {
@@ -261,6 +269,9 @@ struct PaidRouteMarketCard: View {
             filterRequireIpv4 = market.filter.requireIpv4
             filterRequireIpv6 = market.filter.requireIpv6
             filterSort = market.filter.sort.isEmpty ? "quality" : market.filter.sort
+        }
+        .sheet(item: $walletFlow) { flow in
+            walletFlowSheet(flow)
         }
     }
 
@@ -335,6 +346,97 @@ struct PaidRouteMarketCard: View {
     private var walletControls: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
+                Button {
+                    walletFlow = .receive
+                } label: {
+                    Label("Receive", systemImage: "arrow.down.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+
+                Button {
+                    walletFlow = .send
+                } label: {
+                    Label("Send", systemImage: "arrow.up.circle.fill")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .controlSize(.large)
+        }
+    }
+
+    private func walletFlowSheet(_ flow: PaidRouteWalletFlow) -> some View {
+        NavigationStack {
+            Form {
+                Section("Lightning") {
+                    if flow == .receive {
+                        TextField("Amount in sats", text: $topUpAmount)
+                            .keyboardType(.numberPad)
+                        Button("Create Invoice") {
+                            guard let amount = parsePositivePaidRouteAmount(topUpAmount) else { return }
+                            model.dispatch(
+                                NativeActions.topUpPaidRouteWallet(mintUrl: optionalPaidRouteMintUrl(mintUrl), amountSat: amount),
+                                status: "Creating invoice"
+                            )
+                        }
+                        .disabled(model.actionInFlight || parsePositivePaidRouteAmount(topUpAmount) == nil)
+                    } else {
+                        TextField("Invoice", text: $withdrawInvoice)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        Button("Pay") {
+                            let trimmed = withdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines)
+                            model.dispatch(
+                                NativeActions.withdrawPaidRouteWalletLightning(mintUrl: optionalPaidRouteMintUrl(mintUrl), invoice: trimmed),
+                                status: "Paying invoice"
+                            )
+                        }
+                        .disabled(model.actionInFlight || withdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+
+                Section("Token") {
+                    if flow == .receive {
+                        TextField("Paste token", text: $token)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        Button("Import") {
+                            let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
+                            model.dispatch(
+                                NativeActions.receivePaidRouteWalletToken(token: trimmed),
+                                status: "Receiving token"
+                            )
+                        }
+                        .disabled(model.actionInFlight || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    } else {
+                        TextField("Amount in sats", text: $sendAmount)
+                            .keyboardType(.numberPad)
+                        Button("Export") {
+                            guard let amount = parsePositivePaidRouteAmount(sendAmount) else { return }
+                            model.dispatch(
+                                NativeActions.sendPaidRouteWalletToken(mintUrl: optionalPaidRouteMintUrl(mintUrl), amountSat: amount),
+                                status: "Creating token"
+                            )
+                        }
+                        .disabled(model.actionInFlight || parsePositivePaidRouteAmount(sendAmount) == nil)
+                    }
+                }
+
+                walletActionResult(market.wallet.lastAction)
+            }
+            .navigationTitle(flow == .receive ? "Receive" : "Send")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { walletFlow = nil }
+                }
+            }
+        }
+    }
+
+    private var walletMintList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
                 TextField("Mint URL", text: $mintUrl)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -349,71 +451,6 @@ struct PaidRouteMarketCard: View {
                 }
                 .disabled(model.actionInFlight || mintUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-            HStack {
-                TextField("Top-up sats", text: $topUpAmount)
-                    .keyboardType(.numberPad)
-                Button("Top Up") {
-                    guard let amount = parsePositivePaidRouteAmount(topUpAmount) else { return }
-                    model.dispatch(
-                        NativeActions.topUpPaidRouteWallet(mintUrl: optionalPaidRouteMintUrl(mintUrl), amountSat: amount),
-                        status: "Creating invoice"
-                    )
-                }
-                .disabled(model.actionInFlight || parsePositivePaidRouteAmount(topUpAmount) == nil)
-            }
-            HStack {
-                TextField("Send sats", text: $sendAmount)
-                    .keyboardType(.numberPad)
-                Button("Export") {
-                    guard let amount = parsePositivePaidRouteAmount(sendAmount) else { return }
-                    model.dispatch(
-                        NativeActions.sendPaidRouteWalletToken(mintUrl: optionalPaidRouteMintUrl(mintUrl), amountSat: amount),
-                        status: "Creating token"
-                    )
-                }
-                .disabled(model.actionInFlight || parsePositivePaidRouteAmount(sendAmount) == nil)
-            }
-            HStack {
-                TextField("Cashu token", text: $token)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button("Import") {
-                    let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
-                    model.dispatch(
-                        NativeActions.receivePaidRouteWalletToken(token: trimmed),
-                        status: "Receiving token"
-                    )
-                    token = ""
-                }
-                .disabled(model.actionInFlight || token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            HStack {
-                TextField("Lightning invoice", text: $withdrawInvoice)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button("Withdraw") {
-                    let trimmed = withdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines)
-                    model.dispatch(
-                        NativeActions.withdrawPaidRouteWalletLightning(mintUrl: optionalPaidRouteMintUrl(mintUrl), invoice: trimmed),
-                        status: "Paying invoice"
-                    )
-                    withdrawInvoice = ""
-                }
-                .disabled(model.actionInFlight || withdrawInvoice.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            HStack {
-                Button("Refresh Wallet") {
-                    model.dispatch(
-                        NativeActions.refreshPaidRouteWallet(),
-                        status: "Refreshing wallet"
-                    )
-                }
-            }
-        }
-    }
-
-    private var walletMintList: some View {
-        VStack(alignment: .leading, spacing: 8) {
             Text("Mints")
                 .font(.subheadline)
                 .fontWeight(.semibold)
@@ -425,7 +462,7 @@ struct PaidRouteMarketCard: View {
                 ForEach(market.wallet.mints) { mint in
                     HStack(alignment: .center) {
                         VStack(alignment: .leading, spacing: 3) {
-                            Text(mint.label.isEmpty ? mint.url : mint.label)
+                            Text(mint.url)
                                 .fontWeight(.semibold)
                                 .lineLimit(1)
                             Text(fallbackText(mint.balanceText, formatPaidRouteMsat(mint.balanceMsat)))
@@ -466,19 +503,13 @@ struct PaidRouteMarketCard: View {
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             if !action.paymentRequest.isEmpty {
-                Text("Lightning invoice ready")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                CopyLine(value: action.paymentRequest, displayValue: "Lightning invoice", model: model)
             }
             if !action.token.isEmpty {
-                Text("Cashu token ready")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                CopyLine(value: action.token, displayValue: "Token", model: model)
             }
             if !action.preimage.isEmpty {
-                Text("Lightning preimage ready")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                CopyLine(value: action.preimage, displayValue: "Lightning preimage", model: model)
             }
         }
     }

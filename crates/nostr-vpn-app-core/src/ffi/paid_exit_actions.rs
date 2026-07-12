@@ -103,7 +103,7 @@ impl NativeAppRuntime {
     pub(super) fn receive_paid_route_wallet_token(&mut self, token: &str) -> Result<()> {
         let token = token.trim();
         if token.is_empty() {
-            return Err(anyhow!("Cashu token is empty"));
+            return Err(anyhow!("Token is empty"));
         }
         let value = self.run_paid_route_wallet_json_with_stdin(
             vec!["receive".to_string(), "--token-stdin".to_string()],

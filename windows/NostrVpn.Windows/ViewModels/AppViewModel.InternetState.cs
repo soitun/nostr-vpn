@@ -238,7 +238,7 @@ public sealed partial class AppViewModel
         var balance = mint.BalanceKnown
             ? $" · {TextOr(mint.BalanceText, FormatPaidRouteMsat(mint.BalanceMsat))}"
             : "";
-        return $"{marker} · {TextOr(mint.Label, mint.Url)}{balance}";
+        return $"{marker} · {mint.Url}{balance}";
     });
 
     public string PaidRouteWalletMintsStatusText => State.PaidRouteMarket.Wallet.Mints.Count == 0

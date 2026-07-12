@@ -23,7 +23,7 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.walletPage(
 ) {
     item {
         Text(
-            "Use this Cashu wallet to pay for internet access and receive earnings when you sell bandwidth.",
+            "Pay for internet access and receive earnings when you sell bandwidth.",
             color = Muted,
             style = MaterialTheme.typography.bodySmall,
         )

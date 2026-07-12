@@ -3,7 +3,7 @@ pub(super) fn build_paid_route_wallet_card(app: &AppRef, page: &gtk::Box, state:
     let card = card();
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.set_valign(gtk::Align::Center);
-    section_header(&header, "Cashu Wallet", "");
+    section_header(&header, "Wallet", "");
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     header.append(&spacer);
@@ -20,14 +20,13 @@ pub(super) fn build_paid_route_wallet_card(app: &AppRef, page: &gtk::Box, state:
     header.append(&refresh);
     card.append(&header);
 
-    detail_row(
-        &card,
-        "Balance",
-        &non_empty_or(
-            &wallet.total_balance_text,
-            &format_paid_route_msat(wallet.total_balance_msat),
-        ),
-    );
+    let balance = gtk::Label::new(Some(&non_empty_or(
+        &wallet.total_balance_text,
+        &format_paid_route_msat(wallet.total_balance_msat),
+    )));
+    balance.set_xalign(0.0);
+    balance.add_css_class("title-1");
+    card.append(&balance);
     if state.wallet_fiat_enabled && !wallet.fiat_balance_text.is_empty() {
         detail_row(&card, "Fiat", &wallet.fiat_balance_text);
         detail_row(
@@ -53,24 +52,36 @@ pub(super) fn build_paid_route_wallet_card(app: &AppRef, page: &gtk::Box, state:
         "list-add-symbolic",
         |drafts| drafts.paid_route_mint_url.clone(),
     );
+    let transfer_stack = gtk::Stack::new();
+    let transfer_switcher = gtk::StackSwitcher::new();
+    transfer_switcher.set_stack(Some(&transfer_stack));
+    transfer_switcher.set_halign(gtk::Align::Center);
+    card.append(&transfer_switcher);
+
+    let receive = gtk::Box::new(gtk::Orientation::Vertical, 8);
     wallet_amount_row(
         app,
-        &card,
-        "Top-up sats",
-        "Top Up",
-        "go-up-symbolic",
+        &receive,
+        "Amount in sats",
+        "Create Invoice",
+        "go-down-symbolic",
         WalletAction::TopUp,
     );
+    wallet_token_row(app, &receive);
+    transfer_stack.add_titled(&receive, Some("receive"), "Receive");
+
+    let send = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    wallet_withdraw_row(app, &send);
     wallet_amount_row(
         app,
-        &card,
-        "Export sats",
+        &send,
+        "Amount in sats",
         "Export",
         "document-send-symbolic",
         WalletAction::Send,
     );
-    wallet_token_row(app, &card);
-    wallet_withdraw_row(app, &card);
+    transfer_stack.add_titled(&send, Some("send"), "Send");
+    card.append(&transfer_stack);
 
     section_header(&card, "Mints", "");
     if wallet.mints.is_empty() {
@@ -196,7 +207,7 @@ fn wallet_amount_row(
 
 fn wallet_token_row(app: &AppRef, parent: &gtk::Box) {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let input = entry("Cashu token", &app.borrow().drafts.paid_route_token);
+    let input = entry("Paste token", &app.borrow().drafts.paid_route_token);
     {
         let app = app.clone();
         input.connect_changed(move |entry| {
@@ -259,7 +270,7 @@ fn paid_route_mint_row(app: &AppRef, parent: &gtk::Box, mint: &NativePaidRouteWa
     row.set_valign(gtk::Align::Center);
     let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
     text.set_hexpand(true);
-    let title = gtk::Label::new(Some(&non_empty_or(&mint.label, &mint.url)));
+    let title = gtk::Label::new(Some(&mint.url));
     title.add_css_class("heading");
     title.set_xalign(0.0);
     text.append(&title);

@@ -159,12 +159,11 @@ extension AppManager {
         return UInt64(units)
     }
 
-    func addPaidRouteWalletMint(url: String, label: String?) {
+    func addPaidRouteWalletMint(url: String) {
         let trimmedUrl = url.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedUrl.isEmpty else { return }
-        let trimmedLabel = label?.trimmingCharacters(in: .whitespacesAndNewlines)
         dispatch(
-            .addPaidRouteWalletMint(url: trimmedUrl, label: trimmedLabel?.isEmpty == false ? trimmedLabel : nil),
+            .addPaidRouteWalletMint(url: trimmedUrl, label: nil),
             status: "Saving wallet"
         )
     }
@@ -346,4 +345,3 @@ extension AppManager {
         dispatch(.discoverPaidRouteOffers(durationSecs: 5), status: "Finding sellers")
     }
 }
-
