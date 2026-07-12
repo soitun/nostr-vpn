@@ -580,6 +580,9 @@ struct RootView: View {
         case .publicExits:
             pageScroll {
                 pageTitle("Buy Internet", "cart.fill")
+                Text("Experimental")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 paidRouteMarketSettings
             }
         case .sellExit:

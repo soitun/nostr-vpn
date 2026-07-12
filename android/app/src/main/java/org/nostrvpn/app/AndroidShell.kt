@@ -1141,6 +1141,13 @@ private fun PaidRouteMarketCard(
                     if (mode == PaidRouteCardMode.Wallet) "Cashu Wallet" else "Buy Internet",
                     style = MaterialTheme.typography.titleMedium,
                 )
+                if (mode == PaidRouteCardMode.Market) {
+                    Text(
+                        "Experimental",
+                        color = Muted,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
                 Text(
                     "Wallet ${market.wallet.totalBalanceText.ifBlank { formatPaidRouteMsat(market.wallet.totalBalanceMsat) }}",
                     color = Muted,

@@ -627,6 +627,7 @@
                   </StackPanel>
                   <StackPanel>
                     <TextBlock Text="Find Internet to Buy" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="Experimental" Foreground="{StaticResource TextSecondary}" FontSize="12" />
                     <TextBlock Foreground="{StaticResource TextSecondary}">
                       <Run Text="Wallet " /><Run Text="{Binding PaidRouteWalletBalanceText, Mode=OneWay}" />
                     </TextBlock>

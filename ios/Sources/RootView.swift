@@ -1158,6 +1158,11 @@ private struct PaidRouteMarketCard: View {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(mode == .wallet ? "Cashu Wallet" : "Buy Internet")
                         .font(.headline)
+                    if mode == .market {
+                        Text("Experimental")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Text("Wallet \(fallbackText(market.wallet.totalBalanceText, formatPaidRouteMsat(market.wallet.totalBalanceMsat)))")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
