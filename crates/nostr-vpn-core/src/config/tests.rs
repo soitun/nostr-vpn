@@ -1,7 +1,8 @@
 #[cfg(test)]
 mod tests {
     use super::{
-        AppConfig, normalize_nostr_pubkey, parse_wireguard_exit_config, wireguard_exit_config_text,
+        AppConfig, InternetSource, normalize_nostr_pubkey, parse_wireguard_exit_config,
+        wireguard_exit_config_text,
     };
     use crate::config_defaults::generate_nostr_identity;
 
@@ -278,6 +279,61 @@ mod tests {
         assert_eq!(config.wireguard_exit.allowed_ips, vec!["0.0.0.0/0"]);
         assert_eq!(config.wireguard_exit.dns, vec!["9.9.9.9"]);
         assert!(config.wireguard_exit.configured());
+    }
+
+    #[test]
+    fn legacy_exit_flags_migrate_to_one_internet_source() {
+        let private_peer = generate_nostr_identity().1;
+        let mut private: AppConfig = toml::from_str(&format!("exit_node = \"{private_peer}\""))
+            .expect("parse legacy private exit config");
+        private.apply_load_migrations();
+        private.ensure_defaults();
+        assert_eq!(private.internet_source, InternetSource::PrivateVpn);
+
+        let seller = generate_nostr_identity().1;
+        let mut paid: AppConfig = toml::from_str(&format!(
+            "exit_node = \"{seller}\"\nexit_node_public_paid_exit = true\nconnect_to_non_roster_fips_peers = true\n"
+        ))
+        .expect("parse legacy paid exit config");
+        paid.apply_load_migrations();
+        paid.ensure_defaults();
+        assert_eq!(paid.internet_source, InternetSource::PaidManual);
+
+        let mut wireguard: AppConfig =
+            toml::from_str("[wireguard_exit]\nenabled = true\n")
+                .expect("parse legacy WireGuard exit config");
+        wireguard.apply_load_migrations();
+        wireguard.ensure_defaults();
+        assert_eq!(wireguard.internet_source, InternetSource::WireGuard);
+    }
+
+    #[test]
+    fn internet_source_switches_are_atomic() {
+        let peer = generate_nostr_identity().1;
+        let seller = generate_nostr_identity().1;
+        let mut config = AppConfig::default();
+
+        config
+            .select_private_exit_node(&peer)
+            .expect("select private exit");
+        assert_eq!(config.internet_source, InternetSource::PrivateVpn);
+        assert!(!config.exit_node_public_paid_exit);
+
+        config.set_internet_source(InternetSource::PaidAutomatic);
+        assert!(config.exit_node.is_empty());
+        config
+            .select_public_paid_exit_node(&seller)
+            .expect("select automatic paid exit");
+        assert_eq!(config.internet_source, InternetSource::PaidAutomatic);
+        assert!(config.exit_node_public_paid_exit);
+
+        config.set_internet_source(InternetSource::WireGuard);
+        assert!(config.wireguard_exit.enabled);
+        assert!(config.exit_node.is_empty());
+
+        config.set_internet_source(InternetSource::Direct);
+        assert!(!config.wireguard_exit.enabled);
+        assert!(config.exit_node.is_empty());
     }
 
     #[test]

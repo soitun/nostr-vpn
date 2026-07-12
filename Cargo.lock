@@ -3711,6 +3711,7 @@ dependencies = [
  "nostr-sdk",
  "nostr-vpn-core",
  "qrcode",
+ "reqwest",
  "rqrr",
  "serde",
  "serde_json",

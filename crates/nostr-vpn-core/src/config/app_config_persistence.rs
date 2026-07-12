@@ -10,6 +10,52 @@ impl AppConfig {
         config
     }
 
+    pub fn set_internet_source(&mut self, source: InternetSource) {
+        self.internet_source = source;
+        match source {
+            InternetSource::Direct => {
+                self.exit_node.clear();
+                self.exit_node_public_paid_exit = false;
+                self.wireguard_exit.enabled = false;
+            }
+            InternetSource::WireGuard => {
+                self.exit_node.clear();
+                self.exit_node_public_paid_exit = false;
+            }
+            InternetSource::PrivateVpn => {
+                if self.exit_node_public_paid_exit {
+                    self.exit_node.clear();
+                }
+                self.exit_node_public_paid_exit = false;
+            }
+            InternetSource::PaidAutomatic => {
+                self.exit_node.clear();
+                self.exit_node_public_paid_exit = false;
+            }
+            InternetSource::PaidManual => {
+                if !self.exit_node_public_paid_exit {
+                    self.exit_node.clear();
+                }
+            }
+        }
+        self.normalize_internet_source();
+    }
+
+    pub fn select_private_exit_node(&mut self, peer: &str) -> Result<String> {
+        let peer_pubkey = normalize_nostr_pubkey(peer)
+            .map_err(|error| anyhow!("invalid private exit peer pubkey: {error}"))?;
+        if let Ok(own_pubkey) = self.own_nostr_pubkey_hex()
+            && peer_pubkey == own_pubkey
+        {
+            return Err(anyhow!("cannot select this device as its own private exit"));
+        }
+        self.internet_source = InternetSource::PrivateVpn;
+        self.exit_node = peer_pubkey.clone();
+        self.exit_node_public_paid_exit = false;
+        self.normalize_internet_source();
+        Ok(peer_pubkey)
+    }
+
     pub fn select_public_paid_exit_node(&mut self, seller: &str) -> Result<String> {
         let seller_pubkey = normalize_nostr_pubkey(seller)
             .map_err(|error| anyhow!("invalid paid exit seller pubkey: {error}"))?;
@@ -19,11 +65,11 @@ impl AppConfig {
             return Err(anyhow!("cannot select this device as its own paid exit"));
         }
 
+        if self.internet_source != InternetSource::PaidAutomatic {
+            self.internet_source = InternetSource::PaidManual;
+        }
         self.exit_node = seller_pubkey.clone();
         self.exit_node_public_paid_exit = true;
-        self.wireguard_exit.enabled = false;
-        self.connect_to_non_roster_fips_peers = true;
-        self.fips_nostr_discovery_enabled = true;
         self.ensure_defaults();
         if self.exit_node != seller_pubkey {
             return Err(anyhow!(

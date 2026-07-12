@@ -33,14 +33,8 @@
           <Button Style="{StaticResource NavButton}" Command="{Binding ShowInternetCommand}">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE774;" Width="24" /><TextBlock Text="Internet" /></StackPanel>
           </Button>
-          <Button Style="{StaticResource NavButton}" Command="{Binding ShowPublicExitsCommand}" Visibility="{Binding PaidRouteMarketVisible, Converter={StaticResource BoolToVisibility}}">
-            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE7BF;" Width="24" /><TextBlock Text="Buy Internet" /></StackPanel>
-          </Button>
           <Button Style="{StaticResource NavButton}" Command="{Binding ShowWalletCommand}" Visibility="{Binding PaidRouteMarketVisible, Converter={StaticResource BoolToVisibility}}">
-            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8C7;" Width="24" /><TextBlock Text="Wallet" /></StackPanel>
-          </Button>
-          <Button Style="{StaticResource NavButton}" Command="{Binding ShowSellAccessCommand}" Visibility="{Binding PaidExitSellerVisible, Converter={StaticResource BoolToVisibility}}">
-            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8B8;" Width="24" /><TextBlock Text="Sell Internet" /></StackPanel>
+            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8C7;" Width="24" /><TextBlock Text="{Binding WalletNavigationText}" /></StackPanel>
           </Button>
           <Button Style="{StaticResource NavButton}" Command="{Binding ShowSettingsCommand}">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" Width="24" /><TextBlock Text="Settings" /></StackPanel>
@@ -582,6 +576,20 @@
                     <TextBlock Text="WireGuard upstream" FontWeight="SemiBold" />
                   </DockPanel>
                 </Button>
+                <Button Click="PaidAutomaticExit_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,8" Visibility="{Binding PaidRouteMarketVisible, Converter={StaticResource BoolToVisibility}}">
+                  <DockPanel LastChildFill="False">
+                    <TextBlock DockPanel.Dock="Right" Text="Experimental · choose a working, reasonably priced provider" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
+                    <TextBlock Text="{Binding PaidAutomaticExitMarker}" Margin="0,0,8,0" />
+                    <TextBlock Text="Paid · Automatic" FontWeight="SemiBold" />
+                  </DockPanel>
+                </Button>
+                <Button Click="PaidManualExit_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,8" Visibility="{Binding PaidRouteMarketVisible, Converter={StaticResource BoolToVisibility}}">
+                  <DockPanel LastChildFill="False">
+                    <TextBlock DockPanel.Dock="Right" Text="Experimental · browse internet sellers" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
+                    <TextBlock Text="{Binding PaidManualExitMarker}" Margin="0,0,8,0" />
+                    <TextBlock Text="Paid · Choose manually" FontWeight="SemiBold" />
+                  </DockPanel>
+                </Button>
                 <ItemsControl ItemsSource="{Binding ExitNodeParticipants}">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
@@ -601,6 +609,7 @@
               <StackPanel>
                 <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Share this device's internet" IsChecked="{Binding State.AdvertiseExitNode, Mode=OneWay}" Click="AdvertiseExit_Click" />
                 <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Block internet if source disconnects" IsChecked="{Binding State.ExitNodeLeakProtection, Mode=OneWay}" Click="ExitLeakProtection_Click" Margin="0,10,0,0" />
+                <Button Content="Sell internet access · Experimental" Command="{Binding ShowSellAccessCommand}" HorizontalAlignment="Left" Margin="0,12,0,0" Visibility="{Binding PaidExitSellerVisible, Converter={StaticResource BoolToVisibility}}" />
               </StackPanel>
             </Border>
 
@@ -687,6 +696,17 @@
           </StackPanel>
 
           <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=Wallet}">
+            <TextBlock Text="Use this Cashu wallet to pay for internet access and receive earnings when you sell bandwidth." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,12" />
+            <Border Style="{StaticResource Card}">
+              <StackPanel>
+                <CheckBox Style="{StaticResource SwitchCheckBox}" Content="Show fiat value" IsChecked="{Binding State.WalletFiatEnabled, Mode=OneWay}" Click="WalletFiatEnabled_Click" />
+                <TextBlock Text="Rates from Coinbase and Kraken" Foreground="{StaticResource TextSecondary}" Margin="0,8,0,0" Visibility="{Binding State.WalletFiatEnabled, Converter={StaticResource BoolToVisibility}}" />
+                <ComboBox SelectedValue="{Binding State.WalletFiatCurrency, Mode=OneWay}" SelectedValuePath="Content" SelectionChanged="WalletFiatCurrency_Changed" Margin="0,10,0,0" Visibility="{Binding State.WalletFiatEnabled, Converter={StaticResource BoolToVisibility}}">
+                  <ComboBoxItem Content="USD" /><ComboBoxItem Content="EUR" /><ComboBoxItem Content="GBP" />
+                  <ComboBoxItem Content="CAD" /><ComboBoxItem Content="AUD" /><ComboBoxItem Content="JPY" /><ComboBoxItem Content="CHF" />
+                </ComboBox>
+              </StackPanel>
+            </Border>
             <Border Style="{StaticResource Card}">
               <StackPanel>
                 <DockPanel LastChildFill="True" Margin="0,0,0,10">
@@ -696,6 +716,8 @@
                     <TextBlock Foreground="{StaticResource TextSecondary}">
                       <Run Text="Balance " /><Run Text="{Binding PaidRouteWalletBalanceText, Mode=OneWay}" />
                     </TextBlock>
+                    <TextBlock Text="{Binding PaidRouteWalletFiatText}" Foreground="{StaticResource TextSecondary}" Visibility="{Binding PaidRouteWalletFiatText, Converter={StaticResource NonEmptyStringToVisibility}}" />
+                    <TextBlock Text="{Binding PaidRouteWalletRateText}" Foreground="{StaticResource TextSecondary}" FontSize="12" Visibility="{Binding PaidRouteWalletRateText, Converter={StaticResource NonEmptyStringToVisibility}}" />
                   </StackPanel>
                 </DockPanel>
                 <TextBlock Text="{Binding State.PaidRouteMarket.Wallet.LastAction.DisplayStatusText}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Visibility="{Binding State.PaidRouteMarket.Wallet.LastAction.DisplayStatusText, Converter={StaticResource NonEmptyStringToVisibility}}" />

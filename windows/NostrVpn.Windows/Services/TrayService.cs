@@ -106,13 +106,25 @@ public sealed class TrayService : IDisposable
             offerExit.Checked = viewModel.State.AdvertiseExitNode;
             exitNodes.DropDownItems.Add(offerExit);
             exitNodes.DropDownItems.Add(new ToolStripSeparator());
-            var noExit = Item("This device", async (_, _) => await viewModel.SetExitNodeAsync(""));
-            noExit.Checked = string.IsNullOrWhiteSpace(viewModel.State.ExitNode);
+            var noExit = Item("This device", async (_, _) => await viewModel.SelectDirectExitAsync());
+            noExit.Checked = viewModel.State.InternetSource == "direct";
             exitNodes.DropDownItems.Add(noExit);
+            if (viewModel.PaidRouteMarketVisible)
+            {
+                var paidAutomatic = Item("Paid · Automatic", async (_, _) => await viewModel.SelectPaidAutomaticExitAsync());
+                paidAutomatic.Checked = viewModel.State.InternetSource == "paid_automatic";
+                exitNodes.DropDownItems.Add(paidAutomatic);
+                var paidManual = Item("Paid · Choose manually", async (_, _) => await viewModel.SelectPaidManualExitAsync());
+                paidManual.Checked = viewModel.State.InternetSource == "paid_manual";
+                exitNodes.DropDownItems.Add(paidManual);
+            }
+            var wireGuard = Item("WireGuard VPN", async (_, _) => await viewModel.SelectWireGuardUpstreamExitAsync(), viewModel.State.WireguardExitConfigured);
+            wireGuard.Checked = viewModel.State.InternetSource == "wireguard";
+            exitNodes.DropDownItems.Add(wireGuard);
             foreach (var participant in network.Participants.Where(participant => participant.OffersExitNode && !participant.IsSelf))
             {
-                var item = Item(DeviceName(participant), async (_, _) => await viewModel.SetExitNodeAsync(participant.Npub));
-                item.Checked = viewModel.State.ExitNode == participant.Npub;
+                var item = Item(DeviceName(participant), async (_, _) => await viewModel.SelectPeerExitAsync(participant.Npub));
+                item.Checked = viewModel.State.InternetSource == "private_vpn" && viewModel.State.ExitNode == participant.Npub;
                 exitNodes.DropDownItems.Add(item);
             }
             menu.Items.Add(exitNodes);

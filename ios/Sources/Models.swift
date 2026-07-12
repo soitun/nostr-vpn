@@ -31,8 +31,9 @@ struct AppState: Decodable {
     var fipsRosterPeerCount: UInt64 = 0
     var nonFipsRosterPeerCount: UInt64 = 0
     var meshReady = false
+    var internetSource = "direct"
     var exitNode = ""
-    var exitNodeLeakProtection = false
+    var exitNodeLeakProtection = true
     var exitNodeActive = false
     var exitNodeBlocked = false
     var exitNodeStatusText = ""
@@ -51,6 +52,8 @@ struct AppState: Decodable {
     var wireguardExitMtu: Int = 0
     var wireguardExitPersistentKeepaliveSecs: Int = 0
     var wireguardExitConfig = ""
+    var walletFiatEnabled = true
+    var walletFiatCurrency = "USD"
     var paidExitSeller = PaidExitSellerState()
     var paidRouteMarket = PaidRouteMarketState()
     var connectToNonRosterFipsPeers = true
@@ -81,13 +84,14 @@ struct AppState: Decodable {
         case activeNetworkInvite, joinRequestQrCodeOrLink
         case connectedPeerCount, expectedPeerCount
         case fipsConnectedPeerCount, fipsRosterPeerCount, nonFipsRosterPeerCount
-        case meshReady, exitNode, exitNodeLeakProtection
+        case meshReady, internetSource, exitNode, exitNodeLeakProtection
         case exitNodeActive, exitNodeBlocked, exitNodeStatusText, advertiseExitNode
         case advertisedRoutes
         case wireguardExitEnabled, wireguardExitConfigured, wireguardExitInterface, wireguardExitAddress
         case wireguardExitPrivateKey, wireguardExitPeerPublicKey, wireguardExitPeerPresharedKey
         case wireguardExitEndpoint, wireguardExitAllowedIps, wireguardExitDns
         case wireguardExitMtu, wireguardExitPersistentKeepaliveSecs, wireguardExitConfig
+        case walletFiatEnabled, walletFiatCurrency
         case paidExitSeller, paidRouteMarket
         case connectToNonRosterFipsPeers
         case fipsNostrDiscoveryEnabled, fipsWebrtcEnabled, fipsBootstrapEnabled
@@ -131,8 +135,9 @@ struct AppState: Decodable {
         fipsRosterPeerCount = container.uint64(.fipsRosterPeerCount)
         nonFipsRosterPeerCount = container.uint64(.nonFipsRosterPeerCount)
         meshReady = container.bool(.meshReady)
+        internetSource = container.string(.internetSource, default: "direct")
         exitNode = container.string(.exitNode)
-        exitNodeLeakProtection = container.bool(.exitNodeLeakProtection)
+        exitNodeLeakProtection = container.bool(.exitNodeLeakProtection, default: true)
         exitNodeActive = container.bool(.exitNodeActive)
         exitNodeBlocked = container.bool(.exitNodeBlocked)
         exitNodeStatusText = container.string(.exitNodeStatusText)
@@ -151,6 +156,8 @@ struct AppState: Decodable {
         wireguardExitMtu = container.int(.wireguardExitMtu)
         wireguardExitPersistentKeepaliveSecs = container.int(.wireguardExitPersistentKeepaliveSecs)
         wireguardExitConfig = container.string(.wireguardExitConfig)
+        walletFiatEnabled = container.bool(.walletFiatEnabled, default: true)
+        walletFiatCurrency = container.string(.walletFiatCurrency, default: "USD")
         paidExitSeller = (try? container.decodeIfPresent(PaidExitSellerState.self, forKey: .paidExitSeller)) ?? PaidExitSellerState()
         paidRouteMarket = (try? container.decodeIfPresent(PaidRouteMarketState.self, forKey: .paidRouteMarket)) ?? PaidRouteMarketState()
         connectToNonRosterFipsPeers = container.bool(.connectToNonRosterFipsPeers, default: true)
@@ -408,6 +415,14 @@ struct PaidRouteWalletState: Decodable, Equatable {
     var balanceKnown = false
     var totalBalanceMsat: UInt64 = 0
     var totalBalanceText = ""
+    var navigationBalanceText = ""
+    var fiatCurrency = ""
+    var fiatBalanceText = ""
+    var exchangeRateText = ""
+    var exchangeRateStatus = ""
+    var exchangeRateSources = ""
+    var exchangeRateStale = false
+    var exchangeRateUpdatedAtUnix: UInt64 = 0
     var mints: [PaidRouteWalletMintState] = []
     var lastAction = PaidRouteWalletActionState()
 

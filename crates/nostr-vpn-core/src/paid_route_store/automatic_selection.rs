@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use super::{persistence::*, *};
 
 pub const PAID_ROUTE_AUTO_OFFER_MAX_AGE_SECS: u64 = 6 * 60 * 60;
-pub const PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GIB: u64 = 10_000_000;
+pub const PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GIB: u64 = 100_000;
 pub const PAID_ROUTE_AUTO_MIN_FREE_PROBE_BYTES: u64 = 1024 * 1024;
 pub const PAID_ROUTE_AUTO_MAX_CHANNEL_CAPACITY_SAT: u64 = 1_000;
 
@@ -16,6 +16,7 @@ struct Candidate {
     offer_key: String,
     mint_url: String,
     capacity_sat: u64,
+    mint_transfer: Option<PaidRouteAutomaticMintTransfer>,
     local_probe: Option<LocalProbeRank>,
     local_probe_count: u32,
     rating_score: i64,
@@ -45,6 +46,7 @@ impl PaidRouteStore {
                 offer_key: candidate.offer_key,
                 mint_url: candidate.mint_url,
                 channel_capacity_sat: candidate.capacity_sat,
+                mint_transfer: candidate.mint_transfer,
             })
             .ok_or_else(|| {
                 anyhow!("no eligible paid route offer is available for automatic selection")
@@ -81,12 +83,13 @@ impl PaidRouteStore {
         if price_msat_per_gib > PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GIB {
             return None;
         }
-        let (mint_url, capacity_sat) = self.trusted_mint_and_capacity(&offer)?;
+        let (mint_url, capacity_sat, mint_transfer) = self.trusted_mint_and_capacity(&offer)?;
         let (local_probe, local_probe_count) = self.local_probe_history(&offer, now_unix);
         Some(Candidate {
             offer_key: key.to_string(),
             mint_url,
             capacity_sat,
+            mint_transfer,
             local_probe,
             local_probe_count,
             rating_score: record.rating_score.unwrap_or_default(),
@@ -95,7 +98,10 @@ impl PaidRouteStore {
         })
     }
 
-    fn trusted_mint_and_capacity(&self, offer: &PaidRouteOffer) -> Option<(String, u64)> {
+    fn trusted_mint_and_capacity(
+        &self,
+        offer: &PaidRouteOffer,
+    ) -> Option<(String, u64, Option<PaidRouteAutomaticMintTransfer>)> {
         let accepted = normalize_mint_list(&offer.channel.accepted_mints);
         let default = self.wallet.default_mint.trim();
         let mut wallet_mints = self
@@ -105,9 +111,49 @@ impl PaidRouteStore {
             .filter(|mint| accepted.iter().any(|url| url == mint.url.trim()))
             .collect::<Vec<_>>();
         wallet_mints.sort_by_key(|mint| (mint.url.trim() != default, mint.url.trim()));
+        let target = recommended_capacity_sat(offer, None)?;
+
+        if let Some(mint) = wallet_mints.iter().find(|mint| {
+            mint.balance_msat
+                .is_some_and(|balance| balance / 1_000 >= target)
+        }) {
+            return Some((mint.url.trim().to_string(), target, None));
+        }
+
+        for destination in &wallet_mints {
+            let Some(destination_balance_msat) = destination.balance_msat else {
+                continue;
+            };
+            let destination_balance_sat = destination_balance_msat / 1_000;
+            let amount_sat = target.saturating_sub(destination_balance_sat);
+            if amount_sat == 0 {
+                continue;
+            }
+            let max_fee_sat = automatic_transfer_max_fee_sat(amount_sat);
+            if let Some(source) = self.wallet.mints.iter().find(|source| {
+                source.url.trim() != destination.url.trim()
+                    && !source.url.trim().is_empty()
+                    && source.balance_msat.is_some_and(|balance| {
+                        balance / 1_000 >= amount_sat.saturating_add(max_fee_sat)
+                    })
+            }) {
+                let destination_mint_url = destination.url.trim().to_string();
+                return Some((
+                    destination_mint_url.clone(),
+                    target,
+                    Some(PaidRouteAutomaticMintTransfer {
+                        source_mint_url: source.url.trim().to_string(),
+                        destination_mint_url,
+                        amount_sat,
+                        max_fee_sat,
+                    }),
+                ));
+            }
+        }
+
         wallet_mints.into_iter().find_map(|mint| {
             recommended_capacity_sat(offer, mint.balance_msat)
-                .map(|capacity| (mint.url.trim().to_string(), capacity))
+                .map(|capacity| (mint.url.trim().to_string(), capacity, None))
         })
     }
 
@@ -139,6 +185,10 @@ impl PaidRouteStore {
         }
         (Some(latest.1), count)
     }
+}
+
+fn automatic_transfer_max_fee_sat(amount_sat: u64) -> u64 {
+    amount_sat.div_ceil(20).clamp(1, 5)
 }
 
 fn compare_candidates(left: &Candidate, right: &Candidate) -> Ordering {

@@ -104,6 +104,35 @@
     }
 
     #[test]
+    fn pending_remote_exit_keeps_fail_closed_default_route() {
+        let keys = Keys::generate();
+        let own_pubkey = keys.public_key().to_hex();
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = keys.secret_key().to_bech32().expect("nsec");
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = "pending-paid-exit".to_string();
+        app.set_internet_source(InternetSource::PaidAutomatic);
+
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "pending-paid-exit",
+            "utun-test",
+            Some(&own_pubkey),
+            None,
+            &[],
+        )
+        .expect("pending paid exit tunnel config");
+
+        assert!(config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
+        assert!(
+            config
+                .peers
+                .iter()
+                .all(|peer| !peer.allowed_ips.iter().any(|route| route == "0.0.0.0/0"))
+        );
+    }
+
+    #[test]
     fn endpoint_bypass_hosts_skip_overlay_tunnel_route_targets() {
         assert!(super::route_targets_include_ipv4_host(
             &["10.44.1.2/32".to_string()],

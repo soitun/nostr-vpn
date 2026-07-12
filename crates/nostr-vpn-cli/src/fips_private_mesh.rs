@@ -17,7 +17,7 @@ use fips_endpoint::{
 };
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
-    AppConfig, WireGuardExitConfig, derive_mesh_tunnel_ip, normalize_nostr_pubkey,
+    AppConfig, InternetSource, WireGuardExitConfig, derive_mesh_tunnel_ip, normalize_nostr_pubkey,
     split_peer_transport_addr,
 };
 use nostr_vpn_core::data_plane::MeshPeerStatus;

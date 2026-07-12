@@ -338,6 +338,34 @@ fn paid_route_store_rejects_incompatible_buyer_mint() {
 }
 
 #[test]
+fn paid_route_store_does_not_trust_seller_listed_mint() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let signed_offer =
+        signed_paid_exit_offer_from_config("internet-exit", &seller, &sample_config(), None, 100)
+            .expect("signed offer");
+    let mut store = PaidRouteStore::default();
+    store
+        .upsert_signed_offer(signed_offer, vec!["wss://relay.example".to_string()], 101)
+        .expect("store offer");
+
+    let error = store
+        .open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+            offer_selector: "internet-exit".to_string(),
+            buyer_npub: buyer.public_key().to_bech32().expect("buyer npub"),
+            mint_url: Some("https://mint.minibits.cash/Bitcoin".to_string()),
+            channel_capacity_sat: None,
+            initial_paid_msat: 0,
+            now_unix: 120,
+        })
+        .expect_err("seller-listed mint is not wallet approval");
+
+    assert!(error.to_string().contains("not approved in this wallet"));
+    assert!(store.wallet.mints.is_empty());
+    assert!(store.sessions.is_empty());
+}
+
+#[test]
 fn paid_route_store_upserts_newer_offer_and_merges_relays() {
     let seller = Keys::generate();
     let old =
@@ -485,7 +513,12 @@ fn automatic_offer_selection_requires_safe_fresh_terms_and_a_wallet_mint() {
             signed_paid_exit_offer_from_config("auto-exit", &seller, &config, None, signed_at)
                 .expect("signed offer");
         let mut store = PaidRouteStore::default();
-        store.upsert_wallet_mint("https://mint.example", "Example", None, now_unix - 1);
+        store.upsert_wallet_mint(
+            "https://mint.example",
+            "Example",
+            Some(50_000),
+            now_unix - 1,
+        );
         store
             .upsert_signed_offer(signed, vec!["wss://relay.example".to_string()], now_unix)
             .expect("store offer");
@@ -497,7 +530,7 @@ fn automatic_offer_selection_requires_safe_fresh_terms_and_a_wallet_mint() {
     let signed = signed_paid_exit_offer_from_config(
         "auto-exit",
         &seller,
-        &sample_config(),
+        &automatic_offer_config(),
         None,
         now_unix - 1,
     )
@@ -510,24 +543,24 @@ fn automatic_offer_selection_requires_safe_fresh_terms_and_a_wallet_mint() {
     assert!(untrusted.select_automatic_offer(now_unix).is_err());
     assert_eq!(untrusted.wallet, wallet_before);
 
-    let mut config = sample_config();
+    let mut config = automatic_offer_config();
     config.ip_support.ipv4 = false;
     assert_rejected(config, now_unix - 1);
-    let mut config = sample_config();
+    let mut config = automatic_offer_config();
     config.pricing.meter = PaidRouteMeter::Packets;
     assert_rejected(config, now_unix - 1);
-    let mut config = sample_config();
+    let mut config = automatic_offer_config();
     config.channel.free_probe_units = PAID_ROUTE_AUTO_MIN_FREE_PROBE_BYTES - 1;
     assert_rejected(config, now_unix - 1);
-    let mut config = sample_config();
+    let mut config = automatic_offer_config();
     config.pricing.per_units = 1_073_741_824;
     config.pricing.price_msat = PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GIB + 1;
     assert_rejected(config, now_unix - 1);
-    let mut config = sample_config();
+    let mut config = automatic_offer_config();
     config.pricing.connection_minimum_msat_per_day = 1;
     assert_rejected(config, now_unix - 1);
     assert_rejected(
-        sample_config(),
+        automatic_offer_config(),
         now_unix - PAID_ROUTE_AUTO_OFFER_MAX_AGE_SECS - 1,
     );
 }
@@ -540,7 +573,7 @@ fn automatic_offer_selection_prefers_local_probe_history_before_rating() {
     let good = signed_paid_exit_offer_from_config(
         "good",
         &good_seller,
-        &sample_config(),
+        &automatic_offer_config(),
         None,
         now_unix - 20,
     )
@@ -548,7 +581,7 @@ fn automatic_offer_selection_prefers_local_probe_history_before_rating() {
     let poor = signed_paid_exit_offer_from_config(
         "poor",
         &poor_seller,
-        &sample_config(),
+        &automatic_offer_config(),
         None,
         now_unix - 10,
     )
@@ -580,7 +613,7 @@ fn automatic_offer_selection_prefers_local_probe_history_before_rating() {
 
     assert_eq!(selected.offer_key, good_key);
     assert_eq!(selected.mint_url, "https://mint.minibits.cash/Bitcoin");
-    assert_eq!(selected.channel_capacity_sat, 50);
+    assert_eq!(selected.channel_capacity_sat, 6);
 }
 
 #[test]
@@ -590,18 +623,18 @@ fn automatic_offer_selection_uses_rating_price_freshness_and_stable_key_order() 
     store.upsert_wallet_mint(
         "https://mint.minibits.cash/Bitcoin",
         "Minibits",
-        None,
+        Some(50_000),
         now_unix - 30,
     );
     let mut expected = Vec::new();
     for (offer_id, price_msat, signed_at) in [
-        ("older-expensive", 3_000, now_unix - 30),
-        ("newer-expensive-rated-low", 3_000, now_unix - 20),
-        ("newer-expensive-unrated", 3_000, now_unix - 20),
-        ("newer-cheap", 2_000, now_unix - 10),
+        ("older-expensive", 70, now_unix - 30),
+        ("newer-expensive-rated-low", 70, now_unix - 20),
+        ("newer-expensive-unrated", 70, now_unix - 20),
+        ("newer-cheap", 50, now_unix - 10),
     ] {
         let seller = Keys::generate();
-        let mut config = sample_config();
+        let mut config = automatic_offer_config();
         config.pricing.price_msat = price_msat;
         let signed =
             signed_paid_exit_offer_from_config(offer_id, &seller, &config, None, signed_at)
@@ -646,7 +679,7 @@ fn automatic_offer_selection_uses_rating_price_freshness_and_stable_key_order() 
         .expect("cheap offer")
         .offer
         .pricing
-        .price_msat = 3_000;
+        .price_msat = 70;
     assert_eq!(
         store
             .select_automatic_offer(now_unix)
@@ -654,6 +687,45 @@ fn automatic_offer_selection_uses_rating_price_freshness_and_stable_key_order() 
             .offer_key,
         expected[2].0
     );
+}
+
+#[test]
+fn automatic_offer_selection_plans_only_between_approved_mints() {
+    let now_unix = 100_000;
+    let seller = Keys::generate();
+    let mut config = automatic_offer_config();
+    config.channel.accepted_mints = vec!["https://mint.destination".to_string()];
+    let signed =
+        signed_paid_exit_offer_from_config("auto-exit", &seller, &config, None, now_unix - 1)
+            .expect("signed offer");
+    let mut store = PaidRouteStore::default();
+    store.upsert_wallet_mint(
+        "https://mint.destination",
+        "Destination",
+        Some(0),
+        now_unix - 2,
+    );
+    store.upsert_wallet_mint("https://mint.source", "Source", Some(100_000), now_unix - 2);
+    store
+        .upsert_signed_offer(signed, vec![], now_unix - 1)
+        .expect("store offer");
+
+    let selected = store
+        .select_automatic_offer(now_unix)
+        .expect("automatic selection with transfer");
+    let transfer = selected.mint_transfer.expect("cross-mint transfer plan");
+
+    assert_eq!(selected.mint_url, "https://mint.destination");
+    assert_eq!(transfer.source_mint_url, "https://mint.source");
+    assert_eq!(transfer.destination_mint_url, selected.mint_url);
+    assert_eq!(transfer.amount_sat, selected.channel_capacity_sat);
+    assert!(transfer.max_fee_sat <= 5);
+}
+
+fn automatic_offer_config() -> PaidExitConfig {
+    let mut config = sample_config();
+    config.pricing.price_msat = 50;
+    config
 }
 
 fn add_local_offer_quality(

@@ -276,6 +276,8 @@ pub struct AppConfig {
     pub mesh_tunnel_mtu: u16,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub exit_node: String,
+    #[serde(default, skip_serializing_if = "InternetSource::is_direct")]
+    pub internet_source: InternetSource,
     #[serde(default, skip_serializing_if = "is_false")]
     pub exit_node_public_paid_exit: bool,
     #[serde(
@@ -291,6 +293,10 @@ pub struct AppConfig {
     pub wireguard_exit: WireGuardExitConfig,
     #[serde(default, skip_serializing_if = "PaidExitConfig::is_default")]
     pub paid_exit: PaidExitConfig,
+    #[serde(default = "default_wallet_fiat_enabled", skip_serializing_if = "is_true")]
+    pub wallet_fiat_enabled: bool,
+    #[serde(default, skip_serializing_if = "FiatCurrency::is_usd")]
+    pub wallet_fiat_currency: FiatCurrency,
     #[serde(default = "default_peer_aliases")]
     pub peer_aliases: HashMap<String, String>,
     #[serde(default)]
@@ -301,6 +307,100 @@ pub struct AppConfig {
     pub pending_nostr_join_request: Option<PendingNostrJoinRequest>,
     #[serde(default)]
     pub node: NodeConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum InternetSource {
+    #[default]
+    Direct,
+    PrivateVpn,
+    PaidAutomatic,
+    PaidManual,
+    WireGuard,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum FiatCurrency {
+    #[default]
+    Usd,
+    Eur,
+    Gbp,
+    Cad,
+    Aud,
+    Jpy,
+    Chf,
+}
+
+impl FiatCurrency {
+    pub fn is_usd(&self) -> bool {
+        *self == Self::Usd
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Usd => "USD",
+            Self::Eur => "EUR",
+            Self::Gbp => "GBP",
+            Self::Cad => "CAD",
+            Self::Aud => "AUD",
+            Self::Jpy => "JPY",
+            Self::Chf => "CHF",
+        }
+    }
+}
+
+impl std::str::FromStr for FiatCurrency {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_uppercase().as_str() {
+            "USD" => Ok(Self::Usd),
+            "EUR" => Ok(Self::Eur),
+            "GBP" => Ok(Self::Gbp),
+            "CAD" => Ok(Self::Cad),
+            "AUD" => Ok(Self::Aud),
+            "JPY" => Ok(Self::Jpy),
+            "CHF" => Ok(Self::Chf),
+            _ => Err("expected one of: USD, EUR, GBP, CAD, AUD, JPY, CHF"),
+        }
+    }
+}
+
+impl InternetSource {
+    pub fn is_direct(&self) -> bool {
+        *self == Self::Direct
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::PrivateVpn => "private_vpn",
+            Self::PaidAutomatic => "paid_automatic",
+            Self::PaidManual => "paid_manual",
+            Self::WireGuard => "wireguard",
+        }
+    }
+}
+
+impl std::str::FromStr for InternetSource {
+    type Err = &'static str;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "direct" | "this_device" | "local" | "off" => Ok(Self::Direct),
+            "private_vpn" | "private" | "peer" => Ok(Self::PrivateVpn),
+            "paid_automatic" | "paid_auto" | "automatic" | "auto" => {
+                Ok(Self::PaidAutomatic)
+            }
+            "paid_manual" | "manual" | "paid" => Ok(Self::PaidManual),
+            "wireguard" | "wg" => Ok(Self::WireGuard),
+            _ => Err(
+                "expected one of: direct, private_vpn, paid_automatic, paid_manual, wireguard",
+            ),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -856,12 +956,15 @@ impl Default for AppConfig {
             mesh_underlay_udp_mtu: 0,
             mesh_tunnel_mtu: 0,
             exit_node: String::new(),
+            internet_source: InternetSource::Direct,
             exit_node_public_paid_exit: false,
             exit_node_leak_protection: default_exit_node_leak_protection(),
             close_to_tray_on_close: default_close_to_tray_on_close(),
             magic_dns_suffix: default_magic_dns_suffix(),
             wireguard_exit: WireGuardExitConfig::default(),
             paid_exit: PaidExitConfig::default(),
+            wallet_fiat_enabled: default_wallet_fiat_enabled(),
+            wallet_fiat_currency: FiatCurrency::default(),
             peer_aliases: default_peer_aliases(),
             nat: NatConfig::default(),
             nostr: NostrConfig::default(),

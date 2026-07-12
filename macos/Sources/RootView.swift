@@ -137,10 +137,6 @@ struct RootView: View {
         state.paidExitSeller.supported
     }
 
-    private var paidInternetAvailable: Bool {
-        paidRouteMarketAvailable || paidExitSellerAvailable
-    }
-
     private var visibleSidebarItem: SidebarItem {
         let item = selectedSidebarItem ?? .devices
         return sidebarItemVisible(item) ? item : .devices
@@ -507,19 +503,9 @@ struct RootView: View {
         VStack(alignment: .leading, spacing: 5) {
             sidebarButton(.devices, "Devices", "circle.grid.2x2.fill")
             sidebarButton(.internet, "Internet", "network")
-            if paidInternetAvailable {
-                sidebarGroupLabel("Internet market")
-                if paidRouteMarketAvailable {
-                    sidebarButton(.publicExits, "Buy Internet", "cart.fill")
-                }
-                if paidExitSellerAvailable {
-                    sidebarButton(.sellExit, "Share Internet", "bitcoinsign.circle.fill")
-                }
-                if paidRouteMarketAvailable {
-                    sidebarButton(.wallet, "Wallet", "creditcard.fill")
-                }
+            if paidRouteMarketAvailable {
+                sidebarButton(.wallet, walletSidebarTitle, "creditcard.fill")
             }
-            sidebarGroupLabel("App")
             sidebarButton(.settings, "Settings", "gearshape")
             Spacer(minLength: 0)
         }
@@ -529,13 +515,9 @@ struct RootView: View {
         .background(Color(nsColor: .controlBackgroundColor))
     }
 
-    private func sidebarGroupLabel(_ title: String) -> some View {
-        Text(title.uppercased())
-            .font(.caption2.weight(.semibold))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 12)
-            .padding(.top, 14)
-            .padding(.bottom, 2)
+    private var walletSidebarTitle: String {
+        let balance = state.paidRouteMarket.wallet.navigationBalanceText
+        return balance.isEmpty ? "Wallet" : "Wallet \(balance)"
     }
 
     private func sidebarButton(_ item: SidebarItem, _ title: String, _ systemImage: String) -> some View {
@@ -574,6 +556,7 @@ struct RootView: View {
                 if let shownNetwork {
                     internetSection(shownNetwork)
                 } else {
+                    internetChoiceSettings
                     wireGuardExitSettings
                 }
             }
@@ -587,7 +570,10 @@ struct RootView: View {
             }
         case .sellExit:
             pageScroll {
-                pageTitle("Share Internet", "bitcoinsign.circle.fill")
+                pageTitle("Sell Internet", "bitcoinsign.circle.fill")
+                Text("Experimental")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 paidExitSellerSettings
             }
         case .wallet:
@@ -1410,22 +1396,33 @@ struct RootView: View {
             sectionHeader("Use Internet", systemImage: "network")
             VStack(spacing: 8) {
                 routeChoice(
-                    title: "My internet",
+                    title: "This device",
                     subtitle: "Use my normal connection",
-                    selected: !state.wireguardExitEnabled && state.exitNode.isEmpty,
+                    selected: state.internetSource == "direct",
                     enabled: true
                 ) {
                     manager.selectDirectExit()
                 }
 
                 if paidRouteMarketAvailable {
-                    let publicSession = state.paidRouteMarket.sessions.first { paidRouteSessionIsSelected($0) }
                     routeChoice(
-                        title: "Bought internet",
-                        subtitle: publicSession.map(paidPublicExitSubtitle) ?? "Connect in Buy Internet",
-                        selected: publicSession != nil,
+                        title: "Paid Internet · Automatic",
+                        subtitle: state.internetSource == "paid_automatic"
+                            ? state.exitNodeStatusText
+                            : "Choose a reasonably priced provider that passes verification",
+                        selected: state.internetSource == "paid_automatic",
                         enabled: true
                     ) {
+                        manager.selectPaidAutomaticExit()
+                    }
+
+                    routeChoice(
+                        title: "Paid Internet · Manual",
+                        subtitle: "Experimental · Browse and choose a provider",
+                        selected: state.internetSource == "paid_manual",
+                        enabled: true
+                    ) {
+                        manager.selectPaidManualExit()
                         selectedSidebarItem = .publicExits
                     }
                 }
@@ -1433,11 +1430,18 @@ struct RootView: View {
                 routeChoice(
                     title: "Upstream VPN",
                     subtitle: wireguardUpstreamSubtitle,
-                    selected: state.wireguardExitEnabled,
+                    selected: state.internetSource == "wireguard",
                     enabled: state.wireguardExitConfigured
                 ) {
                     manager.selectWireGuardUpstreamExit()
                 }
+
+                Divider()
+                Toggle("Block internet if selected source disconnects", isOn: Binding(
+                    get: { state.exitNodeLeakProtection },
+                    set: { manager.setExitNodeLeakProtection($0) }
+                ))
+                .disabled(manager.actionInFlight)
             }
         }
     }
@@ -1449,7 +1453,7 @@ struct RootView: View {
         let peerExitCandidates = exitNodeCandidates(network, search: activeSearch)
 
         return surface {
-            sectionHeader("Trusted Devices", systemImage: "lock.shield.fill")
+            sectionHeader("Private VPN Device", systemImage: "lock.shield.fill")
             if showSearch {
                 TextField("Search devices", text: search)
                     .textFieldStyle(.roundedBorder)
@@ -1468,7 +1472,7 @@ struct RootView: View {
                         routeChoice(
                             title: deviceName(participant),
                             subtitle: participant.statusText.isEmpty ? "Trusted device" : participant.statusText,
-                            selected: !state.wireguardExitEnabled && state.exitNode == participant.npub,
+                            selected: state.internetSource == "private_vpn" && state.exitNode == participant.npub,
                             enabled: true
                         ) {
                             manager.selectPeerExit(participant.npub)
@@ -1495,6 +1499,16 @@ struct RootView: View {
             Text("Only devices in \(shownNetworkLabel) can use it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+
+            if paidExitSellerAvailable {
+                Divider()
+                Button {
+                    selectedSidebarItem = .sellExit
+                } label: {
+                    Label("Sell Internet · Experimental", systemImage: "bitcoinsign.circle.fill")
+                }
+                .buttonStyle(.borderless)
+            }
         }
     }
 
@@ -1521,15 +1535,15 @@ struct RootView: View {
     }
 
     private var paidExitCurrentUpstream: String {
-        state.wireguardExitEnabled ? "wireguard_exit" : "host_default"
+        state.internetSource == "wireguard" ? "wireguard_exit" : "host_default"
     }
 
     private var paidExitCurrentInternetTitle: String {
-        state.wireguardExitEnabled ? "My internet through WireGuard" : "My internet"
+        state.internetSource == "wireguard" ? "My internet through WireGuard" : "My internet"
     }
 
     private var paidExitCurrentInternetDetail: String {
-        if state.wireguardExitEnabled {
+        if state.internetSource == "wireguard" {
             return wireguardUpstreamSubtitle
         }
         return "The same connection this Mac already uses"
@@ -2048,6 +2062,10 @@ struct RootView: View {
 
     private func paidRouteWalletSection(_ wallet: NativePaidRouteWalletState) -> some View {
         surface {
+            Text("Use this Cashu wallet to pay for internet access and receive earnings when you sell bandwidth.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
             HStack(spacing: 10) {
                 sectionHeader("Cashu Wallet", systemImage: "creditcard.fill")
                 if wallet.balanceKnown {
@@ -2069,6 +2087,40 @@ struct RootView: View {
                 }
                 .help("Refresh wallet")
                 .disabled(manager.actionInFlight)
+            }
+
+            Toggle("Show exchange rate", isOn: Binding(
+                get: { state.walletFiatEnabled },
+                set: { manager.setWalletFiatEnabled($0) }
+            ))
+            .disabled(manager.actionInFlight)
+
+            if state.walletFiatEnabled {
+                HStack(spacing: 10) {
+                    Picker("Currency", selection: Binding(
+                        get: { state.walletFiatCurrency },
+                        set: { manager.setWalletFiatCurrency($0) }
+                    )) {
+                        ForEach(["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF"], id: \.self) {
+                            Text($0).tag($0)
+                        }
+                    }
+                    .frame(width: 180)
+
+                    if !wallet.fiatBalanceText.isEmpty {
+                        Text(wallet.fiatBalanceText)
+                            .font(.headline)
+                    }
+                    Spacer(minLength: 8)
+                }
+
+                if !wallet.exchangeRateText.isEmpty {
+                    Text([wallet.exchangeRateText, wallet.exchangeRateStatus]
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(wallet.exchangeRateStale ? Color.orange : Color.secondary)
+                }
             }
 
             VStack(spacing: 6) {
@@ -2317,7 +2369,9 @@ struct RootView: View {
 
     private func paidRouteSessionIsSelected(_ session: NativePaidRouteSessionState) -> Bool {
         let seller = paidRouteSessionSellerNpub(session)
-        return !seller.isEmpty && !state.wireguardExitEnabled && state.exitNode == seller
+        return !seller.isEmpty
+            && ["paid_automatic", "paid_manual"].contains(state.internetSource)
+            && state.exitNode == seller
     }
 
     private func paidRouteSessionSellerNpub(_ session: NativePaidRouteSessionState) -> String {
@@ -3151,10 +3205,6 @@ struct RootView: View {
                     get: { state.closeToTrayOnClose },
                     set: { manager.setCloseToTray($0) }
                 ), disabled: !state.trayBehaviorSupported)
-                settingsToggleRow("Block internet if selected source disconnects", isOn: Binding(
-                    get: { state.exitNodeLeakProtection },
-                    set: { manager.setExitNodeLeakProtection($0) }
-                ), disabled: manager.actionInFlight)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

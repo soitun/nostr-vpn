@@ -88,9 +88,10 @@ use nostr_sdk::{
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::config::normalize_relay_urls;
 use nostr_vpn_core::config::{
-    AppConfig, SharedNetworkRoster, derive_mesh_tunnel_ip, exit_node_default_routes,
-    maybe_autoconfigure_node, normalize_advertised_route, normalize_fips_peer_endpoint_hint,
-    normalize_nostr_pubkey, normalize_runtime_network_id, parse_wireguard_exit_config,
+    AppConfig, InternetSource, SharedNetworkRoster, derive_mesh_tunnel_ip,
+    exit_node_default_routes, maybe_autoconfigure_node, normalize_advertised_route,
+    normalize_fips_peer_endpoint_hint, normalize_nostr_pubkey, normalize_runtime_network_id,
+    parse_wireguard_exit_config,
 };
 use nostr_vpn_core::control::PeerAnnouncement;
 use nostr_vpn_core::data_plane::MeshPeerStatus;

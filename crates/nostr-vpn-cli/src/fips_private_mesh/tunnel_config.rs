@@ -70,6 +70,17 @@ impl FipsPrivateTunnelConfig {
                 .extend(exit_routes);
         }
 
+        let pending_remote_exit = app.exit_node.is_empty()
+            && matches!(
+                app.internet_source,
+                InternetSource::PrivateVpn
+                    | InternetSource::PaidAutomatic
+                    | InternetSource::PaidManual
+            );
+        if app.exit_node_leak_protection && pending_remote_exit {
+            route_targets.extend(crate::runtime_exit_node_default_routes());
+        }
+
         let mut route_participants = app.active_network_signal_pubkeys_hex();
         #[cfg(feature = "paid-exit")]
         if let Some(public_paid_exit) = app.public_paid_exit_node_pubkey_hex() {

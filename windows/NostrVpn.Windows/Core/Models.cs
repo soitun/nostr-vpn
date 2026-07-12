@@ -52,8 +52,9 @@ public sealed class NativeAppState
     public string NetworkId { get; set; } = "";
     public string ActiveNetworkInvite { get; set; } = "";
     public string JoinRequestQrCodeOrLink { get; set; } = "";
+    public string InternetSource { get; set; } = "direct";
     public string ExitNode { get; set; } = "";
-    public bool ExitNodeLeakProtection { get; set; }
+    public bool ExitNodeLeakProtection { get; set; } = true;
     public bool ExitNodeActive { get; set; }
     public bool ExitNodeBlocked { get; set; }
     public string ExitNodeStatusText { get; set; } = "";
@@ -73,6 +74,8 @@ public sealed class NativeAppState
     public ushort WireguardExitMtu { get; set; }
     public ushort WireguardExitPersistentKeepaliveSecs { get; set; }
     public string WireguardExitConfig { get; set; } = "";
+    public bool WalletFiatEnabled { get; set; } = true;
+    public string WalletFiatCurrency { get; set; } = "USD";
     public NativePaidExitSellerState PaidExitSeller { get; set; } = new();
     public NativePaidRouteMarketState PaidRouteMarket { get; set; } = new();
     public bool FipsHostTunnelEnabled { get; set; }
@@ -175,6 +178,14 @@ public sealed class NativePaidRouteWalletState
     public bool BalanceKnown { get; set; }
     public ulong TotalBalanceMsat { get; set; }
     public string TotalBalanceText { get; set; } = "";
+    public string NavigationBalanceText { get; set; } = "";
+    public string FiatCurrency { get; set; } = "";
+    public string FiatBalanceText { get; set; } = "";
+    public string ExchangeRateText { get; set; } = "";
+    public string ExchangeRateStatus { get; set; } = "";
+    public string ExchangeRateSources { get; set; } = "";
+    public bool ExchangeRateStale { get; set; }
+    public ulong ExchangeRateUpdatedAtUnix { get; set; }
     public List<NativePaidRouteWalletMintState> Mints { get; set; } = [];
     public NativePaidRouteWalletActionState LastAction { get; set; } = new();
 }

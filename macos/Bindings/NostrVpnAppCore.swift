@@ -961,6 +961,7 @@ public struct NativeAppState {
     public var networkId: String
     public var activeNetworkInvite: String
     public var joinRequestQrCodeOrLink: String
+    public var internetSource: String
     public var exitNode: String
     public var exitNodeLeakProtection: Bool
     public var exitNodeActive: Bool
@@ -982,6 +983,8 @@ public struct NativeAppState {
     public var wireguardExitMtu: UInt16
     public var wireguardExitPersistentKeepaliveSecs: UInt16
     public var wireguardExitConfig: String
+    public var walletFiatEnabled: Bool
+    public var walletFiatCurrency: String
     public var paidExitSeller: NativePaidExitSellerState
     public var paidRouteMarket: NativePaidRouteMarketState
     public var fipsHostTunnelEnabled: Bool
@@ -1021,7 +1024,7 @@ public struct NativeAppState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(rev: UInt64, platform: String, mobile: Bool, vpnControlSupported: Bool, cliInstallSupported: Bool, startupSettingsSupported: Bool, trayBehaviorSupported: Bool, runtimeStatusDetail: String, appVersion: String, configPath: String, error: String, cliInstalled: Bool, serviceSupported: Bool, serviceEnablementSupported: Bool, serviceInstalled: Bool, serviceDisabled: Bool, serviceRunning: Bool, serviceStatusDetail: String, daemonRunning: Bool, vpnEnabled: Bool, vpnActive: Bool, vpnStatus: String, daemonBinaryVersion: String, serviceBinaryVersion: String, expectedServiceBinaryVersion: String, ownNpub: String, ownPubkeyHex: String, nodeId: String, nodeName: String, selfMagicDnsName: String, endpoint: String, tunnelIp: String, listenPort: UInt32, relays: [NativeRelayState], nostrPubsubMode: String, nostrPubsubFanout: UInt32, nostrPubsubMaxHops: UInt8, nostrPubsubMaxEventBytes: UInt32, networkId: String, activeNetworkInvite: String, joinRequestQrCodeOrLink: String, exitNode: String, exitNodeLeakProtection: Bool, exitNodeActive: Bool, exitNodeBlocked: Bool, exitNodeStatusText: String, advertiseExitNode: Bool, advertisedRoutes: [String], effectiveAdvertisedRoutes: [String], wireguardExitEnabled: Bool, wireguardExitConfigured: Bool, wireguardExitInterface: String, wireguardExitAddress: String, wireguardExitPrivateKey: String, wireguardExitPeerPublicKey: String, wireguardExitPeerPresharedKey: String, wireguardExitEndpoint: String, wireguardExitAllowedIps: String, wireguardExitDns: String, wireguardExitMtu: UInt16, wireguardExitPersistentKeepaliveSecs: UInt16, wireguardExitConfig: String, paidExitSeller: NativePaidExitSellerState, paidRouteMarket: NativePaidRouteMarketState, fipsHostTunnelEnabled: Bool, connectToNonRosterFipsPeers: Bool, fipsNostrDiscoveryEnabled: Bool, fipsWebrtcEnabled: Bool, fipsBootstrapEnabled: Bool,
+    public init(rev: UInt64, platform: String, mobile: Bool, vpnControlSupported: Bool, cliInstallSupported: Bool, startupSettingsSupported: Bool, trayBehaviorSupported: Bool, runtimeStatusDetail: String, appVersion: String, configPath: String, error: String, cliInstalled: Bool, serviceSupported: Bool, serviceEnablementSupported: Bool, serviceInstalled: Bool, serviceDisabled: Bool, serviceRunning: Bool, serviceStatusDetail: String, daemonRunning: Bool, vpnEnabled: Bool, vpnActive: Bool, vpnStatus: String, daemonBinaryVersion: String, serviceBinaryVersion: String, expectedServiceBinaryVersion: String, ownNpub: String, ownPubkeyHex: String, nodeId: String, nodeName: String, selfMagicDnsName: String, endpoint: String, tunnelIp: String, listenPort: UInt32, relays: [NativeRelayState], nostrPubsubMode: String, nostrPubsubFanout: UInt32, nostrPubsubMaxHops: UInt8, nostrPubsubMaxEventBytes: UInt32, networkId: String, activeNetworkInvite: String, joinRequestQrCodeOrLink: String, internetSource: String, exitNode: String, exitNodeLeakProtection: Bool, exitNodeActive: Bool, exitNodeBlocked: Bool, exitNodeStatusText: String, advertiseExitNode: Bool, advertisedRoutes: [String], effectiveAdvertisedRoutes: [String], wireguardExitEnabled: Bool, wireguardExitConfigured: Bool, wireguardExitInterface: String, wireguardExitAddress: String, wireguardExitPrivateKey: String, wireguardExitPeerPublicKey: String, wireguardExitPeerPresharedKey: String, wireguardExitEndpoint: String, wireguardExitAllowedIps: String, wireguardExitDns: String, wireguardExitMtu: UInt16, wireguardExitPersistentKeepaliveSecs: UInt16, wireguardExitConfig: String, walletFiatEnabled: Bool, walletFiatCurrency: String, paidExitSeller: NativePaidExitSellerState, paidRouteMarket: NativePaidRouteMarketState, fipsHostTunnelEnabled: Bool, connectToNonRosterFipsPeers: Bool, fipsNostrDiscoveryEnabled: Bool, fipsWebrtcEnabled: Bool, fipsBootstrapEnabled: Bool,
         /**
          * Editable bootstrap/transit peers (npub -> transport-tagged addresses).
          */fipsBootstrapPeers: [String: [String]],
@@ -1069,6 +1072,7 @@ public struct NativeAppState {
         self.networkId = networkId
         self.activeNetworkInvite = activeNetworkInvite
         self.joinRequestQrCodeOrLink = joinRequestQrCodeOrLink
+        self.internetSource = internetSource
         self.exitNode = exitNode
         self.exitNodeLeakProtection = exitNodeLeakProtection
         self.exitNodeActive = exitNodeActive
@@ -1090,6 +1094,8 @@ public struct NativeAppState {
         self.wireguardExitMtu = wireguardExitMtu
         self.wireguardExitPersistentKeepaliveSecs = wireguardExitPersistentKeepaliveSecs
         self.wireguardExitConfig = wireguardExitConfig
+        self.walletFiatEnabled = walletFiatEnabled
+        self.walletFiatCurrency = walletFiatCurrency
         self.paidExitSeller = paidExitSeller
         self.paidRouteMarket = paidRouteMarket
         self.fipsHostTunnelEnabled = fipsHostTunnelEnabled
@@ -1253,6 +1259,9 @@ extension NativeAppState: Equatable, Hashable {
         if lhs.joinRequestQrCodeOrLink != rhs.joinRequestQrCodeOrLink {
             return false
         }
+        if lhs.internetSource != rhs.internetSource {
+            return false
+        }
         if lhs.exitNode != rhs.exitNode {
             return false
         }
@@ -1314,6 +1323,12 @@ extension NativeAppState: Equatable, Hashable {
             return false
         }
         if lhs.wireguardExitConfig != rhs.wireguardExitConfig {
+            return false
+        }
+        if lhs.walletFiatEnabled != rhs.walletFiatEnabled {
+            return false
+        }
+        if lhs.walletFiatCurrency != rhs.walletFiatCurrency {
             return false
         }
         if lhs.paidExitSeller != rhs.paidExitSeller {
@@ -1451,6 +1466,7 @@ extension NativeAppState: Equatable, Hashable {
         hasher.combine(networkId)
         hasher.combine(activeNetworkInvite)
         hasher.combine(joinRequestQrCodeOrLink)
+        hasher.combine(internetSource)
         hasher.combine(exitNode)
         hasher.combine(exitNodeLeakProtection)
         hasher.combine(exitNodeActive)
@@ -1472,6 +1488,8 @@ extension NativeAppState: Equatable, Hashable {
         hasher.combine(wireguardExitMtu)
         hasher.combine(wireguardExitPersistentKeepaliveSecs)
         hasher.combine(wireguardExitConfig)
+        hasher.combine(walletFiatEnabled)
+        hasher.combine(walletFiatCurrency)
         hasher.combine(paidExitSeller)
         hasher.combine(paidRouteMarket)
         hasher.combine(fipsHostTunnelEnabled)
@@ -1555,6 +1573,7 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
                 networkId: FfiConverterString.read(from: &buf),
                 activeNetworkInvite: FfiConverterString.read(from: &buf),
                 joinRequestQrCodeOrLink: FfiConverterString.read(from: &buf),
+                internetSource: FfiConverterString.read(from: &buf),
                 exitNode: FfiConverterString.read(from: &buf),
                 exitNodeLeakProtection: FfiConverterBool.read(from: &buf),
                 exitNodeActive: FfiConverterBool.read(from: &buf),
@@ -1576,6 +1595,8 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
                 wireguardExitMtu: FfiConverterUInt16.read(from: &buf),
                 wireguardExitPersistentKeepaliveSecs: FfiConverterUInt16.read(from: &buf),
                 wireguardExitConfig: FfiConverterString.read(from: &buf),
+                walletFiatEnabled: FfiConverterBool.read(from: &buf),
+                walletFiatCurrency: FfiConverterString.read(from: &buf),
                 paidExitSeller: FfiConverterTypeNativePaidExitSellerState.read(from: &buf),
                 paidRouteMarket: FfiConverterTypeNativePaidRouteMarketState.read(from: &buf),
                 fipsHostTunnelEnabled: FfiConverterBool.read(from: &buf),
@@ -1651,6 +1672,7 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
         FfiConverterString.write(value.networkId, into: &buf)
         FfiConverterString.write(value.activeNetworkInvite, into: &buf)
         FfiConverterString.write(value.joinRequestQrCodeOrLink, into: &buf)
+        FfiConverterString.write(value.internetSource, into: &buf)
         FfiConverterString.write(value.exitNode, into: &buf)
         FfiConverterBool.write(value.exitNodeLeakProtection, into: &buf)
         FfiConverterBool.write(value.exitNodeActive, into: &buf)
@@ -1672,6 +1694,8 @@ public struct FfiConverterTypeNativeAppState: FfiConverterRustBuffer {
         FfiConverterUInt16.write(value.wireguardExitMtu, into: &buf)
         FfiConverterUInt16.write(value.wireguardExitPersistentKeepaliveSecs, into: &buf)
         FfiConverterString.write(value.wireguardExitConfig, into: &buf)
+        FfiConverterBool.write(value.walletFiatEnabled, into: &buf)
+        FfiConverterString.write(value.walletFiatCurrency, into: &buf)
         FfiConverterTypeNativePaidExitSellerState.write(value.paidExitSeller, into: &buf)
         FfiConverterTypeNativePaidRouteMarketState.write(value.paidRouteMarket, into: &buf)
         FfiConverterBool.write(value.fipsHostTunnelEnabled, into: &buf)
@@ -4392,16 +4416,32 @@ public struct NativePaidRouteWalletState {
     public var balanceKnown: Bool
     public var totalBalanceMsat: UInt64
     public var totalBalanceText: String
+    public var navigationBalanceText: String
+    public var fiatCurrency: String
+    public var fiatBalanceText: String
+    public var exchangeRateText: String
+    public var exchangeRateStatus: String
+    public var exchangeRateSources: String
+    public var exchangeRateStale: Bool
+    public var exchangeRateUpdatedAtUnix: UInt64
     public var mints: [NativePaidRouteWalletMintState]
     public var lastAction: NativePaidRouteWalletActionState
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(defaultMint: String, balanceKnown: Bool, totalBalanceMsat: UInt64, totalBalanceText: String, mints: [NativePaidRouteWalletMintState], lastAction: NativePaidRouteWalletActionState) {
+    public init(defaultMint: String, balanceKnown: Bool, totalBalanceMsat: UInt64, totalBalanceText: String, navigationBalanceText: String, fiatCurrency: String, fiatBalanceText: String, exchangeRateText: String, exchangeRateStatus: String, exchangeRateSources: String, exchangeRateStale: Bool, exchangeRateUpdatedAtUnix: UInt64, mints: [NativePaidRouteWalletMintState], lastAction: NativePaidRouteWalletActionState) {
         self.defaultMint = defaultMint
         self.balanceKnown = balanceKnown
         self.totalBalanceMsat = totalBalanceMsat
         self.totalBalanceText = totalBalanceText
+        self.navigationBalanceText = navigationBalanceText
+        self.fiatCurrency = fiatCurrency
+        self.fiatBalanceText = fiatBalanceText
+        self.exchangeRateText = exchangeRateText
+        self.exchangeRateStatus = exchangeRateStatus
+        self.exchangeRateSources = exchangeRateSources
+        self.exchangeRateStale = exchangeRateStale
+        self.exchangeRateUpdatedAtUnix = exchangeRateUpdatedAtUnix
         self.mints = mints
         self.lastAction = lastAction
     }
@@ -4426,6 +4466,30 @@ extension NativePaidRouteWalletState: Equatable, Hashable {
         if lhs.totalBalanceText != rhs.totalBalanceText {
             return false
         }
+        if lhs.navigationBalanceText != rhs.navigationBalanceText {
+            return false
+        }
+        if lhs.fiatCurrency != rhs.fiatCurrency {
+            return false
+        }
+        if lhs.fiatBalanceText != rhs.fiatBalanceText {
+            return false
+        }
+        if lhs.exchangeRateText != rhs.exchangeRateText {
+            return false
+        }
+        if lhs.exchangeRateStatus != rhs.exchangeRateStatus {
+            return false
+        }
+        if lhs.exchangeRateSources != rhs.exchangeRateSources {
+            return false
+        }
+        if lhs.exchangeRateStale != rhs.exchangeRateStale {
+            return false
+        }
+        if lhs.exchangeRateUpdatedAtUnix != rhs.exchangeRateUpdatedAtUnix {
+            return false
+        }
         if lhs.mints != rhs.mints {
             return false
         }
@@ -4440,6 +4504,14 @@ extension NativePaidRouteWalletState: Equatable, Hashable {
         hasher.combine(balanceKnown)
         hasher.combine(totalBalanceMsat)
         hasher.combine(totalBalanceText)
+        hasher.combine(navigationBalanceText)
+        hasher.combine(fiatCurrency)
+        hasher.combine(fiatBalanceText)
+        hasher.combine(exchangeRateText)
+        hasher.combine(exchangeRateStatus)
+        hasher.combine(exchangeRateSources)
+        hasher.combine(exchangeRateStale)
+        hasher.combine(exchangeRateUpdatedAtUnix)
         hasher.combine(mints)
         hasher.combine(lastAction)
     }
@@ -4458,6 +4530,14 @@ public struct FfiConverterTypeNativePaidRouteWalletState: FfiConverterRustBuffer
                 balanceKnown: FfiConverterBool.read(from: &buf),
                 totalBalanceMsat: FfiConverterUInt64.read(from: &buf),
                 totalBalanceText: FfiConverterString.read(from: &buf),
+                navigationBalanceText: FfiConverterString.read(from: &buf),
+                fiatCurrency: FfiConverterString.read(from: &buf),
+                fiatBalanceText: FfiConverterString.read(from: &buf),
+                exchangeRateText: FfiConverterString.read(from: &buf),
+                exchangeRateStatus: FfiConverterString.read(from: &buf),
+                exchangeRateSources: FfiConverterString.read(from: &buf),
+                exchangeRateStale: FfiConverterBool.read(from: &buf),
+                exchangeRateUpdatedAtUnix: FfiConverterUInt64.read(from: &buf),
                 mints: FfiConverterSequenceTypeNativePaidRouteWalletMintState.read(from: &buf),
                 lastAction: FfiConverterTypeNativePaidRouteWalletActionState.read(from: &buf)
         )
@@ -4468,6 +4548,14 @@ public struct FfiConverterTypeNativePaidRouteWalletState: FfiConverterRustBuffer
         FfiConverterBool.write(value.balanceKnown, into: &buf)
         FfiConverterUInt64.write(value.totalBalanceMsat, into: &buf)
         FfiConverterString.write(value.totalBalanceText, into: &buf)
+        FfiConverterString.write(value.navigationBalanceText, into: &buf)
+        FfiConverterString.write(value.fiatCurrency, into: &buf)
+        FfiConverterString.write(value.fiatBalanceText, into: &buf)
+        FfiConverterString.write(value.exchangeRateText, into: &buf)
+        FfiConverterString.write(value.exchangeRateStatus, into: &buf)
+        FfiConverterString.write(value.exchangeRateSources, into: &buf)
+        FfiConverterBool.write(value.exchangeRateStale, into: &buf)
+        FfiConverterUInt64.write(value.exchangeRateUpdatedAtUnix, into: &buf)
         FfiConverterSequenceTypeNativePaidRouteWalletMintState.write(value.mints, into: &buf)
         FfiConverterTypeNativePaidRouteWalletActionState.write(value.lastAction, into: &buf)
     }
@@ -5279,6 +5367,7 @@ public struct SettingsPatch {
     public var nostrPubsubFanout: UInt32?
     public var nostrPubsubMaxHops: UInt8?
     public var nostrPubsubMaxEventBytes: UInt32?
+    public var internetSource: String?
     public var exitNode: String?
     public var exitNodeLeakProtection: Bool?
     public var advertiseExitNode: Bool?
@@ -5295,6 +5384,8 @@ public struct SettingsPatch {
     public var wireguardExitMtu: UInt16?
     public var wireguardExitPersistentKeepaliveSecs: UInt16?
     public var wireguardExitConfig: String?
+    public var walletFiatEnabled: Bool?
+    public var walletFiatCurrency: String?
     public var paidExitEnabled: Bool?
     public var paidExitUpstream: String?
     public var paidExitMeter: String?
@@ -5328,7 +5419,7 @@ public struct SettingsPatch {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(nodeName: String?, endpoint: String?, tunnelIp: String?, listenPort: UInt16?, relays: [String]?, disabledRelays: [String]?, nostrPubsubMode: String?, nostrPubsubFanout: UInt32?, nostrPubsubMaxHops: UInt8?, nostrPubsubMaxEventBytes: UInt32?, exitNode: String?, exitNodeLeakProtection: Bool?, advertiseExitNode: Bool?, advertisedRoutes: String?, wireguardExitEnabled: Bool?, wireguardExitInterface: String?, wireguardExitAddress: String?, wireguardExitPrivateKey: String?, wireguardExitPeerPublicKey: String?, wireguardExitPeerPresharedKey: String?, wireguardExitEndpoint: String?, wireguardExitAllowedIps: String?, wireguardExitDns: String?, wireguardExitMtu: UInt16?, wireguardExitPersistentKeepaliveSecs: UInt16?, wireguardExitConfig: String?, paidExitEnabled: Bool?, paidExitUpstream: String?, paidExitMeter: String?, paidExitPriceMsat: UInt64?, paidExitPerUnits: UInt64?, paidExitAcceptedMints: String?, paidExitMaxChannelCapacitySat: UInt64?, paidExitChannelExpirySecs: UInt64?, paidExitFreeProbeUnits: UInt64?, paidExitGraceUnits: UInt64?, paidExitCountryCode: String?, paidExitRegion: String?, paidExitAsn: String?, paidExitNetworkClass: String?, paidExitIpv4: Bool?, paidExitIpv6: Bool?, paidExitRatingFile: String?, paidExitRatingRelays: [String]?, paidExitTrustedRatingAuthors: [String]?, paidExitRatingScope: String?, fipsHostTunnelEnabled: Bool?, connectToNonRosterFipsPeers: Bool?, fipsNostrDiscoveryEnabled: Bool?, fipsWebrtcEnabled: Bool?, fipsBootstrapEnabled: Bool?, fipsBootstrapPeers: [String: [String]]?, fipsHostInboundTcpPorts: String?, autoconnect: Bool?, launchOnStartup: Bool?, closeToTrayOnClose: Bool?) {
+    public init(nodeName: String?, endpoint: String?, tunnelIp: String?, listenPort: UInt16?, relays: [String]?, disabledRelays: [String]?, nostrPubsubMode: String?, nostrPubsubFanout: UInt32?, nostrPubsubMaxHops: UInt8?, nostrPubsubMaxEventBytes: UInt32?, internetSource: String?, exitNode: String?, exitNodeLeakProtection: Bool?, advertiseExitNode: Bool?, advertisedRoutes: String?, wireguardExitEnabled: Bool?, wireguardExitInterface: String?, wireguardExitAddress: String?, wireguardExitPrivateKey: String?, wireguardExitPeerPublicKey: String?, wireguardExitPeerPresharedKey: String?, wireguardExitEndpoint: String?, wireguardExitAllowedIps: String?, wireguardExitDns: String?, wireguardExitMtu: UInt16?, wireguardExitPersistentKeepaliveSecs: UInt16?, wireguardExitConfig: String?, walletFiatEnabled: Bool?, walletFiatCurrency: String?, paidExitEnabled: Bool?, paidExitUpstream: String?, paidExitMeter: String?, paidExitPriceMsat: UInt64?, paidExitPerUnits: UInt64?, paidExitAcceptedMints: String?, paidExitMaxChannelCapacitySat: UInt64?, paidExitChannelExpirySecs: UInt64?, paidExitFreeProbeUnits: UInt64?, paidExitGraceUnits: UInt64?, paidExitCountryCode: String?, paidExitRegion: String?, paidExitAsn: String?, paidExitNetworkClass: String?, paidExitIpv4: Bool?, paidExitIpv6: Bool?, paidExitRatingFile: String?, paidExitRatingRelays: [String]?, paidExitTrustedRatingAuthors: [String]?, paidExitRatingScope: String?, fipsHostTunnelEnabled: Bool?, connectToNonRosterFipsPeers: Bool?, fipsNostrDiscoveryEnabled: Bool?, fipsWebrtcEnabled: Bool?, fipsBootstrapEnabled: Bool?, fipsBootstrapPeers: [String: [String]]?, fipsHostInboundTcpPorts: String?, autoconnect: Bool?, launchOnStartup: Bool?, closeToTrayOnClose: Bool?) {
         self.nodeName = nodeName
         self.endpoint = endpoint
         self.tunnelIp = tunnelIp
@@ -5339,6 +5430,7 @@ public struct SettingsPatch {
         self.nostrPubsubFanout = nostrPubsubFanout
         self.nostrPubsubMaxHops = nostrPubsubMaxHops
         self.nostrPubsubMaxEventBytes = nostrPubsubMaxEventBytes
+        self.internetSource = internetSource
         self.exitNode = exitNode
         self.exitNodeLeakProtection = exitNodeLeakProtection
         self.advertiseExitNode = advertiseExitNode
@@ -5355,6 +5447,8 @@ public struct SettingsPatch {
         self.wireguardExitMtu = wireguardExitMtu
         self.wireguardExitPersistentKeepaliveSecs = wireguardExitPersistentKeepaliveSecs
         self.wireguardExitConfig = wireguardExitConfig
+        self.walletFiatEnabled = walletFiatEnabled
+        self.walletFiatCurrency = walletFiatCurrency
         self.paidExitEnabled = paidExitEnabled
         self.paidExitUpstream = paidExitUpstream
         self.paidExitMeter = paidExitMeter
@@ -5425,6 +5519,9 @@ extension SettingsPatch: Equatable, Hashable {
         if lhs.nostrPubsubMaxEventBytes != rhs.nostrPubsubMaxEventBytes {
             return false
         }
+        if lhs.internetSource != rhs.internetSource {
+            return false
+        }
         if lhs.exitNode != rhs.exitNode {
             return false
         }
@@ -5471,6 +5568,12 @@ extension SettingsPatch: Equatable, Hashable {
             return false
         }
         if lhs.wireguardExitConfig != rhs.wireguardExitConfig {
+            return false
+        }
+        if lhs.walletFiatEnabled != rhs.walletFiatEnabled {
+            return false
+        }
+        if lhs.walletFiatCurrency != rhs.walletFiatCurrency {
             return false
         }
         if lhs.paidExitEnabled != rhs.paidExitEnabled {
@@ -5577,6 +5680,7 @@ extension SettingsPatch: Equatable, Hashable {
         hasher.combine(nostrPubsubFanout)
         hasher.combine(nostrPubsubMaxHops)
         hasher.combine(nostrPubsubMaxEventBytes)
+        hasher.combine(internetSource)
         hasher.combine(exitNode)
         hasher.combine(exitNodeLeakProtection)
         hasher.combine(advertiseExitNode)
@@ -5593,6 +5697,8 @@ extension SettingsPatch: Equatable, Hashable {
         hasher.combine(wireguardExitMtu)
         hasher.combine(wireguardExitPersistentKeepaliveSecs)
         hasher.combine(wireguardExitConfig)
+        hasher.combine(walletFiatEnabled)
+        hasher.combine(walletFiatCurrency)
         hasher.combine(paidExitEnabled)
         hasher.combine(paidExitUpstream)
         hasher.combine(paidExitMeter)
@@ -5645,6 +5751,7 @@ public struct FfiConverterTypeSettingsPatch: FfiConverterRustBuffer {
                 nostrPubsubFanout: FfiConverterOptionUInt32.read(from: &buf),
                 nostrPubsubMaxHops: FfiConverterOptionUInt8.read(from: &buf),
                 nostrPubsubMaxEventBytes: FfiConverterOptionUInt32.read(from: &buf),
+                internetSource: FfiConverterOptionString.read(from: &buf),
                 exitNode: FfiConverterOptionString.read(from: &buf),
                 exitNodeLeakProtection: FfiConverterOptionBool.read(from: &buf),
                 advertiseExitNode: FfiConverterOptionBool.read(from: &buf),
@@ -5661,6 +5768,8 @@ public struct FfiConverterTypeSettingsPatch: FfiConverterRustBuffer {
                 wireguardExitMtu: FfiConverterOptionUInt16.read(from: &buf),
                 wireguardExitPersistentKeepaliveSecs: FfiConverterOptionUInt16.read(from: &buf),
                 wireguardExitConfig: FfiConverterOptionString.read(from: &buf),
+                walletFiatEnabled: FfiConverterOptionBool.read(from: &buf),
+                walletFiatCurrency: FfiConverterOptionString.read(from: &buf),
                 paidExitEnabled: FfiConverterOptionBool.read(from: &buf),
                 paidExitUpstream: FfiConverterOptionString.read(from: &buf),
                 paidExitMeter: FfiConverterOptionString.read(from: &buf),
@@ -5705,6 +5814,7 @@ public struct FfiConverterTypeSettingsPatch: FfiConverterRustBuffer {
         FfiConverterOptionUInt32.write(value.nostrPubsubFanout, into: &buf)
         FfiConverterOptionUInt8.write(value.nostrPubsubMaxHops, into: &buf)
         FfiConverterOptionUInt32.write(value.nostrPubsubMaxEventBytes, into: &buf)
+        FfiConverterOptionString.write(value.internetSource, into: &buf)
         FfiConverterOptionString.write(value.exitNode, into: &buf)
         FfiConverterOptionBool.write(value.exitNodeLeakProtection, into: &buf)
         FfiConverterOptionBool.write(value.advertiseExitNode, into: &buf)
@@ -5721,6 +5831,8 @@ public struct FfiConverterTypeSettingsPatch: FfiConverterRustBuffer {
         FfiConverterOptionUInt16.write(value.wireguardExitMtu, into: &buf)
         FfiConverterOptionUInt16.write(value.wireguardExitPersistentKeepaliveSecs, into: &buf)
         FfiConverterOptionString.write(value.wireguardExitConfig, into: &buf)
+        FfiConverterOptionBool.write(value.walletFiatEnabled, into: &buf)
+        FfiConverterOptionString.write(value.walletFiatCurrency, into: &buf)
         FfiConverterOptionBool.write(value.paidExitEnabled, into: &buf)
         FfiConverterOptionString.write(value.paidExitUpstream, into: &buf)
         FfiConverterOptionString.write(value.paidExitMeter, into: &buf)

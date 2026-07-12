@@ -83,6 +83,27 @@
     }
 
     #[test]
+    fn native_state_reports_pending_automatic_exit_as_blocked() {
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.vpn_enabled = true;
+        create_test_network(&mut runtime, "Home");
+        runtime
+            .config
+            .set_internet_source(InternetSource::PaidAutomatic);
+
+        let state = runtime.state();
+
+        assert!(state.exit_node_blocked);
+        assert!(!state.exit_node_active);
+        assert_eq!(
+            state.exit_node_status_text,
+            "Internet blocked: waiting for paid provider"
+        );
+    }
+
+    #[test]
     fn native_state_reports_routed_fips_peer_latency() {
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);

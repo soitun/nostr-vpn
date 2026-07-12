@@ -1,5 +1,5 @@
 fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
-    page_title(page, "Exit Nodes", "");
+    page_title(page, "Internet", "");
 
     let Some(network) = active_network(state).cloned() else {
         build_wireguard_settings_card(app, page, state);
@@ -7,7 +7,7 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
     };
 
     let exit = card();
-    section_header(&exit, "Exit Node", "");
+    section_header(&exit, "Internet Source", "");
 
     let all_exit_candidates = exit_node_candidates(&network, state);
     let show_search = all_exit_candidates.len() > SEARCH_VISIBILITY_THRESHOLD;
@@ -22,13 +22,12 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
         exit.append(&search);
     }
 
-    let direct_selected = !state.wireguard_exit_enabled && state.exit_node.is_empty();
     route_choice(
         app,
         &exit,
         "Direct",
         "Use normal internet routing",
-        direct_selected,
+        state.internet_source == "direct",
         true,
         ExitChoice::Direct,
     );
@@ -45,7 +44,7 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
         &exit,
         "WireGuard upstream",
         &wg_subtitle,
-        state.wireguard_exit_enabled,
+        state.internet_source == "wireguard",
         state.wireguard_exit_configured,
         ExitChoice::WireGuard,
     );
@@ -76,8 +75,8 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
         );
     } else {
         for participant in exit_candidates {
-            let peer_selected =
-                !state.wireguard_exit_enabled && state.exit_node == participant.npub;
+            let peer_selected = state.internet_source == "private_vpn"
+                && state.exit_node == participant.npub;
             route_choice(
                 app,
                 &exit,
@@ -88,6 +87,26 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
                 ExitChoice::Peer(participant.npub.clone()),
             );
         }
+    }
+    if state.paid_route_market.supported {
+        route_choice(
+            app,
+            &exit,
+            "Paid · Automatic",
+            "Experimental · choose a working, reasonably priced provider",
+            state.internet_source == "paid_automatic",
+            true,
+            ExitChoice::PaidAutomatic,
+        );
+        route_choice(
+            app,
+            &exit,
+            "Paid · Choose manually",
+            "Experimental · browse internet sellers",
+            state.internet_source == "paid_manual",
+            true,
+            ExitChoice::PaidManual,
+        );
     }
     page.append(&exit);
 
@@ -107,7 +126,7 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
     switch_row(
         app,
         &offer,
-        "Block internet if exit node disconnects",
+        "Block internet if selected source disconnects",
         state.exit_node_leak_protection,
         |enabled| NativeAppAction::UpdateSettings {
             patch: SettingsPatch {
@@ -117,7 +136,17 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
         },
     );
     page.append(&offer);
-    build_wireguard_settings_card(app, page, state);
+    if state.paid_exit_seller.supported {
+        let sell = icon_text_button("Sell internet access · Experimental", "mail-send-symbolic");
+        {
+            let app = app.clone();
+            sell.connect_clicked(move |_| set_page(&app, Page::PaidRoutes));
+        }
+        offer.append(&sell);
+    }
+    if state.internet_source == "wireguard" {
+        build_wireguard_settings_card(app, page, state);
+    }
 }
 
 #[derive(Clone)]
@@ -125,6 +154,8 @@ enum ExitChoice {
     Direct,
     WireGuard,
     Peer(String),
+    PaidAutomatic,
+    PaidManual,
 }
 
 fn route_choice(
@@ -171,26 +202,33 @@ fn route_choice(
         let app = app.clone();
         let choice = choice.clone();
         button.connect_clicked(move |_| {
-            // The daemon enforces mutual exclusion (peer vs WG), so
-            // each non-direct row only sends the field it owns.
-            // Direct needs to flip both because there's nothing to
-            // conflict with — it means "neither".
             let patch = match choice.clone() {
                 ExitChoice::Direct => SettingsPatch {
-                    exit_node: Some(String::new()),
-                    wireguard_exit_enabled: Some(false),
+                    internet_source: Some("direct".to_string()),
                     ..SettingsPatch::default()
                 },
                 ExitChoice::WireGuard => SettingsPatch {
-                    wireguard_exit_enabled: Some(true),
+                    internet_source: Some("wireguard".to_string()),
                     ..SettingsPatch::default()
                 },
                 ExitChoice::Peer(npub) => SettingsPatch {
+                    internet_source: Some("private_vpn".to_string()),
                     exit_node: Some(npub),
+                    ..SettingsPatch::default()
+                },
+                ExitChoice::PaidAutomatic => SettingsPatch {
+                    internet_source: Some("paid_automatic".to_string()),
+                    ..SettingsPatch::default()
+                },
+                ExitChoice::PaidManual => SettingsPatch {
+                    internet_source: Some("paid_manual".to_string()),
                     ..SettingsPatch::default()
                 },
             };
             dispatch(&app, NativeAppAction::UpdateSettings { patch });
+            if matches!(choice, ExitChoice::PaidManual) {
+                set_page(&app, Page::PaidRoutes);
+            }
         });
     }
     parent.append(&button);

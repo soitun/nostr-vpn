@@ -320,6 +320,34 @@ public partial class MainWindow : Window
         await ViewModel.SelectWireGuardUpstreamExitAsync();
     }
 
+    private async void PaidAutomaticExit_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.SelectPaidAutomaticExitAsync();
+    }
+
+    private async void WalletFiatEnabled_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is CheckBox checkBox)
+        {
+            await ViewModel.SetWalletFiatEnabledAsync(checkBox.IsChecked == true);
+        }
+    }
+
+    private async void WalletFiatCurrency_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (sender is ComboBox { SelectedItem: ComboBoxItem item }
+            && item.Content is string currency
+            && !string.Equals(currency, ViewModel.State.WalletFiatCurrency, StringComparison.Ordinal))
+        {
+            await ViewModel.SetWalletFiatCurrencyAsync(currency);
+        }
+    }
+
+    private async void PaidManualExit_Click(object sender, RoutedEventArgs e)
+    {
+        await ViewModel.SelectPaidManualExitAsync();
+    }
+
     private async void Autoconnect_Click(object sender, RoutedEventArgs e)
     {
         if (sender is CheckBox checkBox)
