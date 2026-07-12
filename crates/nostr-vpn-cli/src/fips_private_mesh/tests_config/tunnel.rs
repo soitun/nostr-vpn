@@ -542,6 +542,7 @@
         let mut app = AppConfig::default();
         app.nostr.secret_key = alice_nsec;
         app.connect_to_non_roster_fips_peers = true;
+        app.fips_bootstrap_enabled = true;
         app.networks[0].enabled = true;
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];
@@ -553,10 +554,14 @@
             let npub = keys.public_key().to_bech32().expect("bootstrap npub");
             app.fips_bootstrap_peers.insert(
                 npub.clone(),
-                vec![format!("203.0.113.{}:51820", i + 10)],
+                vec![format!("[2001:db8::{:x}]:51820", i + 10)],
             );
             bootstrap_npubs.push(npub);
         }
+        assert_eq!(
+            app.fips_bootstrap_peer_endpoints().len(),
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING + 2,
+        );
 
         let config = FipsPrivateTunnelConfig::from_app(
             &app,
