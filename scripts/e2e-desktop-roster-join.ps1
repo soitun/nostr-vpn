@@ -42,6 +42,8 @@ Get-Process -Name NostrVpn.Windows -ErrorAction SilentlyContinue |
 $env:NVPN_APP_DATA_DIR = $DataDir
 $env:NVPN_CLI_PATH = $FakeNvpn
 $env:NVPN_ROSTER_E2E_TRACE_PATH = $Trace
+$Dotnet = Get-Command dotnet -ErrorAction Stop
+$env:DOTNET_ROOT = Split-Path -Parent $Dotnet.Source
 $Process = Start-Process -FilePath $AppExe -ArgumentList $DebugUrl -PassThru
 
 try {
