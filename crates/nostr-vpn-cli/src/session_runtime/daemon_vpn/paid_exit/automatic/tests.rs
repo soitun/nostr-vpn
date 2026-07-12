@@ -1,6 +1,9 @@
 use super::*;
 use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::config::InternetSource;
+use nostr_vpn_core::paid_routes::{
+    PaidRouteChannelTerms, PaidRouteIpSupport, PaidRoutePricing,
+};
 
 #[test]
 fn automatic_selection_opens_only_an_unfunded_probe_session() {
@@ -12,17 +15,27 @@ fn automatic_selection_opens_only_an_unfunded_probe_session() {
     let config_path = directory.join("config.toml");
     let store_path = paid_route_store_file_path(&config_path);
     let mint = "https://mint.example";
-    let mut offer_config = PaidExitConfig::default();
-    offer_config.enabled = true;
-    offer_config.pricing.meter = PaidRouteMeter::Bytes;
-    offer_config.pricing.price_msat = 90;
-    offer_config.pricing.per_units = 1_000_000;
-    offer_config.pricing.connection_minimum_msat_per_day = 0;
-    offer_config.channel.accepted_mints = vec![mint.to_string()];
-    offer_config.channel.max_channel_capacity_sat = 100;
-    offer_config.channel.channel_expiry_secs = 600;
-    offer_config.channel.free_probe_units = 1_048_576;
-    offer_config.ip_support.ipv4 = true;
+    let offer_config = PaidExitConfig {
+        enabled: true,
+        pricing: PaidRoutePricing {
+            meter: PaidRouteMeter::Bytes,
+            price_msat: 90,
+            per_units: 1_000_000,
+            connection_minimum_msat_per_day: 0,
+        },
+        channel: PaidRouteChannelTerms {
+            accepted_mints: vec![mint.to_string()],
+            max_channel_capacity_sat: 100,
+            channel_expiry_secs: 600,
+            free_probe_units: 1_048_576,
+            ..PaidRouteChannelTerms::default()
+        },
+        ip_support: PaidRouteIpSupport {
+            ipv4: true,
+            ..PaidRouteIpSupport::default()
+        },
+        ..PaidExitConfig::default()
+    };
     let signed = nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config(
         "automatic",
         &seller,
@@ -64,8 +77,10 @@ fn automatic_selection_opens_only_an_unfunded_probe_session() {
 fn automatic_buyer_requires_probe_authenticated_seller_and_both_counter_directions() {
     let seller = Keys::generate();
     let seller_pubkey = seller.public_key().to_hex();
-    let mut automatic = PaidExitAutomaticBuyer::default();
-    automatic.candidate = Some(test_candidate(&seller_pubkey));
+    let mut automatic = PaidExitAutomaticBuyer {
+        candidate: Some(test_candidate(&seller_pubkey)),
+        ..PaidExitAutomaticBuyer::default()
+    };
     let mut app = AppConfig::generated();
     app.set_internet_source(InternetSource::PaidAutomatic);
     let now = 100;
@@ -114,8 +129,10 @@ fn automatic_cancellation_never_overwrites_another_internet_mode() {
     app.select_public_paid_exit_node(&seller_npub)
         .expect("manual seller");
     let selected_before = app.exit_node.clone();
-    let mut automatic = PaidExitAutomaticBuyer::default();
-    automatic.candidate = Some(test_candidate(&seller_pubkey));
+    let mut automatic = PaidExitAutomaticBuyer {
+        candidate: Some(test_candidate(&seller_pubkey)),
+        ..PaidExitAutomaticBuyer::default()
+    };
     let generation = automatic.generation;
 
     automatic.cancel_if_disabled(&app);
