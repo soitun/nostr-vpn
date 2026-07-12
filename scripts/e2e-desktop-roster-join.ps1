@@ -43,8 +43,12 @@ try {
   $Deadline = (Get-Date).AddSeconds(30)
   while ((Get-Date) -lt $Deadline) {
     Start-Sleep -Milliseconds 250
+    $PreviousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
     & $Fixture verify --data-dir $DataDir --result $Result 2>$null
-    if ($LASTEXITCODE -eq 0) {
+    $VerifyExitCode = $LASTEXITCODE
+    $ErrorActionPreference = $PreviousErrorActionPreference
+    if ($VerifyExitCode -eq 0) {
       Write-Host "DESKTOP_ROSTER_JOIN_E2E_OK"
       Write-Host "Result: $Result"
       exit 0
