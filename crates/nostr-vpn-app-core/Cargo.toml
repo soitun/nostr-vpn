@@ -31,6 +31,7 @@ nostr-pubsub.workspace = true
 nostr-pubsub-relay.workspace = true
 nostr-vpn-core = { workspace = true, features = ["updater"] }
 qrcode = { version = "0.14", default-features = false }
+reqwest.workspace = true
 rqrr = "0.10"
 serde.workspace = true
 serde_json.workspace = true
