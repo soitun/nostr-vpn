@@ -212,15 +212,6 @@ pub struct PaidRouteAutomaticOfferSelection {
     pub offer_key: String,
     pub mint_url: String,
     pub channel_capacity_sat: u64,
-    pub mint_transfer: Option<PaidRouteAutomaticMintTransfer>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PaidRouteAutomaticMintTransfer {
-    pub source_mint_url: String,
-    pub destination_mint_url: String,
-    pub amount_sat: u64,
-    pub max_fee_sat: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

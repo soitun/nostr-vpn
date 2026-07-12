@@ -1,0 +1,231 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Reflection;
+using System.Runtime.CompilerServices;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Threading;
+using Microsoft.Win32;
+using NostrVpn.Windows.Core;
+using NostrVpn.Windows.Services;
+
+namespace NostrVpn.Windows.ViewModels;
+
+public sealed partial class AppViewModel
+{
+    private async Task ImportInviteAsync(string invite)
+    {
+        var trimmed = invite.Trim();
+        if (string.IsNullOrEmpty(trimmed))
+        {
+            return;
+        }
+        await DispatchAsync(NativeActions.ImportNetworkInvite(trimmed), "Importing invite");
+        // Always clear the paste field after a dispatch — keeps stale invites
+        // from sticking around between sessions, and gives instant visual
+        // feedback that the import was accepted.
+        InviteInput = "";
+    }
+
+    private void PasteInviteFromClipboard()
+    {
+        try
+        {
+            if (Clipboard.ContainsText())
+            {
+                InviteInput = Clipboard.GetText().Trim();
+            }
+        }
+        catch (Exception error)
+        {
+            Notice = error.Message;
+        }
+    }
+
+    private static bool LooksLikeInviteCode(string value)
+        => value.StartsWith("nvpn://invite/", StringComparison.OrdinalIgnoreCase);
+
+    private static bool LooksLikeJoinRequest(string value)
+    {
+        const string prefix = "nvpn://join-request/";
+        return value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && value.Length > prefix.Length;
+    }
+
+    private const string Bech32BodyCharset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+
+    /// <summary>
+    /// A valid device ID is a bech32-encoded npub: "npub1" + 58 bech32 chars.
+    /// </summary>
+    public static bool IsValidDeviceId(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        var trimmed = value.Trim();
+        if (trimmed.Length != 63 || !trimmed.StartsWith("npub1", StringComparison.Ordinal)) return false;
+        for (var i = 5; i < trimmed.Length; i++)
+        {
+            if (Bech32BodyCharset.IndexOf(trimmed[i]) < 0) return false;
+        }
+        return true;
+    }
+
+    private async Task ConfirmAndImportJoinRequestAsync(string request)
+    {
+        var trimmed = request.Trim();
+        if (_joinRequestPromptOpen || !LooksLikeJoinRequest(trimmed))
+        {
+            return;
+        }
+        var network = ActiveNetwork;
+        if (network?.LocalIsAdmin != true)
+        {
+            return;
+        }
+        _joinRequestPromptOpen = true;
+        try
+        {
+            var name = string.IsNullOrWhiteSpace(network.Name) ? "this network" : network.Name;
+            var result = MessageBox.Show(
+                $"Add the device from this join request to {name}?",
+                "Add device?",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question);
+            if (result != MessageBoxResult.Yes)
+            {
+                return;
+            }
+            await DispatchAsync(NativeActions.ImportJoinRequest(trimmed), "Adding device");
+            if (string.IsNullOrWhiteSpace(State.Error))
+            {
+                JoinRequestInput = "";
+                Page = AppPage.Devices;
+                Notice = "Device added";
+            }
+        }
+        finally
+        {
+            _joinRequestPromptOpen = false;
+        }
+    }
+
+    private async Task ImportJoinRequestQrImageAsync()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "Images|*.png;*.jpg;*.jpeg;*.bmp;*.gif|All files|*.*",
+            Multiselect = false,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+        var result = await Task.Run(() => _core.DecodeQrImage(dialog.FileName));
+        if (!string.IsNullOrWhiteSpace(result.Error))
+        {
+            Notice = result.Error;
+            return;
+        }
+        var value = result.Value.Trim();
+        if (LooksLikeJoinRequest(value))
+        {
+            await ConfirmAndImportJoinRequestAsync(value);
+            return;
+        }
+        var network = ActiveNetwork;
+        if (IsValidDeviceId(value) && network?.LocalIsAdmin == true)
+        {
+            await DispatchAsync(NativeActions.AddParticipant(network.Id, value, null), "Adding device");
+        }
+        else
+        {
+            await DispatchAsync(NativeActions.ImportJoinRequest(value), "Adding device");
+        }
+    }
+
+    private async Task ImportWireGuardExitAsync()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Filter = "WireGuard configs|*.conf;*.txt|All files|*.*",
+            Multiselect = false,
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+        try
+        {
+            var config = await File.ReadAllTextAsync(dialog.FileName);
+            if (string.IsNullOrWhiteSpace(config))
+            {
+                Notice = "Selected WireGuard config is empty.";
+                return;
+            }
+            WireguardExitConfig = config;
+            await SaveWireGuardExitAsync();
+        }
+        catch (Exception error)
+        {
+            Notice = $"Could not read WireGuard config: {error.Message}";
+        }
+    }
+
+    private Task AddParticipantAsync()
+    {
+        var network = ActiveNetwork;
+        if (network?.LocalIsAdmin != true)
+        {
+            return Task.CompletedTask;
+        }
+        return DispatchAsync(
+            NativeActions.AddParticipant(network.Id, ParticipantInput.Trim(), string.IsNullOrWhiteSpace(ParticipantAliasInput) ? null : ParticipantAliasInput.Trim()),
+            "Adding device");
+    }
+
+    private Task AddNetworkAsync()
+    {
+        return DispatchAsync(NativeActions.AddNetwork(NetworkNameInput.Trim()), "Adding network");
+    }
+
+    private async Task CreateNetworkAsync()
+    {
+        var name = string.IsNullOrWhiteSpace(NetworkNameInput) ? "My Network" : NetworkNameInput.Trim();
+        NetworkNameInput = "";
+        await DispatchAsync(NativeActions.AddNetwork(name), "Creating network");
+        // Land on the new network's Devices view. Add Network may have
+        // been the active page (or we may have been showing the
+        // pre-network setup card); either way, Devices is the next
+        // meaningful destination.
+        SetNetworkSetupMode("");
+        Page = AppPage.Devices;
+    }
+
+    private async Task ManualAddNetworkAsync()
+    {
+        var admin = (ManualJoinAdminId ?? string.Empty).Trim();
+        var mesh = NormalizeNetworkIdInput(ManualJoinMeshId);
+        if (admin.Length == 0 || mesh.Length == 0 || ManualJoinAdminInvalid)
+        {
+            return;
+        }
+        await DispatchAsync(NativeActions.ManualAddNetwork(admin, mesh), "Adding network");
+        ManualJoinAdminId = "";
+        ManualJoinMeshId = "";
+        ManualJoinExpanded = false;
+    }
+
+    private Task ActivateInactiveNetworkAsync(string? networkId)
+    {
+        if (string.IsNullOrWhiteSpace(networkId))
+        {
+            return Task.CompletedTask;
+        }
+        return DispatchAsync(NativeActions.SetNetworkEnabled(networkId, true), "Switching network");
+    }
+}
