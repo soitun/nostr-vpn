@@ -31,7 +31,7 @@ impl IsolatedAdminDaemon {
             .arg("--config")
             .arg(&args.config_path)
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .map_err(|_| HarnessError::new("preflight", "admin-daemon-start-failed"))?;
         Ok(Self(child))
