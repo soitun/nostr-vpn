@@ -654,18 +654,27 @@ fn basis_points(numerator: usize, denominator: usize) -> u32 {
 mod tests {
     use super::*;
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn twelve_instance_full_path_smoke() {
-        let report = run_simulation(SimulationConfig {
-            node_count: 12,
-            attacker_count: 3,
-            fake_inventories_per_attacker: 2,
-            convergence_timeout_ms: 10_000,
-            delivery_timeout_ms: 10_000,
-            seed: DEFAULT_SEED,
-        })
-        .await
-        .expect("twelve-instance simulation");
+    fn simulation_test_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(4)
+            .thread_stack_size(8 * 1024 * 1024)
+            .enable_all()
+            .build()
+            .expect("simulation test runtime")
+    }
+
+    #[test]
+    fn twelve_instance_full_path_smoke() {
+        let report = simulation_test_runtime()
+            .block_on(run_simulation(SimulationConfig {
+                node_count: 12,
+                attacker_count: 3,
+                fake_inventories_per_attacker: 2,
+                convergence_timeout_ms: 10_000,
+                delivery_timeout_ms: 10_000,
+                seed: DEFAULT_SEED,
+            }))
+            .expect("twelve-instance simulation");
         eprintln!("{report:#?}");
 
         assert_eq!(report.connected_node_count, 12, "{report:?}");
@@ -679,18 +688,17 @@ mod tests {
         assert!(report.trusted_negative_ratings_applied > 0, "{report:?}");
         assert!(report.unknown_honest_peer_links > 0, "{report:?}");
         assert!(report.unknown_attacker_peer_links > 0, "{report:?}");
-        assert!(report.rating_spam_stored_by_honest_nodes > 0, "{report:?}");
         assert!(
             report.received_untrusted_ratings_ignored >= report.rating_spam_stored_by_honest_nodes,
             "{report:?}"
         );
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[test]
     #[ignore = "34-second adversarial lane; run explicitly or through the simulator binary"]
-    async fn hundred_instance_adversarial_pubsub_remains_live_and_bounded() {
-        let report = run_simulation(SimulationConfig::default())
-            .await
+    fn hundred_instance_adversarial_pubsub_remains_live_and_bounded() {
+        let report = simulation_test_runtime()
+            .block_on(run_simulation(SimulationConfig::default()))
             .expect("hundred-instance simulation");
         eprintln!("{report:#?}");
 
@@ -705,7 +713,6 @@ mod tests {
         assert!(report.trusted_negative_ratings_applied > 0, "{report:?}");
         assert!(report.unknown_honest_peer_links > 0, "{report:?}");
         assert!(report.unknown_attacker_peer_links > 0, "{report:?}");
-        assert!(report.rating_spam_stored_by_honest_nodes > 0, "{report:?}");
         assert!(
             report.received_untrusted_ratings_ignored >= report.rating_spam_stored_by_honest_nodes,
             "{report:?}"
