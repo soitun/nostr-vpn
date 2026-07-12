@@ -246,7 +246,6 @@ impl FipsPrivateTunnelConfig {
             control_pubsub_store_path: PathBuf::new(),
             share_local_candidates: app.lan_discovery_enabled,
             peers,
-            #[cfg(any(target_os = "linux", target_os = "macos", test))]
             endpoint_peers,
             route_targets,
             magic_dns_records: build_magic_dns_records(app),
