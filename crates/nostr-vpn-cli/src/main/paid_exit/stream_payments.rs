@@ -27,28 +27,26 @@ pub(crate) struct PaidExitDaemonStreamPaymentsResult {
 
 struct PaidExitStreamPaymentUpdatesRequest<'a, S: CashuSpilmanPaymentSigner> {
     app: &'a AppConfig,
-    keys: &'a Keys,
+    config_path: &'a Path,
     store: &'a mut PaidRouteStore,
     signer: &'a S,
     buyer_npub: &'a str,
     due: Vec<PaidRouteBuyerPaymentUpdateDue>,
-    relays: &'a [String],
-    publish: bool,
+    queue: bool,
     now_unix: u64,
 }
 
-async fn paid_exit_stream_payment_updates_with_signer<S: CashuSpilmanPaymentSigner>(
+fn paid_exit_stream_payment_updates_with_signer<S: CashuSpilmanPaymentSigner>(
     request: PaidExitStreamPaymentUpdatesRequest<'_, S>,
 ) -> PaidExitStreamPaymentUpdatesResult {
     let PaidExitStreamPaymentUpdatesRequest {
         app,
-        keys,
+        config_path,
         store,
         signer,
         buyer_npub,
         due,
-        relays,
-        publish,
+        queue,
         now_unix,
     } = request;
     let mut result = PaidExitStreamPaymentUpdatesResult::default();
@@ -74,36 +72,12 @@ async fn paid_exit_stream_payment_updates_with_signer<S: CashuSpilmanPaymentSign
         let payment = signed_update.payment;
         let payment_changed = payment.changed;
 
-        let mut persisted = !publish;
-        let publish_result = if publish {
-            match gift_wrap_paid_route_payment(&payment.envelope, keys).await {
-                Ok(event) => {
-                    let event_id = event.id.to_string();
-                    match publish_paid_exit_payment_to_relays(app, &event, relays).await {
-                        Ok(publish_result) => {
-                            persisted =
-                                publish_result["success_count"].as_u64().unwrap_or_default() > 0;
-                            if !persisted {
-                                result.errors.push(json!({
-                                    "due": update_due.clone(),
-                                    "session_id": payment.session_id,
-                                    "error": "payment update was not accepted by any relay",
-                                }));
-                            }
-                            Some(json!({
-                                "event_id": event_id,
-                                "result": publish_result,
-                            }))
-                        }
-                        Err(error) => {
-                            result.errors.push(json!({
-                                "due": update_due.clone(),
-                                "session_id": payment.session_id,
-                                "error": error.to_string(),
-                            }));
-                            None
-                        }
-                    }
+        let mut persisted = false;
+        let queued = if queue {
+            match queue_paid_exit_payment(app, config_path, &payment.envelope) {
+                Ok(created) => {
+                    persisted = true;
+                    Some(created)
                 }
                 Err(error) => {
                     result.errors.push(json!({
@@ -125,7 +99,7 @@ async fn paid_exit_stream_payment_updates_with_signer<S: CashuSpilmanPaymentSign
         result.signed.push(json!({
             "due": update_due,
             "payment": payment,
-            "publish": publish_result,
+            "queued": queued,
             "persisted": persisted,
         }));
     }
@@ -133,7 +107,7 @@ async fn paid_exit_stream_payment_updates_with_signer<S: CashuSpilmanPaymentSign
     result
 }
 
-pub(crate) async fn paid_exit_stream_due_payments_for_daemon(
+pub(crate) fn paid_exit_stream_due_payments_for_daemon(
     app: &AppConfig,
     config_path: &Path,
     min_increment_msat: u64,
@@ -143,12 +117,11 @@ pub(crate) async fn paid_exit_stream_due_payments_for_daemon(
         return Ok(PaidExitDaemonStreamPaymentsResult::default());
     }
 
-    let keys = app.nostr_keys()?;
-    let buyer_npub = keys
+    let buyer_npub = app
+        .nostr_keys()?
         .public_key()
         .to_bech32()
         .context("failed to encode buyer npub")?;
-    let relays = paid_exit_relay_urls(app, &[]);
     let store_path = paid_route_store_file_path(config_path);
     let mut store = load_paid_route_store(&store_path)?;
     let now_unix = unix_timestamp();
@@ -168,28 +141,20 @@ pub(crate) async fn paid_exit_stream_due_payments_for_daemon(
             ..Default::default()
         });
     }
-    if relays.is_empty() {
-        return Err(anyhow!(
-            "no Nostr relays configured for paid exit payment publishing"
-        ));
-    }
-
     let signer = FileSpilmanPaymentSigner::load(&paid_exit_wallet_data_dir(config_path))
         .map_err(|error| anyhow!("{error}"))?;
     let result = paid_exit_stream_payment_updates_with_signer(
         PaidExitStreamPaymentUpdatesRequest {
             app,
-            keys: &keys,
+            config_path,
             store: &mut store,
             signer: &signer,
             buyer_npub: &buyer_npub,
             due,
-            relays: &relays,
-            publish: true,
+            queue: true,
             now_unix,
         },
-    )
-    .await;
+    );
     if result.changed {
         write_paid_route_store(&store_path, &store)?;
     }
@@ -207,22 +172,11 @@ pub(crate) async fn paid_exit_stream_due_payments_for_daemon(
 async fn paid_exit_stream_payments_command(args: PaidExitStreamPaymentsArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
     let app = load_or_default_config(&config_path)?;
-    let keys = app.nostr_keys()?;
-    let buyer_npub = keys
+    let buyer_npub = app
+        .nostr_keys()?
         .public_key()
         .to_bech32()
         .context("failed to encode buyer npub")?;
-    let relays = if args.publish {
-        paid_exit_relay_urls(&app, &args.relays)
-    } else {
-        Vec::new()
-    };
-    if args.publish && relays.is_empty() {
-        return Err(anyhow!(
-            "no Nostr relays configured for paid exit payment publishing"
-        ));
-    }
-
     let store_path = paid_route_store_file_path(&config_path);
     let mut store = load_paid_route_store(&store_path)?;
     let now_unix = unix_timestamp();
@@ -244,17 +198,15 @@ async fn paid_exit_stream_payments_command(args: PaidExitStreamPaymentsArgs) -> 
         paid_exit_stream_payment_updates_with_signer(
             PaidExitStreamPaymentUpdatesRequest {
                 app: &app,
-                keys: &keys,
+                config_path: &config_path,
                 store: &mut store,
                 signer: &signer,
                 buyer_npub: &buyer_npub,
                 due,
-                relays: &relays,
-                publish: args.publish,
+                queue: !args.dry_run,
                 now_unix,
             },
         )
-        .await
     };
     let changed = result.changed;
 
@@ -271,8 +223,8 @@ async fn paid_exit_stream_payments_command(args: PaidExitStreamPaymentsArgs) -> 
                     "source": "spilman-client-store",
                     "data_dir": paid_exit_wallet_data_dir(&config_path).display().to_string(),
                 },
-                "publish_requested": args.publish,
-                "relays": relays,
+                "dry_run": args.dry_run,
+                "outbox": paid_exit_payment_outbox_directory(&config_path),
                 "total_due_count": total_due_count,
                 "processed_due_count": selected_due_count,
                 "signed_count": result.signed.len(),
@@ -291,9 +243,14 @@ async fn paid_exit_stream_payments_command(args: PaidExitStreamPaymentsArgs) -> 
             total_due_count,
             changed
         );
-        if args.publish {
-            println!("relays: {}", relays.join(", "));
-        }
+        println!(
+            "delivery: {}",
+            if args.dry_run {
+                "dry-run"
+            } else {
+                "queued for direct FIPS delivery"
+            }
+        );
         for entry in &result.signed {
             let payment = &entry["payment"];
             let paid_msat = payment["paid_msat"].as_u64().unwrap_or_default();
@@ -316,9 +273,10 @@ async fn paid_exit_stream_payments_command(args: PaidExitStreamPaymentsArgs) -> 
                 serde_json::to_string(&payment["envelope"])
                     .context("failed to encode paid route payment envelope")?
             );
-            if let Some(event_id) = entry["publish"]["event_id"].as_str() {
-                println!("published_event: {event_id}");
-            }
+            println!(
+                "queued: {}",
+                entry["queued"].as_bool().unwrap_or_default()
+            );
         }
         for entry in &result.errors {
             println!(

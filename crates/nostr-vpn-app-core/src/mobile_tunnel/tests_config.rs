@@ -73,6 +73,43 @@
     }
 
     #[test]
+    fn mobile_config_keeps_default_route_during_protected_exit_selection() {
+        for internet_source in [
+            "private_vpn",
+            "paid_automatic",
+            "paid_manual",
+        ] {
+            let mut route_targets = Vec::new();
+
+            preserve_mobile_pending_exit_default_routes(
+                &mut route_targets,
+                "",
+                true,
+                Some(internet_source),
+            );
+
+            assert!(
+                route_targets.iter().any(|route| route == "0.0.0.0/0"),
+                "{internet_source:?} must capture traffic while exit selection is pending"
+            );
+        }
+    }
+
+    #[test]
+    fn mobile_config_does_not_capture_pending_exit_without_leak_protection() {
+        let mut route_targets = Vec::new();
+
+        preserve_mobile_pending_exit_default_routes(
+            &mut route_targets,
+            "",
+            false,
+            Some("paid_automatic"),
+        );
+
+        assert!(!route_targets.iter().any(|route| route == "0.0.0.0/0"));
+    }
+
+    #[test]
     fn mobile_peer_ping_due_recovers_from_future_timestamps() {
         assert!(!mobile_peer_ping_due(Some(122), Some(115), 120));
         assert!(!mobile_peer_ping_due(Some(180), Some(1), 120));

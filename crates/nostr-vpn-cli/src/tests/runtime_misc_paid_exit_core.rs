@@ -534,6 +534,7 @@ fn paid_exit_run_once_enables_seller_and_stores_offer() {
         load_paid_route_store(&paid_route_store_file_path(&config_path)).expect("load store");
 
     assert!(app.paid_exit.enabled);
+    assert_eq!(app.nostr.relays, vec!["wss://relay.example"]);
     assert_eq!(app.paid_exit.pricing.price_msat, 250);
     assert_eq!(app.paid_exit.pricing.per_units, 1_000_000);
     assert_eq!(app.paid_exit.pricing.connection_minimum_msat_per_day, 86_400);

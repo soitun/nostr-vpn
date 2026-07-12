@@ -116,86 +116,6 @@ pub fn paid_route_offer_filter(limit: usize, since_unix: Option<u64>) -> Filter 
     filter
 }
 
-pub fn paid_route_payment_filter(
-    recipient: PublicKey,
-    limit: usize,
-    since_unix: Option<u64>,
-) -> Filter {
-    let mut filter = Filter::new().kind(Kind::GiftWrap).pubkey(recipient);
-    if limit > 0 {
-        filter = filter.limit(limit);
-    }
-    if let Some(since_unix) = since_unix {
-        filter = filter.since(Timestamp::from(since_unix));
-    }
-    filter
-}
-
-#[cfg(feature = "paid-exit")]
-pub async fn gift_wrap_paid_route_payment(
-    envelope: &StreamingRoutePaymentEnvelope,
-    keys: &Keys,
-) -> Result<Event> {
-    let buyer_npub = normalize_npub(&envelope.buyer, "buyer")?;
-    let local_npub = public_key_npub(&keys.public_key())?;
-    if buyer_npub != local_npub {
-        return Err(anyhow!(
-            "paid route payment buyer does not match local signer"
-        ));
-    }
-
-    let seller = PublicKey::parse(&envelope.seller)
-        .map_err(|error| anyhow!("invalid paid route payment seller npub: {error}"))?;
-    let content =
-        serde_json::to_string(envelope).context("failed to encode paid route payment envelope")?;
-    EventBuilder::private_msg(
-        keys,
-        seller,
-        content,
-        paid_route_payment_rumor_tags(envelope)?,
-    )
-    .await
-    .map_err(|error| anyhow!("failed to gift-wrap paid route payment: {error}"))
-}
-
-#[cfg(feature = "paid-exit")]
-pub async fn unwrap_paid_route_payment(
-    event: &Event,
-    keys: &Keys,
-) -> Result<StreamingRoutePaymentEnvelope> {
-    if event.kind != Kind::GiftWrap {
-        return Err(anyhow!("paid route payment event is not a gift wrap"));
-    }
-
-    let unwrapped = nostr_sdk::prelude::nip59::extract_rumor(keys, event)
-        .await
-        .map_err(|error| anyhow!("failed to unwrap paid route payment: {error}"))?;
-    if unwrapped.rumor.kind != Kind::PrivateDirectMessage {
-        return Err(anyhow!("paid route payment rumor is not a private message"));
-    }
-    validate_paid_route_payment_rumor_tags(unwrapped.rumor.tags.as_slice())?;
-
-    let envelope: StreamingRoutePaymentEnvelope = serde_json::from_str(&unwrapped.rumor.content)
-        .context("failed to decode paid route payment envelope")?;
-    let sender_npub = public_key_npub(&unwrapped.sender)?;
-    let buyer_npub = normalize_npub(&envelope.buyer, "buyer")?;
-    if sender_npub != buyer_npub {
-        return Err(anyhow!(
-            "paid route payment buyer does not match gift-wrap sender"
-        ));
-    }
-
-    let local_npub = public_key_npub(&keys.public_key())?;
-    let seller_npub = normalize_npub(&envelope.seller, "seller")?;
-    if seller_npub != local_npub {
-        return Err(anyhow!(
-            "paid route payment seller does not match local recipient"
-        ));
-    }
-
-    Ok(envelope)
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SignedPaidRouteOffer {
     pub event: Event,
@@ -432,50 +352,6 @@ pub(super) fn paid_route_tag(parts: &[&str]) -> Result<Tag> {
 
 fn paid_route_owned_tag(parts: Vec<String>) -> Result<Tag> {
     Tag::parse(parts).map_err(|error| anyhow!("failed to build paid route tag: {error}"))
-}
-
-#[cfg(feature = "paid-exit")]
-fn paid_route_payment_rumor_tags(envelope: &StreamingRoutePaymentEnvelope) -> Result<Vec<Tag>> {
-    Ok(vec![
-        paid_route_tag(&["app", PAID_ROUTE_PAYMENT_APP])?,
-        paid_route_tag(&["v", PAID_ROUTE_PAYMENT_VERSION])?,
-        paid_route_tag(&["service", envelope.service_id.as_str()])?,
-        paid_route_tag(&["lease", envelope.lease_id.as_str()])?,
-        paid_route_tag(&["channel", envelope.channel_id()])?,
-    ])
-}
-
-#[cfg(feature = "paid-exit")]
-fn validate_paid_route_payment_rumor_tags(tags: &[Tag]) -> Result<()> {
-    let mut app_ok = false;
-    let mut version_ok = false;
-    for tag in tags {
-        let parts = tag.as_slice();
-        let Some(kind) = parts.first().map(String::as_str) else {
-            continue;
-        };
-        match kind {
-            "app" => {
-                app_ok |= parts
-                    .get(1)
-                    .is_some_and(|value| value == PAID_ROUTE_PAYMENT_APP)
-            }
-            "v" => {
-                version_ok |= parts
-                    .get(1)
-                    .is_some_and(|value| value == PAID_ROUTE_PAYMENT_VERSION)
-            }
-            _ => {}
-        }
-    }
-
-    if !app_ok {
-        return Err(anyhow!("paid route payment rumor is missing app tag"));
-    }
-    if !version_ok {
-        return Err(anyhow!("paid route payment rumor is missing version tag"));
-    }
-    Ok(())
 }
 
 fn validate_paid_route_offer(offer: &PaidRouteOffer) -> Result<()> {

@@ -86,6 +86,9 @@ fn apply_paid_exit_run_settings(app: &mut AppConfig, args: &PaidExitRunArgs) -> 
     app.connect_to_non_roster_fips_peers = true;
     app.fips_nostr_discovery_enabled = true;
     app.fips_advertise_public_endpoint = true;
+    if !args.relays.is_empty() {
+        app.nostr.relays = normalize_relay_urls(args.relays.clone());
+    }
     if let Some(value) = args.upstream.as_deref() {
         app.paid_exit.access.upstream = value
             .parse::<PaidExitUpstream>()

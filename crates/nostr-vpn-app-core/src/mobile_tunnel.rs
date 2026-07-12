@@ -64,5 +64,6 @@ include!("mobile_tunnel/magic_dns.rs");
 mod tests {
     include!("mobile_tunnel/tests_core.rs");
     include!("mobile_tunnel/tests_runtime.rs");
+    include!("mobile_tunnel/tests_paid_route.rs");
     include!("mobile_tunnel/tests_config.rs");
 }

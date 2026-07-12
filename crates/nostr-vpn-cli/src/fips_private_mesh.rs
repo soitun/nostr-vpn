@@ -1,5 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
+#[cfg(feature = "paid-exit")]
+use cashu_service::StreamingRoutePaymentEnvelope;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use fips_endpoint::EthernetConfig;

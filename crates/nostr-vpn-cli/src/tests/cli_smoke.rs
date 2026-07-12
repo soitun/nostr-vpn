@@ -239,19 +239,6 @@ fn clap_includes_paid_exit_command_when_enabled() {
 
 #[cfg(feature = "paid-exit")]
 #[test]
-fn clap_paid_exit_receive_payments_defaults_to_no_since_filter() {
-    let cli = Cli::parse_from(["nvpn", "paid-exit", "receive-payments"]);
-    let Command::PaidExit(args) = cli.command else {
-        panic!("expected paid-exit command");
-    };
-    let PaidExitCommand::ReceivePayments(args) = args.command else {
-        panic!("expected receive-payments command");
-    };
-    assert_eq!(args.since_secs, 0);
-}
-
-#[cfg(feature = "paid-exit")]
-#[test]
 fn clap_paid_exit_buy_supports_best_rated_selector() {
     let cli = Cli::parse_from(["nvpn", "paid-exit", "buy", "--best-rated"]);
     let Command::PaidExit(args) = cli.command else {

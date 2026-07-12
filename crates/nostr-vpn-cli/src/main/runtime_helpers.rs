@@ -209,7 +209,9 @@ fn fips_private_runtime_active(app: &AppConfig, vpn_enabled: bool, expected_peer
 pub(crate) fn paid_exit_fips_runtime_active(app: &AppConfig) -> bool {
     #[cfg(feature = "paid-exit")]
     {
-        app.paid_exit.enabled || app.public_paid_exit_node_pubkey_hex().is_some()
+        app.paid_exit.enabled
+            || app.internet_source == nostr_vpn_core::config::InternetSource::PaidAutomatic
+            || app.public_paid_exit_node_pubkey_hex().is_some()
     }
     #[cfg(not(feature = "paid-exit"))]
     {
@@ -375,6 +377,10 @@ fn endpoint_hint_refresh_participant(
 struct DrainedFipsMeshEvents {
     roster_changed: bool,
     endpoint_hint_participants: Vec<String>,
+    #[cfg(feature = "paid-exit")]
+    paid_route_payments: Vec<(String, String, StreamingRoutePaymentEnvelope)>,
+    #[cfg(feature = "paid-exit")]
+    paid_route_payment_acks: Vec<(String, String)>,
 }
 fn drain_fips_mesh_events(
     runtime: &mut crate::fips_private_mesh::FipsPrivateTunnelRuntime,
@@ -449,6 +455,21 @@ fn drain_fips_mesh_events(
                     drained.endpoint_hint_participants.push(participant);
                 }
             }
+            #[cfg(feature = "paid-exit")]
+            crate::fips_private_mesh::FipsPrivateMeshEvent::PaidRoutePayment {
+                sender_pubkey,
+                id,
+                envelope,
+            } => drained
+                .paid_route_payments
+                .push((sender_pubkey, id, envelope)),
+            #[cfg(feature = "paid-exit")]
+            crate::fips_private_mesh::FipsPrivateMeshEvent::PaidRoutePaymentAck {
+                sender_pubkey,
+                id,
+            } => drained
+                .paid_route_payment_acks
+                .push((sender_pubkey, id)),
         }
     }
     drained.endpoint_hint_participants.sort();

@@ -581,60 +581,6 @@ fn paid_route_offer_filter_targets_offer_kind() {
     assert_eq!(json["since"], 100);
 }
 
-#[test]
-fn paid_route_payment_filter_targets_recipient_gift_wraps() {
-    let seller = Keys::generate();
-    let filter = paid_route_payment_filter(seller.public_key(), 25, Some(100));
-    let json = serde_json::to_value(&filter).expect("filter json");
-
-    assert_eq!(
-        json["kinds"],
-        serde_json::json!([u16::from(Kind::GiftWrap)])
-    );
-    assert_eq!(
-        json["#p"],
-        serde_json::json!([seller.public_key().to_hex()])
-    );
-    assert_eq!(json["limit"], 25);
-    assert_eq!(json["since"], 100);
-}
-
-#[cfg(feature = "paid-exit")]
-#[tokio::test]
-async fn paid_route_payment_gift_wrap_roundtrips_envelope() {
-    let buyer = Keys::generate();
-    let seller = Keys::generate();
-    let envelope = sample_paid_route_payment_envelope(&buyer, &seller);
-
-    let event = gift_wrap_paid_route_payment(&envelope, &buyer)
-        .await
-        .expect("gift-wrap payment");
-
-    assert_eq!(event.kind, Kind::GiftWrap);
-    assert!(!event.content.contains("lease-1"));
-    assert!(!event.content.contains("channel-1"));
-
-    let unwrapped = unwrap_paid_route_payment(&event, &seller)
-        .await
-        .expect("unwrap payment");
-
-    assert_eq!(unwrapped, envelope);
-}
-
-#[cfg(feature = "paid-exit")]
-#[tokio::test]
-async fn paid_route_payment_gift_wrap_rejects_wrong_sender() {
-    let buyer = Keys::generate();
-    let seller = Keys::generate();
-    let envelope = sample_paid_route_payment_envelope(&buyer, &seller);
-
-    let error = gift_wrap_paid_route_payment(&envelope, &seller)
-        .await
-        .expect_err("seller cannot send buyer payment envelope");
-
-    assert!(error.to_string().contains("buyer"));
-}
-
 fn sample_paid_exit_offer(seller: &Keys) -> PaidRouteOffer {
     let config = sample_paid_exit_config();
     PaidRouteOffer::from_paid_exit_config(
@@ -685,34 +631,6 @@ fn sample_paid_exit_config() -> PaidExitConfig {
         },
         rating_discovery: PaidExitRatingDiscoveryConfig::default(),
     }
-}
-
-#[cfg(feature = "paid-exit")]
-fn sample_paid_route_payment_envelope(
-    buyer: &Keys,
-    seller: &Keys,
-) -> StreamingRoutePaymentEnvelope {
-    StreamingRoutePaymentEnvelope::new(
-        "internet-exit",
-        "lease-1",
-        buyer.public_key().to_bech32().expect("buyer npub"),
-        seller.public_key().to_bech32().expect("seller npub"),
-        123,
-        cashu_service::StreamingRoutePaymentPayload::BalanceUpdate(
-            cashu_service::StreamingRouteBalanceUpdate {
-                delivered_units: 2048,
-                amount_due_msat: 500,
-                paid_msat: 1000,
-                payment: CashuSpilmanPayment {
-                    channel_id: "channel-1".to_string(),
-                    balance: 1,
-                    signature: "sig".to_string(),
-                    params: None,
-                    funding_proofs: None,
-                },
-            },
-        ),
-    )
 }
 
 fn usage_bytes(bytes: u64) -> PaidRouteUsage {

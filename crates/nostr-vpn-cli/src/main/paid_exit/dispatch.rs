@@ -17,7 +17,6 @@ async fn run_paid_exit_command(args: PaidExitArgs) -> Result<()> {
         PaidExitCommand::Settle(args) => paid_exit_settle_command(args).await,
         PaidExitCommand::ApplyPayment(args) => paid_exit_apply_payment_command(args).await,
         PaidExitCommand::SendPayment(args) => paid_exit_send_payment_command(args).await,
-        PaidExitCommand::ReceivePayments(args) => paid_exit_receive_payments_command(args).await,
         PaidExitCommand::Collect(args) => paid_exit_collect_command(args).await,
         PaidExitCommand::CollectDue(args) => paid_exit_collect_due_command(args).await,
         PaidExitCommand::Wallet(args) => paid_exit_wallet_command(args).await,

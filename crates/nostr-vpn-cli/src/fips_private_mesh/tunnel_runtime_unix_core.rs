@@ -710,6 +710,27 @@ impl FipsPrivateTunnelRuntime {
             .await
     }
 
+    #[cfg(feature = "paid-exit")]
+    pub(crate) async fn send_paid_route_payment(
+        &self,
+        seller: &str,
+        id: String,
+        envelope: StreamingRoutePaymentEnvelope,
+    ) -> Result<()> {
+        self.mesh
+            .send_paid_route_payment(seller, id, envelope)
+            .await
+    }
+
+    #[cfg(feature = "paid-exit")]
+    pub(crate) async fn send_paid_route_payment_ack(
+        &self,
+        buyer: &str,
+        id: String,
+    ) -> Result<()> {
+        self.mesh.send_paid_route_payment_ack(buyer, id).await
+    }
+
     pub(crate) fn peer_advertised_routes(&self, participant: &str) -> Vec<String> {
         self.mesh.peer_advertised_routes(participant)
     }

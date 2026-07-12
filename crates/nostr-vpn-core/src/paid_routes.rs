@@ -4,8 +4,7 @@ use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "paid-exit")]
 use cashu_service::{
     CashuSpilmanPayment, StreamingRouteAccessState, StreamingRouteCashuTokenLease,
-    StreamingRouteDecision, StreamingRouteMeter, StreamingRoutePaymentEnvelope,
-    StreamingRoutePolicy,
+    StreamingRouteDecision, StreamingRouteMeter, StreamingRoutePolicy,
 };
 use nostr_sdk::prelude::{
     Event, EventBuilder, Filter, Keys, Kind, PublicKey, Tag, Timestamp, ToBech32,
@@ -21,8 +20,6 @@ use serde::{Deserialize, Serialize};
 pub const PAID_ROUTE_OFFER_KIND: u16 = 37_196;
 pub const PAID_ROUTE_OFFER_VERSION: &str = "1";
 pub const PAID_ROUTE_OFFER_APP: &str = "fips/paid-route-offer";
-pub const PAID_ROUTE_PAYMENT_VERSION: &str = "1";
-pub const PAID_ROUTE_PAYMENT_APP: &str = "fips/paid-route-payment";
 pub const DEFAULT_FIPS_PEER_RATING_SCOPE: &str = "fips.peer";
 
 const DEFAULT_PRICE_DENOMINATOR_UNITS: u64 = 1_000_000;

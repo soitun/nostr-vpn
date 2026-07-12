@@ -194,6 +194,37 @@ impl FipsPrivateMeshRuntime {
                         },
                     ));
                 }
+                #[cfg(feature = "paid-exit")]
+                FipsControlFrame::PaidRoutePayment { id, envelope } => {
+                    let encoded = serde_json::to_vec(&envelope)
+                        .context("failed to encode received paid route payment")?;
+                    if id != hex::encode(Sha256::digest(encoded)) {
+                        return Err(anyhow!("paid route payment id does not match envelope"));
+                    }
+                    let buyer_pubkey = normalize_nostr_pubkey(&envelope.buyer)
+                        .context("invalid paid route payment buyer")?;
+                    if buyer_pubkey != source_pubkey {
+                        return Err(anyhow!(
+                            "paid route payment buyer does not match authenticated FIPS source"
+                        ));
+                    }
+                    return Ok(FipsEndpointMessageOutcome::event(
+                        FipsPrivateMeshEvent::PaidRoutePayment {
+                            sender_pubkey: source_pubkey,
+                            id,
+                            envelope,
+                        },
+                    ));
+                }
+                #[cfg(feature = "paid-exit")]
+                FipsControlFrame::PaidRoutePaymentAck { id } => {
+                    return Ok(FipsEndpointMessageOutcome::event(
+                        FipsPrivateMeshEvent::PaidRoutePaymentAck {
+                            sender_pubkey: source_pubkey,
+                            id,
+                        },
+                    ));
+                }
                 FipsControlFrame::Fragment { .. } => {
                     return Ok(FipsEndpointMessageOutcome::none());
                 }

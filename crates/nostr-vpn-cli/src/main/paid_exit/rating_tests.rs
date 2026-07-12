@@ -547,26 +547,6 @@ mod paid_exit_rating_tests {
     }
 
     #[test]
-    fn payment_retention_policy_targets_gift_wrap_recipient() {
-        let seller = Keys::generate();
-        let sender = Keys::generate();
-        let seller_hex = seller.public_key().to_hex();
-        let event = EventBuilder::new(Kind::GiftWrap, "")
-            .tags([sample_rating_fact_tag(["p", seller_hex.as_str()])])
-            .custom_created_at(Timestamp::from(200))
-            .sign_with_keys(&sender)
-            .unwrap();
-        let verified = nostr_pubsub::VerifiedEvent::try_from(event).unwrap();
-
-        let accepted = paid_exit_payment_retention_policy(seller.public_key(), 0, Some(100));
-        let rejected = paid_exit_payment_retention_policy(Keys::generate().public_key(), 0, Some(100));
-
-        assert_eq!(accepted.max_events, PAID_EXIT_PAYMENT_EVENT_CACHE_LIMIT);
-        assert!(accepted.accepts(&verified));
-        assert!(!rejected.accepts(&verified));
-    }
-
-    #[test]
     fn rating_fact_scope_filter_matches_scope_tag() {
         let event = sample_rating_fact_event("npub1crawler", "npub1peer", "fips.peer", 85, 20);
 

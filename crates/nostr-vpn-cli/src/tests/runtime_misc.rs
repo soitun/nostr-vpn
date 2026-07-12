@@ -63,6 +63,26 @@ fn paid_exit_seller_keeps_private_fips_runtime_active_without_roster() {
 
 #[cfg(feature = "paid-exit")]
 #[test]
+fn paid_automatic_keeps_fips_runtime_active_before_selecting_seller() {
+    use nostr_vpn_core::config::InternetSource;
+
+    let mut app = AppConfig::generated();
+    app.fips_host_tunnel_enabled = false;
+    for network in &mut app.networks {
+        network.listen_for_join_requests = false;
+    }
+
+    app.set_internet_source(InternetSource::PaidAutomatic);
+    assert!(app.public_paid_exit_node_pubkey_hex().is_none());
+    assert!(paid_exit_fips_runtime_active(&app));
+    assert!(fips_private_runtime_active(&app, false, 0));
+
+    app.set_internet_source(InternetSource::Direct);
+    assert!(!paid_exit_fips_runtime_active(&app));
+}
+
+#[cfg(feature = "paid-exit")]
+#[test]
 fn paid_exit_run_settings_prepare_public_fips_discovery() {
     let mut app = AppConfig::generated();
     app.connect_to_non_roster_fips_peers = false;

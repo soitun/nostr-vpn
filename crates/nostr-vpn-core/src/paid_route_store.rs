@@ -207,6 +207,13 @@ pub struct OpenPaidRouteBuyerSessionResult {
     pub changed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaidRouteAutomaticOfferSelection {
+    pub offer_key: String,
+    pub mint_url: String,
+    pub channel_capacity_sat: u64,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BuildPaidRouteBuyerPaymentEnvelopeKind {
@@ -492,6 +499,7 @@ pub struct PaidRouteSellerCollectionState {
     pub updated_at_unix: u64,
 }
 
+mod automatic_selection;
 mod buyer_payment;
 mod buyer_session;
 mod persistence;
@@ -499,10 +507,16 @@ mod seller_payment;
 mod seller_state;
 mod wallet_offers;
 
+pub use automatic_selection::{
+    PAID_ROUTE_AUTO_MAX_CHANNEL_CAPACITY_SAT, PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GIB,
+    PAID_ROUTE_AUTO_MIN_FREE_PROBE_BYTES, PAID_ROUTE_AUTO_OFFER_MAX_AGE_SECS,
+};
 use persistence::{default_version, is_zero};
 pub use persistence::{
-    load_paid_route_store, paid_route_offer_store_key, paid_route_store_file_path,
-    upsert_paid_route_offer, write_paid_route_store,
+    acknowledge_paid_route_payment_outbox, apply_paid_route_seller_payment_file,
+    load_paid_route_store, paid_route_offer_store_key, paid_route_payment_id,
+    paid_route_payment_outbox_directory, paid_route_store_file_path, upsert_paid_route_offer,
+    write_paid_route_store,
 };
 
 #[cfg(test)]
