@@ -28,8 +28,8 @@ boringtun = "0.7"
 cashu-service = { version = "0.2.57", default-features = false }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = { version = "0.3.58", path = "../fips/crates/fips-endpoint" }
-fips-core = { version = "0.3.91", path = "../fips/crates/fips-core", features = ["webrtc-transport"] }
+fips-endpoint = "0.3.58"
+fips-core = { version = "0.3.91", features = ["webrtc-transport"] }
 futures = "0.3"
 hashtree-updater = "0.2.78"
 hex = "0.4"
@@ -61,9 +61,6 @@ nostr-social-memory = "0.1.1"
 nostr-identity = "0.3.0"
 nostr-vpn-core = { version = "4.0.40", path = "crates/nostr-vpn-core", default-features = false }
 nostr-vpn-wintun = { version = "4.0.40", path = "crates/nostr-vpn-wintun" }
-
-[patch.crates-io]
-fips-core = { path = "../fips/crates/fips-core" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

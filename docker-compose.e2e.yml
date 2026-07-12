@@ -10,9 +10,9 @@ services:
         NVPN_E2E_RUNTIME_APT_INSTALL: ${NVPN_E2E_RUNTIME_APT_INSTALL:-1}
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
-        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
-        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-../cashu-service}
-        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}
+        fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-./docker/empty-cashu-service-context}
+        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
     entrypoint: ["sleep", "infinity"]
     environment:
       FIPS_PEER_ACTOR: "${FIPS_PEER_ACTOR:-0}"
@@ -35,9 +35,9 @@ services:
         NVPN_E2E_RUNTIME_APT_INSTALL: ${NVPN_E2E_RUNTIME_APT_INSTALL:-1}
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
-        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
-        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-../cashu-service}
-        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}
+        fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-./docker/empty-cashu-service-context}
+        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
     entrypoint: ["sleep", "infinity"]
     environment:
       FIPS_PEER_ACTOR: "${FIPS_PEER_ACTOR:-0}"
@@ -60,9 +60,9 @@ services:
         NVPN_E2E_RUNTIME_APT_INSTALL: ${NVPN_E2E_RUNTIME_APT_INSTALL:-1}
         NVPN_PATCH_LOCAL_FIPS: ${NVPN_PATCH_LOCAL_FIPS:-0}
       additional_contexts:
-        fips: ${NVPN_FIPS_REPO_PATH:-../fips}
-        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-../cashu-service}
-        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}
+        fips: ${NVPN_FIPS_REPO_PATH:-./docker/empty-fips-context}
+        cashu-service: ${NVPN_CASHU_SERVICE_REPO_PATH:-./docker/empty-cashu-service-context}
+        cashu-spilman-channels: ${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-./docker/empty-cashu-spilman-context}
     entrypoint: ["sleep", "infinity"]
     environment:
       FIPS_PEER_ACTOR: "${FIPS_PEER_ACTOR:-0}"

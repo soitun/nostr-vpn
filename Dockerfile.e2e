@@ -20,8 +20,8 @@ COPY --from=fips . /app/fips
 
 ARG NVPN_PATCH_LOCAL_FIPS=0
 
-# Cargo already resolves the workspace's sibling FIPS paths through /app/fips.
-# The flag validates an explicitly selected local context and records provenance.
+# Published FIPS crates are the default. The named context points at this repo
+# unless an explicit local FIPS checkout is selected for cross-repo testing.
 RUN case "$NVPN_PATCH_LOCAL_FIPS" in \
         1|true|TRUE|True|yes|YES|Yes|on|ON|On) \
           test -f /app/fips/crates/fips-core/Cargo.toml \
