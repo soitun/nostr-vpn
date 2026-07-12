@@ -61,6 +61,7 @@ public sealed class SettingsPatch
     public ushort? ListenPort { get; set; }
     public List<string>? Relays { get; set; }
     public List<string>? DisabledRelays { get; set; }
+    public string? InternetSource { get; set; }
     public string? ExitNode { get; set; }
     public bool? ExitNodeLeakProtection { get; set; }
     public bool? AdvertiseExitNode { get; set; }
@@ -77,6 +78,8 @@ public sealed class SettingsPatch
     public ushort? WireguardExitMtu { get; set; }
     public ushort? WireguardExitPersistentKeepaliveSecs { get; set; }
     public string? WireguardExitConfig { get; set; }
+    public bool? WalletFiatEnabled { get; set; }
+    public string? WalletFiatCurrency { get; set; }
     public bool? PaidExitEnabled { get; set; }
     public string? PaidExitUpstream { get; set; }
     public string? PaidExitMeter { get; set; }

@@ -22,6 +22,7 @@ impl AppConfig {
         self.fips_host_inbound_tcp_ports.sort_unstable();
         self.fips_host_inbound_tcp_ports.dedup();
         normalize_wireguard_exit_config(&mut self.wireguard_exit);
+        self.normalize_internet_source();
         self.paid_exit.normalize();
         self.nostr.relays = normalize_relay_urls(std::mem::take(&mut self.nostr.relays));
         self.nostr.disabled_relays =
@@ -146,7 +147,48 @@ impl AppConfig {
         self.normalize_peer_aliases();
     }
 
-    fn apply_load_migrations(&mut self) {}
+    fn apply_load_migrations(&mut self) {
+        if self.internet_source == InternetSource::Direct {
+            self.internet_source = if self.wireguard_exit.enabled {
+                InternetSource::WireGuard
+            } else if self.exit_node_public_paid_exit && !self.exit_node.trim().is_empty() {
+                InternetSource::PaidManual
+            } else if !self.exit_node.trim().is_empty() {
+                InternetSource::PrivateVpn
+            } else {
+                InternetSource::Direct
+            };
+        }
+    }
+
+    fn normalize_internet_source(&mut self) {
+        if self.internet_source == InternetSource::Direct {
+            self.apply_load_migrations();
+        }
+
+        match self.internet_source {
+            InternetSource::Direct => {
+                self.exit_node.clear();
+                self.exit_node_public_paid_exit = false;
+                self.wireguard_exit.enabled = false;
+            }
+            InternetSource::PrivateVpn => {
+                self.exit_node_public_paid_exit = false;
+                self.wireguard_exit.enabled = false;
+            }
+            InternetSource::PaidAutomatic | InternetSource::PaidManual => {
+                self.exit_node_public_paid_exit = !self.exit_node.trim().is_empty();
+                self.wireguard_exit.enabled = false;
+                self.connect_to_non_roster_fips_peers = true;
+                self.fips_nostr_discovery_enabled = true;
+            }
+            InternetSource::WireGuard => {
+                self.exit_node.clear();
+                self.exit_node_public_paid_exit = false;
+                self.wireguard_exit.enabled = true;
+            }
+        }
+    }
 
     fn canonicalize_user_facing_pubkeys(&mut self) {
         self.nostr.public_key = canonical_npub_key(&self.nostr.public_key).unwrap_or_default();
@@ -346,4 +388,8 @@ impl AppConfig {
         id
     }
 
+}
+
+fn default_wallet_fiat_enabled() -> bool {
+    true
 }

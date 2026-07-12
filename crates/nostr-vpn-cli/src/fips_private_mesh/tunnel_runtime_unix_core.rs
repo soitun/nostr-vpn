@@ -280,6 +280,13 @@ impl FipsPrivateTunnelRuntime {
     async fn apply_macos_network_state(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
         let mut route_targets = config.route_targets.clone();
         let requested_ipv4_exit = route_targets.iter().any(|route| route == "0.0.0.0/0");
+        let pending_exit_without_peer = requested_ipv4_exit
+            && !config.wireguard_exit.enabled
+            && !config.peers.iter().any(|peer| {
+                peer.allowed_ips
+                    .iter()
+                    .any(|route| crate::is_exit_node_route(route))
+            });
         let original_route_targets_require_bypass =
             crate::route_targets_require_endpoint_bypass(&route_targets);
 
@@ -289,12 +296,15 @@ impl FipsPrivateTunnelRuntime {
             .reconcile_macos_endpoint_bypass_for_config(config)
             .await?;
 
-        if requested_ipv4_exit && !has_peer_endpoint_hosts {
+        if requested_ipv4_exit && !has_peer_endpoint_hosts && !pending_exit_without_peer {
             eprintln!(
                 "fips: withholding macOS default route until the selected exit peer underlay endpoint is known"
             );
             route_targets.retain(|route| !crate::is_exit_node_route(route));
-        } else if original_route_targets_require_bypass && underlay.is_none() {
+        } else if original_route_targets_require_bypass
+            && underlay.is_none()
+            && !pending_exit_without_peer
+        {
             eprintln!(
                 "fips: withholding macOS default route because no underlay default route is available"
             );

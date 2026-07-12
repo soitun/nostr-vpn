@@ -7,7 +7,9 @@ use nostr_identity::{
 use nostr_sdk::prelude::{Event, JsonUtil, Keys};
 use serde::{Deserialize, Serialize};
 
-use crate::config::{AppConfig, normalize_nostr_pubkey, normalize_runtime_network_id};
+use crate::config::{
+    AppConfig, InternetSource, normalize_nostr_pubkey, normalize_runtime_network_id,
+};
 use crate::fips_control::SignedRoster;
 use crate::identity_bridge::{
     CreateNostrIdentityDeviceApprovalRequestOptions, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE,
@@ -240,8 +242,11 @@ impl AppConfig {
             ));
         }
         updated.nostr.identity_profile_id = Some(context.profile_id);
-        updated.exit_node = context.exit_node_pubkey.clone().unwrap_or_default();
-        updated.wireguard_exit.enabled = false;
+        if let Some(exit_node) = context.exit_node_pubkey.as_deref() {
+            updated.select_private_exit_node(exit_node)?;
+        } else {
+            updated.set_internet_source(InternetSource::Direct);
+        }
         updated.pending_nostr_join_request = None;
         updated.ensure_defaults();
         updated.set_network_enabled(&network_entry_id, true)?;

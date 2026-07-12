@@ -6,6 +6,7 @@ impl NativeAppRuntime {
             .as_deref()
             .map(parse_wireguard_exit_config)
             .transpose()?;
+        let internet_source_in_patch = patch.internet_source.is_some();
 
         if let Some(value) = patch.node_name {
             self.config.node_name = value.trim().to_string();
@@ -33,13 +34,16 @@ impl NativeAppRuntime {
         if let Some(value) = patch.nostr_pubsub_max_event_bytes {
             self.config.nostr.pubsub.max_event_bytes = value as usize;
         }
-        // Exit-node selection is mutually exclusive: at most one of
-        // (peer exit_node, WireGuard upstream) can be active at a
-        // time. The daemon enforces this so every UI / CLI client
-        // can push a single field and get the right end state —
-        // they don't have to remember to clear the other side. When
-        // both fields are in the same patch, both are applied as
-        // sent (so the patch fully specifies the intent).
+        if let Some(value) = patch.internet_source {
+            let source = value
+                .parse::<InternetSource>()
+                .map_err(|error| anyhow!(error))?;
+            self.config.set_internet_source(source);
+        }
+
+        // Keep the old individual fields as an input compatibility boundary.
+        // New clients send internet_source; legacy private/WireGuard choices
+        // are lowered into that same canonical field here.
         let exit_node_in_patch = patch.exit_node.is_some();
         let wg_enabled_in_patch = patch.wireguard_exit_enabled.is_some();
         if let Some(value) = patch.exit_node {
@@ -48,6 +52,31 @@ impl NativeAppRuntime {
             } else {
                 normalize_nostr_pubkey(&value)?
             };
+            if internet_source_in_patch {
+                match self.config.internet_source {
+                    InternetSource::PrivateVpn => {
+                        self.config.exit_node_public_paid_exit = false;
+                    }
+                    InternetSource::PaidAutomatic | InternetSource::PaidManual => {
+                        self.config.exit_node_public_paid_exit =
+                            !self.config.exit_node.is_empty();
+                    }
+                    InternetSource::Direct | InternetSource::WireGuard
+                        if !self.config.exit_node.is_empty() =>
+                    {
+                        return Err(anyhow!(
+                            "internet source {} cannot select a peer exit",
+                            self.config.internet_source.as_str()
+                        ));
+                    }
+                    InternetSource::Direct | InternetSource::WireGuard => {}
+                }
+            } else if !self.config.exit_node.is_empty() {
+                self.config.internet_source = InternetSource::PrivateVpn;
+                self.config.exit_node_public_paid_exit = false;
+            } else if !wg_enabled_in_patch {
+                self.config.internet_source = InternetSource::Direct;
+            }
         }
         if let Some(value) = patch.exit_node_leak_protection {
             self.config.exit_node_leak_protection = value;
@@ -60,24 +89,23 @@ impl NativeAppRuntime {
         }
         if let Some(value) = patch.wireguard_exit_enabled {
             self.config.wireguard_exit.enabled = value;
-        }
-        // Mutual-exclusion guard. After both fields have landed,
-        // resolve any conflict by preferring the field the patch
-        // *explicitly* set. If both are set explicitly, the patch
-        // already declared the full intent — trust it. If only one
-        // is in the patch, clear the other side when the new value
-        // would otherwise leave both "selected".
-        let peer_set = !self.config.exit_node.is_empty();
-        let wg_on = self.config.wireguard_exit.enabled;
-        if peer_set && wg_on {
-            if exit_node_in_patch && !wg_enabled_in_patch {
-                self.config.wireguard_exit.enabled = false;
-            } else if wg_enabled_in_patch && !exit_node_in_patch {
-                self.config.exit_node = String::new();
+            if internet_source_in_patch
+                && value
+                && self.config.internet_source != InternetSource::WireGuard
+            {
+                return Err(anyhow!(
+                    "WireGuard cannot be enabled for internet source {}",
+                    self.config.internet_source.as_str()
+                ));
             }
-            // both-in-patch: leave as the caller sent — caller will
-            // typically have set them consistently (one true, other
-            // empty), so this branch is dead in practice.
+            if !internet_source_in_patch && value {
+                self.config.internet_source = InternetSource::WireGuard;
+            } else if !internet_source_in_patch
+                && !exit_node_in_patch
+                && self.config.internet_source == InternetSource::WireGuard
+            {
+                self.config.internet_source = InternetSource::Direct;
+            }
         }
         if let Some(value) = patch.wireguard_exit_interface {
             self.config.wireguard_exit.interface = value.trim().to_string();
@@ -113,6 +141,18 @@ impl NativeAppRuntime {
             let enabled = self.config.wireguard_exit.enabled;
             parsed.enabled = enabled;
             self.config.wireguard_exit = parsed;
+        }
+        if let Some(value) = patch.wallet_fiat_enabled {
+            self.config.wallet_fiat_enabled = value;
+        }
+        if let Some(value) = patch.wallet_fiat_currency {
+            let currency = value
+                .parse::<FiatCurrency>()
+                .map_err(|error| anyhow!(error))?;
+            if currency != self.config.wallet_fiat_currency {
+                self.config.wallet_fiat_currency = currency;
+                self.exchange_rate_service = ExchangeRateService::for_currency(currency);
+            }
         }
         if let Some(value) = patch.paid_exit_enabled {
             self.config.paid_exit.enabled = value;
@@ -210,6 +250,7 @@ impl NativeAppRuntime {
         if let Some(value) = patch.close_to_tray_on_close {
             self.config.close_to_tray_on_close = value;
         }
+        self.config.ensure_defaults();
         self.config.nostr.pubsub.normalize();
         Ok(())
     }
@@ -260,6 +301,13 @@ impl NativeAppRuntime {
         values.sort();
         values.dedup();
         values
+    }
+
+    fn sync_exchange_rate_currency(&mut self) {
+        if self.exchange_rate_service.snapshot().currency != self.config.wallet_fiat_currency {
+            self.exchange_rate_service =
+                ExchangeRateService::for_currency(self.config.wallet_fiat_currency);
+        }
     }
 
     fn connect_vpn(&mut self) -> Result<()> {
@@ -642,6 +690,7 @@ impl NativeAppRuntime {
 
         self.config = AppConfig::load(&self.config_path)?;
         self.config.ensure_defaults();
+        self.sync_exchange_rate_currency();
         maybe_autoconfigure_node(&mut self.config);
         Ok(())
     }
@@ -672,6 +721,7 @@ impl NativeAppRuntime {
         }
 
         self.config = config;
+        self.sync_exchange_rate_currency();
         self.startup_error = None;
         self.last_error.clear();
         self.refresh_expected_service_binary_version();

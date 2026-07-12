@@ -1,83 +1,20 @@
 use std::{
     collections::HashMap,
-    fmt,
     sync::{Arc, Mutex, MutexGuard},
     time::{Duration, Instant, SystemTime},
 };
 
 use anyhow::{Result, anyhow, bail};
+use nostr_vpn_core::config::FiatCurrency;
 use serde::Deserialize;
+
+use crate::native_state::NativePaidRouteWalletState;
 
 pub const REFRESH_CADENCE: Duration = Duration::from_mins(1);
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_SOURCE_SPREAD: f64 = 0.05;
 const COINBASE_URL: &str = "https://api.coinbase.com/v2/exchange-rates";
 const KRAKEN_URL: &str = "https://api.kraken.com/0/public/Ticker";
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum FiatCurrency {
-    Usd,
-    Eur,
-    Gbp,
-    Cad,
-    Aud,
-    Jpy,
-    Chf,
-}
-
-impl FiatCurrency {
-    pub const ALL: [Self; 7] = [
-        Self::Usd,
-        Self::Eur,
-        Self::Gbp,
-        Self::Cad,
-        Self::Aud,
-        Self::Jpy,
-        Self::Chf,
-    ];
-
-    #[must_use]
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::Usd => "USD",
-            Self::Eur => "EUR",
-            Self::Gbp => "GBP",
-            Self::Cad => "CAD",
-            Self::Aud => "AUD",
-            Self::Jpy => "JPY",
-            Self::Chf => "CHF",
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnsupportedCurrency(String);
-
-impl UnsupportedCurrency {
-    #[must_use]
-    pub fn code(&self) -> &str {
-        &self.0
-    }
-}
-
-impl fmt::Display for UnsupportedCurrency {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(formatter, "unsupported fiat currency: {}", self.0)
-    }
-}
-
-impl std::error::Error for UnsupportedCurrency {}
-
-impl TryFrom<&str> for FiatCurrency {
-    type Error = UnsupportedCurrency;
-
-    fn try_from(code: &str) -> Result<Self, Self::Error> {
-        Self::ALL
-            .into_iter()
-            .find(|currency| currency.code().eq_ignore_ascii_case(code))
-            .ok_or_else(|| UnsupportedCurrency(code.to_owned()))
-    }
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ExchangeRateSource {
@@ -108,6 +45,15 @@ pub struct ExchangeRateService {
     inner: Arc<Inner>,
 }
 
+impl std::fmt::Debug for ExchangeRateService {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ExchangeRateService")
+            .field("snapshot", &self.snapshot())
+            .finish()
+    }
+}
+
 struct Inner {
     currency: FiatCurrency,
     client: reqwest::Client,
@@ -125,10 +71,6 @@ struct State {
 }
 
 impl ExchangeRateService {
-    pub fn new(currency: &str) -> Result<Self, UnsupportedCurrency> {
-        Ok(Self::for_currency(currency.try_into()?))
-    }
-
     #[must_use]
     pub fn for_currency(currency: FiatCurrency) -> Self {
         Self {
@@ -150,9 +92,6 @@ impl ExchangeRateService {
 
     #[must_use]
     pub fn refresh_if_due(&self) -> bool {
-        let Ok(handle) = tokio::runtime::Handle::try_current() else {
-            return false;
-        };
         let now = Instant::now();
         {
             let mut state = self.inner.state();
@@ -168,16 +107,31 @@ impl ExchangeRateService {
             state.status = ExchangeRateStatus::Refreshing;
         }
         let inner = Arc::clone(&self.inner);
-        handle.spawn(async move { inner.refresh().await });
-        true
+        match std::thread::Builder::new()
+            .name("nvpn-exchange-rate".to_string())
+            .spawn(move || match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => runtime.block_on(inner.refresh()),
+                Err(_) => inner.note_refresh_failed(),
+            })
+        {
+            Ok(_) => true,
+            Err(_) => {
+                self.inner.note_refresh_failed();
+                false
+            }
+        }
     }
 
     #[must_use]
     pub fn snapshot(&self) -> ExchangeRateSnapshot {
         let state = self.inner.state();
-        let snapshot_is_stale = state.refreshed_at.is_none_or(|refreshed_at| {
-            Instant::now().saturating_duration_since(refreshed_at) >= REFRESH_CADENCE
-        });
+        let snapshot_is_stale = state.status == ExchangeRateStatus::Failed
+            || state.refreshed_at.is_none_or(|refreshed_at| {
+                Instant::now().saturating_duration_since(refreshed_at) >= REFRESH_CADENCE
+            });
         ExchangeRateSnapshot {
             currency: self.inner.currency,
             rate: state.rate,
@@ -186,6 +140,48 @@ impl ExchangeRateService {
             timestamp: state.timestamp,
             stale: snapshot_is_stale,
         }
+    }
+}
+
+pub(crate) fn apply_exchange_rate(
+    wallet: &mut NativePaidRouteWalletState,
+    snapshot: &ExchangeRateSnapshot,
+) {
+    wallet.fiat_currency = snapshot.currency.as_str().to_string();
+    wallet.exchange_rate_status = match snapshot.status {
+        ExchangeRateStatus::Unavailable => "Unavailable",
+        ExchangeRateStatus::Refreshing => "Refreshing",
+        ExchangeRateStatus::Ready => "Updated",
+        ExchangeRateStatus::Failed if snapshot.rate.is_some() => "Using last rate",
+        ExchangeRateStatus::Failed => "Unavailable",
+    }
+    .to_string();
+    wallet.exchange_rate_sources = snapshot
+        .sources
+        .iter()
+        .map(|source| match source {
+            ExchangeRateSource::Coinbase => "Coinbase",
+            ExchangeRateSource::Kraken => "Kraken",
+        })
+        .collect::<Vec<_>>()
+        .join(" + ");
+    wallet.exchange_rate_stale = snapshot.stale;
+    wallet.exchange_rate_updated_at_unix = snapshot
+        .timestamp
+        .and_then(|timestamp| timestamp.duration_since(SystemTime::UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_secs());
+
+    let Some(rate) = snapshot.rate.filter(|rate| is_valid_rate(*rate)) else {
+        return;
+    };
+    wallet.exchange_rate_text = format!("1 BTC = {rate:.2} {}", snapshot.currency.as_str());
+    if wallet.balance_known {
+        let value = wallet.total_balance_msat as f64 / 100_000_000_000.0 * rate;
+        wallet.fiat_balance_text = if snapshot.currency == FiatCurrency::Jpy {
+            format!("{value:.0} JPY")
+        } else {
+            format!("{value:.2} {}", snapshot.currency.as_str())
+        };
     }
 }
 
@@ -204,6 +200,12 @@ impl Inner {
             }
             Err(_) => state.status = ExchangeRateStatus::Failed,
         }
+    }
+
+    fn note_refresh_failed(&self) {
+        let mut state = self.state();
+        state.refreshing = false;
+        state.status = ExchangeRateStatus::Failed;
     }
 
     fn state(&self) -> MutexGuard<'_, State> {
@@ -264,7 +266,7 @@ async fn fetch_coinbase(client: &reqwest::Client, currency: FiatCurrency) -> Res
 }
 
 async fn fetch_kraken(client: &reqwest::Client, currency: FiatCurrency) -> Result<f64> {
-    let pair = format!("XBT{}", currency.code());
+    let pair = format!("XBT{}", currency.as_str());
     let payload = client
         .get(KRAKEN_URL)
         .query(&[("pair", pair)])
@@ -284,7 +286,7 @@ fn parse_coinbase(payload: &str, currency: FiatCurrency) -> Result<f64> {
     let value = response
         .data
         .rates
-        .get(currency.code())
+        .get(currency.as_str())
         .ok_or_else(|| anyhow!("Coinbase rate is missing"))?;
     parse_rate(value)
 }
@@ -360,8 +362,8 @@ mod tests {
 
     #[test]
     fn parses_supported_currency_case_insensitively() {
-        assert_eq!(FiatCurrency::try_from("eur"), Ok(FiatCurrency::Eur));
-        assert_eq!(FiatCurrency::try_from("NZD").unwrap_err().code(), "NZD");
+        assert_eq!("eur".parse(), Ok(FiatCurrency::Eur));
+        assert!("NZD".parse::<FiatCurrency>().is_err());
     }
 
     #[test]

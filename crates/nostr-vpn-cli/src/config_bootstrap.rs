@@ -356,8 +356,7 @@ pub(crate) fn apply_devices_override(config: &mut AppConfig, devices: Vec<String
     if let Some(exit_node) = pending_exit_node
         && normalized.iter().any(|device| device == &exit_node)
     {
-        config.exit_node_public_paid_exit = false;
-        config.exit_node = exit_node;
+        config.select_private_exit_node(&exit_node)?;
     }
     let _ = config.note_active_network_roster_local_change();
     config.ensure_defaults();

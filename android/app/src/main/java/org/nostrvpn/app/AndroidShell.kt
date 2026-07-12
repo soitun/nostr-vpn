@@ -85,7 +85,6 @@ internal data class SelfUpdateActions(
 private enum class Page(val title: String) {
     Devices("Devices"),
     Internet("Internet"),
-    PublicExits("Buy Internet"),
     Wallet("Wallet"),
     Settings("Settings"),
 }
@@ -97,7 +96,7 @@ private enum class NetworkSetupMode {
 
 private fun Page.visibleIn(state: AppState): Boolean =
     when (this) {
-        Page.PublicExits, Page.Wallet -> state.paidRouteMarket.supported
+        Page.Wallet -> state.paidRouteMarket.supported
         Page.Devices, Page.Internet, Page.Settings -> true
     }
 
@@ -202,7 +201,16 @@ internal fun NostrVpnApp(
                                     attention = false,
                                 )
                             },
-                            label = { Text(item.title) },
+                            label = {
+                                val balance = state.paidRouteMarket.wallet.navigationBalanceText
+                                Text(
+                                    if (item == Page.Wallet && balance.isNotBlank()) {
+                                        "Wallet $balance"
+                                    } else {
+                                        item.title
+                                    },
+                                )
+                            },
                         )
                     }
                 }
@@ -231,7 +239,6 @@ internal fun NostrVpnApp(
                         onDeleteNetwork = { pendingNetworkRemoval = network },
                     )
                     Page.Internet -> internetPage(state, network, dispatch, importWireGuardConfigFile)
-                    Page.PublicExits -> publicExitsPage(state, dispatch)
                     Page.Wallet -> walletPage(state, dispatch)
                     Page.Settings -> settingsPage(state, network, dispatch, selfUpdateState, selfUpdateActions)
                 }
@@ -472,14 +479,6 @@ private fun NavIcon(page: Page, selected: Boolean, attention: Boolean = false) {
                     strokeWidth = strokeWidth,
                     cap = StrokeCap.Round,
                 )
-            }
-            Page.PublicExits -> {
-                val baseY = 18.5.dp.toPx()
-                drawLine(color, Offset(6.dp.toPx(), 8.dp.toPx()), Offset(8.5.dp.toPx(), baseY), strokeWidth = strokeWidth, cap = StrokeCap.Round)
-                drawLine(color, Offset(8.5.dp.toPx(), baseY), Offset(21.dp.toPx(), baseY), strokeWidth = strokeWidth, cap = StrokeCap.Round)
-                drawLine(color, Offset(9.5.dp.toPx(), 11.dp.toPx()), Offset(20.dp.toPx(), 11.dp.toPx()), strokeWidth = strokeWidth, cap = StrokeCap.Round)
-                drawCircle(color, 2.4.dp.toPx(), Offset(10.dp.toPx(), 22.5.dp.toPx()))
-                drawCircle(color, 2.4.dp.toPx(), Offset(20.dp.toPx(), 22.5.dp.toPx()))
             }
             Page.Wallet -> {
                 val left = 5.dp.toPx()
@@ -1003,70 +1002,99 @@ private fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
 ) {
     item {
         AppCard {
-            Text("Internet", style = MaterialTheme.typography.titleMedium)
+            Text("Internet source", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(10.dp))
-
-            // The daemon clears the *other* side automatically when
-            // both would otherwise be set (see
-            // `settings_patch_enforces_exit_node_mutual_exclusion`),
-            // so the WG and peer rows only push the field they own.
-            // Using this device's normal internet still needs to flip
-            // both explicitly since neither is a conflict the daemon resolves.
-            val directSelected = !state.wireguardExitEnabled && state.exitNode.isBlank()
-            ExitNodeRow(
-                title = "This device",
-                subtitle = "Use this device's normal internet",
-                selected = directSelected,
-                enabled = true,
-                onClick = {
-                    dispatch(
-                        NativeActions.updateSettings(
-                            "exitNode" to "",
-                            "wireguardExitEnabled" to false,
-                        ),
-                    )
-                },
+            var sourceMenuExpanded by remember { mutableStateOf(false) }
+            val sourceOptions = listOf(
+                "direct" to "This device",
+                "private_vpn" to "Private VPN device",
+                "paid_automatic" to "Paid · Automatic",
+                "paid_manual" to "Paid · Choose manually",
+                "wireguard" to "WireGuard VPN",
             )
+            Box {
+                Button(onClick = { sourceMenuExpanded = true }) {
+                    Text(sourceOptions.firstOrNull { it.first == state.internetSource }?.second ?: "This device")
+                }
+                DropdownMenu(
+                    expanded = sourceMenuExpanded,
+                    onDismissRequest = { sourceMenuExpanded = false },
+                ) {
+                    sourceOptions.forEach { (source, title) ->
+                        DropdownMenuItem(
+                            text = { Text(title) },
+                            onClick = {
+                                sourceMenuExpanded = false
+                                dispatch(NativeActions.updateSettings("internetSource" to source))
+                            },
+                        )
+                    }
+                }
+            }
 
-            val wgSubtitle =
-                if (!state.wireguardExitConfigured) {
-                    "No WireGuard config saved yet"
-                } else if (state.wireguardExitEndpoint.isBlank()) {
-                    "Configured"
+            if (state.internetSource == "private_vpn") {
+                val exitParticipants = network?.participants.orEmpty()
+                    .filter { it.offersExitNode && !it.isSelf(state) }
+                if (exitParticipants.isEmpty()) {
+                    Text("No trusted devices sharing internet", color = Muted, style = MaterialTheme.typography.bodySmall)
                 } else {
-                    state.wireguardExitEndpoint
+                    exitParticipants.forEach { participant ->
+                        ExitNodeRow(
+                            title = participant.magicDnsName.ifBlank { participant.alias },
+                            subtitle = participant.npub,
+                            selected = state.exitNode == participant.npub,
+                            enabled = true,
+                            onClick = {
+                                dispatch(
+                                    NativeActions.updateSettings(
+                                        "internetSource" to "private_vpn",
+                                        "exitNode" to participant.npub,
+                                    ),
+                                )
+                            },
+                        )
+                    }
                 }
-            ExitNodeRow(
-                title = "WireGuard upstream",
-                subtitle = wgSubtitle,
-                selected = state.wireguardExitEnabled,
-                enabled = state.wireguardExitConfigured,
-                onClick = {
-                    dispatch(NativeActions.updateSettings("wireguardExitEnabled" to true))
-                },
-            )
+            }
 
-            val exitParticipants = network?.participants.orEmpty()
-                .filter { it.offersExitNode && !it.isSelf(state) }
-            if (exitParticipants.isEmpty()) {
-                Text("No trusted devices sharing internet", color = Muted, style = MaterialTheme.typography.bodySmall)
-            } else {
-                exitParticipants.forEach { participant ->
-                    ExitNodeRow(
-                        title = participant.magicDnsName.ifBlank { participant.alias },
-                        subtitle = participant.npub,
-                        selected = !state.wireguardExitEnabled && state.exitNode == participant.npub,
-                        enabled = true,
-                        onClick = {
-                            dispatch(NativeActions.updateSettings("exitNode" to participant.npub))
-                        },
-                    )
-                }
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    "Block internet if selected source disconnects",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Switch(
+                    checked = state.exitNodeLeakProtection,
+                    onCheckedChange = { enabled ->
+                        dispatch(NativeActions.updateSettings("exitNodeLeakProtection" to enabled))
+                    },
+                )
             }
         }
     }
+    if (state.internetSource == "paid_automatic") {
+        item {
+            AppCard {
+                Text("Automatic paid provider", style = MaterialTheme.typography.titleMedium)
+                Text("Experimental", color = Muted, style = MaterialTheme.typography.labelSmall)
+                Text(
+                    state.exitNodeStatusText.ifBlank { "Looking for a working provider at a reasonable price" },
+                    color = Muted,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
+    } else if (state.internetSource == "paid_manual") {
+        item { PaidRouteMarketCard(state, dispatch, PaidRouteCardMode.Market) }
+    }
     item {
         AppCard {
+            Text("Share Internet", style = MaterialTheme.typography.titleMedium)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Checkbox(
                     checked = state.advertiseExitNode,
@@ -1082,20 +1110,58 @@ private fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
     if (state.paidExitSeller.supported) {
         item { PaidExitSellerStatusCard(state) }
     }
-    item { WireGuardSettingsCard(state, dispatch, importWireGuardConfigFile) }
-}
-
-private fun androidx.compose.foundation.lazy.LazyListScope.publicExitsPage(
-    state: AppState,
-    dispatch: (JSONObject) -> Unit,
-) {
-    item { PaidRouteMarketCard(state, dispatch, PaidRouteCardMode.Market) }
+    if (state.internetSource == "wireguard") {
+        item { WireGuardSettingsCard(state, dispatch, importWireGuardConfigFile) }
+    }
 }
 
 private fun androidx.compose.foundation.lazy.LazyListScope.walletPage(
     state: AppState,
     dispatch: (JSONObject) -> Unit,
 ) {
+    item {
+        Text(
+            "Use this Cashu wallet to pay for internet access and receive earnings when you sell bandwidth.",
+            color = Muted,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+    item {
+        AppCard {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Checkbox(
+                    checked = state.walletFiatEnabled,
+                    onCheckedChange = { enabled ->
+                        dispatch(NativeActions.updateSettings("walletFiatEnabled" to enabled))
+                    },
+                )
+                Text("Show fiat value")
+            }
+            if (state.walletFiatEnabled) {
+                Text("Rates from Coinbase and Kraken", color = Muted, style = MaterialTheme.typography.bodySmall)
+                var currencyMenuExpanded by remember { mutableStateOf(false) }
+                Box {
+                    Button(onClick = { currencyMenuExpanded = true }) {
+                        Text("Currency ${state.walletFiatCurrency}")
+                    }
+                    DropdownMenu(
+                        expanded = currencyMenuExpanded,
+                        onDismissRequest = { currencyMenuExpanded = false },
+                    ) {
+                        listOf("USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF").forEach { currency ->
+                            DropdownMenuItem(
+                                text = { Text(currency) },
+                                onClick = {
+                                    currencyMenuExpanded = false
+                                    dispatch(NativeActions.updateSettings("walletFiatCurrency" to currency))
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
     item { PaidRouteMarketCard(state, dispatch, PaidRouteCardMode.Wallet) }
 }
 
@@ -1153,6 +1219,16 @@ private fun PaidRouteMarketCard(
                     color = Muted,
                     style = MaterialTheme.typography.bodySmall,
                 )
+                if (state.walletFiatEnabled && market.wallet.fiatBalanceText.isNotBlank()) {
+                    Text("≈ ${market.wallet.fiatBalanceText}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                if (mode == PaidRouteCardMode.Wallet && market.wallet.exchangeRateText.isNotBlank()) {
+                    Text(
+                        "${market.wallet.exchangeRateText} · ${market.wallet.exchangeRateSources}",
+                        color = Muted,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
             if (mode == PaidRouteCardMode.Market) {
                 Button(
@@ -1692,7 +1768,7 @@ private fun PaidRouteSessionRow(
 private fun PaidExitSellerStatusCard(state: AppState) {
     val seller = state.paidExitSeller
     AppCard {
-        Text("Share My Internet", style = MaterialTheme.typography.titleMedium)
+        Text("Sell Internet · Experimental", style = MaterialTheme.typography.titleMedium)
         Text(
             paidExitSellerStatusText(seller),
             color = Muted,

@@ -53,6 +53,9 @@ final class TrayController: NSObject {
     private let offerExitItem = NSMenuItem()
     private let exitNodeSelectionSeparator = NSMenuItem.separator()
     private let noExitNodeItem = NSMenuItem()
+    private let paidAutomaticItem = NSMenuItem()
+    private let paidManualItem = NSMenuItem()
+    private let wireGuardItem = NSMenuItem()
 
     private var cancellables = Set<AnyCancellable>()
     private var lastSnapshot: MenuSnapshot?
@@ -131,10 +134,25 @@ final class TrayController: NSObject {
         noExitNodeItem.target = self
         noExitNodeItem.action = #selector(handleSelectNoExit)
 
+        paidAutomaticItem.title = "Paid Internet · Automatic"
+        paidAutomaticItem.target = self
+        paidAutomaticItem.action = #selector(handleSelectPaidAutomatic)
+
+        paidManualItem.title = "Paid Internet · Manual"
+        paidManualItem.target = self
+        paidManualItem.action = #selector(handleSelectPaidManual)
+
+        wireGuardItem.title = "WireGuard"
+        wireGuardItem.target = self
+        wireGuardItem.action = #selector(handleSelectWireGuard)
+
         exitNodeSubmenu.addItem(exitNodeStatusItem)
         exitNodeSubmenu.addItem(offerExitItem)
         exitNodeSubmenu.addItem(exitNodeSelectionSeparator)
         exitNodeSubmenu.addItem(noExitNodeItem)
+        exitNodeSubmenu.addItem(paidAutomaticItem)
+        exitNodeSubmenu.addItem(paidManualItem)
+        exitNodeSubmenu.addItem(wireGuardItem)
         // Peer items appended in updateExitNodeSubmenu().
 
         openItem.title = "Open Nostr VPN"
@@ -189,8 +207,17 @@ final class TrayController: NSObject {
         exitNodeStatusItem.title = snapshot.exitNodeStatusText
         exitNodeStatusItem.isHidden = snapshot.exitNodeStatusText.isEmpty
         offerExitItem.state = snapshot.advertiseExitNode ? .on : .off
-        noExitNodeItem.state = snapshot.exitNodeNpub.isEmpty ? .on : .off
-        rebuildExitNodePeers(items: snapshot.exitNodeItems, selectedNpub: snapshot.exitNodeNpub)
+        noExitNodeItem.state = snapshot.internetSource == "direct" ? .on : .off
+        paidAutomaticItem.state = snapshot.internetSource == "paid_automatic" ? .on : .off
+        paidAutomaticItem.isEnabled = snapshot.paidInternetAvailable
+        paidManualItem.state = snapshot.internetSource == "paid_manual" ? .on : .off
+        paidManualItem.isEnabled = snapshot.paidInternetAvailable
+        wireGuardItem.state = snapshot.internetSource == "wireguard" ? .on : .off
+        wireGuardItem.isEnabled = snapshot.wireGuardConfigured
+        rebuildExitNodePeers(
+            items: snapshot.exitNodeItems,
+            selectedNpub: snapshot.internetSource == "private_vpn" ? snapshot.exitNodeNpub : ""
+        )
 
         statusItem.button?.toolTip = snapshot.tooltip
     }
@@ -220,8 +247,8 @@ final class TrayController: NSObject {
     /// "This Device") followed by a dynamic list of peers sharing internet. Keep
     /// the header items in place and rebuild the trailing peer list.
     private func rebuildExitNodePeers(items: [SubmenuItem<ExitNodeRow>], selectedNpub: String) {
-        // Drop everything past the "This Device" item.
-        let keepCount = exitNodeSubmenu.items.firstIndex(of: noExitNodeItem).map { $0 + 1 } ?? 0
+        // Drop dynamic peer rows while retaining the stable source choices.
+        let keepCount = exitNodeSubmenu.items.firstIndex(of: wireGuardItem).map { $0 + 1 } ?? 0
         while exitNodeSubmenu.items.count > keepCount {
             exitNodeSubmenu.removeItem(at: exitNodeSubmenu.items.count - 1)
         }
@@ -259,12 +286,25 @@ final class TrayController: NSObject {
     }
 
     @objc private func handleSelectNoExit() {
-        manager.setExitNode("")
+        manager.selectDirectExit()
+    }
+
+    @objc private func handleSelectPaidAutomatic() {
+        manager.selectPaidAutomaticExit()
+    }
+
+    @objc private func handleSelectPaidManual() {
+        manager.selectPaidManualExit()
+        openMainWindow()
+    }
+
+    @objc private func handleSelectWireGuard() {
+        manager.selectWireGuardUpstreamExit()
     }
 
     @objc private func handleSelectExitNode(_ sender: NSMenuItem) {
         guard let npub = sender.representedObject as? String else { return }
-        manager.setExitNode(npub)
+        manager.selectPeerExit(npub)
     }
 
     @objc private func handleOpenMain() {
@@ -288,6 +328,9 @@ private struct MenuSnapshot: Equatable {
     let networkItems: [SubmenuItem<NetworkRow>]
     let exitNodeStatusText: String
     let advertiseExitNode: Bool
+    let internetSource: String
+    let paidInternetAvailable: Bool
+    let wireGuardConfigured: Bool
     let exitNodeNpub: String
     let exitNodeItems: [SubmenuItem<ExitNodeRow>]
     let tooltip: String
@@ -341,6 +384,9 @@ private struct MenuSnapshot: Equatable {
             networkItems: networkItems,
             exitNodeStatusText: state.exitNodeStatusText,
             advertiseExitNode: state.advertiseExitNode,
+            internetSource: state.internetSource,
+            paidInternetAvailable: state.paidRouteMarket.supported,
+            wireGuardConfigured: state.wireguardExitConfigured,
             exitNodeNpub: state.exitNode,
             exitNodeItems: exitNodeItems,
             tooltip: tooltip

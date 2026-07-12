@@ -478,9 +478,13 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 
     // Bullet-style radio indicators next to each exit-node row.
     public string DirectExitMarker =>
-        (!State.WireguardExitEnabled && string.IsNullOrEmpty(State.ExitNode)) ? "●" : "○";
+        State.InternetSource == "direct" ? "●" : "○";
 
-    public string WireguardExitMarker => State.WireguardExitEnabled ? "●" : "○";
+    public string WireguardExitMarker => State.InternetSource == "wireguard" ? "●" : "○";
+
+    public string PaidAutomaticExitMarker => State.InternetSource == "paid_automatic" ? "●" : "○";
+
+    public string PaidManualExitMarker => State.InternetSource == "paid_manual" ? "●" : "○";
 
     public IEnumerable<NativeParticipantState> ExitNodeParticipants =>
         (ActiveNetwork?.Participants ?? [])
@@ -503,6 +507,16 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 
     public string PaidRouteWalletBalanceText =>
         TextOr(State.PaidRouteMarket.Wallet.TotalBalanceText, FormatPaidRouteMsat(State.PaidRouteMarket.Wallet.TotalBalanceMsat));
+
+    public string WalletNavigationText => string.IsNullOrWhiteSpace(State.PaidRouteMarket.Wallet.NavigationBalanceText)
+        ? "Wallet"
+        : $"Wallet {State.PaidRouteMarket.Wallet.NavigationBalanceText}";
+
+    public string PaidRouteWalletFiatText => State.PaidRouteMarket.Wallet.FiatBalanceText;
+
+    public string PaidRouteWalletRateText => string.IsNullOrWhiteSpace(State.PaidRouteMarket.Wallet.ExchangeRateText)
+        ? ""
+        : $"{State.PaidRouteMarket.Wallet.ExchangeRateText} · {State.PaidRouteMarket.Wallet.ExchangeRateSources}";
 
     public string PaidRouteMarketStatusText => string.IsNullOrWhiteSpace(State.PaidRouteMarket.StatusText)
         ? $"{State.PaidRouteMarket.Offers.Count} internet sellers"
@@ -955,6 +969,20 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             "Saving internet protection");
     }
 
+    public Task SetWalletFiatEnabledAsync(bool enabled)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { WalletFiatEnabled = enabled }),
+            "Saving wallet display");
+    }
+
+    public Task SetWalletFiatCurrencyAsync(string currency)
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { WalletFiatCurrency = currency }),
+            "Saving wallet currency");
+    }
+
     public Task SetWireGuardExitEnabledAsync(bool enabled)
     {
         return DispatchAsync(
@@ -969,31 +997,17 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             "Saving internet source");
     }
 
-    // Internet source selection. The daemon enforces mutual exclusion
-    // between peer and WG (see settings_patch_enforces_exit_node_
-    // mutual_exclusion in ffi.rs), so non-direct rows send only the
-    // field they own. Direct flips both because that's the
-    // "neither" state which doesn't trigger the daemon's conflict
-    // resolution.
-
     public Task SelectDirectExitAsync()
     {
         return DispatchAsync(
-            NativeActions.UpdateSettings(new SettingsPatch
-            {
-                ExitNode = "",
-                WireguardExitEnabled = false,
-            }),
+            NativeActions.UpdateSettings(new SettingsPatch { InternetSource = "direct" }),
             "Saving internet source");
     }
 
     public Task SelectWireGuardUpstreamExitAsync()
     {
         return DispatchAsync(
-            NativeActions.UpdateSettings(new SettingsPatch
-            {
-                WireguardExitEnabled = true,
-            }),
+            NativeActions.UpdateSettings(new SettingsPatch { InternetSource = "wireguard" }),
             "Saving internet source");
     }
 
@@ -1002,9 +1016,25 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         return DispatchAsync(
             NativeActions.UpdateSettings(new SettingsPatch
             {
+                InternetSource = "private_vpn",
                 ExitNode = npub,
             }),
             "Saving internet source");
+    }
+
+    public Task SelectPaidAutomaticExitAsync()
+    {
+        return DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { InternetSource = "paid_automatic" }),
+            "Saving internet source");
+    }
+
+    public async Task SelectPaidManualExitAsync()
+    {
+        await DispatchAsync(
+            NativeActions.UpdateSettings(new SettingsPatch { InternetSource = "paid_manual" }),
+            "Saving internet source");
+        Page = AppPage.PublicExits;
     }
 
     public Task DiscoverPaidRouteOffersAsync()
@@ -1991,10 +2021,15 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         OnPropertyChanged(nameof(DiagnosticsOtherFips));
         OnPropertyChanged(nameof(DirectExitMarker));
         OnPropertyChanged(nameof(WireguardExitMarker));
+        OnPropertyChanged(nameof(PaidAutomaticExitMarker));
+        OnPropertyChanged(nameof(PaidManualExitMarker));
         OnPropertyChanged(nameof(WireguardExitSubtitle));
         OnPropertyChanged(nameof(PaidRouteMarketVisible));
         OnPropertyChanged(nameof(PaidExitSellerVisible));
         OnPropertyChanged(nameof(PaidRouteWalletBalanceText));
+        OnPropertyChanged(nameof(WalletNavigationText));
+        OnPropertyChanged(nameof(PaidRouteWalletFiatText));
+        OnPropertyChanged(nameof(PaidRouteWalletRateText));
         OnPropertyChanged(nameof(PaidRouteMarketStatusText));
         OnPropertyChanged(nameof(PaidExitSellerStatusText));
         OnPropertyChanged(nameof(PaidExitSellerSummary));

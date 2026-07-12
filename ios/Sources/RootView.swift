@@ -24,6 +24,11 @@ struct RootView: View {
         model.state.paidRouteMarket.supported
     }
 
+    private var walletTabTitle: String {
+        let balance = model.state.paidRouteMarket.wallet.navigationBalanceText
+        return balance.isEmpty ? "Wallet" : "Wallet \(balance)"
+    }
+
     var body: some View {
         Group {
             if model.state.networks.isEmpty {
@@ -56,19 +61,11 @@ struct RootView: View {
 
                     if paidRouteMarketAvailable {
                         NavigationStack {
-                            PublicExitsPage(model: model)
-                                .navigationTitle("Buy Internet")
-                                .toolbar { networkSwitcherToolbar }
-                        }
-                        .tabItem { Label("Buy Internet", systemImage: "cart.fill") }
-                        .tag(AppTab.publicExits)
-
-                        NavigationStack {
                             PaidRouteWalletPage(model: model)
                                 .navigationTitle("Wallet")
                                 .toolbar { networkSwitcherToolbar }
                         }
-                        .tabItem { Label("Wallet", systemImage: "creditcard.fill") }
+                        .tabItem { Label(walletTabTitle, systemImage: "creditcard.fill") }
                         .tag(AppTab.wallet)
                     }
 
@@ -160,7 +157,7 @@ struct RootView: View {
     }
 
     private func normalizeSelectedTab() {
-        if !paidRouteMarketAvailable && (selectedTab == .publicExits || selectedTab == .wallet) {
+        if !paidRouteMarketAvailable && selectedTab == .wallet {
             selectedTab = .devices
         }
     }
@@ -170,7 +167,7 @@ struct RootView: View {
         case "internet", "exit", "exit-node", "exit-nodes", "routes", "routing":
             return .internet
         case "public-exits", "paid-exits", "paid-market", "market":
-            return .publicExits
+            return .internet
         case "wallet", "paid-wallet":
             return .wallet
         case "settings", "diagnostics":
@@ -184,7 +181,6 @@ struct RootView: View {
 private enum AppTab: Hashable {
     case devices
     case internet
-    case publicExits
     case wallet
     case settings
 }
@@ -980,50 +976,22 @@ private struct InternetPage: View {
     @ObservedObject var model: AppModel
     let network: NetworkState?
 
-    private var directSelected: Bool {
-        !model.state.wireguardExitEnabled && model.state.exitNode.isEmpty
-    }
-
-    private var wgSelected: Bool {
-        model.state.wireguardExitEnabled
-    }
-
-    private var wgSubtitle: String {
-        if !model.state.wireguardExitConfigured {
-            return "No WireGuard config saved yet"
-        }
-        let endpoint = model.state.wireguardExitEndpoint
-        return endpoint.isEmpty ? "Configured" : endpoint
-    }
-
     private var exitParticipants: [ParticipantState] {
         network?.participants.filter { participant in
             participant.offersExitNode && !isSelf(participant, state: model.state)
         } ?? []
     }
 
-    // The daemon clears the *other* side automatically when there
-    // would otherwise be both a peer exit AND WG upstream enabled
-    // (see `settings_patch_enforces_exit_node_mutual_exclusion` in
-    // ffi.rs). Using this device's normal internet needs to clear both
-    // explicitly since there's no conflict in that case for the daemon to resolve.
-    private func selectDirect() {
+    private func selectSource(_ source: String) {
         model.dispatch(
-            NativeActions.updateSettings(["exitNode": "", "wireguardExitEnabled": false]),
-            status: "Saving internet"
-        )
-    }
-
-    private func selectWireGuard() {
-        model.dispatch(
-            NativeActions.updateSettings(["wireguardExitEnabled": true]),
+            NativeActions.updateSettings(["internetSource": source]),
             status: "Saving internet"
         )
     }
 
     private func selectPeer(_ npub: String) {
         model.dispatch(
-            NativeActions.updateSettings(["exitNode": npub]),
+            NativeActions.updateSettings(["internetSource": "private_vpn", "exitNode": npub]),
             status: "Saving internet"
         )
     }
@@ -1032,42 +1000,60 @@ private struct InternetPage: View {
         ScrollView {
             LazyVStack(spacing: 14) {
                 AppCard {
-                    Text("Internet")
+                    Text("Internet source")
                         .font(.headline)
-                    ExitNodeRow(
-                        title: "This device",
-                        subtitle: "Use this device's normal internet",
-                        selected: directSelected,
-                        enabled: true,
-                        action: selectDirect
-                    )
-                    ExitNodeRow(
-                        title: "WireGuard upstream",
-                        subtitle: wgSubtitle,
-                        selected: wgSelected,
-                        enabled: model.state.wireguardExitConfigured,
-                        action: selectWireGuard
-                    )
-                    if exitParticipants.isEmpty {
-                        Text("No trusted devices sharing internet")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        ForEach(exitParticipants) { participant in
-                            ExitNodeRow(
-                                title: participant.displayName,
-                                subtitle: deviceSubtitle(participant, state: model.state),
-                                selected: !model.state.wireguardExitEnabled
-                                    && model.state.exitNode == participant.npub,
-                                enabled: true,
-                                action: { selectPeer(participant.npub) }
-                            )
+                    Picker("Internet source", selection: Binding(
+                        get: { model.state.internetSource },
+                        set: selectSource
+                    )) {
+                        Text("This device").tag("direct")
+                        Text("Private VPN device").tag("private_vpn")
+                        Text("Paid · Automatic").tag("paid_automatic")
+                        Text("Paid · Choose manually").tag("paid_manual")
+                        Text("WireGuard VPN").tag("wireguard")
+                    }
+                    .pickerStyle(.menu)
+
+                    if model.state.internetSource == "private_vpn" {
+                        if exitParticipants.isEmpty {
+                            Text("No trusted devices sharing internet")
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            ForEach(exitParticipants) { participant in
+                                ExitNodeRow(
+                                    title: participant.displayName,
+                                    subtitle: deviceSubtitle(participant, state: model.state),
+                                    selected: model.state.exitNode == participant.npub,
+                                    enabled: true,
+                                    action: { selectPeer(participant.npub) }
+                                )
+                            }
                         }
                     }
                 }
 
+                if model.state.internetSource == "paid_automatic" {
+                    AppCard {
+                        Text("Automatic paid provider")
+                            .font(.headline)
+                        Text("Experimental")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Text(model.state.exitNodeStatusText.isEmpty
+                            ? "Looking for a working provider at a reasonable price"
+                            : model.state.exitNodeStatusText)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                } else if model.state.internetSource == "paid_manual" {
+                    PaidRouteMarketCard(model: model, mode: .market)
+                }
+
                 AppCard {
+                    Text("Share Internet")
+                        .font(.headline)
                     Toggle("Share internet with this network", isOn: Binding(
                         get: { model.state.advertiseExitNode },
                         set: { value in
@@ -1090,22 +1076,9 @@ private struct InternetPage: View {
                 if model.state.paidExitSeller.supported {
                     PaidExitSellerStatusCard(state: model.state)
                 }
-                WireGuardSettingsCard(model: model)
-            }
-            .padding()
-        }
-        .safeAreaPadding(.bottom, 92)
-        .background(AppColors.background)
-    }
-}
-
-private struct PublicExitsPage: View {
-    @ObservedObject var model: AppModel
-
-    var body: some View {
-        ScrollView {
-            LazyVStack(spacing: 14) {
-                PaidRouteMarketCard(model: model, mode: .market)
+                if model.state.internetSource == "wireguard" {
+                    WireGuardSettingsCard(model: model)
+                }
             }
             .padding()
         }
@@ -1120,6 +1093,40 @@ private struct PaidRouteWalletPage: View {
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 14) {
+                Text("Use this Cashu wallet to pay for internet access and receive earnings when you sell bandwidth.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                AppCard {
+                    Toggle("Show fiat value", isOn: Binding(
+                        get: { model.state.walletFiatEnabled },
+                        set: { enabled in
+                            model.dispatch(
+                                NativeActions.updateSettings(["walletFiatEnabled": enabled]),
+                                status: "Saving wallet display"
+                            )
+                        }
+                    ))
+                    if model.state.walletFiatEnabled {
+                        Text("Rates from Coinbase and Kraken")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Picker("Currency", selection: Binding(
+                            get: { model.state.walletFiatCurrency },
+                            set: { currency in
+                                model.dispatch(
+                                    NativeActions.updateSettings(["walletFiatCurrency": currency]),
+                                    status: "Saving wallet currency"
+                                )
+                            }
+                        )) {
+                            ForEach(["USD", "EUR", "GBP", "CAD", "AUD", "JPY", "CHF"], id: \.self) {
+                                Text($0).tag($0)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                    }
+                }
                 PaidRouteMarketCard(model: model, mode: .wallet)
             }
             .padding()
@@ -1166,6 +1173,16 @@ private struct PaidRouteMarketCard: View {
                     Text("Wallet \(fallbackText(market.wallet.totalBalanceText, formatPaidRouteMsat(market.wallet.totalBalanceMsat)))")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                    if model.state.walletFiatEnabled && !market.wallet.fiatBalanceText.isEmpty {
+                        Text("≈ \(market.wallet.fiatBalanceText)")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    if mode == .wallet && !market.wallet.exchangeRateText.isEmpty {
+                        Text("\(market.wallet.exchangeRateText) · \(market.wallet.exchangeRateSources)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 if mode == .market {
@@ -1660,7 +1677,7 @@ private struct PaidExitSellerStatusCard: View {
     var body: some View {
         let seller = state.paidExitSeller
         AppCard {
-            Text("Share My Internet")
+            Text("Sell Internet · Experimental")
                 .font(.headline)
             Text(
                 paidExitSellerStatusText(seller)

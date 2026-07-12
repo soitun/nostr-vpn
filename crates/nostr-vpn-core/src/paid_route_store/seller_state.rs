@@ -265,21 +265,6 @@ impl PaidRouteStore {
         }
     }
 
-    pub(super) fn ensure_buyer_mint_present(&mut self, mint_url: &str, now_unix: u64) -> bool {
-        let mint_url = mint_url.trim();
-        if mint_url.is_empty() {
-            return false;
-        }
-        if !self.wallet.mints.iter().any(|mint| mint.url == mint_url) {
-            return self.upsert_wallet_mint(mint_url, "", None, now_unix);
-        }
-        if self.wallet.default_mint.trim().is_empty() {
-            self.wallet.default_mint = mint_url.to_string();
-            return true;
-        }
-        false
-    }
-
     pub(super) fn retain_valid(&mut self) {
         for record in self.offers.values_mut() {
             if let Ok(offer) = record.signed_offer.offer() {

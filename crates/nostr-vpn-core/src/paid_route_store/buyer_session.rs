@@ -33,8 +33,7 @@ impl PaidRouteStore {
             cashu_token_lease: None,
         };
 
-        let mut changed = self.ensure_buyer_mint_present(&mint_url, now_unix);
-        changed |= self.upsert_quote(
+        let mut changed = self.upsert_quote(
             PaidRouteQuote {
                 quote_id: quote_id.clone(),
                 offer_id: offer.offer_id.clone(),

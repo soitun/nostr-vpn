@@ -43,7 +43,27 @@ impl NativeAppRuntime {
             };
         }
 
-        let wireguard_exit_selected = self.config.wireguard_exit.enabled;
+        let pending_source = match self.config.internet_source {
+            InternetSource::PrivateVpn => Some("private VPN device"),
+            InternetSource::PaidAutomatic | InternetSource::PaidManual => {
+                Some("paid provider")
+            }
+            InternetSource::Direct | InternetSource::WireGuard => None,
+        };
+        if let Some(source) = pending_source {
+            let blocked = self.config.exit_node_leak_protection && vpn_enabled;
+            return ExitNodeUiStatus {
+                active: false,
+                blocked,
+                text: if blocked {
+                    format!("Internet blocked: waiting for {source}")
+                } else {
+                    format!("Exit pending: {source}")
+                },
+            };
+        }
+
+        let wireguard_exit_selected = self.config.internet_source == InternetSource::WireGuard;
         if wireguard_exit_selected {
             let wireguard_exit_active = vpn_active && self.config.wireguard_exit.configured();
             let blocked =

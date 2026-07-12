@@ -895,10 +895,6 @@ final class AppManager: ObservableObject {
         dispatch(.discoverPaidRouteOffers(durationSecs: 5), status: "Finding sellers")
     }
 
-    func setWireGuardExitEnabled(_ enabled: Bool) {
-        dispatch(.updateSettings(patch: settingsPatch(wireguardExitEnabled: enabled)), status: "Saving WireGuard")
-    }
-
     func saveWireGuardExitConfig(_ config: String) {
         dispatch(.updateSettings(patch: settingsPatch(wireguardExitConfig: config)), status: "Saving WireGuard")
     }
@@ -970,28 +966,52 @@ final class AppManager: ObservableObject {
         dispatch(.updateSettings(patch: settingsPatch(advertisedRoutes: routes)), status: "Saving routes")
     }
 
-    func setExitNode(_ npub: String) {
-        dispatch(.updateSettings(patch: settingsPatch(exitNode: npub)), status: "Saving internet source")
-    }
-
     func selectDirectExit() {
         dispatch(
-            .updateSettings(patch: settingsPatch(exitNode: "", wireguardExitEnabled: false)),
+            .updateSettings(patch: settingsPatch(internetSource: "direct")),
             status: "Saving internet source"
         )
     }
 
     func selectWireGuardUpstreamExit() {
         dispatch(
-            .updateSettings(patch: settingsPatch(exitNode: "", wireguardExitEnabled: true)),
+            .updateSettings(patch: settingsPatch(internetSource: "wireguard")),
             status: "Saving internet source"
         )
     }
 
     func selectPeerExit(_ npub: String) {
         dispatch(
-            .updateSettings(patch: settingsPatch(exitNode: npub, wireguardExitEnabled: false)),
+            .updateSettings(patch: settingsPatch(internetSource: "private_vpn", exitNode: npub)),
             status: "Saving internet source"
+        )
+    }
+
+    func selectPaidAutomaticExit() {
+        dispatch(
+            .updateSettings(patch: settingsPatch(internetSource: "paid_automatic")),
+            status: "Selecting paid internet"
+        )
+    }
+
+    func selectPaidManualExit() {
+        dispatch(
+            .updateSettings(patch: settingsPatch(internetSource: "paid_manual")),
+            status: "Selecting paid internet"
+        )
+    }
+
+    func setWalletFiatEnabled(_ enabled: Bool) {
+        dispatch(
+            .updateSettings(patch: settingsPatch(walletFiatEnabled: enabled)),
+            status: "Saving wallet display"
+        )
+    }
+
+    func setWalletFiatCurrency(_ currency: String) {
+        dispatch(
+            .updateSettings(patch: settingsPatch(walletFiatCurrency: currency)),
+            status: "Saving wallet currency"
         )
     }
 
@@ -1696,6 +1716,7 @@ final class AppManager: ObservableObject {
             networkId: networkId,
             activeNetworkInvite: "nvpn://invite/demo-mesh",
             joinRequestQrCodeOrLink: "nvpn://join-request/demo",
+            internetSource: sellerScreenshot ? "direct" : "paid_manual",
             exitNode: sellerScreenshot ? "" : "npub1paidexitfinlanddemo",
             exitNodeLeakProtection: true,
             exitNodeActive: !sellerScreenshot,
@@ -1717,6 +1738,8 @@ final class AppManager: ObservableObject {
             wireguardExitMtu: 1280,
             wireguardExitPersistentKeepaliveSecs: 25,
             wireguardExitConfig: "",
+            walletFiatEnabled: true,
+            walletFiatCurrency: "USD",
             paidExitSeller: NativePaidExitSellerState(
                 supported: true,
                 enabled: true,
@@ -1831,6 +1854,14 @@ final class AppManager: ObservableObject {
                     balanceKnown: true,
                     totalBalanceMsat: 123_000,
                     totalBalanceText: "123 sat",
+                    navigationBalanceText: "₿123",
+                    fiatCurrency: "USD",
+                    fiatBalanceText: "$0.08",
+                    exchangeRateText: "1 BTC = $63,973",
+                    exchangeRateStatus: "Coinbase · Kraken",
+                    exchangeRateSources: "coinbase,kraken",
+                    exchangeRateStale: false,
+                    exchangeRateUpdatedAtUnix: 1_780_650_000,
                     mints: [
                         NativePaidRouteWalletMintState(
                             url: "https://mint.minibits.cash/Bitcoin",
@@ -2664,6 +2695,7 @@ func settingsPatch(
     nostrPubsubFanout: UInt32? = nil,
     nostrPubsubMaxHops: UInt8? = nil,
     nostrPubsubMaxEventBytes: UInt32? = nil,
+    internetSource: String? = nil,
     exitNode: String? = nil,
     exitNodeLeakProtection: Bool? = nil,
     advertiseExitNode: Bool? = nil,
@@ -2680,6 +2712,8 @@ func settingsPatch(
     wireguardExitMtu: UInt16? = nil,
     wireguardExitPersistentKeepaliveSecs: UInt16? = nil,
     wireguardExitConfig: String? = nil,
+    walletFiatEnabled: Bool? = nil,
+    walletFiatCurrency: String? = nil,
     paidExitEnabled: Bool? = nil,
     paidExitUpstream: String? = nil,
     paidExitMeter: String? = nil,
@@ -2722,6 +2756,7 @@ func settingsPatch(
         nostrPubsubFanout: nostrPubsubFanout,
         nostrPubsubMaxHops: nostrPubsubMaxHops,
         nostrPubsubMaxEventBytes: nostrPubsubMaxEventBytes,
+        internetSource: internetSource,
         exitNode: exitNode,
         exitNodeLeakProtection: exitNodeLeakProtection,
         advertiseExitNode: advertiseExitNode,
@@ -2738,6 +2773,8 @@ func settingsPatch(
         wireguardExitMtu: wireguardExitMtu,
         wireguardExitPersistentKeepaliveSecs: wireguardExitPersistentKeepaliveSecs,
         wireguardExitConfig: wireguardExitConfig,
+        walletFiatEnabled: walletFiatEnabled,
+        walletFiatCurrency: walletFiatCurrency,
         paidExitEnabled: paidExitEnabled,
         paidExitUpstream: paidExitUpstream,
         paidExitMeter: paidExitMeter,

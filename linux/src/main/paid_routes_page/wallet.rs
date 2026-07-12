@@ -28,6 +28,17 @@ pub(super) fn build_paid_route_wallet_card(app: &AppRef, page: &gtk::Box, state:
             &format_paid_route_msat(wallet.total_balance_msat),
         ),
     );
+    if state.wallet_fiat_enabled && !wallet.fiat_balance_text.is_empty() {
+        detail_row(&card, "Fiat", &wallet.fiat_balance_text);
+        detail_row(
+            &card,
+            "Rate",
+            &format!(
+                "{} · {}",
+                wallet.exchange_rate_text, wallet.exchange_rate_sources
+            ),
+        );
+    }
     detail_row(
         &card,
         "Status",

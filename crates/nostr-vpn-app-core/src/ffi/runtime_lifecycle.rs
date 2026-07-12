@@ -42,6 +42,8 @@ impl NativeAppRuntime {
         }
 
         let capabilities = current_runtime_capabilities();
+        let exchange_rate_service =
+            ExchangeRateService::for_currency(config.wallet_fiat_currency);
         let mut runtime = Self {
             rev: 0,
             app_version,
@@ -73,6 +75,7 @@ impl NativeAppRuntime {
             paid_route_market_filter: NativePaidRouteMarketFilterState::default(),
             paid_route_wallet_last_action: NativePaidRouteWalletActionState::default(),
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
+            exchange_rate_service,
             #[cfg(not(test))]
             join_approval_worker: None,
             #[cfg(not(test))]
@@ -102,6 +105,8 @@ impl NativeAppRuntime {
             config.node.endpoint = "198.51.100.10:51820".to_string();
             let _ = config.ensure_pending_nostr_join_request(unix_timestamp());
         }
+        let exchange_rate_service =
+            ExchangeRateService::for_currency(config.wallet_fiat_currency);
         Self {
             rev: 0,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -133,6 +138,7 @@ impl NativeAppRuntime {
             paid_route_market_filter: NativePaidRouteMarketFilterState::default(),
             paid_route_wallet_last_action: NativePaidRouteWalletActionState::default(),
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
+            exchange_rate_service,
             #[cfg(not(test))]
             join_approval_worker: None,
             #[cfg(not(test))]
@@ -293,6 +299,14 @@ impl NativeAppRuntime {
         let raw_port_mapping = daemon_state.map(|state| &state.port_mapping);
         let has_enabled_network = !config_unavailable
             && self.config.networks.iter().any(|network| network.enabled);
+        let mut paid_route_market = self.paid_route_market_state(config_for_paid);
+        if !config_unavailable && self.config.wallet_fiat_enabled {
+            let _ = self.exchange_rate_service.refresh_if_due();
+            apply_exchange_rate(
+                &mut paid_route_market.wallet,
+                &self.exchange_rate_service.snapshot(),
+            );
+        }
 
         NativeAppState {
             rev: self.rev,
@@ -412,6 +426,11 @@ impl NativeAppRuntime {
             } else {
                 own_join_request_qr_code_or_link(&self.config).unwrap_or_default()
             },
+            internet_source: if config_unavailable {
+                String::new()
+            } else {
+                self.config.internet_source.as_str().to_string()
+            },
             exit_node: if self.config.exit_node.trim().is_empty() {
                 String::new()
             } else {
@@ -432,7 +451,8 @@ impl NativeAppRuntime {
             } else {
                 self.config.effective_advertised_routes()
             },
-            wireguard_exit_enabled: !config_unavailable && self.config.wireguard_exit.enabled,
+            wireguard_exit_enabled: !config_unavailable
+                && self.config.internet_source == InternetSource::WireGuard,
             wireguard_exit_configured: !config_unavailable
                 && self.config.wireguard_exit.configured(),
             wireguard_exit_interface: if config_unavailable {
@@ -490,12 +510,18 @@ impl NativeAppRuntime {
             } else {
                 wireguard_exit_config_text(&self.config.wireguard_exit)
             },
+            wallet_fiat_enabled: !config_unavailable && self.config.wallet_fiat_enabled,
+            wallet_fiat_currency: if config_unavailable {
+                String::new()
+            } else {
+                self.config.wallet_fiat_currency.as_str().to_string()
+            },
             paid_exit_seller: self.paid_exit_seller_state(
                 config_for_paid,
                 raw_port_mapping,
                 capabilities.mobile,
             ),
-            paid_route_market: self.paid_route_market_state(config_for_paid),
+            paid_route_market,
             fips_host_tunnel_enabled: !config_unavailable && self.config.fips_host_tunnel_enabled,
             connect_to_non_roster_fips_peers: !config_unavailable
                 && self.config.connect_to_non_roster_fips_peers,

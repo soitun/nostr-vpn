@@ -349,7 +349,11 @@ async fn run_command(command: Command) -> Result<()> {
                 app.node.listen_port = value;
             }
             if let Some(value) = args.exit_node {
-                app.exit_node = parse_exit_node_arg(&value)?.unwrap_or_default();
+                if let Some(exit_node) = parse_exit_node_arg(&value)? {
+                    app.select_private_exit_node(&exit_node)?;
+                } else {
+                    app.set_internet_source(InternetSource::Direct);
+                }
             }
             if let Some(value) = args.exit_node_leak_protection {
                 app.exit_node_leak_protection = value;
@@ -432,7 +436,11 @@ async fn run_command(command: Command) -> Result<()> {
                 }
             }
             if let Some(value) = args.wireguard_exit_enabled {
-                app.wireguard_exit.enabled = value;
+                if value {
+                    app.set_internet_source(InternetSource::WireGuard);
+                } else if app.internet_source == InternetSource::WireGuard {
+                    app.set_internet_source(InternetSource::Direct);
+                }
             }
             if args.wireguard_exit_config.is_some() && args.wireguard_exit_config_file.is_some() {
                 return Err(anyhow!(

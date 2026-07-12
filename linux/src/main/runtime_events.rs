@@ -105,11 +105,23 @@ fn drain_tray_commands(app: &AppRef) {
                 }
             }
             tray::TrayCommand::CopyPeer(npub) => copy_text(&npub),
+            tray::TrayCommand::SetInternetSource(source) => {
+                dispatch(
+                    app,
+                    NativeAppAction::UpdateSettings {
+                        patch: SettingsPatch {
+                            internet_source: Some(source),
+                            ..SettingsPatch::default()
+                        },
+                    },
+                );
+            }
             tray::TrayCommand::SetExitNode(npub) => {
                 dispatch(
                     app,
                     NativeAppAction::UpdateSettings {
                         patch: SettingsPatch {
+                            internet_source: Some("private_vpn".to_string()),
                             exit_node: Some(npub),
                             ..SettingsPatch::default()
                         },

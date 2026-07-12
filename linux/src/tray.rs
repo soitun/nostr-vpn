@@ -110,6 +110,7 @@ pub enum TrayCommand {
     ToggleExitOffer,
     CopyDeviceId,
     CopyPeer(String),
+    SetInternetSource(String),
     SetExitNode(String),
     Quit,
 }
@@ -494,8 +495,28 @@ fn build_menu(state: &NativeAppState) -> MenuNode {
         exit_children.push(radio_item(
             32,
             "This Device",
-            state.exit_node.is_empty(),
-            TrayCommand::SetExitNode(String::new()),
+            state.internet_source == "direct",
+            TrayCommand::SetInternetSource("direct".to_string()),
+        ));
+        if state.paid_route_market.supported {
+            exit_children.push(radio_item(
+                34,
+                "Paid · Automatic",
+                state.internet_source == "paid_automatic",
+                TrayCommand::SetInternetSource("paid_automatic".to_string()),
+            ));
+            exit_children.push(radio_item(
+                35,
+                "Paid · Choose manually",
+                state.internet_source == "paid_manual",
+                TrayCommand::SetInternetSource("paid_manual".to_string()),
+            ));
+        }
+        exit_children.push(radio_item(
+            36,
+            "WireGuard VPN",
+            state.internet_source == "wireguard",
+            TrayCommand::SetInternetSource("wireguard".to_string()),
         ));
         exit_children.extend(
             network
@@ -507,7 +528,8 @@ fn build_menu(state: &NativeAppState) -> MenuNode {
                     radio_item(
                         200 + index as i32,
                         &exit_node_label(participant),
-                        state.exit_node == participant.npub,
+                        state.internet_source == "private_vpn"
+                            && state.exit_node == participant.npub,
                         TrayCommand::SetExitNode(participant.npub.clone()),
                     )
                 }),

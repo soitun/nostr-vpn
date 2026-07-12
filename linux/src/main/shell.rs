@@ -158,17 +158,29 @@ fn update_stripe_text(version: &str, current: &str) -> String {
 fn build_sidebar(app: &AppRef, sidebar: &gtk::Box, state: &NativeAppState, page: Page) {
     let has_incoming_join_requests = incoming_join_request_count(state) > 0;
     let mut pages = vec![
-        (Page::Devices, "Devices", ""),
-        (Page::ExitNodes, "Exit Nodes", ""),
+        (Page::Devices, "Devices".to_string(), ""),
+        (Page::ExitNodes, "Internet".to_string(), ""),
     ];
     if paid_internet_available(state) {
-        pages.push((Page::PaidRoutes, "Buy Internet", ""));
-        pages.push((Page::Wallet, "Wallet", ""));
+        let wallet_title = if state
+            .paid_route_market
+            .wallet
+            .navigation_balance_text
+            .is_empty()
+        {
+            "Wallet".to_string()
+        } else {
+            format!(
+                "Wallet {}",
+                state.paid_route_market.wallet.navigation_balance_text
+            )
+        };
+        pages.push((Page::Wallet, wallet_title, ""));
     }
-    pages.push((Page::Settings, "Settings", ""));
+    pages.push((Page::Settings, "Settings".to_string(), ""));
     for (target, title, icon) in pages {
         let button = nav_button(
-            title,
+            &title,
             icon,
             page == target,
             target == Page::Devices && has_incoming_join_requests,

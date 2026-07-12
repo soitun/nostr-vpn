@@ -208,6 +208,11 @@ pub(super) fn select_buyer_mint(
                 offer.offer_id
             ));
         }
+        if !wallet.mints.iter().any(|mint| mint.url.trim() == requested) {
+            return Err(anyhow!(
+                "Cashu mint {requested} is not approved in this wallet"
+            ));
+        }
         return Ok(requested.to_string());
     }
 
@@ -226,16 +231,12 @@ pub(super) fn select_buyer_mint(
         return Ok(wallet_mint.url.trim().to_string());
     }
 
-    if let Some(first_accepted) = accepted_mints.first() {
-        return Ok(first_accepted.clone());
-    }
-
     if !paid_route_offer_requires_payment(offer) {
         return Ok(String::new());
     }
 
     Err(anyhow!(
-        "paid route offer {} has no accepted Cashu mint",
+        "paid route offer {} has no accepted mint approved in this wallet",
         offer.offer_id
     ))
 }

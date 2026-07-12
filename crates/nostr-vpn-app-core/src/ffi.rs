@@ -12,11 +12,11 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use nostr_sdk::prelude::Event;
 use nostr_vpn_core::config::{
-    AppConfig, NetworkConfig, NostrPubsubMode, PendingInboundJoinRequest,
-    PendingOutboundJoinRequest, derive_mesh_tunnel_ip, maybe_autoconfigure_node,
-    normalize_advertised_route, normalize_magic_dns_label, normalize_nostr_pubkey,
-    normalize_relay_urls, normalize_runtime_network_id, parse_wireguard_exit_config,
-    wireguard_exit_config_text,
+    AppConfig, FiatCurrency, InternetSource, NetworkConfig, NostrPubsubMode,
+    PendingInboundJoinRequest, PendingOutboundJoinRequest, derive_mesh_tunnel_ip,
+    maybe_autoconfigure_node, normalize_advertised_route, normalize_magic_dns_label,
+    normalize_nostr_pubkey, normalize_relay_urls, normalize_runtime_network_id,
+    parse_wireguard_exit_config, wireguard_exit_config_text,
 };
 use nostr_vpn_core::diagnostics::ProbeStatus;
 use nostr_vpn_core::paid_routes::{ExitNetworkClass, PaidExitUpstream, PaidRouteMeter};
@@ -24,6 +24,7 @@ use nostr_vpn_core::process_ext::CommandWindowExt;
 use serde::Deserialize;
 
 use crate::actions::NativeAppAction;
+use crate::exchange_rate::{ExchangeRateService, apply_exchange_rate};
 use crate::invite::{
     NETWORK_INVITE_VERSION, NetworkInvite, active_network_invite_code_with_endpoints,
     apply_network_invite_to_active_network, parse_network_invite, preferred_join_request_recipient,
@@ -206,6 +207,7 @@ struct NativeAppRuntime {
     paid_route_market_filter: NativePaidRouteMarketFilterState,
     paid_route_wallet_last_action: NativePaidRouteWalletActionState,
     paid_route_payment_last_action: NativePaidRoutePaymentActionState,
+    exchange_rate_service: ExchangeRateService,
     #[cfg(not(test))]
     join_approval_worker: Option<NativeJoinApprovalWorker>,
     #[cfg(not(test))]
