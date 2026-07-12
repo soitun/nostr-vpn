@@ -90,7 +90,7 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
         100,
     );
     rating.scope = Some("fips.peer".to_string());
-    rating.created_at = 1;
+    rating.created_at = unix_timestamp();
     rating.sample_count = Some(1);
     let blocked_author_rating = rating
         .to_event(&endpoint_keys)

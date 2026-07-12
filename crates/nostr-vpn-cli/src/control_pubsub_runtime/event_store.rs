@@ -11,6 +11,13 @@ struct ControlEventStore {
     order: VecDeque<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RatingEventStoreKey {
+    author: String,
+    subject: String,
+    scope: String,
+}
+
 #[derive(Clone, Debug)]
 struct UpdateRootSubscription {
     author: PublicKey,
@@ -85,10 +92,14 @@ impl ControlEventStore {
                 path.display()
             ));
         }
+        let saved_count = saved.events.len();
         for event in saved.events {
             if event.verify().is_ok() && is_control_event(&event, update_root) {
                 let _ = store.insert_memory(event);
             }
+        }
+        if store.events.len() != saved_count {
+            store.persist()?;
         }
         Ok(store)
     }
@@ -105,6 +116,32 @@ impl ControlEventStore {
         let event_id = event.id.to_hex();
         if self.events.contains_key(&event_id) {
             return false;
+        }
+        if u16::from(event.kind) == RATING_FACT_KIND {
+            let Some((rating_key, created_at)) = retained_rating_event(&event, now_ms() / 1_000)
+            else {
+                return false;
+            };
+            if self.events.values().any(|stored| {
+                rating_event_store_key(stored).is_some_and(|(stored_key, stored_created_at)| {
+                    stored_key == rating_key
+                        && (stored_created_at, stored.id) >= (created_at, event.id)
+                })
+            }) {
+                return false;
+            }
+            let replaced = self
+                .events
+                .iter()
+                .filter(|(_, stored)| {
+                    rating_event_store_key(stored)
+                        .is_some_and(|(stored_key, _)| stored_key == rating_key)
+                })
+                .map(|(stored_id, _)| stored_id.clone())
+                .collect::<std::collections::HashSet<_>>();
+            self.events
+                .retain(|stored_id, _| !replaced.contains(stored_id));
+            self.order.retain(|stored_id| !replaced.contains(stored_id));
         }
         if is_update_root_kind(u16::from(event.kind)) {
             if self.events.values().any(|stored| {
@@ -150,6 +187,26 @@ impl ControlEventStore {
             .collect()
     }
 
+    fn prune_expired_ratings(&mut self, now_secs: u64) -> Result<usize> {
+        let remove = self
+            .events
+            .iter()
+            .filter(|(_, event)| {
+                u16::from(event.kind) == RATING_FACT_KIND
+                    && retained_rating_event(event, now_secs).is_none()
+            })
+            .map(|(event_id, _)| event_id.clone())
+            .collect::<std::collections::HashSet<_>>();
+        if remove.is_empty() {
+            return Ok(0);
+        }
+        self.events
+            .retain(|event_id, _| !remove.contains(event_id));
+        self.order.retain(|event_id| !remove.contains(event_id));
+        self.persist()?;
+        Ok(remove.len())
+    }
+
     fn persist(&self) -> Result<()> {
         let Some(path) = self.path.as_deref() else {
             return Ok(());
@@ -174,5 +231,124 @@ impl ControlEventStore {
             )
         })?;
         Ok(())
+    }
+}
+
+fn retained_rating_event(event: &Event, now_secs: u64) -> Option<(RatingEventStoreKey, u64)> {
+    let (key, created_at) = rating_event_store_key(event)?;
+    if created_at > now_secs.saturating_add(PEER_RATING_MAX_FUTURE_SKEW.as_secs())
+        || now_secs.saturating_sub(created_at) > PEER_RATING_MAX_AGE.as_secs()
+    {
+        return None;
+    }
+    Some((key, created_at))
+}
+
+fn rating_event_store_key(event: &Event) -> Option<(RatingEventStoreKey, u64)> {
+    if u16::from(event.kind) != RATING_FACT_KIND {
+        return None;
+    }
+    let rating = rating_from_event(event).ok()?;
+    let subject = PublicKey::parse(&rating.subject).ok()?.to_hex();
+    let scope = rating.scope?.trim().to_string();
+    if scope.is_empty() {
+        return None;
+    }
+    Some((
+        RatingEventStoreKey {
+            author: event.pubkey.to_hex(),
+            subject,
+            scope,
+        },
+        rating.created_at,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use nostr_social_graph::Rating;
+    use nostr_social_memory::RatingEventExt;
+
+    use super::*;
+
+    #[test]
+    fn rating_events_are_coalesced_by_author_subject_and_scope() {
+        let author = Keys::generate();
+        let subject = Keys::generate().public_key().to_hex();
+        let update_root = test_update_root();
+        let now = now_ms() / 1_000;
+        let mut store = ControlEventStore::load(None, &update_root).expect("event store");
+        let older = rating_event(&author, &subject, "fips.peer", 20, now.saturating_sub(1));
+        let newer = rating_event(&author, &subject, "fips.peer", 80, now);
+
+        assert!(store.insert(older).expect("insert older rating"));
+        assert!(store.insert(newer.clone()).expect("insert newer rating"));
+        assert_eq!(store.snapshot(), vec![newer]);
+    }
+
+    #[test]
+    fn stale_or_far_future_ratings_are_not_retained() {
+        let author = Keys::generate();
+        let subject = Keys::generate().public_key().to_hex();
+        let update_root = test_update_root();
+        let now = now_ms() / 1_000;
+        let mut store = ControlEventStore::load(None, &update_root).expect("event store");
+        let stale = rating_event(
+            &author,
+            &subject,
+            "fips.peer",
+            20,
+            now.saturating_sub(PEER_RATING_MAX_AGE.as_secs() + 1),
+        );
+        let future = rating_event(
+            &author,
+            &subject,
+            "fips.peer",
+            80,
+            now.saturating_add(PEER_RATING_MAX_FUTURE_SKEW.as_secs() + 60),
+        );
+
+        assert!(!store.insert(stale).expect("reject stale rating"));
+        assert!(!store.insert(future).expect("reject future rating"));
+        assert!(store.snapshot().is_empty());
+    }
+
+    #[test]
+    fn maintenance_prunes_ratings_that_age_out() {
+        let author = Keys::generate();
+        let subject = Keys::generate().public_key().to_hex();
+        let update_root = test_update_root();
+        let created_at = now_ms() / 1_000;
+        let mut store = ControlEventStore::load(None, &update_root).expect("event store");
+        let rating = rating_event(&author, &subject, "fips.peer", 20, created_at);
+
+        assert!(store.insert(rating).expect("insert rating"));
+        assert_eq!(
+            store
+                .prune_expired_ratings(created_at + PEER_RATING_MAX_AGE.as_secs() + 1)
+                .expect("prune ratings"),
+            1
+        );
+        assert!(store.snapshot().is_empty());
+    }
+
+    fn test_update_root() -> UpdateRootSubscription {
+        UpdateRootSubscription {
+            author: Keys::generate().public_key(),
+            tree_name: "test-root".to_string(),
+        }
+    }
+
+    fn rating_event(
+        author: &Keys,
+        subject: &str,
+        scope: &str,
+        value: i64,
+        created_at: u64,
+    ) -> Event {
+        let mut rating = Rating::new(author.public_key().to_hex(), subject, value, 0, 100);
+        rating.scope = Some(scope.to_string());
+        rating.created_at = created_at;
+        rating.to_event(author).expect("signed rating")
     }
 }
