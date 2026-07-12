@@ -111,7 +111,7 @@ fn windows_service_bin_path_runs_hidden_service_daemon_with_same_config() {
     let executable = Path::new("C:\\Program Files\\Nostr VPN\\nvpn.exe");
     let config_path = Path::new("C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml");
 
-    let command = windows_service_bin_path(executable, config_path, "nvpn", 20);
+    let command = windows_service_bin_path(executable, config_path, "nvpn", 60);
 
     assert!(command.starts_with("\"C:\\Program Files\\Nostr VPN\\nvpn.exe\""));
     assert!(command.contains(" daemon "));
@@ -119,7 +119,7 @@ fn windows_service_bin_path_runs_hidden_service_daemon_with_same_config() {
     assert!(command.contains(" --config "));
     assert!(command.contains("\"C:\\Users\\Example\\AppData\\Roaming\\nvpn\\config.toml\""));
     assert!(command.contains(" --iface \"nvpn\""));
-    assert!(command.contains(" --mesh-refresh-interval-secs 20"));
+    assert!(command.contains(" --mesh-refresh-interval-secs 60"));
 }
 
 #[test]

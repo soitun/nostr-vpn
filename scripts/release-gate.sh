@@ -11,11 +11,15 @@ load_mobile_env "$ROOT_DIR"
 enable_deterministic_build_env "$ROOT_DIR"
 
 export NVPN_IDLE_CPU_GATE="${NVPN_RELEASE_GATE_IDLE_CPU:-${NVPN_IDLE_CPU_GATE:-1}}"
+export NVPN_IDLE_CPU_MAX_PERCENT="${NVPN_RELEASE_GATE_IDLE_CPU_MAX_PERCENT:-${NVPN_IDLE_CPU_MAX_PERCENT:-2}}"
+export NVPN_IDLE_CPU_SAMPLE_SECONDS="${NVPN_RELEASE_GATE_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAMPLE_SECONDS:-60}}"
+export NVPN_IDLE_CPU_SETTLE_SECONDS="${NVPN_RELEASE_GATE_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-15}}"
 
 MACOS_WG_EXIT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MACOS_WG_EXIT_TIMEOUT_SECS:-300}"
 WINDOWS_WG_EXIT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_TIMEOUT_SECS:-900}"
 LINUX_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_LINUX_GUI_SMOKE_TIMEOUT_SECS:-1800}"
 MACOS_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MACOS_GUI_SMOKE_TIMEOUT_SECS:-900}"
+MACOS_DAEMON_IDLE_CPU_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MACOS_DAEMON_IDLE_CPU_TIMEOUT_SECS:-600}"
 WINDOWS_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE_TIMEOUT_SECS:-1800}"
 MOBILE_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MOBILE_GUI_SMOKE_TIMEOUT_SECS:-1800}"
 IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS="${NVPN_RELEASE_GATE_IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS:-180}"
@@ -358,6 +362,19 @@ run_desktop_app_launch_smokes() {
   esac
 }
 
+run_macos_daemon_idle_cpu_gate() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    echo "Skipping macOS daemon idle CPU gate on this host."
+    return
+  fi
+  if ! { [[ "${EUID:-$(id -u)}" == "0" ]] || sudo -n true >/dev/null 2>&1; }; then
+    echo "Skipping macOS daemon idle CPU gate because passwordless sudo is unavailable."
+    return
+  fi
+  release_gate_run_with_timeout "macOS daemon idle CPU" "$MACOS_DAEMON_IDLE_CPU_TIMEOUT_SECS" \
+    env NVPN_RUN_MACOS_SERVICE_E2E=1 ./scripts/e2e-macos-service.sh
+}
+
 run_mobile_idle_cpu_gates() {
   case "$NVPN_IDLE_CPU_GATE" in
     0|false|FALSE|False|no|NO|No|off|OFF|Off)
@@ -368,7 +385,7 @@ run_mobile_idle_cpu_gates() {
 
   if [[ "$(uname -s)" == "Darwin" ]]; then
     release_gate_run_with_timeout "iOS simulator idle CPU smoke" "$MOBILE_GUI_SMOKE_TIMEOUT_SECS" \
-      ./scripts/mobile-ios-smoke.sh simulator
+      env NVPN_IOS_RUST_PROFILE=release ./scripts/mobile-ios-smoke.sh simulator
   else
     echo "Skipping iOS simulator idle CPU smoke on this host."
   fi
@@ -376,27 +393,22 @@ run_mobile_idle_cpu_gates() {
   if command -v adb >/dev/null 2>&1 \
     && adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { found = 1 } END { exit !found }'; then
     release_gate_run_with_timeout "Android idle CPU smoke" "$MOBILE_GUI_SMOKE_TIMEOUT_SECS" \
-      ./scripts/mobile-android-smoke.sh
+      ./scripts/mobile-android-smoke.sh --vpn-cycle --create-network --accept-vpn-dialog
   else
     echo "Skipping Android idle CPU smoke because no adb device is online."
   fi
 
   local ios_device="${NVPN_IOS_DEVICE:-${NVPN_IOS_DEVICE_ID:-}}"
-  if [[ "$(uname -s)" == "Darwin" && -n "$ios_device" ]] \
-    && xcrun devicectl device info processes --device "$ios_device" 2>/dev/null \
-      | grep -Fq '/Nostr VPN Tunnel.appex/Nostr VPN Tunnel'; then
-    mkdir -p "$ROOT_DIR/artifacts/mobile-ios"
+  if [[ "$(uname -s)" == "Darwin" && -n "$ios_device" ]]; then
     release_gate_run_with_timeout "iOS packet tunnel idle CPU" "$IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS" \
-      ./scripts/idle-cpu-gate.py ios-process \
-        --device "$ios_device" \
-        --process-pattern '^Nostr VPN Tunnel$' \
-        --label "iOS packet tunnel" \
-        --artifact "$ROOT_DIR/artifacts/mobile-ios/packet-tunnel-idle-cpu.json" \
-        --max-percent "${NVPN_IOS_PACKET_TUNNEL_IDLE_CPU_MAX_PERCENT:-5}" \
-        --settle-seconds "${NVPN_IOS_PACKET_TUNNEL_IDLE_CPU_SETTLE_SECONDS:-15}" \
-        --sample-seconds "${NVPN_IOS_PACKET_TUNNEL_IDLE_CPU_SAMPLE_SECONDS:-60}"
+      env \
+        NVPN_IOS_RUST_PROFILE=release \
+        NVPN_IOS_IDLE_CPU_MAX_PERCENT="${NVPN_IOS_PACKET_TUNNEL_IDLE_CPU_MAX_PERCENT:-$NVPN_IDLE_CPU_MAX_PERCENT}" \
+        NVPN_IOS_IDLE_CPU_SETTLE_SECONDS="${NVPN_IOS_PACKET_TUNNEL_IDLE_CPU_SETTLE_SECONDS:-15}" \
+        NVPN_IOS_IDLE_CPU_SAMPLE_SECONDS="${NVPN_IOS_PACKET_TUNNEL_IDLE_CPU_SAMPLE_SECONDS:-60}" \
+        ./scripts/mobile-ios-smoke.sh device --device "$ios_device" --install --create-network --vpn-cycle
   else
-    echo "Skipping iOS packet tunnel idle CPU gate because no configured device has an active tunnel."
+    echo "Skipping iOS packet tunnel idle CPU gate because no physical device is configured."
   fi
 }
 
@@ -438,4 +450,5 @@ esac
 ./scripts/release-gate-host-pair-loaded-latency.sh
 run_wireguard_exit_platform_gates
 run_desktop_app_launch_smokes
+run_macos_daemon_idle_cpu_gate
 run_mobile_idle_cpu_gates

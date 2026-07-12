@@ -314,29 +314,6 @@ copy_vpn_probe_result() {
   printf '%s\n' "$result_path"
 }
 
-copy_ios_idle_cpu_result() {
-  local device="$1"
-  local result_path="$VPN_RESULT_DIR/$IOS_IDLE_CPU_RESULT_NAME"
-  mkdir -p "$VPN_RESULT_DIR"
-  rm -f "$result_path"
-  if ! xcrun devicectl device copy from \
-    --device "$device" \
-    --domain-type appDataContainer \
-    --domain-identifier "$BUNDLE_ID" \
-    --source "Library/Application Support/Nostr VPN/$IOS_IDLE_CPU_RESULT_NAME" \
-    --destination "$result_path" \
-    --quiet
-  then
-    echo "Failed to copy iOS idle CPU result from app data container for $BUNDLE_ID" >&2
-    return 1
-  fi
-  if [[ ! -s "$result_path" ]]; then
-    echo "iOS idle CPU result not found at $result_path" >&2
-    return 1
-  fi
-  printf '%s\n' "$result_path"
-}
-
 copy_ios_debug_logs() {
   local device="$1"
   local stem="${VPN_RESULT_NAME%.json}"
@@ -634,75 +611,25 @@ if result.get("tunPacketProbeReadIncreased") is True:
 PY
 }
 
-validate_ios_idle_cpu_result() {
-  local result_path="$1"
-  python3 - "$result_path" "$NVPN_BUILD_GIT_SHA" <<'PY'
-import json
-import sys
-
-path, expected_build_git_sha = sys.argv[1:3]
-with open(path, encoding="utf-8") as fh:
-    result = json.load(fh)
-
-errors = []
-actual_build_git_sha = result.get("appBuildGitSha")
-if expected_build_git_sha:
-    if not actual_build_git_sha:
-        errors.append(f"appBuildGitSha missing expected={expected_build_git_sha!r}")
-    elif actual_build_git_sha != expected_build_git_sha:
-        errors.append(
-            f"appBuildGitSha={actual_build_git_sha!r} expected={expected_build_git_sha!r}"
-        )
-if result.get("phase") != "finished":
-    errors.append(f"phase={result.get('phase')!r}")
-if result.get("ok") is not True:
-    errors.append(
-        "ok="
-        f"{result.get('ok')!r} cpuPercent={result.get('cpuPercent')!r} "
-        f"maxPercent={result.get('maxPercent')!r}"
-    )
-cpu = result.get("cpuPercent")
-max_percent = result.get("maxPercent")
-if not isinstance(cpu, (int, float)) or not isinstance(max_percent, (int, float)):
-    errors.append(f"invalid CPU fields cpuPercent={cpu!r} maxPercent={max_percent!r}")
-elif cpu > max_percent:
-    errors.append(f"cpuPercent={cpu:.3f} > maxPercent={max_percent:.3f}")
-
-if errors:
-    print("iOS idle CPU gate failed: " + ", ".join(errors), file=sys.stderr)
-    sys.exit(1)
-print(f"iOS idle CPU ok: {cpu:.3f}% <= {max_percent:.3f}%")
-print("Result: " + path)
-PY
-}
-
 run_ios_device_idle_cpu_gate() {
   local device="$1"
+  local process_pattern="$2"
+  local label="$3"
   case "$IDLE_CPU_GATE" in
     0|false|FALSE|False|no|NO|No|off|OFF|Off)
       echo "Skipping iOS physical-device idle CPU gate because NVPN_IOS_IDLE_CPU_GATE=$IDLE_CPU_GATE"
       return
       ;;
   esac
-  launch_device "$device" \
-    --nvpn-debug-idle-cpu-probe \
-    --nvpn-debug-idle-cpu-result "$IOS_IDLE_CPU_RESULT_NAME" \
-    --nvpn-debug-idle-cpu-max-percent "$IDLE_CPU_MAX_PERCENT" \
-    --nvpn-debug-idle-cpu-sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
-    --nvpn-debug-idle-cpu-settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
-
-  python3 - "$IDLE_CPU_SAMPLE_SECONDS" "$IDLE_CPU_SETTLE_SECONDS" <<'PY'
-import math
-import sys
-import time
-
-sample, settle = map(float, sys.argv[1:3])
-time.sleep(max(1, math.ceil(sample + settle + 1)))
-PY
-
-  local result_path
-  result_path="$(copy_ios_idle_cpu_result "$device")"
-  validate_ios_idle_cpu_result "$result_path"
+  mkdir -p "$VPN_RESULT_DIR"
+  "$ROOT/scripts/idle-cpu-gate.py" ios-process \
+    --device "$device" \
+    --process-pattern "$process_pattern" \
+    --label "$label" \
+    --artifact "$VPN_RESULT_DIR/$IOS_IDLE_CPU_RESULT_NAME" \
+    --max-percent "$IDLE_CPU_MAX_PERCENT" \
+    --sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
+    --settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
 }
 
 run_vpn_cycle() {
@@ -732,6 +659,7 @@ run_vpn_cycle() {
     return 1
   fi
   echo "iOS device VPN probe passed: $result_path"
+  run_ios_device_idle_cpu_gate "$device" '^Nostr VPN Tunnel$' "iOS packet tunnel"
   cleanup_ios_vpn_after_pass "$device"
 }
 
@@ -768,11 +696,11 @@ run_device() {
   if bool_is_true "$INSTALL_DEVICE_APP"; then
     install_device_app "$device"
   fi
-  run_ios_device_idle_cpu_gate "$device"
   if [[ "$vpn_cycle" -eq 1 ]]; then
     run_vpn_cycle "$device"
   else
     launch_device "$device"
+    run_ios_device_idle_cpu_gate "$device" '^Nostr VPN$' "iOS foreground app"
   fi
   echo "iOS device smoke launched bundle $BUNDLE_ID"
 }

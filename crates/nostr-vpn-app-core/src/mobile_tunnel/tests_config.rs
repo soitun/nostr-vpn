@@ -124,6 +124,14 @@
     }
 
     #[test]
+    fn background_maintenance_uses_low_wakeup_intervals() {
+        assert_eq!(MOBILE_RUNTIME_STATE_REFRESH_SECS, 10);
+        assert_eq!(MOBILE_PEER_ACTIVE_PING_INTERVAL_SECS, 30);
+        assert_eq!(MOBILE_ROSTER_RESEND_SECS, 60);
+        assert_eq!(MOBILE_CAPABILITIES_BROADCAST_SECS, 60);
+    }
+
+    #[test]
     fn mobile_connected_roster_peers_rejects_far_future_presence() {
         let mut app = AppConfig::generated();
         app.ensure_defaults();

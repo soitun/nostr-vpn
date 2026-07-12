@@ -29,6 +29,8 @@ if ('${NVPN_FIPS_REPO_PATH:-}' -ne '') { \$env:NVPN_FIPS_REPO_PATH = '$GUEST_FIP
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-build.ps1 -Configuration Release -Installer -Tag '$SMOKE_TAG' -OutputDir '$GUEST_ARTIFACT_ROOT'
 \$installer = Join-Path '$GUEST_ARTIFACT_ROOT' 'nostr-vpn-$SMOKE_TAG-windows-x64-setup.exe'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-installer-smoke.ps1 -InstallerPath \$installer -ArtifactRoot '$GUEST_ARTIFACT_ROOT'
+\$candidate = Join-Path (Resolve-Path .) 'target\\release\\nvpn.exe'
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-daemon-idle-cpu.ps1 -Bin \$candidate -ArtifactRoot '$GUEST_ARTIFACT_ROOT'
 exit \$LASTEXITCODE"
 
 echo "WINDOWS_VM_APP_LAUNCH_SMOKE_OK"

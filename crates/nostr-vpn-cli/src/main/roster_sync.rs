@@ -191,10 +191,12 @@ fn signed_roster_is_current_for_app(
                 .is_ok_and(|value| value == signed_by)
     })
 }
-const FIPS_ROSTER_RESEND_SECS: u64 = 10;
+const FIPS_ROSTER_RESEND_SECS: u64 = 60;
 #[derive(Default)]
 struct FipsRosterSyncState {
     sent_by_peer: HashMap<String, FipsRosterSentState>,
+    source: Option<(String, u64, String)>,
+    roster: Option<SignedRoster>,
 }
 struct FipsRosterSentState {
     hash: String,
@@ -206,7 +208,18 @@ async fn sync_fips_roster_with_connected_peers(
     config_path: &Path,
     state: &mut FipsRosterSyncState,
 ) -> Result<usize> {
-    let Some(signed_roster) = active_signed_roster_for_sync(app, config_path, true)? else {
+    let source = app.active_network_opt().map(|network| {
+        (
+            normalize_runtime_network_id(&network.network_id),
+            network.shared_roster_updated_at,
+            network.shared_roster_signed_by.clone(),
+        )
+    });
+    if state.source != source {
+        state.roster = active_signed_roster_for_sync(app, config_path, true)?;
+        state.source = state.roster.as_ref().map(|_| source).unwrap_or_default();
+    }
+    let Some(signed_roster) = state.roster.clone() else {
         return Ok(0);
     };
     let now = unix_timestamp();

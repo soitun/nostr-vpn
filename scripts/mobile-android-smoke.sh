@@ -36,7 +36,7 @@ TUN_PACKET_PROBE_COUNT="${NVPN_ANDROID_TUN_PACKET_PROBE_COUNT:-4}"
 TUN_PACKET_PROBE_WAIT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_WAIT_SECS:-6}"
 TUN_PACKET_PROBE_TIMEOUT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_TIMEOUT_SECS:-1}"
 TUN_PACKET_PROBE_REQUIRE_REPLY="${NVPN_ANDROID_TUN_PACKET_PROBE_REQUIRE_REPLY:-0}"
-DEBUG_SEED_WAIT_SECS="${NVPN_ANDROID_DEBUG_SEED_WAIT_SECS:-2}"
+DEBUG_SEED_WAIT_SECS="${NVPN_ANDROID_DEBUG_SEED_WAIT_SECS:-10}"
 DEBUG_INVITE="${NVPN_ANDROID_DEBUG_INVITE:-}"
 DEBUG_EXIT_NODE="${NVPN_ANDROID_DEBUG_EXIT_NODE:-}"
 DEBUG_WIREGUARD_CONFIG="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG:-}"
@@ -278,6 +278,25 @@ android_build_metadata_path() {
 
 android_idle_cpu_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$ANDROID_IDLE_CPU_RESULT_NAME"
+}
+
+run_android_idle_cpu_gate() {
+  local label="$1"
+  case "$IDLE_CPU_GATE" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "Skipping Android idle CPU gate because NVPN_ANDROID_IDLE_CPU_GATE=$IDLE_CPU_GATE"
+      return
+      ;;
+  esac
+  "$ROOT/scripts/idle-cpu-gate.py" android-package \
+    --adb "$ADB" \
+    --serial "$serial" \
+    --package "$PACKAGE_NAME" \
+    --label "$label" \
+    --artifact "$(android_idle_cpu_path)" \
+    --max-percent "$IDLE_CPU_MAX_PERCENT" \
+    --sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
+    --settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
 }
 
 android_vpn_link_stats_path() {
@@ -1288,22 +1307,9 @@ start_main_activity
 "$ADB" -s "$serial" shell pm path "$PACKAGE_NAME" >/dev/null
 wait_for_android_build_metadata
 
-case "$IDLE_CPU_GATE" in
-  0|false|FALSE|False|no|NO|No|off|OFF|Off)
-    echo "Skipping Android idle CPU gate because NVPN_ANDROID_IDLE_CPU_GATE=$IDLE_CPU_GATE"
-    ;;
-  *)
-    "$ROOT/scripts/idle-cpu-gate.py" android-package \
-      --adb "$ADB" \
-      --serial "$serial" \
-      --package "$PACKAGE_NAME" \
-      --label "Android app" \
-      --artifact "$(android_idle_cpu_path)" \
-      --max-percent "$IDLE_CPU_MAX_PERCENT" \
-      --sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
-      --settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
-    ;;
-esac
+if [[ "$vpn_cycle" -eq 0 ]]; then
+  run_android_idle_cpu_gate "Android foreground app"
+fi
 
 if [[ "$vpn_cycle" -eq 1 ]]; then
   seed_debug_config
@@ -1331,6 +1337,8 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
     echo "Android smoke failed: native TUN packet probe failed." >&2
     exit 1
   fi
+  "$ADB" -s "$serial" shell input keyevent KEYCODE_HOME
+  run_android_idle_cpu_gate "Android background active VPN"
   if ! cleanup_android_vpn_after_pass; then
     exit 1
   fi

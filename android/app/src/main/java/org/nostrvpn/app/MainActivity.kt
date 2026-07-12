@@ -22,7 +22,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import org.json.JSONObject
@@ -69,6 +72,7 @@ class MainActivity : ComponentActivity() {
         selfUpdateManager.startAutomaticChecks()
 
         setContent {
+            val lifecycleOwner = LocalLifecycleOwner.current
             var state by remember { mutableStateOf(core.state()) }
             var androidError by remember { mutableStateOf("") }
             var vpnLockdownActive by remember { mutableStateOf(VpnStartState.refreshLockdownActive(this)) }
@@ -265,19 +269,21 @@ class MainActivity : ComponentActivity() {
             DisposableEffect(core) {
                 onDispose { core.close() }
             }
-            LaunchedEffect(core) {
-                while (true) {
-                    delay(2_000)
-                    vpnLockdownActive = VpnStartState.refreshLockdownActive(this@MainActivity)
-                    state = try {
-                        val nextState = core.refresh()
-                        if (nextState.error.isNotBlank()) {
-                            androidError = ""
+            LaunchedEffect(core, lifecycleOwner) {
+                lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    while (true) {
+                        vpnLockdownActive = VpnStartState.refreshLockdownActive(this@MainActivity)
+                        state = try {
+                            val nextState = core.refresh()
+                            if (nextState.error.isNotBlank()) {
+                                androidError = ""
+                            }
+                            nextState
+                        } catch (error: Exception) {
+                            showAndroidError(error, "Android refresh failed")
+                            state
                         }
-                        nextState
-                    } catch (error: Exception) {
-                        showAndroidError(error, "Android refresh failed")
-                        state
+                        delay(2_000)
                     }
                 }
             }

@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$ROOT_DIR/scripts/idle-cpu-gate.py"
 RELEASE_GATE="$ROOT_DIR/scripts/release-gate.sh"
+MOBILE_IOS_SMOKE="$ROOT_DIR/scripts/mobile-ios-smoke.sh"
 
 fail() {
   printf 'idle CPU gate harness failed: %s\n' "$*" >&2
@@ -153,11 +154,23 @@ assert_status 1 "busy iOS process" \
     --max-percent 5
 assert_json_field "$ios_busy_json" 'data["ok"] is False and data["cpuPercent"] > 5'
 
-grep -Fq './scripts/idle-cpu-gate.py ios-process' "$RELEASE_GATE" \
-  || fail "release gate does not run the iOS packet-tunnel idle CPU check"
+grep -Fq 'idle-cpu-gate.py" ios-process' "$MOBILE_IOS_SMOKE" \
+  || fail "iOS physical-device smoke does not run the packet-tunnel idle CPU check"
+grep -Fq './scripts/mobile-ios-smoke.sh device --device "$ios_device" --install --create-network --vpn-cycle' "$RELEASE_GATE" \
+  || fail "release gate does not install and exercise the candidate iOS packet tunnel"
 grep -Fq './scripts/mobile-ios-smoke.sh simulator' "$RELEASE_GATE" \
   || fail "release gate does not run the iOS app idle CPU smoke"
-grep -Fq './scripts/mobile-android-smoke.sh' "$RELEASE_GATE" \
-  || fail "release gate does not run the Android idle CPU smoke"
+grep -Fq './scripts/mobile-android-smoke.sh --vpn-cycle --create-network' "$RELEASE_GATE" \
+  || fail "release gate does not run the Android background active-VPN idle CPU smoke"
+grep -Fq 'NVPN_IDLE_CPU_SAMPLE_SECONDS:-60' "$RELEASE_GATE" \
+  || fail "release gate does not cover a full mDNS cadence in CPU samples"
+grep -Fq 'run_macos_daemon_idle_cpu_gate' "$RELEASE_GATE" \
+  || fail "release gate does not run the macOS daemon idle CPU check"
+grep -Fq -- '--fips-peer-endpoint' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
+  || fail "macOS daemon idle CPU check does not exercise an active mesh fixture"
+grep -Fq 'assert_idle_daemon_cpu_below node-a' "$ROOT_DIR/scripts/e2e-fips-routed-udp-docker.sh" \
+  || fail "release-gated Linux active-tunnel e2e has no daemon idle CPU check"
+grep -Fq 'windows-daemon-idle-cpu.ps1' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
+  || fail "release-gated Windows VM smoke has no daemon idle CPU check"
 
 printf 'idle CPU gate harness passed\n'

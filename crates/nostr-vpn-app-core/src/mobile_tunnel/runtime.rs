@@ -352,7 +352,7 @@ impl MobileTunnel {
             let presence = Arc::clone(&presence);
             let app_config = Arc::clone(&app_config);
             tasks.push(tokio::spawn(async move {
-                let mut sent_by_peer = HashMap::<String, MobileRosterSentState>::new();
+                let mut roster_sync = MobileRosterSyncState::default();
                 loop {
                     if let Err(error) = sync_mobile_signed_roster_with_connected_peers(
                         &endpoint,
@@ -361,7 +361,7 @@ impl MobileTunnel {
                         &presence,
                         &app_config,
                         &config_path,
-                        &mut sent_by_peer,
+                        &mut roster_sync,
                     )
                     .await
                     {

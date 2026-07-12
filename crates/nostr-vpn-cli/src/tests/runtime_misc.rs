@@ -507,10 +507,10 @@ fn wall_time_jump_detection_ignores_busy_loop_delays() {
 }
 
 #[test]
-fn daemon_network_refresh_cadence_keeps_link_changes_low_latency() {
+fn daemon_network_refresh_uses_platform_events_with_sparse_fallback() {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     {
-        assert_eq!(DAEMON_NETWORK_REFRESH_INTERVAL_SECS, 15);
+        assert_eq!(DAEMON_NETWORK_REFRESH_INTERVAL_SECS, 300);
         const {
             assert!(DAEMON_NETWORK_EVENT_DEBOUNCE_MILLIS <= 1_000);
         }

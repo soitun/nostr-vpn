@@ -353,6 +353,9 @@ impl FipsPrivateTunnelRuntime {
     ) -> Result<(bool, Option<crate::MacosRouteSpec>)> {
         let hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
         let routes = crate::macos_network::macos_endpoint_bypass_targets_for_hosts(&hosts);
+        if routes == self.endpoint_bypass_routes {
+            return Ok((!hosts.is_empty(), self.endpoint_bypass_underlay.clone()));
+        }
         let underlay = match crate::macos_underlay_default_route_from_system() {
             Ok(underlay) => underlay,
             Err(error) => {

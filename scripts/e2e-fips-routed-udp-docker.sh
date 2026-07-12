@@ -14,6 +14,9 @@ CONTINUITY_DURATION_SECS="${NVPN_E2E_CONTINUITY_SECS:-90}"
 CONTINUITY_INTERVAL_SECS="${NVPN_E2E_CONTINUITY_INTERVAL_SECS:-0.2}"
 FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-open}"
 KEEP_ON_FAILURE="${NVPN_E2E_KEEP_ON_FAILURE:-0}"
+IDLE_CPU_MAX_PERCENT="${NVPN_LINUX_DAEMON_IDLE_CPU_MAX_PERCENT:-${NVPN_IDLE_CPU_MAX_PERCENT:-2}}"
+IDLE_CPU_SAMPLE_SECONDS="${NVPN_LINUX_DAEMON_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAMPLE_SECONDS:-60}}"
+IDLE_CPU_SETTLE_SECONDS="${NVPN_LINUX_DAEMON_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-5}}"
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
@@ -64,6 +67,32 @@ trap on_exit EXIT
 
 compact_json() {
   tr -d '\n\r\t '
+}
+
+assert_idle_daemon_cpu_below() {
+  local node="$1"
+  local cpu
+  cpu="$("${COMPOSE[@]}" exec -T \
+    -e SAMPLE_SECONDS="$IDLE_CPU_SAMPLE_SECONDS" \
+    -e SETTLE_SECONDS="$IDLE_CPU_SETTLE_SECONDS" \
+    "$node" sh -lc '
+      pid="$(pgrep -o -x nvpn)"
+      test -n "$pid" && test -r "/proc/$pid/stat"
+      sleep "$SETTLE_SECONDS"
+      hz="$(getconf CLK_TCK)"
+      start_ticks="$(awk "{ print \$14 + \$15 }" "/proc/$pid/stat")"
+      start_ns="$(date +%s%N)"
+      sleep "$SAMPLE_SECONDS"
+      end_ticks="$(awk "{ print \$14 + \$15 }" "/proc/$pid/stat")"
+      end_ns="$(date +%s%N)"
+      awk -v ticks="$((end_ticks - start_ticks))" -v hz="$hz" -v ns="$((end_ns - start_ns))" \
+        "BEGIN { printf \"%.6f\", ticks * 100000000000 / hz / ns }"
+    ' | tr -d '\r')"
+  echo "--- $node active Linux daemon idle CPU: ${cpu}% ---"
+  if awk -v cpu="$cpu" -v limit="$IDLE_CPU_MAX_PERCENT" 'BEGIN { exit !(cpu > limit) }'; then
+    echo "fips routed udp e2e failed: $node idle CPU ${cpu}% exceeded ${IDLE_CPU_MAX_PERCENT}%" >&2
+    exit 1
+  fi
 }
 
 wait_for_service() {
@@ -503,6 +532,8 @@ wait_for_payload node-b /tmp/bob-udp.out "alice-to-bob-fips-udp"
 start_udp_listener node-a /tmp/alice-udp.out
 send_udp_payload node-b "$ALICE_TUNNEL_IP" "bob-to-alice-fips-udp"
 wait_for_payload node-a /tmp/alice-udp.out "bob-to-alice-fips-udp"
+
+assert_idle_daemon_cpu_below node-a
 
 echo "--- Alice status ---"
 echo "$ALICE_STATUS"

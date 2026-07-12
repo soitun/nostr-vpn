@@ -636,6 +636,13 @@ struct MobileRosterSentState {
     sent_at: u64,
 }
 
+#[derive(Default)]
+struct MobileRosterSyncState {
+    source: Option<(String, u64, String)>,
+    encoded: Option<(String, Vec<Vec<u8>>)>,
+    sent_by_peer: HashMap<String, MobileRosterSentState>,
+}
+
 async fn sync_mobile_signed_roster_with_connected_peers(
     endpoint: &FipsEndpoint,
     mesh: &MobileMesh,
@@ -643,34 +650,54 @@ async fn sync_mobile_signed_roster_with_connected_peers(
     presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     app_config: &Arc<RwLock<AppConfig>>,
     config_path: &Path,
-    sent_by_peer: &mut HashMap<String, MobileRosterSentState>,
+    state: &mut MobileRosterSyncState,
 ) -> Result<usize> {
-    let Some(signed_roster) = mobile_current_signed_roster_from_store(app_config, config_path)?
-    else {
-        sent_by_peer.clear();
+    let source = {
+        let app = app_config
+            .read()
+            .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+        app.active_network_opt().map(|network| {
+            (
+                normalize_runtime_network_id(&network.network_id),
+                network.shared_roster_updated_at,
+                network.shared_roster_signed_by.clone(),
+            )
+        })
+    };
+    if state.source != source {
+        state.encoded = mobile_current_signed_roster_from_store(app_config, config_path)?
+            .map(|signed_roster| {
+                let roster_hash = signed_roster.content_hash();
+                let frame = FipsControlFrame::Roster {
+                    network_id: signed_roster.network_id()?,
+                    roster: signed_roster.roster()?,
+                    signed_roster: Some(Box::new(signed_roster)),
+                };
+                Ok::<_, anyhow::Error>((roster_hash, encode_fips_control_messages(&frame)?))
+            })
+            .transpose()?;
+        state.source = state.encoded.as_ref().map(|_| source).unwrap_or_default();
+    }
+    let Some((roster_hash, messages)) = state.encoded.as_ref() else {
+        state.sent_by_peer.clear();
         return Ok(0);
     };
     let now = unix_timestamp();
-    let roster_hash = signed_roster.content_hash();
-    let frame = FipsControlFrame::Roster {
-        network_id: signed_roster.network_id()?,
-        roster: signed_roster.roster()?,
-        signed_roster: Some(Box::new(signed_roster)),
-    };
-    let messages = encode_fips_control_messages(&frame)?;
     let connected = mobile_connected_roster_peers(mesh, presence)?;
-    sent_by_peer.retain(|peer, _| connected.contains(peer));
+    state
+        .sent_by_peer
+        .retain(|peer, _| connected.contains(peer));
 
     let mut sent = 0usize;
     for participant in connected {
-        if sent_by_peer.get(&participant).is_some_and(|sent| {
-            sent.hash == roster_hash
+        if state.sent_by_peer.get(&participant).is_some_and(|sent| {
+            sent.hash == *roster_hash
                 && !mobile_elapsed_at_least(now, sent.sent_at, MOBILE_ROSTER_RESEND_SECS)
         }) {
             continue;
         }
         let mut all_sent = true;
-        for message in &messages {
+        for message in messages {
             if send_mobile_endpoint_data(endpoint, peer_identities, &participant, message.clone())
                 .await
                 .is_err()
@@ -680,7 +707,7 @@ async fn sync_mobile_signed_roster_with_connected_peers(
             }
         }
         if all_sent {
-            sent_by_peer.insert(
+            state.sent_by_peer.insert(
                 participant,
                 MobileRosterSentState {
                     hash: roster_hash.clone(),

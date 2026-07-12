@@ -324,7 +324,7 @@ struct ServiceInstallArgs {
     config: Option<PathBuf>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
-    #[arg(long, alias = "announce-interval-secs", default_value_t = 20)]
+    #[arg(long, alias = "announce-interval-secs", default_value_t = 60)]
     mesh_refresh_interval_secs: u64,
     #[arg(long)]
     force: bool,
@@ -362,7 +362,7 @@ struct ConnectArgs {
     devices: Vec<String>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
-    #[arg(long, alias = "announce-interval-secs", default_value_t = 20)]
+    #[arg(long, alias = "announce-interval-secs", default_value_t = 60)]
     mesh_refresh_interval_secs: u64,
 }
 
@@ -376,7 +376,7 @@ struct DaemonArgs {
     devices: Vec<String>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
-    #[arg(long, alias = "announce-interval-secs", default_value_t = 20)]
+    #[arg(long, alias = "announce-interval-secs", default_value_t = 60)]
     mesh_refresh_interval_secs: u64,
     #[arg(long, hide = true, default_value_t = false)]
     paused: bool,
@@ -400,7 +400,7 @@ struct StartArgs {
     devices: Vec<String>,
     #[arg(long, default_value_t = default_tunnel_iface())]
     iface: String,
-    #[arg(long, alias = "announce-interval-secs", default_value_t = 20)]
+    #[arg(long, alias = "announce-interval-secs", default_value_t = 60)]
     mesh_refresh_interval_secs: u64,
     #[arg(long)]
     daemon: bool,

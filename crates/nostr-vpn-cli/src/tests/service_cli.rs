@@ -93,13 +93,16 @@ fn macos_service_plist_runs_service_supervised_daemon() {
         Path::new("/Applications/Nostr VPN.app/Contents/MacOS/nvpn"),
         Path::new("/Users/example/Library/Application Support/nvpn/config.toml"),
         "utun100",
-        20,
+        60,
         Path::new("/Users/example/Library/Logs/nvpn/daemon.log"),
     );
 
     assert!(plist.contains("<string>daemon</string>"));
     assert!(plist.contains("<string>--service</string>"));
     assert!(plist.contains("<string>--config</string>"));
+    assert!(plist.contains(
+        "<string>--mesh-refresh-interval-secs</string>\n    <string>60</string>"
+    ));
     assert!(plist.contains("<key>ProcessType</key>\n  <string>Interactive</string>"));
 }
 
@@ -268,13 +271,13 @@ fn linux_service_unit_runs_service_supervised_daemon() {
         Path::new("/usr/local/bin/nvpn"),
         Path::new("/home/example/.config/nvpn/config.toml"),
         "nvpn",
-        20,
+        60,
         Path::new("/home/example/.local/state/nvpn/daemon.log"),
     );
 
     assert!(unit.contains("ExecStart=\"/usr/local/bin/nvpn\" daemon --service --config"));
     assert!(unit.contains("--iface \"nvpn\""));
-    assert!(unit.contains("--mesh-refresh-interval-secs 20"));
+    assert!(unit.contains("--mesh-refresh-interval-secs 60"));
     assert!(unit.contains("StandardOutput=append:/home/example/.local/state/nvpn/daemon.log"));
     assert!(unit.contains("StandardError=append:/home/example/.local/state/nvpn/daemon.log"));
     assert!(!unit.contains("StandardOutput=append:\""));

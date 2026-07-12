@@ -19,15 +19,15 @@ const MOBILE_MAX_FIPS_PEERS: usize = 32;
 const MOBILE_MAX_FIPS_CONNECTIONS: usize = 64;
 /// Active-link cap on mobile (matches `MOBILE_MAX_FIPS_CONNECTIONS`).
 const MOBILE_MAX_FIPS_LINKS: usize = 64;
-const MOBILE_CAPABILITIES_BROADCAST_SECS: u64 = 30;
+const MOBILE_CAPABILITIES_BROADCAST_SECS: u64 = 60;
 const MOBILE_CAPABILITIES_STARTUP_BURST_COUNT: usize = 4;
 const MOBILE_CAPABILITIES_STARTUP_BURST_INTERVAL_MS: u64 = 750;
-const MOBILE_RUNTIME_STATE_REFRESH_SECS: u64 = 2;
-const MOBILE_ROSTER_RESEND_SECS: u64 = 10;
+const MOBILE_RUNTIME_STATE_REFRESH_SECS: u64 = 10;
+const MOBILE_ROSTER_RESEND_SECS: u64 = 60;
 const MOBILE_RUNTIME_STATE_FILE: &str = "mobile-runtime-state.json";
 const MOBILE_PEER_ONLINE_GRACE_SECS: u64 = 45;
 const MOBILE_PEER_MAX_FUTURE_SKEW_SECS: u64 = 2;
-const MOBILE_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 10;
+const MOBILE_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 30;
 // Nostr subscriptions and minute-cadence LAN scans provide the fast paths;
 // this is only the battery-safe fallback for peers that remain offline.
 const MOBILE_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 300;

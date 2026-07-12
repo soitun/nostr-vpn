@@ -35,6 +35,10 @@ esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NVPN_BIN="${NVPN_E2E_BINARY:-}"
+IDLE_CPU_MAX_PERCENT="${NVPN_MACOS_DAEMON_IDLE_CPU_MAX_PERCENT:-${NVPN_IDLE_CPU_MAX_PERCENT:-2}}"
+IDLE_CPU_SAMPLE_SECONDS="${NVPN_MACOS_DAEMON_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAMPLE_SECONDS:-60}}"
+IDLE_CPU_SETTLE_SECONDS="${NVPN_MACOS_DAEMON_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-15}}"
+IDLE_CPU_RESULT="${NVPN_MACOS_DAEMON_IDLE_CPU_RESULT:-$ROOT/artifacts/macos-daemon-idle-cpu.json}"
 
 if [ -z "$NVPN_BIN" ]; then
   echo "Building nvpn (release)..."
@@ -51,6 +55,8 @@ fi
 SUFFIX="e2e-$(date +%s)-$$"
 TEST_DIR="$(mktemp -d -t nvpn-svc-e2e)"
 TEST_CONFIG="$TEST_DIR/$SUFFIX.toml"
+PEER_CONFIG="$TEST_DIR/$SUFFIX-peer.toml"
+TEST_PORT="$((52000 + $$ % 1000))"
 SERVICE_LABEL="to.nostrvpn.nvpn.$(printf '%s' "$TEST_DIR/$SUFFIX" \
   | sed -e 's:/:_:g' -e 's:^_*::' -e 's:^Users_:u_:' )"
 
@@ -61,7 +67,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-"$NVPN_BIN" init --config "$TEST_CONFIG" >/dev/null
+"$NVPN_BIN" init --config "$TEST_CONFIG" --force >/dev/null
+"$NVPN_BIN" init --config "$PEER_CONFIG" --force >/dev/null
+own_npub="$(sed -n 's/^public_key = "\([^"]*\)"/\1/p' "$TEST_CONFIG" | head -1)"
+peer_npub="$(sed -n 's/^public_key = "\([^"]*\)"/\1/p' "$PEER_CONFIG" | head -1)"
+test -n "$own_npub" && test -n "$peer_npub"
+"$NVPN_BIN" set --config "$TEST_CONFIG" \
+  --participant "$own_npub" --participant "$peer_npub" \
+  --network-id macos-idle-cpu \
+  --endpoint "127.0.0.1:$TEST_PORT" --listen-port "$TEST_PORT" \
+  --fips-peer-endpoint "$peer_npub=127.0.0.1:$((TEST_PORT + 1))" \
+  --fips-advertise-endpoint true \
+  --fips-nostr-discovery-enabled false --fips-bootstrap-enabled false >/dev/null
 
 echo "Installing test service..."
 sudo "$NVPN_BIN" service install --force --config "$TEST_CONFIG" >/dev/null
@@ -69,7 +86,8 @@ sudo "$NVPN_BIN" service install --force --config "$TEST_CONFIG" >/dev/null
 # Give launchd a moment to actually spawn the daemon.
 sleep 3
 
-DETECTED_RUNNING="$("$NVPN_BIN" status --json --discover-secs 0 --config "$TEST_CONFIG" \
+runtime_json="$("$NVPN_BIN" status --json --discover-secs 0 --config "$TEST_CONFIG")"
+DETECTED_RUNNING="$(printf '%s' "$runtime_json" \
   | python3 -c 'import sys,json; d=json.load(sys.stdin).get("daemon",{}); print(str(d.get("running")).lower())')"
 
 if [ "$DETECTED_RUNNING" != "true" ]; then
@@ -79,6 +97,35 @@ if [ "$DETECTED_RUNNING" != "true" ]; then
   "$NVPN_BIN" service status --config "$TEST_CONFIG" || true
   exit 1
 fi
+printf '%s' "$runtime_json" | python3 -c '
+import json, sys
+state = json.load(sys.stdin).get("daemon", {}).get("state", {})
+if state.get("vpn_active") is not True:
+    raise SystemExit("FAIL: isolated macOS daemon did not activate its VPN fixture")
+'
+
+service_json="$("$NVPN_BIN" service status --json --skip-binary-version --config "$TEST_CONFIG")"
+daemon_pid="$(printf '%s' "$service_json" | python3 -c '
+import json, sys
+s = json.load(sys.stdin)
+p = s.get("pid")
+ok = s.get("supported") and s.get("installed") and s.get("loaded") and s.get("running") and isinstance(p, int) and p > 1
+print(p if ok else "")
+')"
+daemon_binary="$(printf '%s' "$service_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("binary_path") or "")')"
+daemon_command="$(ps -p "$daemon_pid" -o command= 2>/dev/null || true)"
+case "$daemon_command" in
+  "$daemon_binary daemon --service --config $TEST_CONFIG"*) ;;
+  *) echo "FAIL: service PID no longer matches the isolated nvpn daemon" >&2; exit 1 ;;
+esac
+
+"$ROOT/scripts/idle-cpu-gate.py" host-pid \
+  --pid "$daemon_pid" \
+  --label "macOS nvpn daemon" \
+  --artifact "$IDLE_CPU_RESULT" \
+  --max-percent "$IDLE_CPU_MAX_PERCENT" \
+  --sample-seconds "$IDLE_CPU_SAMPLE_SECONDS" \
+  --settle-seconds "$IDLE_CPU_SETTLE_SECONDS"
 
 echo "Pausing..."
 "$NVPN_BIN" pause --config "$TEST_CONFIG"
