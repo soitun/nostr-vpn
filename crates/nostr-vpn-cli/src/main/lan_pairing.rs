@@ -20,12 +20,15 @@ fn run_invite_broadcast(args: InviteBroadcastArgs) -> Result<()> {
         .checked_add(duration)
         .ok_or_else(|| anyhow::anyhow!("broadcast duration overflows SystemTime"))?;
 
-    let mut worker = spawn_lan_pairing_worker(LanPairingAnnouncement {
-        npub: own_npub.clone(),
-        node_name,
-        endpoint: endpoint.clone(),
-        invite: invite.clone(),
-    })?;
+    let mut worker = spawn_lan_pairing_worker(
+        LanPairingAnnouncement {
+            npub: own_npub.clone(),
+            node_name,
+            endpoint: endpoint.clone(),
+            invite: invite.clone(),
+        },
+        app.nostr_keys()?,
+    )?;
     worker.set_broadcast_until(expires_at);
 
     println!("network_id={}", app.effective_network_id());
@@ -69,12 +72,15 @@ fn run_discover(args: DiscoverArgs) -> Result<()> {
         .checked_add(duration)
         .ok_or_else(|| anyhow::anyhow!("discover duration overflows SystemTime"))?;
 
-    let mut worker = spawn_lan_pairing_worker(LanPairingAnnouncement {
-        npub: own_npub,
-        node_name,
-        endpoint,
-        invite: local_invite,
-    })?;
+    let mut worker = spawn_lan_pairing_worker(
+        LanPairingAnnouncement {
+            npub: own_npub,
+            node_name,
+            endpoint,
+            invite: local_invite,
+        },
+        app.nostr_keys()?,
+    )?;
     worker.set_listen_until(expires_at);
 
     println!(

@@ -9,6 +9,7 @@
   import nostrVpnIcon from './lib/nostr-vpn-icon.svg';
   import type {
     HealthIssue,
+    LanPeer,
     NetworkView,
     ParticipantView,
     UiState,
@@ -36,6 +37,7 @@
   let joinRequestQr = '';
   let joinerInput = '';
   let pendingJoinRequest = '';
+  let pendingNearbyPeer: LanPeer | null = null;
   let settingsDirty = false;
   let participantNpub = '';
   let participantAlias = '';
@@ -705,6 +707,22 @@
     }
   }
 
+  async function confirmNearbyPeer() {
+    if (!pendingNearbyPeer) {
+      return;
+    }
+    const ok = await run(
+      '/api/import_nearby_peer',
+      { npub: pendingNearbyPeer.npub, networkId: pendingNearbyPeer.networkId },
+      'Adding device',
+    );
+    if (ok) {
+      pendingNearbyPeer = null;
+      addDeviceOpen = false;
+      setNotice('Device added');
+    }
+  }
+
   async function importNetworkInvite(invite: string, label = 'Importing') {
     const existingIds = new Set(state?.networks.map((network) => network.id) ?? []);
     const next = await runState('/api/import_network_invite', { invite }, label);
@@ -1114,11 +1132,9 @@
 	                      <strong>{peer.nodeName || peer.networkName || 'Nearby device'}</strong>
 	                      <span>{peer.lastSeenText ?? ''}</span>
 	                    </div>
-	                    {#if peer.invite}
-	                      <button type="button" class="small-button" on:click={() => (pendingJoinRequest = peer.invite ?? '')}>
-	                        Add
-	                      </button>
-	                    {/if}
+	                    <button type="button" class="small-button" on:click={() => (pendingNearbyPeer = peer)}>
+	                      Add
+	                    </button>
 	                  </div>
 	                {/each}
 	              </div>
@@ -1185,6 +1201,28 @@
                 Add
               </button>
               <button class="small-button" type="button" on:click={() => (pendingJoinRequest = '')}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      {/if}
+
+      {#if pendingNearbyPeer && shownNetwork}
+        <Modal title="Add Device?" titleId="confirm-nearby-peer-title" on:close={() => (pendingNearbyPeer = null)}>
+          <div class="modal-section">
+            <div class="section-heading">
+              <div>
+                <h3>Add device?</h3>
+                <p>{shownNetwork.name || 'This network'}</p>
+              </div>
+            </div>
+            <p class="muted-copy">Add {pendingNearbyPeer.nodeName || 'this nearby device'} to {shownNetwork.name || 'this network'}?</p>
+            <div class="button-row">
+              <button class="secondary-button" type="button" disabled={Boolean(busyAction)} on:click={confirmNearbyPeer}>
+                Add
+              </button>
+              <button class="small-button" type="button" on:click={() => (pendingNearbyPeer = null)}>
                 Cancel
               </button>
             </div>
@@ -1734,6 +1772,7 @@
                   class="code-textarea"
                   bind:value={wireguardExitConfigDraft}
                   on:input={() => (wireguardDirty = true)}
+                  placeholder={state.wireguardExitConfigured ? 'Configured (hidden)' : 'Paste a WireGuard config'}
                   rows="10"
                 ></textarea>
               </label>
@@ -1753,7 +1792,7 @@
                 >
                   Import file
                 </button>
-                <button type="submit" class="secondary-button" disabled={Boolean(busyAction)}>
+                <button type="submit" class="secondary-button" disabled={Boolean(busyAction) || !wireguardDirty}>
                   Save
                 </button>
                 <span class="form-status">{state.exitNodeStatusText}</span>

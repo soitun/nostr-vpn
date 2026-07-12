@@ -637,7 +637,7 @@ impl NativeAppRuntime {
         if self.lan_pairing_worker.is_some() {
             return Ok(());
         }
-        let worker = NativeLanPairingWorker::spawn(announcement)?;
+        let worker = NativeLanPairingWorker::spawn(announcement, self.config.nostr_keys()?)?;
         self.lan_pairing_worker = Some(worker);
         Ok(())
     }

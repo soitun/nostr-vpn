@@ -267,9 +267,10 @@ test('WireGuard exit settings import, save, toggle, and reject bad config from t
         .poll(async () => (await postJson<UiState>(request, '/api/tick')).wireguardExitConfigured)
         .toBe(true);
       let state = await postJson<UiState>(request, '/api/tick');
-      expect(state.wireguardExitConfig).toContain(`PrivateKey = ${TEST_WG_PRIVATE_KEY}`);
-      expect(state.wireguardExitConfig).toContain('Endpoint = 198.51.100.20:51820');
-      await expect(configField).toHaveValue(/Endpoint = 198\.51\.100\.20:51820/);
+      expect(state.wireguardExitConfig).toBe('');
+      expect(JSON.stringify(state)).not.toContain(TEST_WG_PRIVATE_KEY);
+      await expect(configField).toHaveValue('');
+      await expect(configField).toHaveAttribute('placeholder', 'Configured (hidden)');
 
       const enabled = wireGuardPanel.getByRole('checkbox', { name: 'Enabled' });
       await expect(enabled).toBeEnabled();
@@ -287,7 +288,6 @@ test('WireGuard exit settings import, save, toggle, and reject bad config from t
         })
         .toBe(false);
 
-      const savedConfig = (await postJson<UiState>(request, '/api/tick')).wireguardExitConfig;
       await configField.fill(`
 [Interface]
 PrivateKey = not-a-wireguard-key
@@ -301,14 +301,15 @@ Endpoint = bad.example.test:51820
       await wireGuardPanel.getByRole('button', { name: 'Save' }).click();
       await expect(page.locator('.notice-row.error')).toContainText('PrivateKey');
       state = await postJson<UiState>(request, '/api/tick');
-      expect(state.wireguardExitConfig).toBe(savedConfig);
+      expect(state.wireguardExitConfig).toBe('');
       expect(state.wireguardExitEnabled).toBe(false);
 
       await configField.fill(validConfig);
       await wireGuardPanel.getByRole('button', { name: 'Save' }).click();
       await expect
-        .poll(async () => (await postJson<UiState>(request, '/api/tick')).wireguardExitConfig)
-        .toContain('Endpoint = 198.51.100.20:51820');
+        .poll(async () => (await postJson<UiState>(request, '/api/tick')).wireguardExitConfigured)
+        .toBe(true);
+      expect((await postJson<UiState>(request, '/api/tick')).wireguardExitConfig).toBe('');
       await expect(page.locator('.notice-row.error')).toHaveCount(0);
     },
     [/Failed to load resource: the server responded with a status of 400 \(Bad Request\)/],
@@ -332,9 +333,8 @@ test('API supports the Umbrel web config action surface', async ({ request }) =>
   expect(originalNetwork.networkId).not.toBe('nostr-vpn');
   expect(originalNetwork.networkId).toMatch(/^[0-9a-f]{8,16}$/);
 
-  const qr = await postJson<QrMatrix>(request, '/api/qr_matrix', {
-    text: state.activeNetworkInvite,
-  });
+  expect(state.activeNetworkInvite).toBe('');
+  const qr = await postJson<QrMatrix>(request, '/api/qr_matrix', { text: 'public test value' });
   expect(qr.width).toBeGreaterThan(0);
   expect(qr.cells.length).toBe(qr.width * qr.width);
   expect(qr.cells.some(Boolean)).toBeTruthy();

@@ -48,12 +48,15 @@ fn main() -> Result<()> {
         &json!({"event": "ready", "npub": npub, "node": node_name}),
     );
 
-    let mut worker = spawn_lan_pairing_worker(LanPairingAnnouncement {
-        npub: npub.clone(),
-        node_name: node_name.clone(),
-        endpoint: "127.0.0.1:51820".to_string(),
-        invite,
-    })
+    let mut worker = spawn_lan_pairing_worker(
+        LanPairingAnnouncement {
+            npub: npub.clone(),
+            node_name: node_name.clone(),
+            endpoint: "127.0.0.1:51820".to_string(),
+            invite,
+        },
+        keys,
+    )
     .context("spawn worker")?;
     let expires_at = SystemTime::now() + Duration::from_secs(duration_secs);
     worker.set_broadcast_until(expires_at);

@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use nostr_sdk::prelude::Event;
+use nostr_sdk::prelude::{Event, Keys};
 use nostr_vpn_core::config::{
     AppConfig, FiatCurrency, InternetSource, NetworkConfig, NostrPubsubMode,
     PendingInboundJoinRequest, PendingOutboundJoinRequest, derive_mesh_tunnel_ip,
@@ -287,12 +287,12 @@ struct NativeLanPairingWorker;
 
 impl NativeLanPairingWorker {
     #[cfg(not(test))]
-    fn spawn(announcement: LanPairingAnnouncement) -> Result<Self> {
-        Ok(Self(spawn_lan_pairing_worker(announcement)?))
+    fn spawn(announcement: LanPairingAnnouncement, signer: Keys) -> Result<Self> {
+        Ok(Self(spawn_lan_pairing_worker(announcement, signer)?))
     }
 
     #[cfg(test)]
-    fn spawn(announcement: LanPairingAnnouncement) -> Result<Self> {
+    fn spawn(announcement: LanPairingAnnouncement, signer: Keys) -> Result<Self> {
         let LanPairingAnnouncement {
             npub,
             node_name,
@@ -300,6 +300,10 @@ impl NativeLanPairingWorker {
             invite,
         } = announcement;
         anyhow::ensure!(!npub.trim().is_empty(), "LAN pairing npub is missing");
+        anyhow::ensure!(
+            normalize_nostr_pubkey(&npub)? == signer.public_key().to_hex(),
+            "LAN pairing announcement identity does not match signer"
+        );
         let _ = (node_name, endpoint, invite);
         Ok(Self)
     }

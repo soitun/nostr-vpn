@@ -9,13 +9,16 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
+use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, Timestamp};
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, SockRef, Socket, Type};
 
 use crate::config::normalize_nostr_pubkey;
 use crate::invite::{parse_network_invite, to_npub};
 
-const LAN_PAIRING_ANNOUNCEMENT_VERSION: u8 = 2;
+const LAN_PAIRING_ANNOUNCEMENT_VERSION: u8 = 3;
+const LAN_PAIRING_ANNOUNCEMENT_KIND: u16 = 37_389;
+const LAN_PAIRING_MAX_FUTURE_SECS: u64 = 5;
 pub const LAN_PAIRING_DURATION: Duration = Duration::from_mins(15);
 pub const LAN_PAIRING_STALE_AFTER: Duration = Duration::from_secs(16);
 
@@ -49,18 +52,19 @@ pub struct LanPairingAnnouncement {
 /// Both `broadcast_until` and `listen_until` are unix-second deadlines. The
 /// worker thread stays alive until the owner stops it, while each loop tick
 /// checks the deadlines independently to decide whether to send / accept.
-#[derive(Debug)]
 struct LanPairingControl {
     stop: AtomicBool,
+    signer: Keys,
     announcement: RwLock<LanPairingAnnouncement>,
     broadcast_until: AtomicU64,
     listen_until: AtomicU64,
 }
 
 impl LanPairingControl {
-    fn new(announcement: LanPairingAnnouncement) -> Self {
+    fn new(announcement: LanPairingAnnouncement, signer: Keys) -> Self {
         Self {
             stop: AtomicBool::new(false),
+            signer,
             announcement: RwLock::new(announcement),
             broadcast_until: AtomicU64::new(0),
             listen_until: AtomicU64::new(0),
@@ -80,6 +84,19 @@ impl LanPairingControl {
     }
 }
 
+impl std::fmt::Debug for LanPairingControl {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LanPairingControl")
+            .field("signer", &self.signer.public_key().to_hex())
+            .field("stop", &self.stop)
+            .field("announcement", &self.announcement)
+            .field("broadcast_until", &self.broadcast_until)
+            .field("listen_until", &self.listen_until)
+            .finish()
+    }
+}
+
 #[derive(Debug)]
 pub struct LanPairingWorker {
     receiver: Receiver<LanPairingSignal>,
@@ -91,14 +108,17 @@ pub struct LanPairingWorker {
 #[serde(rename_all = "camelCase")]
 struct LanPairingAnnouncementPayload {
     v: u8,
-    npub: String,
+    event: Event,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct LanPairingAnnouncementContent {
     #[serde(default)]
     node_name: String,
     #[serde(default)]
     endpoint: String,
     invite: String,
-    #[serde(default)]
-    timestamp: u64,
 }
 
 impl LanPairingWorker {
@@ -152,14 +172,18 @@ impl Drop for LanPairingWorker {
     }
 }
 
-pub fn spawn_lan_pairing_worker(announcement: LanPairingAnnouncement) -> Result<LanPairingWorker> {
+pub fn spawn_lan_pairing_worker(
+    announcement: LanPairingAnnouncement,
+    signer: Keys,
+) -> Result<LanPairingWorker> {
+    validate_lan_pairing_signer(&announcement, &signer)?;
     let socket = bind_lan_pairing_socket()?;
     let interfaces = lan_pairing_interfaces();
     join_multicast_on_interfaces(&socket, &interfaces);
     let send_plan = LanPairingSendPlan::production(interfaces);
 
     let (sender, receiver) = mpsc::channel();
-    let control = Arc::new(LanPairingControl::new(announcement));
+    let control = Arc::new(LanPairingControl::new(announcement, signer));
     let own_npub = to_npub_for_filter(&control);
     let thread_control = Arc::clone(&control);
     let handle = thread::spawn(move || {
@@ -287,13 +311,37 @@ impl LanPairingSendPlan {
     }
 }
 fn decode_lan_pairing_payload(payload: &[u8], own_npub: &str) -> Result<Option<LanPairingSignal>> {
-    let announcement = serde_json::from_slice::<LanPairingAnnouncementPayload>(payload)
-        .context("failed to parse LAN pairing announcement")?;
-    if announcement.v != LAN_PAIRING_ANNOUNCEMENT_VERSION {
+    decode_lan_pairing_payload_at(payload, own_npub, unix_timestamp())
+}
+
+fn decode_lan_pairing_payload_at(
+    payload: &[u8],
+    own_npub: &str,
+    now: u64,
+) -> Result<Option<LanPairingSignal>> {
+    let signed = match serde_json::from_slice::<LanPairingAnnouncementPayload>(payload) {
+        Ok(signed) => signed,
+        Err(_) => return Ok(None),
+    };
+    if signed.v != LAN_PAIRING_ANNOUNCEMENT_VERSION
+        || signed.event.kind.as_u16() != LAN_PAIRING_ANNOUNCEMENT_KIND
+        || signed.event.verify().is_err()
+    {
         return Ok(None);
     }
+    let timestamp = signed.event.created_at.as_secs();
+    if timestamp > now.saturating_add(LAN_PAIRING_MAX_FUTURE_SECS)
+        || now.saturating_sub(timestamp) > LAN_PAIRING_STALE_AFTER.as_secs()
+    {
+        return Ok(None);
+    }
+    let announcement =
+        match serde_json::from_str::<LanPairingAnnouncementContent>(&signed.event.content) {
+            Ok(announcement) => announcement,
+            Err(_) => return Ok(None),
+        };
 
-    let sender_npub = normalize_nostr_pubkey(&announcement.npub).map(|value| to_npub(&value))?;
+    let sender_npub = to_npub(&signed.event.pubkey.to_hex());
     if sender_npub == own_npub.trim() {
         return Ok(None);
     }
@@ -356,7 +404,12 @@ fn run_lan_pairing_loop(
         if control.broadcast_active(now_secs) && now >= next_announcement {
             let snapshot = control.announcement.read().ok().map(|guard| guard.clone());
             if let Some(announcement) = snapshot {
-                let _ = send_lan_pairing_announcement(socket, send_plan, &announcement);
+                let _ = send_lan_pairing_announcement(
+                    socket,
+                    send_plan,
+                    &announcement,
+                    &control.signer,
+                );
             }
             next_announcement = now
                 .checked_add(LAN_PAIRING_ANNOUNCE_EVERY)
@@ -384,16 +437,9 @@ fn send_lan_pairing_announcement(
     socket: &UdpSocket,
     send_plan: &LanPairingSendPlan,
     announcement: &LanPairingAnnouncement,
+    signer: &Keys,
 ) -> Result<()> {
-    let payload = LanPairingAnnouncementPayload {
-        v: LAN_PAIRING_ANNOUNCEMENT_VERSION,
-        npub: announcement.npub.clone(),
-        node_name: announcement.node_name.clone(),
-        endpoint: announcement.endpoint.clone(),
-        invite: announcement.invite.clone(),
-        timestamp: unix_timestamp(),
-    };
-    let encoded = serde_json::to_vec(&payload).context("failed to encode LAN announcement")?;
+    let encoded = encode_signed_lan_pairing_announcement(announcement, signer, unix_timestamp())?;
 
     if let Some(multicast_target) = send_plan.multicast_target {
         let sock_ref = SockRef::from(socket);
@@ -436,6 +482,38 @@ fn send_lan_pairing_announcement(
     Ok(())
 }
 
+fn encode_signed_lan_pairing_announcement(
+    announcement: &LanPairingAnnouncement,
+    signer: &Keys,
+    timestamp: u64,
+) -> Result<Vec<u8>> {
+    validate_lan_pairing_signer(announcement, signer)?;
+    let content = serde_json::to_string(&LanPairingAnnouncementContent {
+        node_name: announcement.node_name.clone(),
+        endpoint: announcement.endpoint.clone(),
+        invite: announcement.invite.clone(),
+    })
+    .context("failed to encode LAN announcement content")?;
+    let event = EventBuilder::new(Kind::Custom(LAN_PAIRING_ANNOUNCEMENT_KIND), content)
+        .custom_created_at(Timestamp::from(timestamp))
+        .sign_with_keys(signer)
+        .map_err(|error| anyhow::anyhow!("failed to sign LAN announcement: {error}"))?;
+    serde_json::to_vec(&LanPairingAnnouncementPayload {
+        v: LAN_PAIRING_ANNOUNCEMENT_VERSION,
+        event,
+    })
+    .context("failed to encode signed LAN announcement")
+}
+
+fn validate_lan_pairing_signer(announcement: &LanPairingAnnouncement, signer: &Keys) -> Result<()> {
+    let announced = normalize_nostr_pubkey(&announcement.npub)?;
+    anyhow::ensure!(
+        announced == signer.public_key().to_hex(),
+        "LAN pairing announcement identity does not match signer"
+    );
+    Ok(())
+}
+
 fn unix_timestamp() -> u64 {
     unix_seconds(SystemTime::now())
 }
@@ -473,6 +551,7 @@ mod tests {
 
     fn spawn_loopback_lan_pairing_worker(
         announcement: LanPairingAnnouncement,
+        signer: Keys,
         socket: UdpSocket,
         unicast_targets: Vec<SocketAddrV4>,
     ) -> LanPairingWorker {
@@ -483,7 +562,7 @@ mod tests {
             global_broadcast: false,
         };
         let (sender, receiver) = mpsc::channel();
-        let control = Arc::new(LanPairingControl::new(announcement));
+        let control = Arc::new(LanPairingControl::new(announcement, signer));
         let own_npub = to_npub_for_filter(&control);
         let thread_control = Arc::clone(&control);
         let handle = thread::spawn(move || {
@@ -499,26 +578,26 @@ mod tests {
 
     #[test]
     fn decodes_lan_announcement_with_invite_metadata() {
-        let admin_npub = nostr_sdk::Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("npub");
+        let admin = nostr_sdk::Keys::generate();
+        let admin_npub = admin.public_key().to_bech32().expect("npub");
         let own_npub = nostr_sdk::Keys::generate()
             .public_key()
             .to_bech32()
             .expect("npub");
         let invite = invite_for(&admin_npub, "Office mesh", "office-mesh");
-        let payload = json!({
-            "v": LAN_PAIRING_ANNOUNCEMENT_VERSION,
-            "npub": admin_npub,
-            "nodeName": "Alice Mac",
-            "endpoint": "192.0.2.10:51820",
-            "invite": invite,
-            "timestamp": 42
-        })
-        .to_string();
+        let payload = encode_signed_lan_pairing_announcement(
+            &LanPairingAnnouncement {
+                npub: admin_npub,
+                node_name: "Alice Mac".to_string(),
+                endpoint: "192.0.2.10:51820".to_string(),
+                invite,
+            },
+            &admin,
+            unix_timestamp(),
+        )
+        .expect("signed payload");
 
-        let signal = decode_lan_pairing_payload(payload.as_bytes(), &own_npub)
+        let signal = decode_lan_pairing_payload(&payload, &own_npub)
             .expect("decode")
             .expect("peer");
 
@@ -530,26 +609,26 @@ mod tests {
 
     #[test]
     fn decodes_lan_announcement_with_join_request() {
-        let requester_npub = nostr_sdk::Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("requester npub");
+        let requester = nostr_sdk::Keys::generate();
+        let requester_npub = requester.public_key().to_bech32().expect("requester npub");
         let own_npub = nostr_sdk::Keys::generate()
             .public_key()
             .to_bech32()
             .expect("own npub");
         let join_request = "nvpn://join-request/payload";
-        let payload = json!({
-            "v": LAN_PAIRING_ANNOUNCEMENT_VERSION,
-            "npub": requester_npub,
-            "nodeName": "Pixel Phone",
-            "endpoint": "",
-            "invite": join_request,
-            "timestamp": 42
-        })
-        .to_string();
+        let payload = encode_signed_lan_pairing_announcement(
+            &LanPairingAnnouncement {
+                npub: requester_npub,
+                node_name: "Pixel Phone".to_string(),
+                endpoint: String::new(),
+                invite: join_request.to_string(),
+            },
+            &requester,
+            unix_timestamp(),
+        )
+        .expect("signed payload");
 
-        let signal = decode_lan_pairing_payload(payload.as_bytes(), &own_npub)
+        let signal = decode_lan_pairing_payload(&payload, &own_npub)
             .expect("decode")
             .expect("peer");
 
@@ -559,15 +638,111 @@ mod tests {
     }
 
     #[test]
+    fn unsigned_lan_announcement_is_rejected() {
+        let admin_npub = nostr_sdk::Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("npub");
+        let payload = json!({
+            "v": 2,
+            "npub": admin_npub,
+            "nodeName": "Spoofed peer",
+            "endpoint": "192.0.2.10:51820",
+            "invite": invite_for(&admin_npub, "Spoofed", "spoofed"),
+            "timestamp": unix_timestamp()
+        })
+        .to_string();
+
+        assert!(
+            decode_lan_pairing_payload(payload.as_bytes(), "npub1other")
+                .expect("decode")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn stale_signed_lan_announcement_is_rejected() {
+        let keys = nostr_sdk::Keys::generate();
+        let npub = keys.public_key().to_bech32().expect("npub");
+        let announcement = LanPairingAnnouncement {
+            npub: npub.clone(),
+            node_name: "Alice".to_string(),
+            endpoint: "192.0.2.10:51820".to_string(),
+            invite: invite_for(&npub, "Alice mesh", "alice-mesh"),
+        };
+        let now = unix_timestamp();
+        let stale = now.saturating_sub(LAN_PAIRING_STALE_AFTER.as_secs() + 1);
+        let payload = encode_signed_lan_pairing_announcement(&announcement, &keys, stale)
+            .expect("signed payload");
+
+        assert!(
+            decode_lan_pairing_payload_at(&payload, "npub1other", now)
+                .expect("decode")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn tampered_signed_lan_announcement_is_rejected() {
+        let keys = nostr_sdk::Keys::generate();
+        let npub = keys.public_key().to_bech32().expect("npub");
+        let announcement = LanPairingAnnouncement {
+            npub: npub.clone(),
+            node_name: "Alice".to_string(),
+            endpoint: "192.0.2.10:51820".to_string(),
+            invite: invite_for(&npub, "Alice mesh", "alice-mesh"),
+        };
+        let payload =
+            encode_signed_lan_pairing_announcement(&announcement, &keys, unix_timestamp())
+                .expect("signed payload");
+        let mut tampered = serde_json::from_slice::<serde_json::Value>(&payload).expect("JSON");
+        tampered["event"]["content"] = json!({
+            "nodeName": "Mallory",
+            "endpoint": "192.0.2.99:51820",
+            "invite": announcement.invite,
+        })
+        .to_string()
+        .into();
+        let tampered = serde_json::to_vec(&tampered).expect("tampered payload");
+
+        assert!(
+            decode_lan_pairing_payload(&tampered, "npub1other")
+                .expect("decode")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn signed_lan_announcement_must_match_invite_admin() {
+        let signer = nostr_sdk::Keys::generate();
+        let signer_npub = signer.public_key().to_bech32().expect("npub");
+        let actual_admin = nostr_sdk::Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("npub");
+        let announcement = LanPairingAnnouncement {
+            npub: signer_npub,
+            node_name: "Mallory".to_string(),
+            endpoint: "192.0.2.10:51820".to_string(),
+            invite: invite_for(&actual_admin, "Alice mesh", "alice-mesh"),
+        };
+        let now = unix_timestamp();
+        let payload = encode_signed_lan_pairing_announcement(&announcement, &signer, now)
+            .expect("signed payload");
+
+        assert!(
+            decode_lan_pairing_payload_at(&payload, "npub1other", now)
+                .expect("decode")
+                .is_none()
+        );
+    }
+
+    #[test]
     fn lan_pairing_workers_exchange_invites_over_loopback_transport() {
-        let alice_npub = nostr_sdk::Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("alice npub");
-        let bob_npub = nostr_sdk::Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("bob npub");
+        let alice_keys = nostr_sdk::Keys::generate();
+        let alice_npub = alice_keys.public_key().to_bech32().expect("alice npub");
+        let bob_keys = nostr_sdk::Keys::generate();
+        let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
         let alice_invite = invite_for(&alice_npub, "Alice mesh", "alice-mesh");
         let bob_invite = invite_for(&bob_npub, "Bob mesh", "bob-mesh");
         let expires_at = SystemTime::now()
@@ -586,6 +761,7 @@ mod tests {
                 endpoint: "192.0.2.10:51820".to_string(),
                 invite: alice_invite,
             },
+            alice_keys,
             alice_socket,
             vec![bob_addr],
         );
@@ -598,6 +774,7 @@ mod tests {
                 endpoint: "192.0.2.11:51820".to_string(),
                 invite: bob_invite,
             },
+            bob_keys,
             bob_socket,
             vec![alice_addr],
         );
@@ -630,14 +807,10 @@ mod tests {
 
     #[test]
     fn listen_only_worker_receives_without_advertising() {
-        let alice_npub = nostr_sdk::Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("alice npub");
-        let bob_npub = nostr_sdk::Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("bob npub");
+        let alice_keys = nostr_sdk::Keys::generate();
+        let alice_npub = alice_keys.public_key().to_bech32().expect("alice npub");
+        let bob_keys = nostr_sdk::Keys::generate();
+        let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
         let alice_invite = invite_for(&alice_npub, "Alice mesh", "alice-mesh");
         let bob_invite = invite_for(&bob_npub, "Bob mesh", "bob-mesh");
         let expires_at = SystemTime::now()
@@ -656,6 +829,7 @@ mod tests {
                 endpoint: "192.0.2.10:51820".to_string(),
                 invite: alice_invite,
             },
+            alice_keys,
             alice_socket,
             vec![bob_addr],
         );
@@ -669,6 +843,7 @@ mod tests {
                 endpoint: "192.0.2.11:51820".to_string(),
                 invite: bob_invite,
             },
+            bob_keys,
             bob_socket,
             Vec::new(),
         );

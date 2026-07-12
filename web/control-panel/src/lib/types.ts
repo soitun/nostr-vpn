@@ -90,7 +90,8 @@ export type NetworkView = {
 };
 
 export type LanPeer = {
-  invite?: string;
+  npub: string;
+  networkId: string;
   nodeName?: string;
   networkName?: string;
   lastSeenText?: string;

@@ -64,4 +64,4 @@ EXPOSE 38080
 VOLUME ["/data"]
 
 ENTRYPOINT ["nvpn-web"]
-CMD ["--listen", "0.0.0.0:38080", "--config", "/data/config/nvpn/config.toml"]
+CMD ["--listen", "127.0.0.1:38080", "--config", "/data/config/nvpn/config.toml"]

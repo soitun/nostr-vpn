@@ -28,6 +28,12 @@ services:
     restart: unless-stopped
     depends_on:
       - daemon
+    command:
+      - --listen
+      - 0.0.0.0:38080
+      - --behind-trusted-proxy
+      - --config
+      - /data/config/nvpn/config.toml
     ports:
       - 127.0.0.1:${NOSTR_VPN_WEB_PORT:-38080}:38080
     environment:

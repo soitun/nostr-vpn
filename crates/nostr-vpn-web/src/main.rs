@@ -5,8 +5,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
-use axum::extract::State;
-use axum::http::StatusCode;
+use axum::extract::{Request, State};
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -21,8 +22,9 @@ mod ui_types;
 
 use crate::ui_types::{
     AliasRequest, EndpointHintsRequest, ImportJoinRequest, InviteRequest, JoinRequestAction,
-    ManualNetworkRequest, NameRequest, NetworkEnabledRequest, NetworkIdRequest, NetworkMeshRequest,
-    NetworkNameRequest, NetworkPeerRequest, ParticipantRequest, QrMatrixRequest, QrMatrixResponse,
+    ManualNetworkRequest, NameRequest, NearbyPeerRequest, NetworkEnabledRequest, NetworkIdRequest,
+    NetworkMeshRequest, NetworkNameRequest, NetworkPeerRequest, ParticipantRequest,
+    QrMatrixRequest, QrMatrixResponse,
 };
 
 const NVPN_BIN_ENV: &str = "NVPN_CLI_PATH";
@@ -34,6 +36,9 @@ const DEFAULT_STATIC_DIR: &str = "/usr/share/nostr-vpn/web";
 struct Args {
     #[arg(long, default_value = "127.0.0.1:8081")]
     listen: SocketAddr,
+    /// Declare that a non-loopback listener is isolated behind an authenticated platform proxy.
+    #[arg(long)]
+    behind_trusted_proxy: bool,
     #[arg(long)]
     config: Option<PathBuf>,
     #[arg(long)]
@@ -93,12 +98,15 @@ async fn main() -> Result<()> {
         )
         .init();
 
+    let args = Args::parse();
+    validate_web_exposure(&args)?;
     let Args {
         listen,
+        behind_trusted_proxy: _,
         config,
         nvpn,
         static_dir,
-    } = Args::parse();
+    } = args;
     let config_path = config.unwrap_or_else(default_config_path);
     ensure_config_exists(&config_path)?;
     let nvpn_bin = resolve_nvpn_cli_path(nvpn)?;
@@ -133,6 +141,7 @@ async fn main() -> Result<()> {
         .route("/api/reset_network_invite", post(reset_network_invite))
         .route("/api/import_network_invite", post(import_network_invite))
         .route("/api/import_join_request", post(import_join_request))
+        .route("/api/import_nearby_peer", post(import_nearby_peer))
         .route("/api/start_invite_broadcast", post(start_invite_broadcast))
         .route("/api/stop_invite_broadcast", post(stop_invite_broadcast))
         .route("/api/start_nearby_discovery", post(start_nearby_discovery))
@@ -165,6 +174,7 @@ async fn main() -> Result<()> {
     } else {
         tracing::info!("static web UI disabled");
     }
+    app = app.layer(middleware::from_fn(enforce_web_request_boundary));
 
     let listener = tokio::net::TcpListener::bind(listen).await?;
     tracing::info!("nostr-vpn web api listening on {}", listen);
@@ -174,6 +184,55 @@ async fn main() -> Result<()> {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+fn validate_web_exposure(args: &Args) -> Result<()> {
+    if !args.listen.ip().is_loopback() && !args.behind_trusted_proxy {
+        return Err(anyhow!(
+            "refusing non-loopback web listener {}; pass --behind-trusted-proxy only when an authenticated platform proxy isolates this service",
+            args.listen
+        ));
+    }
+    Ok(())
+}
+
+async fn enforce_web_request_boundary(request: Request, next: Next) -> Response {
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok());
+    let host = request
+        .headers()
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok());
+    if !web_origin_allowed(origin, host) {
+        return (StatusCode::FORBIDDEN, "cross-origin request rejected").into_response();
+    }
+
+    let api_request = request.uri().path().starts_with("/api/");
+    let mut response = next.run(request).await;
+    if api_request {
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    }
+    response
+}
+
+fn web_origin_allowed(origin: Option<&str>, host: Option<&str>) -> bool {
+    let Some(origin) = origin.map(str::trim) else {
+        return true;
+    };
+    let Some(host) = host.map(str::trim).filter(|host| !host.is_empty()) else {
+        return false;
+    };
+    let Some(authority) = origin
+        .strip_prefix("https://")
+        .or_else(|| origin.strip_prefix("http://"))
+    else {
+        return false;
+    };
+    !authority.contains('/') && authority.eq_ignore_ascii_case(host)
 }
 
 async fn tick(State(state): State<ServerState>) -> ApiResult<UiStateResponse> {
@@ -347,6 +406,37 @@ async fn import_join_request(
     )
 }
 
+async fn import_nearby_peer(
+    State(state): State<ServerState>,
+    Json(request): Json<NearbyPeerRequest>,
+) -> ApiResult<UiStateResponse> {
+    let refreshed = state.core.refresh();
+    let peer = refreshed
+        .lan_peers
+        .iter()
+        .find(|peer| peer.npub == request.npub && peer.network_id == request.network_id)
+        .ok_or_else(|| ApiError::bad_request("nearby peer is no longer available"))?;
+    let invite = peer.invite.trim();
+    if invite.is_empty() {
+        return Err(ApiError::bad_request(
+            "nearby peer did not provide an invitation",
+        ));
+    }
+    let action = if invite
+        .get(.."nvpn://join-request".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("nvpn://join-request"))
+    {
+        NativeAppAction::ImportJoinRequest {
+            request: invite.to_string(),
+        }
+    } else {
+        NativeAppAction::ImportNetworkInvite {
+            invite: invite.to_string(),
+        }
+    };
+    dispatch(&state, action)
+}
+
 async fn start_invite_broadcast(State(state): State<ServerState>) -> ApiResult<UiStateResponse> {
     dispatch(&state, NativeAppAction::StartInviteBroadcast)
 }
@@ -512,6 +602,21 @@ fn umbrel_state_value(state: NativeAppState) -> ApiResult<Value> {
         "serviceStatusDetail".to_string(),
         json!("Managed directly by the Umbrel app"),
     );
+    for field in [
+        "activeNetworkInvite",
+        "wireguardExitPrivateKey",
+        "wireguardExitPeerPresharedKey",
+        "wireguardExitConfig",
+    ] {
+        object.insert(field.to_string(), json!(""));
+    }
+    if let Some(peers) = object.get_mut("lanPeers").and_then(Value::as_array_mut) {
+        for peer in peers {
+            if let Some(peer) = peer.as_object_mut() {
+                peer.remove("invite");
+            }
+        }
+    }
 
     Ok(value)
 }
@@ -660,6 +765,47 @@ mod tests {
 
         assert!(args.listen.ip().is_loopback());
         assert_eq!(args.listen.port(), 8081);
+        assert!(!args.behind_trusted_proxy);
+        assert!(validate_web_exposure(&args).is_ok());
+    }
+
+    #[test]
+    fn non_loopback_listen_requires_explicit_trusted_proxy() {
+        let args = Args::parse_from(["nvpn-web", "--listen", "0.0.0.0:38080"]);
+
+        let error = validate_web_exposure(&args).expect_err("public bind must be explicit");
+
+        assert!(error.to_string().contains("--behind-trusted-proxy"));
+    }
+
+    #[test]
+    fn trusted_proxy_allows_non_loopback_listen() {
+        let args = Args::parse_from([
+            "nvpn-web",
+            "--listen",
+            "0.0.0.0:38080",
+            "--behind-trusted-proxy",
+        ]);
+
+        assert!(validate_web_exposure(&args).is_ok());
+    }
+
+    #[test]
+    fn browser_origin_must_match_request_host() {
+        assert!(web_origin_allowed(
+            Some("https://vpn.example"),
+            Some("vpn.example")
+        ));
+        assert!(web_origin_allowed(
+            Some("http://vpn.example"),
+            Some("vpn.example")
+        ));
+        assert!(web_origin_allowed(None, Some("vpn.example")));
+        assert!(!web_origin_allowed(
+            Some("https://attacker.example"),
+            Some("vpn.example")
+        ));
+        assert!(!web_origin_allowed(Some("null"), Some("vpn.example")));
     }
 
     #[test]
@@ -701,6 +847,36 @@ mod tests {
             value["serviceStatusDetail"],
             "Managed directly by the Umbrel app"
         );
+    }
+
+    #[test]
+    fn web_state_does_not_serialize_network_credentials() {
+        let state = NativeAppState {
+            active_network_invite: "nvpn://invite/secret".to_string(),
+            wireguard_exit_private_key: "private-key".to_string(),
+            wireguard_exit_peer_preshared_key: "preshared-key".to_string(),
+            wireguard_exit_config: "[Interface]\nPrivateKey = private-key".to_string(),
+            lan_peers: vec![nostr_vpn_app_core::native_state::NativeLanPeerState {
+                npub: "npub1peer".to_string(),
+                network_id: "network-id".to_string(),
+                invite: "nvpn://join-request/nearby-secret".to_string(),
+                ..nostr_vpn_app_core::native_state::NativeLanPeerState::default()
+            }],
+            ..NativeAppState::default()
+        };
+
+        let value = umbrel_state_value(state).expect("state value");
+        let encoded = serde_json::to_string(&value).expect("state JSON");
+
+        assert_eq!(value["activeNetworkInvite"], "");
+        assert_eq!(value["wireguardExitPrivateKey"], "");
+        assert_eq!(value["wireguardExitPeerPresharedKey"], "");
+        assert_eq!(value["wireguardExitConfig"], "");
+        assert!(value["lanPeers"][0].get("invite").is_none());
+        assert!(!encoded.contains("private-key"));
+        assert!(!encoded.contains("preshared-key"));
+        assert!(!encoded.contains("nvpn://invite/secret"));
+        assert!(!encoded.contains("nearby-secret"));
     }
 
     #[test]

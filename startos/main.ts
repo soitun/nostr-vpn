@@ -64,7 +64,7 @@ export const main = sdk.setupMain(async ({ effects }) => {
           [
             'bind_ip="$(ip -4 -o addr show dev eth0 scope global | awk \'{ split($4, a, "/"); print a[1]; exit }\')"',
             'test -n "$bind_ip"',
-            `exec /usr/local/bin/nvpn-web --listen "$bind_ip:${uiPort}" --config /data/config/nvpn/config.toml`,
+            `exec /usr/local/bin/nvpn-web --listen "$bind_ip:${uiPort}" --behind-trusted-proxy --config /data/config/nvpn/config.toml`,
           ].join('\n'),
         ],
         env: {
