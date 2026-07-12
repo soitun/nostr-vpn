@@ -76,6 +76,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         mut platform_network_event_suppressed_until,
         supervised_service_executable,
     } = loop_state;
+    #[cfg(feature = "paid-exit")]
+    let (mut paid_exit_spilman_receiver, mut paid_exit_spilman_receiver_error) =
+        try_load_paid_exit_spilman_receiver(&config_path, &app.paid_exit).await;
 
     loop {
         tokio::select! {
@@ -591,8 +594,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                     &app,
                                     &config_path,
                                     drained.paid_route_payments,
+                                    paid_exit_spilman_receiver.as_ref(),
+                                    paid_exit_spilman_receiver_error.as_deref(),
                                 )
-                                .await
                                 {
                                     Ok(result) => {
                                         eprintln!(
@@ -790,6 +794,17 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                                 reloaded_network_id,
                                             );
                                             app = reload.app;
+                                            #[cfg(feature = "paid-exit")]
+                                            {
+                                                (
+                                                    paid_exit_spilman_receiver,
+                                                    paid_exit_spilman_receiver_error,
+                                                ) = try_load_paid_exit_spilman_receiver(
+                                                    &config_path,
+                                                    &app.paid_exit,
+                                                )
+                                                .await;
+                                            }
                                             network_id = reload.network_id;
                                             expected_peers = reload.expected_peers;
                                             own_pubkey = reload.own_pubkey;

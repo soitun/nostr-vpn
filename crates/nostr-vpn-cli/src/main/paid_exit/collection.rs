@@ -9,10 +9,12 @@ pub(crate) struct PaidExitApplyFipsPaymentsResult {
     pub(crate) acknowledgments: Vec<(String, String)>,
 }
 
-pub(crate) async fn paid_exit_apply_fips_payments(
+pub(crate) fn paid_exit_apply_fips_payments(
     app: &AppConfig,
     config_path: &Path,
     payments: Vec<(String, String, StreamingRoutePaymentEnvelope)>,
+    spilman_receiver: Option<&FileSpilmanPaymentReceiver>,
+    spilman_receiver_error: Option<&str>,
 ) -> Result<PaidExitApplyFipsPaymentsResult> {
     if payments.is_empty() {
         return Ok(PaidExitApplyFipsPaymentsResult::default());
@@ -27,8 +29,6 @@ pub(crate) async fn paid_exit_apply_fips_payments(
         .context("failed to encode seller npub")?;
     let store_path = paid_route_store_file_path(config_path);
     let mut store = load_paid_route_store(&store_path)?;
-    let (spilman_receiver, spilman_receiver_error) =
-        try_load_paid_exit_spilman_receiver(config_path, &app.paid_exit).await;
     let spilman_receiver_processing = spilman_receiver.is_some();
     let received_count = payments.len();
     let mut applied_count = 0;
@@ -48,8 +48,8 @@ pub(crate) async fn paid_exit_apply_fips_payments(
                 config: app.paid_exit.clone(),
                 now_unix: unix_timestamp(),
             },
-            spilman_receiver.as_ref(),
-            spilman_receiver_error.as_deref(),
+            spilman_receiver,
+            spilman_receiver_error,
         ) {
             Ok(result) => {
                 applied_count += 1;
