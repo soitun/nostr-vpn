@@ -259,8 +259,18 @@
         );
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn mobile_fips_exit_node_routes_default_traffic_to_selected_member() {
+    #[test]
+    fn mobile_fips_exit_node_routes_default_traffic_to_selected_member() {
+        let runtime = RuntimeBuilder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .thread_stack_size(4 * 1024 * 1024)
+            .build()
+            .expect("mobile FIPS test runtime");
+        runtime.block_on(Box::pin(run_mobile_fips_exit_node_route_test()));
+    }
+
+    async fn run_mobile_fips_exit_node_route_test() {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock is after epoch")

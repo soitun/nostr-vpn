@@ -100,9 +100,9 @@ fn macos_service_plist_runs_service_supervised_daemon() {
     assert!(plist.contains("<string>daemon</string>"));
     assert!(plist.contains("<string>--service</string>"));
     assert!(plist.contains("<string>--config</string>"));
-    assert!(plist.contains(
-        "<string>--mesh-refresh-interval-secs</string>\n    <string>60</string>"
-    ));
+    assert!(
+        plist.contains("<string>--mesh-refresh-interval-secs</string>\n    <string>60</string>")
+    );
     assert!(plist.contains("<key>ProcessType</key>\n  <string>Interactive</string>"));
 }
 
