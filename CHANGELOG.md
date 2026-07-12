@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Updated to FIPS Core 0.3.92 and Endpoint 0.3.59 so busy relays retain the
+  first authenticated application packet until session ownership is installed.
+
 ## 4.0.91 - 2026-07-11
 
 ### Changed
