@@ -24,7 +24,7 @@ use fips_endpoint::{
 };
 use nostr_sdk::prelude::PublicKey;
 use nostr_vpn_core::config::{
-    AppConfig, InternetSource, MESH_TUNNEL_IPV4_CIDR, WireGuardExitConfig, derive_mesh_tunnel_ip,
+    AppConfig, MESH_TUNNEL_IPV4_CIDR, WireGuardExitConfig, derive_mesh_tunnel_ip,
     maybe_autoconfigure_node, normalize_nostr_pubkey, normalize_runtime_network_id,
     split_peer_transport_addr,
 };

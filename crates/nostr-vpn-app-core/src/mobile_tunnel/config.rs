@@ -195,6 +195,36 @@ fn default_true() -> bool {
     true
 }
 
+fn preserve_mobile_pending_exit_default_routes(
+    route_targets: &mut Vec<String>,
+    exit_node: &str,
+    leak_protection: bool,
+    internet_source: Option<&str>,
+) {
+    if !exit_node.trim().is_empty() || !leak_protection {
+        return;
+    }
+    if !matches!(
+        internet_source,
+        Some("private_vpn" | "paid_automatic" | "paid_manual")
+    ) {
+        return;
+    }
+    route_targets.extend(
+        MOBILE_EXIT_NODE_DEFAULT_ROUTES
+            .iter()
+            .map(|route| (*route).to_string()),
+    );
+}
+
+fn serialized_mobile_internet_source(app: &AppConfig) -> Option<String> {
+    toml::Value::try_from(app)
+        .ok()?
+        .get("internet_source")?
+        .as_str()
+        .map(str::to_string)
+}
+
 impl MobileTunnelConfig {
     pub(crate) fn from_data_dir(data_dir: &str) -> Result<Self> {
         let config_path = native_config_path(data_dir);
@@ -266,21 +296,13 @@ impl MobileTunnelConfig {
         {
             route_targets.push(MESH_TUNNEL_IPV4_CIDR.to_string());
         }
-        if app.exit_node.trim().is_empty()
-            && app.exit_node_leak_protection
-            && matches!(
-                app.internet_source,
-                InternetSource::PrivateVpn
-                    | InternetSource::PaidAutomatic
-                    | InternetSource::PaidManual
-            )
-        {
-            route_targets.extend(
-                MOBILE_EXIT_NODE_DEFAULT_ROUTES
-                    .iter()
-                    .map(|route| (*route).to_string()),
-            );
-        }
+        let internet_source = serialized_mobile_internet_source(app);
+        preserve_mobile_pending_exit_default_routes(
+            &mut route_targets,
+            &app.exit_node,
+            app.exit_node_leak_protection,
+            internet_source.as_deref(),
+        );
         peers.sort_by(|left, right| left.participant_pubkey.cmp(&right.participant_pubkey));
         peers.dedup_by(|left, right| left.participant_pubkey == right.participant_pubkey);
         route_targets.sort();
