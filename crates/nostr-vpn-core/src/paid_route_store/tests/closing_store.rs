@@ -690,7 +690,7 @@ fn automatic_offer_selection_uses_rating_price_freshness_and_stable_key_order() 
 }
 
 #[test]
-fn automatic_offer_selection_plans_only_between_approved_mints() {
+fn automatic_offer_selection_rejects_unfunded_seller_mint() {
     let now_unix = 100_000;
     let seller = Keys::generate();
     let mut config = automatic_offer_config();
@@ -710,16 +710,7 @@ fn automatic_offer_selection_plans_only_between_approved_mints() {
         .upsert_signed_offer(signed, vec![], now_unix - 1)
         .expect("store offer");
 
-    let selected = store
-        .select_automatic_offer(now_unix)
-        .expect("automatic selection with transfer");
-    let transfer = selected.mint_transfer.expect("cross-mint transfer plan");
-
-    assert_eq!(selected.mint_url, "https://mint.destination");
-    assert_eq!(transfer.source_mint_url, "https://mint.source");
-    assert_eq!(transfer.destination_mint_url, selected.mint_url);
-    assert_eq!(transfer.amount_sat, selected.channel_capacity_sat);
-    assert!(transfer.max_fee_sat <= 5);
+    assert!(store.select_automatic_offer(now_unix).is_err());
 }
 
 fn automatic_offer_config() -> PaidExitConfig {
