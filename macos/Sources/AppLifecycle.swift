@@ -208,6 +208,13 @@ final class SingleInstanceCoordinator: NSObject {
     }
 
     private static func lockFilePaths() -> [String] {
+        if let isolatedDataDir = ProcessInfo.processInfo.environment["NVPN_APP_DATA_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !isolatedDataDir.isEmpty {
+            let dir = URL(fileURLWithPath: isolatedDataDir, isDirectory: true)
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            return [dir.appendingPathComponent("NostrVpnMac.lock").path]
+        }
         var paths = ["/tmp/fi.siriusbusiness.nvpn.gui.\(getuid()).lock"]
         if let dir = FileManager.default
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)

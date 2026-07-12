@@ -84,9 +84,13 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     public AppViewModel()
     {
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "";
-        var dataDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "Nostr VPN");
+        var dataDir = Environment.GetEnvironmentVariable("NVPN_APP_DATA_DIR");
+        if (string.IsNullOrWhiteSpace(dataDir))
+        {
+            dataDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "Nostr VPN");
+        }
         _core = new AppCoreClient(dataDir, version);
         _autoInstallUpdates = LoadAutoInstallUpdates();
         ApplyState(_core.State(), syncDrafts: true);
@@ -1403,8 +1407,60 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         if (url.StartsWith("nvpn://join-request", StringComparison.OrdinalIgnoreCase))
         {
             _ = ConfirmAndImportJoinRequestAsync(url);
+            return;
         }
+
+#if DEBUG
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || !uri.Host.Equals("debug", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        var query = ParseDebugQuery(uri.Query);
+        var requestedNetwork = QueryValue(query, "networkId", "network");
+        var network = State.Networks.FirstOrDefault(candidate =>
+            string.IsNullOrWhiteSpace(requestedNetwork)
+            || candidate.Id == requestedNetwork
+            || candidate.NetworkId == requestedNetwork);
+        if (network is null)
+        {
+            return;
+        }
+        if (uri.AbsolutePath.Equals("/request-join", StringComparison.OrdinalIgnoreCase))
+        {
+            _ = DispatchAsync(NativeActions.RequestNetworkJoin(network.Id), "Requesting access");
+            return;
+        }
+        if (uri.AbsolutePath.Equals("/accept-join", StringComparison.OrdinalIgnoreCase))
+        {
+            var requester = QueryValue(query, "requesterNpub", "requester")
+                ?? network.InboundJoinRequests.FirstOrDefault()?.RequesterNpub;
+            if (!string.IsNullOrWhiteSpace(requester))
+            {
+                _ = DispatchAsync(NativeActions.AcceptJoinRequest(network.Id, requester), "Adding device");
+            }
+        }
+#endif
     }
+
+#if DEBUG
+    private static Dictionary<string, string> ParseDebugQuery(string raw)
+    {
+        return raw.TrimStart('?')
+            .Split('&', StringSplitOptions.RemoveEmptyEntries)
+            .Select(pair => pair.Split('=', 2))
+            .ToDictionary(
+                pair => Uri.UnescapeDataString(pair[0].Replace('+', ' ')),
+                pair => pair.Length > 1 ? Uri.UnescapeDataString(pair[1].Replace('+', ' ')) : "",
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string? QueryValue(IReadOnlyDictionary<string, string> query, params string[] names)
+    {
+        return names.Select(name => query.GetValueOrDefault(name))
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+    }
+#endif
 
     public void Dispose()
     {

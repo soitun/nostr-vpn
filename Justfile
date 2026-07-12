@@ -74,6 +74,8 @@ info:
     @echo "  just e2e-join-request"
     @echo "  just e2e-lan-pairing"
     @echo "  just e2e-roster-admin"
+    @echo "  just e2e-desktop-roster-join"
+    @echo "  just e2e-device-roster"
     @echo "  just e2e-wireguard-exit"
     @echo "  just e2e-wireguard-exit-userspace"
     @echo "  just e2e-wireguard-exit-host"
@@ -116,6 +118,17 @@ linux-build:
 
 linux-e2e-gui:
     ./tools/run-linux ./scripts/e2e-smoke.sh
+
+e2e-desktop-roster-join:
+    @case "$(uname -s)" in \
+        Darwin) ./scripts/e2e-desktop-roster-join.sh ;; \
+        Linux) ./tools/run-linux /workspace/nostr-vpn/scripts/e2e-desktop-roster-join.sh ;; \
+        MINGW*|MSYS*|CYGWIN*) powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/e2e-desktop-roster-join.ps1 ;; \
+        *) echo "No desktop roster e2e target for $(uname -s)." >&2; exit 1 ;; \
+    esac
+
+e2e-device-roster:
+    ./scripts/e2e-device-roster.sh
 
 windows-build:
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/windows-build.ps1

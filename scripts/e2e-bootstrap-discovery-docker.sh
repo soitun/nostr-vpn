@@ -131,6 +131,85 @@ wait_for_inbound_join_request() {
   exit 1
 }
 
+config_array_contains() {
+  local service="$1"
+  local key="$2"
+  local value="$3"
+  "${COMPOSE[@]}" exec -T -e KEY="$key" -e VALUE="$value" "$service" perl -0ne '
+    my $key = $ENV{KEY};
+    my $value = $ENV{VALUE};
+    if (/^\Q$key\E\s*=\s*\[[^\]]*\Q$value\E[^\]]*\]/m) { print "yes" }
+  ' /root/.config/nvpn/config.toml
+}
+
+wait_for_roster_member() {
+  local service="$1"
+  local member="$2"
+  local description="$3"
+  for _ in $(seq 1 80); do
+    if [[ "$(config_array_contains "$service" participants "$member" || true)" == "yes" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "bootstrap-discovery docker e2e failed: $description" >&2
+  exit 1
+}
+
+wait_for_connected_peer() {
+  local service="$1"
+  local description="$2"
+  local count=""
+  for _ in $(seq 1 80); do
+    count="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+      "nvpn status --json --discover-secs 0 | perl -0ne 'print \$1 if /\"connected_peer_count\"\\s*:\\s*(\\d+)/'" || true)"
+    if [[ "$count" == "1" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "bootstrap-discovery docker e2e failed: $description (connected_peer_count='$count')" >&2
+  exit 1
+}
+
+ping_until_success() {
+  local service="$1"
+  local target="$2"
+  for _ in $(seq 1 30); do
+    if "${COMPOSE[@]}" exec -T "$service" ping -c 1 -W 1 "$target" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+accept_join_request_through_gui_api() {
+  local service="$1"
+  local requester="$2"
+  local network_id=""
+  network_id="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+    "awk '/^\[\[networks\]\]/{in_network=1; next} in_network && /^id[[:space:]]*=/{gsub(/[[:space:]\"]/, \"\", \$2); print \$2; exit}' /root/.config/nvpn/config.toml" | tr -d '\r')"
+  if [[ -z "$network_id" ]]; then
+    echo "bootstrap-discovery docker e2e failed: active GUI network ID was unavailable" >&2
+    exit 1
+  fi
+  "${COMPOSE[@]}" exec -d "$service" sh -lc \
+    "nostr-vpn-web --listen 127.0.0.1:8081 --config /root/.config/nvpn/config.toml --nvpn /usr/local/bin/nvpn >/tmp/nvpn-web.log 2>&1"
+  for _ in $(seq 1 30); do
+    if "${COMPOSE[@]}" exec -T "$service" curl -fsS http://127.0.0.1:8081/api/health >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  "${COMPOSE[@]}" exec -T \
+    -e NETWORK_ID="$network_id" \
+    -e REQUESTER="$requester" \
+    "$service" sh -lc 'curl -fsS -X POST -H "content-type: application/json" \
+      --data "{\"networkId\":\"$NETWORK_ID\",\"requesterNpub\":\"$REQUESTER\"}" \
+      http://127.0.0.1:8081/api/accept_join_request >/tmp/accept-join-response.json'
+}
+
 cleanup
 
 "${COMPOSE[@]}" build >/dev/null
@@ -185,4 +264,27 @@ wait_for_inbound_join_request node-a "$REQUESTER_NPUB" "$REQUESTER_NAME"
 assert_no_relay_streaming node-a
 assert_no_relay_streaming node-c
 
-echo "join request from $REQUESTER_NAME flowed over FIPS with relay discovery disabled"
+# Exercise the same app-core action used by the Linux/macOS/Windows Accept
+# button. The desktop-shell regression tests drive that action through each
+# native GUI's deep-link boundary; this deterministic network lane proves the
+# accepted mobile node and desktop then see and can reach one another.
+accept_join_request_through_gui_api node-a "$REQUESTER_NPUB"
+wait_for_roster_member node-a "$REQUESTER_NPUB" "GUI acceptance did not persist the phone in the admin roster"
+"${COMPOSE[@]}" exec -T node-a nvpn reload >/dev/null
+
+wait_for_roster_member node-c "$REQUESTER_NPUB" "phone never applied the accepted roster"
+wait_for_connected_peer node-a "desktop never reported the accepted phone online"
+wait_for_connected_peer node-c "phone never reported the desktop online"
+
+ADMIN_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip | tr -d '\r')"
+REQUESTER_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-c nvpn ip | tr -d '\r')"
+if ! ping_until_success node-a "$REQUESTER_TUNNEL_IP"; then
+  echo "bootstrap-discovery docker e2e failed: desktop could not reach the accepted phone" >&2
+  exit 1
+fi
+if ! ping_until_success node-c "$ADMIN_TUNNEL_IP"; then
+  echo "bootstrap-discovery docker e2e failed: accepted phone could not reach the desktop" >&2
+  exit 1
+fi
+
+echo "join request from $REQUESTER_NAME was accepted through the GUI action; desktop and phone reported each other online and passed reciprocal tunnel pings"

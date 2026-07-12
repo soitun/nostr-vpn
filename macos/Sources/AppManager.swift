@@ -82,11 +82,13 @@ final class AppManager: ObservableObject {
             return
         }
 
-        let dataDir = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first?
-            .appendingPathComponent("nvpn", isDirectory: true)
-            .path ?? ""
+        let dataDir = ProcessInfo.processInfo.environment["NVPN_APP_DATA_DIR"]
+            ?? FileManager.default
+                .urls(for: .applicationSupportDirectory, in: .userDomainMask)
+                .first?
+                .appendingPathComponent("nvpn", isDirectory: true)
+                .path
+            ?? ""
         // Pass empty so the FFI falls back to its own CARGO_PKG_VERSION
         // (workspace-inherited). Avoids drift between MARKETING_VERSION in the
         // xcodeproj and the bundled nvpn binary.
@@ -144,6 +146,12 @@ final class AppManager: ObservableObject {
     }
 
     func start() {
+        #if DEBUG
+        if let path = ProcessInfo.processInfo.environment["NVPN_ROSTER_E2E_READY_PATH"],
+           !path.isEmpty {
+            _ = FileManager.default.createFile(atPath: path, contents: Data())
+        }
+        #endif
         drainStartupUrls()
         guard !fixtureMode else {
             return
@@ -321,10 +329,47 @@ final class AppManager: ObservableObject {
         switch action {
         case "tick":
             dispatch(.tick, status: "Refreshing")
+        case "request-join":
+            let requestedNetwork = Self.debugQueryValue("networkId", aliases: ["network"], in: url)
+            guard let network = state.networks.first(where: {
+                requestedNetwork == nil || $0.id == requestedNetwork || $0.networkId == requestedNetwork
+            }) else {
+                return
+            }
+            dispatch(.requestNetworkJoin(networkId: network.id), status: "Requesting access")
+        case "accept-join":
+            let requestedNetwork = Self.debugQueryValue("networkId", aliases: ["network"], in: url)
+            guard let network = state.networks.first(where: {
+                requestedNetwork == nil || $0.id == requestedNetwork || $0.networkId == requestedNetwork
+            }) else {
+                return
+            }
+            let requester = Self.debugQueryValue(
+                "requesterNpub",
+                aliases: ["requester"],
+                in: url
+            ) ?? network.inboundJoinRequests.first?.requesterNpub
+            guard let requester, !requester.isEmpty else {
+                return
+            }
+            dispatch(
+                .acceptJoinRequest(networkId: network.id, requesterNpub: requester),
+                status: "Adding device",
+                successStatus: "Device added"
+            )
         default:
             break
         }
         #endif
+    }
+
+    private static func debugQueryValue(_ name: String, aliases: [String], in url: URL) -> String? {
+        let names = Set([name] + aliases)
+        return URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first(where: { names.contains($0.name) })?
+            .value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func importInvite(_ invite: String) {
