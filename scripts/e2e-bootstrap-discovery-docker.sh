@@ -188,12 +188,6 @@ accept_join_request_through_gui_api() {
   local service="$1"
   local requester="$2"
   local network_id=""
-  network_id="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
-    "awk '/^\[\[networks\]\]/{in_network=1; next} in_network && /^id[[:space:]]*=/{gsub(/[[:space:]\"]/, \"\", \$2); print \$2; exit}' /root/.config/nvpn/config.toml" | tr -d '\r')"
-  if [[ -z "$network_id" ]]; then
-    echo "bootstrap-discovery docker e2e failed: active GUI network ID was unavailable" >&2
-    exit 1
-  fi
   "${COMPOSE[@]}" exec -d "$service" sh -lc \
     "nostr-vpn-web --listen 127.0.0.1:8081 --config /root/.config/nvpn/config.toml --nvpn /usr/local/bin/nvpn >/tmp/nvpn-web.log 2>&1"
   for _ in $(seq 1 30); do
@@ -202,6 +196,12 @@ accept_join_request_through_gui_api() {
     fi
     sleep 1
   done
+  network_id="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
+    "curl -fsS -X POST http://127.0.0.1:8081/api/tick | perl -0ne 'print \$1 if /\"networks\"\\s*:\\s*\\[\\s*\\{.*?\"id\"\\s*:\\s*\"([^\"]+)\"/s'" | tr -d '\r')"
+  if [[ -z "$network_id" ]]; then
+    echo "bootstrap-discovery docker e2e failed: active GUI network ID was unavailable" >&2
+    exit 1
+  fi
   local http_code=""
   http_code="$("${COMPOSE[@]}" exec -T \
     -e NETWORK_ID="$network_id" \
@@ -210,7 +210,7 @@ accept_join_request_through_gui_api() {
       --data "{\"networkId\":\"$NETWORK_ID\",\"requesterNpub\":\"$REQUESTER\"}" \
       http://127.0.0.1:8081/api/accept_join_request')"
   if [[ "$http_code" != "200" ]]; then
-    echo "bootstrap-discovery docker e2e failed: GUI accept returned HTTP $http_code" >&2
+    echo "bootstrap-discovery docker e2e failed: GUI accept for network '$network_id' returned HTTP $http_code" >&2
     "${COMPOSE[@]}" exec -T "$service" sh -lc \
       'cat /tmp/accept-join-response.json; tail -n 100 /tmp/nvpn-web.log' >&2 || true
     exit 1
