@@ -1399,6 +1399,9 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
 
     public void HandleDeepLink(string url)
     {
+#if DEBUG
+        DebugRosterE2eTrace($"received {url}");
+#endif
         if (url.StartsWith("nvpn://invite/", StringComparison.OrdinalIgnoreCase))
         {
             _ = ImportInviteAsync(url);
@@ -1414,6 +1417,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
             || !uri.Host.Equals("debug", StringComparison.OrdinalIgnoreCase))
         {
+            DebugRosterE2eTrace("debug URL parse failed");
             return;
         }
         var query = ParseDebugQuery(uri.Query);
@@ -1424,6 +1428,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
             || candidate.NetworkId == requestedNetwork);
         if (network is null)
         {
+            DebugRosterE2eTrace($"network not found: {requestedNetwork}");
             return;
         }
         if (uri.AbsolutePath.Equals("/request-join", StringComparison.OrdinalIgnoreCase))
@@ -1437,6 +1442,7 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
                 ?? network.InboundJoinRequests.FirstOrDefault()?.RequesterNpub;
             if (!string.IsNullOrWhiteSpace(requester))
             {
+                DebugRosterE2eTrace($"dispatching accept for {network.Id}");
                 _ = DispatchAsync(NativeActions.AcceptJoinRequest(network.Id, requester), "Adding device");
             }
         }
@@ -1444,6 +1450,15 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
     }
 
 #if DEBUG
+    private static void DebugRosterE2eTrace(string message)
+    {
+        var path = Environment.GetEnvironmentVariable("NVPN_ROSTER_E2E_TRACE_PATH");
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} {message}{Environment.NewLine}");
+        }
+    }
+
     private static Dictionary<string, string> ParseDebugQuery(string raw)
     {
         return raw.TrimStart('?')
@@ -1492,12 +1507,18 @@ public sealed class AppViewModel : INotifyPropertyChanged, IDisposable
         try
         {
             var state = await Task.Run(() => _core.Dispatch(actionJson));
+#if DEBUG
+            DebugRosterE2eTrace($"dispatch completed: {state.Error}");
+#endif
             noticeCts.Cancel();
             ApplyState(state, syncDrafts: true);
             Notice = string.IsNullOrWhiteSpace(state.Error) ? "" : state.Error;
         }
         catch (Exception error)
         {
+#if DEBUG
+            DebugRosterE2eTrace($"dispatch threw: {error}");
+#endif
             noticeCts.Cancel();
             Notice = error.Message;
         }

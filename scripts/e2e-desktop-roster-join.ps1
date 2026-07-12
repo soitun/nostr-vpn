@@ -10,10 +10,12 @@ if (!$AppExe) { $AppExe = Join-Path $Root "windows\NostrVpn.Windows\bin\Debug\ne
 $DataDir = Join-Path $ArtifactRoot "app-data"
 $Result = Join-Path $ArtifactRoot "result.json"
 $FakeNvpn = Join-Path $ArtifactRoot "nvpn-e2e.cmd"
+$Trace = Join-Path $ArtifactRoot "wpf-trace.log"
 
 New-Item -ItemType Directory -Force -Path $ArtifactRoot | Out-Null
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $DataDir
 Remove-Item -Force -ErrorAction SilentlyContinue $Result
+Remove-Item -Force -ErrorAction SilentlyContinue $Trace
 
 & cargo build -q -p nostr-vpn-app-core --example desktop_roster_e2e_fixture
 if ($LASTEXITCODE -ne 0) { throw "desktop roster fixture build failed" }
@@ -37,6 +39,7 @@ Get-Process -Name NostrVpn.Windows -ErrorAction SilentlyContinue |
   Stop-Process -Force -ErrorAction SilentlyContinue
 $env:NVPN_APP_DATA_DIR = $DataDir
 $env:NVPN_CLI_PATH = $FakeNvpn
+$env:NVPN_ROSTER_E2E_TRACE_PATH = $Trace
 $Process = Start-Process -FilePath $AppExe -ArgumentList $DebugUrl -PassThru
 
 try {
@@ -56,6 +59,7 @@ try {
     $Process.Refresh()
     if ($Process.HasExited) { throw "Windows app exited before accepting the join request" }
   }
+  if (Test-Path $Trace) { Get-Content $Trace | Write-Error }
   throw "Windows GUI did not persist the accepted device within 30 seconds"
 } finally {
   if (!$Process.HasExited) { Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue }
