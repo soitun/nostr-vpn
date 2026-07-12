@@ -12,6 +12,8 @@ $Result = Join-Path $ArtifactRoot "result.json"
 $FakeNvpn = Join-Path $ArtifactRoot "nvpn-e2e.cmd"
 $Trace = Join-Path $ArtifactRoot "wpf-trace.log"
 
+Set-Location $Root
+
 New-Item -ItemType Directory -Force -Path $ArtifactRoot | Out-Null
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $DataDir
 Remove-Item -Force -ErrorAction SilentlyContinue $Result
