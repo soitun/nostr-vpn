@@ -717,7 +717,7 @@ fn fips_pending_roster_recovery_ignores_connected_non_roster_transit() {
     ));
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 #[test]
 fn runtime_exit_node_routes_do_not_advertise_ipv6_default() {
     let mut app = AppConfig::generated();
