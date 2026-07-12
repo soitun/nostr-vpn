@@ -17,9 +17,11 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
+        TraceRosterE2E($"startup args: {string.Join(' ', e.Args)}");
         _singleInstance = SingleInstanceService.ClaimOrSignal(e.Args);
         if (_singleInstance is null)
         {
+            TraceRosterE2E("signaled existing instance");
             Shutdown();
             return;
         }
@@ -32,16 +34,27 @@ public partial class App : System.Windows.Application
         }
 
         _viewModel = new AppViewModel();
+        TraceRosterE2E("view model ready");
         _window = new MainWindow(_viewModel);
         _tray = new TrayService();
         _tray.Attach(_viewModel, ShowMainWindow, Quit);
         _singleInstance.Start(args => Dispatcher.Invoke(() => HandleLaunchArgs(args, forceShow: true)));
 
         HandleLaunchArgs(e.Args, forceShow: false);
+        TraceRosterE2E("startup args handled");
 
         if (!e.Args.Contains("--hidden", StringComparer.OrdinalIgnoreCase))
         {
             ShowMainWindow();
+        }
+    }
+
+    private static void TraceRosterE2E(string message)
+    {
+        var path = Environment.GetEnvironmentVariable("NVPN_ROSTER_E2E_TRACE_PATH");
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            File.AppendAllText(path, $"{DateTimeOffset.UtcNow:O} {message}{Environment.NewLine}");
         }
     }
 
