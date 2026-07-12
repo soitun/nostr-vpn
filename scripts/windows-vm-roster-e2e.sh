@@ -29,7 +29,7 @@ run_ps "\$ErrorActionPreference = 'Stop'
 Set-Location '$GUEST_REPO'
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows-build.ps1 -Configuration Debug
 if (\$LASTEXITCODE -ne 0) { exit \$LASTEXITCODE }
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\e2e-desktop-roster-join.ps1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\run-windows-interactive-e2e.ps1 -ScriptPath .\scripts\e2e-desktop-roster-join.ps1
 exit \$LASTEXITCODE"
 
 echo "WINDOWS_VM_ROSTER_JOIN_E2E_OK"
