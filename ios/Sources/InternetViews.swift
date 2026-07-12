@@ -466,12 +466,14 @@ struct PaidRouteMarketCard: View {
                 Section {
                     Button("Redeem") {
                         let token = pendingWalletToken
-                        walletTokenReviewPresented = false
-                        pendingWalletToken = ""
                         model.dispatch(
                             NativeActions.receivePaidRouteWalletToken(token: token),
                             status: "Redeeming token"
                         )
+                        if model.state.error.isEmpty && market.wallet.lastAction.kind == "receive" {
+                            walletTokenReviewPresented = false
+                            pendingWalletToken = ""
+                        }
                     }
                     .disabled(model.actionInFlight || !ready)
                 }

@@ -43,6 +43,7 @@ struct RootView: View {
     @State var showingWalletTokenScanner = false
     @State var pendingWalletToken = ""
     @State var showingWalletTokenReview = false
+    @State var redeemingWalletToken = false
     @State var paidRouteSendAmount = "1000"
     @State var paidRouteWithdrawInvoice = ""
     @State var paidExitAdvancedTermsExpanded = RootView.initialPaidExitAdvancedTermsExpanded()

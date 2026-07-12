@@ -178,6 +178,10 @@ public sealed partial class AppViewModel
         if (MessageBox.Show(message + "\n\nRedeem this token?", "Redeem token?", MessageBoxButton.YesNo, MessageBoxImage.Question) == MessageBoxResult.Yes)
         {
             await DispatchAsync(NativeActions.ReceivePaidRouteWalletToken(token), "Redeeming token");
+            if (!string.IsNullOrWhiteSpace(State.Error))
+            {
+                MessageBox.Show(State.Error, "Could not redeem token", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
         }
     }
 

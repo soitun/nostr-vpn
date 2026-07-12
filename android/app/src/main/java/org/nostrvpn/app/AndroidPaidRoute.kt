@@ -55,6 +55,7 @@ internal fun PaidRouteMarketCard(
     var walletFlow by remember { mutableStateOf<PaidRouteWalletFlow?>(null) }
     var walletTokenScannerVisible by remember { mutableStateOf(false) }
     var pendingWalletToken by remember { mutableStateOf<String?>(null) }
+    var redeemingWalletToken by remember { mutableStateOf(false) }
     var filterCountry by remember { mutableStateOf(market.filter.countryCode) }
     var filterNetwork by remember { mutableStateOf(market.filter.networkClass) }
     var filterIpv4 by remember { mutableStateOf(market.filter.requireIpv4) }
@@ -337,6 +338,7 @@ internal fun PaidRouteMarketCard(
                                     if (isLikelyCashuToken(value)) {
                                         val pastedToken = value.trim()
                                         token = ""
+                                        redeemingWalletToken = false
                                         pendingWalletToken = pastedToken
                                         dispatch(NativeActions.previewPaidRouteWalletToken(pastedToken))
                                     }
@@ -385,6 +387,7 @@ internal fun PaidRouteMarketCard(
                 } else {
                     walletTokenScannerVisible = false
                     token = ""
+                    redeemingWalletToken = false
                     pendingWalletToken = scannedToken
                     dispatch(NativeActions.previewPaidRouteWalletToken(scannedToken))
                     null
@@ -394,12 +397,24 @@ internal fun PaidRouteMarketCard(
     }
     pendingWalletToken?.let { pendingToken ->
         val preview = market.wallet.lastAction
-        val ready = preview.kind == "preview" && preview.tokenRedeemable
+        val ready = preview.kind == "preview" && preview.tokenRedeemable && !redeemingWalletToken
         val reviewStatus = state.error.takeIf { it.isNotBlank() }
-            ?.let { "Could not inspect token: $it" }
-            ?: if (preview.kind == "preview") preview.statusText else "Checking…"
+            ?.let { "Could not redeem token: $it" }
+            ?: if (redeemingWalletToken) "Redeeming…"
+            else if (preview.kind == "preview") preview.statusText else "Checking…"
+        LaunchedEffect(redeemingWalletToken, state.error, preview.kind) {
+            if (!redeemingWalletToken) return@LaunchedEffect
+            if (state.error.isNotBlank()) {
+                redeemingWalletToken = false
+            } else if (preview.kind == "receive") {
+                pendingWalletToken = null
+                redeemingWalletToken = false
+            }
+        }
         AlertDialog(
-            onDismissRequest = { pendingWalletToken = null },
+            onDismissRequest = {
+                if (!redeemingWalletToken) pendingWalletToken = null
+            },
             title = { Text("Redeem token?") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -415,13 +430,19 @@ internal fun PaidRouteMarketCard(
                 TextButton(
                     enabled = ready,
                     onClick = {
-                        pendingWalletToken = null
+                        redeemingWalletToken = true
                         dispatch(NativeActions.receivePaidRouteWalletToken(pendingToken))
                     },
                 ) { Text("Redeem") }
             },
             dismissButton = {
-                TextButton(onClick = { pendingWalletToken = null }) { Text("Cancel") }
+                TextButton(
+                    enabled = !redeemingWalletToken,
+                    onClick = {
+                        pendingWalletToken = null
+                        redeemingWalletToken = false
+                    },
+                ) { Text("Cancel") }
             },
         )
     }

@@ -227,17 +227,18 @@ extension RootView {
         paidRouteReceiveToken = ""
         showingWalletTokenScanner = false
         pendingWalletToken = token
+        redeemingWalletToken = false
         showingWalletTokenReview = true
         manager.previewPaidRouteWalletToken(token)
     }
 
     func paidRouteWalletTokenReview(wallet: NativePaidRouteWalletState) -> some View {
         let preview = wallet.lastAction
-        let checked = !manager.actionInFlight && preview.kind == "preview"
-        let ready = checked && preview.tokenRedeemable
+        let checked = preview.kind == "preview"
+        let ready = checked && preview.tokenRedeemable && !manager.actionInFlight
         let reviewStatus = !state.error.isEmpty
-            ? "Could not inspect token: \(state.error)"
-            : (checked ? preview.statusText : "Checking…")
+            ? "Could not redeem token: \(state.error)"
+            : (redeemingWalletToken ? "Redeeming…" : (checked ? preview.statusText : "Checking…"))
         return VStack(alignment: .leading, spacing: 16) {
             Text("Redeem token?")
                 .font(.title2.weight(.semibold))
@@ -254,11 +255,12 @@ extension RootView {
                 Button("Cancel") {
                     showingWalletTokenReview = false
                     pendingWalletToken = ""
+                    redeemingWalletToken = false
                 }
+                .disabled(manager.actionInFlight)
                 Button("Redeem") {
                     let token = pendingWalletToken
-                    showingWalletTokenReview = false
-                    pendingWalletToken = ""
+                    redeemingWalletToken = true
                     manager.receivePaidRouteWalletToken(token)
                 }
                 .keyboardShortcut(.defaultAction)
@@ -267,6 +269,14 @@ extension RootView {
         }
         .padding(22)
         .frame(width: 480)
+        .onChange(of: manager.actionInFlight) { _, inFlight in
+            guard !inFlight, redeemingWalletToken else { return }
+            if state.error.isEmpty && state.paidRouteMarket.wallet.lastAction.kind == "receive" {
+                showingWalletTokenReview = false
+                pendingWalletToken = ""
+            }
+            redeemingWalletToken = false
+        }
     }
 
     @ViewBuilder
