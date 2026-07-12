@@ -476,6 +476,237 @@ fn best_rated_offer_key_prefers_good_then_newcomer_over_degraded() {
 }
 
 #[test]
+fn automatic_offer_selection_requires_safe_fresh_terms_and_a_wallet_mint() {
+    let now_unix = 100_000;
+    let assert_rejected = |mut config: PaidExitConfig, signed_at: u64| {
+        config.channel.accepted_mints = vec!["https://mint.example".to_string()];
+        let seller = Keys::generate();
+        let signed =
+            signed_paid_exit_offer_from_config("auto-exit", &seller, &config, None, signed_at)
+                .expect("signed offer");
+        let mut store = PaidRouteStore::default();
+        store.upsert_wallet_mint("https://mint.example", "Example", None, now_unix - 1);
+        store
+            .upsert_signed_offer(signed, vec!["wss://relay.example".to_string()], now_unix)
+            .expect("store offer");
+
+        assert!(store.select_automatic_offer(now_unix).is_err());
+    };
+
+    let seller = Keys::generate();
+    let signed = signed_paid_exit_offer_from_config(
+        "auto-exit",
+        &seller,
+        &sample_config(),
+        None,
+        now_unix - 1,
+    )
+    .expect("signed offer");
+    let mut untrusted = PaidRouteStore::default();
+    untrusted
+        .upsert_signed_offer(signed, vec!["wss://relay.example".to_string()], now_unix)
+        .expect("store seller-listed mint");
+    let wallet_before = untrusted.wallet.clone();
+    assert!(untrusted.select_automatic_offer(now_unix).is_err());
+    assert_eq!(untrusted.wallet, wallet_before);
+
+    let mut config = sample_config();
+    config.ip_support.ipv4 = false;
+    assert_rejected(config, now_unix - 1);
+    let mut config = sample_config();
+    config.pricing.meter = PaidRouteMeter::Packets;
+    assert_rejected(config, now_unix - 1);
+    let mut config = sample_config();
+    config.channel.free_probe_units = PAID_ROUTE_AUTO_MIN_FREE_PROBE_BYTES - 1;
+    assert_rejected(config, now_unix - 1);
+    let mut config = sample_config();
+    config.pricing.per_units = 1_073_741_824;
+    config.pricing.price_msat = PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GIB + 1;
+    assert_rejected(config, now_unix - 1);
+    let mut config = sample_config();
+    config.pricing.connection_minimum_msat_per_day = 1;
+    assert_rejected(config, now_unix - 1);
+    assert_rejected(
+        sample_config(),
+        now_unix - PAID_ROUTE_AUTO_OFFER_MAX_AGE_SECS - 1,
+    );
+}
+
+#[test]
+fn automatic_offer_selection_prefers_local_probe_history_before_rating() {
+    let now_unix = 100_000;
+    let good_seller = Keys::generate();
+    let poor_seller = Keys::generate();
+    let good = signed_paid_exit_offer_from_config(
+        "good",
+        &good_seller,
+        &sample_config(),
+        None,
+        now_unix - 20,
+    )
+    .expect("good offer");
+    let poor = signed_paid_exit_offer_from_config(
+        "poor",
+        &poor_seller,
+        &sample_config(),
+        None,
+        now_unix - 10,
+    )
+    .expect("poor offer");
+    let good_offer = good.offer().expect("good terms");
+    let poor_offer = poor.offer().expect("poor terms");
+    let good_key = paid_route_offer_store_key(&good_offer.seller_npub, &good_offer.offer_id);
+    let mut store = PaidRouteStore::default();
+    store.upsert_wallet_mint(
+        "https://mint.minibits.cash/Bitcoin",
+        "Minibits",
+        Some(50_000),
+        now_unix - 30,
+    );
+    store
+        .upsert_signed_offer(good, vec![], now_unix - 20)
+        .expect("store good");
+    store
+        .upsert_signed_offer(poor, vec![], now_unix - 10)
+        .expect("store poor");
+    assert!(store.upsert_offer_rating_score(&good_offer.seller_npub, -100, now_unix));
+    assert!(store.upsert_offer_rating_score(&poor_offer.seller_npub, 100, now_unix));
+    add_local_offer_quality(&mut store, &good_offer, 30, 1_000, now_unix - 5);
+    add_local_offer_quality(&mut store, &poor_offer, 300, 50_000, now_unix - 5);
+
+    let selected = store
+        .select_automatic_offer(now_unix)
+        .expect("automatic selection");
+
+    assert_eq!(selected.offer_key, good_key);
+    assert_eq!(selected.mint_url, "https://mint.minibits.cash/Bitcoin");
+    assert_eq!(selected.channel_capacity_sat, 50);
+}
+
+#[test]
+fn automatic_offer_selection_uses_rating_price_freshness_and_stable_key_order() {
+    let now_unix = 100_000;
+    let mut store = PaidRouteStore::default();
+    store.upsert_wallet_mint(
+        "https://mint.minibits.cash/Bitcoin",
+        "Minibits",
+        None,
+        now_unix - 30,
+    );
+    let mut expected = Vec::new();
+    for (offer_id, price_msat, signed_at) in [
+        ("older-expensive", 3_000, now_unix - 30),
+        ("newer-expensive-rated-low", 3_000, now_unix - 20),
+        ("newer-expensive-unrated", 3_000, now_unix - 20),
+        ("newer-cheap", 2_000, now_unix - 10),
+    ] {
+        let seller = Keys::generate();
+        let mut config = sample_config();
+        config.pricing.price_msat = price_msat;
+        let signed =
+            signed_paid_exit_offer_from_config(offer_id, &seller, &config, None, signed_at)
+                .expect("signed offer");
+        let offer = signed.offer().expect("offer terms");
+        let key = paid_route_offer_store_key(&offer.seller_npub, &offer.offer_id);
+        store
+            .upsert_signed_offer(signed, vec![], signed_at)
+            .expect("store offer");
+        expected.push((key, offer.seller_npub));
+    }
+
+    assert_eq!(
+        store
+            .select_automatic_offer(now_unix)
+            .expect("price winner")
+            .offer_key,
+        expected[3].0
+    );
+    assert_eq!(
+        store
+            .select_automatic_offer(now_unix)
+            .expect("stable repeat selection")
+            .offer_key,
+        expected[3].0
+    );
+
+    assert!(store.upsert_offer_rating_score(&expected[0].1, 100, now_unix));
+    assert!(store.upsert_offer_rating_score(&expected[1].1, -100, now_unix));
+    assert!(store.upsert_offer_rating_score(&expected[3].1, -100, now_unix));
+    assert_eq!(
+        store
+            .select_automatic_offer(now_unix)
+            .expect("price precedes imported rating")
+            .offer_key,
+        expected[3].0
+    );
+
+    store
+        .offers
+        .get_mut(&expected[3].0)
+        .expect("cheap offer")
+        .offer
+        .pricing
+        .price_msat = 3_000;
+    assert_eq!(
+        store
+            .select_automatic_offer(now_unix)
+            .expect("fresh unrated exploration candidate")
+            .offer_key,
+        expected[2].0
+    );
+}
+
+fn add_local_offer_quality(
+    store: &mut PaidRouteStore,
+    offer: &PaidRouteOffer,
+    latency_ms: u32,
+    packet_loss_ppm: u32,
+    measured_at_unix: u64,
+) {
+    let channel_id = format!("history-{}", offer.offer_id);
+    store.upsert_channel(PaidRouteChannelRecord {
+        channel_id: channel_id.clone(),
+        offer_id: offer.offer_id.clone(),
+        role: PaidRouteChannelRole::Buyer,
+        status: PaidRouteLifecycleStatus::Closed,
+        payment: PaidRoutePaymentState {
+            channel_id: channel_id.clone(),
+            ..PaidRoutePaymentState::default()
+        },
+        mint_url: "https://mint.minibits.cash/Bitcoin".to_string(),
+        counterparty_npub: offer.seller_npub.clone(),
+        created_at_unix: measured_at_unix,
+        expires_at_unix: measured_at_unix,
+        updated_at_unix: measured_at_unix,
+        error: String::new(),
+    });
+    store.upsert_session(
+        PaidRouteSession {
+            session_id: format!("session-{}", offer.offer_id),
+            lease_id: format!("lease-{}", offer.offer_id),
+            usage: PaidRouteUsage::default(),
+            payment: PaidRoutePaymentState {
+                channel_id,
+                ..PaidRoutePaymentState::default()
+            },
+            realized_exit_ip: Some("198.51.100.42".to_string()),
+            observed_country_code: None,
+            observed_asn: None,
+            quality: Some(PaidRouteQualityMetrics {
+                latency_ms: Some(latency_ms),
+                jitter_ms: Some(latency_ms / 10),
+                packet_loss_ppm: Some(packet_loss_ppm),
+                down_bps: Some(10_000_000),
+                up_bps: Some(1_000_000),
+                uptime_secs: None,
+                last_seen_unix: Some(measured_at_unix),
+            }),
+        },
+        measured_at_unix,
+    );
+}
+
+#[test]
 fn unreadable_paid_route_store_is_discarded() {
     let scratch = ScratchDir::new("unreadable");
     let store_path = scratch.path().join("paid-routes.json");
