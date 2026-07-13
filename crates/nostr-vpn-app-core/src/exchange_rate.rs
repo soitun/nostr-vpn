@@ -151,8 +151,7 @@ pub(crate) fn apply_exchange_rate(
 ) {
     wallet.fiat_currency = snapshot.currency.as_str().to_string();
     wallet.exchange_rate_status = match snapshot.status {
-        ExchangeRateStatus::Refreshing => "",
-        ExchangeRateStatus::Ready => "",
+        ExchangeRateStatus::Refreshing | ExchangeRateStatus::Ready => "",
         ExchangeRateStatus::Failed if snapshot.rate.is_some() => "Using last rate",
         ExchangeRateStatus::Unavailable | ExchangeRateStatus::Failed => "Unavailable",
     }
