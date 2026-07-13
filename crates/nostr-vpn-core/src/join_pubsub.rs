@@ -26,6 +26,7 @@ const MAX_DIRECT_APPROVAL_EVENTS: usize = 4;
 pub struct QueuedNostrJoinApproval {
     pub version: u8,
     pub recipient_npub: String,
+    pub fips_route_npub: Option<String>,
     pub request_pubkey: String,
     pub events: Vec<Event>,
 }
@@ -81,6 +82,7 @@ pub fn direct_join_approval_outbox_directory(config_path: &Path) -> PathBuf {
 pub fn queue_direct_join_approval(
     config_path: &Path,
     recipient_npub: &str,
+    fips_route_npub: Option<&str>,
     request_pubkey: &str,
     events: &[Event],
 ) -> Result<PathBuf> {
@@ -88,6 +90,10 @@ pub fn queue_direct_join_approval(
         normalize_nostr_pubkey(recipient_npub).context("invalid direct join approval recipient")?;
     let request_pubkey = normalize_nostr_pubkey(request_pubkey)
         .context("invalid direct join approval request pubkey")?;
+    let fips_route_npub = fips_route_npub
+        .map(normalize_nostr_pubkey)
+        .transpose()
+        .context("invalid direct join approval FIPS return route")?;
     let events = events
         .iter()
         .filter(|event| is_targeted_approval_event(event, &request_pubkey))
@@ -104,6 +110,7 @@ pub fn queue_direct_join_approval(
     let queued = QueuedNostrJoinApproval {
         version: DIRECT_APPROVAL_OUTBOX_VERSION,
         recipient_npub,
+        fips_route_npub,
         request_pubkey: request_pubkey.clone(),
         events,
     };

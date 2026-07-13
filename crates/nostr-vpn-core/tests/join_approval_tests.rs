@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use nostr_pubsub::{FipsPubsubWireCodec, FipsPubsubWireMessage, VerifiedEvent};
-use nostr_sdk::prelude::{Event, EventBuilder, JsonUtil, Keys, Kind, Tag, Timestamp};
+use nostr_sdk::prelude::{Event, EventBuilder, JsonUtil, Keys, Kind, Tag, Timestamp, ToBech32};
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::{
@@ -328,17 +328,28 @@ fn direct_fips_approval_outbox_delivers_without_a_relay_subscription() {
         .expect("pending request")
         .clone();
     let recipient = joiner.own_nostr_pubkey_hex().expect("joiner pubkey");
+    let route = Keys::generate().public_key();
+    let route_npub = route.to_bech32().expect("route npub");
     let admin = Keys::generate();
     let profile_id = NostrIdentityId::new_v4();
     let events = approval_events(&joiner, &admin, &pending.request.request_secret, profile_id);
 
-    let queued_path =
-        queue_direct_join_approval(&path, &recipient, &pending.request.request_pubkey, &events)
-            .expect("queue direct approval");
+    let queued_path = queue_direct_join_approval(
+        &path,
+        &recipient,
+        Some(&route_npub),
+        &pending.request.request_pubkey,
+        &events,
+    )
+    .expect("queue direct approval");
     let queued = load_direct_join_approvals(&path);
     assert_eq!(queued.len(), 1);
     assert_eq!(queued[0].0, queued_path);
     assert_eq!(queued[0].1.recipient_npub, recipient);
+    assert_eq!(
+        queued[0].1.fips_route_npub.as_deref(),
+        Some(route.to_hex().as_str())
+    );
     assert_eq!(queued[0].1.events.len(), 2);
 
     let mut client = NostrJoinFipsPubsubClient::new(&joiner).expect("pubsub client");

@@ -403,19 +403,20 @@ impl NativeAppRuntime {
 
     fn import_join_request(&mut self, request: &str) -> Result<()> {
         let parsed = parse_join_request_qr_code_or_link(request)?;
-        self.import_parsed_join_request(&parsed.bootstrap)
+        self.import_parsed_join_request(&parsed.bootstrap, parsed.fips_route_npub.as_deref())
     }
 
     fn import_parsed_join_request(
         &mut self,
         bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
+        fips_route_npub: Option<&str>,
     ) -> Result<()> {
         let network_id = self.active_admin_network_id()?;
         let prepared =
             prepare_join_approval(&self.config, &network_id, bootstrap, unix_timestamp())?;
         self.config = prepared.updated_config;
         self.save_reload_and_refresh()?;
-        self.queue_direct_join_request_approval(bootstrap, &prepared.events)?;
+        self.queue_direct_join_request_approval(bootstrap, fips_route_npub, &prepared.events)?;
         if !self.vpn_enabled {
             self.connect_vpn()?;
         }
@@ -427,6 +428,7 @@ impl NativeAppRuntime {
     fn queue_direct_join_request_approval(
         &mut self,
         _bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
+        _fips_route_npub: Option<&str>,
         events: &[Event],
     ) -> Result<()> {
         self.published_join_approval_events
@@ -438,11 +440,13 @@ impl NativeAppRuntime {
     fn queue_direct_join_request_approval(
         &self,
         bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
+        fips_route_npub: Option<&str>,
         events: &[Event],
     ) -> Result<()> {
         nostr_vpn_core::join_pubsub::queue_direct_join_approval(
             &self.config_path,
             &bootstrap.device_app_key_npub,
+            fips_route_npub,
             &bootstrap.request_npub,
             events,
         )?;

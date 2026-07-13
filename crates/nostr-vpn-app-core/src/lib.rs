@@ -2,6 +2,7 @@ pub mod actions;
 pub mod c_abi;
 mod exchange_rate;
 mod ffi;
+mod headless_fips;
 mod invite;
 pub mod join_approval;
 mod join_approval_transport;
@@ -15,6 +16,8 @@ mod wg_upstream_nat;
 
 pub use actions::NativeAppAction;
 pub use ffi::FfiApp;
+#[doc(hidden)]
+pub use headless_fips::HeadlessDirectApprovalRuntime;
 pub use native_state::{NativeAppState, NativeNetworkState, NativeParticipantState};
 pub use nostr_vpn_core::updater::UpdateAutoCheckPolicy;
 pub use platform::{

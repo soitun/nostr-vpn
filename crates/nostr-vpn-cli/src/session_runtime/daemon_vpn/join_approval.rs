@@ -20,6 +20,12 @@ pub(super) async fn flush_direct_join_approval_outbox(
             );
             continue;
         }
+        if let Some(route) = queued.fips_route_npub.as_deref()
+            && let Err(error) = runtime.ensure_join_approval_route(route).await
+        {
+            eprintln!("direct FIPS join approval return route is pending: {error}");
+            continue;
+        }
         let mut sent = true;
         for event in &queued.events {
             if let Err(error) = runtime

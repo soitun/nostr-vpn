@@ -190,7 +190,7 @@ fn non_empty_path(value: &str) -> Option<PathBuf> {
     (!trimmed.is_empty()).then(|| PathBuf::from(trimmed))
 }
 
-fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig {
+pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig {
     let mut config = FipsConfig::new();
     // The fips control socket binds a UNIX socket at
     // `/tmp/fips-control.sock` by default. Inside an iOS app extension

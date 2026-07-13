@@ -1,14 +1,17 @@
-use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io::{self, BufRead, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, ExitCode, Stdio};
+use std::process::ExitCode;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use nostr_vpn_app_core::{FfiApp, NativeAppAction, NativeAppState};
+use nostr_vpn_app_core::HeadlessDirectApprovalRuntime;
+use nostr_vpn_app_core::join_approval::prepare_join_approval;
+use nostr_vpn_app_core::join_request_link::parse_join_request_qr_code_or_link;
 use nostr_vpn_core::config::AppConfig;
+use nostr_vpn_core::join_pubsub::queue_direct_join_approval;
 use nostr_vpn_core::join_requests::NOSTR_VPN_JOIN_APPROVAL_RELAY;
 use serde_json::json;
 
@@ -19,38 +22,6 @@ const IMPORT_COMMAND_PREFIX: &str = "import ";
 #[derive(Debug)]
 struct Args {
     config_path: PathBuf,
-    nvpn_bin: PathBuf,
-}
-
-struct IsolatedAdminDaemon(Child);
-
-impl IsolatedAdminDaemon {
-    fn spawn(args: &Args) -> HarnessResult<Self> {
-        let child = Command::new(&args.nvpn_bin)
-            .arg("daemon")
-            .arg("--config")
-            .arg(&args.config_path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::inherit())
-            .spawn()
-            .map_err(|_| HarnessError::new("preflight", "admin-daemon-start-failed"))?;
-        Ok(Self(child))
-    }
-
-    fn require_running(&mut self) -> HarnessResult<()> {
-        match self.0.try_wait() {
-            Ok(None) => Ok(()),
-            Ok(Some(_)) => Err(HarnessError::new("runtime", "admin-daemon-exited")),
-            Err(_) => Err(HarnessError::new("runtime", "admin-daemon-status-failed")),
-        }
-    }
-}
-
-impl Drop for IsolatedAdminDaemon {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -70,12 +41,10 @@ impl HarnessError {
 impl Args {
     fn parse() -> HarnessResult<Self> {
         let mut config_path = None;
-        let mut nvpn_bin = None;
         let mut args = env::args().skip(1);
         while let Some(flag) = args.next() {
             match flag.as_str() {
                 "--config-path" => config_path = Some(required_arg_value(&mut args)?),
-                "--nvpn-bin" => nvpn_bin = Some(required_arg_value(&mut args)?),
                 _ => return Err(HarnessError::new("arguments", "invalid-argument")),
             }
         }
@@ -84,14 +53,7 @@ impl Args {
             false,
         )?;
         require_isolated_config(&config_path)?;
-        let nvpn_bin = canonical_file(
-            &nvpn_bin.ok_or_else(|| HarnessError::new("arguments", "missing-nvpn-bin"))?,
-            true,
-        )?;
-        Ok(Self {
-            config_path,
-            nvpn_bin,
-        })
+        Ok(Self { config_path })
     }
 }
 
@@ -147,7 +109,7 @@ fn emit_status(value: &serde_json::Value) -> HarnessResult<()> {
         .map_err(|_| HarnessError::new("output", "stdout-flush-failed"))
 }
 
-fn prepare_admin_config(path: &Path) -> HarnessResult<String> {
+fn prepare_admin_config(path: &Path) -> HarnessResult<(String, String)> {
     let mut config =
         AppConfig::load(path).map_err(|_| HarnessError::new("preflight", "config-load-failed"))?;
     let own_pubkey = config
@@ -159,35 +121,14 @@ fn prepare_admin_config(path: &Path) -> HarnessResult<String> {
         .map_err(|_| HarnessError::new("preflight", "temporary-network-enable-failed"))?;
     config.node.advertise_exit_node = true;
     config.connect_to_non_roster_fips_peers = true;
+    config.fips_webrtc_enabled = true;
     config.exit_node.clear();
     config.nostr.relays = vec![NOSTR_VPN_JOIN_APPROVAL_RELAY.to_string()];
     config.nostr.disabled_relays.clear();
     config
         .save(path)
         .map_err(|_| HarnessError::new("preflight", "config-save-failed"))?;
-    Ok(own_pubkey)
-}
-
-fn participant_keys(state: &NativeAppState) -> HashSet<(String, String)> {
-    state
-        .networks
-        .iter()
-        .flat_map(|network| {
-            network
-                .participants
-                .iter()
-                .map(|participant| (network.id.clone(), participant.npub.clone()))
-        })
-        .collect()
-}
-
-fn participant_was_added(before: &NativeAppState, after: &NativeAppState) -> bool {
-    let before = participant_keys(before);
-    participant_keys(after)
-        .into_iter()
-        .filter(|participant| !before.contains(participant))
-        .count()
-        == 1
+    Ok((own_pubkey, network_id))
 }
 
 fn read_command(input: &mut impl BufRead) -> HarnessResult<Option<String>> {
@@ -207,25 +148,9 @@ fn run() -> HarnessResult<()> {
         return Err(HarnessError::new("guard", "real-e2e-not-enabled"));
     }
     let args = Args::parse()?;
-    let exit_node = prepare_admin_config(&args.config_path)?;
-    let mut daemon = IsolatedAdminDaemon::spawn(&args)?;
-    let app = FfiApp::new_with_config_path(
-        args.config_path,
-        env!("CARGO_PKG_VERSION").to_string(),
-        Some(args.nvpn_bin),
-    );
-    let before = app.state();
-    if !before.error.is_empty()
-        || !before
-            .networks
-            .iter()
-            .any(|network| network.enabled && network.local_is_admin)
-    {
-        return Err(HarnessError::new(
-            "preflight",
-            "active-admin-network-required",
-        ));
-    }
+    let (exit_node, network_id) = prepare_admin_config(&args.config_path)?;
+    let transport = HeadlessDirectApprovalRuntime::start(&args.config_path)
+        .map_err(|_| HarnessError::new("preflight", "headless-fips-start-failed"))?;
     emit_status(&json!({ "status": "ready", "exitNode": exit_node }))?;
 
     let mut input = io::stdin().lock();
@@ -236,17 +161,42 @@ fn run() -> HarnessResult<()> {
         .filter(|request| request.starts_with("nvpn://join-request/"))
         .filter(|request| !request.chars().any(char::is_whitespace))
         .ok_or_else(|| HarnessError::new("import", "invalid-join-request"))?;
-    let after = app.dispatch(NativeAppAction::ImportJoinRequest {
-        request: request.to_string(),
-    });
-    if !participant_was_added(&before, &after) {
+    let parsed = parse_join_request_qr_code_or_link(request)
+        .map_err(|_| HarnessError::new("import", "join-request-parse-failed"))?;
+    let mut config = AppConfig::load(&args.config_path)
+        .map_err(|_| HarnessError::new("import", "config-load-failed"))?;
+    let before_count = config.participant_pubkeys_hex().len();
+    let approved_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|_| HarnessError::new("import", "clock-unavailable"))?
+        .as_secs();
+    let prepared = prepare_join_approval(&config, &network_id, &parsed.bootstrap, approved_at)
+        .map_err(|_| HarnessError::new("import", "approval-prepare-failed"))?;
+    config = prepared.updated_config;
+    config
+        .save(&args.config_path)
+        .map_err(|_| HarnessError::new("import", "config-save-failed"))?;
+    queue_direct_join_approval(
+        &args.config_path,
+        &parsed.bootstrap.device_app_key_npub,
+        parsed.fips_route_npub.as_deref(),
+        &parsed.bootstrap.request_npub,
+        &prepared.events,
+    )
+    .map_err(|_| HarnessError::new("import", "approval-queue-failed"))?;
+    if config.participant_pubkeys_hex().len() != before_count + 1 {
         return Err(HarnessError::new("import", "participant-not-added"));
     }
-    daemon.require_running()?;
+    let direct_events = transport
+        .send_queued_approvals(&args.config_path)
+        .map_err(|error| {
+            eprintln!("direct FIPS approval send failed: {error:#}");
+            HarnessError::new("runtime", "direct-fips-send-failed")
+        })?;
     emit_status(&json!({
         "status": "imported",
         "participantAdded": true,
-        "postApprovalWarning": (!after.error.is_empty()).then_some(after.error),
+        "directEvents": direct_events,
         "exitNode": exit_node,
     }))?;
     let _ = read_command(&mut input)?;

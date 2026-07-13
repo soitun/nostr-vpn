@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(any(target_os = "linux", test))]
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
 #[path = "webvm_guest/daemon.rs"]
 mod daemon;
@@ -419,8 +421,12 @@ fn validate_approved_config(app: &AppConfig) -> Result<()> {
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn webvm_pairing_uri(app: &AppConfig) -> Result<String> {
+fn webvm_pairing_uri(app: &AppConfig, fips_route_npub: &str) -> Result<String> {
+    let route = normalize_nostr_pubkey(fips_route_npub)?;
+    let route = hex::decode(route).context("invalid WebVM FIPS return route")?;
+    let route = URL_SAFE_NO_PAD.encode(route);
     app.pending_nostr_join_request_link(JOIN_REQUEST_LINK_PREFIX)
+        .map(|request| format!("{request}?r={route}"))
 }
 
 #[cfg(target_os = "linux")]
@@ -430,7 +436,26 @@ async fn pair_over_fips(
     app: &mut AppConfig,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let pairing_uri = webvm_pairing_uri(app)?;
+    let mut browser_hosts = endpoint
+        .peers()
+        .await
+        .context("failed to inspect WebVM FIPS peers")?
+        .into_iter()
+        .filter(|peer| {
+            peer.connected
+                && peer
+                    .transport_type
+                    .as_deref()
+                    .is_some_and(|transport| transport.eq_ignore_ascii_case("ethernet"))
+        })
+        .map(|peer| peer.npub)
+        .collect::<Vec<_>>();
+    browser_hosts.sort();
+    browser_hosts.dedup();
+    let browser_host = browser_hosts
+        .first()
+        .ok_or_else(|| anyhow!("WebVM browser FIPS return route is unavailable"))?;
+    let pairing_uri = webvm_pairing_uri(app, browser_host)?;
     write_pairing_uri(&args.pairing_uri_file, &pairing_uri)?;
 
     println!(
@@ -709,19 +734,25 @@ mod tests {
     fn first_boot_persists_one_stable_compact_join_bootstrap() {
         let path = temp_path("config").with_extension("toml");
         let first = load_or_initialize_config(&path, 1_778_998_000).expect("first boot");
-        let first_uri = webvm_pairing_uri(&first).expect("first URI");
+        let route = first
+            .nostr_keys()
+            .expect("route keys")
+            .public_key()
+            .to_bech32()
+            .expect("route npub");
+        let first_uri = webvm_pairing_uri(&first, &route).expect("first URI");
         let second = load_or_initialize_config(&path, 1_778_998_100).expect("second boot");
-        let second_uri = webvm_pairing_uri(&second).expect("second URI");
+        let second_uri = webvm_pairing_uri(&second, &route).expect("second URI");
         assert_eq!(first_uri, second_uri);
         assert!(first_uri.starts_with(JOIN_REQUEST_LINK_PREFIX));
         assert!(
-            first_uri.len() <= 360,
+            first_uri.len() <= 420,
             "pairing URI was {} bytes",
             first_uri.len()
         );
         let bootstrap =
             nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_bootstrap(
-                &first_uri,
+                first_uri.split_once('?').expect("return route").0,
                 &[JOIN_REQUEST_LINK_PREFIX],
             )
             .expect("parse compact bootstrap")

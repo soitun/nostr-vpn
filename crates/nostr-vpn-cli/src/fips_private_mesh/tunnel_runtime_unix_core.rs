@@ -753,6 +753,22 @@ impl FipsPrivateTunnelRuntime {
             .await
     }
 
+    pub(crate) async fn ensure_join_approval_route(&self, route_pubkey: &str) -> Result<()> {
+        let route_pubkey = normalize_nostr_pubkey(route_pubkey)?;
+        let route_npub = PublicKey::from_hex(&route_pubkey)?.to_bech32()?;
+        let mut peers = self.config.endpoint_peers.clone();
+        if !peers.iter().any(|peer| peer.npub == route_npub) {
+            peers.push(FipsEndpointPeerTransportConfig {
+                npub: route_npub,
+                addresses: Vec::new(),
+                auto_reconnect: true,
+                discovery_fallback_transit: true,
+            });
+        }
+        self.mesh.update_peers(&peers).await?;
+        Ok(())
+    }
+
     pub(crate) async fn send_roster(
         &self,
         participant: &str,
