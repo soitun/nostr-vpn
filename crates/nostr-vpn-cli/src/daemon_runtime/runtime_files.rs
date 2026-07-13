@@ -176,6 +176,21 @@ pub(crate) fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Re
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(stderr_log));
 
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+
+        // OpenSSH runs commands in a Windows job and waits for descendants.
+        // Break the daemon out of that job as well as redirecting stdio, so
+        // `nvpn start --daemon` can actually return to PowerShell/SSH.
+        const DETACHED_PROCESS: u32 = 0x0000_0008;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+        command.creation_flags(
+            DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB,
+        );
+    }
+
     if let Some(network_id) = &args.network_id {
         command.arg("--network-id").arg(network_id);
     }
