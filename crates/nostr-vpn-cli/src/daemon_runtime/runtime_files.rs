@@ -179,6 +179,24 @@ pub(crate) fn spawn_daemon_process(args: &ConnectArgs, config_path: &Path) -> Re
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::Foundation::{
+            HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, SetHandleInformation,
+        };
+        use windows_sys::Win32::System::Console::{
+            GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+        };
+
+        // Rust supplies the daemon's explicit null/log handles below, but
+        // CreateProcess can otherwise inherit the launcher's PowerShell/SSH
+        // pipe handles too. Those leaked handles keep the remote shell open.
+        for stream in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            let handle = unsafe { GetStdHandle(stream) };
+            if !handle.is_null() && handle != INVALID_HANDLE_VALUE {
+                unsafe {
+                    SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
 
         // OpenSSH runs commands in a Windows job and waits for descendants.
         // Break the daemon out of that job as well as redirecting stdio, so

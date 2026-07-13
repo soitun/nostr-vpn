@@ -68,6 +68,7 @@ windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_NetworkManagement_IpHelper",
   "Win32_Networking_WinSock",
+  "Win32_System_Console",
 ] }
 
 [target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
