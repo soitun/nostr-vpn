@@ -32,6 +32,19 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Added buyer-side stateful ingress filtering for selected FIPS exits: only
+  replies to locally originated flows and narrowly valid ICMP errors are
+  admitted, while unsolicited, malformed, private, loopback, link-local, and
+  spoofed mesh-source traffic is dropped for IPv4 and IPv6.
+- Hardened the appliance web control surface by refusing non-loopback binds
+  unless an authenticated platform proxy is declared, enforcing same-origin
+  browser requests, preventing API caching, and keeping WireGuard credentials,
+  full configurations, and raw network or nearby-pairing invites out of web
+  responses.
+- Signed LAN-pairing announcements with the device's Nostr identity and reject
+  unsigned, stale, replayed, tampered, or signer/admin-mismatched packets.
+- Updated the plist/XML dependency chain to remove the affected quick-xml
+  versions reported by the Rust security advisory database.
 - Removed debug-only desktop and mobile UI gates that hid the paid-exit market,
   wallet, and seller controls from release builds despite backend support being
   enabled by default.

@@ -234,9 +234,10 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
 			};
 			buildConfigurationList = 74AC5F0BB81527A1F708C8A6 /* Build configuration list for PBXProject "NostrVpnIos" */;
-			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -246,6 +247,7 @@
 			mainGroup = 277A36BBB757931F3D25086F;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			productRefGroup = D39D5A56D64190205BCC5B1A /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (

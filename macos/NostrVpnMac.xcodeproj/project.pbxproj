@@ -200,7 +200,6 @@
 				};
 			};
 			buildConfigurationList = 0277AC19474DA24AD6A769EC /* Build configuration list for PBXProject "NostrVpnMac" */;
-			compatibilityVersion = "Xcode 14.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
 			knownRegions = (
@@ -210,6 +209,7 @@
 			mainGroup = A555F6215210F60CC5080800;
 			minimizedProjectReferenceProxies = 1;
 			preferredProjectObjectVersion = 77;
+			productRefGroup = B99A4C66E89B31BB281C0401 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
