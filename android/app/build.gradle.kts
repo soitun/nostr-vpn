@@ -31,8 +31,8 @@ android {
         applicationId = "fi.siriusbusiness.nvpn"
         minSdk = 26
         targetSdk = 36
-        versionCode = 40091
-        versionName = "4.0.91"
+        versionCode = 40092
+        versionName = "4.0.92"
         buildConfigField("String", "NVPN_BUILD_GIT_SHA", buildConfigString(buildGitSha))
         buildConfigField("String", "NVPN_BUILD_TIMESTAMP_UTC", buildConfigString(buildTimestampUtc))
 
