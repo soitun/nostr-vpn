@@ -111,6 +111,13 @@ is not anonymity: the selected DNS provider can process the question, and the
 exit can still observe destination IP addresses, traffic timing and volume, and
 possibly TLS hostnames when the destination connection does not use ECH.
 
+Selected FIPS exit peers are also treated as hostile inbound networks. The
+buyer admits TCP, UDP, and echo replies only for locally originated flows, plus
+ICMP errors that quote a tracked flow. Unsolicited connections, malformed or
+fragmented packets, and packets with private, loopback, link-local, multicast,
+or spoofed mesh sources are dropped before reaching the TUN. This state
+survives route-table refreshes and applies equally to IPv4 and IPv6.
+
 ## Canonical Source
 
 If this document and the code diverge, the code wins. The main protocol implementations currently live in:

@@ -1,13 +1,17 @@
-fn routed_fips_peer(peer: &FipsMeshPeerRuntime) -> Option<RoutedFipsPeer<'_>> {
+fn routed_fips_peer(
+    peer: &FipsMeshPeerRuntime,
+    via_default_route: bool,
+) -> Option<RoutedFipsPeer<'_>> {
     Some(RoutedFipsPeer {
         participant_pubkey: &peer.participant_pubkey_hex,
         participant_pubkey_bytes: peer.participant_pubkey.as_ref(),
         endpoint_node_addr: peer.endpoint_node_addr.as_ref()?,
+        via_default_route,
     })
 }
 
 fn routed_fips_packet(peer: &FipsMeshPeerRuntime, bytes: Vec<u8>) -> Option<RoutedFipsPacket<'_>> {
-    let peer = routed_fips_peer(peer)?;
+    let peer = routed_fips_peer(peer, false)?;
     Some(RoutedFipsPacket {
         participant_pubkey: peer.participant_pubkey,
         participant_pubkey_bytes: peer.participant_pubkey_bytes,

@@ -507,10 +507,12 @@ fn mobile_mesh_snapshot(mesh: &MobileMesh) -> Result<Arc<FipsMeshRuntime>> {
         .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))
 }
 
-fn replace_mobile_mesh(mesh: &MobileMesh, runtime: FipsMeshRuntime) -> Result<()> {
-    *mesh
+fn replace_mobile_mesh(mesh: &MobileMesh, mut runtime: FipsMeshRuntime) -> Result<()> {
+    let mut mesh = mesh
         .write()
-        .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))? = Arc::new(runtime);
+        .map_err(|_| anyhow!("mobile FIPS mesh route table lock poisoned"))?;
+    runtime.inherit_exit_flows(&mesh);
+    *mesh = Arc::new(runtime);
     Ok(())
 }
 

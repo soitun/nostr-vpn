@@ -58,6 +58,17 @@
         ipv4_udp_packet(source, destination, 53123, 443, b"mobile-vpn-basic")
     }
 
+    fn test_ipv4_reply(source: Ipv4Addr, destination: Ipv4Addr, payload: &[u8]) -> Vec<u8> {
+        ipv4_udp_packet(source, destination, 443, 53123, payload)
+    }
+
+    fn test_ipv4_replies(destination: Ipv4Addr) -> (Vec<u8>, Vec<u8>) {
+        (
+            test_ipv4_reply(Ipv4Addr::new(8, 8, 8, 8), destination, b"reply-one"),
+            test_ipv4_reply(Ipv4Addr::new(1, 1, 1, 1), destination, b"reply-two"),
+        )
+    }
+
     #[test]
     fn mobile_inbound_roster_requires_signed_event() {
         let admin_hex = Keys::generate().public_key().to_hex();
@@ -307,8 +318,8 @@
         );
 
         let client_tunnel_ip = assert_mobile_fips_exit_config(&client_mobile, &exit_pubkey);
-        let packet = test_ipv4_packet(client_tunnel_ip, Ipv4Addr::new(203, 0, 113, 45));
-        let packet_two = test_ipv4_packet(client_tunnel_ip, Ipv4Addr::new(203, 0, 113, 46));
+        let packet = test_ipv4_packet(client_tunnel_ip, Ipv4Addr::new(8, 8, 8, 8));
+        let packet_two = test_ipv4_packet(client_tunnel_ip, Ipv4Addr::new(1, 1, 1, 1));
         let mut started = Box::pin(MobileTunnel::start_async(client_mobile, client_app))
             .await
             .expect("start client mobile tunnel");
@@ -349,8 +360,7 @@
                 .is_some(),
             "a FIPS exit node with a local default route should admit the second forwarded packet"
         );
-        let reply = test_ipv4_packet(Ipv4Addr::new(203, 0, 113, 45), client_tunnel_ip);
-        let reply_two = test_ipv4_packet(Ipv4Addr::new(198, 51, 100, 7), client_tunnel_ip);
+        let (reply, reply_two) = test_ipv4_replies(client_tunnel_ip);
         exit_endpoint
             .send_batch_to_peer(message.source_peer, vec![reply.clone()])
             .await

@@ -73,6 +73,97 @@ mod tests {
         packet
     }
 
+    fn ipv4_udp_packet(
+        source: Ipv4Addr,
+        destination: Ipv4Addr,
+        source_port: u16,
+        destination_port: u16,
+    ) -> Vec<u8> {
+        let mut packet = ipv4_packet(source, destination);
+        packet.resize(28, 0);
+        packet[2..4].copy_from_slice(&28_u16.to_be_bytes());
+        packet[20..22].copy_from_slice(&source_port.to_be_bytes());
+        packet[22..24].copy_from_slice(&destination_port.to_be_bytes());
+        packet[24..26].copy_from_slice(&8_u16.to_be_bytes());
+        packet
+    }
+
+    fn ipv6_udp_packet(
+        source: Ipv6Addr,
+        destination: Ipv6Addr,
+        source_port: u16,
+        destination_port: u16,
+    ) -> Vec<u8> {
+        let mut packet = ipv6_packet(source, destination);
+        packet.resize(48, 0);
+        packet[4..6].copy_from_slice(&8_u16.to_be_bytes());
+        packet[40..42].copy_from_slice(&source_port.to_be_bytes());
+        packet[42..44].copy_from_slice(&destination_port.to_be_bytes());
+        packet[44..46].copy_from_slice(&8_u16.to_be_bytes());
+        packet
+    }
+
+    fn ipv4_icmp_error(source: Ipv4Addr, destination: Ipv4Addr, original: &[u8]) -> Vec<u8> {
+        let quoted_len = original.len().min(28);
+        let mut packet = ipv4_packet(source, destination);
+        packet.resize(28 + quoted_len, 0);
+        packet[2..4].copy_from_slice(&((28 + quoted_len) as u16).to_be_bytes());
+        packet[9] = 1;
+        packet[20] = 3;
+        packet[21] = 4;
+        packet[28..].copy_from_slice(&original[..quoted_len]);
+        packet
+    }
+
+    fn ipv4_icmp_echo(
+        source: Ipv4Addr,
+        destination: Ipv4Addr,
+        kind: u8,
+        identifier: u16,
+        sequence: u16,
+    ) -> Vec<u8> {
+        let mut packet = ipv4_packet(source, destination);
+        packet.resize(28, 0);
+        packet[2..4].copy_from_slice(&28_u16.to_be_bytes());
+        packet[9] = 1;
+        packet[20..28].fill(0);
+        packet[20] = kind;
+        packet[24..26].copy_from_slice(&identifier.to_be_bytes());
+        packet[26..28].copy_from_slice(&sequence.to_be_bytes());
+        packet
+    }
+
+    fn ipv6_icmp_error(source: Ipv6Addr, destination: Ipv6Addr, original: &[u8]) -> Vec<u8> {
+        let quoted_len = original.len().min(48);
+        let payload_len = 8 + quoted_len;
+        let mut packet = ipv6_packet(source, destination);
+        packet.resize(40 + payload_len, 0);
+        packet[4..6].copy_from_slice(&(payload_len as u16).to_be_bytes());
+        packet[6] = 58;
+        packet[40] = 2;
+        packet[44..48].copy_from_slice(&1280_u32.to_be_bytes());
+        packet[48..].copy_from_slice(&original[..quoted_len]);
+        packet
+    }
+
+    fn ipv4_tcp_packet(
+        source: Ipv4Addr,
+        destination: Ipv4Addr,
+        source_port: u16,
+        destination_port: u16,
+        flags: u8,
+    ) -> Vec<u8> {
+        let mut packet = ipv4_packet(source, destination);
+        packet.resize(40, 0);
+        packet[2..4].copy_from_slice(&40_u16.to_be_bytes());
+        packet[9] = 6;
+        packet[20..22].copy_from_slice(&source_port.to_be_bytes());
+        packet[22..24].copy_from_slice(&destination_port.to_be_bytes());
+        packet[32] = 5 << 4;
+        packet[33] = flags;
+        packet
+    }
+
     fn paid_route_admission(
         peer: &TestPeer,
         allowed_ips: Vec<&str>,
@@ -759,5 +850,268 @@ mod tests {
 
         assert_eq!(outgoing.endpoint_node_addr, &peer.endpoint_node_addr);
         assert_eq!(received.source_pubkey, peer.participant_pubkey);
+    }
+
+    #[test]
+    fn default_exit_admits_only_udp_replies_to_local_flows() {
+        let exit = TestPeer::generate();
+        let local = Ipv4Addr::new(10, 44, 10, 1);
+        let remote = Ipv4Addr::new(8, 8, 8, 8);
+        let runtime = FipsMeshRuntime::with_local_routes(
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: exit.participant_pubkey.clone(),
+                endpoint_npub: exit.endpoint_npub.clone(),
+                allowed_ips: vec!["0.0.0.0/0".to_string()],
+            }],
+            vec![format!("{local}/32")],
+        );
+        let reply = ipv4_udp_packet(remote, local, 53, 40_000);
+        let admitter = runtime
+            .endpoint_source_admitter(&exit.endpoint_node_addr)
+            .expect("exit source");
+
+        assert!(admitter.receive_owned(reply.clone()).is_none());
+        let outbound = ipv4_udp_packet(local, remote, 40_000, 53);
+        let routed = runtime
+            .route_outbound_destination_peer(IpAddr::V4(remote))
+            .expect("cached exit route");
+        assert!(routed.via_default_route);
+        runtime.note_cached_exit_outbound(*routed.endpoint_node_addr, &outbound);
+        assert!(admitter.receive_owned(reply).is_some());
+    }
+
+    #[test]
+    fn default_exit_flow_state_survives_route_table_refresh() {
+        let exit = TestPeer::generate();
+        let local = Ipv4Addr::new(10, 44, 10, 1);
+        let remote = Ipv4Addr::new(8, 8, 8, 8);
+        let config = FipsMeshPeerConfig {
+            participant_pubkey: exit.participant_pubkey,
+            endpoint_npub: exit.endpoint_npub.clone(),
+            allowed_ips: vec!["0.0.0.0/0".to_string()],
+        };
+        let first =
+            FipsMeshRuntime::with_local_routes(vec![config.clone()], vec![format!("{local}/32")]);
+        assert!(
+            first
+                .route_outbound_packet_peer(&ipv4_udp_packet(local, remote, 40_000, 443))
+                .is_some()
+        );
+
+        let mut refreshed =
+            FipsMeshRuntime::with_local_routes(vec![config], vec![format!("{local}/32")]);
+        refreshed.inherit_exit_flows(&first);
+        let reply = ipv4_udp_packet(remote, local, 443, 40_000);
+
+        assert!(
+            refreshed
+                .receive_endpoint_data_owned_with_source_node_addr(&exit.endpoint_node_addr, reply,)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn default_exit_drops_malformed_and_non_global_sources_even_after_outbound() {
+        let exit = TestPeer::generate();
+        let local = Ipv4Addr::new(10, 44, 10, 1);
+        let private = Ipv4Addr::new(10, 0, 0, 9);
+        let runtime = FipsMeshRuntime::with_local_routes(
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: exit.participant_pubkey,
+                endpoint_npub: exit.endpoint_npub.clone(),
+                allowed_ips: vec!["0.0.0.0/0".to_string()],
+            }],
+            vec![format!("{local}/32")],
+        );
+        let admitter = runtime
+            .endpoint_source_admitter(&exit.endpoint_node_addr)
+            .expect("exit source");
+
+        assert!(
+            runtime
+                .route_outbound_packet_peer(&ipv4_udp_packet(local, private, 40_000, 53))
+                .is_some()
+        );
+        assert!(
+            admitter
+                .receive_owned(ipv4_udp_packet(private, local, 53, 40_000))
+                .is_none()
+        );
+        assert!(
+            admitter
+                .receive_owned(ipv4_packet(Ipv4Addr::new(8, 8, 4, 4), local))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn default_exit_admits_tcp_replies_but_not_remote_connection_attempts() {
+        let exit = TestPeer::generate();
+        let local = Ipv4Addr::new(10, 44, 10, 1);
+        let remote = Ipv4Addr::new(8, 8, 8, 8);
+        let runtime = FipsMeshRuntime::with_local_routes(
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: exit.participant_pubkey,
+                endpoint_npub: exit.endpoint_npub.clone(),
+                allowed_ips: vec!["0.0.0.0/0".to_string()],
+            }],
+            vec![format!("{local}/32")],
+        );
+        let admitter = runtime
+            .endpoint_source_admitter(&exit.endpoint_node_addr)
+            .expect("exit source");
+
+        assert!(
+            runtime
+                .route_outbound_packet_peer(&ipv4_tcp_packet(local, remote, 40_000, 443, 0x02))
+                .is_some()
+        );
+        assert!(
+            admitter
+                .receive_owned(ipv4_tcp_packet(remote, local, 443, 40_000, 0x12))
+                .is_some()
+        );
+        assert!(
+            admitter
+                .receive_owned(ipv4_tcp_packet(remote, local, 443, 40_000, 0x02))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn default_exit_admits_only_matching_icmp_echo_replies() {
+        let exit = TestPeer::generate();
+        let local = Ipv4Addr::new(10, 44, 10, 1);
+        let remote = Ipv4Addr::new(8, 8, 8, 8);
+        let runtime = FipsMeshRuntime::with_local_routes(
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: exit.participant_pubkey,
+                endpoint_npub: exit.endpoint_npub.clone(),
+                allowed_ips: vec!["0.0.0.0/0".to_string()],
+            }],
+            vec![format!("{local}/32")],
+        );
+        let admitter = runtime
+            .endpoint_source_admitter(&exit.endpoint_node_addr)
+            .expect("exit source");
+        let reply = ipv4_icmp_echo(remote, local, 0, 7, 11);
+
+        assert!(admitter.receive_owned(reply.clone()).is_none());
+        assert!(
+            runtime
+                .route_outbound_packet_peer(&ipv4_icmp_echo(local, remote, 8, 7, 11))
+                .is_some()
+        );
+        assert!(
+            admitter
+                .receive_owned(ipv4_icmp_echo(remote, local, 0, 7, 12))
+                .is_none()
+        );
+        assert!(admitter.receive_owned(reply).is_some());
+    }
+
+    #[test]
+    fn default_exit_filters_ipv6_and_allows_matching_icmp_errors() {
+        let exit = TestPeer::generate();
+        let local = "2606:4700:4700::1001".parse().expect("local IPv6");
+        let remote = "2606:4700:4700::1111".parse().expect("remote IPv6");
+        let runtime = FipsMeshRuntime::with_local_routes(
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: exit.participant_pubkey.clone(),
+                endpoint_npub: exit.endpoint_npub.clone(),
+                allowed_ips: vec!["0.0.0.0/0".to_string(), "::/0".to_string()],
+            }],
+            vec![format!("{local}/128")],
+        );
+        let admitter = runtime
+            .endpoint_source_admitter(&exit.endpoint_node_addr)
+            .expect("exit source");
+        let outbound_v6 = ipv6_udp_packet(local, remote, 40_000, 443);
+        let reply_v6 = ipv6_udp_packet(remote, local, 443, 40_000);
+
+        assert!(admitter.receive_owned(reply_v6.clone()).is_none());
+        assert!(runtime.route_outbound_packet_peer(&outbound_v6).is_some());
+        assert!(admitter.receive_owned(reply_v6).is_some());
+        assert!(
+            admitter
+                .receive_owned(ipv6_icmp_error(remote, local, &outbound_v6))
+                .is_some()
+        );
+        let private_v6 = "fd00::1".parse().expect("private IPv6");
+        assert!(
+            runtime
+                .route_outbound_packet_peer(&ipv6_udp_packet(local, private_v6, 40_001, 443))
+                .is_some()
+        );
+        assert!(
+            admitter
+                .receive_owned(ipv6_udp_packet(private_v6, local, 443, 40_001))
+                .is_none()
+        );
+
+        let local_v4 = Ipv4Addr::new(10, 44, 10, 1);
+        let remote_v4 = Ipv4Addr::new(8, 8, 8, 8);
+        let runtime_v4 = FipsMeshRuntime::with_local_routes(
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: exit.participant_pubkey,
+                endpoint_npub: exit.endpoint_npub,
+                allowed_ips: vec!["0.0.0.0/0".to_string()],
+            }],
+            vec![format!("{local_v4}/32")],
+        );
+        let outbound_v4 = ipv4_udp_packet(local_v4, remote_v4, 40_000, 443);
+        let error = ipv4_icmp_error(Ipv4Addr::new(1, 1, 1, 1), local_v4, &outbound_v4);
+        let unsolicited = ipv4_icmp_error(
+            Ipv4Addr::new(1, 1, 1, 1),
+            local_v4,
+            &ipv4_udp_packet(local_v4, Ipv4Addr::new(9, 9, 9, 9), 40_001, 443),
+        );
+        let admitter_v4 = runtime_v4
+            .endpoint_source_admitter(&exit.endpoint_node_addr)
+            .expect("exit source");
+
+        assert!(admitter_v4.receive_owned(unsolicited).is_none());
+        assert!(
+            runtime_v4
+                .route_outbound_packet_peer(&outbound_v4)
+                .is_some()
+        );
+        assert!(admitter_v4.receive_owned(error).is_some());
+    }
+
+    #[test]
+    fn default_exit_filter_overhead_smoke() {
+        let exit = TestPeer::generate();
+        let local = Ipv4Addr::new(10, 44, 10, 1);
+        let remote = Ipv4Addr::new(8, 8, 8, 8);
+        let runtime = FipsMeshRuntime::with_local_routes(
+            vec![FipsMeshPeerConfig {
+                participant_pubkey: exit.participant_pubkey,
+                endpoint_npub: exit.endpoint_npub.clone(),
+                allowed_ips: vec!["0.0.0.0/0".to_string()],
+            }],
+            vec![format!("{local}/32")],
+        );
+        let outbound = ipv4_udp_packet(local, remote, 40_000, 443);
+        let inbound = ipv4_udp_packet(remote, local, 443, 40_000);
+        let admitter = runtime
+            .endpoint_source_admitter(&exit.endpoint_node_addr)
+            .expect("exit source");
+        let mut cache = FipsEndpointAdmissionCache::default();
+        let iterations = 200_000_u32;
+        let started = std::time::Instant::now();
+
+        for _ in 0..iterations {
+            assert!(runtime.route_outbound_packet_peer(&outbound).is_some());
+            assert!(admitter.admit_packet_cached(&inbound, &mut cache));
+        }
+
+        let elapsed = started.elapsed();
+        eprintln!(
+            "exit filter: {} packets in {:?} ({:.1} ns/packet)",
+            iterations * 2,
+            elapsed,
+            elapsed.as_nanos() as f64 / f64::from(iterations * 2)
+        );
     }
 }

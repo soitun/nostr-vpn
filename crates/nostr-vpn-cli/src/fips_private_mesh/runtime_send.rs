@@ -374,6 +374,9 @@ fn cached_tun_destination_route<'a>(
         *cached = Some((destination, peer));
         peer
     };
+    if peer.via_default_route {
+        mesh.note_cached_exit_outbound(*peer.endpoint_node_addr, &bytes);
+    }
 
     Some(RoutedTunPipelinePacket {
         participant_pubkey: peer.participant_pubkey,

@@ -1,8 +1,10 @@
 use crate::paid_routes::PaidRouteUsage;
 use std::collections::{HashMap, VecDeque};
 
+const IPPROTO_ICMP: u8 = 1;
 const IPPROTO_TCP: u8 = 6;
 const IPPROTO_UDP: u8 = 17;
+const IPPROTO_ICMPV6: u8 = 58;
 const IPV6_EXTENSION_HOP_BY_HOP: u8 = 0;
 const IPV6_EXTENSION_ROUTING: u8 = 43;
 const IPV6_EXTENSION_FRAGMENT: u8 = 44;
@@ -15,6 +17,7 @@ const MAX_TRACKED_TCP_FLOWS: usize = 4096;
 const MAX_PENDING_TCP_PACKET_ENDS: usize = 8192;
 const MAX_TRACKED_UDP_FLOWS: usize = 4096;
 const UDP_FLOW_IDLE_OBSERVATIONS: u64 = 262_144;
+include!("exit_flow_filter.rs");
 
 #[derive(Debug, Default)]
 pub struct PaidRouteTrafficAccountant {
@@ -296,6 +299,7 @@ struct ParsedTcpPacket {
     sequence_number: u32,
     ack_number: u32,
     ack: bool,
+    flags: u8,
     payload_len: usize,
 }
 
@@ -387,7 +391,7 @@ fn parse_ipv6_transport(packet: &[u8]) -> Option<ParsedTransport> {
 
     for _ in 0..8 {
         match protocol {
-            IPPROTO_TCP => {
+            IPPROTO_TCP | IPPROTO_UDP | IPPROTO_ICMPV6 => {
                 return Some(ParsedTransport {
                     source_addr,
                     destination_addr,
@@ -449,6 +453,7 @@ fn parse_tcp_at(packet: &[u8], transport: ParsedTransport) -> Option<ParsedTcpPa
         sequence_number: u32::from_be_bytes([tcp[4], tcp[5], tcp[6], tcp[7]]),
         ack_number: u32::from_be_bytes([tcp[8], tcp[9], tcp[10], tcp[11]]),
         ack: tcp[13] & 0x10 != 0,
+        flags: tcp[13],
         payload_len: tcp.len().saturating_sub(header_len),
     })
 }
