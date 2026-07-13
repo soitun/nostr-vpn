@@ -149,7 +149,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
 
         StartupService.RegisterDeepLinkProtocol();
 
-        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
+        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _refreshTimer.Start();
         _ = CheckUpdatesAsync(manual: false);

@@ -1,5 +1,7 @@
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::ErrorKind;
+#[cfg(unix)]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
