@@ -32,6 +32,9 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- WebVM approvals now return directly over the authenticated FIPS path through
+  the scanned browser and host, without depending on a public relay; routed
+  pairing waits for the browser path and surfaces administrator daemon errors.
 - Added buyer-side stateful ingress filtering for selected FIPS exits: only
   replies to locally originated flows and narrowly valid ICMP errors are
   admitted, while unsolicited, malformed, private, loopback, link-local, and
