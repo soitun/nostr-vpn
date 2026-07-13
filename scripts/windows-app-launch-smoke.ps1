@@ -155,6 +155,18 @@ function Invoke-IdleCpuGate {
   $elapsed = [Math]::Max($watch.Elapsed.TotalSeconds, 0.001)
   $cpuPercent = [Math]::Max(0, $endCpu - $startCpu) * 100.0 / $elapsed
   $ok = $cpuPercent -le $IdleCpuMaxPercent
+  $threads = @($Process.Threads |
+      Sort-Object TotalProcessorTime -Descending |
+      Select-Object -First 8 |
+      ForEach-Object {
+        [pscustomobject]@{
+          id                   = $_.Id
+          cpuSeconds           = $_.TotalProcessorTime.TotalSeconds
+          userCpuSeconds       = $_.UserProcessorTime.TotalSeconds
+          privilegedCpuSeconds = $_.PrivilegedProcessorTime.TotalSeconds
+          state                = [string]$_.ThreadState
+        }
+      })
   $result = [pscustomobject]@{
     ok             = $ok
     mode           = "windows-process"
@@ -165,6 +177,7 @@ function Invoke-IdleCpuGate {
     sampleSeconds  = $IdleCpuSampleSeconds
     settleSeconds  = $IdleCpuSettleSeconds
     elapsedSeconds = $elapsed
+    threads        = $threads
     generatedAt    = (Get-Date).ToUniversalTime().ToString("o")
   }
   New-Item -ItemType Directory -Force -Path $ArtifactRoot | Out-Null

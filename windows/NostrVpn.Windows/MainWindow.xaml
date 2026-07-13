@@ -89,8 +89,11 @@
         </DockPanel>
       </Border>
 
-      <ScrollViewer x:Name="ContentScroll" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <Grid Width="{Binding ActualWidth, ElementName=ContentScroll}">
+      <ScrollViewer x:Name="ContentScroll"
+                    VerticalScrollBarVisibility="Auto"
+                    HorizontalScrollBarVisibility="Disabled"
+                    HorizontalContentAlignment="Stretch">
+        <Grid>
         <StackPanel Margin="24,0,24,24">
           <Border Style="{StaticResource Card}" Visibility="{Binding Notice, Converter={StaticResource NonEmptyStringToVisibility}}">
             <TextBlock Text="{Binding Notice}" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" />
