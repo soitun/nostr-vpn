@@ -40,6 +40,13 @@ function Find-FixtureDaemon {
   return Get-Process -Id $matches[0].ProcessId
 }
 
+function Wait-NvpnSeconds([double]$Seconds) {
+  $watch = [Diagnostics.Stopwatch]::StartNew()
+  while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
+    Start-Sleep -Milliseconds ([Math]::Min(250, [Math]::Max(1, [int](($Seconds - $watch.Elapsed.TotalSeconds) * 1000))))
+  }
+}
+
 try {
   if (!(Test-Path $Bin)) { throw "nvpn.exe not found: $Bin" }
   New-Item -ItemType Directory -Force -Path $ArtifactRoot, $Fixture | Out-Null
@@ -60,11 +67,11 @@ try {
   }
   if (!$daemon) { throw 'Candidate Windows nvpn daemon did not start' }
 
-  Start-Sleep -Milliseconds ([int]($SettleSeconds * 1000))
+  Wait-NvpnSeconds $SettleSeconds
   $daemon.Refresh()
   $startCpu = $daemon.TotalProcessorTime.TotalSeconds
   $watch = [Diagnostics.Stopwatch]::StartNew()
-  Start-Sleep -Milliseconds ([int]($SampleSeconds * 1000))
+  Wait-NvpnSeconds $SampleSeconds
   $watch.Stop()
   $daemon.Refresh()
   if ($daemon.HasExited) { throw 'Candidate Windows nvpn daemon exited during idle sample' }
@@ -86,9 +93,9 @@ try {
   Write-Host ("Windows daemon idle CPU ok: {0:N3}% <= {1:N3}%" -f $cpuPercent, $MaxPercent)
   Write-Host "Result: $ResultPath"
 } finally {
+  if ($daemon -and !$daemon.HasExited) { Stop-Process -Id $daemon.Id -Force -ErrorAction SilentlyContinue }
   if ((Test-Path $Bin) -and (Test-Path $Config)) {
     & $Bin down --config $Config 2>$null | Out-Null
   }
-  if ($daemon -and !$daemon.HasExited) { Stop-Process -Id $daemon.Id -Force -ErrorAction SilentlyContinue }
   Remove-Item -Recurse -Force $Fixture -ErrorAction SilentlyContinue
 }
