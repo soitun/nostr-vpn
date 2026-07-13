@@ -29,15 +29,14 @@ function Get-Npub([string]$Path) {
 }
 
 function Find-FixtureDaemon {
-  $escapedBin = [regex]::Escape($Bin)
-  $escapedConfig = [regex]::Escape($Config)
-  $matches = @(Get-CimInstance Win32_Process | Where-Object {
-    $_.Name -eq 'nvpn.exe' -and $_.ExecutablePath -eq $Bin -and
-    $_.CommandLine -match "^`"?$escapedBin`"?\s+daemon\b" -and
-    $_.CommandLine -match $escapedConfig
-  })
-  if ($matches.Count -ne 1) { return $null }
-  return Get-Process -Id $matches[0].ProcessId
+  $pidFile = Join-Path $Fixture 'daemon.pid'
+  if (!(Test-Path $pidFile)) { return $null }
+  try {
+    $record = Get-Content $pidFile -Raw | ConvertFrom-Json
+    return Get-Process -Id ([int]$record.pid) -ErrorAction Stop
+  } catch {
+    return $null
+  }
 }
 
 function Wait-NvpnSeconds([double]$Seconds) {
