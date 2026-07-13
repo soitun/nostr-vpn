@@ -14,6 +14,8 @@ use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 
 use crate::mobile_tunnel::{MobileTunnelConfig, fips_endpoint_config};
 
+const HEADLESS_FIPS_WORKER_STACK_SIZE: usize = 4 * 1024 * 1024;
+
 /// Unprivileged FIPS endpoint used by production-like integration tests.
 ///
 /// Desktop production uses the long-running nVPN daemon. This runtime shares
@@ -35,6 +37,7 @@ impl HeadlessDirectApprovalRuntime {
         let runtime = RuntimeBuilder::new_multi_thread()
             .enable_all()
             .thread_name("nvpn-headless-fips")
+            .thread_stack_size(HEADLESS_FIPS_WORKER_STACK_SIZE)
             .build()
             .context("failed to start headless FIPS runtime")?;
         let endpoint = runtime.block_on(async {
