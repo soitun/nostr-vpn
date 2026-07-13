@@ -202,7 +202,18 @@ $proc = $null
 $windowSeen = $false
 
 try {
-  $proc = Start-Process -FilePath $AppExe -WorkingDirectory (Split-Path -Parent $AppExe) -PassThru
+  $startProcess = @{
+    FilePath = $AppExe
+    WorkingDirectory = (Split-Path -Parent $AppExe)
+    PassThru = $true
+  }
+  if ($NoWindowRequired) {
+    # SSH runs this smoke in Windows session 0, where a "visible" WPF window is
+    # software-rendered without an interactive desktop and consumes a steady
+    # render-thread core slice. Test the app's real tray-idle state instead.
+    $startProcess.ArgumentList = @("--hidden")
+  }
+  $proc = Start-Process @startProcess
   $deadline = (Get-Date).AddSeconds($StartupTimeoutSeconds)
 
   while ((Get-Date) -lt $deadline) {
