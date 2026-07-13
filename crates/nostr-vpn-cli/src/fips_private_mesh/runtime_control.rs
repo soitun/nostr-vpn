@@ -34,6 +34,7 @@ impl FipsPrivateMeshRuntime {
     pub(crate) async fn send_join_approval_event(
         &self,
         participant: &str,
+        routed_recipient: Option<&str>,
         request_pubkey: &str,
         event: &nostr_sdk::Event,
     ) -> Result<()> {
@@ -43,7 +44,11 @@ impl FipsPrivateMeshRuntime {
             let peer_identities = self.peer_identities.load();
             control_frame_destination_peer(&mesh, &peer_identities, participant)?
         };
-        let datagram = delivered_approval_event_datagram(request_pubkey, event)?;
+        let datagram = if let Some(recipient) = routed_recipient {
+            routed_approval_event_datagram(recipient, request_pubkey, event)?
+        } else {
+            delivered_approval_event_datagram(request_pubkey, event)?
+        };
         let sent_len = datagram.payload.len();
         self.endpoint
             .send_datagram_batch_to_peer(

@@ -36,6 +36,7 @@ use nostr_vpn_core::fips_mesh::{FipsEndpointAdmissionCache, FipsEndpointSourceAd
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission};
 use nostr_vpn_core::join_pubsub::{
     NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, delivered_approval_event_datagram,
+    routed_approval_event_datagram,
 };
 use nostr_vpn_core::join_requests::MeshJoinRequest;
 use nostr_vpn_core::magic_dns::build_magic_dns_records;

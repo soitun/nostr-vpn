@@ -1,20 +1,22 @@
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
-use fips_endpoint::{FipsEndpoint, PeerConfig as FipsPeerConfig, PeerIdentity};
+use fips_endpoint::{FipsEndpoint, PeerAddress, PeerConfig as FipsPeerConfig, PeerIdentity};
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::join_pubsub::{
     NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, delivered_approval_event_datagram,
-    load_direct_join_approvals,
+    load_direct_join_approvals, routed_approval_event_datagram,
 };
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 
 use crate::mobile_tunnel::{MobileTunnelConfig, fips_endpoint_config};
 
 const HEADLESS_FIPS_WORKER_STACK_SIZE: usize = 4 * 1024 * 1024;
+const DIRECT_APPROVAL_ROUTE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Unprivileged FIPS endpoint used by production-like integration tests.
 ///
@@ -71,23 +73,63 @@ impl HeadlessDirectApprovalRuntime {
                     .to_bech32()
                     .context("failed to encode direct join approval FIPS return route")?;
                 let mut peers = self.base_peers.clone();
-                if !peers.iter().any(|peer| peer.npub == route_npub) {
+                let route_address = PeerAddress::new("webrtc", format!("02{route}"));
+                if let Some(peer) = peers.iter_mut().find(|peer| peer.npub == route_npub) {
+                    if !peer
+                        .addresses
+                        .iter()
+                        .any(|address| address == &route_address)
+                    {
+                        peer.addresses.push(route_address);
+                    }
+                } else {
                     peers.push(FipsPeerConfig {
-                        npub: route_npub,
+                        npub: route_npub.clone(),
+                        addresses: vec![route_address],
                         discovery_fallback_transit: true,
                         ..FipsPeerConfig::default()
                     });
                 }
                 self.runtime.block_on(self.endpoint.update_peers(peers))?;
+                self.runtime.block_on(async {
+                    let deadline = tokio::time::Instant::now() + DIRECT_APPROVAL_ROUTE_TIMEOUT;
+                    loop {
+                        if self
+                            .endpoint
+                            .peers()
+                            .await?
+                            .iter()
+                            .any(|peer| peer.npub == route_npub && peer.connected)
+                        {
+                            break Ok::<(), anyhow::Error>(());
+                        }
+                        if tokio::time::Instant::now() >= deadline {
+                            break Err(anyhow!("direct join approval FIPS route did not connect"));
+                        }
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                })?;
             }
-            let recipient_npub = PublicKey::from_hex(&approval.recipient_npub)
-                .context("invalid direct join approval recipient")?
+            let delivery_pubkey = approval
+                .fips_route_npub
+                .as_deref()
+                .unwrap_or(&approval.recipient_npub);
+            let recipient_npub = PublicKey::from_hex(delivery_pubkey)
+                .context("invalid direct join approval delivery peer")?
                 .to_bech32()
-                .context("failed to encode direct join approval recipient")?;
+                .context("failed to encode direct join approval delivery peer")?;
             let remote = PeerIdentity::from_npub(&recipient_npub)
-                .context("invalid direct join approval recipient")?;
+                .context("invalid direct join approval delivery peer")?;
             for event in &approval.events {
-                let datagram = delivered_approval_event_datagram(&approval.request_pubkey, event)?;
+                let datagram = if approval.fips_route_npub.is_some() {
+                    routed_approval_event_datagram(
+                        &approval.recipient_npub,
+                        &approval.request_pubkey,
+                        event,
+                    )?
+                } else {
+                    delivered_approval_event_datagram(&approval.request_pubkey, event)?
+                };
                 self.runtime.block_on(self.endpoint.send_datagram(
                     remote,
                     NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,

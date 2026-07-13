@@ -27,10 +27,15 @@ pub(super) async fn flush_direct_join_approval_outbox(
             continue;
         }
         let mut sent = true;
+        let delivery_peer = queued
+            .fips_route_npub
+            .as_deref()
+            .unwrap_or(&queued.recipient_npub);
         for event in &queued.events {
             if let Err(error) = runtime
                 .send_join_approval_event(
-                    &queued.recipient_npub,
+                    delivery_peer,
+                    queued.fips_route_npub.as_ref().map(|_| queued.recipient_npub.as_str()),
                     &queued.request_pubkey,
                     event,
                 )

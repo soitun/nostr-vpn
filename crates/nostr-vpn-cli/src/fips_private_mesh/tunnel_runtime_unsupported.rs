@@ -92,6 +92,7 @@ impl FipsPrivateTunnelRuntime {
     pub(crate) async fn send_join_approval_event(
         &self,
         _participant: &str,
+        _routed_recipient: Option<&str>,
         _request_pubkey: &str,
         _event: &nostr_sdk::Event,
     ) -> Result<()> {

@@ -745,22 +745,32 @@ impl FipsPrivateTunnelRuntime {
     pub(crate) async fn send_join_approval_event(
         &self,
         participant: &str,
+        routed_recipient: Option<&str>,
         request_pubkey: &str,
         event: &nostr_sdk::Event,
     ) -> Result<()> {
         self.mesh
-            .send_join_approval_event(participant, request_pubkey, event)
+            .send_join_approval_event(participant, routed_recipient, request_pubkey, event)
             .await
     }
 
     pub(crate) async fn ensure_join_approval_route(&self, route_pubkey: &str) -> Result<()> {
         let route_pubkey = normalize_nostr_pubkey(route_pubkey)?;
         let route_npub = PublicKey::from_hex(&route_pubkey)?.to_bech32()?;
+        let route_address = FipsPeerAddressHint {
+            addr: format!("webrtc:02{route_pubkey}"),
+            seen_at_ms: None,
+            priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
+        };
         let mut peers = self.config.endpoint_peers.clone();
-        if !peers.iter().any(|peer| peer.npub == route_npub) {
+        if let Some(peer) = peers.iter_mut().find(|peer| peer.npub == route_npub) {
+            if !peer.addresses.contains(&route_address) {
+                peer.addresses.push(route_address);
+            }
+        } else {
             peers.push(FipsEndpointPeerTransportConfig {
                 npub: route_npub,
-                addresses: Vec::new(),
+                addresses: vec![route_address],
                 auto_reconnect: true,
                 discovery_fallback_transit: true,
             });

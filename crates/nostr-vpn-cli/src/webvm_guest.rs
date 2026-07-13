@@ -9,7 +9,7 @@ pub(crate) use daemon::{args_from_daemon, run_daemon};
 #[cfg(target_os = "linux")]
 use fips_core::FipsEndpointServiceDatagram;
 #[cfg(target_os = "linux")]
-use fips_endpoint::FipsEndpoint;
+use fips_endpoint::{FipsEndpoint, PeerIdentity};
 use nostr_vpn_core::join_pubsub::NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT;
 #[cfg(target_os = "linux")]
 use nostr_vpn_core::join_pubsub::{NostrJoinFipsPubsubClient, NostrJoinFipsPubsubDatagram};
@@ -29,6 +29,8 @@ const HOST_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const BROWSER_HOST_POLL_INTERVAL: Duration = Duration::from_millis(100);
 #[cfg(target_os = "linux")]
 const SERVICE_RECV_BATCH: usize = 8;
+#[cfg(target_os = "linux")]
+const WEBVM_APPROVAL_ROUTE_REGISTRATION: &[u8; 9] = b"NVPNPAIR1";
 const DEFAULT_WEBVM_PAIRING_URI_PATH: &str = "/run/webvm/join-request";
 
 pub(crate) async fn run(args: WebvmGuestArgs) -> Result<()> {
@@ -439,6 +441,17 @@ async fn pair_over_fips(
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let browser_host = wait_for_browser_host(endpoint, shutdown.clone()).await?;
+    let browser_identity = PeerIdentity::from_npub(&browser_host)
+        .context("invalid WebVM browser FIPS return route")?;
+    endpoint
+        .send_datagram(
+            browser_identity,
+            args.join_pubsub_port,
+            args.join_pubsub_port,
+            WEBVM_APPROVAL_ROUTE_REGISTRATION.to_vec(),
+        )
+        .await
+        .context("failed to register WebVM approval return route")?;
     let pairing_uri = webvm_pairing_uri(app, &browser_host)?;
     write_pairing_uri(&args.pairing_uri_file, &pairing_uri)?;
 

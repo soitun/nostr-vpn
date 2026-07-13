@@ -21,6 +21,7 @@ pub const NOSTR_JOIN_PUBSUB_INITIAL_EVENT_LIMIT: usize = 8;
 const MAX_BUFFERED_APPROVAL_EVENTS: usize = 4;
 const DIRECT_APPROVAL_OUTBOX_VERSION: u8 = 1;
 const MAX_DIRECT_APPROVAL_EVENTS: usize = 4;
+const WEBVM_APPROVAL_ROUTE_MAGIC: &[u8; 8] = b"NVPNFWD1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueuedNostrJoinApproval {
@@ -69,6 +70,24 @@ pub fn delivered_approval_event_datagram(
         .map_err(|error| anyhow!("invalid signed Nostr join approval event: {error}"))?;
     let payload = FipsPubsubWireCodec::default()
         .encode_frame(&FipsPubsubWireMessage::deliver(subscription_id, event))?;
+    Ok(NostrJoinFipsPubsubDatagram::new(payload))
+}
+
+pub fn routed_approval_event_datagram(
+    recipient_npub: &str,
+    request_pubkey: &str,
+    event: &Event,
+) -> Result<NostrJoinFipsPubsubDatagram> {
+    let recipient = normalize_nostr_pubkey(recipient_npub)
+        .context("invalid routed Nostr join approval recipient")?;
+    let recipient = hex::decode(recipient).context("invalid routed approval recipient bytes")?;
+    let direct = delivered_approval_event_datagram(request_pubkey, event)?;
+    let mut payload = Vec::with_capacity(
+        WEBVM_APPROVAL_ROUTE_MAGIC.len() + recipient.len() + direct.payload.len(),
+    );
+    payload.extend_from_slice(WEBVM_APPROVAL_ROUTE_MAGIC);
+    payload.extend_from_slice(&recipient);
+    payload.extend_from_slice(&direct.payload);
     Ok(NostrJoinFipsPubsubDatagram::new(payload))
 }
 

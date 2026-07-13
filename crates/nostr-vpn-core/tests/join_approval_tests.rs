@@ -15,7 +15,7 @@ use nostr_vpn_core::identity_bridge::{
 use nostr_vpn_core::join_pubsub::{
     NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, NostrJoinFipsPubsubClient, NostrJoinFipsPubsubDatagram,
     delivered_approval_event_datagram, direct_join_approval_outbox_directory,
-    load_direct_join_approvals, queue_direct_join_approval,
+    load_direct_join_approvals, queue_direct_join_approval, routed_approval_event_datagram,
 };
 use nostr_vpn_core::join_requests::MAX_NOSTR_JOIN_APPROVAL_AGE_SECS;
 
@@ -351,6 +351,19 @@ fn direct_fips_approval_outbox_delivers_without_a_relay_subscription() {
         Some(route.to_hex().as_str())
     );
     assert_eq!(queued[0].1.events.len(), 2);
+
+    let direct =
+        delivered_approval_event_datagram(&pending.request.request_pubkey, &queued[0].1.events[0])
+            .expect("direct payload");
+    let routed = routed_approval_event_datagram(
+        &recipient,
+        &pending.request.request_pubkey,
+        &queued[0].1.events[0],
+    )
+    .expect("routed payload");
+    assert_eq!(&routed.payload[..8], b"NVPNFWD1");
+    assert_eq!(&routed.payload[8..40], hex::decode(&recipient).unwrap());
+    assert_eq!(&routed.payload[40..], direct.payload);
 
     let mut client = NostrJoinFipsPubsubClient::new(&joiner).expect("pubsub client");
     let mut applied = None;
