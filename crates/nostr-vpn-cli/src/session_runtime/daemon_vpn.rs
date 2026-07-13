@@ -980,7 +980,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             }
         }
     }
-
     port_mapping_runtime.stop().await;
     if let Some(runtime) = fips_tunnel_runtime
         && let Err(error) = runtime.stop().await
