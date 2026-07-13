@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use qrcode::QrCode;
 use qrcode::render::unicode::Dense1x2;
 
@@ -13,6 +13,8 @@ use crate::{
 };
 
 const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
+const WEBVM_PAIRING_URI_PATH: &str = "/run/webvm/join-request";
+const WEBVM_PAIRING_URI_WAIT: Duration = Duration::from_secs(5);
 
 #[cfg(test)]
 pub(crate) fn pending_pairing_uri(config_path: &Path) -> Result<String> {
@@ -39,9 +41,10 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
         return Ok(());
     }
 
-    let uri = app
+    let base_uri = app
         .pending_nostr_join_request_link(JOIN_REQUEST_LINK_PREFIX)
         .context("config has no valid pending device-approval request")?;
+    let uri = pairing_uri_for_output(&base_uri).await?;
     if args.no_qr {
         println!("{uri}");
     } else {
@@ -79,6 +82,33 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
                 }
             }
         }
+    }
+}
+
+async fn pairing_uri_for_output(base_uri: &str) -> Result<String> {
+    let webvm_directory = Path::new(WEBVM_PAIRING_URI_PATH)
+        .parent()
+        .expect("WebVM pairing URI has a parent");
+    if !webvm_directory.is_dir() {
+        return Ok(base_uri.to_string());
+    }
+    let deadline = tokio::time::Instant::now() + WEBVM_PAIRING_URI_WAIT;
+    loop {
+        if let Ok(candidate) = std::fs::read_to_string(WEBVM_PAIRING_URI_PATH) {
+            let candidate = candidate.trim();
+            if candidate
+                .split_once('?')
+                .is_some_and(|(request, route)| request == base_uri && route.starts_with("r="))
+            {
+                return Ok(candidate.to_string());
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(anyhow!(
+                "WebVM browser FIPS return route is not ready; retry in a moment"
+            ));
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
 
