@@ -4,8 +4,6 @@ use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-#[cfg(not(test))]
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -31,8 +29,6 @@ use crate::invite::{
     to_npub,
 };
 use crate::join_approval::prepare_join_approval;
-#[cfg(not(test))]
-use crate::join_approval_transport::fetch_pending_join_approval_events;
 use crate::join_request_link::{
     own_join_request_qr_code_or_link, parse_join_request_qr_code_or_link,
 };
@@ -64,8 +60,6 @@ const MOBILE_RUNTIME_STATE_STALE_SECS: u64 = 10;
 const MOBILE_RUNTIME_STATE_MAX_FUTURE_SKEW_SECS: u64 = 2;
 const PEER_PRESENCE_GRACE_SECS: u64 = 90;
 const PEER_PRESENCE_MAX_FUTURE_SKEW_SECS: u64 = 2;
-#[cfg(not(test))]
-const JOIN_APPROVAL_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 
 /// Output of running a privileged command from foreign code.
 ///
@@ -210,10 +204,6 @@ struct NativeAppRuntime {
     paid_route_wallet_next_refresh_at: Option<Instant>,
     paid_route_payment_last_action: NativePaidRoutePaymentActionState,
     exchange_rate_service: ExchangeRateService,
-    #[cfg(not(test))]
-    join_approval_worker: Option<NativeJoinApprovalWorker>,
-    #[cfg(not(test))]
-    join_approval_next_attempt_at: Option<Instant>,
     #[cfg(test)]
     published_join_approval_events: Vec<Event>,
     #[cfg(target_os = "macos")]
@@ -235,48 +225,6 @@ impl std::fmt::Debug for PrivilegedCommandRunnerHandle {
 struct LanPeerRecord {
     signal: LanPairingSignal,
     last_seen: SystemTime,
-}
-
-#[cfg(not(test))]
-#[derive(Debug)]
-struct NativeJoinApprovalWorker {
-    request_pubkey: String,
-    receiver: mpsc::Receiver<Result<Vec<Event>, String>>,
-    cancellation: Option<tokio::sync::oneshot::Sender<()>>,
-}
-
-#[cfg(not(test))]
-impl NativeJoinApprovalWorker {
-    fn spawn(config: AppConfig, request_pubkey: String) -> Self {
-        let (sender, receiver) = mpsc::channel();
-        let (cancellation, cancelled) = tokio::sync::oneshot::channel();
-        std::thread::spawn(move || {
-            let result = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|error| format!("failed to start join approval receiver: {error}"))
-                .and_then(|runtime| {
-                    runtime
-                        .block_on(fetch_pending_join_approval_events(&config, cancelled))
-                        .map_err(|error| error.to_string())
-                });
-            let _ = sender.send(result);
-        });
-        Self {
-            request_pubkey,
-            receiver,
-            cancellation: Some(cancellation),
-        }
-    }
-}
-
-#[cfg(not(test))]
-impl Drop for NativeJoinApprovalWorker {
-    fn drop(&mut self) {
-        if let Some(cancellation) = self.cancellation.take() {
-            let _ = cancellation.send(());
-        }
-    }
 }
 
 #[cfg(not(test))]

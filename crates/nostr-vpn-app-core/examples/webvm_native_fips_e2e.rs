@@ -12,10 +12,10 @@ use nostr_vpn_app_core::join_approval::prepare_join_approval;
 use nostr_vpn_app_core::join_request_link::parse_join_request_qr_code_or_link;
 use nostr_vpn_core::config::AppConfig;
 use nostr_vpn_core::join_pubsub::queue_direct_join_approval;
-use nostr_vpn_core::join_requests::NOSTR_VPN_JOIN_APPROVAL_RELAY;
 use serde_json::json;
 
 const REAL_E2E_GUARD: &str = "NVPN_WEBVM_REAL_E2E";
+const FIPS_DISCOVERY_RELAY: &str = "wss://temp.iris.to";
 const ISOLATED_DIRECTORY_PREFIX: &str = "iris-webvm-nvpn-e2e-";
 const IMPORT_COMMAND_PREFIX: &str = "import ";
 
@@ -123,7 +123,7 @@ fn prepare_admin_config(path: &Path) -> HarnessResult<(String, String)> {
     config.connect_to_non_roster_fips_peers = true;
     config.fips_webrtc_enabled = true;
     config.exit_node.clear();
-    config.nostr.relays = vec![NOSTR_VPN_JOIN_APPROVAL_RELAY.to_string()];
+    config.nostr.relays = vec![FIPS_DISCOVERY_RELAY.to_string()];
     config.nostr.disabled_relays.clear();
     config
         .save(path)

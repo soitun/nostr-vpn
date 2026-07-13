@@ -380,10 +380,16 @@
 
         assert!(
             joiner
-                .apply_fetched_join_approval_events(&admin.published_join_approval_events)
-                .expect("apply fetched approval events"),
+                .config
+                .apply_nostr_join_approval_events(
+                    &admin.published_join_approval_events,
+                    unix_timestamp(),
+                )
+                .expect("apply direct FIPS approval events")
+                .is_some(),
             "joiner should apply the accepted network"
         );
+        joiner.save_config().expect("persist joined config");
         assert!(joiner.config.pending_nostr_join_request.is_none());
         assert_eq!(joiner.config.active_network().network_id, "8d4f34f5425bc50e");
         assert!(joiner.config.active_network_has_confirmed_local_identity());

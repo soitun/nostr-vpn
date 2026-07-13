@@ -1899,9 +1899,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.93"
+version = "0.3.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "554d1e76c511d0a0ab1723af30c209b58be782b0f61250c4a4c31b26eac32d67"
+checksum = "935048cca96e264cc5cf8f373ad2c473d9d72e09482da81af9d9b89312d35cbf"
 dependencies = [
  "bluer",
  "bytes",
@@ -1940,9 +1940,9 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.3.60"
+version = "0.3.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5d3d60da3101627c366609d07297e7082fab078abde216088a01a58d0017dde"
+checksum = "bae0d2aaa425869b6d5dc29f7ba93e0c192cad836966ca43f91b7597dc66be64"
 dependencies = [
  "fips-core",
 ]
@@ -3601,19 +3601,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nostr-pubsub-relay"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7d9e278806e79e040d274708f35a008cb947fa37aed185a6d6142cf7561c223"
-dependencies = [
- "async-trait",
- "nostr-pubsub",
- "nostr-sdk",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
 name = "nostr-pubsub-social-graph"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3700,7 +3687,6 @@ dependencies = [
  "dirs 6.0.0",
  "fips-core",
  "fips-endpoint",
- "futures",
  "hickory-proto",
  "image",
  "jni 0.21.1",
@@ -3708,8 +3694,6 @@ dependencies = [
  "ndk-context",
  "netdev",
  "nostr-identity 0.3.1",
- "nostr-pubsub",
- "nostr-pubsub-relay",
  "nostr-sdk",
  "nostr-vpn-core",
  "qrcode",
@@ -3719,7 +3703,6 @@ dependencies = [
  "serde_json",
  "socket2 0.6.4",
  "tokio",
- "tokio-tungstenite 0.26.2",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "uniffi",

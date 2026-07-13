@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow};
 use nostr_identity::{
     NOSTR_IDENTITY_DEVICE_APPROVAL_LABEL_MAX_BYTES, NostrIdentityDeviceApprovalReceipt,
-    nostr_identity_device_approval_relay_resource, nostr_identity_device_approval_request_relays,
+    nostr_identity_device_approval_request_relays,
     parse_nostr_identity_device_approval_receipt_event_for_bootstrap,
 };
 use nostr_sdk::prelude::{Event, JsonUtil, Keys};
@@ -22,7 +22,6 @@ use crate::identity_bridge::{
 
 pub const FIPS_JOIN_REQUEST_RETRY_SECS: u64 = 10;
 pub const NOSTR_VPN_JOIN_REQUEST_TYPE: &str = "nostr-vpn.join-request";
-pub const NOSTR_VPN_JOIN_APPROVAL_RELAY: &str = "wss://temp.iris.to";
 pub const MAX_NOSTR_JOIN_APPROVAL_AGE_SECS: u64 = 7 * 24 * 60 * 60;
 pub const MAX_NOSTR_JOIN_APPROVAL_FUTURE_SECS: u64 = 10 * 60;
 
@@ -100,9 +99,9 @@ impl PendingNostrJoinRequest {
         }
         let relays = nostr_identity_device_approval_request_relays(&self.request)
             .map_err(|error| anyhow!("pending join request approval relay is invalid: {error}"))?;
-        if relays.as_slice() != [NOSTR_VPN_JOIN_APPROVAL_RELAY] {
+        if !relays.is_empty() {
             return Err(anyhow!(
-                "pending join request must use the Nostr VPN approval relay"
+                "pending join request must not use Nostr approval relays"
             ));
         }
         self.request_keys()?;
@@ -125,7 +124,7 @@ impl AppConfig {
             let relays = nostr_identity_device_approval_request_relays(&pending.request).map_err(
                 |error| anyhow!("pending join request approval relay is invalid: {error}"),
             )?;
-            if !relays.is_empty() {
+            if relays.is_empty() {
                 pending.validate_for_device(&device_pubkey)?;
                 return Ok(false);
             }
@@ -141,12 +140,7 @@ impl AppConfig {
                 request_secret: None,
                 requested_at,
                 request_type: Some(NOSTR_VPN_JOIN_REQUEST_TYPE.to_string()),
-                resources: vec![
-                    nostr_identity_device_approval_relay_resource(NOSTR_VPN_JOIN_APPROVAL_RELAY)
-                        .map_err(|error| {
-                            anyhow!("failed to build join approval relay resource: {error}")
-                        })?,
-                ],
+                resources: Vec::new(),
                 expires_at: None,
                 profile_id: self.nostr.identity_profile_id,
                 admin_app_key_pubkey: None,

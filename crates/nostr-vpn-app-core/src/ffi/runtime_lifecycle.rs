@@ -78,10 +78,6 @@ impl NativeAppRuntime {
             paid_route_wallet_next_refresh_at: None,
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
             exchange_rate_service,
-            #[cfg(not(test))]
-            join_approval_worker: None,
-            #[cfg(not(test))]
-            join_approval_next_attempt_at: None,
             #[cfg(test)]
             published_join_approval_events: Vec::new(),
             #[cfg(target_os = "macos")]
@@ -143,85 +139,11 @@ impl NativeAppRuntime {
             paid_route_wallet_next_refresh_at: None,
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
             exchange_rate_service,
-            #[cfg(not(test))]
-            join_approval_worker: None,
-            #[cfg(not(test))]
-            join_approval_next_attempt_at: None,
             #[cfg(test)]
             published_join_approval_events: Vec::new(),
             #[cfg(target_os = "macos")]
             privileged_command_runner: None,
         }
-    }
-
-    #[cfg(not(test))]
-    fn refresh_pending_join_approval(&mut self) {
-        let Some(pending) = self.config.pending_nostr_join_request.as_ref() else {
-            self.join_approval_worker = None;
-            self.join_approval_next_attempt_at = None;
-            return;
-        };
-        let request_pubkey = pending.request.request_pubkey.clone();
-        if self
-            .join_approval_worker
-            .as_ref()
-            .is_some_and(|worker| worker.request_pubkey != request_pubkey)
-        {
-            self.join_approval_worker = None;
-        }
-
-        let completed = self
-            .join_approval_worker
-            .as_ref()
-            .and_then(|worker| match worker.receiver.try_recv() {
-                Ok(result) => Some(result),
-                Err(mpsc::TryRecvError::Disconnected) => Some(Err(
-                    "join approval receiver stopped before returning a result".to_string(),
-                )),
-                Err(mpsc::TryRecvError::Empty) => None,
-            });
-        if let Some(result) = completed {
-            self.join_approval_worker = None;
-            match result {
-                Ok(events) => match self.apply_fetched_join_approval_events(&events) {
-                    Ok(true) => {
-                        self.join_approval_next_attempt_at = None;
-                        return;
-                    }
-                    Ok(false) => {}
-                    Err(error) => {
-                        tracing::warn!(?error, "failed to apply fetched join approval");
-                    }
-                },
-                Err(error) => {
-                    tracing::debug!(%error, "join approval receiver will retry");
-                }
-            }
-            self.join_approval_next_attempt_at = Some(Instant::now() + JOIN_APPROVAL_RETRY_INTERVAL);
-        }
-
-        if self.join_approval_worker.is_some()
-            || self
-                .join_approval_next_attempt_at
-                .is_some_and(|next| Instant::now() < next)
-        {
-            return;
-        }
-        self.join_approval_worker = Some(NativeJoinApprovalWorker::spawn(
-            self.config.clone(),
-            request_pubkey,
-        ));
-    }
-
-    fn apply_fetched_join_approval_events(&mut self, events: &[Event]) -> Result<bool> {
-        let applied = self
-            .config
-            .apply_nostr_join_approval_events(events, unix_timestamp())?;
-        if applied.is_none() {
-            return Ok(false);
-        }
-        self.save_config()?;
-        Ok(true)
     }
 
     #[allow(clippy::too_many_lines)]

@@ -23,12 +23,9 @@ dirs.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 fips-core.workspace = true
 fips-endpoint.workspace = true
-futures.workspace = true
 netdev.workspace = true
 nostr-sdk.workspace = true
 nostr-identity.workspace = true
-nostr-pubsub.workspace = true
-nostr-pubsub-relay.workspace = true
 nostr-vpn-core = { workspace = true, features = ["updater", "secure-dns"] }
 qrcode = { version = "0.14", default-features = false }
 reqwest.workspace = true
@@ -51,7 +48,6 @@ ndk-context = "0.1"
 [dev-dependencies]
 async-trait.workspace = true
 hickory-proto.workspace = true
-tokio-tungstenite = "0.26.2"
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

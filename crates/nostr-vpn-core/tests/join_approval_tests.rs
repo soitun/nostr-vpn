@@ -154,6 +154,12 @@ fn pending_join_request_is_secure_and_stable_across_reload() {
         .as_ref()
         .expect("pending request")
         .clone();
+    assert!(
+        nostr_identity::nostr_identity_device_approval_request_relays(&pending.request)
+            .expect("parse approval resources")
+            .is_empty(),
+        "join approval must be delivered only over FIPS"
+    );
     assert_eq!(pending.request.label.as_deref(), Some("Pixel 10 Pro Dev"));
 
     config.save(&path).expect("save config");
@@ -187,6 +193,36 @@ fn pending_join_request_is_secure_and_stable_across_reload() {
 
     AppConfig::delete_persisted_secrets_for_path(&path).expect("delete test secrets");
     let _ = fs::remove_file(path);
+}
+
+#[test]
+fn relay_backed_pending_join_request_is_rotated_to_fips_only() {
+    let mut config = pending_joiner();
+    let pending = config
+        .pending_nostr_join_request
+        .as_mut()
+        .expect("pending request");
+    let previous_request_pubkey = pending.request.request_pubkey.clone();
+    pending.request.resources.push(
+        nostr_identity::nostr_identity_device_approval_relay_resource("wss://temp.iris.to")
+            .expect("legacy approval relay resource"),
+    );
+
+    assert!(
+        config
+            .ensure_pending_nostr_join_request(REQUESTED_AT + 1)
+            .expect("rotate legacy pending request")
+    );
+    let replacement = config
+        .pending_nostr_join_request
+        .as_ref()
+        .expect("replacement pending request");
+    assert_ne!(replacement.request.request_pubkey, previous_request_pubkey);
+    assert!(
+        nostr_identity::nostr_identity_device_approval_request_relays(&replacement.request)
+            .expect("parse replacement approval resources")
+            .is_empty()
+    );
 }
 
 #[test]
