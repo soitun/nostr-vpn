@@ -41,6 +41,8 @@ const BROWSER_HOST_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const SERVICE_RECV_BATCH: usize = 8;
 #[cfg(target_os = "linux")]
 const WEBVM_APPROVAL_ROUTE_REGISTRATION: &[u8; 9] = b"NVPNPAIR1";
+#[cfg(any(target_os = "linux", test))]
+const WEBVM_MESH_INGRESS_HINT_MAGIC: &[u8; 9] = b"NVPNMESH1";
 const DEFAULT_WEBVM_PAIRING_URI_PATH: &str = "/run/webvm/join-request";
 
 #[cfg(target_os = "linux")]
@@ -534,6 +536,17 @@ async fn register_approval_route(
         .context("failed to announce WebVM approval readiness")
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn webvm_mesh_ingress_hint(app: &AppConfig) -> Result<Vec<u8>> {
+    let exit_node =
+        normalize_nostr_pubkey(&app.exit_node).context("invalid WebVM mesh ingress identity")?;
+    let exit_node = hex::decode(exit_node).context("invalid WebVM mesh ingress identity")?;
+    let mut hint = Vec::with_capacity(WEBVM_MESH_INGRESS_HINT_MAGIC.len() + exit_node.len());
+    hint.extend_from_slice(WEBVM_MESH_INGRESS_HINT_MAGIC);
+    hint.extend_from_slice(&exit_node);
+    Ok(hint)
+}
+
 #[cfg(target_os = "linux")]
 async fn wait_for_browser_host(
     endpoint: &FipsEndpoint,
@@ -686,6 +699,10 @@ async fn run_tunnel(
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let endpoint = Arc::clone(shared.endpoint());
+    let browser_host = wait_for_browser_host(&endpoint, shutdown.clone()).await?;
+    let browser_identity =
+        PeerIdentity::from_npub(&browser_host).context("invalid WebVM browser FIPS mesh route")?;
+    let mesh_ingress_hint = webvm_mesh_ingress_hint(&app)?;
     let mut tunnel = match build_tunnel_config(args, &app) {
         Ok(tunnel) => tunnel,
         Err(error) => {
@@ -740,6 +757,17 @@ async fn run_tunnel(
                 }
             }
             _ = heartbeat.tick() => {
+                if let Err(error) = endpoint
+                    .send_datagram(
+                        browser_identity,
+                        args.join_pubsub_port,
+                        args.join_pubsub_port,
+                        mesh_ingress_hint.clone(),
+                    )
+                    .await
+                {
+                    eprintln!("webvm: mesh ingress hint failed; will retry: {error:#}");
+                }
                 let network_id = app.effective_network_id();
                 if let Err(error) = runtime.ping_peers(&network_id, unix_timestamp()).await {
                     eprintln!("webvm: FIPS peer ping failed: {error}");
@@ -1003,6 +1031,10 @@ mod tests {
 
         assert!(!app.participant_pubkeys_hex().contains(&own_pubkey));
         validate_approved_config(&app).expect("rostered Nostr VPN exit");
+        let hint = webvm_mesh_ingress_hint(&app).expect("mesh ingress hint");
+        assert_eq!(hint.len(), 41);
+        assert_eq!(&hint[..9], b"NVPNMESH1");
+        assert_eq!(hex::encode(&hint[9..]), app.exit_node);
         app.exit_node = Keys::generate().public_key().to_hex();
         assert!(
             validate_approved_config(&app)
