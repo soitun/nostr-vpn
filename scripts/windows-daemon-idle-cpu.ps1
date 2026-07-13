@@ -94,7 +94,7 @@ try {
 } finally {
   if ($daemon -and !$daemon.HasExited) { Stop-Process -Id $daemon.Id -Force -ErrorAction SilentlyContinue }
   if ((Test-Path $Bin) -and (Test-Path $Config)) {
-    & $Bin down --config $Config 2>$null | Out-Null
+    & $Bin stop --config $Config --force 2>$null | Out-Null
   }
   Remove-Item -Recurse -Force $Fixture -ErrorAction SilentlyContinue
 }
