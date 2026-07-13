@@ -39,7 +39,9 @@ impl FipsPrivateMeshRuntime {
         event: &nostr_sdk::Event,
     ) -> Result<()> {
         let participant_key = participant_pubkey_bytes(participant);
-        let destination = {
+        let destination = if routed_recipient.is_some() {
+            direct_join_approval_destination_peer(participant)?
+        } else {
             let mesh = self.mesh.load();
             let peer_identities = self.peer_identities.load();
             control_frame_destination_peer(&mesh, &peer_identities, participant)?

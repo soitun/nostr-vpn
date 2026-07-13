@@ -210,6 +210,11 @@ impl FipsPrivateTunnelConfig {
         }
         let mut endpoint_peers =
             fips_endpoint_peers_from_mesh(&peers, operator_static, recent_peer_endpoints);
+        // `fips_webrtc_enabled = false` keeps one dormant WebRTC transport so
+        // a QR-carried browser return route can be dialed explicitly. Cached
+        // and configured peer hints are ambient routes, however, and must not
+        // wake that transport or contend with the approval session.
+        retain_enabled_peer_transport_addresses(&mut endpoint_peers, app.fips_webrtc_enabled);
         if !stamped_endpoint_hints_enabled {
             for peer in &mut endpoint_peers {
                 if peer.auto_reconnect {

@@ -38,6 +38,47 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
     pub(crate) discovery_fallback_transit: bool,
 }
 
+pub(crate) fn prioritize_direct_join_approval_route(
+    peers: Vec<FipsEndpointPeerTransportConfig>,
+    route_pubkey: &str,
+) -> Result<(String, Vec<FipsEndpointPeerTransportConfig>)> {
+    let route_pubkey = normalize_nostr_pubkey(route_pubkey)
+        .with_context(|| format!("invalid direct join approval recipient {route_pubkey}"))?;
+    let route_npub = PublicKey::from_hex(&route_pubkey)?.to_bech32()?;
+    let route_address = FipsPeerAddressHint {
+        addr: format!("webrtc:02{route_pubkey}"),
+        seen_at_ms: None,
+        priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
+    };
+    Ok((
+        route_npub.clone(),
+        prioritize_join_approval_route(peers, &route_npub, route_address),
+    ))
+}
+
+fn prioritize_join_approval_route(
+    mut peers: Vec<FipsEndpointPeerTransportConfig>,
+    route_npub: &str,
+    route_address: FipsPeerAddressHint,
+) -> Vec<FipsEndpointPeerTransportConfig> {
+    let mut route_peer = peers
+        .iter()
+        .position(|peer| peer.npub == route_npub)
+        .map(|index| peers.remove(index))
+        .unwrap_or_else(|| FipsEndpointPeerTransportConfig {
+            npub: route_npub.to_string(),
+            addresses: Vec::new(),
+            auto_reconnect: true,
+            discovery_fallback_transit: true,
+        });
+    if !route_peer.addresses.contains(&route_address) {
+        route_peer.addresses.push(route_address);
+    }
+    route_peer.auto_reconnect = true;
+    peers.insert(0, route_peer);
+    peers
+}
+
 fn fips_peer_address_from_hint(hint: &FipsPeerAddressHint) -> PeerAddress {
     let (transport, addr) = split_peer_transport_addr(&hint.addr);
     let mut peer_address = PeerAddress::with_priority(transport, addr, hint.priority);
@@ -45,6 +86,19 @@ fn fips_peer_address_from_hint(hint: &FipsPeerAddressHint) -> PeerAddress {
         peer_address = peer_address.learned().with_seen_at_ms(seen_at_ms);
     }
     peer_address
+}
+
+fn retain_enabled_peer_transport_addresses(
+    peers: &mut [FipsEndpointPeerTransportConfig],
+    webrtc_enabled: bool,
+) {
+    if webrtc_enabled {
+        return;
+    }
+    for peer in peers {
+        peer.addresses
+            .retain(|hint| split_peer_transport_addr(&hint.addr).0 != "webrtc");
+    }
 }
 
 fn dynamic_endpoint_priority(addr: &str) -> u8 {
@@ -175,10 +229,14 @@ fn fips_endpoint_config_with_open_discovery_limit(
             config.node.discovery.nostr.advert_relays = transport.nostr_relays.clone();
             config.node.discovery.nostr.dm_relays = transport.nostr_relays.clone();
         }
-        if transport.webrtc_enabled {
+        // Keep a dormant outbound WebRTC transport available even when
+        // ambient WebRTC discovery is disabled. Browser join approvals carry
+        // an explicit WebRTC return address and must not depend on the mesh
+        // discovery preference that controls advertising and auto-connect.
+        if nostr_enabled {
             configure_fips_webrtc_transport(
                 &mut config,
-                advertise_on_nostr,
+                transport.webrtc_enabled && advertise_on_nostr,
                 &transport.nostr_relays,
                 &transport.stun_servers,
                 mesh_mtu.underlay_udp,
@@ -467,15 +525,11 @@ fn fips_udp_external_addr(transport: &FipsEndpointTransportConfig) -> Option<Str
 
 fn configure_fips_webrtc_transport(
     config: &mut Config,
-    advertise_on_nostr: bool,
+    ambient_discovery_enabled: bool,
     signal_relays: &[String],
     stun_servers: &[String],
     mtu: u16,
 ) {
-    if !advertise_on_nostr {
-        return;
-    }
-
     #[allow(clippy::default_trait_access)]
     {
         config.transports.webrtc = TransportInstances::Single(Default::default());
@@ -483,9 +537,9 @@ fn configure_fips_webrtc_transport(
     let TransportInstances::Single(webrtc) = &mut config.transports.webrtc else {
         return;
     };
-    webrtc.advertise_on_nostr = Some(true);
-    webrtc.auto_connect = Some(true);
-    webrtc.accept_connections = Some(true);
+    webrtc.advertise_on_nostr = Some(ambient_discovery_enabled);
+    webrtc.auto_connect = Some(ambient_discovery_enabled);
+    webrtc.accept_connections = Some(ambient_discovery_enabled);
     webrtc.mtu = Some(mtu);
     if !signal_relays.is_empty() {
         webrtc.signal_relays = Some(signal_relays.to_vec());
@@ -627,7 +681,7 @@ mod endpoint_config_tests {
     }
 
     #[test]
-    fn endpoint_config_keeps_nostr_discovery_without_webrtc_by_default() {
+    fn endpoint_config_keeps_dormant_webrtc_for_explicit_browser_routes() {
         let peer = test_peer();
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
         let transport = test_transport(true, false);
@@ -641,8 +695,63 @@ mod endpoint_config_tests {
 
         assert!(config.node.discovery.nostr.enabled);
         assert!(config.node.discovery.nostr.advertise);
-        assert!(config.transports.webrtc.is_empty());
+        let TransportInstances::Single(webrtc) = &config.transports.webrtc else {
+            panic!("expected a dormant WebRTC transport for explicit browser routes");
+        };
+        assert_eq!(webrtc.advertise_on_nostr, Some(false));
+        assert_eq!(webrtc.auto_connect, Some(false));
+        assert_eq!(webrtc.accept_connections, Some(false));
+        assert_eq!(
+            webrtc.signal_relays.as_ref().expect("signal relays"),
+            &transport.nostr_relays
+        );
         assert!(!config.transports.udp.is_empty());
+    }
+
+    #[test]
+    fn disabled_webrtc_keeps_only_an_explicit_browser_route() {
+        let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
+        let browser_pubkey = Keys::generate().public_key().to_hex();
+        let mut peers = vec![FipsEndpointPeerTransportConfig {
+            npub: ambient_npub,
+            addresses: vec![
+                FipsPeerAddressHint {
+                    addr: "udp:203.0.113.20:51820".to_string(),
+                    seen_at_ms: None,
+                    priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
+                },
+                FipsPeerAddressHint {
+                    addr: format!(
+                        "webrtc:02{}",
+                        Keys::generate().public_key().to_hex()
+                    ),
+                    seen_at_ms: Some(1),
+                    priority: FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY,
+                },
+            ],
+            auto_reconnect: true,
+            discovery_fallback_transit: true,
+        }];
+
+        retain_enabled_peer_transport_addresses(&mut peers, false);
+        let (_, peers) = prioritize_direct_join_approval_route(peers, &browser_pubkey)
+            .expect("explicit browser route");
+
+        let webrtc_addresses = peers
+            .iter()
+            .flat_map(|peer| peer.addresses.iter())
+            .filter(|hint| split_peer_transport_addr(&hint.addr).0 == "webrtc")
+            .collect::<Vec<_>>();
+        assert_eq!(webrtc_addresses.len(), 1);
+        assert_eq!(
+            webrtc_addresses[0].addr,
+            format!("webrtc:02{browser_pubkey}")
+        );
+        assert!(peers.iter().any(|peer| {
+            peer.addresses
+                .iter()
+                .any(|hint| hint.addr == "udp:203.0.113.20:51820")
+        }));
     }
 
     #[test]

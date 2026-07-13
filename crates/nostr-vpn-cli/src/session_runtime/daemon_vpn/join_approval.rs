@@ -12,6 +12,8 @@ use crate::fips_private_mesh::FipsPrivateTunnelRuntime;
 
 const APPROVAL_RETRY_INITIAL: Duration = Duration::from_secs(2);
 const APPROVAL_RETRY_MAX: Duration = Duration::from_secs(60);
+const APPROVAL_INITIAL_BURST_ATTEMPTS: usize = 3;
+const APPROVAL_INITIAL_BURST_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone)]
 struct PendingRetry {
@@ -131,27 +133,34 @@ async fn flush_direct_join_approval_outbox(
             .fips_route_npub
             .as_deref()
             .unwrap_or(&approval.recipient_npub);
-        let mut sent = true;
-        for event in &approval.events {
-            if let Err(error) = runtime
-                .send_join_approval_event(
-                    delivery_peer,
-                    approval
-                        .fips_route_npub
-                        .as_ref()
-                        .map(|_| approval.recipient_npub.as_str()),
-                    &approval.request_pubkey,
-                    event,
-                )
-                .await
-            {
-                sent = false;
-                eprintln!(
-                    "direct FIPS join approval to {} is pending: {error}",
-                    approval.recipient_npub
-                );
-                break;
+        let mut sent = false;
+        for attempt in 0..APPROVAL_INITIAL_BURST_ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(APPROVAL_INITIAL_BURST_INTERVAL).await;
             }
+            let mut complete_attempt = true;
+            for event in &approval.events {
+                if let Err(error) = runtime
+                    .send_join_approval_event(
+                        delivery_peer,
+                        approval
+                            .fips_route_npub
+                            .as_ref()
+                            .map(|_| approval.recipient_npub.as_str()),
+                        &approval.request_pubkey,
+                        event,
+                    )
+                    .await
+                {
+                    complete_attempt = false;
+                    eprintln!(
+                        "direct FIPS join approval to {} is pending: {error}",
+                        approval.recipient_npub
+                    );
+                    break;
+                }
+            }
+            sent |= complete_attempt;
         }
         state.record_attempt(path, now);
         if sent {

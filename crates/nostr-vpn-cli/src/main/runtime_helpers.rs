@@ -529,6 +529,21 @@ fn fips_tunnel_config_from_app(
         recent_peers,
         live_peer_endpoints,
     )?;
+    for (_, approval) in nostr_vpn_core::join_pubsub::load_direct_join_approvals(config_path) {
+        let route_pubkey = approval
+            .fips_route_npub
+            .as_deref()
+            .unwrap_or(&approval.recipient_npub);
+        match crate::fips_private_mesh::prioritize_direct_join_approval_route(
+            config.endpoint_peers.clone(),
+            route_pubkey,
+        ) {
+            Ok((_, peers)) => config.endpoint_peers = peers,
+            Err(error) => {
+                eprintln!("ignoring invalid pending direct join approval route: {error}");
+            }
+        }
+    }
     config.control_pubsub_store_path =
         crate::control_pubsub_runtime::control_pubsub_store_file_path(config_path);
     config.clamp_mesh_mtu_to_underlay_interface_mtu(underlay_interface_mtu);

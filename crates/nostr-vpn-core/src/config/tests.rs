@@ -2,13 +2,24 @@
 mod tests {
     use super::{
         AdminSignedSharedRosterUpdate, AppConfig, InternetSource, PendingOutboundJoinRequest,
-        normalize_nostr_pubkey, parse_wireguard_exit_config, wireguard_exit_config_text,
+        normalize_nostr_pubkey, parse_wireguard_exit_config, split_peer_transport_addr,
+        wireguard_exit_config_text,
     };
     use crate::config_defaults::generate_nostr_identity;
 
     const TEST_WG_PRIVATE_KEY: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=";
     const TEST_WG_PUBLIC_KEY: &str = "AgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgI=";
     const TEST_WG_PRESHARED_KEY: &str = "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=";
+
+    #[test]
+    fn split_peer_transport_addr_preserves_webrtc_transport() {
+        let route = format!("webrtc:02{}", "ab".repeat(32));
+
+        assert_eq!(
+            split_peer_transport_addr(&route),
+            ("webrtc".to_string(), format!("02{}", "ab".repeat(32)))
+        );
+    }
 
     #[test]
     fn successful_roster_join_clears_every_local_join_request() {

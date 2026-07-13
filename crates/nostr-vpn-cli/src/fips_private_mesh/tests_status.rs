@@ -598,3 +598,48 @@
 
         assert_eq!(destination.npub(), endpoint_npub);
     }
+
+    #[test]
+    fn direct_join_approval_destinations_use_requested_browser_identity() {
+        let browser_keys = Keys::generate();
+        let browser_pubkey = browser_keys.public_key().to_hex();
+        let browser_npub = browser_keys.public_key().to_bech32().expect("npub");
+
+        let destination = direct_join_approval_destination_peer(&browser_pubkey)
+            .expect("direct browser destination identity");
+
+        assert_eq!(destination.npub(), browser_npub);
+    }
+
+    #[test]
+    fn direct_join_approval_route_is_prioritized_ahead_of_ambient_peers() {
+        let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
+        let browser_npub = Keys::generate().public_key().to_bech32().expect("npub");
+        let browser_address = FipsPeerAddressHint {
+            addr: format!("webrtc:02{}", Keys::generate().public_key().to_hex()),
+            seen_at_ms: None,
+            priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
+        };
+        let peers = vec![
+            FipsEndpointPeerTransportConfig {
+                npub: ambient_npub.clone(),
+                addresses: Vec::new(),
+                auto_reconnect: true,
+                discovery_fallback_transit: true,
+            },
+            FipsEndpointPeerTransportConfig {
+                npub: browser_npub.clone(),
+                addresses: Vec::new(),
+                auto_reconnect: false,
+                discovery_fallback_transit: true,
+            },
+        ];
+
+        let prioritized =
+            prioritize_join_approval_route(peers, &browser_npub, browser_address.clone());
+
+        assert_eq!(prioritized[0].npub, browser_npub);
+        assert!(prioritized[0].addresses.contains(&browser_address));
+        assert!(prioritized[0].auto_reconnect);
+        assert_eq!(prioritized[1].npub, ambient_npub);
+    }

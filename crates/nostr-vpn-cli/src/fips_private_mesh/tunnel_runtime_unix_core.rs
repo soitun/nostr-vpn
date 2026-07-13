@@ -770,28 +770,28 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) async fn ensure_join_approval_route(&self, route_pubkey: &str) -> Result<()> {
-        let route_pubkey = normalize_nostr_pubkey(route_pubkey)?;
-        let route_npub = PublicKey::from_hex(&route_pubkey)?.to_bech32()?;
-        let route_address = FipsPeerAddressHint {
-            addr: format!("webrtc:02{route_pubkey}"),
-            seen_at_ms: None,
-            priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
-        };
-        let mut peers = self.config.endpoint_peers.clone();
-        if let Some(peer) = peers.iter_mut().find(|peer| peer.npub == route_npub) {
-            if !peer.addresses.contains(&route_address) {
-                peer.addresses.push(route_address);
-            }
-        } else {
-            peers.push(FipsEndpointPeerTransportConfig {
-                npub: route_npub,
-                addresses: vec![route_address],
-                auto_reconnect: true,
-                discovery_fallback_transit: true,
-            });
-        }
+        let (route_npub, peers) = prioritize_direct_join_approval_route(
+            self.config.endpoint_peers.clone(),
+            route_pubkey,
+        )?;
         self.mesh.update_peers(&peers).await?;
-        Ok(())
+        let deadline = tokio::time::Instant::now() + DIRECT_JOIN_APPROVAL_ROUTE_CONNECT_TIMEOUT;
+        loop {
+            if self
+                .mesh
+                .endpoint()
+                .peers()
+                .await?
+                .iter()
+                .any(|peer| peer.npub == route_npub && peer.connected)
+            {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(anyhow!("direct join approval FIPS route did not connect"));
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
     }
 
     pub(crate) async fn send_roster(
