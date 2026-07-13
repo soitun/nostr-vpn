@@ -7,6 +7,7 @@ import org.nostrvpn.app.core.AppState
 
 internal fun androidx.compose.foundation.lazy.LazyListScope.walletPage(
     state: AppState,
+    qrJson: (String) -> JSONObject,
     dispatch: (JSONObject) -> Unit,
 ) {
     item {
@@ -16,5 +17,5 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.walletPage(
             style = MaterialTheme.typography.bodySmall,
         )
     }
-    item { PaidRouteMarketCard(state, dispatch, PaidRouteCardMode.Wallet) }
+    item { PaidRouteMarketCard(state, dispatch, PaidRouteCardMode.Wallet, qrJson) }
 }

@@ -32,6 +32,9 @@ mod paid_exit {
         unix_timestamp,
     };
 
+    const PAID_ROUTE_WALLET_TOP_UP_POLL_CADENCE: std::time::Duration =
+        std::time::Duration::from_secs(3);
+
     include!("paid_exit_actions.rs");
     include!("paid_exit_state.rs");
     include!("paid_exit_text.rs");
@@ -86,6 +89,42 @@ mod paid_exit {
             assert_eq!(state.total_balance_msat, 0);
             assert_eq!(state.total_balance_text, "0 sat");
             assert!(state.navigation_balance_text.is_empty());
+        }
+
+        #[test]
+        fn unchecked_mint_omits_unknown_balance_copy() {
+            let mut store = PaidRouteStore::default();
+            assert!(store.upsert_wallet_mint(
+                "https://mint.example",
+                "Example",
+                None,
+                0,
+            ));
+
+            let state = paid_route_wallet_state(
+                &store.wallet,
+                &NativePaidRouteWalletActionState::default(),
+            );
+
+            assert!(!state.balance_known);
+            assert!(state.total_balance_text.is_empty());
+            assert!(state.mints[0].balance_text.is_empty());
+        }
+
+        #[test]
+        fn top_up_activity_matches_the_pending_quote() {
+            let value = json!({
+                "activity": [
+                    {"kind": "top_up", "quote_id": "other", "status": "expired"},
+                    {"kind": "top_up", "quote_id": "wanted", "status": "complete"}
+                ]
+            });
+
+            assert_eq!(
+                paid_route_top_up_activity_status(&value, "wanted"),
+                Some(PaidRouteTopUpActivityStatus::Complete)
+            );
+            assert_eq!(paid_route_top_up_activity_status(&value, "missing"), None);
         }
 
         fn offer(

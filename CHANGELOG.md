@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Native wallets no longer show placeholder balances or routine exchange-rate
+  refresh labels, render Lightning top-up invoices as QR codes, and
+  automatically claim paid invoices while the receive flow is open.
+
 ## 4.0.92 - 2026-07-13
 
 ### Changed

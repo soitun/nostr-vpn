@@ -42,8 +42,10 @@ extension RootView {
             HStack(alignment: .top, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     sectionHeader("Wallet", systemImage: "creditcard.fill")
-                    Text(fallbackText(wallet.totalBalanceText, formatPaidRouteMsat(wallet.totalBalanceMsat)))
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                    if wallet.balanceKnown {
+                        Text(fallbackText(wallet.totalBalanceText, formatPaidRouteMsat(wallet.totalBalanceMsat)))
+                            .font(.system(size: 30, weight: .bold, design: .rounded))
+                    }
                     if !wallet.defaultMint.isEmpty {
                         Text(wallet.defaultMint)
                             .font(.caption)
@@ -89,7 +91,7 @@ extension RootView {
 
                 if !wallet.exchangeRateText.isEmpty {
                     Text([wallet.exchangeRateText, wallet.exchangeRateStatus]
-                        .filter { !$0.isEmpty }
+                        .filter { !$0.isEmpty && $0 != "Updated" && $0 != "Refreshing" }
                         .joined(separator: " · "))
                         .font(.caption)
                         .foregroundStyle(wallet.exchangeRateStale ? Color.orange : Color.secondary)
@@ -132,8 +134,10 @@ extension RootView {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(flow == .receive ? "Receive" : "Send")
                         .font(.title2.weight(.semibold))
-                    Text(fallbackText(wallet.totalBalanceText, formatPaidRouteMsat(wallet.totalBalanceMsat)))
-                        .foregroundStyle(.secondary)
+                    if wallet.balanceKnown {
+                        Text(fallbackText(wallet.totalBalanceText, formatPaidRouteMsat(wallet.totalBalanceMsat)))
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
                 Button("Done") { paidRouteWalletFlow = nil }
@@ -202,7 +206,7 @@ extension RootView {
                 }
             }
 
-            paidRouteWalletActionResult(wallet.lastAction)
+            paidRouteWalletActionResult(wallet.lastAction, showInvoiceQRCode: flow == .receive)
         }
         .padding(22)
         .frame(width: 520)
@@ -280,7 +284,10 @@ extension RootView {
     }
 
     @ViewBuilder
-    func paidRouteWalletActionResult(_ action: NativePaidRouteWalletActionState) -> some View {
+    func paidRouteWalletActionResult(
+        _ action: NativePaidRouteWalletActionState,
+        showInvoiceQRCode: Bool = false
+    ) -> some View {
         if !action.kind.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
@@ -301,7 +308,28 @@ extension RootView {
                 }
 
                 if !action.paymentRequest.isEmpty {
-                    paidRouteWalletOutputRow("Invoice", value: action.paymentRequest, copied: .paymentRequest)
+                    if showInvoiceQRCode && action.kind == "topup" {
+                        VStack(spacing: 10) {
+                            InviteQRCodeView(invite: action.paymentRequest)
+                                .frame(width: 220, height: 220)
+                            if action.expiresAtUnix > 0 {
+                                Text(paidRouteExpiryText(action.expiresAtUnix))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Button {
+                                manager.copy(action.paymentRequest, as: .paymentRequest)
+                            } label: {
+                                Label(
+                                    manager.copiedValue == .paymentRequest ? "Copied" : "Copy Invoice",
+                                    systemImage: manager.copiedValue == .paymentRequest ? "checkmark" : "doc.on.doc"
+                                )
+                            }
+                        }
+                        .frame(maxWidth: .infinity)
+                    } else {
+                        paidRouteWalletOutputRow("Invoice", value: action.paymentRequest, copied: .paymentRequest)
+                    }
                 }
                 if !action.token.isEmpty {
                     paidRouteWalletOutputRow("Token", value: action.token, copied: .cashuToken)

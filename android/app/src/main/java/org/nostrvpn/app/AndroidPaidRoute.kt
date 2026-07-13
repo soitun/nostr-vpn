@@ -1,5 +1,7 @@
 package org.nostrvpn.app
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -45,6 +47,7 @@ internal fun PaidRouteMarketCard(
     state: AppState,
     dispatch: (JSONObject) -> Unit,
     mode: PaidRouteCardMode,
+    qrJson: ((String) -> JSONObject)? = null,
 ) {
     val market = state.paidRouteMarket
     var mintUrl by remember { mutableStateOf(market.wallet.defaultMint) }
@@ -88,12 +91,14 @@ internal fun PaidRouteMarketCard(
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
-                Text(
-                    market.wallet.totalBalanceText.ifBlank { formatPaidRouteMsat(market.wallet.totalBalanceMsat) },
-                    color = if (mode == PaidRouteCardMode.Wallet) MaterialTheme.colorScheme.onSurface else Muted,
-                    style = if (mode == PaidRouteCardMode.Wallet) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.bodySmall,
-                    fontWeight = if (mode == PaidRouteCardMode.Wallet) FontWeight.Bold else FontWeight.Normal,
-                )
+                if (market.wallet.balanceKnown) {
+                    Text(
+                        market.wallet.totalBalanceText.ifBlank { formatPaidRouteMsat(market.wallet.totalBalanceMsat) },
+                        color = if (mode == PaidRouteCardMode.Wallet) MaterialTheme.colorScheme.onSurface else Muted,
+                        style = if (mode == PaidRouteCardMode.Wallet) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.bodySmall,
+                        fontWeight = if (mode == PaidRouteCardMode.Wallet) FontWeight.Bold else FontWeight.Normal,
+                    )
+                }
                 if (state.walletFiatEnabled && market.wallet.fiatBalanceText.isNotBlank()) {
                     Text("≈ ${market.wallet.fiatBalanceText}", color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
@@ -253,11 +258,13 @@ internal fun PaidRouteMarketCard(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(mint.url, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    mint.balanceText.ifBlank { formatPaidRouteMsat(mint.balanceMsat) },
-                                    color = Muted,
-                                    style = MaterialTheme.typography.bodySmall,
-                                )
+                                if (mint.balanceKnown) {
+                                    Text(
+                                        mint.balanceText.ifBlank { formatPaidRouteMsat(mint.balanceMsat) },
+                                        color = Muted,
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                }
                             }
                             if (mint.isDefault || mint.url == market.wallet.defaultMint) {
                                 Text("Default", color = Accent, style = MaterialTheme.typography.bodySmall)
@@ -288,7 +295,10 @@ internal fun PaidRouteMarketCard(
             onDismissRequest = { walletFlow = null },
             title = { Text(if (flow == PaidRouteWalletFlow.Receive) "Receive" else "Send") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                     Text("Lightning", style = MaterialTheme.typography.titleSmall)
                     if (!hasMint) {
                         Text("Add a mint before using Lightning.", color = Muted, style = MaterialTheme.typography.bodySmall)
@@ -369,7 +379,11 @@ internal fun PaidRouteMarketCard(
                             ) { Text("Export") }
                         }
                     }
-                    PaidRouteWalletActionResult(market.wallet.lastAction)
+                    PaidRouteWalletActionResult(
+                        market.wallet.lastAction,
+                        qrJson = qrJson,
+                        showInvoiceQrCode = flow == PaidRouteWalletFlow.Receive,
+                    )
                 }
             },
             confirmButton = {
@@ -549,11 +563,30 @@ private fun dispatchPaidRouteMarketFilter(
 }
 
 @Composable
-private fun PaidRouteWalletActionResult(action: org.nostrvpn.app.core.PaidRouteWalletActionState) {
+private fun PaidRouteWalletActionResult(
+    action: org.nostrvpn.app.core.PaidRouteWalletActionState,
+    qrJson: ((String) -> JSONObject)? = null,
+    showInvoiceQrCode: Boolean = false,
+) {
     if (action.kind.isBlank() && action.statusText.isBlank()) return
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(action.statusText.ifBlank { paidRouteWalletActionTitle(action.kind) }, color = Muted, style = MaterialTheme.typography.bodySmall)
         if (action.paymentRequest.isNotBlank()) {
+            if (showInvoiceQrCode && action.kind == "topup" && qrJson != null) {
+                QrCode(
+                    invite = action.paymentRequest,
+                    qrJson = qrJson,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                    side = 220.dp,
+                )
+                if (action.expiresAtUnix > 0) {
+                    Text(
+                        "Expires ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date(action.expiresAtUnix * 1_000))}",
+                        color = Muted,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
             CopyLine(action.paymentRequest, "Lightning invoice ready")
         }
         if (action.token.isNotBlank()) {

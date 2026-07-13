@@ -144,8 +144,20 @@ public sealed partial class AppViewModel
         }
     }
 
-    public string PaidRouteWalletBalanceText =>
-        TextOr(State.PaidRouteMarket.Wallet.TotalBalanceText, FormatPaidRouteMsat(State.PaidRouteMarket.Wallet.TotalBalanceMsat));
+    public string PaidRouteWalletBalanceText => State.PaidRouteMarket.Wallet.BalanceKnown
+        ? TextOr(State.PaidRouteMarket.Wallet.TotalBalanceText, FormatPaidRouteMsat(State.PaidRouteMarket.Wallet.TotalBalanceMsat))
+        : "";
+
+    public string PaidRouteWalletInvoiceExpiryText
+    {
+        get
+        {
+            var expiry = State.PaidRouteMarket.Wallet.LastAction.ExpiresAtUnix;
+            return expiry == 0
+                ? ""
+                : $"Expires {DateTimeOffset.FromUnixTimeSeconds((long)expiry).ToLocalTime():g}";
+        }
+    }
 
     public string WalletNavigationText => string.IsNullOrWhiteSpace(State.PaidRouteMarket.Wallet.NavigationBalanceText)
         ? "Wallet"

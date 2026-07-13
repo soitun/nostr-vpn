@@ -219,7 +219,7 @@ internal fun NostrVpnApp(
                         onDeleteNetwork = { pendingNetworkRemoval = network },
                     )
                     Page.Internet -> internetPage(state, network, dispatch, importWireGuardConfigFile)
-                    Page.Wallet -> walletPage(state, dispatch)
+                    Page.Wallet -> walletPage(state, qrJson, dispatch)
                     Page.Settings -> settingsPage(state, network, dispatch, selfUpdateState, selfUpdateActions)
                 }
             }

@@ -151,8 +151,8 @@ pub(crate) fn apply_exchange_rate(
 ) {
     wallet.fiat_currency = snapshot.currency.as_str().to_string();
     wallet.exchange_rate_status = match snapshot.status {
-        ExchangeRateStatus::Refreshing => "Refreshing",
-        ExchangeRateStatus::Ready => "Updated",
+        ExchangeRateStatus::Refreshing => "",
+        ExchangeRateStatus::Ready => "",
         ExchangeRateStatus::Failed if snapshot.rate.is_some() => "Using last rate",
         ExchangeRateStatus::Unavailable | ExchangeRateStatus::Failed => "Unavailable",
     }
@@ -426,5 +426,24 @@ mod tests {
         assert!(combine_rates(Some(60_000.0), Some(63_000.0)).is_ok());
         assert!(combine_rates(Some(60_000.0), Some(63_001.0)).is_err());
         assert!(combine_rates(Some(0.0), Some(f64::NAN)).is_err());
+    }
+
+    #[test]
+    fn routine_exchange_rate_states_have_no_status_copy() {
+        let mut wallet = NativePaidRouteWalletState::default();
+        for status in [ExchangeRateStatus::Refreshing, ExchangeRateStatus::Ready] {
+            apply_exchange_rate(
+                &mut wallet,
+                &ExchangeRateSnapshot {
+                    currency: FiatCurrency::Usd,
+                    rate: Some(63_000.0),
+                    sources: vec![ExchangeRateSource::Coinbase],
+                    status,
+                    timestamp: None,
+                    stale: false,
+                },
+            );
+            assert!(wallet.exchange_rate_status.is_empty());
+        }
     }
 }

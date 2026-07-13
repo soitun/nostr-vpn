@@ -62,11 +62,41 @@ impl NativeAppRuntime {
     }
 
     pub(super) fn refresh_paid_route_wallet(&mut self, refresh: bool) -> Result<()> {
+        let pending_top_up = (self.paid_route_wallet_last_action.kind == "topup")
+            .then(|| self.paid_route_wallet_last_action.clone());
         let mut args = vec!["show".to_string()];
         if refresh {
             args.push("--refresh".to_string());
+            if pending_top_up.is_some() {
+                args.push("--activity".to_string());
+            }
         }
-        let _ = self.run_paid_route_wallet_json(args)?;
+        let value = self.run_paid_route_wallet_json(args)?;
+        if let Some(mut top_up) = pending_top_up {
+            let status = paid_route_top_up_activity_status(&value, &top_up.quote_id);
+            if status == Some(PaidRouteTopUpActivityStatus::Complete) {
+                top_up.kind = "topup_complete".to_string();
+                top_up.status_text = format!("Received {} sat", top_up.amount_sat);
+                top_up.payment_request.clear();
+                self.paid_route_wallet_last_action = top_up;
+                self.paid_route_wallet_next_refresh_at = None;
+                return Ok(());
+            }
+            if status == Some(PaidRouteTopUpActivityStatus::Expired)
+                || (top_up.expires_at_unix > 0
+                    && top_up.expires_at_unix <= unix_timestamp())
+            {
+                top_up.kind = "topup_expired".to_string();
+                top_up.status_text = "Invoice expired".to_string();
+                top_up.payment_request.clear();
+                self.paid_route_wallet_last_action = top_up;
+                self.paid_route_wallet_next_refresh_at = None;
+                return Ok(());
+            }
+            top_up.status_text = format!("Waiting for {} sat", top_up.amount_sat);
+            self.paid_route_wallet_last_action = top_up;
+            return Ok(());
+        }
         self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
             kind: "refresh".to_string(),
             status_text: "Wallet refreshed".to_string(),
@@ -97,7 +127,26 @@ impl NativeAppRuntime {
             expires_at_unix: json_u64(quote, "expiry_unix"),
             ..NativePaidRouteWalletActionState::default()
         };
+        self.paid_route_wallet_next_refresh_at =
+            Some(std::time::Instant::now() + PAID_ROUTE_WALLET_TOP_UP_POLL_CADENCE);
         Ok(())
+    }
+
+    pub(super) fn refresh_pending_paid_route_wallet(&mut self) {
+        if self.paid_route_wallet_last_action.kind != "topup" {
+            self.paid_route_wallet_next_refresh_at = None;
+            return;
+        }
+        let now = std::time::Instant::now();
+        if self
+            .paid_route_wallet_next_refresh_at
+            .is_some_and(|next_refresh| now < next_refresh)
+        {
+            return;
+        }
+        self.paid_route_wallet_next_refresh_at =
+            Some(now + PAID_ROUTE_WALLET_TOP_UP_POLL_CADENCE);
+        let _ = self.refresh_paid_route_wallet(true);
     }
 
     pub(super) fn receive_paid_route_wallet_token(&mut self, token: &str) -> Result<()> {
@@ -782,4 +831,31 @@ impl NativeAppRuntime {
             .wait_with_output()
             .with_context(|| format!("failed to wait for {}", nvpn_bin.display()))
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PaidRouteTopUpActivityStatus {
+    Complete,
+    Expired,
+    Pending,
+}
+
+fn paid_route_top_up_activity_status(
+    value: &serde_json::Value,
+    quote_id: &str,
+) -> Option<PaidRouteTopUpActivityStatus> {
+    value
+        .get("activity")?
+        .as_array()?
+        .iter()
+        .find(|entry| {
+            json_string(entry, "kind") == "top_up"
+                && json_string(entry, "quote_id") == quote_id
+        })
+        .and_then(|entry| match json_string(entry, "status").as_str() {
+            "complete" => Some(PaidRouteTopUpActivityStatus::Complete),
+            "expired" => Some(PaidRouteTopUpActivityStatus::Expired),
+            "pending" => Some(PaidRouteTopUpActivityStatus::Pending),
+            _ => None,
+        })
 }

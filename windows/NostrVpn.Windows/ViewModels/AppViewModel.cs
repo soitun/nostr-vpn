@@ -74,6 +74,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     private bool _autoInstallUpdates;
     private string _updateVersion = "";
     private QrMatrix _joinRequestQr = new();
+    private QrMatrix _paidRouteWalletInvoiceQr = new();
     private bool _joinRequestPromptOpen;
     private static readonly TimeSpan UpdatePollInterval = LoadUpdatePollInterval();
     private static readonly Brush HeaderDangerBrush = new SolidColorBrush(Color.FromRgb(220, 38, 38));
@@ -92,6 +93,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
                 "Nostr VPN");
         }
         _core = new AppCoreClient(dataDir, version);
+        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         _autoInstallUpdates = LoadAutoInstallUpdates();
         ApplyState(_core.State(), syncDrafts: true);
         SyncLaunchOnStartupRegistration();
@@ -149,7 +151,6 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
 
         StartupService.RegisterDeepLinkProtocol();
 
-        _refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
         _refreshTimer.Tick += async (_, _) => await RefreshAsync();
         _refreshTimer.Start();
         _ = CheckUpdatesAsync(manual: false);
@@ -473,6 +474,12 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     {
         get => _joinRequestQr;
         private set => SetField(ref _joinRequestQr, value);
+    }
+
+    public QrMatrix PaidRouteWalletInvoiceQr
+    {
+        get => _paidRouteWalletInvoiceQr;
+        private set => SetField(ref _paidRouteWalletInvoiceQr, value);
     }
 
     public string JoinRequestQrCodeOrLink => State.JoinRequestQrCodeOrLink;

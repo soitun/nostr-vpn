@@ -20,13 +20,15 @@ pub(super) fn build_paid_route_wallet_card(app: &AppRef, page: &gtk::Box, state:
     header.append(&refresh);
     card.append(&header);
 
-    let balance = gtk::Label::new(Some(&non_empty_or(
-        &wallet.total_balance_text,
-        &format_paid_route_msat(wallet.total_balance_msat),
-    )));
-    balance.set_xalign(0.0);
-    balance.add_css_class("title-1");
-    card.append(&balance);
+    if wallet.balance_known {
+        let balance = gtk::Label::new(Some(&non_empty_or(
+            &wallet.total_balance_text,
+            &format_paid_route_msat(wallet.total_balance_msat),
+        )));
+        balance.set_xalign(0.0);
+        balance.add_css_class("title-1");
+        card.append(&balance);
+    }
     if state.wallet_fiat_enabled && !wallet.fiat_balance_text.is_empty() {
         detail_row(&card, "Fiat", &wallet.fiat_balance_text);
         detail_row(
@@ -43,6 +45,15 @@ pub(super) fn build_paid_route_wallet_card(app: &AppRef, page: &gtk::Box, state:
         "Status",
         &paid_route_wallet_action_text(&wallet.last_action),
     );
+    if wallet.last_action.kind == "topup" && !wallet.last_action.payment_request.is_empty() {
+        card.append(&qr::build(&wallet.last_action.payment_request, 220));
+        let copy = icon_text_button("Copy invoice", "edit-copy-symbolic");
+        {
+            let invoice = wallet.last_action.payment_request.clone();
+            copy.connect_clicked(move |_| copy_text(&invoice));
+        }
+        card.append(&copy);
+    }
 
     wallet_form_row(
         app,
@@ -383,19 +394,17 @@ fn paid_route_mint_row(app: &AppRef, parent: &gtk::Box, mint: &NativePaidRouteWa
     title.add_css_class("heading");
     title.set_xalign(0.0);
     text.append(&title);
-    let status = if mint.balance_known {
-        non_empty_or(
+    if mint.balance_known {
+        let status = non_empty_or(
             &mint.balance_text,
             &format_paid_route_msat(mint.balance_msat),
-        )
-    } else {
-        "Balance unknown".to_string()
-    };
-    let status = gtk::Label::new(Some(&status));
-    status.add_css_class("caption");
-    status.add_css_class("dim-label");
-    status.set_xalign(0.0);
-    text.append(&status);
+        );
+        let status = gtk::Label::new(Some(&status));
+        status.add_css_class("caption");
+        status.add_css_class("dim-label");
+        status.set_xalign(0.0);
+        text.append(&status);
+    }
     row.append(&text);
     if mint.is_default {
         row.append(&badge("Default", "ok"));

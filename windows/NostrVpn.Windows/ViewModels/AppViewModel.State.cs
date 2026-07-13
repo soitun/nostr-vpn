@@ -28,6 +28,12 @@ public sealed partial class AppViewModel
         JoinRequestQr = string.IsNullOrWhiteSpace(state.JoinRequestQrCodeOrLink)
             ? new QrMatrix()
             : _core.QrMatrix(state.JoinRequestQrCodeOrLink);
+        var invoice = state.PaidRouteMarket.Wallet.LastAction.PaymentRequest;
+        PaidRouteWalletInvoiceQr = string.IsNullOrWhiteSpace(invoice)
+            ? new QrMatrix()
+            : _core.QrMatrix(invoice);
+        _refreshTimer.Interval = TimeSpan.FromSeconds(
+            state.PaidRouteMarket.Wallet.LastAction.Kind == "topup" ? 2 : 15);
         if (syncDrafts)
         {
             SyncDrafts(state);
@@ -166,6 +172,8 @@ public sealed partial class AppViewModel
         OnPropertyChanged(nameof(PaidRouteMarketVisible));
         OnPropertyChanged(nameof(PaidExitSellerVisible));
         OnPropertyChanged(nameof(PaidRouteWalletBalanceText));
+        OnPropertyChanged(nameof(PaidRouteWalletInvoiceQr));
+        OnPropertyChanged(nameof(PaidRouteWalletInvoiceExpiryText));
         OnPropertyChanged(nameof(HasPaidRouteWalletMint));
         OnPropertyChanged(nameof(WalletNavigationText));
         OnPropertyChanged(nameof(PaidRouteWalletFiatText));

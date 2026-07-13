@@ -606,7 +606,7 @@ fn paid_route_wallet_state(
             balance_msat: mint.balance_msat.unwrap_or_default(),
             balance_text: mint
                 .balance_msat
-                .map_or_else(|| "unknown".to_string(), paid_route_msat_text),
+                .map_or_else(String::new, paid_route_msat_text),
             last_checked_unix: mint.last_checked_unix,
         })
         .collect();
@@ -618,7 +618,7 @@ fn paid_route_wallet_state(
         total_balance_text: if balance_known {
             paid_route_msat_text(total_balance_msat)
         } else {
-            "unknown".to_string()
+            String::new()
         },
         navigation_balance_text: if balance_known && total_balance_msat > 0 {
             compact_wallet_balance_text(total_balance_msat)

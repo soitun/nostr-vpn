@@ -228,6 +228,9 @@ final class AppManager: ObservableObject {
     }
 
     var paidRouteLiveRefreshWanted: Bool {
+        if state.paidRouteMarket.wallet.lastAction.kind == "topup" {
+            return true
+        }
         if state.paidExitSeller.enabled, !state.paidExitSeller.sessions.isEmpty {
             return true
         }

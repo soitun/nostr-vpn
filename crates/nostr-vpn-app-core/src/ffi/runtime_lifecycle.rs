@@ -74,6 +74,8 @@ impl NativeAppRuntime {
             lan_peers: HashMap::new(),
             paid_route_market_filter: NativePaidRouteMarketFilterState::default(),
             paid_route_wallet_last_action: NativePaidRouteWalletActionState::default(),
+            #[cfg(feature = "paid-exit")]
+            paid_route_wallet_next_refresh_at: None,
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
             exchange_rate_service,
             #[cfg(not(test))]
@@ -137,6 +139,8 @@ impl NativeAppRuntime {
             lan_peers: HashMap::new(),
             paid_route_market_filter: NativePaidRouteMarketFilterState::default(),
             paid_route_wallet_last_action: NativePaidRouteWalletActionState::default(),
+            #[cfg(feature = "paid-exit")]
+            paid_route_wallet_next_refresh_at: None,
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
             exchange_rate_service,
             #[cfg(not(test))]

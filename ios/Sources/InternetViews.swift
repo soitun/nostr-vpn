@@ -186,9 +186,11 @@ struct PaidRouteMarketCard: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Text(fallbackText(market.wallet.totalBalanceText, formatPaidRouteMsat(market.wallet.totalBalanceMsat)))
-                        .font(mode == .wallet ? .largeTitle.bold() : .footnote)
-                        .foregroundStyle(mode == .wallet ? .primary : .secondary)
+                    if market.wallet.balanceKnown {
+                        Text(fallbackText(market.wallet.totalBalanceText, formatPaidRouteMsat(market.wallet.totalBalanceMsat)))
+                            .font(mode == .wallet ? .largeTitle.bold() : .footnote)
+                            .foregroundStyle(mode == .wallet ? .primary : .secondary)
+                    }
                     if model.state.walletFiatEnabled && !market.wallet.fiatBalanceText.isEmpty {
                         Text("≈ \(market.wallet.fiatBalanceText)")
                             .font(.footnote)
@@ -407,7 +409,10 @@ struct PaidRouteMarketCard: View {
                     }
                 }
 
-                walletActionResult(market.wallet.lastAction)
+                walletActionResult(
+                    market.wallet.lastAction,
+                    showInvoiceQRCode: flow == .receive
+                )
             }
             .navigationTitle(flow == .receive ? "Receive" : "Send")
             .toolbar {
@@ -521,9 +526,11 @@ struct PaidRouteMarketCard: View {
                             Text(mint.url)
                                 .fontWeight(.semibold)
                                 .lineLimit(1)
-                            Text(fallbackText(mint.balanceText, formatPaidRouteMsat(mint.balanceMsat)))
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
+                            if mint.balanceKnown {
+                                Text(fallbackText(mint.balanceText, formatPaidRouteMsat(mint.balanceMsat)))
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                         Spacer()
                         if mint.url == market.wallet.defaultMint {
@@ -553,12 +560,25 @@ struct PaidRouteMarketCard: View {
     }
 
     @ViewBuilder
-    private func walletActionResult(_ action: PaidRouteWalletActionState) -> some View {
+    private func walletActionResult(
+        _ action: PaidRouteWalletActionState,
+        showInvoiceQRCode: Bool = false
+    ) -> some View {
         if !action.kind.isEmpty || !action.statusText.isEmpty {
             Text(action.statusText.isEmpty ? paidRouteWalletActionTitle(action.kind) : action.statusText)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             if !action.paymentRequest.isEmpty {
+                if showInvoiceQRCode && action.kind == "topup" {
+                    QrCodeView(matrix: model.qrMatrix(for: action.paymentRequest))
+                        .frame(width: 240, height: 240)
+                        .frame(maxWidth: .infinity)
+                    if action.expiresAtUnix > 0 {
+                        Text("Expires \(Date(timeIntervalSince1970: TimeInterval(action.expiresAtUnix)).formatted())")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
                 CopyLine(value: action.paymentRequest, displayValue: "Lightning invoice", model: model)
             }
             if !action.token.isEmpty {

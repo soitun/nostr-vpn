@@ -26,6 +26,8 @@ impl NativeAppRuntime {
             NativeAppAction::GetState | NativeAppAction::Tick => {
                 #[cfg(not(test))]
                 self.refresh_pending_join_approval();
+                #[cfg(feature = "paid-exit")]
+                self.refresh_pending_paid_route_wallet();
                 if self.mobile_runtime {
                     self.refresh_mobile_status()
                 } else {

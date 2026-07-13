@@ -206,6 +206,8 @@ struct NativeAppRuntime {
     lan_peers: HashMap<String, LanPeerRecord>,
     paid_route_market_filter: NativePaidRouteMarketFilterState,
     paid_route_wallet_last_action: NativePaidRouteWalletActionState,
+    #[cfg(feature = "paid-exit")]
+    paid_route_wallet_next_refresh_at: Option<Instant>,
     paid_route_payment_last_action: NativePaidRoutePaymentActionState,
     exchange_rate_service: ExchangeRateService,
     #[cfg(not(test))]

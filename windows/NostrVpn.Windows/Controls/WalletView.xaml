@@ -1,6 +1,7 @@
 <UserControl x:Class="NostrVpn.Windows.Controls.WalletView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:controls="clr-namespace:NostrVpn.Windows.Controls">
 <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=Wallet}">
   <TextBlock Text="Pay for internet access and receive earnings when you sell bandwidth." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,12" />
   <Border Style="{StaticResource Card}">
@@ -9,7 +10,7 @@
         <Button DockPanel.Dock="Right" Content="Refresh" Click="RefreshPaidRouteWallet_Click" />
         <StackPanel>
           <TextBlock Text="Wallet" FontSize="18" FontWeight="SemiBold" />
-          <TextBlock Text="{Binding PaidRouteWalletBalanceText, Mode=OneWay}" FontSize="32" FontWeight="Bold" />
+          <TextBlock Text="{Binding PaidRouteWalletBalanceText, Mode=OneWay}" FontSize="32" FontWeight="Bold" Visibility="{Binding PaidRouteWalletBalanceText, Converter={StaticResource NonEmptyStringToVisibility}}" />
           <TextBlock Text="{Binding PaidRouteWalletFiatText}" Foreground="{StaticResource TextSecondary}" Visibility="{Binding PaidRouteWalletFiatText, Converter={StaticResource NonEmptyStringToVisibility}}" />
           <TextBlock Text="{Binding PaidRouteWalletRateText}" Foreground="{StaticResource TextSecondary}" FontSize="12" Visibility="{Binding PaidRouteWalletRateText, Converter={StaticResource NonEmptyStringToVisibility}}" />
         </StackPanel>
@@ -62,6 +63,10 @@
 
       <StackPanel Margin="0,10,0,0" Visibility="{Binding State.PaidRouteMarket.Wallet.LastAction.PaymentRequest, Converter={StaticResource NonEmptyStringToVisibility}}">
         <TextBlock Text="Invoice" FontWeight="SemiBold" Margin="0,0,0,4" />
+        <Viewbox Stretch="Uniform" StretchDirection="DownOnly" MaxWidth="220" MaxHeight="220" HorizontalAlignment="Center">
+          <controls:QrCodeView Width="220" Height="220" Matrix="{Binding PaidRouteWalletInvoiceQr}" />
+        </Viewbox>
+        <TextBlock Text="{Binding PaidRouteWalletInvoiceExpiryText}" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center" Margin="0,6,0,4" Visibility="{Binding PaidRouteWalletInvoiceExpiryText, Converter={StaticResource NonEmptyStringToVisibility}}" />
         <DockPanel LastChildFill="True">
           <Button DockPanel.Dock="Right" Content="Copy" Tag="{Binding State.PaidRouteMarket.Wallet.LastAction.PaymentRequest}" Click="CopyWalletValue_Click" Margin="8,0,0,0" />
           <TextBox Text="{Binding State.PaidRouteMarket.Wallet.LastAction.PaymentRequest}" IsReadOnly="True" />
