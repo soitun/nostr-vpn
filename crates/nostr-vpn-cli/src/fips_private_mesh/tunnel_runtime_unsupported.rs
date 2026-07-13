@@ -17,6 +17,10 @@ impl FipsPrivateTunnelRuntime {
         Vec::new()
     }
 
+    pub(crate) fn drain_join_approval_acks(&mut self) -> Vec<ReceivedJoinApprovalAck> {
+        Vec::new()
+    }
+
     #[cfg(feature = "paid-exit")]
     pub(crate) fn drain_paid_route_usage(&self, _participant: &str) -> Result<PaidRouteUsage> {
         Ok(PaidRouteUsage::default())

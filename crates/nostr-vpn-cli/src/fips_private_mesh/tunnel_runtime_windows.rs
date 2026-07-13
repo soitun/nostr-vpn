@@ -43,6 +43,8 @@ impl FipsPrivateTunnelRuntime {
             Some(config.control_pubsub_store_path.clone()),
         )
         .await?;
+        let join_approval_ack =
+            Some(DirectJoinApprovalAckRuntime::start(Arc::clone(mesh.endpoint())).await?);
         let (session, iface, interface_index) = start_windows_fips_wintun(&config)?;
         let endpoint_bypass_routes =
             windows_fips_endpoint_bypass_targets(&config.endpoint_peers, &config.route_targets);
@@ -102,6 +104,7 @@ impl FipsPrivateTunnelRuntime {
             iface,
             mesh,
             control_pubsub,
+            join_approval_ack,
             secure_dns,
             config: config.clone(),
             session,
@@ -319,6 +322,9 @@ impl FipsPrivateTunnelRuntime {
         }
         if let Some(control_pubsub) = runtime.control_pubsub.take() {
             control_pubsub.stop().await;
+        }
+        if let Some(join_approval_ack) = runtime.join_approval_ack.take() {
+            join_approval_ack.stop().await;
         }
         runtime.stop.store(true, Ordering::Relaxed);
         let _ = runtime.session.shutdown();

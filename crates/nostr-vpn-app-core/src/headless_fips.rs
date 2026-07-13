@@ -4,12 +4,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
+use fips_core::FipsEndpointServiceReceiver;
 use fips_endpoint::{FipsEndpoint, PeerAddress, PeerConfig as FipsPeerConfig, PeerIdentity};
 use nostr_sdk::prelude::{PublicKey, ToBech32};
-use nostr_vpn_core::config::AppConfig;
+use nostr_vpn_core::config::{AppConfig, normalize_nostr_pubkey};
 use nostr_vpn_core::join_pubsub::{
-    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, delivered_approval_event_datagram,
-    load_direct_join_approvals, routed_approval_event_datagram,
+    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, NostrJoinFipsPubsubDatagram,
+    approval_applied_ack_matches_queued, delivered_approval_event_datagram,
+    load_direct_join_approvals, parse_approval_applied_ack_datagram,
+    routed_approval_event_datagram,
 };
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
 
@@ -17,6 +20,7 @@ use crate::mobile_tunnel::{MobileTunnelConfig, fips_endpoint_config};
 
 const HEADLESS_FIPS_WORKER_STACK_SIZE: usize = 4 * 1024 * 1024;
 const DIRECT_APPROVAL_ROUTE_TIMEOUT: Duration = Duration::from_secs(5);
+const DIRECT_APPROVAL_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Unprivileged FIPS endpoint used by production-like integration tests.
 ///
@@ -26,6 +30,7 @@ const DIRECT_APPROVAL_ROUTE_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct HeadlessDirectApprovalRuntime {
     runtime: Runtime,
     endpoint: Arc<FipsEndpoint>,
+    approval_ack_receiver: FipsEndpointServiceReceiver,
     base_peers: Vec<FipsPeerConfig>,
 }
 
@@ -53,9 +58,13 @@ impl HeadlessDirectApprovalRuntime {
             )
             .await
         })?;
+        let endpoint = Arc::new(endpoint);
+        let approval_ack_receiver = runtime
+            .block_on(endpoint.register_service_receiver(NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT))?;
         Ok(Self {
             runtime,
-            endpoint: Arc::new(endpoint),
+            endpoint,
+            approval_ack_receiver,
             base_peers,
         })
     }
@@ -138,10 +147,65 @@ impl HeadlessDirectApprovalRuntime {
                 ))?;
                 sent += 1;
             }
+            self.wait_for_approval_ack(&approval)?;
             fs::remove_file(&path)
                 .with_context(|| format!("failed to remove {}", path.display()))?;
         }
         Ok(sent)
+    }
+
+    fn wait_for_approval_ack(
+        &self,
+        approval: &nostr_vpn_core::join_pubsub::QueuedNostrJoinApproval,
+    ) -> Result<()> {
+        let expected_source = approval
+            .fips_route_npub
+            .as_deref()
+            .unwrap_or(&approval.recipient_npub);
+        self.runtime.block_on(async {
+            let deadline = tokio::time::Instant::now() + DIRECT_APPROVAL_ACK_TIMEOUT;
+            let mut datagrams = Vec::with_capacity(8);
+            loop {
+                let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+                if remaining.is_zero() {
+                    return Err(anyhow!(
+                        "direct join approval apply acknowledgment timed out"
+                    ));
+                }
+                let received = tokio::time::timeout(
+                    remaining,
+                    self.approval_ack_receiver
+                        .recv_batch_into(&mut datagrams, 8),
+                )
+                .await
+                .map_err(|_| anyhow!("direct join approval apply acknowledgment timed out"))?;
+                let Some(_) = received else {
+                    return Err(anyhow!(
+                        "direct join approval acknowledgment service closed"
+                    ));
+                };
+                for datagram in &datagrams {
+                    let Ok(source_peer) = normalize_nostr_pubkey(&datagram.source_peer.npub())
+                    else {
+                        continue;
+                    };
+                    if source_peer != expected_source {
+                        continue;
+                    }
+                    let inbound = NostrJoinFipsPubsubDatagram {
+                        source_port: datagram.source_port,
+                        destination_port: datagram.destination_port,
+                        payload: datagram.data.as_ref().to_vec(),
+                    };
+                    let Ok(ack) = parse_approval_applied_ack_datagram(&inbound) else {
+                        continue;
+                    };
+                    if approval_applied_ack_matches_queued(&ack, approval) {
+                        return Ok(());
+                    }
+                }
+            }
+        })
     }
 }
 

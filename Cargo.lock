@@ -148,7 +148,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3560,9 +3560,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e60e2d54b509b0359b18ae0675e1c7301a386c8cd8cb4725a89de53e5647e2fb"
+checksum = "0af733d7fc22088128b58d63aaeefc0fca5429ee6a1c43578f9be51e32f84591"
 dependencies = [
  "anyhow",
  "nostr-sdk",
@@ -3707,7 +3707,7 @@ dependencies = [
  "libc",
  "ndk-context",
  "netdev",
- "nostr-identity 0.3.0",
+ "nostr-identity 0.3.1",
  "nostr-pubsub",
  "nostr-pubsub-relay",
  "nostr-sdk",
@@ -3744,7 +3744,7 @@ dependencies = [
  "keyring-core",
  "libc",
  "netdev",
- "nostr-identity 0.3.0",
+ "nostr-identity 0.3.1",
  "nostr-pubsub",
  "nostr-sdk",
  "rcgen",

@@ -7,7 +7,6 @@ mod daemon_vpn_join_approval;
 mod daemon_vpn_paid_exit;
 #[path = "daemon_vpn/startup.rs"]
 mod daemon_vpn_startup;
-
 use daemon_vpn_heartbeat::*;
 use daemon_vpn_join_approval::*;
 #[cfg(feature = "paid-exit")]
@@ -87,6 +86,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         try_load_paid_exit_spilman_receiver(&config_path, &app.paid_exit).await;
     #[cfg(feature = "paid-exit")]
     let mut automatic_paid_exit = PaidExitAutomaticBuyer::default();
+    let mut direct_join_approval_delivery = DirectJoinApprovalDeliveryState::default();
 
     loop {
         tokio::select! {
@@ -155,8 +155,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         join_request_sends: &mut fips_join_request_sends,
                     })
                     .await;
-                    if let Some(runtime) = fips_tunnel_runtime.as_ref() {
-                        flush_direct_join_approval_outbox(runtime, &app, &config_path).await;
+                    if let Some(runtime) = fips_tunnel_runtime.as_mut() {
+                        direct_join_approval_delivery.flush(runtime, &app, &config_path).await;
                     }
                 }
                 if !vpn_active {

@@ -253,6 +253,7 @@ include!("fips_private_mesh/runtime_status.rs");
 include!("fips_private_mesh/runtime_control.rs");
 include!("fips_private_mesh/control_frame.rs");
 include!("fips_private_mesh/endpoint_config.rs");
+include!("fips_private_mesh/join_approval_ack.rs");
 include!("fips_private_mesh/tunnel_config.rs");
 include!("fips_private_mesh/tunnel_runtime_unix_core.rs");
 include!("fips_private_mesh/tunnel_runtime_linux.rs");

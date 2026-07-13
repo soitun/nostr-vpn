@@ -92,6 +92,11 @@ impl FipsPrivateTunnelRuntime {
             Some(config.control_pubsub_store_path.clone()),
         )
         .await?;
+        let join_approval_ack = if manage_host_dns {
+            Some(DirectJoinApprovalAckRuntime::start(Arc::clone(mesh.endpoint())).await?)
+        } else {
+            None
+        };
         let tun = Arc::new(
             SystemTun::new(&config.iface)
                 .with_context(|| fips_tun_create_context(&config.iface))?
@@ -109,6 +114,7 @@ impl FipsPrivateTunnelRuntime {
             iface,
             mesh,
             control_pubsub,
+            join_approval_ack,
             secure_dns: None,
             manages_secure_dns: manage_host_dns,
             config: config.clone(),
@@ -230,6 +236,9 @@ impl FipsPrivateTunnelRuntime {
         runtime.stop_fips_host_runtime().await;
         if let Some(control_pubsub) = runtime.control_pubsub.take() {
             control_pubsub.stop().await;
+        }
+        if let Some(join_approval_ack) = runtime.join_approval_ack.take() {
+            join_approval_ack.stop().await;
         }
         runtime.event_rx.close();
         stop_tun_send_worker(runtime.tun_send_worker).await;
@@ -674,6 +683,12 @@ impl FipsPrivateTunnelRuntime {
 
     pub(crate) fn peer_statuses(&self) -> Vec<MeshPeerStatus> {
         self.mesh.peer_statuses()
+    }
+
+    pub(crate) fn drain_join_approval_acks(&mut self) -> Vec<ReceivedJoinApprovalAck> {
+        self.join_approval_ack
+            .as_mut()
+            .map_or_else(Vec::new, DirectJoinApprovalAckRuntime::drain)
     }
 
     #[cfg(feature = "paid-exit")]

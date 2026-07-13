@@ -3,6 +3,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     iface: String,
     mesh: Arc<FipsPrivateMeshRuntime>,
     control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
+    join_approval_ack: Option<DirectJoinApprovalAckRuntime>,
     secure_dns: Option<crate::secure_dns_runtime::SecureDnsRuntime>,
     config: FipsPrivateTunnelConfig,
     session: Arc<Session>,

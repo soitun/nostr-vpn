@@ -30,17 +30,23 @@ pub const MAX_NOSTR_JOIN_APPROVAL_FUTURE_SECS: u64 = 10 * 60;
 pub struct AppliedNostrJoinApproval {
     pub profile_id: NostrIdentityId,
     pub network_id: String,
+    pub request_pubkey: String,
+    pub device_app_key_pubkey: String,
+    pub approval_event_id: String,
     pub approved_by_pubkey: String,
     pub approved_at: u64,
+    pub applied_at: u64,
 }
 
 struct VerifiedNostrJoinApproval {
     context: NostrVpnJoinApprovalContext,
     signed_roster: SignedRoster,
+    approval_event_id: String,
 }
 
 struct VerifiedReceiptCandidate {
     signer_pubkey: String,
+    event_id: String,
     receipt: NostrIdentityDeviceApprovalReceipt,
 }
 
@@ -181,7 +187,7 @@ impl AppConfig {
         pending.validate_for_device(&self.own_nostr_pubkey_hex()?)?;
         let verified_approvals = verify_nostr_join_approval_events(pending, events, now)?;
         for verified in verified_approvals {
-            if let Ok((updated, applied)) = self.stage_verified_nostr_join_approval(verified) {
+            if let Ok((updated, applied)) = self.stage_verified_nostr_join_approval(verified, now) {
                 *self = updated;
                 return Ok(Some(applied));
             }
@@ -192,6 +198,7 @@ impl AppConfig {
     fn stage_verified_nostr_join_approval(
         &self,
         verified: VerifiedNostrJoinApproval,
+        now: u64,
     ) -> Result<(Self, AppliedNostrJoinApproval)> {
         let context = &verified.context;
         let mut updated = self.clone();
@@ -253,9 +260,13 @@ impl AppConfig {
         let applied = AppliedNostrJoinApproval {
             profile_id: context.profile_id,
             network_id: context.mesh_network_id.clone(),
+            request_pubkey: context.request_pubkey.clone(),
+            device_app_key_pubkey: context.device_app_key_pubkey.clone(),
+            approval_event_id: verified.approval_event_id,
             approved_by_pubkey: context.approved_by_pubkey.clone(),
             approved_at: u64::try_from(context.approved_at)
                 .context("Nostr join approval timestamp is negative")?,
+            applied_at: now,
         };
         Ok((updated, applied))
     }
@@ -339,6 +350,7 @@ fn parse_nostr_join_approval_candidate(
             Ok(Some(VerifiedApprovalCandidate::Receipt(
                 VerifiedReceiptCandidate {
                     signer_pubkey: event.pubkey.to_hex(),
+                    event_id: event.id.to_hex(),
                     receipt,
                 },
             )))
@@ -446,6 +458,7 @@ fn verify_nostr_join_approval_pair(
     Ok(VerifiedNostrJoinApproval {
         context: context.context.clone(),
         signed_roster,
+        approval_event_id: receipt.event_id.clone(),
     })
 }
 

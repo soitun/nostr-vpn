@@ -14,8 +14,11 @@ use nostr_vpn_core::identity_bridge::{
 };
 use nostr_vpn_core::join_pubsub::{
     NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, NostrJoinFipsPubsubClient, NostrJoinFipsPubsubDatagram,
-    delivered_approval_event_datagram, direct_join_approval_outbox_directory,
-    load_direct_join_approvals, queue_direct_join_approval, routed_approval_event_datagram,
+    approval_applied_ack_datagram, approval_applied_ack_matches_queued,
+    approval_event_datagram_matches_ack, delivered_approval_event_datagram,
+    direct_join_approval_outbox_directory, load_direct_join_approvals,
+    parse_approval_applied_ack_datagram, queue_direct_join_approval,
+    routed_approval_event_datagram,
 };
 use nostr_vpn_core::join_requests::MAX_NOSTR_JOIN_APPROVAL_AGE_SECS;
 
@@ -391,7 +394,29 @@ fn direct_fips_approval_outbox_delivers_without_a_relay_subscription() {
             .expect("ingest direct approval")
             .or(applied);
     }
-    assert_eq!(applied.expect("approval applied").profile_id, profile_id);
+    let applied = applied.expect("approval applied");
+    assert_eq!(applied.profile_id, profile_id);
+    assert_eq!(applied.request_pubkey, pending.request.request_pubkey);
+    assert_eq!(applied.device_app_key_pubkey, recipient);
+    assert_eq!(applied.approval_event_id, queued[0].1.events[0].id.to_hex());
+    let ack_datagram =
+        approval_applied_ack_datagram(&joiner.nostr_keys().expect("device AppKey"), &applied)
+            .expect("build applied ack datagram");
+    let ack =
+        parse_approval_applied_ack_datagram(&ack_datagram).expect("parse applied ack datagram");
+    assert!(approval_applied_ack_matches_queued(&ack, &queued[0].1));
+    for event in &queued[0].1.events {
+        let duplicate = delivered_approval_event_datagram(&pending.request.request_pubkey, event)
+            .expect("duplicate approval datagram");
+        assert!(approval_event_datagram_matches_ack(&duplicate, &ack));
+    }
+
+    let attacker = Keys::generate();
+    let forged = nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalAppliedAck {
+        device_app_key_pubkey: attacker.public_key().to_hex(),
+        ..ack
+    };
+    assert!(!approval_applied_ack_matches_queued(&forged, &queued[0].1));
     assert!(joiner.pending_nostr_join_request.is_none());
 
     let _ = fs::remove_dir_all(direct_join_approval_outbox_directory(&path));

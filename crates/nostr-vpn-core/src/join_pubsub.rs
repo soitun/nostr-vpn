@@ -8,12 +8,15 @@ use anyhow::{Context, Result, anyhow};
 use nostr_pubsub::{
     Filter, FipsPubsubWireCodec, FipsPubsubWireMessage, PublicKey, SubscriptionId, VerifiedEvent,
 };
-use nostr_sdk::prelude::{Alphabet, Event, Kind, SingleLetterTag, Timestamp};
+use nostr_sdk::prelude::{Alphabet, Event, JsonUtil, Keys, Kind, SingleLetterTag, Timestamp};
 use serde::{Deserialize, Serialize};
 
 use crate::config::{AppConfig, normalize_nostr_pubkey};
 use crate::identity_bridge::{
-    NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE, NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE,
+    NOSTR_IDENTITY_DEVICE_APPROVAL_APPLIED_ACK_SCHEMA, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE,
+    NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE, NostrIdentityDeviceApprovalAppliedAck,
+    build_nostr_identity_device_approval_applied_ack_event,
+    parse_nostr_identity_device_approval_applied_ack_event,
 };
 use crate::join_requests::{AppliedNostrJoinApproval, is_valid_nostr_join_approval_candidate};
 
@@ -24,6 +27,7 @@ const MAX_BUFFERED_APPROVAL_EVENTS: usize = 4;
 const DIRECT_APPROVAL_OUTBOX_VERSION: u8 = 1;
 const MAX_DIRECT_APPROVAL_EVENTS: usize = 4;
 const WEBVM_APPROVAL_ROUTE_MAGIC: &[u8; 8] = b"NVPNFWD1";
+pub const NOSTR_JOIN_APPROVAL_APPLIED_ACK_MAGIC: &[u8; 8] = b"NVPNACK1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueuedNostrJoinApproval {
@@ -91,6 +95,94 @@ pub fn routed_approval_event_datagram(
     payload.extend_from_slice(&recipient);
     payload.extend_from_slice(&direct.payload);
     Ok(NostrJoinFipsPubsubDatagram::new(payload))
+}
+
+pub fn approval_applied_ack_datagram(
+    device_app_key_keys: &Keys,
+    applied: &AppliedNostrJoinApproval,
+) -> Result<NostrJoinFipsPubsubDatagram> {
+    let event = build_nostr_identity_device_approval_applied_ack_event(
+        device_app_key_keys,
+        NostrIdentityDeviceApprovalAppliedAck {
+            schema: NOSTR_IDENTITY_DEVICE_APPROVAL_APPLIED_ACK_SCHEMA,
+            request_pubkey: applied.request_pubkey.clone(),
+            device_app_key_pubkey: applied.device_app_key_pubkey.clone(),
+            approval_event_id: applied.approval_event_id.clone(),
+            approved_by_pubkey: applied.approved_by_pubkey.clone(),
+            applied_at: i64::try_from(applied.applied_at)
+                .context("join approval applied timestamp overflows i64")?,
+        },
+    )
+    .map_err(|error| anyhow!("failed to build join approval applied ack: {error}"))?;
+    let event_json = event.as_json();
+    let mut payload =
+        Vec::with_capacity(NOSTR_JOIN_APPROVAL_APPLIED_ACK_MAGIC.len() + event_json.len());
+    payload.extend_from_slice(NOSTR_JOIN_APPROVAL_APPLIED_ACK_MAGIC);
+    payload.extend_from_slice(event_json.as_bytes());
+    Ok(NostrJoinFipsPubsubDatagram::new(payload))
+}
+
+pub fn parse_approval_applied_ack_datagram(
+    datagram: &NostrJoinFipsPubsubDatagram,
+) -> Result<NostrIdentityDeviceApprovalAppliedAck> {
+    if datagram.source_port != NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT
+        || datagram.destination_port != NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT
+    {
+        return Err(anyhow!(
+            "Nostr join approval applied ack used the wrong FSP service port"
+        ));
+    }
+    let event_json = datagram
+        .payload
+        .strip_prefix(NOSTR_JOIN_APPROVAL_APPLIED_ACK_MAGIC)
+        .ok_or_else(|| anyhow!("invalid Nostr join approval applied ack magic"))?;
+    let event_json =
+        std::str::from_utf8(event_json).context("Nostr join approval applied ack is not UTF-8")?;
+    let event = Event::from_json(event_json)
+        .context("invalid Nostr join approval applied ack event JSON")?;
+    parse_nostr_identity_device_approval_applied_ack_event(&event)
+        .map_err(|error| anyhow!("invalid Nostr join approval applied ack: {error}"))
+}
+
+#[must_use]
+pub fn approval_applied_ack_matches_queued(
+    ack: &NostrIdentityDeviceApprovalAppliedAck,
+    queued: &QueuedNostrJoinApproval,
+) -> bool {
+    let Ok(recipient) = normalize_nostr_pubkey(&queued.recipient_npub) else {
+        return false;
+    };
+    ack.device_app_key_pubkey == recipient
+        && ack.request_pubkey == queued.request_pubkey
+        && queued.events.iter().any(|event| {
+            event.id.to_hex() == ack.approval_event_id
+                && event.pubkey.to_hex() == ack.approved_by_pubkey
+                && event_has_tag(event, "type", NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE)
+                && event_has_tag(event, "p", &queued.request_pubkey)
+        })
+}
+
+#[must_use]
+pub fn approval_event_datagram_matches_ack(
+    datagram: &NostrJoinFipsPubsubDatagram,
+    ack: &NostrIdentityDeviceApprovalAppliedAck,
+) -> bool {
+    if datagram.source_port != NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT
+        || datagram.destination_port != NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT
+    {
+        return false;
+    }
+    let Ok(FipsPubsubWireMessage::Event { event, .. }) =
+        FipsPubsubWireCodec::default().decode_frame(&datagram.payload)
+    else {
+        return false;
+    };
+    let event = event.into_event();
+    event.pubkey.to_hex() == ack.approved_by_pubkey
+        && event_has_tag(&event, "p", &ack.request_pubkey)
+        && (event_has_tag(&event, "type", NOSTR_VPN_JOIN_APPROVAL_CONTEXT_TYPE)
+            || (event.id.to_hex() == ack.approval_event_id
+                && event_has_tag(&event, "type", NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE)))
 }
 
 pub fn direct_join_approval_outbox_directory(config_path: &Path) -> PathBuf {
