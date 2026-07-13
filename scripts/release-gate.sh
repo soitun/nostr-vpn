@@ -327,11 +327,13 @@ run_desktop_app_launch_smokes() {
       ;;
     1|true|TRUE|True|yes|YES|Yes|on|ON|On)
       release_gate_run_with_timeout "macOS app launch smoke" "$MACOS_GUI_SMOKE_TIMEOUT_SECS" \
+        env NVPN_MACOS_RUST_PROFILE=release NVPN_MACOS_XCODE_CONFIGURATION=Release \
         ./scripts/macos-app-launch-smoke.sh
       ;;
     auto|AUTO|Auto|"")
       if [[ "$(uname -s)" == "Darwin" && -d "$ROOT_DIR/macos/Sources" ]]; then
         release_gate_run_with_timeout "macOS app launch smoke" "$MACOS_GUI_SMOKE_TIMEOUT_SECS" \
+          env NVPN_MACOS_RUST_PROFILE=release NVPN_MACOS_XCODE_CONFIGURATION=Release \
           ./scripts/macos-app-launch-smoke.sh
       else
         echo "Skipping macOS app launch smoke on this host."

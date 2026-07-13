@@ -164,6 +164,8 @@ grep -Fq './scripts/mobile-android-smoke.sh --vpn-cycle --create-network' "$RELE
   || fail "release gate does not run the Android background active-VPN idle CPU smoke"
 grep -Fq 'NVPN_IDLE_CPU_SAMPLE_SECONDS:-60' "$RELEASE_GATE" \
   || fail "release gate does not cover a full mDNS cadence in CPU samples"
+grep -Fq 'env NVPN_MACOS_RUST_PROFILE=release NVPN_MACOS_XCODE_CONFIGURATION=Release' "$RELEASE_GATE" \
+  || fail "release gate does not measure an optimized macOS app candidate"
 grep -Fq 'run_macos_daemon_idle_cpu_gate' "$RELEASE_GATE" \
   || fail "release gate does not run the macOS daemon idle CPU check"
 grep -Fq -- '--fips-peer-endpoint' "$ROOT_DIR/scripts/e2e-macos-service.sh" \

@@ -210,15 +210,19 @@ final class AppManager: ObservableObject {
         } while refreshPending && !Task.isCancelled
     }
 
-    static let busyRefreshIntervalNanoseconds: UInt64 = 2_000_000_000
-    static let idleRefreshIntervalNanoseconds: UInt64 = 6_000_000_000
+    static let paidRouteRefreshIntervalNanoseconds: UInt64 = 2_000_000_000
+    static let activeVpnRefreshIntervalNanoseconds: UInt64 = 15_000_000_000
+    static let idleRefreshIntervalNanoseconds: UInt64 = 30_000_000_000
 
     var refreshIntervalNanoseconds: UInt64 {
         if actionInFlight || serviceSettling || updateChecking || updateInstalling {
             return 1_000_000_000
         }
-        if state.vpnEnabled || paidRouteLiveRefreshWanted {
-            return Self.busyRefreshIntervalNanoseconds
+        if paidRouteLiveRefreshWanted {
+            return Self.paidRouteRefreshIntervalNanoseconds
+        }
+        if state.vpnEnabled {
+            return Self.activeVpnRefreshIntervalNanoseconds
         }
         return Self.idleRefreshIntervalNanoseconds
     }
