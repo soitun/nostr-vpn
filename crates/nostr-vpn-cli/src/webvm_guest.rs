@@ -24,7 +24,7 @@ use std::sync::Arc;
 #[cfg(any(target_os = "linux", test))]
 const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
 #[cfg(target_os = "linux")]
-const HOST_POLL_INTERVAL: Duration = Duration::from_millis(500);
+const PAIRING_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
 #[cfg(target_os = "linux")]
 const BROWSER_HOST_POLL_INTERVAL: Duration = Duration::from_millis(100);
 #[cfg(target_os = "linux")]
@@ -443,13 +443,7 @@ async fn pair_over_fips(
     let browser_host = wait_for_browser_host(endpoint, shutdown.clone()).await?;
     let browser_identity = PeerIdentity::from_npub(&browser_host)
         .context("invalid WebVM browser FIPS return route")?;
-    endpoint
-        .send_datagram(
-            browser_identity,
-            args.join_pubsub_port,
-            args.join_pubsub_port,
-            WEBVM_APPROVAL_ROUTE_REGISTRATION.to_vec(),
-        )
+    register_approval_route(endpoint, browser_identity, args.join_pubsub_port)
         .await
         .context("failed to register WebVM approval return route")?;
     let pairing_uri = webvm_pairing_uri(app, &browser_host)?;
@@ -460,9 +454,35 @@ async fn pair_over_fips(
         args.join_pubsub_port
     );
     let mut client = NostrJoinFipsPubsubClient::new(app)?;
-    wait_for_approval(endpoint, &args.config, app, &mut client, shutdown).await?;
+    wait_for_approval(
+        endpoint,
+        browser_identity,
+        args.join_pubsub_port,
+        &args.config,
+        app,
+        &mut client,
+        shutdown,
+    )
+    .await?;
     remove_pairing_uri(&args.pairing_uri_file)?;
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+async fn register_approval_route(
+    endpoint: &FipsEndpoint,
+    browser_identity: PeerIdentity,
+    port: u16,
+) -> Result<()> {
+    endpoint
+        .send_datagram(
+            browser_identity,
+            port,
+            port,
+            WEBVM_APPROVAL_ROUTE_REGISTRATION.to_vec(),
+        )
+        .await
+        .context("failed to announce WebVM approval readiness")
 }
 
 #[cfg(target_os = "linux")]
@@ -505,13 +525,18 @@ async fn wait_for_browser_host(
 #[cfg(target_os = "linux")]
 async fn wait_for_approval(
     endpoint: &FipsEndpoint,
+    browser_identity: PeerIdentity,
+    port: u16,
     config_path: &Path,
     app: &mut AppConfig,
     client: &mut NostrJoinFipsPubsubClient,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let mut datagrams = Vec::<FipsEndpointServiceDatagram>::with_capacity(SERVICE_RECV_BATCH);
-    let mut host_poll = tokio::time::interval(HOST_POLL_INTERVAL);
+    let mut host_poll = tokio::time::interval_at(
+        tokio::time::Instant::now() + PAIRING_HEARTBEAT_INTERVAL,
+        PAIRING_HEARTBEAT_INTERVAL,
+    );
     host_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
@@ -524,6 +549,9 @@ async fn wait_for_approval(
             _ = host_poll.tick() => {
                 if pending_join_request_changed(config_path, app)? {
                     return Err(anyhow::Error::new(WebvmReloadJoinRequest));
+                }
+                if let Err(error) = register_approval_route(endpoint, browser_identity, port).await {
+                    eprintln!("webvm: approval readiness heartbeat failed; will retry: {error:#}");
                 }
             }
             received = endpoint.recv_service_datagram_batch_into(
