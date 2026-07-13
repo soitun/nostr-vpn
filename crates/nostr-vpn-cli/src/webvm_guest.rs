@@ -26,6 +26,8 @@ const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
 #[cfg(target_os = "linux")]
 const HOST_POLL_INTERVAL: Duration = Duration::from_millis(500);
 #[cfg(target_os = "linux")]
+const BROWSER_HOST_POLL_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(target_os = "linux")]
 const SERVICE_RECV_BATCH: usize = 8;
 const DEFAULT_WEBVM_PAIRING_URI_PATH: &str = "/run/webvm/join-request";
 
@@ -436,26 +438,8 @@ async fn pair_over_fips(
     app: &mut AppConfig,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut browser_hosts = endpoint
-        .peers()
-        .await
-        .context("failed to inspect WebVM FIPS peers")?
-        .into_iter()
-        .filter(|peer| {
-            peer.connected
-                && peer
-                    .transport_type
-                    .as_deref()
-                    .is_some_and(|transport| transport.eq_ignore_ascii_case("ethernet"))
-        })
-        .map(|peer| peer.npub)
-        .collect::<Vec<_>>();
-    browser_hosts.sort();
-    browser_hosts.dedup();
-    let browser_host = browser_hosts
-        .first()
-        .ok_or_else(|| anyhow!("WebVM browser FIPS return route is unavailable"))?;
-    let pairing_uri = webvm_pairing_uri(app, browser_host)?;
+    let browser_host = wait_for_browser_host(endpoint, shutdown.clone()).await?;
+    let pairing_uri = webvm_pairing_uri(app, &browser_host)?;
     write_pairing_uri(&args.pairing_uri_file, &pairing_uri)?;
 
     println!(
@@ -466,6 +450,43 @@ async fn pair_over_fips(
     wait_for_approval(endpoint, &args.config, app, &mut client, shutdown).await?;
     remove_pairing_uri(&args.pairing_uri_file)?;
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+async fn wait_for_browser_host(
+    endpoint: &FipsEndpoint,
+    mut shutdown: tokio::sync::watch::Receiver<bool>,
+) -> Result<String> {
+    loop {
+        let mut browser_hosts = endpoint
+            .peers()
+            .await
+            .context("failed to inspect WebVM FIPS peers")?
+            .into_iter()
+            .filter(|peer| {
+                peer.connected
+                    && peer
+                        .transport_type
+                        .as_deref()
+                        .is_some_and(|transport| transport.eq_ignore_ascii_case("ethernet"))
+            })
+            .map(|peer| peer.npub)
+            .collect::<Vec<_>>();
+        browser_hosts.sort();
+        browser_hosts.dedup();
+        if let Some(browser_host) = browser_hosts.into_iter().next() {
+            return Ok(browser_host);
+        }
+
+        tokio::select! {
+            changed = shutdown.changed() => {
+                if changed.is_err() || *shutdown.borrow() {
+                    return Err(anyhow::Error::new(WebvmStop));
+                }
+            }
+            _ = tokio::time::sleep(BROWSER_HOST_POLL_INTERVAL) => {}
+        }
+    }
 }
 
 #[cfg(target_os = "linux")]
