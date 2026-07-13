@@ -92,10 +92,15 @@ pub fn routed_approval_event_datagram(
 }
 
 pub fn direct_join_approval_outbox_directory(config_path: &Path) -> PathBuf {
+    let mut directory_name = config_path
+        .file_name()
+        .map(|name| name.to_os_string())
+        .unwrap_or_else(|| "config.toml".into());
+    directory_name.push(".join-approval-outbox");
     config_path
         .parent()
         .unwrap_or_else(|| Path::new("."))
-        .join("join-approval-outbox")
+        .join(directory_name)
 }
 
 pub fn queue_direct_join_approval(

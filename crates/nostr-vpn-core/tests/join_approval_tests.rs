@@ -352,6 +352,22 @@ fn direct_fips_approval_outbox_delivers_without_a_relay_subscription() {
     );
     assert_eq!(queued[0].1.events.len(), 2);
 
+    let sibling_path = unique_temp_config_path("direct-join-approval-sibling");
+    queue_direct_join_approval(
+        &sibling_path,
+        &recipient,
+        Some(&route_npub),
+        &pending.request.request_pubkey,
+        &events,
+    )
+    .expect("queue sibling direct approval");
+    assert_ne!(
+        direct_join_approval_outbox_directory(&path),
+        direct_join_approval_outbox_directory(&sibling_path)
+    );
+    assert_eq!(load_direct_join_approvals(&path).len(), 1);
+    assert_eq!(load_direct_join_approvals(&sibling_path).len(), 1);
+
     let direct =
         delivered_approval_event_datagram(&pending.request.request_pubkey, &queued[0].1.events[0])
             .expect("direct payload");
@@ -379,6 +395,7 @@ fn direct_fips_approval_outbox_delivers_without_a_relay_subscription() {
     assert!(joiner.pending_nostr_join_request.is_none());
 
     let _ = fs::remove_dir_all(direct_join_approval_outbox_directory(&path));
+    let _ = fs::remove_dir_all(direct_join_approval_outbox_directory(&sibling_path));
 }
 
 #[test]
