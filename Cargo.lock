@@ -2317,9 +2317,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.72"
+version = "0.2.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3af5926f07ee243e9d52ddbdb7cad27f497fcd4f058d0fbf01dd57fd7bff8340"
+checksum = "1961103103a3b250f39016d0f4e089cee7f61c598234c5773c98f00b43473dee"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2339,9 +2339,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-config"
-version = "0.2.72"
+version = "0.2.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f796f3b542999a3e0c2d677eebb9fc20a41f8ecfc75403511d7d7238b87d398"
+checksum = "c1f6e108351f28899e1bc4516a99c1f0efbd0e14e99c61fe14368e64bd89ff6c"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -2351,9 +2351,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.72"
+version = "0.2.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b8c5b9d45681f69555d054176a9a6f38246d2a9ead5e3de6abac64e8a1ee73f4"
+checksum = "8cbb452596ed45e59fd51478545703e3b4f0e35f2d9ffe79a9f9731140f08ddd"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2372,9 +2372,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.78"
+version = "0.2.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "998df5739810446207caf72e2306f7038bc988c8eceabe834184a3d8c94d7418"
+checksum = "3886054a4e540317f0a2ae580d3a7aa40694b632a4dc4b7ee2e4959f73927535"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2387,14 +2387,15 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.78"
+version = "0.2.80"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "377ad548fefcf6711f721a9f2d178a70ceb187568c00c483acdddf8c989055e5"
+checksum = "3fbd714b573c9c962023551ab12fa0bcbc8e3b185faa480abb8d2bb2b224c056"
 dependencies = [
  "flate2",
  "hashtree-blossom",
  "hashtree-core",
  "hashtree-resolver",
+ "nostr-pubsub",
  "semver",
  "serde",
  "serde_json",

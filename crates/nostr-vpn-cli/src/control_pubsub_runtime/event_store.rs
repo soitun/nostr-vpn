@@ -9,6 +9,7 @@ struct ControlEventStore {
     path: Option<PathBuf>,
     events: HashMap<String, Event>,
     order: VecDeque<String>,
+    update_events: UpdateEventCache,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,63 +19,26 @@ struct RatingEventStoreKey {
     scope: String,
 }
 
-#[derive(Clone, Debug)]
-struct UpdateRootSubscription {
-    author: PublicKey,
-    tree_name: String,
-}
-
-impl UpdateRootSubscription {
-    fn configured() -> Result<Self> {
-        let reference = configured_update_ref()?;
-        let author = PublicKey::parse(&reference.npub)
-            .with_context(|| format!("invalid update publisher {}", reference.npub))?;
-        Ok(Self {
-            author,
-            tree_name: reference.tree_name,
-        })
-    }
-
-    fn filter(&self) -> Filter {
-        Filter::new()
-            .kinds([
-                Kind::Custom(HASHTREE_ROOT_KIND),
-                Kind::Custom(HASHTREE_LEGACY_ROOT_KIND),
-            ])
-            .author(self.author)
-            .custom_tag(
-                SingleLetterTag::lowercase(Alphabet::D),
-                self.tree_name.clone(),
-            )
-    }
-
-    fn matches(&self, event: &Event) -> bool {
-        matches!(
-            u16::from(event.kind),
-            HASHTREE_ROOT_KIND | HASHTREE_LEGACY_ROOT_KIND
-        ) && event.pubkey == self.author
-            && event.tags.iter().any(|tag| {
-                matches!(
-                    tag.as_standardized(),
-                    Some(TagStandard::Identifier(identifier)) if identifier == &self.tree_name
-                )
-            })
-    }
+fn configured_update_events() -> Result<UpdateEventCache> {
+    let reference = configured_update_ref()?;
+    UpdateEventCache::new(&reference).context("failed to configure update announcement cache")
 }
 
 impl ControlEventStore {
-    fn load(path: Option<PathBuf>, update_root: &UpdateRootSubscription) -> Result<Self> {
+    fn load(path: Option<PathBuf>, update_events: UpdateEventCache) -> Result<Self> {
         let Some(path) = path else {
             return Ok(Self {
                 path: None,
                 events: HashMap::new(),
                 order: VecDeque::new(),
+                update_events,
             });
         };
         let mut store = Self {
             path: Some(path.clone()),
             events: HashMap::new(),
             order: VecDeque::new(),
+            update_events,
         };
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
@@ -94,7 +58,7 @@ impl ControlEventStore {
         }
         let saved_count = saved.events.len();
         for event in saved.events {
-            if event.verify().is_ok() && is_control_event(&event, update_root) {
+            if event.verify().is_ok() && is_control_event(&event, &store.update_events) {
                 let _ = store.insert_memory(event);
             }
         }
@@ -143,17 +107,22 @@ impl ControlEventStore {
                 .retain(|stored_id, _| !replaced.contains(stored_id));
             self.order.retain(|stored_id| !replaced.contains(stored_id));
         }
-        if is_update_root_kind(u16::from(event.kind)) {
-            if self.events.values().any(|stored| {
-                same_replaceable_update_root(stored, &event)
-                    && (stored.created_at, stored.id) >= (event.created_at, event.id)
-            }) {
+        let is_update_event = self
+            .update_events
+            .filter()
+            .match_event(&event, MatchEventOptions::new());
+        if is_update_event {
+            if !self.update_events.ingest_event(event.clone()).unwrap_or(false) {
                 return false;
             }
             let replaced = self
                 .events
                 .iter()
-                .filter(|(_, stored)| same_replaceable_update_root(stored, &event))
+                .filter(|(_, stored)| {
+                    self.update_events
+                        .filter()
+                        .match_event(stored, MatchEventOptions::new())
+                })
                 .map(|(event_id, _)| event_id.clone())
                 .collect::<std::collections::HashSet<_>>();
             self.events
@@ -167,7 +136,12 @@ impl ControlEventStore {
                 .position(|stored_id| {
                     self.events
                         .get(stored_id)
-                        .is_some_and(|stored| !is_update_root_kind(u16::from(stored.kind)))
+                        .is_some_and(|stored| {
+                            !self
+                                .update_events
+                                .filter()
+                                .match_event(stored, MatchEventOptions::new())
+                        })
                 })
                 .unwrap_or(0);
             let Some(oldest) = self.order.remove(remove_index) else {
@@ -185,6 +159,12 @@ impl ControlEventStore {
             .iter()
             .filter_map(|event_id| self.events.get(event_id).cloned())
             .collect()
+    }
+
+    fn latest_update_event(&self) -> Option<Event> {
+        self.update_events
+            .latest()
+            .map(|event| event.as_event().clone())
     }
 
     fn prune_expired_ratings(&mut self, now_secs: u64) -> Result<usize> {
@@ -266,6 +246,7 @@ fn rating_event_store_key(event: &Event) -> Option<(RatingEventStoreKey, u64)> {
 
 #[cfg(test)]
 mod tests {
+    use nostr_sdk::ToBech32;
     use nostr_social_graph::Rating;
     use nostr_social_memory::RatingEventExt;
 
@@ -275,9 +256,9 @@ mod tests {
     fn rating_events_are_coalesced_by_author_subject_and_scope() {
         let author = Keys::generate();
         let subject = Keys::generate().public_key().to_hex();
-        let update_root = test_update_root();
+        let update_events = test_update_events();
         let now = now_ms() / 1_000;
-        let mut store = ControlEventStore::load(None, &update_root).expect("event store");
+        let mut store = ControlEventStore::load(None, update_events).expect("event store");
         let older = rating_event(&author, &subject, "fips.peer", 20, now.saturating_sub(1));
         let newer = rating_event(&author, &subject, "fips.peer", 80, now);
 
@@ -290,9 +271,9 @@ mod tests {
     fn stale_or_far_future_ratings_are_not_retained() {
         let author = Keys::generate();
         let subject = Keys::generate().public_key().to_hex();
-        let update_root = test_update_root();
+        let update_events = test_update_events();
         let now = now_ms() / 1_000;
-        let mut store = ControlEventStore::load(None, &update_root).expect("event store");
+        let mut store = ControlEventStore::load(None, update_events).expect("event store");
         let stale = rating_event(
             &author,
             &subject,
@@ -317,9 +298,9 @@ mod tests {
     fn maintenance_prunes_ratings_that_age_out() {
         let author = Keys::generate();
         let subject = Keys::generate().public_key().to_hex();
-        let update_root = test_update_root();
+        let update_events = test_update_events();
         let created_at = now_ms() / 1_000;
-        let mut store = ControlEventStore::load(None, &update_root).expect("event store");
+        let mut store = ControlEventStore::load(None, update_events).expect("event store");
         let rating = rating_event(&author, &subject, "fips.peer", 20, created_at);
 
         assert!(store.insert(rating).expect("insert rating"));
@@ -332,11 +313,14 @@ mod tests {
         assert!(store.snapshot().is_empty());
     }
 
-    fn test_update_root() -> UpdateRootSubscription {
-        UpdateRootSubscription {
-            author: Keys::generate().public_key(),
+    fn test_update_events() -> UpdateEventCache {
+        let keys = Keys::generate();
+        let reference = nostr_vpn_core::updater::UpdateRef {
+            npub: keys.public_key().to_bech32().expect("npub"),
             tree_name: "test-root".to_string(),
-        }
+            path: Some("latest".to_string()),
+        };
+        UpdateEventCache::new(&reference).expect("update event cache")
     }
 
     fn rating_event(

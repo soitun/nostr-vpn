@@ -61,8 +61,8 @@ fn validate_control_pubsub_event(event: &Event) -> Result<()> {
         .verify()
         .map_err(|error| anyhow!("invalid signed control pubsub event: {error}"))?;
     let kind = u16::from(event.kind);
-    let update_root = UpdateRootSubscription::configured()?;
-    if !is_control_event(event, &update_root) {
+    let update_events = configured_update_events()?;
+    if !is_control_event(event, &update_events) {
         anyhow::bail!("unsupported control pubsub event kind or filter {kind}");
     }
     let bytes = serde_json::to_vec(event).context("failed to encode control pubsub event")?;
@@ -101,10 +101,10 @@ fn control_pubsub_outbox_event_paths(directory: &Path) -> Vec<PathBuf> {
 
 #[cfg(any(feature = "paid-exit", test))]
 pub fn load_control_pubsub_events(config_path: &Path) -> Result<Vec<Event>> {
-    let update_root = UpdateRootSubscription::configured()?;
+    let update_events = configured_update_events()?;
     Ok(ControlEventStore::load(
         Some(control_pubsub_store_file_path(config_path)),
-        &update_root,
+        update_events,
     )?
     .snapshot())
 }

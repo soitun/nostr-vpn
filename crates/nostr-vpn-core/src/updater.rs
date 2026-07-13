@@ -13,12 +13,10 @@ use hashtree_updater::{
     selected_download_path as shared_selected_download_path, update_ref_from_override,
 };
 pub use hashtree_updater::{
-    ProductUpdateMode, SECURE_SOURCE_NAME, UpdateAutoCheckPolicy, UpdateRef,
+    ProductUpdateMode, SECURE_SOURCE_NAME, UpdateAutoCheckPolicy, UpdateEventCache, UpdateRef,
 };
-use nostr_sdk::prelude::{Event, PublicKey, TagStandard};
+use nostr_sdk::prelude::Event;
 use serde::{Deserialize, Serialize};
-
-use crate::control_pubsub::{HASHTREE_LEGACY_ROOT_KIND, HASHTREE_ROOT_KIND};
 
 pub const GITHUB_LATEST_RELEASE_URL: &str =
     "https://api.github.com/repos/mmalmi/nostr-vpn/releases/latest";
@@ -298,27 +296,12 @@ fn load_cached_update_root_events(path: &Path, reference: &UpdateRef) -> Result<
     };
     let cached: CachedPubsubEvents = serde_json::from_slice(&bytes)
         .with_context(|| format!("failed to decode {}", path.display()))?;
-    let author = PublicKey::parse(&reference.npub)
-        .with_context(|| format!("invalid update publisher {}", reference.npub))?;
-    let latest = cached
-        .events
-        .into_iter()
-        .filter(|event| event.verify().is_ok())
-        .filter(|event| {
-            matches!(
-                u16::from(event.kind),
-                HASHTREE_ROOT_KIND | HASHTREE_LEGACY_ROOT_KIND
-            ) && event.pubkey == author
-                && event.tags.iter().any(|tag| {
-                    matches!(
-                        tag.as_standardized(),
-                        Some(TagStandard::Identifier(identifier))
-                            if identifier == &reference.tree_name
-                    )
-                })
-        })
-        .max_by_key(|event| (event.created_at, event.id));
-    Ok(latest.into_iter().collect())
+    let mut update_events = UpdateEventCache::new(reference)
+        .context("failed to configure update announcement cache")?;
+    for event in cached.events {
+        let _ = update_events.ingest_event(event);
+    }
+    Ok(update_events.resolver_events())
 }
 
 async fn build_secure_updater(
@@ -694,7 +677,7 @@ mod tests {
             path: Some("latest".to_string()),
         };
         let root = |keys: &Keys, created_at: u64, hash: &str| {
-            EventBuilder::new(Kind::Custom(HASHTREE_ROOT_KIND), "")
+            EventBuilder::new(Kind::Custom(30_064), "")
                 .tags([
                     Tag::identifier("releases/test-app"),
                     Tag::custom(TagKind::Custom("l".into()), ["hashtree"]),

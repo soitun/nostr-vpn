@@ -8,22 +8,19 @@ use anyhow::{Context, Result, anyhow};
 use fips_core::{
     FipsEndpoint, FipsEndpointOutboundDatagram, FipsEndpointServiceReceiver, PeerIdentity,
 };
-use nostr_pubsub::{EventSource, MeshPeer, MeshPeerPolicy, PolicyDecision};
+use nostr_pubsub::{EventSource, MatchEventOptions, MeshPeer, MeshPeerPolicy, PolicyDecision};
 use nostr_pubsub_fips::{FipsPubsubPolicy, FipsPubsubPolicyOptions};
 use nostr_pubsub_social_graph::{PEER_RATING_MAX_AGE, PEER_RATING_MAX_FUTURE_SKEW};
-use nostr_sdk::prelude::{
-    Alphabet, Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification, SingleLetterTag,
-    TagStandard,
-};
+use nostr_sdk::prelude::{Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification};
 use nostr_social_memory::rating_from_event;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::control_pubsub::{
     CONTROL_PUBSUB_FIPS_SERVICE_PORT, CONTROL_PUBSUB_MAX_EVENT_BYTES,
     CONTROL_PUBSUB_MAX_WIRE_BYTES, ControlPubsubAction, ControlPubsubCodec, ControlPubsubMesh,
-    ControlPubsubOptions, ControlPubsubWireMessage, FIPS_PEER_ADVERT_KIND,
-    HASHTREE_LEGACY_ROOT_KIND, HASHTREE_ROOT_KIND, PAID_EXIT_OFFER_KIND, RATING_FACT_KIND,
+    ControlPubsubOptions, ControlPubsubWireMessage, FIPS_PEER_ADVERT_KIND, PAID_EXIT_OFFER_KIND,
+    RATING_FACT_KIND,
 };
-use nostr_vpn_core::updater::configured_update_ref;
+use nostr_vpn_core::updater::{UpdateEventCache, configured_update_ref};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
@@ -202,7 +199,7 @@ impl ControlPubsubFipsRuntime {
         relays: Vec<String>,
         store_path: Option<PathBuf>,
         mut peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
-        update_root_override: Option<UpdateRootSubscription>,
+        update_events_override: Option<UpdateEventCache>,
     ) -> Result<Option<Self>> {
         if config.mode == NostrPubsubMode::Off {
             return Ok(None);
@@ -211,16 +208,16 @@ impl ControlPubsubFipsRuntime {
             .register_service_receiver(CONTROL_PUBSUB_FIPS_SERVICE_PORT)
             .await
             .context("failed to register the FIPS control pubsub service")?;
-        let update_root = match update_root_override {
-            Some(update_root) => update_root,
-            None => UpdateRootSubscription::configured()?,
+        let update_events = match update_events_override {
+            Some(update_events) => update_events,
+            None => configured_update_events()?,
         };
-        let bridge = RelayBridge::start(config.mode, relays, &update_root).await?;
+        let bridge = RelayBridge::start(config.mode, relays, &update_events).await?;
         let relay_client = bridge.as_ref().map(|bridge| bridge.client.clone());
         let outbox_path = store_path
             .as_deref()
             .map(control_pubsub_outbox_directory_from_store_path);
-        let event_store = ControlEventStore::load(store_path, &update_root)?;
+        let event_store = ControlEventStore::load(store_path, update_events.clone())?;
         let stored_events = event_store.snapshot();
         let pubsub_policy = FipsPubsubPolicy::new(
             Arc::clone(&endpoint),
@@ -242,7 +239,7 @@ impl ControlPubsubFipsRuntime {
                     events: task_events,
                     peer_policy,
                     pubsub_policy,
-                    update_root,
+                    update_events,
                 },
                 receiver,
                 outbox_path,
@@ -300,7 +297,7 @@ impl RelayBridge {
     async fn start(
         mode: NostrPubsubMode,
         relays: Vec<String>,
-        update_root: &UpdateRootSubscription,
+        update_events: &UpdateEventCache,
     ) -> Result<Option<Self>> {
         if mode != NostrPubsubMode::Relay || relays.is_empty() {
             return Ok(None);
@@ -319,7 +316,7 @@ impl RelayBridge {
             .await
             .context("failed to subscribe to control pubsub relays")?;
         client
-            .subscribe(update_root.filter(), None)
+            .subscribe(update_events.filter().clone(), None)
             .await
             .context("failed to subscribe to Hashtree update roots")?;
         Ok(Some(Self {
@@ -342,7 +339,7 @@ struct PubsubRunState {
     events: Arc<Mutex<ControlEventStore>>,
     peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
     pubsub_policy: FipsPubsubPolicy,
-    update_root: UpdateRootSubscription,
+    update_events: UpdateEventCache,
 }
 
 #[derive(Clone, Copy)]
@@ -352,7 +349,7 @@ struct PublishContext<'a> {
     bridge: Option<&'a RelayBridge>,
     events: &'a Arc<Mutex<ControlEventStore>>,
     peer_policy: Option<&'a dyn MeshPeerPolicy>,
-    update_root: &'a UpdateRootSubscription,
+    update_events: &'a UpdateEventCache,
 }
 
 async fn run(
@@ -368,15 +365,20 @@ async fn run(
         events,
         peer_policy,
         mut pubsub_policy,
-        update_root,
+        update_events,
     } = state;
     let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
-    let options = ControlPubsubOptions {
+    let mut options = ControlPubsubOptions {
         fanout: config.fanout,
         max_hops: config.max_hops,
         max_event_bytes,
         ..ControlPubsubOptions::default()
     };
+    if let Some(kinds) = update_events.filter().kinds.as_ref() {
+        options
+            .allowed_kinds
+            .extend(kinds.iter().map(|kind| u16::from(*kind)));
+    }
     let mut mesh = ControlPubsubMesh::new(options);
     let codec = ControlPubsubCodec::new(CONTROL_PUBSUB_MAX_WIRE_BYTES);
     let mut datagrams = Vec::with_capacity(RECEIVE_BATCH);
@@ -398,7 +400,7 @@ async fn run(
                         bridge: bridge.as_ref(),
                         events: &events,
                         peer_policy: peer_policy.as_deref(),
-                        update_root: &update_root,
+                        update_events: &update_events,
                     },
                     &mut mesh,
                     &mut retries,
@@ -416,7 +418,7 @@ async fn run(
                         bridge: bridge.as_ref(),
                         events: &events,
                         peer_policy: peer_policy.as_deref(),
-                        update_root: &update_root,
+                        update_events: &update_events,
                     },
                     &mut mesh,
                     &mut retries,
@@ -449,7 +451,7 @@ async fn run(
                             tracing::debug!(%error, %source, "ignored invalid signed control pubsub event");
                             continue;
                         }
-                        if !is_control_event(event, &update_root) {
+                        if !is_control_event(event, &update_events) {
                             mesh.record_invalid_peer_message(&source);
                             mesh.dismiss_peer_frame(&source, event_id);
                             tracing::debug!(%source, event_id, "ignored event outside control pubsub subscriptions");
@@ -487,7 +489,7 @@ async fn run(
             }
             notification = relay_notification(&mut bridge) => {
                 let Some((relay_url, event)) = notification else { continue; };
-                if !is_control_event(&event, &update_root) {
+                if !is_control_event(&event, &update_events) {
                     continue;
                 }
                 if !event_is_admitted(
@@ -530,7 +532,7 @@ async fn run(
                         bridge: bridge.as_ref(),
                         events: &events,
                         peer_policy: peer_policy.as_deref(),
-                        update_root: &update_root,
+                        update_events: &update_events,
                     },
                     &mut mesh,
                     &mut retries,
@@ -544,7 +546,7 @@ async fn run(
                         bridge: bridge.as_ref(),
                         events: &events,
                         peer_policy: peer_policy.as_deref(),
-                        update_root: &update_root,
+                        update_events: &update_events,
                     },
                     &mut mesh,
                     &mut retries,
@@ -567,7 +569,6 @@ async fn replay_update_root_to_connected_peers(
         codec,
         events,
         peer_policy,
-        update_root,
         ..
     } = context;
     let peers = connected_peers(endpoint, peer_policy).await;
@@ -577,13 +578,7 @@ async fn replay_update_root_to_connected_peers(
         .collect::<std::collections::HashSet<_>>();
     replayed.retain(|peer_id, _| connected.contains(peer_id.as_str()));
 
-    let event = events
-        .lock()
-        .await
-        .snapshot()
-        .into_iter()
-        .filter(|event| update_root.matches(event))
-        .max_by_key(|event| (event.created_at, event.id));
+    let event = events.lock().await.latest_update_event();
     let Some(event) = event else {
         return;
     };
@@ -619,9 +614,9 @@ async fn publish_local(
         bridge,
         events,
         peer_policy,
-        update_root,
+        update_events,
     } = context;
-    if !is_control_event(&event, update_root) {
+    if !is_control_event(&event, update_events) {
         anyhow::bail!("event is outside control pubsub subscriptions");
     }
     let peers = connected_peers(endpoint, peer_policy).await;
@@ -909,33 +904,17 @@ fn control_kinds() -> [Kind; 3] {
     ]
 }
 
-fn is_control_event(event: &Event, update_root: &UpdateRootSubscription) -> bool {
-    match u16::from(event.kind) {
-        FIPS_PEER_ADVERT_KIND | PAID_EXIT_OFFER_KIND | RATING_FACT_KIND => true,
-        HASHTREE_ROOT_KIND | HASHTREE_LEGACY_ROOT_KIND => update_root.matches(event),
-        _ => false,
-    }
-}
-
-fn is_update_root_kind(kind: u16) -> bool {
-    matches!(kind, HASHTREE_ROOT_KIND | HASHTREE_LEGACY_ROOT_KIND)
-}
-
-fn same_replaceable_update_root(left: &Event, right: &Event) -> bool {
-    is_update_root_kind(u16::from(left.kind))
-        && is_update_root_kind(u16::from(right.kind))
-        && left.pubkey == right.pubkey
-        && event_identifier(left) == event_identifier(right)
-}
-
-fn event_identifier(event: &Event) -> Option<&str> {
-    event
-        .tags
-        .iter()
-        .find_map(|tag| match tag.as_standardized() {
-            Some(TagStandard::Identifier(identifier)) => Some(identifier.as_str()),
-            _ => None,
-        })
+fn is_control_event(event: &Event, update_events: &UpdateEventCache) -> bool {
+    matches!(
+        u16::from(event.kind),
+        FIPS_PEER_ADVERT_KIND | PAID_EXIT_OFFER_KIND | RATING_FACT_KIND
+    ) || update_events
+        .filter()
+        .match_event(event, MatchEventOptions::new())
 }
 
 include!("control_pubsub_runtime/outbox.rs");
+
+#[cfg(test)]
+#[path = "control_pubsub_runtime/tests.rs"]
+mod fips_update_tests;
