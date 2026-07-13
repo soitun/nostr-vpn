@@ -128,17 +128,34 @@ sim_device_id() {
     | head -n 1
 }
 
+resolved_sim_device_id() {
+  local device
+  while IFS= read -r device; do
+    [[ -n "$device" ]] || continue
+    if xcrun simctl boot "$device" >/dev/null 2>&1 \
+      || xcrun simctl bootstatus "$device" -b >/dev/null 2>&1; then
+      if xcrun simctl bootstatus "$device" -b >/dev/null 2>&1; then
+        printf '%s\n' "$device"
+        return
+      fi
+    fi
+  done < <(
+    {
+      printf '%s\n' "${NVPN_IOS_SIMULATOR_ID:-}"
+      sim_device_id
+      xcrun simctl list devices available \
+        | sed -n 's/.*iPhone[^()]*(\([0-9A-F-]\{36\}\)).*/\1/p'
+    } | awk 'NF && !seen[$0]++'
+  )
+}
+
 ios_destination() {
   if [[ -n "${NVPN_IOS_DESTINATION:-}" ]]; then
     printf '%s\n' "$NVPN_IOS_DESTINATION"
     return
   fi
-  if [[ -n "${NVPN_IOS_SIMULATOR_ID:-}" ]]; then
-    printf 'platform=iOS Simulator,id=%s\n' "$NVPN_IOS_SIMULATOR_ID"
-    return
-  fi
   local device
-  device="$(sim_device_id)"
+  device="$(resolved_sim_device_id)"
   if [[ -n "$device" ]]; then
     printf 'platform=iOS Simulator,id=%s\n' "$device"
   else
@@ -149,7 +166,7 @@ ios_destination() {
 run_app() {
   build_app
   local device app_path
-  device="${NVPN_IOS_SIMULATOR_ID:-$(sim_device_id)}"
+  device="$(resolved_sim_device_id)"
   if [[ -z "$device" ]]; then
     echo "No available iOS simulator found" >&2
     exit 1
