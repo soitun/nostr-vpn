@@ -304,6 +304,7 @@ impl NativeLanPairingWorker {
             normalize_nostr_pubkey(&npub)? == signer.public_key().to_hex(),
             "LAN pairing announcement identity does not match signer"
         );
+        drop(signer);
         let _ = (node_name, endpoint, invite);
         Ok(Self)
     }
