@@ -30,7 +30,7 @@ use std::os::unix::fs::OpenOptionsExt as _;
 #[cfg(any(target_os = "linux", test))]
 use std::path::Path;
 #[cfg(target_os = "linux")]
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 #[cfg(any(target_os = "linux", test))]
 const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
 #[cfg(target_os = "linux")]
@@ -42,6 +42,9 @@ const SERVICE_RECV_BATCH: usize = 8;
 #[cfg(target_os = "linux")]
 const WEBVM_APPROVAL_ROUTE_REGISTRATION: &[u8; 9] = b"NVPNPAIR1";
 const DEFAULT_WEBVM_PAIRING_URI_PATH: &str = "/run/webvm/join-request";
+
+#[cfg(target_os = "linux")]
+type WebvmPeerStatusSnapshot = Arc<RwLock<Option<Vec<MeshPeerStatus>>>>;
 
 pub(crate) async fn run(args: WebvmGuestArgs) -> Result<()> {
     run_daemon(args, false).await
@@ -126,10 +129,12 @@ async fn run_linux(args: WebvmGuestArgs) -> Result<()> {
             }
         };
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let peer_status_snapshot = Arc::new(RwLock::new(None));
     let supervisor = tokio::spawn(supervise_webvm_daemon(
         args.config.clone(),
         args.tun_interface.clone(),
         Arc::clone(&endpoint),
+        Arc::clone(&peer_status_snapshot),
         shutdown_tx,
     ));
     let approval_receiver = match endpoint
@@ -179,6 +184,7 @@ async fn run_linux(args: WebvmGuestArgs) -> Result<()> {
         shared,
         host_network,
         approval_receiver,
+        peer_status_snapshot,
         shutdown_rx,
     )
     .await;
@@ -192,6 +198,7 @@ async fn supervise_webvm_daemon(
     config_path: PathBuf,
     tun_interface: String,
     endpoint: Arc<FipsEndpoint>,
+    peer_status_snapshot: WebvmPeerStatusSnapshot,
     shutdown: tokio::sync::watch::Sender<bool>,
 ) {
     let state_file = daemon_state_file_path(&config_path);
@@ -250,6 +257,7 @@ async fn supervise_webvm_daemon(
                     &state_file,
                     &tun_interface,
                     &endpoint,
+                    &peer_status_snapshot,
                 ).await {
                     eprintln!("daemon: failed to persist WebVM state: {error}");
                 }
@@ -264,15 +272,24 @@ async fn persist_webvm_daemon_state(
     state_file: &Path,
     tun_interface: &str,
     endpoint: &FipsEndpoint,
+    peer_status_snapshot: &WebvmPeerStatusSnapshot,
 ) -> Result<()> {
     let app = AppConfig::load(config_path)
         .with_context(|| format!("failed to load {}", config_path.display()))?;
-    let endpoint_peers = endpoint
-        .peers()
-        .await
-        .context("failed to inspect WebVM FIPS endpoint peers")?;
-    let peer_statuses =
-        crate::fips_private_mesh::endpoint_peer_statuses(&endpoint_peers, unix_timestamp());
+    let runtime_statuses = peer_status_snapshot
+        .read()
+        .map_err(|_| anyhow!("WebVM peer status snapshot lock poisoned"))?
+        .clone();
+    let peer_statuses = match runtime_statuses {
+        Some(statuses) => statuses,
+        None => {
+            let endpoint_peers = endpoint
+                .peers()
+                .await
+                .context("failed to inspect WebVM FIPS endpoint peers")?;
+            crate::fips_private_mesh::endpoint_peer_statuses(&endpoint_peers, unix_timestamp())
+        }
+    };
     let connected = peer_statuses.iter().filter(|peer| peer.connected).count();
     let approved = app.active_network_has_confirmed_local_identity();
     let vpn_status = if approved {
@@ -665,6 +682,7 @@ async fn run_tunnel(
     shared: crate::fips_private_mesh::FipsSharedEndpoint,
     host_network: crate::fips_private_mesh::WebvmFipsHostNetworkRuntime,
     approval_receiver: FipsEndpointServiceReceiver,
+    peer_status_snapshot: WebvmPeerStatusSnapshot,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let endpoint = Arc::clone(shared.endpoint());
@@ -699,6 +717,10 @@ async fn run_tunnel(
         runtime.iface(),
         args.ethernet_interface
     );
+    if let Err(error) = runtime.refresh_link_statuses().await {
+        eprintln!("webvm: initial FIPS link snapshot failed: {error}");
+    }
+    replace_webvm_peer_status_snapshot(&peer_status_snapshot, runtime.peer_statuses())?;
 
     let mut heartbeat = tokio::time::interval(Duration::from_secs(2));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -746,6 +768,10 @@ async fn run_tunnel(
                 if let Err(error) = runtime.refresh_peer_dependent_routes().await {
                     eprintln!("webvm: route refresh failed: {error}");
                 }
+                replace_webvm_peer_status_snapshot(
+                    &peer_status_snapshot,
+                    runtime.peer_statuses(),
+                )?;
             }
             received = approval_receiver.recv_batch_into(
                 &mut approval_datagrams,
@@ -787,6 +813,17 @@ async fn run_tunnel(
     run_result?;
     host_result.context("failed to stop WebVM .fips host network")?;
     tunnel_result.context("failed to stop WebVM guest tunnel")
+}
+
+#[cfg(target_os = "linux")]
+fn replace_webvm_peer_status_snapshot(
+    snapshot: &WebvmPeerStatusSnapshot,
+    statuses: Vec<MeshPeerStatus>,
+) -> Result<()> {
+    *snapshot
+        .write()
+        .map_err(|_| anyhow!("WebVM peer status snapshot lock poisoned"))? = Some(statuses);
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]
