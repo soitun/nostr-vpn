@@ -1495,9 +1495,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.93"
+version = "0.3.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "554d1e76c511d0a0ab1723af30c209b58be782b0f61250c4a4c31b26eac32d67"
+checksum = "935048cca96e264cc5cf8f373ad2c473d9d72e09482da81af9d9b89312d35cbf"
 dependencies = [
  "bluer",
  "bytes",
@@ -1536,9 +1536,9 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.3.60"
+version = "0.3.61"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5d3d60da3101627c366609d07297e7082fab078abde216088a01a58d0017dde"
+checksum = "bae0d2aaa425869b6d5dc29f7ba93e0c192cad836966ca43f91b7597dc66be64"
 dependencies = [
  "fips-core",
 ]
@@ -3288,9 +3288,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e60e2d54b509b0359b18ae0675e1c7301a386c8cd8cb4725a89de53e5647e2fb"
+checksum = "0af733d7fc22088128b58d63aaeefc0fca5429ee6a1c43578f9be51e32f84591"
 dependencies = [
  "anyhow",
  "nostr-sdk",
@@ -3312,19 +3312,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "nostr-pubsub-relay"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7d9e278806e79e040d274708f35a008cb947fa37aed185a6d6142cf7561c223"
-dependencies = [
- "async-trait",
- "nostr-pubsub",
- "nostr-sdk",
- "thiserror 2.0.18",
- "tokio",
 ]
 
 [[package]]
@@ -3369,15 +3356,12 @@ dependencies = [
  "dirs 6.0.0",
  "fips-core",
  "fips-endpoint",
- "futures",
  "image",
  "jni 0.21.1",
  "libc",
  "ndk-context",
  "netdev",
  "nostr-identity",
- "nostr-pubsub",
- "nostr-pubsub-relay",
  "nostr-sdk",
  "nostr-vpn-core",
  "qrcode",
