@@ -570,6 +570,30 @@ fn fips_stale_participant_recovery_is_cooldown_gated() {
         900
     ));
 }
+
+#[test]
+fn fips_endpoint_control_timeout_requires_runtime_replacement() {
+    for endpoint_error in [
+        fips_endpoint::FipsEndpointError::Timeout {
+            operation: "peer path refresh",
+        },
+        fips_endpoint::FipsEndpointError::Closed,
+    ] {
+        let error = anyhow::Error::new(endpoint_error)
+            .context("fips: refresh_peer_paths rejected by endpoint");
+        assert!(fips_endpoint_control_requires_runtime_replacement(&error));
+    }
+}
+
+#[test]
+fn fips_endpoint_node_error_does_not_replace_runtime() {
+    let error = anyhow::Error::new(fips_endpoint::FipsEndpointError::Node(
+        fips_core::NodeError::NotStarted,
+    ));
+
+    assert!(!fips_endpoint_control_requires_runtime_replacement(&error));
+}
+
 fn pending_fips_peer(pubkey: &str) -> MeshPeerStatus {
     MeshPeerStatus {
         pubkey: pubkey.to_string(),

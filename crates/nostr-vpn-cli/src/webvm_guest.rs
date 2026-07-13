@@ -780,6 +780,7 @@ fn remove_pairing_uri(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr_sdk::ToBech32;
 
     fn temp_path(name: &str) -> PathBuf {
         std::env::temp_dir().join(format!(

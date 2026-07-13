@@ -148,6 +148,21 @@ pub(crate) fn fips_stale_participant_restart_due(
     }
     due
 }
+
+pub(crate) fn fips_endpoint_control_requires_runtime_replacement(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        cause
+            .downcast_ref::<fips_endpoint::FipsEndpointError>()
+            .is_some_and(|error| {
+                matches!(
+                    error,
+                    fips_endpoint::FipsEndpointError::Closed
+                        | fips_endpoint::FipsEndpointError::Timeout { .. }
+                )
+            })
+    })
+}
+
 fn fips_pending_roster_links_detected(
     peer_statuses: &[MeshPeerStatus],
     relay_statuses: &[DaemonRelayState],
@@ -424,6 +439,47 @@ async fn refresh_fips_tunnel_runtime_after_link_event(
         eprintln!("daemon: FIPS private mesh on {} after {reason}", started.iface());
         *runtime = Some(started);
     }
+    *context.last_endpoint_peer_signature = endpoint_peer_signature;
+    Ok(())
+}
+
+async fn rebuild_fips_tunnel_runtime_after_control_failure(
+    runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
+    context: FipsRestartContext<'_>,
+    reason: &str,
+) -> Result<()> {
+    let config_iface = runtime
+        .as_ref()
+        .map(|runtime| runtime.iface().to_string())
+        .unwrap_or_else(|| context.fallback_iface.to_string());
+    let live_peer_endpoints = runtime
+        .as_ref()
+        .map(|runtime| runtime.peer_endpoint_hints())
+        .unwrap_or_default();
+    let config = fips_tunnel_config_from_app_async(FipsTunnelConfigInput {
+        app: context.app,
+        config_path: context.config_path,
+        network_id: context.network_id,
+        iface: config_iface,
+        underlay_interface_mtu: context.underlay_interface_mtu,
+        own_pubkey: context.own_pubkey,
+        recent_peers: context.recent_peers,
+        live_peer_endpoints: &live_peer_endpoints,
+    })
+    .await?;
+    let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
+
+    if let Some(existing) = runtime.take()
+        && let Err(error) = existing.stop().await
+    {
+        eprintln!("fips: unresponsive endpoint shutdown was forced: {error:#}");
+    }
+    let started = crate::fips_private_mesh::FipsPrivateTunnelRuntime::start(config).await?;
+    eprintln!(
+        "daemon: rebuilt FIPS private mesh on {} after {reason}",
+        started.iface()
+    );
+    *runtime = Some(started);
     *context.last_endpoint_peer_signature = endpoint_peer_signature;
     Ok(())
 }

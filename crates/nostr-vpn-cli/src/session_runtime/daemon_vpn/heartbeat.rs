@@ -38,12 +38,44 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
     } = context;
     let now = unix_timestamp();
 
-    if let Some(runtime) = runtime.as_ref() {
-        if let Err(error) = runtime.ping_peers(network_id, now).await {
+    if let Some(current) = runtime.as_ref() {
+        if let Err(error) = current.ping_peers(network_id, now).await {
             eprintln!("fips: peer ping failed: {error}");
         }
-        if let Err(error) = runtime.refresh_link_statuses().await {
-            eprintln!("fips: peer link snapshot failed: {error}");
+        if let Err(error) = current.refresh_link_statuses().await {
+            eprintln!("fips: peer link snapshot failed: {error:#}");
+            if fips_endpoint_control_requires_runtime_replacement(&error) {
+                if fips_stale_participant_restart_due(last_stale_participant_restart_at, now) {
+                    eprintln!(
+                        "daemon: replacing unresponsive FIPS endpoint after local control timeout"
+                    );
+                    let recovery = rebuild_fips_tunnel_runtime_after_control_failure(
+                        runtime,
+                        FipsRestartContext {
+                            app,
+                            config_path,
+                            network_id,
+                            fallback_iface,
+                            underlay_interface_mtu,
+                            own_pubkey,
+                            recent_peers: Some(recent_peers),
+                            last_endpoint_peer_signature,
+                        },
+                        "local endpoint control timeout",
+                    )
+                    .await;
+                    match recovery {
+                        Ok(()) => {
+                            *pending_roster_restart_state = FipsPendingRosterRestartState::default();
+                            *roster_sync_state = FipsRosterSyncState::default();
+                        }
+                        Err(error) => {
+                            eprintln!("fips: endpoint control recovery failed: {error:#}");
+                        }
+                    }
+                }
+                return;
+            }
         }
     }
 
