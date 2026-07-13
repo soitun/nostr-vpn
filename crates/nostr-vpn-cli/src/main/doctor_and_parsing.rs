@@ -149,15 +149,11 @@ async fn run_doctor(args: DoctorArgs) -> Result<()> {
 
 fn print_daemon_peer_line(peer: &DaemonPeerState, now: u64) {
     let marker = if peer.reachable { '✓' } else { '✗' };
-    let transport = match (
-        peer.fips_transport_type.as_str(),
-        peer.fips_transport_addr.as_str(),
-    ) {
-        ("", "") if peer.reachable => "relayed".to_string(),
-        ("", "") => "pending".to_string(),
-        (kind, "") => kind.to_string(),
-        (kind, addr) => format!("{kind} {addr}"),
-    };
+    let transport = daemon_peer_transport_label(
+        peer.reachable,
+        &peer.fips_transport_type,
+        &peer.fips_transport_addr,
+    );
     let srtt = peer
         .fips_srtt_ms
         .map(|ms| format!(" srtt={ms}ms"))
@@ -202,6 +198,16 @@ fn print_daemon_peer_line(peer: &DaemonPeerState, now: u64) {
         truncate_pubkey(pubkey),
         peer.tunnel_ip,
     );
+}
+
+fn daemon_peer_transport_label(reachable: bool, kind: &str, addr: &str) -> String {
+    match (kind, addr) {
+        ("", "") if reachable => "via mesh".to_string(),
+        ("", "") => "pending".to_string(),
+        (kind, _) if kind.eq_ignore_ascii_case("relayed") => "via mesh".to_string(),
+        (kind, "") => kind.to_string(),
+        (kind, addr) => format!("{kind} {addr}"),
+    }
 }
 
 fn human_bytes(bytes: u64) -> String {

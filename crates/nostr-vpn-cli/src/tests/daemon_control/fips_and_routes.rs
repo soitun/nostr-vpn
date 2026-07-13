@@ -6,6 +6,20 @@ fn daemon_peer_age_secs_rejects_far_future_timestamp() {
 }
 
 #[test]
+fn daemon_peer_transport_labels_routed_peers_as_via_mesh() {
+    assert_eq!(daemon_peer_transport_label(true, "", ""), "via mesh");
+    assert_eq!(
+        daemon_peer_transport_label(true, "relayed", "ignored"),
+        "via mesh"
+    );
+    assert_eq!(daemon_peer_transport_label(false, "", ""), "pending");
+    assert_eq!(
+        daemon_peer_transport_label(true, "ethernet", "02996cffb087"),
+        "ethernet 02996cffb087"
+    );
+}
+
+#[test]
 fn fips_runtime_state_counts_direct_roster_and_other_peers() {
     let mut config = AppConfig::generated();
     activate_first_network(&mut config);
