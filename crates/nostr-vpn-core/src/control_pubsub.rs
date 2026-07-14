@@ -102,6 +102,7 @@ impl ControlPubsubMesh {
                 max_hops: options.max_hops,
                 max_event_bytes: options.max_event_bytes,
                 max_cached_events: options.max_cached_events,
+                max_cached_event_bytes: nostr_pubsub::DEFAULT_INV_WANT_MAX_CACHE_BYTES,
                 max_seen_events: options.max_seen_events,
                 max_pending_peers_per_event: options.max_pending_peers_per_event,
                 route_ttl_ms: options.route_ttl_ms,
