@@ -395,6 +395,7 @@ run_mobile_idle_cpu_gates() {
   if command -v adb >/dev/null 2>&1 \
     && adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { found = 1 } END { exit !found }'; then
     release_gate_run_with_timeout "Android idle CPU smoke" "$MOBILE_GUI_SMOKE_TIMEOUT_SECS" \
+      env NVPN_ANDROID_PACKAGE="fi.siriusbusiness.nvpn.releasegate" \
       ./scripts/mobile-android-smoke.sh --vpn-cycle --create-network --accept-vpn-dialog
   else
     echo "Skipping Android idle CPU smoke because no adb device is online."

@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$ROOT_DIR/scripts/idle-cpu-gate.py"
 RELEASE_GATE="$ROOT_DIR/scripts/release-gate.sh"
 MOBILE_IOS_SMOKE="$ROOT_DIR/scripts/mobile-ios-smoke.sh"
+MOBILE_ANDROID_SMOKE="$ROOT_DIR/scripts/mobile-android-smoke.sh"
 
 fail() {
   printf 'idle CPU gate harness failed: %s\n' "$*" >&2
@@ -162,6 +163,16 @@ grep -Fq './scripts/mobile-ios-smoke.sh simulator' "$RELEASE_GATE" \
   || fail "release gate does not run the iOS app idle CPU smoke"
 grep -Fq './scripts/mobile-android-smoke.sh --vpn-cycle --create-network' "$RELEASE_GATE" \
   || fail "release gate does not run the Android background active-VPN idle CPU smoke"
+grep -Fq 'NVPN_ANDROID_PACKAGE="fi.siriusbusiness.nvpn.releasegate"' "$RELEASE_GATE" \
+  || fail "release gate Android smoke does not use an isolated package"
+grep -Fq 'environmentVariable("NVPN_ANDROID_PACKAGE")' "$ROOT_DIR/android/app/build.gradle.kts" \
+  || fail "Android Gradle application id cannot follow the smoke package override"
+grep -Fq 'ACTION_PACKAGE_NAME="${NVPN_ANDROID_ACTION_PACKAGE:-${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}}"' "$MOBILE_ANDROID_SMOKE" \
+  || fail "Android smoke action name incorrectly follows the overridable package id"
+grep -Fq 'OwnerUid: $PACKAGE_UID' "$MOBILE_ANDROID_SMOKE" \
+  || fail "Android smoke VPN state is not scoped to the candidate package uid"
+grep -Fq '$1 ~ /^emulator-/' "$MOBILE_ANDROID_SMOKE" \
+  || fail "Android smoke does not prefer an isolated emulator over a physical device"
 grep -Fq 'NVPN_IDLE_CPU_SAMPLE_SECONDS:-60' "$RELEASE_GATE" \
   || fail "release gate does not cover a full mDNS cadence in CPU samples"
 grep -Fq 'env NVPN_MACOS_RUST_PROFILE=release NVPN_MACOS_XCODE_CONFIGURATION=Release' "$RELEASE_GATE" \

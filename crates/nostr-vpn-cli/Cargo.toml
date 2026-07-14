@@ -24,6 +24,7 @@ clap.workspace = true
 dirs.workspace = true
 fips-core.workspace = true
 fips-endpoint.workspace = true
+fips-tcp.workspace = true
 hickory-proto.workspace = true
 hex.workspace = true
 serde.workspace = true

@@ -687,9 +687,9 @@ dependencies = [
 
 [[package]]
 name = "cashu-service"
-version = "0.2.57"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02cd7cc2b5cf7ce343c8f4d91945d6051f0b18c60c3d34aa6915736ada4dec3a"
+checksum = "fe41f2a040b24570c91eaec667c244d0a490a3f5a01ce48721cd1755b91dbc9c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -751,9 +751,9 @@ dependencies = [
 
 [[package]]
 name = "cdk-spilman"
-version = "0.15.1"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "369995eef9ebcbdd7315d5a552e9d9a1d328aa93b70b5df891d768a8c269d7d6"
+checksum = "42b49bab9a4554ba4b3e778eac26b98071541ff2b242965115b929cc0f17a603"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3349,7 +3349,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.92"
+version = "4.0.93"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3378,7 +3378,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.92"
+version = "4.0.93"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -3415,7 +3415,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-linux"
-version = "4.0.92"
+version = "4.0.93"
 dependencies = [
  "gio",
  "glib",

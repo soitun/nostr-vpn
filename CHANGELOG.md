@@ -4,11 +4,27 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.93 - 2026-07-14
+
+### Changed
+
+- Control-event pubsub now carries bounded framed records over TCP/FIPS 0.1.0.
+  Persistent peer streams provide ordered retransmission, replacing the local
+  three-attempt `Inventory`/`Want` datagram retry layer while reconnects
+  resubscribe the cached update root.
+- Kept tunnel packets, liveness probes, and routed WebVM approval forwarding as
+  FIPS datagrams to avoid head-of-line blocking and preserve payload routing.
+  Join-approval and paid-route acknowledgments remain application receipts
+  because they prove applied configuration and committed payment state, not
+  transport delivery.
+
 ### Fixed
 
 - Native wallets no longer show placeholder balances or routine exchange-rate
   refresh labels, render Lightning top-up invoices as QR codes, and
   automatically claim paid invoices while the receive flow is open.
+- WebVM's approval wait helper now stays within the strict Clippy argument
+  limit used by release CI.
 
 ## 4.0.92 - 2026-07-13
 

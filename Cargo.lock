@@ -837,9 +837,9 @@ dependencies = [
 
 [[package]]
 name = "cashu-service"
-version = "0.2.57"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02cd7cc2b5cf7ce343c8f4d91945d6051f0b18c60c3d34aa6915736ada4dec3a"
+checksum = "fe41f2a040b24570c91eaec667c244d0a490a3f5a01ce48721cd1755b91dbc9c"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1025,9 +1025,9 @@ dependencies = [
 
 [[package]]
 name = "cdk-spilman"
-version = "0.15.1"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "369995eef9ebcbdd7315d5a552e9d9a1d328aa93b70b5df891d768a8c269d7d6"
+checksum = "42b49bab9a4554ba4b3e778eac26b98071541ff2b242965115b929cc0f17a603"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1959,6 +1959,12 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
 ]
+
+[[package]]
+name = "fips-tcp"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7db0b403ebcb8953be95f8f7d545edf773933762abeb7120437c59839585596"
 
 [[package]]
 name = "flate2"
@@ -3588,9 +3594,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6899ab1067aff08925024d25ca4d95a5267c1cafdbfcc9ead2a59670086f552"
+checksum = "03649ec74a5e1a0794a5dacfb79340badeccd4625b6cc6bc16d7a6e64d2a8afe"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -3679,7 +3685,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.92"
+version = "4.0.93"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3710,7 +3716,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.92"
+version = "4.0.93"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -3749,7 +3755,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-sim"
-version = "4.0.92"
+version = "4.0.93"
 dependencies = [
  "anyhow",
  "fips-core",
@@ -3774,7 +3780,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.0.92"
+version = "4.0.93"
 dependencies = [
  "anyhow",
  "axum",
@@ -3795,7 +3801,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.0.92"
+version = "4.0.93"
 dependencies = [
  "anyhow",
  "wintun",
@@ -3890,7 +3896,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn"
-version = "4.0.92"
+version = "4.0.93"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -3904,6 +3910,7 @@ dependencies = [
  "dirs 6.0.0",
  "fips-core",
  "fips-endpoint",
+ "fips-tcp",
  "futures-util",
  "hex",
  "hickory-proto",
