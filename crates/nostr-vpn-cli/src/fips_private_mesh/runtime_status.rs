@@ -207,13 +207,13 @@ impl FipsPrivateMeshRuntime {
             .link_status
             .read()
             .map_err(|_| anyhow!("FIPS mesh link status lock poisoned"))?;
-        Ok(participants
+        let mut due = participants
             .into_iter()
-            .filter(|participant| {
-                let participant_key = participant_pubkey_bytes(participant);
-                let peer_presence = presence.get(participant);
+            .filter_map(|participant| {
+                let participant_key = participant_pubkey_bytes(&participant);
+                let peer_presence = presence.get(&participant);
                 let link_connected = link_status
-                    .get(participant)
+                    .get(&participant)
                     .is_some_and(|peer| peer.connected);
                 let last_seen_at = participant_key
                     .as_ref()
@@ -226,7 +226,18 @@ impl FipsPrivateMeshRuntime {
                     link_connected,
                     now,
                 )
+                .then(|| {
+                    (
+                        participant,
+                        peer_presence.and_then(|value| value.last_ping_sent_at),
+                    )
+                })
             })
+            .collect::<Vec<_>>();
+        prioritize_fips_peer_pings(&mut due);
+        Ok(due
+            .into_iter()
+            .map(|(participant, _)| participant)
             .collect())
     }
 
@@ -415,4 +426,12 @@ impl FipsPrivateMeshRuntime {
         Ok(())
     }
 
+}
+
+fn prioritize_fips_peer_pings(due: &mut [(String, Option<u64>)]) {
+    due.sort_by(|left, right| {
+        left.1
+            .cmp(&right.1)
+            .then_with(|| left.0.cmp(&right.0))
+    });
 }
