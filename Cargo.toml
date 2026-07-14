@@ -53,9 +53,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip44", "nip59"] }
-nostr-pubsub = "0.1.8"
-nostr-pubsub-fips = "0.2.1"
-nostr-pubsub-social-graph = "0.2.0"
+nostr-pubsub = "0.1.9"
+nostr-pubsub-fips = "0.2.2"
+nostr-pubsub-social-graph = "0.2.1"
 nostr-social-graph = "0.1.2"
 nostr-social-memory = "0.1.1"
 nostr-identity = "0.3.1"
