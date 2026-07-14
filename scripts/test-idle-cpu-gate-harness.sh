@@ -185,6 +185,10 @@ grep -Fq 'ps -ww -p "$daemon_pid"' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon identity check may truncate the launchd command"
 grep -Fq 'os.path.realpath(sys.argv[1])' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon identity check does not account for launchd path canonicalization"
+grep -Fq 'NVPN_MACOS_SWIFT_COMPILATION_MODE:-singlefile' "$ROOT_DIR/scripts/macos-build" \
+  || fail "macOS release build does not avoid hosted whole-module Swift compiler failures"
+grep -Fq 'NVPN_MACOS_SWIFT_ENABLE_BATCH_MODE:-NO' "$ROOT_DIR/scripts/macos-build" \
+  || fail "macOS release build does not disable hosted Swift batch compilation"
 grep -Fq 'assert_idle_daemon_cpu_below node-a' "$ROOT_DIR/scripts/e2e-fips-routed-udp-docker.sh" \
   || fail "release-gated Linux active-tunnel e2e has no daemon idle CPU check"
 grep -Fq 'windows-daemon-idle-cpu.ps1' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \

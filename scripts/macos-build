@@ -712,6 +712,8 @@ run_macos_app() {
     ARCHS=arm64 \
     ONLY_ACTIVE_ARCH=NO \
     SKIP_INSTALL=NO \
+    SWIFT_COMPILATION_MODE="${NVPN_MACOS_SWIFT_COMPILATION_MODE:-singlefile}" \
+    SWIFT_ENABLE_BATCH_MODE="${NVPN_MACOS_SWIFT_ENABLE_BATCH_MODE:-NO}" \
     "${sign_args[@]}" \
     build
 
