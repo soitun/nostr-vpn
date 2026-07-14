@@ -114,6 +114,7 @@ struct FipsRestartContext<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FipsLinkEventRefresh {
     None,
+    RestartEndpoint,
     RefreshPaths,
 }
 #[derive(Debug, Default)]
@@ -128,7 +129,9 @@ pub(crate) fn fips_link_event_refresh(
     resumed_after_sleep: bool,
 ) -> FipsLinkEventRefresh {
     let _ = platform_network_event;
-    if network_changed || endpoint_changed || resumed_after_sleep {
+    if network_changed || resumed_after_sleep {
+        FipsLinkEventRefresh::RestartEndpoint
+    } else if endpoint_changed {
         FipsLinkEventRefresh::RefreshPaths
     } else {
         FipsLinkEventRefresh::None
@@ -392,14 +395,14 @@ async fn refresh_fips_tunnel_runtime_after_link_event(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
     context: FipsRestartContext<'_>,
     reason: &str,
+    restart_endpoint: bool,
 ) -> Result<()> {
     let config_iface = runtime
         .as_ref()
         .map(|runtime| runtime.iface().to_string())
         .unwrap_or_else(|| context.fallback_iface.to_string());
-    // Link events mean the old runtime's learned endpoint hints may belong to
-    // a previous underlay/NAT mapping. Keep the endpoint bound and make fips
-    // re-earn direct paths from configured hints and fresh discovery.
+    // Do not carry learned endpoint hints across link changes. They may belong
+    // to a previous underlay or NAT mapping.
     let live_peer_endpoints = Vec::new();
     let config = fips_tunnel_config_from_app_async(
         FipsTunnelConfigInput {
@@ -415,9 +418,10 @@ async fn refresh_fips_tunnel_runtime_after_link_event(
     )
     .await?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
-    if runtime
-        .as_ref()
-        .is_some_and(|existing| existing.requires_endpoint_restart(&config))
+    if restart_endpoint
+        || runtime
+            .as_ref()
+            .is_some_and(|existing| existing.requires_endpoint_restart(&config))
     {
         if let Some(existing) = runtime.take() {
             existing.stop().await?;
@@ -608,6 +612,7 @@ async fn restart_fips_tunnel_runtime_after_pending_roster_links(
         runtime,
         context,
         "all FIPS roster links pending",
+        false,
     )
     .await?;
     Ok(true)
