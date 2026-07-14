@@ -55,6 +55,7 @@ fi
 SUFFIX="e2e-$(date +%s)-$$"
 TEST_DIR="$(mktemp -d -t nvpn-svc-e2e)"
 TEST_CONFIG="$TEST_DIR/$SUFFIX.toml"
+TEST_CONFIG_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TEST_CONFIG")"
 PEER_CONFIG="$TEST_DIR/$SUFFIX-peer.toml"
 TEST_PORT="$((52000 + $$ % 1000))"
 UNDERLAY_IFACE="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}' || true)"
@@ -124,10 +125,10 @@ print(p if ok else "")
 daemon_binary="$(printf '%s' "$service_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("binary_path") or "")')"
 daemon_command="$(ps -ww -p "$daemon_pid" -o command= 2>/dev/null || true)"
 case "$daemon_command" in
-  "$daemon_binary daemon --service --config $TEST_CONFIG"*) ;;
+  "$daemon_binary daemon --service --config $TEST_CONFIG_REAL"*) ;;
   *)
     echo "FAIL: service PID no longer matches the isolated nvpn daemon" >&2
-    echo "expected prefix: $daemon_binary daemon --service --config $TEST_CONFIG" >&2
+    echo "expected prefix: $daemon_binary daemon --service --config $TEST_CONFIG_REAL" >&2
     echo "observed: $daemon_command" >&2
     exit 1
     ;;
