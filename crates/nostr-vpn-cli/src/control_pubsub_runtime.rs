@@ -815,7 +815,7 @@ async fn send_control_messages(
 }
 
 async fn ingest_into_fips_discovery(endpoint: &FipsEndpoint, event: &Event) {
-    if let Err(error) = endpoint.ingest_nostr_pubsub_event(event.clone()).await {
+    if let Err(error) = endpoint.ingest_nostr_discovery_event(event.clone()).await {
         tracing::debug!(%error, event_id = %event.id, "failed to ingest pubsub event into FIPS discovery");
     }
 }
