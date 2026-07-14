@@ -503,6 +503,36 @@
     }
 
     #[test]
+    fn fips_peer_ping_batching_reaches_every_peer_before_recycling() {
+        let mut peers = (0..10)
+            .map(|index| (format!("peer-{index:02}"), None))
+            .collect::<Vec<_>>();
+
+        for now in [120, 122, 124, 126, 128] {
+            let mut due = peers
+                .iter()
+                .filter(|(_, last_ping_sent_at)| {
+                    super::fips_peer_ping_due(Some(now), *last_ping_sent_at, true, now)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            super::prioritize_fips_peer_pings(&mut due);
+            for (participant, _) in due.into_iter().take(super::FIPS_PEER_PING_MAX_PER_TICK) {
+                peers
+                    .iter_mut()
+                    .find(|(candidate, _)| candidate == &participant)
+                    .expect("scheduled peer")
+                    .1 = Some(now);
+            }
+        }
+
+        assert!(
+            peers.iter().all(|(_, last_ping_sent_at)| last_ping_sent_at.is_some()),
+            "bounded heartbeat batches must not starve peers at the end of the roster"
+        );
+    }
+
+    #[test]
     fn control_frames_from_rostered_endpoint_resolve_to_participant() {
         let keys = Keys::generate();
         let participant_pubkey = keys.public_key().to_hex();
