@@ -88,17 +88,21 @@ mod tests {
         );
     }
     #[test]
-    fn link_event_refresh_classifies_path_refreshes() {
+    fn link_event_refresh_classifies_restarts_and_path_refreshes() {
         let idle = fips_link_event_refresh(false, false, false, false);
         assert_eq!(idle, FipsLinkEventRefresh::None);
 
-        for refresh in [
+        for restart in [
             fips_link_event_refresh(false, true, false, false),
-            fips_link_event_refresh(false, false, true, false),
             fips_link_event_refresh(false, false, false, true),
         ] {
-            assert_eq!(refresh, FipsLinkEventRefresh::RefreshPaths);
+            assert_eq!(restart, FipsLinkEventRefresh::RestartEndpoint);
         }
+
+        assert_eq!(
+            fips_link_event_refresh(false, false, true, false),
+            FipsLinkEventRefresh::RefreshPaths
+        );
 
         assert_eq!(
             fips_link_event_refresh(true, false, false, false),

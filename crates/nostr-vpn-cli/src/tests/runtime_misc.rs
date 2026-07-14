@@ -520,14 +520,14 @@ fn daemon_network_refresh_uses_platform_events_with_sparse_fallback() {
 }
 
 #[test]
-fn fips_link_events_refresh_paths_for_major_link_changes() {
+fn fips_link_events_restart_endpoint_for_major_link_changes() {
     assert_eq!(
         fips_link_event_refresh(false, true, false, false),
-        FipsLinkEventRefresh::RefreshPaths
+        FipsLinkEventRefresh::RestartEndpoint
     );
     assert_eq!(
         fips_link_event_refresh(false, false, false, true),
-        FipsLinkEventRefresh::RefreshPaths
+        FipsLinkEventRefresh::RestartEndpoint
     );
 }
 #[test]

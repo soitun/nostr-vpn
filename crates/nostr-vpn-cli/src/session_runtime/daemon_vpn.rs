@@ -293,7 +293,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         eprintln!("daemon: endpoint changed; refreshing FIPS endpoint state");
                     }
                     let fips_result = match fips_refresh {
-                        FipsLinkEventRefresh::RefreshPaths => {
+                        FipsLinkEventRefresh::RestartEndpoint
+                        | FipsLinkEventRefresh::RefreshPaths => {
                             if fips_tunnel_runtime.is_some()
                                 || fips_private_runtime_active(&app, vpn_enabled, expected_peers)
                             {
@@ -315,6 +316,10 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                             &mut last_fips_endpoint_peer_signature,
                                     },
                                     refresh_reason,
+                                    matches!(
+                                        fips_refresh,
+                                        FipsLinkEventRefresh::RestartEndpoint
+                                    ),
                                 )
                                 .await
                             } else {
