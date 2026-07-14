@@ -57,6 +57,16 @@ TEST_DIR="$(mktemp -d -t nvpn-svc-e2e)"
 TEST_CONFIG="$TEST_DIR/$SUFFIX.toml"
 PEER_CONFIG="$TEST_DIR/$SUFFIX-peer.toml"
 TEST_PORT="$((52000 + $$ % 1000))"
+UNDERLAY_IFACE="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}' || true)"
+if [ -z "$UNDERLAY_IFACE" ]; then
+  echo "FAIL: could not resolve the macOS runner's default underlay interface" >&2
+  exit 1
+fi
+UNDERLAY_IP="$(ipconfig getifaddr "$UNDERLAY_IFACE" 2>/dev/null || true)"
+if [ -z "$UNDERLAY_IP" ]; then
+  echo "FAIL: could not resolve the macOS runner's default underlay IPv4 address" >&2
+  exit 1
+fi
 SERVICE_LABEL="to.nostrvpn.nvpn.$(printf '%s' "$TEST_DIR/$SUFFIX" \
   | sed -e 's:/:_:g' -e 's:^_*::' -e 's:^Users_:u_:' )"
 
@@ -74,9 +84,8 @@ peer_npub="$(sed -n 's/^public_key = "\([^"]*\)"/\1/p' "$PEER_CONFIG" | head -1)
 test -n "$own_npub" && test -n "$peer_npub"
 "$NVPN_BIN" set --config "$TEST_CONFIG" \
   --participant "$own_npub" --participant "$peer_npub" \
-  --network-id macos-idle-cpu \
-  --endpoint "127.0.0.1:$TEST_PORT" --listen-port "$TEST_PORT" \
-  --fips-peer-endpoint "$peer_npub=127.0.0.1:$((TEST_PORT + 1))" \
+  --endpoint "$UNDERLAY_IP:$TEST_PORT" --listen-port "$TEST_PORT" \
+  --fips-peer-endpoint "$peer_npub=$UNDERLAY_IP:$((TEST_PORT + 1))" \
   --fips-advertise-endpoint true \
   --fips-nostr-discovery-enabled false --fips-bootstrap-enabled false >/dev/null
 

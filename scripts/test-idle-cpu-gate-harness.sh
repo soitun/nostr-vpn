@@ -185,5 +185,9 @@ grep -Fq 'assert_idle_daemon_cpu_below node-a' "$ROOT_DIR/scripts/e2e-fips-route
   || fail "release-gated Linux active-tunnel e2e has no daemon idle CPU check"
 grep -Fq 'windows-daemon-idle-cpu.ps1' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
   || fail "release-gated Windows VM smoke has no daemon idle CPU check"
+grep -Fq '"NVPN_IDLE_CPU_SAMPLE_SECONDS" 60' "$ROOT_DIR/scripts/windows-app-launch-smoke.ps1" \
+  || fail "Windows app idle CPU gate does not sample a full minute"
+grep -Fq '"NVPN_IDLE_CPU_SETTLE_SECONDS" 20' "$ROOT_DIR/scripts/windows-app-launch-smoke.ps1" \
+  || fail "Windows app idle CPU gate does not exclude startup warm-up"
 
 printf 'idle CPU gate harness passed\n'
