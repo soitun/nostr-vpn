@@ -122,10 +122,15 @@ ok = s.get("supported") and s.get("installed") and s.get("loaded") and s.get("ru
 print(p if ok else "")
 ')"
 daemon_binary="$(printf '%s' "$service_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("binary_path") or "")')"
-daemon_command="$(ps -p "$daemon_pid" -o command= 2>/dev/null || true)"
+daemon_command="$(ps -ww -p "$daemon_pid" -o command= 2>/dev/null || true)"
 case "$daemon_command" in
   "$daemon_binary daemon --service --config $TEST_CONFIG"*) ;;
-  *) echo "FAIL: service PID no longer matches the isolated nvpn daemon" >&2; exit 1 ;;
+  *)
+    echo "FAIL: service PID no longer matches the isolated nvpn daemon" >&2
+    echo "expected prefix: $daemon_binary daemon --service --config $TEST_CONFIG" >&2
+    echo "observed: $daemon_command" >&2
+    exit 1
+    ;;
 esac
 
 "$ROOT/scripts/idle-cpu-gate.py" host-pid \
