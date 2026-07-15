@@ -408,8 +408,16 @@ fn persist_daemon_runtime_state_marks_vpn_on_as_active() {
         let limit = state
             .open_file_descriptor_soft_limit
             .expect("daemon state should report the soft file descriptor limit");
+        let types = state
+            .open_file_descriptor_types
+            .as_ref()
+            .expect("daemon state should report sanitized file descriptor types");
         assert!(count > 0);
         assert!(count < limit);
+        assert_eq!(types.values().sum::<u64>(), count);
+        assert!(types
+            .keys()
+            .all(|kind| ["event", "file", "other", "pipe", "socket"].contains(&kind.as_str())));
     }
     assert_eq!(state.relays.len(), 1);
     assert_eq!(state.relays[0].status, "connected");
