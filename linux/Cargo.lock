@@ -1495,10 +1495,11 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.98"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16149f0fd238336ef647520f89cb78e8dc52a27c1304683b63bb0c704cd0288c"
+checksum = "5eb5c2cd49701461cfe2a9604eec3ddad6d3fadca67aceb11f472b6e665ecf89"
 dependencies = [
+ "base64 0.22.1",
  "bluer",
  "bytes",
  "dirs 6.0.0",
@@ -1506,6 +1507,7 @@ dependencies = [
  "futures",
  "hex",
  "hkdf",
+ "if-addrs",
  "libc",
  "mdns-sd",
  "nostr",
@@ -1530,14 +1532,15 @@ dependencies = [
  "tun",
  "uuid",
  "webrtc",
+ "windows-sys 0.61.2",
  "wintun",
 ]
 
 [[package]]
 name = "fips-endpoint"
-version = "0.3.63"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11c8fc2b4e703b6e433ff003bd21bb9d622e279b69aceb6f153272ce6487089e"
+checksum = "a031e060af856e6f2cca1ffc216e0512aa73c10b7768da32e1031182d0ea70b3"
 dependencies = [
  "fips-core",
 ]
@@ -3303,9 +3306,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub"
-version = "0.1.10"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a3c668aede5ebf20501199206e1853ee8e26f38d476a60f54fb27443dfb552f"
+checksum = "f3c509d68c8de0f87de781630cca6d3d4e61b2fe8a1ba3d21463efd7bc4780c6"
 dependencies = [
  "async-trait",
  "nostr",

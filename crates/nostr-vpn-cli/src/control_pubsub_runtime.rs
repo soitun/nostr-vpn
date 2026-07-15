@@ -2,34 +2,43 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use fips_core::FipsEndpoint;
-use nostr_pubsub::{EventSource, MatchEventOptions, MeshPeer, MeshPeerPolicy, PolicyDecision};
-use nostr_pubsub_fips::{FipsPubsubPolicy, FipsPubsubPolicyOptions};
+use async_trait::async_trait;
+use fips_core::{FipsEndpoint, PeerIdentity};
+use nostr_pubsub::{
+    EventPolicyContext, EventSource, MatchEventOptions, MeshPeerPolicy, PolicyDecision,
+    PubsubPolicy, SourcePolicyContext, VerifiedEvent,
+};
+use nostr_pubsub_fips::{
+    FipsInvWantStream, FipsInvWantStreamOptions, FipsInvWantTcpDriveReport, FipsInvWantTcpDriver,
+    FipsInvWantTcpDriverOptions, FipsPubsubPolicy, FipsPubsubPolicyOptions,
+};
 use nostr_pubsub_social_graph::{PEER_RATING_MAX_AGE, PEER_RATING_MAX_FUTURE_SKEW};
 use nostr_sdk::prelude::{Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification};
 use nostr_social_memory::rating_from_event;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::control_pubsub::{
     CONTROL_PUBSUB_FIPS_SERVICE_PORT, CONTROL_PUBSUB_MAX_EVENT_BYTES,
-    CONTROL_PUBSUB_MAX_WIRE_BYTES, ControlPubsubAction, ControlPubsubCodec, ControlPubsubMesh,
-    ControlPubsubOptions, ControlPubsubWireMessage, FIPS_PEER_ADVERT_KIND, PAID_EXIT_OFFER_KIND,
-    RATING_FACT_KIND,
+    CONTROL_PUBSUB_MAX_WIRE_BYTES, CONTROL_PUBSUB_PROTOCOL, CONTROL_PUBSUB_VERSION,
+    ControlPubsubOptions, FIPS_PEER_ADVERT_KIND, PAID_EXIT_OFFER_KIND, RATING_FACT_KIND,
 };
 use nostr_vpn_core::updater::{UpdateEventCache, configured_update_ref};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::fips_tcp_records::{FipsTcpRecordEvent, FipsTcpRecordSender, FipsTcpRecordTransport};
-
 const STORE_VERSION: u8 = 1;
 const STORE_MAX_EVENTS: usize = 1_024;
 const COMMAND_CAPACITY: usize = 64;
-const MAINTENANCE_TICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-const OUTBOX_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
+const MAX_PUBSUB_PEERS: usize = 64;
+const MAX_QUEUED_RECORDS_PER_PEER: usize = 1_024;
+const MAX_QUEUED_BYTES_PER_PEER: usize = 4 * 1024 * 1024;
+const MAX_IO_BYTES_PER_DRIVE: usize = 256 * 1024;
+const DRIVER_TICK_INTERVAL: Duration = Duration::from_millis(25);
+const MAINTENANCE_TICK_INTERVAL: Duration = Duration::from_millis(100);
+const OUTBOX_POLL_INTERVAL: Duration = Duration::from_millis(250);
 const OUTBOX_BATCH: usize = 8;
 
 struct PublishRequest {
@@ -83,19 +92,12 @@ impl ControlPubsubFipsRuntime {
         config: NostrPubsubConfig,
         relays: Vec<String>,
         store_path: Option<PathBuf>,
-        mut peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
+        peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
         update_events_override: Option<UpdateEventCache>,
     ) -> Result<Option<Self>> {
         if config.mode == NostrPubsubMode::Off {
             return Ok(None);
         }
-        let transport = FipsTcpRecordTransport::bind(
-            Arc::clone(&endpoint),
-            CONTROL_PUBSUB_FIPS_SERVICE_PORT,
-            CONTROL_PUBSUB_MAX_WIRE_BYTES,
-        )
-        .await
-        .context("failed to bind reliable FIPS control pubsub transport")?;
         let update_events = match update_events_override {
             Some(update_events) => update_events,
             None => configured_update_events()?,
@@ -112,9 +114,61 @@ impl ControlPubsubFipsRuntime {
             stored_events.iter(),
             FipsPubsubPolicyOptions::default(),
         )?;
-        if peer_policy.is_none() {
-            peer_policy = Some(pubsub_policy.peer_policy());
+        let peer_policy = peer_policy.unwrap_or_else(|| pubsub_policy.peer_policy());
+        let pubsub_policy = Arc::new(Mutex::new(pubsub_policy));
+
+        let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
+        let mut options = ControlPubsubOptions {
+            fanout: config.fanout,
+            max_hops: config.max_hops,
+            max_event_bytes,
+            ..ControlPubsubOptions::default()
+        };
+        if let Some(kinds) = update_events.filter().kinds.as_ref() {
+            options
+                .allowed_kinds
+                .extend(kinds.iter().map(|kind| u16::from(*kind)));
         }
+        let event_policy = Arc::new(ControlEventPolicy {
+            inner: Arc::clone(&pubsub_policy),
+            update_events: update_events.clone(),
+        });
+        let mut stream = FipsInvWantStream::new(FipsInvWantStreamOptions {
+            mesh: options.into_mesh_options(),
+            protocol: CONTROL_PUBSUB_PROTOCOL.to_string(),
+            protocol_version: CONTROL_PUBSUB_VERSION,
+            max_record_bytes: CONTROL_PUBSUB_MAX_WIRE_BYTES,
+            max_input_peers: MAX_PUBSUB_PEERS,
+            max_records_per_receive: 64,
+        })?
+        .with_event_policy(event_policy)
+        .with_peer_policy(peer_policy.clone());
+        let now = now_ms();
+        for event in stored_events {
+            match VerifiedEvent::try_from(event).and_then(|event| stream.seed(event, now)) {
+                Ok(()) => {}
+                Err(error) => {
+                    tracing::warn!(%error, "skipped stored event outside shared pubsub bounds");
+                }
+            }
+        }
+        let driver = FipsInvWantTcpDriver::bind(
+            Arc::clone(&endpoint),
+            stream,
+            FipsInvWantTcpDriverOptions {
+                service_namespace: CONTROL_PUBSUB_PROTOCOL.to_string(),
+                service_version: CONTROL_PUBSUB_VERSION,
+                service_port: CONTROL_PUBSUB_FIPS_SERVICE_PORT,
+                max_peers: MAX_PUBSUB_PEERS,
+                max_queued_records_per_peer: MAX_QUEUED_RECORDS_PER_PEER,
+                max_queued_bytes_per_peer: MAX_QUEUED_BYTES_PER_PEER,
+                max_io_bytes_per_drive: MAX_IO_BYTES_PER_DRIVE,
+            },
+            isn_seed(endpoint.npub()),
+        )
+        .await
+        .context("failed to bind shared reliable FIPS control pubsub driver")?;
+
         let events = Arc::new(Mutex::new(event_store));
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
@@ -123,14 +177,13 @@ impl ControlPubsubFipsRuntime {
             run(
                 PubsubRunState {
                     endpoint,
-                    config,
                     bridge,
                     events: task_events,
                     peer_policy,
                     pubsub_policy,
                     update_events,
                 },
-                transport,
+                driver,
                 outbox_path,
                 command_rx,
                 shutdown_rx,
@@ -228,63 +281,87 @@ impl RelayBridge {
     }
 }
 
+struct ControlEventPolicy {
+    inner: Arc<Mutex<FipsPubsubPolicy>>,
+    update_events: UpdateEventCache,
+}
+
+#[async_trait]
+impl PubsubPolicy for ControlEventPolicy {
+    async fn check_event(
+        &self,
+        context: EventPolicyContext<'_>,
+    ) -> nostr_pubsub::Result<PolicyDecision> {
+        if !is_control_event(context.event.as_event(), &self.update_events) {
+            return Ok(PolicyDecision::drop(
+                "event is outside control pubsub subscriptions",
+            ));
+        }
+        self.inner
+            .lock()
+            .await
+            .check_event(context.event.as_event(), context.source)
+            .await
+    }
+
+    async fn check_source(
+        &self,
+        context: SourcePolicyContext<'_>,
+    ) -> nostr_pubsub::Result<PolicyDecision> {
+        Ok(PolicyDecision::allow_with_priority(
+            context.candidate.priority,
+        ))
+    }
+}
+
 struct PubsubRunState {
     endpoint: Arc<FipsEndpoint>,
-    config: NostrPubsubConfig,
     bridge: Option<RelayBridge>,
     events: Arc<Mutex<ControlEventStore>>,
-    peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
-    pubsub_policy: FipsPubsubPolicy,
+    peer_policy: Arc<dyn MeshPeerPolicy>,
+    pubsub_policy: Arc<Mutex<FipsPubsubPolicy>>,
     update_events: UpdateEventCache,
 }
 
 #[derive(Clone, Copy)]
 struct PublishContext<'a> {
     endpoint: &'a FipsEndpoint,
-    transport: &'a FipsTcpRecordSender,
-    codec: &'a ControlPubsubCodec,
     bridge: Option<&'a RelayBridge>,
     events: &'a Arc<Mutex<ControlEventStore>>,
-    peer_policy: Option<&'a dyn MeshPeerPolicy>,
+    peer_policy: &'a dyn MeshPeerPolicy,
+    pubsub_policy: &'a Arc<Mutex<FipsPubsubPolicy>>,
     update_events: &'a UpdateEventCache,
 }
 
 async fn run(
     state: PubsubRunState,
-    mut transport: FipsTcpRecordTransport,
+    mut driver: FipsInvWantTcpDriver,
     outbox_path: Option<PathBuf>,
     mut command_rx: mpsc::Receiver<PublishRequest>,
     mut shutdown: oneshot::Receiver<()>,
 ) {
     let PubsubRunState {
         endpoint,
-        config,
         mut bridge,
         events,
         peer_policy,
-        mut pubsub_policy,
+        pubsub_policy,
         update_events,
     } = state;
-    let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
-    let mut options = ControlPubsubOptions {
-        fanout: config.fanout,
-        max_hops: config.max_hops,
-        max_event_bytes,
-        ..ControlPubsubOptions::default()
-    };
-    if let Some(kinds) = update_events.filter().kinds.as_ref() {
-        options
-            .allowed_kinds
-            .extend(kinds.iter().map(|kind| u16::from(*kind)));
-    }
-    let mut mesh = ControlPubsubMesh::new(options);
-    let codec = ControlPubsubCodec::new(CONTROL_PUBSUB_MAX_WIRE_BYTES);
-    let transport_sender = transport.sender();
-    let mut replayed_update_roots = HashMap::<String, String>::new();
+    let mut driver_tick = tokio::time::interval(DRIVER_TICK_INTERVAL);
+    driver_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut maintenance_tick = tokio::time::interval(MAINTENANCE_TICK_INTERVAL);
     maintenance_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
     outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut peer_links = HashMap::new();
+    sync_connected_peers(
+        &endpoint,
+        &mut driver,
+        peer_policy.as_ref(),
+        &mut peer_links,
+    )
+    .await;
 
     loop {
         tokio::select! {
@@ -294,15 +371,14 @@ async fn run(
                 let result = publish_local(
                     PublishContext {
                         endpoint: &endpoint,
-                        transport: &transport_sender,
-                        codec: &codec,
                         bridge: bridge.as_ref(),
                         events: &events,
-                        peer_policy: peer_policy.as_deref(),
+                        peer_policy: peer_policy.as_ref(),
+                        pubsub_policy: &pubsub_policy,
                         update_events: &update_events,
                     },
-                    &mut mesh,
-                    Some(&mut pubsub_policy),
+                    &mut driver,
+                    &mut peer_links,
                     *event,
                 )
                 .await;
@@ -312,247 +388,135 @@ async fn run(
                 publish_outbox_batch(
                     PublishContext {
                         endpoint: &endpoint,
-                        transport: &transport_sender,
-                        codec: &codec,
                         bridge: bridge.as_ref(),
                         events: &events,
-                        peer_policy: peer_policy.as_deref(),
+                        peer_policy: peer_policy.as_ref(),
+                        pubsub_policy: &pubsub_policy,
                         update_events: &update_events,
                     },
-                    &mut mesh,
-                    &mut pubsub_policy,
+                    &mut driver,
+                    &mut peer_links,
                     outbox_path.as_deref().expect("outbox path is present"),
                 )
                 .await;
             }
-            received = transport.recv() => {
-                let Some(received) = received else { break; };
-                let (source, payload) = match received {
-                    FipsTcpRecordEvent::Connected { peer } => {
-                        replayed_update_roots.remove(&peer);
-                        tracing::debug!(%peer, "control pubsub TCP/FIPS session established; resubscribing cached state");
-                        continue;
-                    }
-                    FipsTcpRecordEvent::Record { source_peer, payload } => (source_peer, payload),
-                };
-                let peers = connected_peers(&endpoint, peer_policy.as_deref()).await;
-                {
-                    if !peer_is_accepted(&source, peer_policy.as_deref()) {
-                        tracing::debug!(%source, "dropped control pubsub stream record by peer reputation");
-                        continue;
-                    }
-                    let message = match codec.decode(&payload) {
-                        Ok(message) => message,
-                        Err(error) => {
-                            mesh.record_invalid_peer_message(&source);
-                            tracing::debug!(%error, %source, "ignored invalid control pubsub stream record");
-                            continue;
-                        }
-                    };
-                    tracing::debug!(%source, message = ?message, "received control pubsub message");
-                    if let ControlPubsubWireMessage::Frame { event_id, event } = &message {
-                        if let Err(error) = event.verify() {
-                            mesh.record_invalid_peer_message(&source);
-                            tracing::debug!(%error, %source, "ignored invalid signed control pubsub event");
-                            continue;
-                        }
-                        if !is_control_event(event, &update_events) {
-                            mesh.record_invalid_peer_message(&source);
-                            mesh.dismiss_peer_frame(&source, event_id);
-                            tracing::debug!(%source, event_id, "ignored event outside control pubsub subscriptions");
-                            continue;
-                        }
-                        if !event_is_admitted(
+            received = driver.receive(now_ms()) => {
+                match received {
+                    Ok(report) => {
+                        process_driver_report(
+                            &endpoint,
+                            bridge.as_ref(),
+                            &events,
                             &pubsub_policy,
-                            event,
-                            &EventSource::fips_endpoint(source.clone()),
+                            report,
                         )
-                        .await
-                        {
-                            mesh.dismiss_peer_frame(&source, event_id);
-                            continue;
-                        }
+                        .await;
                     }
-                    match mesh.receive(&source, message.clone(), &peers, now_ms()) {
-                        Ok(actions) => {
-                            execute_actions(
-                                &endpoint,
-                                &transport_sender,
-                                &codec,
-                                bridge.as_ref(),
-                                &events,
-                                Some(&mut pubsub_policy),
-                                actions,
-                            )
-                            .await;
-                        }
-                        Err(error) => tracing::debug!(%error, %source, "ignored invalid control pubsub message"),
-                    }
+                    Err(error) => tracing::debug!(%error, "ignored invalid control pubsub stream input"),
                 }
             }
             notification = relay_notification(&mut bridge) => {
                 let Some((relay_url, event)) = notification else { continue; };
-                if !is_control_event(&event, &update_events) {
-                    continue;
-                }
-                if !event_is_admitted(
-                    &pubsub_policy,
-                    &event,
-                    &EventSource::relay(relay_url),
-                )
-                .await
+                if !is_control_event(&event, &update_events)
+                    || !event_is_admitted(
+                        &pubsub_policy,
+                        &event,
+                        &EventSource::relay(relay_url),
+                    )
+                    .await
                 {
                     continue;
                 }
-                let peers = connected_peers(&endpoint, peer_policy.as_deref()).await;
-                match mesh.publish(event.clone(), &peers, now_ms()) {
-                    Ok(actions) => {
-                        observe_policy_event(&mut pubsub_policy, &event);
-                        ingest_into_fips_discovery(&endpoint, &event).await;
-                        if let Err(error) = events.lock().await.insert(event) {
-                            tracing::warn!(%error, "failed to store control event from relay");
-                        }
-                        execute_actions(
+                if let Err(error) = publish_local(
+                    PublishContext {
+                        endpoint: &endpoint,
+                        bridge: None,
+                        events: &events,
+                        peer_policy: peer_policy.as_ref(),
+                        pubsub_policy: &pubsub_policy,
+                        update_events: &update_events,
+                    },
+                    &mut driver,
+                    &mut peer_links,
+                    event,
+                )
+                .await
+                {
+                    tracing::debug!(%error, "ignored invalid control event from relay");
+                }
+            }
+            _ = driver_tick.tick() => {
+                match driver.poll(now_ms()).await {
+                    Ok(report) => {
+                        process_driver_report(
                             &endpoint,
-                            &transport_sender,
-                            &codec,
-                            None,
+                            bridge.as_ref(),
                             &events,
-                            Some(&mut pubsub_policy),
-                            actions,
+                            &pubsub_policy,
+                            report,
                         )
                         .await;
                     }
-                    Err(error) => tracing::debug!(%error, "ignored invalid control event from relay"),
+                    Err(error) => tracing::debug!(%error, "control pubsub driver poll failed"),
                 }
             }
             _ = maintenance_tick.tick() => {
+                sync_connected_peers(
+                    &endpoint,
+                    &mut driver,
+                    peer_policy.as_ref(),
+                    &mut peer_links,
+                )
+                .await;
                 publish_policy_maintenance(
                     PublishContext {
                         endpoint: &endpoint,
-                        transport: &transport_sender,
-                        codec: &codec,
                         bridge: bridge.as_ref(),
                         events: &events,
-                        peer_policy: peer_policy.as_deref(),
+                        peer_policy: peer_policy.as_ref(),
+                        pubsub_policy: &pubsub_policy,
                         update_events: &update_events,
                     },
-                    &mut mesh,
-                    &mut pubsub_policy,
-                )
-                .await;
-                replay_update_root_to_connected_peers(
-                    PublishContext {
-                        endpoint: &endpoint,
-                        transport: &transport_sender,
-                        codec: &codec,
-                        bridge: bridge.as_ref(),
-                        events: &events,
-                        peer_policy: peer_policy.as_deref(),
-                        update_events: &update_events,
-                    },
-                    &mut mesh,
-                    &mut replayed_update_roots,
+                    &mut driver,
+                    &mut peer_links,
                 )
                 .await;
             }
         }
     }
-    transport.stop().await;
-}
-
-async fn replay_update_root_to_connected_peers(
-    context: PublishContext<'_>,
-    mesh: &mut ControlPubsubMesh,
-    replayed: &mut HashMap<String, String>,
-) {
-    let PublishContext {
-        endpoint,
-        transport,
-        codec,
-        events,
-        peer_policy,
-        ..
-    } = context;
-    let peers = connected_peers(endpoint, peer_policy).await;
-    let connected = peers
-        .iter()
-        .map(|peer| peer.id.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    replayed.retain(|peer_id, _| connected.contains(peer_id.as_str()));
-
-    let event = events.lock().await.latest_update_event();
-    let Some(event) = event else {
-        return;
-    };
-    let event_id = event.id.to_hex();
-    let mut actions = Vec::new();
-    for peer in peers {
-        if replayed.get(&peer.id) == Some(&event_id) {
-            continue;
-        }
-        match mesh.replay_to_peer(event.clone(), &peer.id, now_ms()) {
-            Ok(mut replay) => {
-                actions.append(&mut replay);
-                replayed.insert(peer.id, event_id.clone());
-            }
-            Err(error) => {
-                tracing::warn!(%error, event_id, "failed to prepare cached update-root replay");
-            }
-        }
-    }
-    execute_actions(endpoint, transport, codec, None, events, None, actions).await;
 }
 
 async fn publish_local(
     context: PublishContext<'_>,
-    mesh: &mut ControlPubsubMesh,
-    mut pubsub_policy: Option<&mut FipsPubsubPolicy>,
+    driver: &mut FipsInvWantTcpDriver,
+    peer_links: &mut HashMap<String, u64>,
     event: Event,
 ) -> Result<bool> {
-    let PublishContext {
-        endpoint,
-        transport,
-        codec,
-        bridge,
-        events,
-        peer_policy,
-        update_events,
-    } = context;
-    if !is_control_event(&event, update_events) {
+    if !is_control_event(&event, context.update_events) {
         anyhow::bail!("event is outside control pubsub subscriptions");
     }
-    let peers = connected_peers(endpoint, peer_policy).await;
-    if peers.is_empty() && bridge.is_none() {
-        return Ok(false);
+    let connected =
+        sync_connected_peers(context.endpoint, driver, context.peer_policy, peer_links).await;
+    let now = now_ms();
+    let verified = VerifiedEvent::try_from(event.clone())?;
+    if let Err(error) = driver.publish(verified.clone(), now) {
+        driver.seed(verified, now)?;
+        tracing::warn!(%error, event_id = %event.id, "control event cached after outbound queue pressure");
     }
-    let actions = mesh.publish(event.clone(), &peers, now_ms())?;
-    tracing::debug!(event_id = %event.id, peers = peers.len(), actions = actions.len(), "publishing local control event");
-    if let Some(policy) = pubsub_policy.as_deref_mut() {
-        observe_policy_event(policy, &event);
-    }
-    events.lock().await.insert(event.clone())?;
-    ingest_into_fips_discovery(endpoint, &event).await;
-    if let Some(bridge) = bridge {
+    tracing::debug!(event_id = %event.id, peers = connected, "publishing local control event");
+    observe_policy_event(context.pubsub_policy, &event).await;
+    context.events.lock().await.insert(event.clone())?;
+    ingest_into_fips_discovery(context.endpoint, &event).await;
+    if let Some(bridge) = context.bridge {
         bridge.publish(&event).await;
     }
-    execute_actions(
-        endpoint,
-        transport,
-        codec,
-        None,
-        events,
-        pubsub_policy,
-        actions,
-    )
-    .await;
-    Ok(true)
+    Ok(connected > 0 || context.bridge.is_some())
 }
 
 async fn publish_policy_maintenance(
     context: PublishContext<'_>,
-    mesh: &mut ControlPubsubMesh,
-    pubsub_policy: &mut FipsPubsubPolicy,
+    driver: &mut FipsInvWantTcpDriver,
+    peer_links: &mut HashMap<String, u64>,
 ) {
     let now = now_ms();
     if let Err(error) = context
@@ -563,22 +527,33 @@ async fn publish_policy_maintenance(
     {
         tracing::warn!(%error, "failed to prune expired control pubsub ratings");
     }
-    let events = match pubsub_policy.maintenance_events(now).await {
+    let policy_events = match context
+        .pubsub_policy
+        .lock()
+        .await
+        .maintenance_events(now)
+        .await
+    {
         Ok(events) => events,
         Err(error) => {
             tracing::warn!(%error, "failed to evaluate pubsub policy maintenance");
             return;
         }
     };
-    for event in events {
-        let published = match publish_local(context, mesh, None, event.clone()).await {
+    for event in policy_events {
+        let published = match publish_local(context, driver, peer_links, event.clone()).await {
             Ok(published) => published,
             Err(error) => {
                 tracing::warn!(%error, "failed to publish pubsub policy event");
                 false
             }
         };
-        if let Err(error) = pubsub_policy.complete_maintenance_event(&event, published, now) {
+        if let Err(error) = context
+            .pubsub_policy
+            .lock()
+            .await
+            .complete_maintenance_event(&event, published, now)
+        {
             tracing::warn!(%error, "failed to complete pubsub policy maintenance");
         }
     }
@@ -586,8 +561,8 @@ async fn publish_policy_maintenance(
 
 async fn publish_outbox_batch(
     context: PublishContext<'_>,
-    mesh: &mut ControlPubsubMesh,
-    pubsub_policy: &mut FipsPubsubPolicy,
+    driver: &mut FipsInvWantTcpDriver,
+    peer_links: &mut HashMap<String, u64>,
     outbox_path: &Path,
 ) {
     for path in control_pubsub_outbox_event_paths(outbox_path) {
@@ -609,7 +584,7 @@ async fn publish_outbox_batch(
             let _ = fs::remove_file(&path);
             continue;
         }
-        match publish_local(context, mesh, Some(&mut *pubsub_policy), event).await {
+        match publish_local(context, driver, peer_links, event).await {
             Ok(true) => {
                 if let Err(error) = fs::remove_file(&path) {
                     tracing::warn!(%error, path = %path.display(), "failed to remove published control pubsub outbox entry");
@@ -624,70 +599,42 @@ async fn publish_outbox_batch(
     }
 }
 
-async fn execute_actions(
+async fn process_driver_report(
     endpoint: &FipsEndpoint,
-    transport: &FipsTcpRecordSender,
-    codec: &ControlPubsubCodec,
     bridge: Option<&RelayBridge>,
     events: &Arc<Mutex<ControlEventStore>>,
-    mut pubsub_policy: Option<&mut FipsPubsubPolicy>,
-    actions: Vec<ControlPubsubAction>,
+    pubsub_policy: &Arc<Mutex<FipsPubsubPolicy>>,
+    report: FipsInvWantTcpDriveReport,
 ) {
-    let mut outbound = Vec::new();
-    for action in actions {
-        match action {
-            ControlPubsubAction::Send { peer_id, message } => {
-                outbound.push((peer_id, message));
-            }
-            ControlPubsubAction::Deliver { event, .. } => {
-                if let Some(policy) = pubsub_policy.as_deref_mut() {
-                    observe_policy_event(policy, &event);
-                }
-                ingest_into_fips_discovery(endpoint, &event).await;
-                let inserted = match events.lock().await.insert(event.clone()) {
-                    Ok(inserted) => inserted,
-                    Err(error) => {
-                        tracing::warn!(%error, event_id = %event.id, "failed to store control pubsub event");
-                        false
-                    }
-                };
-                if inserted {
-                    tracing::debug!(event_id = %event.id, "delivered new control pubsub event");
-                    if let Some(bridge) = bridge {
-                        bridge.publish(&event).await;
-                    }
-                }
-            }
-        }
+    if report.rejected_tcp_segments > 0 {
+        tracing::debug!(
+            rejected = report.rejected_tcp_segments,
+            "isolated invalid TCP/FIPS control pubsub segments"
+        );
     }
-
-    send_control_messages(transport, codec, outbound).await;
-}
-
-fn observe_policy_event(policy: &mut FipsPubsubPolicy, event: &Event) {
-    if let Err(error) = policy.observe_event(event) {
-        tracing::warn!(%error, event_id = %event.id, "failed to observe pubsub policy event");
-    }
-}
-
-async fn send_control_messages(
-    transport: &FipsTcpRecordSender,
-    codec: &ControlPubsubCodec,
-    messages: Vec<(String, ControlPubsubWireMessage)>,
-) {
-    for (peer_id, message) in messages {
-        let payload = match codec.encode(&message) {
-            Ok(payload) => payload,
+    for delivery in report.deliveries {
+        let event = delivery.event.into_event();
+        observe_policy_event(pubsub_policy, &event).await;
+        ingest_into_fips_discovery(endpoint, &event).await;
+        let inserted = match events.lock().await.insert(event.clone()) {
+            Ok(inserted) => inserted,
             Err(error) => {
-                tracing::warn!(%error, %peer_id, "failed to encode control pubsub message");
-                continue;
+                tracing::warn!(%error, event_id = %event.id, "failed to store control pubsub event");
+                false
             }
         };
-        if let Err(error) = transport.send(&peer_id, payload).await {
-            tracing::debug!(%error, %peer_id, "failed to queue control pubsub TCP/FIPS record");
-        } else {
-            tracing::debug!(%peer_id, "queued control pubsub TCP/FIPS record");
+        if inserted {
+            tracing::debug!(event_id = %event.id, "delivered new control pubsub event");
+            if let Some(bridge) = bridge {
+                bridge.publish(&event).await;
+            }
         }
+    }
+}
+
+async fn observe_policy_event(policy: &Arc<Mutex<FipsPubsubPolicy>>, event: &Event) {
+    if let Err(error) = policy.lock().await.observe_event(event) {
+        tracing::warn!(%error, event_id = %event.id, "failed to observe pubsub policy event");
     }
 }
 
@@ -697,42 +644,80 @@ async fn ingest_into_fips_discovery(endpoint: &FipsEndpoint, event: &Event) {
     }
 }
 
+async fn sync_connected_peers(
+    endpoint: &FipsEndpoint,
+    driver: &mut FipsInvWantTcpDriver,
+    peer_policy: &dyn MeshPeerPolicy,
+    peer_links: &mut HashMap<String, u64>,
+) -> usize {
+    let peers = connected_peers(endpoint, peer_policy).await;
+    let current_links = peers.iter().cloned().collect::<HashMap<_, _>>();
+    let stale_peers = peer_links
+        .iter()
+        .filter_map(|(peer_id, link_id)| {
+            (current_links.get(peer_id) != Some(link_id)).then_some(peer_id.clone())
+        })
+        .collect::<Vec<_>>();
+    for peer_id in stale_peers {
+        match PeerIdentity::from_npub(&peer_id) {
+            Ok(peer) => {
+                if let Err(error) = driver.abort_peer(peer).await {
+                    tracing::debug!(%error, %peer_id, "control pubsub stale link cleanup deferred");
+                    continue;
+                }
+            }
+            Err(error) => {
+                tracing::debug!(%error, %peer_id, "ignored invalid stale FIPS identity");
+            }
+        }
+        peer_links.remove(&peer_id);
+    }
+    for (peer_id, link_id) in &peers {
+        let peer = match PeerIdentity::from_npub(peer_id) {
+            Ok(peer) => peer,
+            Err(error) => {
+                tracing::debug!(%error, %peer_id, "ignored invalid connected FIPS identity");
+                continue;
+            }
+        };
+        if let Err(error) = driver.connect_peer(peer, now_ms()).await {
+            tracing::debug!(%error, %peer_id, "control pubsub peer connection deferred");
+        } else {
+            peer_links.insert(peer_id.clone(), *link_id);
+        }
+    }
+    peers.len()
+}
+
 async fn connected_peers(
     endpoint: &FipsEndpoint,
-    peer_policy: Option<&dyn MeshPeerPolicy>,
-) -> Vec<MeshPeer> {
+    peer_policy: &dyn MeshPeerPolicy,
+) -> Vec<(String, u64)> {
     let mut peers = endpoint
         .peers()
         .await
         .unwrap_or_default()
         .into_iter()
         .filter(|peer| peer.connected)
-        .filter_map(|peer| select_mesh_peer(&peer.npub, peer_policy))
+        .filter_map(|peer| {
+            peer_policy
+                .select_mesh_peer(&peer.npub)
+                .ok()
+                .flatten()
+                .map(|selected| (selected.id, peer.link_id))
+        })
         .collect::<Vec<_>>();
-    peers.sort_by(|left, right| left.id.cmp(&right.id));
-    peers.dedup_by(|left, right| left.id == right.id);
+    peers.sort();
+    peers.dedup();
     peers
 }
 
-fn peer_is_accepted(peer_id: &str, peer_policy: Option<&dyn MeshPeerPolicy>) -> bool {
-    select_mesh_peer(peer_id, peer_policy).is_some()
-}
-
-fn select_mesh_peer(peer_id: &str, peer_policy: Option<&dyn MeshPeerPolicy>) -> Option<MeshPeer> {
-    let Some(peer_policy) = peer_policy else {
-        return Some(MeshPeer::new(peer_id));
-    };
-    match peer_policy.select_mesh_peer(peer_id) {
-        Ok(peer) => peer,
-        Err(error) => {
-            tracing::warn!(%error, %peer_id, "peer reputation failed; treating peer as unknown");
-            Some(MeshPeer::new(peer_id))
-        }
-    }
-}
-
-async fn event_is_admitted(policy: &FipsPubsubPolicy, event: &Event, source: &EventSource) -> bool {
-    match policy.check_event(event, source).await {
+async fn event_is_admitted(
+    policy: &Arc<Mutex<FipsPubsubPolicy>>,
+    event: &Event,
+    source: &EventSource,
+) -> bool {
+    match policy.lock().await.check_event(event, source).await {
         Ok(PolicyDecision::Drop { reason }) => {
             tracing::debug!(
                 event_id = %event.id,
@@ -788,6 +773,11 @@ fn is_control_event(event: &Event, update_events: &UpdateEventCache) -> bool {
     ) || update_events
         .filter()
         .match_event(event, MatchEventOptions::new())
+}
+
+fn isn_seed(npub: &str) -> u64 {
+    npub.bytes()
+        .fold(now_ms(), |seed, byte| seed.rotate_left(5) ^ u64::from(byte))
 }
 
 include!("control_pubsub_runtime/outbox.rs");

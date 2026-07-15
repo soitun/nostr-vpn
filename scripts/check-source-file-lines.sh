@@ -12,6 +12,7 @@ fi
 status=0
 while IFS= read -r -d '' file; do
   rel_path="${file#./}"
+  [[ -f "$ROOT_DIR/$rel_path" ]] || continue
   lines="$(wc -l <"$ROOT_DIR/$rel_path")"
   lines="${lines//[[:space:]]/}"
   if ((lines > LIMIT)); then

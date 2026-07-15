@@ -79,7 +79,6 @@ impl FipsHostTunnelConfig {
         config.node.discovery.nostr.enabled = !self.nostr_relays.is_empty();
         config.node.discovery.nostr.advertise = false;
         config.node.discovery.nostr.advert_relays = self.nostr_relays.clone();
-        config.node.discovery.nostr.dm_relays = self.nostr_relays.clone();
         config.node.discovery.nostr.stun_servers = self.stun_servers.clone();
         config.node.discovery.nostr.share_local_candidates = self.share_local_candidates;
         config.node.discovery.nostr.policy = NostrDiscoveryPolicy::Open;

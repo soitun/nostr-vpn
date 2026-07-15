@@ -61,8 +61,8 @@ impl HeadlessDirectApprovalRuntime {
         let scope = format!("nostr-vpn:{}", config.network_id.trim());
         let mut endpoint_config = fips_endpoint_config(&scope, &config);
         // Direct approval delivery is a single explicit WebRTC dial, not a
-        // second VPN mesh. Keep relay signaling available even when the app's
-        // ambient WebRTC preference is off, and remove every ambient path.
+        // second VPN mesh. FIPS negotiates it over the authenticated session;
+        // remove every ambient discovery path.
         endpoint_config.peers.clear();
         endpoint_config.node.discovery.nostr.enabled = true;
         endpoint_config.node.discovery.nostr.advertise = false;
@@ -85,7 +85,6 @@ impl HeadlessDirectApprovalRuntime {
         webrtc.advertise_on_nostr = Some(false);
         webrtc.auto_connect = Some(false);
         webrtc.accept_connections = Some(false);
-        webrtc.signal_relays = Some(config.nostr_relays.clone());
         webrtc.stun_servers = Some(config.stun_servers.clone());
         let base_peers = endpoint_config.peers.clone();
         let runtime = RuntimeBuilder::new_multi_thread()

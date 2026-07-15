@@ -453,12 +453,7 @@ fn effective_config_relays(config: &AppConfig) -> Vec<String> {
         .collect::<std::collections::HashSet<_>>();
     let fips = fips_endpoint::NostrDiscoveryConfig::default();
     let mut relays = if config.nostr.relays.is_empty() {
-        normalize_relay_urls(
-            fips.advert_relays
-                .into_iter()
-                .chain(fips.dm_relays)
-                .collect(),
-        )
+        normalize_relay_urls(fips.advert_relays)
     } else {
         normalize_relay_urls(config.nostr.relays.clone())
     };

@@ -161,12 +161,6 @@ impl ControlEventStore {
             .collect()
     }
 
-    fn latest_update_event(&self) -> Option<Event> {
-        self.update_events
-            .latest()
-            .map(|event| event.as_event().clone())
-    }
-
     fn prune_expired_ratings(&mut self, now_secs: u64) -> Result<usize> {
         let remove = self
             .events

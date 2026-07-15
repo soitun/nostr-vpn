@@ -1,10 +1,6 @@
 use std::collections::BTreeSet;
 
-use nostr_pubsub::{
-    InvWantAction, InvWantCodec, InvWantMesh, InvWantMeshOptions, InvWantWireMessage, MeshPeer,
-    PubsubError,
-};
-use nostr_sdk::prelude::Event;
+use nostr_pubsub::InvWantMeshOptions;
 
 pub const CONTROL_PUBSUB_PROTOCOL: &str = "nvpn.control.pubsub";
 pub const CONTROL_PUBSUB_VERSION: u8 = 1;
@@ -17,43 +13,6 @@ pub const RATING_FACT_KIND: u16 = 7_368;
 
 const DEFAULT_ROUTE_TTL_MS: u64 = 2 * 60 * 1_000;
 const DEFAULT_EVENT_TTL_MS: u64 = 10 * 60 * 1_000;
-
-pub type Result<T> = std::result::Result<T, PubsubError>;
-pub type ControlPubsubError = PubsubError;
-pub type ControlPubsubWireMessage = InvWantWireMessage;
-pub type ControlPubsubAction = InvWantAction;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ControlPubsubCodec {
-    inner: InvWantCodec,
-}
-
-impl Default for ControlPubsubCodec {
-    fn default() -> Self {
-        Self::new(CONTROL_PUBSUB_MAX_WIRE_BYTES)
-    }
-}
-
-impl ControlPubsubCodec {
-    #[must_use]
-    pub fn new(max_wire_bytes: usize) -> Self {
-        Self {
-            inner: InvWantCodec::new(
-                CONTROL_PUBSUB_PROTOCOL,
-                CONTROL_PUBSUB_VERSION,
-                max_wire_bytes,
-            ),
-        }
-    }
-
-    pub fn encode(&self, message: &ControlPubsubWireMessage) -> Result<Vec<u8>> {
-        self.inner.encode(message)
-    }
-
-    pub fn decode(&self, payload: &[u8]) -> Result<ControlPubsubWireMessage> {
-        self.inner.decode(payload)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ControlPubsubOptions {
@@ -88,63 +47,23 @@ impl Default for ControlPubsubOptions {
     }
 }
 
-pub struct ControlPubsubMesh {
-    inner: InvWantMesh,
-}
-
-impl ControlPubsubMesh {
+impl ControlPubsubOptions {
+    /// Convert VPN policy/configuration into options for the shared Inv/WANT
+    /// state machine without wrapping or forking that implementation.
     #[must_use]
-    pub fn new(options: ControlPubsubOptions) -> Self {
-        Self {
-            inner: InvWantMesh::new(InvWantMeshOptions {
-                fanout: options.fanout,
-                unknown_peer_reserve: 1,
-                max_hops: options.max_hops,
-                max_event_bytes: options.max_event_bytes,
-                max_cached_events: options.max_cached_events,
-                max_cached_event_bytes: nostr_pubsub::DEFAULT_INV_WANT_MAX_CACHE_BYTES,
-                max_seen_events: options.max_seen_events,
-                max_pending_peers_per_event: options.max_pending_peers_per_event,
-                route_ttl_ms: options.route_ttl_ms,
-                event_ttl_ms: options.event_ttl_ms,
-                allowed_kinds: Some(options.allowed_kinds),
-            }),
+    pub fn into_mesh_options(self) -> InvWantMeshOptions {
+        InvWantMeshOptions {
+            fanout: self.fanout,
+            unknown_peer_reserve: 1,
+            max_hops: self.max_hops,
+            max_event_bytes: self.max_event_bytes,
+            max_cached_events: self.max_cached_events,
+            max_cached_event_bytes: nostr_pubsub::DEFAULT_INV_WANT_MAX_CACHE_BYTES,
+            max_seen_events: self.max_seen_events,
+            max_pending_peers_per_event: self.max_pending_peers_per_event,
+            route_ttl_ms: self.route_ttl_ms,
+            event_ttl_ms: self.event_ttl_ms,
+            allowed_kinds: Some(self.allowed_kinds),
         }
-    }
-
-    pub fn publish(
-        &mut self,
-        event: Event,
-        peers: &[MeshPeer],
-        now_ms: u64,
-    ) -> Result<Vec<ControlPubsubAction>> {
-        self.inner.publish(event, peers, now_ms)
-    }
-
-    pub fn receive(
-        &mut self,
-        source_peer: &str,
-        message: ControlPubsubWireMessage,
-        peers: &[MeshPeer],
-        now_ms: u64,
-    ) -> Result<Vec<ControlPubsubAction>> {
-        self.inner.receive(source_peer, message, peers, now_ms)
-    }
-
-    pub fn record_invalid_peer_message(&mut self, peer_id: &str) {
-        self.inner.record_invalid_message(peer_id);
-    }
-
-    pub fn dismiss_peer_frame(&mut self, peer_id: &str, event_id: &str) {
-        self.inner.dismiss_frame(peer_id, event_id);
-    }
-
-    pub fn replay_to_peer(
-        &mut self,
-        event: Event,
-        peer_id: &str,
-        now_ms: u64,
-    ) -> Result<Vec<ControlPubsubAction>> {
-        self.inner.replay_to_peer(event, peer_id, now_ms)
     }
 }

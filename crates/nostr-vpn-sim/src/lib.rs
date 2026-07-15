@@ -14,8 +14,7 @@ use nostr_social_graph::RatingGraphConfig;
 use nostr_social_memory::rating_from_event;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::control_pubsub::{
-    CONTROL_PUBSUB_FIPS_SERVICE_PORT, ControlPubsubCodec, ControlPubsubWireMessage,
-    FIPS_PEER_ADVERT_KIND, RATING_FACT_KIND,
+    CONTROL_PUBSUB_FIPS_SERVICE_PORT, FIPS_PEER_ADVERT_KIND, RATING_FACT_KIND,
 };
 use nvpn::control_pubsub_runtime::ControlPubsubFipsRuntime;
 use serde::{Deserialize, Serialize};
@@ -28,9 +27,8 @@ use reputation::{
 
 const DEFAULT_SEED: u64 = 0x4e56_504e_5055_4253;
 const DEFAULT_HONEST_RATIO_PERCENT: usize = 80;
-const DEFAULT_FAKE_INVENTORIES_PER_ATTACKER: usize = 8;
+const DEFAULT_MALFORMED_PUBSUB_DATAGRAMS_PER_ATTACKER: usize = 8;
 const DELIVERY_POLL_INTERVAL: Duration = Duration::from_millis(50);
-const SIM_PROTOCOL_MAX_WIRE_BYTES: usize = 60 * 1024;
 
 static NETWORK_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
@@ -38,7 +36,7 @@ static NETWORK_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 pub struct SimulationConfig {
     pub node_count: usize,
     pub attacker_count: usize,
-    pub fake_inventories_per_attacker: usize,
+    pub malformed_pubsub_datagrams_per_attacker: usize,
     pub convergence_timeout_ms: u64,
     pub delivery_timeout_ms: u64,
     pub seed: u64,
@@ -50,7 +48,8 @@ impl Default for SimulationConfig {
         Self {
             node_count,
             attacker_count: node_count * (100 - DEFAULT_HONEST_RATIO_PERCENT) / 100,
-            fake_inventories_per_attacker: DEFAULT_FAKE_INVENTORIES_PER_ATTACKER,
+            malformed_pubsub_datagrams_per_attacker:
+                DEFAULT_MALFORMED_PUBSUB_DATAGRAMS_PER_ATTACKER,
             convergence_timeout_ms: 15_000,
             delivery_timeout_ms: 15_000,
             seed: DEFAULT_SEED,
@@ -68,8 +67,8 @@ pub struct SimulationReport {
     pub baseline_delivery_basis_points: u32,
     pub post_attack_honest_deliveries: usize,
     pub post_attack_delivery_basis_points: u32,
-    pub fake_inventories_attempted: usize,
-    pub fake_inventories_sent: usize,
+    pub malformed_pubsub_datagrams_attempted: usize,
+    pub malformed_pubsub_datagrams_sent: usize,
     pub rating_spam_published: usize,
     pub rating_spam_stored_by_honest_nodes: usize,
     pub trusted_positive_ratings_applied: usize,
@@ -163,8 +162,8 @@ impl SimulationRuntime {
             .await;
 
         let before_attack = self.network.stats();
-        let (fake_inventories_attempted, fake_inventories_sent) =
-            self.inject_fake_inventories().await?;
+        let (malformed_pubsub_datagrams_attempted, malformed_pubsub_datagrams_sent) =
+            self.inject_malformed_pubsub_datagrams().await?;
         let rating_spam_published = self.publish_rating_spam().await?;
         tokio::time::sleep(Duration::from_secs(1)).await;
         let rating_spam_stored_by_honest_nodes =
@@ -208,8 +207,8 @@ impl SimulationRuntime {
                 post_attack_honest_deliveries,
                 honest_node_count,
             ),
-            fake_inventories_attempted,
-            fake_inventories_sent,
+            malformed_pubsub_datagrams_attempted,
+            malformed_pubsub_datagrams_sent,
             rating_spam_published,
             rating_spam_stored_by_honest_nodes,
             trusted_positive_ratings_applied: self.reputation_seed.trusted_positive_ratings_applied,
@@ -289,8 +288,7 @@ impl SimulationRuntime {
         Ok(ignored)
     }
 
-    async fn inject_fake_inventories(&self) -> Result<(usize, usize)> {
-        let codec = ControlPubsubCodec::new(SIM_PROTOCOL_MAX_WIRE_BYTES);
+    async fn inject_malformed_pubsub_datagrams(&self) -> Result<(usize, usize)> {
         let honest_count = self.config.node_count - self.config.attacker_count;
         let mut attempted = 0usize;
         let mut sent = 0usize;
@@ -301,17 +299,18 @@ impl SimulationRuntime {
                 .copied()
                 .filter(|target| *target < honest_count)
                 .collect::<Vec<_>>();
-            for sequence in 0..self.config.fake_inventories_per_attacker {
+            for sequence in 0..self.config.malformed_pubsub_datagrams_per_attacker {
                 for target in &targets {
                     attempted += 1;
-                    let event_id =
-                        format!("{:064x}", ((attacker as u128 + 1) << 64) | sequence as u128);
-                    let payload = codec.encode(&ControlPubsubWireMessage::Inventory {
-                        event_id,
-                        event_kind: FIPS_PEER_ADVERT_KIND,
-                        payload_bytes: 512,
-                        hop_limit: 3,
-                    })?;
+                    // This deliberately bypasses the reliable stream carrier.
+                    // A short FSP payload can never be a complete TCP/FIPS
+                    // segment, so it exercises bounded malformed-input
+                    // isolation without claiming to be a valid inventory.
+                    let payload = (attacker as u64)
+                        .to_be_bytes()
+                        .into_iter()
+                        .chain((sequence as u64).to_be_bytes())
+                        .collect();
                     if self.endpoints[attacker]
                         .send_datagram(
                             self.specs[*target].peer_identity,
@@ -495,8 +494,8 @@ fn validate_config(config: &SimulationConfig) -> Result<()> {
     if config.attacker_count == 0 || config.attacker_count >= config.node_count - 1 {
         bail!("attacker_count must leave at least two honest nodes");
     }
-    if config.fake_inventories_per_attacker == 0 {
-        bail!("fake_inventories_per_attacker must be non-zero");
+    if config.malformed_pubsub_datagrams_per_attacker == 0 {
+        bail!("malformed_pubsub_datagrams_per_attacker must be non-zero");
     }
     Ok(())
 }
@@ -669,7 +668,7 @@ mod tests {
             .block_on(run_simulation(SimulationConfig {
                 node_count: 12,
                 attacker_count: 3,
-                fake_inventories_per_attacker: 2,
+                malformed_pubsub_datagrams_per_attacker: 2,
                 convergence_timeout_ms: 10_000,
                 delivery_timeout_ms: 10_000,
                 seed: DEFAULT_SEED,
@@ -684,6 +683,14 @@ mod tests {
             "{report:?}"
         );
         assert_eq!(report.rating_spam_published, 3, "{report:?}");
+        assert!(
+            report.malformed_pubsub_datagrams_attempted > 0,
+            "{report:?}"
+        );
+        assert_eq!(
+            report.malformed_pubsub_datagrams_sent, report.malformed_pubsub_datagrams_attempted,
+            "{report:?}"
+        );
         assert!(report.trusted_positive_ratings_applied > 0, "{report:?}");
         assert!(report.trusted_negative_ratings_applied > 0, "{report:?}");
         assert!(report.unknown_honest_peer_links > 0, "{report:?}");

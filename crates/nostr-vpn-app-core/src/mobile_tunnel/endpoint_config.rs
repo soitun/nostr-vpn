@@ -256,12 +256,6 @@ pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> 
             .nostr
             .advert_relays
             .clone_from(&mobile.nostr_relays);
-        config
-            .node
-            .discovery
-            .nostr
-            .dm_relays
-            .clone_from(&mobile.nostr_relays);
     }
     if !mobile.stun_servers.is_empty() {
         config
@@ -275,7 +269,6 @@ pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> 
         configure_mobile_webrtc_transport(
             &mut config,
             nostr_enabled,
-            &mobile.nostr_relays,
             &mobile.stun_servers,
         );
     }
@@ -519,7 +512,6 @@ fn wg_upstream_excluded_route_for_addr(upstream: SocketAddr) -> Option<String> {
 fn configure_mobile_webrtc_transport(
     config: &mut FipsConfig,
     nostr_enabled: bool,
-    signal_relays: &[String],
     stun_servers: &[String],
 ) {
     if !nostr_enabled {
@@ -536,9 +528,6 @@ fn configure_mobile_webrtc_transport(
     webrtc.advertise_on_nostr = Some(true);
     webrtc.auto_connect = Some(true);
     webrtc.accept_connections = Some(true);
-    if !signal_relays.is_empty() {
-        webrtc.signal_relays = Some(signal_relays.to_vec());
-    }
     if !stun_servers.is_empty() {
         webrtc.stun_servers = Some(stun_servers.to_vec());
     }
@@ -575,10 +564,6 @@ mod endpoint_config_tests {
         assert_eq!(webrtc.advertise_on_nostr, Some(true));
         assert_eq!(webrtc.auto_connect, Some(true));
         assert_eq!(webrtc.accept_connections, Some(true));
-        assert_eq!(
-            webrtc.signal_relays.as_ref().expect("signal relays"),
-            &mobile.nostr_relays
-        );
         assert_eq!(
             webrtc.stun_servers.as_ref().expect("stun servers"),
             &mobile.stun_servers

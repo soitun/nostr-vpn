@@ -227,7 +227,6 @@ fn fips_endpoint_config_with_open_discovery_limit(
         config.node.discovery.nostr.stun_servers = transport.stun_servers.clone();
         if !transport.nostr_relays.is_empty() {
             config.node.discovery.nostr.advert_relays = transport.nostr_relays.clone();
-            config.node.discovery.nostr.dm_relays = transport.nostr_relays.clone();
         }
         // Keep a dormant outbound WebRTC transport available even when
         // ambient WebRTC discovery is disabled. Browser join approvals carry
@@ -237,7 +236,6 @@ fn fips_endpoint_config_with_open_discovery_limit(
             configure_fips_webrtc_transport(
                 &mut config,
                 transport.webrtc_enabled && advertise_on_nostr,
-                &transport.nostr_relays,
                 &transport.stun_servers,
                 mesh_mtu.underlay_udp,
             );
@@ -310,7 +308,6 @@ fn fips_endpoint_config_for_local_ethernet(
     config.node.discovery.nostr.advertise = false;
     config.node.discovery.nostr.share_local_candidates = false;
     config.node.discovery.nostr.advert_relays.clear();
-    config.node.discovery.nostr.dm_relays.clear();
     config.node.discovery.nostr.stun_servers.clear();
     config.node.discovery.lan.enabled = false;
     config.node.discovery.lan.scope = Some(ethernet.discovery_scope.clone());
@@ -526,7 +523,6 @@ fn fips_udp_external_addr(transport: &FipsEndpointTransportConfig) -> Option<Str
 fn configure_fips_webrtc_transport(
     config: &mut Config,
     ambient_discovery_enabled: bool,
-    signal_relays: &[String],
     stun_servers: &[String],
     mtu: u16,
 ) {
@@ -541,9 +537,6 @@ fn configure_fips_webrtc_transport(
     webrtc.auto_connect = Some(ambient_discovery_enabled);
     webrtc.accept_connections = Some(ambient_discovery_enabled);
     webrtc.mtu = Some(mtu);
-    if !signal_relays.is_empty() {
-        webrtc.signal_relays = Some(signal_relays.to_vec());
-    }
     if !stun_servers.is_empty() {
         webrtc.stun_servers = Some(stun_servers.to_vec());
     }
@@ -654,10 +647,6 @@ mod endpoint_config_tests {
         assert_eq!(webrtc.accept_connections, Some(true));
         assert_eq!(webrtc.mtu, Some(mesh_mtu.underlay_udp));
         assert_eq!(
-            webrtc.signal_relays.as_ref().expect("signal relays"),
-            &transport.nostr_relays
-        );
-        assert_eq!(
             webrtc.stun_servers.as_ref().expect("stun servers"),
             &transport.stun_servers
         );
@@ -701,10 +690,6 @@ mod endpoint_config_tests {
         assert_eq!(webrtc.advertise_on_nostr, Some(false));
         assert_eq!(webrtc.auto_connect, Some(false));
         assert_eq!(webrtc.accept_connections, Some(false));
-        assert_eq!(
-            webrtc.signal_relays.as_ref().expect("signal relays"),
-            &transport.nostr_relays
-        );
         assert!(!config.transports.udp.is_empty());
     }
 
@@ -764,7 +749,6 @@ mod endpoint_config_tests {
         assert!(!config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);
         assert!(config.node.discovery.nostr.advert_relays.is_empty());
-        assert!(config.node.discovery.nostr.dm_relays.is_empty());
         assert!(config.node.discovery.nostr.stun_servers.is_empty());
         assert!(!config.node.discovery.lan.enabled);
         assert!(!config.node.discovery.local.enabled);

@@ -138,7 +138,6 @@
         config.node.discovery.nostr.enabled = true;
         config.node.discovery.nostr.advertise = false;
         config.node.discovery.nostr.advert_relays.clear();
-        config.node.discovery.nostr.dm_relays.clear();
         config.node.discovery.nostr.stun_servers.clear();
         config.node.discovery.nostr.share_local_candidates = false;
         config.node.discovery.lan.enabled = false;
@@ -727,10 +726,6 @@
         );
         assert_eq!(
             config.node.discovery.nostr.advert_relays,
-            vec!["wss://relay.example.org".to_string()]
-        );
-        assert_eq!(
-            config.node.discovery.nostr.dm_relays,
             vec!["wss://relay.example.org".to_string()]
         );
         let udp = match config.transports.udp {
