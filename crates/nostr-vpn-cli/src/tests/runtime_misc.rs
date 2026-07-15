@@ -536,10 +536,10 @@ fn fips_link_events_refresh_paths_for_endpoint_only_changes() {
     );
 }
 #[test]
-fn fips_link_events_skip_route_maintenance_only_refreshes() {
+fn fips_link_events_restart_endpoint_for_route_changes() {
     assert_eq!(
         fips_link_event_refresh(true, false, false, false),
-        FipsLinkEventRefresh::None
+        FipsLinkEventRefresh::RestartEndpoint
     );
 }
 #[test]

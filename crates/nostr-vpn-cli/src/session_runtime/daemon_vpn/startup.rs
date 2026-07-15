@@ -238,7 +238,6 @@ pub(super) fn daemon_refresh_intervals(
 
 pub(super) struct DaemonVpnLoopState {
     pub(super) vpn_status: String,
-    pub(super) last_network_check_at: WallTimeJumpObserver,
     pub(super) last_log_compact_check: Instant,
     pub(super) last_state_persisted_at: Instant,
     pub(super) daemon_state_persist_interval: Duration,
@@ -261,7 +260,6 @@ pub(super) async fn initialize_daemon_vpn_loop(
     } else {
         "VPN on".to_string()
     };
-    let last_network_check_at = WallTimeJumpObserver::new(unix_timestamp());
     let last_log_compact_check = Instant::now();
     let fips_peer_statuses = startup
         .fips_tunnel_runtime
@@ -310,7 +308,6 @@ pub(super) async fn initialize_daemon_vpn_loop(
 
     Ok(DaemonVpnLoopState {
         vpn_status,
-        last_network_check_at,
         last_log_compact_check,
         last_state_persisted_at,
         daemon_state_persist_interval,

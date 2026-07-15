@@ -75,7 +75,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     } = startup;
     let DaemonVpnLoopState {
         mut vpn_status,
-        mut last_network_check_at,
         mut last_log_compact_check,
         mut last_state_persisted_at,
         daemon_state_persist_interval,
@@ -190,13 +189,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             }
             _ = network_interval.tick() => {
                 let now = unix_timestamp();
-                let sparse_poll_resume = observe_wall_time_jump(
-                    &mut last_network_check_at,
-                    now,
-                    MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
-                );
-                let resumed_after_sleep =
-                    std::mem::take(&mut runtime_resume_pending) || sparse_poll_resume;
+                let resumed_after_sleep = std::mem::take(&mut runtime_resume_pending);
                 if resumed_after_sleep {
                     eprintln!("daemon: sleep/wake detected; refreshing FIPS endpoint state");
                 }
@@ -341,7 +334,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if let Err(error) = fips_result {
                         vpn_status = format!("Network route refresh failed ({error})");
                     } else {
-                        if platform_network_event {
+                        if matches!(fips_refresh, FipsLinkEventRefresh::RestartEndpoint) {
+                            platform_network_event_pending = false;
+                            drain_platform_network_changes(&mut platform_network_change_rx);
                             platform_network_event_suppressed_until =
                                 Some(Instant::now() + Duration::from_secs(5));
                         }
