@@ -5,9 +5,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use fips_core::{
-    FipsEndpoint, FipsEndpointOutboundDatagram, FipsEndpointServiceReceiver, PeerIdentity,
-};
+use fips_core::FipsEndpoint;
 use nostr_pubsub::{EventSource, MatchEventOptions, MeshPeer, MeshPeerPolicy, PolicyDecision};
 use nostr_pubsub_fips::{FipsPubsubPolicy, FipsPubsubPolicyOptions};
 use nostr_pubsub_social_graph::{PEER_RATING_MAX_AGE, PEER_RATING_MAX_FUTURE_SKEW};
@@ -25,15 +23,12 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::{Mutex, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
+use crate::fips_tcp_records::{FipsTcpRecordEvent, FipsTcpRecordSender, FipsTcpRecordTransport};
+
 const STORE_VERSION: u8 = 1;
 const STORE_MAX_EVENTS: usize = 1_024;
 const COMMAND_CAPACITY: usize = 64;
-const RECEIVE_BATCH: usize = 64;
-const RETRY_TICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
-const RETRY_BASE_INTERVAL_MS: u64 = 250;
-const RETRY_MAX_ATTEMPTS: u8 = 3;
-const MAX_PENDING_RETRIES: usize = 1_024;
-const MAX_PENDING_RETRIES_PER_PEER: usize = 64;
+const MAINTENANCE_TICK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
 const OUTBOX_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 const OUTBOX_BATCH: usize = 8;
 
@@ -42,123 +37,13 @@ struct PublishRequest {
     response: oneshot::Sender<Result<bool>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum RetryKind {
-    Inventory,
-    Want,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct RetryKey {
-    peer_id: String,
-    event_id: String,
-    kind: RetryKind,
-}
-
-#[derive(Debug, Clone)]
-struct PendingRetry {
-    message: ControlPubsubWireMessage,
-    attempts: u8,
-    next_attempt_ms: u64,
-}
-
-#[derive(Debug, Default)]
-struct RetryState {
-    pending: HashMap<RetryKey, PendingRetry>,
-}
-
-impl RetryState {
-    fn track(&mut self, peer_id: &str, message: &ControlPubsubWireMessage, now_ms: u64) {
-        let Some(key) = retry_key(peer_id, message) else {
-            return;
-        };
-        if self.pending.contains_key(&key)
-            || self.pending.len() >= MAX_PENDING_RETRIES
-            || self
-                .pending
-                .keys()
-                .filter(|candidate| candidate.peer_id == peer_id)
-                .count()
-                >= MAX_PENDING_RETRIES_PER_PEER
-        {
-            return;
-        }
-        self.pending.insert(
-            key,
-            PendingRetry {
-                message: message.clone(),
-                attempts: 1,
-                next_attempt_ms: now_ms.saturating_add(RETRY_BASE_INTERVAL_MS),
-            },
-        );
-    }
-
-    fn acknowledge(&mut self, source_peer: &str, message: &ControlPubsubWireMessage) {
-        let acknowledged = match message {
-            ControlPubsubWireMessage::Want { event_id } => Some(RetryKey {
-                peer_id: source_peer.to_string(),
-                event_id: event_id.clone(),
-                kind: RetryKind::Inventory,
-            }),
-            ControlPubsubWireMessage::Frame { event_id, .. } => Some(RetryKey {
-                peer_id: source_peer.to_string(),
-                event_id: event_id.clone(),
-                kind: RetryKind::Want,
-            }),
-            ControlPubsubWireMessage::Inventory { .. } => None,
-        };
-        if let Some(key) = acknowledged {
-            self.pending.remove(&key);
-        }
-    }
-
-    fn due(&mut self, now_ms: u64) -> Vec<(String, ControlPubsubWireMessage)> {
-        let due = self
-            .pending
-            .iter()
-            .filter(|(_, retry)| retry.next_attempt_ms <= now_ms)
-            .map(|(key, _)| key.clone())
-            .collect::<Vec<_>>();
-        let mut outbound = Vec::new();
-        for key in due {
-            let Some(retry) = self.pending.get_mut(&key) else {
-                continue;
-            };
-            if retry.attempts >= RETRY_MAX_ATTEMPTS {
-                self.pending.remove(&key);
-                continue;
-            }
-            retry.attempts += 1;
-            let shift = u32::from(retry.attempts.saturating_sub(2));
-            let backoff = RETRY_BASE_INTERVAL_MS.saturating_mul(1_u64 << shift);
-            retry.next_attempt_ms = now_ms.saturating_add(backoff);
-            outbound.push((key.peer_id, retry.message.clone()));
-        }
-        outbound
-    }
-}
-
-fn retry_key(peer_id: &str, message: &ControlPubsubWireMessage) -> Option<RetryKey> {
-    let (event_id, kind) = match message {
-        ControlPubsubWireMessage::Inventory { event_id, .. } => {
-            (event_id.clone(), RetryKind::Inventory)
-        }
-        ControlPubsubWireMessage::Want { event_id } => (event_id.clone(), RetryKind::Want),
-        ControlPubsubWireMessage::Frame { .. } => return None,
-    };
-    Some(RetryKey {
-        peer_id: peer_id.to_string(),
-        event_id,
-        kind,
-    })
-}
-
 include!("control_pubsub_runtime/event_store.rs");
 
 pub struct ControlPubsubFipsRuntime {
     command_tx: mpsc::Sender<PublishRequest>,
     events: Arc<Mutex<ControlEventStore>>,
     relay_client: Option<Client>,
+    shutdown: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
 }
 
@@ -204,10 +89,13 @@ impl ControlPubsubFipsRuntime {
         if config.mode == NostrPubsubMode::Off {
             return Ok(None);
         }
-        let receiver = endpoint
-            .register_service_receiver(CONTROL_PUBSUB_FIPS_SERVICE_PORT)
-            .await
-            .context("failed to register the FIPS control pubsub service")?;
+        let transport = FipsTcpRecordTransport::bind(
+            Arc::clone(&endpoint),
+            CONTROL_PUBSUB_FIPS_SERVICE_PORT,
+            CONTROL_PUBSUB_MAX_WIRE_BYTES,
+        )
+        .await
+        .context("failed to bind reliable FIPS control pubsub transport")?;
         let update_events = match update_events_override {
             Some(update_events) => update_events,
             None => configured_update_events()?,
@@ -229,6 +117,7 @@ impl ControlPubsubFipsRuntime {
         }
         let events = Arc::new(Mutex::new(event_store));
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let task_events = Arc::clone(&events);
         let task = tokio::spawn(async move {
             run(
@@ -241,9 +130,10 @@ impl ControlPubsubFipsRuntime {
                     pubsub_policy,
                     update_events,
                 },
-                receiver,
+                transport,
                 outbox_path,
                 command_rx,
+                shutdown_rx,
             )
             .await;
         });
@@ -251,6 +141,7 @@ impl ControlPubsubFipsRuntime {
             command_tx,
             events,
             relay_client,
+            shutdown: Some(shutdown_tx),
             task,
         }))
     }
@@ -274,7 +165,9 @@ impl ControlPubsubFipsRuntime {
     }
 
     pub async fn stop(mut self) {
-        self.task.abort();
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
         let _ = (&mut self.task).await;
         if let Some(client) = self.relay_client.take() {
             client.shutdown().await;
@@ -284,6 +177,9 @@ impl ControlPubsubFipsRuntime {
 
 impl Drop for ControlPubsubFipsRuntime {
     fn drop(&mut self) {
+        if let Some(shutdown) = self.shutdown.take() {
+            let _ = shutdown.send(());
+        }
         self.task.abort();
     }
 }
@@ -345,6 +241,7 @@ struct PubsubRunState {
 #[derive(Clone, Copy)]
 struct PublishContext<'a> {
     endpoint: &'a FipsEndpoint,
+    transport: &'a FipsTcpRecordSender,
     codec: &'a ControlPubsubCodec,
     bridge: Option<&'a RelayBridge>,
     events: &'a Arc<Mutex<ControlEventStore>>,
@@ -354,9 +251,10 @@ struct PublishContext<'a> {
 
 async fn run(
     state: PubsubRunState,
-    receiver: FipsEndpointServiceReceiver,
+    mut transport: FipsTcpRecordTransport,
     outbox_path: Option<PathBuf>,
     mut command_rx: mpsc::Receiver<PublishRequest>,
+    mut shutdown: oneshot::Receiver<()>,
 ) {
     let PubsubRunState {
         endpoint,
@@ -381,21 +279,22 @@ async fn run(
     }
     let mut mesh = ControlPubsubMesh::new(options);
     let codec = ControlPubsubCodec::new(CONTROL_PUBSUB_MAX_WIRE_BYTES);
-    let mut datagrams = Vec::with_capacity(RECEIVE_BATCH);
-    let mut retries = RetryState::default();
+    let transport_sender = transport.sender();
     let mut replayed_update_roots = HashMap::<String, String>::new();
-    let mut retry_tick = tokio::time::interval(RETRY_TICK_INTERVAL);
-    retry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut maintenance_tick = tokio::time::interval(MAINTENANCE_TICK_INTERVAL);
+    maintenance_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
     outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
+            _ = &mut shutdown => break,
             command = command_rx.recv() => {
                 let Some(PublishRequest { event, response }) = command else { break; };
                 let result = publish_local(
                     PublishContext {
                         endpoint: &endpoint,
+                        transport: &transport_sender,
                         codec: &codec,
                         bridge: bridge.as_ref(),
                         events: &events,
@@ -403,7 +302,6 @@ async fn run(
                         update_events: &update_events,
                     },
                     &mut mesh,
-                    &mut retries,
                     Some(&mut pubsub_policy),
                     *event,
                 )
@@ -414,6 +312,7 @@ async fn run(
                 publish_outbox_batch(
                     PublishContext {
                         endpoint: &endpoint,
+                        transport: &transport_sender,
                         codec: &codec,
                         bridge: bridge.as_ref(),
                         events: &events,
@@ -421,26 +320,32 @@ async fn run(
                         update_events: &update_events,
                     },
                     &mut mesh,
-                    &mut retries,
                     &mut pubsub_policy,
                     outbox_path.as_deref().expect("outbox path is present"),
                 )
                 .await;
             }
-            count = receiver.recv_batch_into(&mut datagrams, RECEIVE_BATCH) => {
-                let Some(count) = count else { break; };
-                let peers = connected_peers(&endpoint, peer_policy.as_deref()).await;
-                for datagram in datagrams.iter().take(count) {
-                    let source = datagram.source_peer.npub().to_string();
-                    if !peer_is_accepted(&source, peer_policy.as_deref()) {
-                        tracing::debug!(%source, "dropped control pubsub datagram by peer reputation");
+            received = transport.recv() => {
+                let Some(received) = received else { break; };
+                let (source, payload) = match received {
+                    FipsTcpRecordEvent::Connected { peer } => {
+                        replayed_update_roots.remove(&peer);
+                        tracing::debug!(%peer, "control pubsub TCP/FIPS session established; resubscribing cached state");
                         continue;
                     }
-                    let message = match codec.decode(datagram.data.as_ref()) {
+                    FipsTcpRecordEvent::Record { source_peer, payload } => (source_peer, payload),
+                };
+                let peers = connected_peers(&endpoint, peer_policy.as_deref()).await;
+                {
+                    if !peer_is_accepted(&source, peer_policy.as_deref()) {
+                        tracing::debug!(%source, "dropped control pubsub stream record by peer reputation");
+                        continue;
+                    }
+                    let message = match codec.decode(&payload) {
                         Ok(message) => message,
                         Err(error) => {
                             mesh.record_invalid_peer_message(&source);
-                            tracing::debug!(%error, %source, "ignored invalid control pubsub datagram");
+                            tracing::debug!(%error, %source, "ignored invalid control pubsub stream record");
                             continue;
                         }
                     };
@@ -470,13 +375,12 @@ async fn run(
                     }
                     match mesh.receive(&source, message.clone(), &peers, now_ms()) {
                         Ok(actions) => {
-                            retries.acknowledge(&source, &message);
                             execute_actions(
                                 &endpoint,
+                                &transport_sender,
                                 &codec,
                                 bridge.as_ref(),
                                 &events,
-                                &mut retries,
                                 Some(&mut pubsub_policy),
                                 actions,
                             )
@@ -485,7 +389,6 @@ async fn run(
                         Err(error) => tracing::debug!(%error, %source, "ignored invalid control pubsub message"),
                     }
                 }
-                datagrams.clear();
             }
             notification = relay_notification(&mut bridge) => {
                 let Some((relay_url, event)) = notification else { continue; };
@@ -511,10 +414,10 @@ async fn run(
                         }
                         execute_actions(
                             &endpoint,
+                            &transport_sender,
                             &codec,
                             None,
                             &events,
-                            &mut retries,
                             Some(&mut pubsub_policy),
                             actions,
                         )
@@ -523,11 +426,11 @@ async fn run(
                     Err(error) => tracing::debug!(%error, "ignored invalid control event from relay"),
                 }
             }
-            _ = retry_tick.tick() => {
-                send_control_messages(&endpoint, &codec, retries.due(now_ms())).await;
+            _ = maintenance_tick.tick() => {
                 publish_policy_maintenance(
                     PublishContext {
                         endpoint: &endpoint,
+                        transport: &transport_sender,
                         codec: &codec,
                         bridge: bridge.as_ref(),
                         events: &events,
@@ -535,13 +438,13 @@ async fn run(
                         update_events: &update_events,
                     },
                     &mut mesh,
-                    &mut retries,
                     &mut pubsub_policy,
                 )
                 .await;
                 replay_update_root_to_connected_peers(
                     PublishContext {
                         endpoint: &endpoint,
+                        transport: &transport_sender,
                         codec: &codec,
                         bridge: bridge.as_ref(),
                         events: &events,
@@ -549,23 +452,23 @@ async fn run(
                         update_events: &update_events,
                     },
                     &mut mesh,
-                    &mut retries,
                     &mut replayed_update_roots,
                 )
                 .await;
             }
         }
     }
+    transport.stop().await;
 }
 
 async fn replay_update_root_to_connected_peers(
     context: PublishContext<'_>,
     mesh: &mut ControlPubsubMesh,
-    retries: &mut RetryState,
     replayed: &mut HashMap<String, String>,
 ) {
     let PublishContext {
         endpoint,
+        transport,
         codec,
         events,
         peer_policy,
@@ -598,18 +501,18 @@ async fn replay_update_root_to_connected_peers(
             }
         }
     }
-    execute_actions(endpoint, codec, None, events, retries, None, actions).await;
+    execute_actions(endpoint, transport, codec, None, events, None, actions).await;
 }
 
 async fn publish_local(
     context: PublishContext<'_>,
     mesh: &mut ControlPubsubMesh,
-    retries: &mut RetryState,
     mut pubsub_policy: Option<&mut FipsPubsubPolicy>,
     event: Event,
 ) -> Result<bool> {
     let PublishContext {
         endpoint,
+        transport,
         codec,
         bridge,
         events,
@@ -635,10 +538,10 @@ async fn publish_local(
     }
     execute_actions(
         endpoint,
+        transport,
         codec,
         None,
         events,
-        retries,
         pubsub_policy,
         actions,
     )
@@ -649,7 +552,6 @@ async fn publish_local(
 async fn publish_policy_maintenance(
     context: PublishContext<'_>,
     mesh: &mut ControlPubsubMesh,
-    retries: &mut RetryState,
     pubsub_policy: &mut FipsPubsubPolicy,
 ) {
     let now = now_ms();
@@ -669,7 +571,7 @@ async fn publish_policy_maintenance(
         }
     };
     for event in events {
-        let published = match publish_local(context, mesh, retries, None, event.clone()).await {
+        let published = match publish_local(context, mesh, None, event.clone()).await {
             Ok(published) => published,
             Err(error) => {
                 tracing::warn!(%error, "failed to publish pubsub policy event");
@@ -685,7 +587,6 @@ async fn publish_policy_maintenance(
 async fn publish_outbox_batch(
     context: PublishContext<'_>,
     mesh: &mut ControlPubsubMesh,
-    retries: &mut RetryState,
     pubsub_policy: &mut FipsPubsubPolicy,
     outbox_path: &Path,
 ) {
@@ -708,7 +609,7 @@ async fn publish_outbox_batch(
             let _ = fs::remove_file(&path);
             continue;
         }
-        match publish_local(context, mesh, retries, Some(&mut *pubsub_policy), event).await {
+        match publish_local(context, mesh, Some(&mut *pubsub_policy), event).await {
             Ok(true) => {
                 if let Err(error) = fs::remove_file(&path) {
                     tracing::warn!(%error, path = %path.display(), "failed to remove published control pubsub outbox entry");
@@ -725,10 +626,10 @@ async fn publish_outbox_batch(
 
 async fn execute_actions(
     endpoint: &FipsEndpoint,
+    transport: &FipsTcpRecordSender,
     codec: &ControlPubsubCodec,
     bridge: Option<&RelayBridge>,
     events: &Arc<Mutex<ControlEventStore>>,
-    retries: &mut RetryState,
     mut pubsub_policy: Option<&mut FipsPubsubPolicy>,
     actions: Vec<ControlPubsubAction>,
 ) {
@@ -736,7 +637,6 @@ async fn execute_actions(
     for action in actions {
         match action {
             ControlPubsubAction::Send { peer_id, message } => {
-                retries.track(&peer_id, &message, now_ms());
                 outbound.push((peer_id, message));
             }
             ControlPubsubAction::Deliver { event, .. } => {
@@ -761,7 +661,7 @@ async fn execute_actions(
         }
     }
 
-    send_control_messages(endpoint, codec, outbound).await;
+    send_control_messages(transport, codec, outbound).await;
 }
 
 fn observe_policy_event(policy: &mut FipsPubsubPolicy, event: &Event) {
@@ -771,11 +671,10 @@ fn observe_policy_event(policy: &mut FipsPubsubPolicy, event: &Event) {
 }
 
 async fn send_control_messages(
-    endpoint: &FipsEndpoint,
+    transport: &FipsTcpRecordSender,
     codec: &ControlPubsubCodec,
     messages: Vec<(String, ControlPubsubWireMessage)>,
 ) {
-    let mut outbound = HashMap::<String, Vec<FipsEndpointOutboundDatagram>>::new();
     for (peer_id, message) in messages {
         let payload = match codec.encode(&message) {
             Ok(payload) => payload,
@@ -784,32 +683,10 @@ async fn send_control_messages(
                 continue;
             }
         };
-        outbound
-            .entry(peer_id)
-            .or_default()
-            .push(FipsEndpointOutboundDatagram::new(
-                CONTROL_PUBSUB_FIPS_SERVICE_PORT,
-                CONTROL_PUBSUB_FIPS_SERVICE_PORT,
-                payload,
-            ));
-    }
-
-    for (peer_id, datagrams) in outbound {
-        let remote = match PeerIdentity::from_npub(&peer_id) {
-            Ok(remote) => remote,
-            Err(error) => {
-                tracing::debug!(%error, %peer_id, "ignored invalid control pubsub peer");
-                continue;
-            }
-        };
-        let count = datagrams.len();
-        if let Err(error) = endpoint
-            .send_datagram_batch_to_peer(remote, datagrams)
-            .await
-        {
-            tracing::debug!(%error, %peer_id, count, "failed to send control pubsub datagram batch");
+        if let Err(error) = transport.send(&peer_id, payload).await {
+            tracing::debug!(%error, %peer_id, "failed to queue control pubsub TCP/FIPS record");
         } else {
-            tracing::debug!(%peer_id, count, "sent control pubsub datagram batch");
+            tracing::debug!(%peer_id, "queued control pubsub TCP/FIPS record");
         }
     }
 }

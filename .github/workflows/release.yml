@@ -28,6 +28,31 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag || github.ref }}
 
+      - name: Reclaim runner disk for the release gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -h /
+
+          # The verify job needs Rust, Docker, and Linux native libraries. The
+          # hosted image's Android, .NET, GHC, and CodeQL installations are not
+          # used here and otherwise leave too little room for the full gate.
+          unused_paths=(
+            /usr/local/lib/android
+            /usr/share/dotnet
+            /opt/ghc
+            /usr/local/.ghcup
+            /opt/hostedtoolcache/CodeQL
+          )
+          for path in "${unused_paths[@]}"; do
+            if [[ -e "${path}" ]]; then
+              sudo rm -rf -- "${path}"
+            fi
+          done
+          docker system prune --all --force
+
+          df -h /
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 

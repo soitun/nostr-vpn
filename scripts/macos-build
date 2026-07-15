@@ -703,7 +703,9 @@ run_macos_app() {
   fi
   sign_args+=(CODE_SIGNING_ALLOWED=NO)
 
+  SWIFTC_MAXIMUM_DETERMINISM="${NVPN_MACOS_SWIFTC_MAXIMUM_DETERMINISM:-1}" \
   xcodebuild \
+    -jobs "${NVPN_MACOS_XCODE_JOBS:-1}" \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
     -configuration "$XCODE_CONFIGURATION" \
@@ -712,8 +714,10 @@ run_macos_app() {
     ARCHS=arm64 \
     ONLY_ACTIVE_ARCH=NO \
     SKIP_INSTALL=NO \
+    SWIFT_COMPILATION_MODE="${NVPN_MACOS_SWIFT_COMPILATION_MODE:-singlefile}" \
+    SWIFT_ENABLE_BATCH_MODE="${NVPN_MACOS_SWIFT_ENABLE_BATCH_MODE:-NO}" \
     "${sign_args[@]}" \
-    build
+    build >&2
 
   products_dir="$BUILD_DIR/ReleaseDerivedData/Build/Products/$XCODE_CONFIGURATION"
   built_app="$(find "$products_dir" -maxdepth 2 -name "$APP_NAME" -print -quit)"

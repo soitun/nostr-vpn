@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use fips_endpoint::{Config, PeerConfig, RoutingMode, TransportInstances, UdpConfig};
-use nostr_sdk::prelude::{EventBuilder, EventId, Keys, Kind, Tag, TagKind, ToBech32};
+use nostr_sdk::prelude::{EventBuilder, EventId, Keys, Kind, Tag, TagKind, Timestamp, ToBech32};
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::updater::UpdateRef;
 
@@ -205,4 +205,96 @@ async fn late_connected_fips_peer_receives_cached_update_root_without_relays_run
     alice_endpoint.shutdown().await.expect("shutdown Alice");
     bob_endpoint.shutdown().await.expect("shutdown Bob");
     carol_endpoint.shutdown().await.expect("shutdown Carol");
+}
+
+#[test]
+fn restarted_pubsub_resubscribes_after_tcp_fips_connection_loss() {
+    std::thread::Builder::new()
+        .name("restarted-fips-pubsub".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("local FIPS reconnect test runtime")
+                .block_on(restarted_pubsub_resubscribes_after_connection_loss_run());
+        })
+        .expect("spawn local FIPS reconnect test")
+        .join()
+        .expect("local FIPS reconnect test thread");
+}
+
+async fn restarted_pubsub_resubscribes_after_connection_loss_run() {
+    let alice = Keys::generate();
+    let bob = Keys::generate();
+    let publisher = Keys::generate();
+    let alice_npub = alice.public_key().to_bech32().expect("Alice npub");
+    let bob_npub = bob.public_key().to_bech32().expect("Bob npub");
+    let [alice_port, bob_port, _] = available_udp_ports();
+    let alice_config = endpoint_config(alice_port, &[(&bob_npub, bob_port)]);
+    let alice_endpoint = endpoint(&alice, alice_config.clone()).await;
+    let bob_endpoint = endpoint(
+        &bob,
+        endpoint_config(bob_port, &[(&alice_npub, alice_port)]),
+    )
+    .await;
+    wait_connected(&alice_endpoint, &bob_npub).await;
+    wait_connected(&bob_endpoint, &alice_npub).await;
+
+    let tree_name = "releases/reconnect-test";
+    let update_events = update_events(&publisher, tree_name);
+    let alice_pubsub = start_pubsub(Arc::clone(&alice_endpoint), update_events.clone()).await;
+    let bob_pubsub = start_pubsub(Arc::clone(&bob_endpoint), update_events.clone()).await;
+    let first = signed_update_root(&publisher, tree_name, 1, "11");
+    assert!(
+        bob_pubsub
+            .publish(first.clone())
+            .await
+            .expect("publish first update root")
+    );
+    wait_for_event(&alice_pubsub, first.id).await;
+
+    alice_pubsub.stop().await;
+    alice_endpoint
+        .shutdown()
+        .await
+        .expect("stop Alice endpoint");
+    drop(alice_endpoint);
+    let restarted_alice_endpoint = endpoint(&alice, alice_config).await;
+    wait_connected(&restarted_alice_endpoint, &bob_npub).await;
+    wait_connected(&bob_endpoint, &alice_npub).await;
+    let restarted_alice = start_pubsub(Arc::clone(&restarted_alice_endpoint), update_events).await;
+    let second = signed_update_root(&publisher, tree_name, 2, "22");
+    assert!(
+        bob_pubsub
+            .publish(second.clone())
+            .await
+            .expect("publish across stale TCP/FIPS session")
+    );
+    wait_for_event(&restarted_alice, second.id).await;
+
+    bob_pubsub.stop().await;
+    restarted_alice.stop().await;
+    restarted_alice_endpoint
+        .shutdown()
+        .await
+        .expect("shutdown restarted Alice");
+    bob_endpoint.shutdown().await.expect("shutdown Bob");
+}
+
+fn signed_update_root(
+    publisher: &Keys,
+    tree_name: &str,
+    created_at: u64,
+    hash_byte: &str,
+) -> Event {
+    EventBuilder::new(Kind::Custom(30_064), "")
+        .tags([
+            Tag::identifier(tree_name),
+            Tag::custom(TagKind::Custom("l".into()), ["hashtree"]),
+            Tag::custom(TagKind::Custom("hash".into()), [hash_byte.repeat(32)]),
+        ])
+        .custom_created_at(Timestamp::from(created_at))
+        .sign_with_keys(publisher)
+        .expect("signed update root")
 }

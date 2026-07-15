@@ -11,6 +11,21 @@ fi
 
 docker compose up -d --build
 
+container_ready=0
+for _ in $(seq 1 20); do
+    if docker compose exec -T nostr-vpn-linux true >/dev/null 2>&1; then
+        container_ready=1
+        break
+    fi
+    sleep 0.25
+done
+if [ "$container_ready" -ne 1 ]; then
+    echo "Linux desktop container exited before it became ready." >&2
+    docker compose ps >&2 || true
+    docker compose logs --no-color --tail 200 nostr-vpn-linux >&2 || true
+    exit 1
+fi
+
 if [ "$#" -eq 0 ]; then
     set -- cargo run
 fi

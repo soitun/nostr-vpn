@@ -508,7 +508,6 @@ async fn pair_over_fips(
         endpoint,
         approval_receiver,
         browser_identity,
-        args.join_pubsub_port,
         &args.config,
         app,
         &mut client,
@@ -589,7 +588,6 @@ async fn wait_for_approval(
     endpoint: &FipsEndpoint,
     approval_receiver: &FipsEndpointServiceReceiver,
     browser_identity: PeerIdentity,
-    port: u16,
     config_path: &Path,
     app: &mut AppConfig,
     client: &mut NostrJoinFipsPubsubClient,
@@ -613,7 +611,11 @@ async fn wait_for_approval(
                 if pending_join_request_changed(config_path, app)? {
                     return Err(anyhow::Error::new(WebvmReloadJoinRequest));
                 }
-                if let Err(error) = register_approval_route(endpoint, browser_identity, port).await {
+                if let Err(error) = register_approval_route(
+                    endpoint,
+                    browser_identity,
+                    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
+                ).await {
                     eprintln!("webvm: approval readiness heartbeat failed; will retry: {error:#}");
                 }
             }
@@ -650,8 +652,8 @@ async fn wait_for_approval(
                         if let Err(error) = endpoint
                             .send_datagram(
                                 datagram.source_peer,
-                                port,
-                                port,
+                                NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
+                                NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
                                 ack_datagram.payload,
                             )
                             .await
