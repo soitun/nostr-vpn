@@ -16,6 +16,8 @@ use fips_endpoint::{
     FIPS_ENDPOINT_DIRECT_PACKET_RUN_MAX_PACKETS, FipsEndpointDirectPacketRun,
     FipsEndpointDirectReceiver,
 };
+#[cfg(feature = "fips-external-pubsub")]
+use fips_endpoint::{NostrPeerfindingSource, NostrRelayConfig};
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
     AppConfig, InternetSource, WireGuardExitConfig, derive_mesh_tunnel_ip, normalize_nostr_pubkey,

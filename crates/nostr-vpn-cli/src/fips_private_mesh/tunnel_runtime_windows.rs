@@ -10,6 +10,8 @@ impl FipsPrivateTunnelRuntime {
             advertised_endpoint: config.advertised_endpoint.clone(),
             advertise_public_endpoint: config.advertise_public_endpoint,
             nostr_discovery_enabled: config.nostr_discovery_enabled,
+            #[cfg(feature = "fips-external-pubsub")]
+            external_pubsub_enabled: config.nostr_pubsub.enabled(),
             webrtc_enabled: config.webrtc_enabled,
             stun_servers: config.stun_servers.clone(),
             nostr_relays: config.nostr_relays.clone(),

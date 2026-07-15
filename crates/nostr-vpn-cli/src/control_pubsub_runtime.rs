@@ -5,6 +5,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
+#[cfg(feature = "fips-external-pubsub")]
+use fips_core::transport::nostr_relay::NOSTR_RELAY_DATAGRAM_KIND as FIPS_NOSTR_RELAY_DATAGRAM_KIND;
 use fips_core::{
     FipsEndpoint, FipsEndpointOutboundDatagram, FipsEndpointServiceReceiver, PeerIdentity,
 };
@@ -36,6 +38,9 @@ const MAX_PENDING_RETRIES: usize = 1_024;
 const MAX_PENDING_RETRIES_PER_PEER: usize = 64;
 const OUTBOX_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 const OUTBOX_BATCH: usize = 8;
+const FIPS_ADVERT_REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1_800);
+#[cfg(feature = "fips-external-pubsub")]
+const FIPS_RELAY_DRAIN_BATCH: usize = 64;
 
 struct PublishRequest {
     event: Box<Event>,
@@ -212,7 +217,14 @@ impl ControlPubsubFipsRuntime {
             Some(update_events) => update_events,
             None => configured_update_events()?,
         };
-        let bridge = RelayBridge::start(config.mode, relays, &update_events).await?;
+        let bridge = RelayBridge::start(
+            config.mode,
+            relays,
+            &update_events,
+            #[cfg(feature = "fips-external-pubsub")]
+            endpoint.npub(),
+        )
+        .await?;
         let relay_client = bridge.as_ref().map(|bridge| bridge.client.clone());
         let outbox_path = store_path
             .as_deref()
@@ -298,6 +310,7 @@ impl RelayBridge {
         mode: NostrPubsubMode,
         relays: Vec<String>,
         update_events: &UpdateEventCache,
+        #[cfg(feature = "fips-external-pubsub")] local_npub: &str,
     ) -> Result<Option<Self>> {
         if mode != NostrPubsubMode::Relay || relays.is_empty() {
             return Ok(None);
@@ -315,6 +328,20 @@ impl RelayBridge {
             .subscribe(Filter::new().kinds(control_kinds()), None)
             .await
             .context("failed to subscribe to control pubsub relays")?;
+        #[cfg(feature = "fips-external-pubsub")]
+        {
+            let local_pubkey = PublicKey::parse(local_npub)
+                .context("failed to parse local FIPS identity for relay pubsub")?;
+            client
+                .subscribe(
+                    Filter::new()
+                        .kind(Kind::Custom(FIPS_NOSTR_RELAY_DATAGRAM_KIND))
+                        .pubkey(local_pubkey),
+                    None,
+                )
+                .await
+                .context("failed to subscribe to targeted FIPS relay datagrams")?;
+        }
         client
             .subscribe(update_events.filter().clone(), None)
             .await
@@ -379,6 +406,8 @@ async fn run(
             .allowed_kinds
             .extend(kinds.iter().map(|kind| u16::from(*kind)));
     }
+    #[cfg(feature = "fips-external-pubsub")]
+    options.allowed_kinds.insert(FIPS_NOSTR_RELAY_DATAGRAM_KIND);
     let mut mesh = ControlPubsubMesh::new(options);
     let codec = ControlPubsubCodec::new(CONTROL_PUBSUB_MAX_WIRE_BYTES);
     let mut datagrams = Vec::with_capacity(RECEIVE_BATCH);
@@ -388,6 +417,8 @@ async fn run(
     retry_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
     outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut advert_tick = tokio::time::interval(FIPS_ADVERT_REFRESH_INTERVAL);
+    advert_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
         tokio::select! {
@@ -426,6 +457,35 @@ async fn run(
                     outbox_path.as_deref().expect("outbox path is present"),
                 )
                 .await;
+            }
+            _ = advert_tick.tick() => {
+                #[cfg(feature = "fips-external-pubsub")]
+                match endpoint.local_nostr_discovery_advert_event().await {
+                    Ok(Some(event)) => {
+                        if let Err(error) = publish_local(
+                            PublishContext {
+                                endpoint: &endpoint,
+                                codec: &codec,
+                                bridge: bridge.as_ref(),
+                                events: &events,
+                                peer_policy: peer_policy.as_deref(),
+                                update_events: &update_events,
+                            },
+                            &mut mesh,
+                            &mut retries,
+                            Some(&mut pubsub_policy),
+                            event,
+                        )
+                        .await
+                        {
+                            tracing::warn!(%error, "failed to publish FIPS peer advert through pubsub");
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to build FIPS peer advert for pubsub");
+                    }
+                }
             }
             count = receiver.recv_batch_into(&mut datagrams, RECEIVE_BATCH) => {
                 let Some(count) = count else { break; };
@@ -525,6 +585,34 @@ async fn run(
             }
             _ = retry_tick.tick() => {
                 send_control_messages(&endpoint, &codec, retries.due(now_ms())).await;
+                #[cfg(feature = "fips-external-pubsub")]
+                match endpoint.drain_nostr_relay_events(FIPS_RELAY_DRAIN_BATCH).await {
+                    Ok(outbound_events) => {
+                        for event in outbound_events {
+                            if let Err(error) = publish_local(
+                                PublishContext {
+                                    endpoint: &endpoint,
+                                    codec: &codec,
+                                    bridge: bridge.as_ref(),
+                                    events: &events,
+                                    peer_policy: peer_policy.as_deref(),
+                                    update_events: &update_events,
+                                },
+                                &mut mesh,
+                                &mut retries,
+                                Some(&mut pubsub_policy),
+                                event,
+                            )
+                            .await
+                            {
+                                tracing::warn!(%error, "failed to publish FIPS relay datagram through pubsub");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to drain FIPS relay datagrams");
+                    }
+                }
                 publish_policy_maintenance(
                     PublishContext {
                         endpoint: &endpoint,
@@ -905,10 +993,18 @@ fn control_kinds() -> [Kind; 3] {
 }
 
 fn is_control_event(event: &Event, update_events: &UpdateEventCache) -> bool {
-    matches!(
-        u16::from(event.kind),
+    let kind = u16::from(event.kind);
+    if matches!(
+        kind,
         FIPS_PEER_ADVERT_KIND | PAID_EXIT_OFFER_KIND | RATING_FACT_KIND
-    ) || update_events
+    ) {
+        return true;
+    }
+    #[cfg(feature = "fips-external-pubsub")]
+    if kind == FIPS_NOSTR_RELAY_DATAGRAM_KIND {
+        return true;
+    }
+    update_events
         .filter()
         .match_event(event, MatchEventOptions::new())
 }

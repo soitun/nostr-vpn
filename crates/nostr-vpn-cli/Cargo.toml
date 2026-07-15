@@ -10,6 +10,7 @@ readme = "README.md"
 
 [features]
 default = ["paid-exit"]
+fips-external-pubsub = []
 paid-exit = [
   "dep:cashu",
   "dep:cashu-service",

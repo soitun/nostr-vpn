@@ -186,10 +186,17 @@ impl FipsPrivateMeshRuntime {
     }
 
     pub(crate) async fn update_relays(&self, relays: &[String]) -> Result<()> {
+        #[cfg(feature = "fips-external-pubsub")]
+        self.endpoint
+            .update_relays(relays.to_vec())
+            .await
+            .context("failed to update FIPS endpoint relays")?;
+        #[cfg(not(feature = "fips-external-pubsub"))]
         self.endpoint
             .update_relays(relays.to_vec(), relays.to_vec())
             .await
-            .context("failed to update FIPS endpoint relays")
+            .context("failed to update FIPS endpoint relays")?;
+        Ok(())
     }
 
     pub(crate) fn peer_pubkeys(&self) -> Vec<String> {

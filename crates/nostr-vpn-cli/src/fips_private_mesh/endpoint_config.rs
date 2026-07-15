@@ -3,10 +3,12 @@ struct FipsEndpointTransportConfig {
     listen_port: u16,
     advertised_endpoint: String,
     advertise_public_endpoint: bool,
-    /// Find/advertise peers over Nostr relays. When false, the endpoint dials
-    /// only configured static/bootstrap peers and does not enable ambient
-    /// relay, LAN, or same-host endpoint discovery.
+    /// Find and advertise peers through Nostr pubsub. When false, the endpoint
+    /// dials only configured static/bootstrap peers and does not enable
+    /// ambient relay, LAN, or same-host endpoint discovery.
     nostr_discovery_enabled: bool,
+    #[cfg(feature = "fips-external-pubsub")]
+    external_pubsub_enabled: bool,
     webrtc_enabled: bool,
     stun_servers: Vec<String>,
     nostr_relays: Vec<String>,
@@ -175,8 +177,8 @@ fn fips_endpoint_config_with_open_discovery_limit(
     let advertise_public_endpoint = transport
         .map(|transport| transport.advertise_public_endpoint)
         .unwrap_or(false);
-    // The "find peers over Nostr relays" toggle. When off we neither advertise
-    // nor stream adverts/DMs, and we keep the endpoint surface deterministic:
+    // The "find peers over Nostr" toggle. When off we neither publish nor
+    // consume peerfinding events, and we keep the endpoint surface deterministic:
     // static/bootstrap peers below are dialed directly without ambient LAN or
     // same-host discovery side paths.
     let nostr_discovery_enabled = transport
@@ -186,6 +188,18 @@ fn fips_endpoint_config_with_open_discovery_limit(
     let nostr_enabled = nostr_discovery_enabled && (transport.is_some() || !peers.is_empty());
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.advertise = advertise_on_nostr;
+    #[cfg(feature = "fips-external-pubsub")]
+    let external_pubsub_enabled = transport
+        .map(|transport| transport.external_pubsub_enabled)
+        .unwrap_or(false);
+    #[cfg(feature = "fips-external-pubsub")]
+    {
+        config.node.discovery.nostr.peerfinding_source = if external_pubsub_enabled {
+            NostrPeerfindingSource::External
+        } else {
+            NostrPeerfindingSource::Relays
+        };
+    }
     // Open discovery by default (unless the user opts into configured-only
     // discovery) so we can FIPS-handshake with any nvpn node we see on relays,
     // not just configured roster peers. This is what lets us route app-mesh
@@ -225,9 +239,24 @@ fn fips_endpoint_config_with_open_discovery_limit(
         .and_then(fips_udp_external_addr);
     if let Some(transport) = transport {
         config.node.discovery.nostr.stun_servers = transport.stun_servers.clone();
-        if !transport.nostr_relays.is_empty() {
+        #[cfg(feature = "fips-external-pubsub")]
+        {
+            config.node.discovery.nostr.advert_relays = if external_pubsub_enabled {
+                Vec::new()
+            } else {
+                transport.nostr_relays.clone()
+            };
+        }
+        #[cfg(not(feature = "fips-external-pubsub"))]
+        {
             config.node.discovery.nostr.advert_relays = transport.nostr_relays.clone();
-            config.node.discovery.nostr.dm_relays = transport.nostr_relays.clone();
+        }
+        #[cfg(feature = "fips-external-pubsub")]
+        if nostr_enabled && external_pubsub_enabled {
+            config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig {
+                mtu: Some(mesh_mtu.underlay_udp),
+                ..NostrRelayConfig::default()
+            });
         }
         // Keep a dormant outbound WebRTC transport available even when
         // ambient WebRTC discovery is disabled. Browser join approvals carry
@@ -237,7 +266,6 @@ fn fips_endpoint_config_with_open_discovery_limit(
             configure_fips_webrtc_transport(
                 &mut config,
                 transport.webrtc_enabled && advertise_on_nostr,
-                &transport.nostr_relays,
                 &transport.stun_servers,
                 mesh_mtu.underlay_udp,
             );
@@ -310,7 +338,6 @@ fn fips_endpoint_config_for_local_ethernet(
     config.node.discovery.nostr.advertise = false;
     config.node.discovery.nostr.share_local_candidates = false;
     config.node.discovery.nostr.advert_relays.clear();
-    config.node.discovery.nostr.dm_relays.clear();
     config.node.discovery.nostr.stun_servers.clear();
     config.node.discovery.lan.enabled = false;
     config.node.discovery.lan.scope = Some(ethernet.discovery_scope.clone());
@@ -526,7 +553,6 @@ fn fips_udp_external_addr(transport: &FipsEndpointTransportConfig) -> Option<Str
 fn configure_fips_webrtc_transport(
     config: &mut Config,
     ambient_discovery_enabled: bool,
-    signal_relays: &[String],
     stun_servers: &[String],
     mtu: u16,
 ) {
@@ -541,9 +567,6 @@ fn configure_fips_webrtc_transport(
     webrtc.auto_connect = Some(ambient_discovery_enabled);
     webrtc.accept_connections = Some(ambient_discovery_enabled);
     webrtc.mtu = Some(mtu);
-    if !signal_relays.is_empty() {
-        webrtc.signal_relays = Some(signal_relays.to_vec());
-    }
     if !stun_servers.is_empty() {
         webrtc.stun_servers = Some(stun_servers.to_vec());
     }
@@ -622,6 +645,8 @@ mod endpoint_config_tests {
             advertised_endpoint: "192.168.50.20:51820".to_string(),
             advertise_public_endpoint: false,
             nostr_discovery_enabled,
+            #[cfg(feature = "fips-external-pubsub")]
+            external_pubsub_enabled: true,
             webrtc_enabled,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
@@ -653,10 +678,17 @@ mod endpoint_config_tests {
         assert_eq!(webrtc.auto_connect, Some(true));
         assert_eq!(webrtc.accept_connections, Some(true));
         assert_eq!(webrtc.mtu, Some(mesh_mtu.underlay_udp));
-        assert_eq!(
-            webrtc.signal_relays.as_ref().expect("signal relays"),
-            &transport.nostr_relays
-        );
+        #[cfg(feature = "fips-external-pubsub")]
+        {
+            assert_eq!(
+                config.node.discovery.nostr.peerfinding_source,
+                NostrPeerfindingSource::External
+            );
+            assert!(config.node.discovery.nostr.advert_relays.is_empty());
+            assert!(!config.transports.nostr_relay.is_empty());
+        }
+        #[cfg(not(feature = "fips-external-pubsub"))]
+        assert_eq!(config.node.discovery.nostr.advert_relays, transport.nostr_relays);
         assert_eq!(
             webrtc.stun_servers.as_ref().expect("stun servers"),
             &transport.stun_servers
@@ -701,10 +733,8 @@ mod endpoint_config_tests {
         assert_eq!(webrtc.advertise_on_nostr, Some(false));
         assert_eq!(webrtc.auto_connect, Some(false));
         assert_eq!(webrtc.accept_connections, Some(false));
-        assert_eq!(
-            webrtc.signal_relays.as_ref().expect("signal relays"),
-            &transport.nostr_relays
-        );
+        #[cfg(feature = "fips-external-pubsub")]
+        assert!(!config.transports.nostr_relay.is_empty());
         assert!(!config.transports.udp.is_empty());
     }
 
@@ -764,7 +794,6 @@ mod endpoint_config_tests {
         assert!(!config.node.discovery.nostr.enabled);
         assert!(!config.node.discovery.nostr.advertise);
         assert!(config.node.discovery.nostr.advert_relays.is_empty());
-        assert!(config.node.discovery.nostr.dm_relays.is_empty());
         assert!(config.node.discovery.nostr.stun_servers.is_empty());
         assert!(!config.node.discovery.lan.enabled);
         assert!(!config.node.discovery.local.enabled);

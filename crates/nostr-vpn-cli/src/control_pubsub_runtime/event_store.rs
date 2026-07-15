@@ -69,6 +69,10 @@ impl ControlEventStore {
     }
 
     fn insert(&mut self, event: Event) -> Result<bool> {
+        #[cfg(feature = "fips-external-pubsub")]
+        if u16::from(event.kind) == FIPS_NOSTR_RELAY_DATAGRAM_KIND {
+            return Ok(true);
+        }
         if !self.insert_memory(event) {
             return Ok(false);
         }
@@ -246,6 +250,8 @@ fn rating_event_store_key(event: &Event) -> Option<(RatingEventStoreKey, u64)> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "fips-external-pubsub")]
+    use nostr_sdk::EventBuilder;
     use nostr_sdk::ToBech32;
     use nostr_social_graph::Rating;
     use nostr_social_memory::RatingEventExt;
@@ -310,6 +316,21 @@ mod tests {
                 .expect("prune ratings"),
             1
         );
+        assert!(store.snapshot().is_empty());
+    }
+
+    #[cfg(feature = "fips-external-pubsub")]
+    #[test]
+    fn ephemeral_fips_relay_datagrams_are_never_persisted() {
+        let mut store = ControlEventStore::load(None, test_update_events()).expect("event store");
+        let event = EventBuilder::new(
+            Kind::Custom(FIPS_NOSTR_RELAY_DATAGRAM_KIND),
+            "encrypted-fips-datagram",
+        )
+        .sign_with_keys(&Keys::generate())
+        .expect("signed FIPS relay datagram");
+
+        assert!(store.insert(event).expect("accept ephemeral datagram"));
         assert!(store.snapshot().is_empty());
     }
 

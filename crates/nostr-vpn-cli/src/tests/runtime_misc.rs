@@ -3,7 +3,6 @@ use fips_core::discovery::nostr::{OverlayEndpointAdvert, OverlayTransportKind};
 use nostr_sdk::prelude::{Keys, ToBech32};
 use std::collections::HashSet;
 use std::net::Ipv4Addr;
-use std::time::{Duration, Instant};
 
 #[test]
 fn daemon_vpn_requires_remote_participants_to_be_active() {
@@ -470,38 +469,33 @@ fn parse_nonzero_pid_rejects_zero_and_invalid_values() {
 
 #[test]
 fn wall_time_jump_detection_flags_sleep_resume_after_threshold() {
-    let observed_at = Instant::now();
     assert!(!wall_time_jump_detected(
         0,
         1_000,
-        observed_at,
-        observed_at,
         MAJOR_LINK_CHANGE_TIME_JUMP_SECS
     ));
     assert!(!wall_time_jump_detected(
         1_000,
         1_000 + MAJOR_LINK_CHANGE_TIME_JUMP_SECS - 1,
-        observed_at,
-        observed_at + Duration::from_secs(MAJOR_LINK_CHANGE_TIME_JUMP_SECS - 1),
         MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
     ));
     assert!(wall_time_jump_detected(
         1_000,
         1_000 + MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
-        observed_at,
-        observed_at,
         MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
     ));
 }
 
 #[test]
-fn wall_time_jump_detection_ignores_busy_loop_delays() {
-    let observed_at = Instant::now();
-    assert!(!wall_time_jump_detected(
+fn wall_time_jump_detection_refreshes_after_runtime_stalls() {
+    assert!(wall_time_jump_detected(
         1_000,
         1_000 + MAJOR_LINK_CHANGE_TIME_JUMP_SECS + 5,
-        observed_at,
-        observed_at + Duration::from_secs(MAJOR_LINK_CHANGE_TIME_JUMP_SECS + 5),
+        MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
+    ));
+    assert!(wall_time_jump_detected(
+        1_000,
+        900,
         MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
     ));
 }

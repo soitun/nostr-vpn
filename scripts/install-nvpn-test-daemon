@@ -9,6 +9,7 @@ SERVICE_IFACE="${NVPN_TEST_DAEMON_IFACE:-utun}"
 SERVICE_CONFIG="${NVPN_TEST_DAEMON_CONFIG:-}"
 MESH_REFRESH_INTERVAL_SECS="${NVPN_TEST_DAEMON_MESH_REFRESH_INTERVAL_SECS:-20}"
 LOCK_SNAPSHOT=""
+FIPS_EXTERNAL_PUBSUB="${NVPN_FIPS_EXTERNAL_PUBSUB:-0}"
 
 case "$(uname -s)" in
   Darwin) ;;
@@ -45,7 +46,9 @@ esac
 
 cd "$ROOT"
 cargo_config_args=()
+patch_local_fips=0
 if [[ "${NVPN_PATCH_LOCAL_FIPS:-0}" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ ]]; then
+  patch_local_fips=1
   FIPS_REPO_PATH="${NVPN_FIPS_REPO_PATH:-$ROOT/../fips}"
   if [[ ! -f "$FIPS_REPO_PATH/crates/fips-core/Cargo.toml" \
         || ! -f "$FIPS_REPO_PATH/crates/fips-endpoint/Cargo.toml" \
@@ -59,6 +62,12 @@ if [[ "${NVPN_PATCH_LOCAL_FIPS:-0}" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$
   cargo_config_args+=(--config "patch.crates-io.fips-identity.path=\"$FIPS_REPO_PATH/crates/fips-identity\"")
 fi
 
+if [[ "$FIPS_EXTERNAL_PUBSUB" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ \
+      && "$patch_local_fips" != "1" ]]; then
+  echo "NVPN_FIPS_EXTERNAL_PUBSUB=1 requires NVPN_PATCH_LOCAL_FIPS=1" >&2
+  exit 1
+fi
+
 cargo_build=(cargo)
 cargo_metadata=(cargo)
 if ((${#cargo_config_args[@]})); then
@@ -66,7 +75,20 @@ if ((${#cargo_config_args[@]})); then
   cargo_metadata+=("${cargo_config_args[@]}")
 fi
 
-"${cargo_build[@]}" build -p nvpn --bin nvpn --release
+cargo_feature_args=()
+if [[ "$FIPS_EXTERNAL_PUBSUB" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ ]]; then
+  fips_core_version="$(awk -F'"' '/^version = / { print $2; exit }' "$FIPS_REPO_PATH/crates/fips-core/Cargo.toml")"
+  fips_endpoint_version="$(awk -F'"' '/^version = / { print $2; exit }' "$FIPS_REPO_PATH/crates/fips-endpoint/Cargo.toml")"
+  if [[ -z "$fips_core_version" || -z "$fips_endpoint_version" ]]; then
+    echo "failed to read local FIPS crate versions" >&2
+    exit 1
+  fi
+  "${cargo_build[@]}" update -p fips-core --precise "$fips_core_version"
+  "${cargo_build[@]}" update -p fips-endpoint --precise "$fips_endpoint_version"
+  cargo_feature_args+=(--features fips-external-pubsub)
+fi
+
+"${cargo_build[@]}" build -p nvpn --bin nvpn --release "${cargo_feature_args[@]}"
 
 BIN="$("$ROOT/scripts/build-output-path" --raw nvpn --release)"
 if [[ ! -x "$BIN" ]]; then

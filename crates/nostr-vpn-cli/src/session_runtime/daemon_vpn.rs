@@ -25,6 +25,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let mut last_paid_exit_usage_flush_at = Instant::now();
     let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
     tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut last_runtime_heartbeat_at = WallTimeJumpObserver::new(unix_timestamp());
+    let mut runtime_resume_pending = false;
     let mut network_interval =
         tokio::time::interval(Duration::from_secs(DAEMON_NETWORK_REFRESH_INTERVAL_SECS));
     network_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -129,6 +131,14 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 }
             }
             _ = tunnel_heartbeat_interval.tick() => {
+                if observe_wall_time_jump(
+                    &mut last_runtime_heartbeat_at,
+                    unix_timestamp(),
+                    MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
+                ) {
+                    runtime_resume_pending = true;
+                    network_interval.reset_immediately();
+                }
                 let vpn_active = daemon_vpn_active(vpn_enabled, expected_peers);
                 let maintain_fips = if vpn_active {
                     fips_tunnel_runtime.is_some()
@@ -180,13 +190,13 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             }
             _ = network_interval.tick() => {
                 let now = unix_timestamp();
-                let observed_at = Instant::now();
-                let resumed_after_sleep = observe_wall_time_jump(
+                let sparse_poll_resume = observe_wall_time_jump(
                     &mut last_network_check_at,
                     now,
-                    observed_at,
                     MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
                 );
+                let resumed_after_sleep =
+                    std::mem::take(&mut runtime_resume_pending) || sparse_poll_resume;
                 if resumed_after_sleep {
                     eprintln!("daemon: sleep/wake detected; refreshing FIPS endpoint state");
                 }

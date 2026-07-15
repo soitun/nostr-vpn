@@ -237,14 +237,12 @@ fn daemon_vpn_idle_status(
 #[derive(Clone, Copy, Debug)]
 struct WallTimeJumpObserver {
     wall_observed_at: u64,
-    monotonic_observed_at: Instant,
 }
 
 impl WallTimeJumpObserver {
     fn new(wall_observed_at: u64) -> Self {
         Self {
             wall_observed_at,
-            monotonic_observed_at: Instant::now(),
         }
     }
 }
@@ -252,40 +250,27 @@ impl WallTimeJumpObserver {
 fn wall_time_jump_detected(
     previous_wall_observed_at: u64,
     now_wall: u64,
-    previous_monotonic_observed_at: Instant,
-    now_monotonic: Instant,
     threshold_secs: u64,
 ) -> bool {
     if previous_wall_observed_at == 0 || threshold_secs == 0 {
         return false;
     }
 
-    let wall_elapsed = now_wall.saturating_sub(previous_wall_observed_at);
-    if wall_elapsed < threshold_secs {
-        return false;
-    }
-
-    let monotonic_elapsed = now_monotonic
-        .saturating_duration_since(previous_monotonic_observed_at)
-        .as_secs();
-    wall_elapsed.saturating_sub(monotonic_elapsed) >= threshold_secs
+    now_wall < previous_wall_observed_at
+        || now_wall.saturating_sub(previous_wall_observed_at) >= threshold_secs
 }
 
 fn observe_wall_time_jump(
     last_observed_at: &mut WallTimeJumpObserver,
     now_wall: u64,
-    now_monotonic: Instant,
     threshold_secs: u64,
 ) -> bool {
     let jumped = wall_time_jump_detected(
         last_observed_at.wall_observed_at,
         now_wall,
-        last_observed_at.monotonic_observed_at,
-        now_monotonic,
         threshold_secs,
     );
     last_observed_at.wall_observed_at = now_wall;
-    last_observed_at.monotonic_observed_at = now_monotonic;
     jumped
 }
 
