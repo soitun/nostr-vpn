@@ -76,7 +76,7 @@ if ((${#cargo_config_args[@]})); then
 fi
 
 cargo_feature_args=()
-if [[ "$FIPS_EXTERNAL_PUBSUB" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ ]]; then
+if [[ "$patch_local_fips" == "1" ]]; then
   fips_core_version="$(awk -F'"' '/^version = / { print $2; exit }' "$FIPS_REPO_PATH/crates/fips-core/Cargo.toml")"
   fips_endpoint_version="$(awk -F'"' '/^version = / { print $2; exit }' "$FIPS_REPO_PATH/crates/fips-endpoint/Cargo.toml")"
   if [[ -z "$fips_core_version" || -z "$fips_endpoint_version" ]]; then
@@ -85,6 +85,8 @@ if [[ "$FIPS_EXTERNAL_PUBSUB" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ ]]; t
   fi
   "${cargo_build[@]}" update -p fips-core --precise "$fips_core_version"
   "${cargo_build[@]}" update -p fips-endpoint --precise "$fips_endpoint_version"
+fi
+if [[ "$FIPS_EXTERNAL_PUBSUB" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ ]]; then
   cargo_feature_args+=(--features fips-external-pubsub)
 fi
 
