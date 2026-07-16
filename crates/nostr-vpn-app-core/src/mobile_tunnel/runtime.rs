@@ -86,6 +86,10 @@ impl MobileTunnel {
             .context("failed to bind mobile FIPS endpoint")?;
         mobile_debug_log("MobileTunnel::start_async FIPS endpoint bound");
         let endpoint = Arc::new(endpoint);
+        let mut state_control = FipsControlTcpRuntime::start(Arc::clone(&endpoint))
+            .await
+            .context("failed to start mobile FIPS-TCP state-control service")?;
+        let state_control_sender = state_control.sender();
         let local_routes = vec![config.local_address.clone()];
         let mesh = new_mobile_mesh(FipsMeshRuntime::with_local_routes(
             initial_peers.clone(),
@@ -256,28 +260,19 @@ impl MobileTunnel {
             let recipient_peer = PeerIdentity::from_npub(&recipient_npub).with_context(|| {
                 format!("invalid mobile join request endpoint npub {recipient_npub}")
             })?;
-            let endpoint = Arc::clone(&endpoint);
+            let state_control = state_control_sender.clone();
             let join_request_active_for_task = Arc::clone(&join_request_active);
             join_request_active.store(true, Ordering::Relaxed);
             tasks.push(tokio::spawn(async move {
-                let encoded = match encode_fips_control_frame(&frame) {
-                    Ok(encoded) => encoded,
-                    Err(error) => {
-                        tracing::warn!(?error, "mobile: failed to encode FIPS join request");
-                        return;
-                    }
-                };
                 while join_request_active_for_task.load(Ordering::Relaxed) {
-                    let _ = endpoint
-                        .send_batch_to_peer(recipient_peer, vec![encoded.clone()])
-                        .await;
+                    let _ = state_control.send(recipient_peer, &frame).await;
                     tokio::time::sleep(Duration::from_secs(FIPS_JOIN_REQUEST_RETRY_SECS)).await;
                 }
             }));
         }
 
         if !config.network_id.trim().is_empty() && !local_capability_hints.is_empty() {
-            let endpoint = Arc::clone(&endpoint);
+            let state_control = state_control_sender.clone();
             let mesh_peers = Arc::clone(&mesh_peers);
             let peer_identities = Arc::clone(&peer_identities);
             let network_id = config.network_id.clone();
@@ -285,7 +280,7 @@ impl MobileTunnel {
                 let mut startup_broadcasts_remaining = MOBILE_CAPABILITIES_STARTUP_BURST_COUNT;
                 loop {
                     if let Err(error) = broadcast_mobile_capabilities(
-                        &endpoint,
+                        &state_control,
                         &mesh_peers,
                         &peer_identities,
                         &network_id,
@@ -359,7 +354,7 @@ impl MobileTunnel {
         }
 
         if let Some(config_path) = config_path.clone() {
-            let endpoint = Arc::clone(&endpoint);
+            let state_control = state_control_sender.clone();
             let mesh = Arc::clone(&mesh);
             let peer_identities = Arc::clone(&peer_identities);
             let presence = Arc::clone(&presence);
@@ -368,7 +363,7 @@ impl MobileTunnel {
                 let mut roster_sync = MobileRosterSyncState::default();
                 loop {
                     if let Err(error) = sync_mobile_signed_roster_with_connected_peers(
-                        &endpoint,
+                        &state_control,
                         &mesh,
                         &peer_identities,
                         &presence,
@@ -398,6 +393,7 @@ impl MobileTunnel {
             let app_config_dirty = Arc::clone(&app_config_dirty);
             let config_path = config_path.clone();
             let join_request_active = Arc::clone(&join_request_active);
+            let state_control_sender = state_control_sender.clone();
             let network_id = config.network_id.clone();
             tokio::spawn(async move {
                 let control = MobileEndpointReceiveContext {
@@ -413,41 +409,40 @@ impl MobileTunnel {
                     config_path: config_path.as_deref(),
                     network_id: &network_id,
                     join_request_active: join_request_active.as_ref(),
+                    state_control: &state_control_sender,
                 };
-                let mut control_fragments = FipsControlFragmentBuffer::default();
                 let mut messages = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
                 let mut inbound_packets = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
                 'recv: loop {
-                    let Some(_) = endpoint
-                        .recv_batch_into(&mut messages, MOBILE_FIPS_RECV_BATCH)
-                        .await
-                    else {
-                        break;
-                    };
-                    inbound_packets.clear();
-                    for message in messages.drain(..) {
-                        match handle_mobile_endpoint_message(
-                            &control,
-                            &mut control_fragments,
-                            &mut inbound_packets,
-                            message,
-                        )
-                        .await
-                        {
-                            Ok(true) => {}
-                            Ok(false) => break 'recv,
-                            Err(error) => {
-                                tracing::warn!(
-                                    ?error,
-                                    "mobile: failed to handle FIPS control frame"
-                                );
+                    tokio::select! {
+                        received = state_control.recv() => {
+                            let Some(received) = received else { break; };
+                            if let Err(error) = handle_mobile_state_control_frame(&control, received).await {
+                                tracing::warn!(?error, "mobile: failed to handle FIPS-TCP state control");
                             }
                         }
-                    }
-                    if !inbound_packets.is_empty()
-                        && !flush_mobile_inbound_packets(&inbound_tx, &mut inbound_packets).await
-                    {
-                        break 'recv;
+                        received = endpoint.recv_batch_into(&mut messages, MOBILE_FIPS_RECV_BATCH) => {
+                            let Some(_) = received else { break; };
+                            inbound_packets.clear();
+                            for message in messages.drain(..) {
+                                match handle_mobile_endpoint_message(
+                                    &control,
+                                    &mut inbound_packets,
+                                    message,
+                                ).await {
+                                    Ok(true) => {}
+                                    Ok(false) => break 'recv,
+                                    Err(error) => {
+                                        tracing::warn!(?error, "mobile: failed to handle FIPS datagram");
+                                    }
+                                }
+                            }
+                            if !inbound_packets.is_empty()
+                                && !flush_mobile_inbound_packets(&inbound_tx, &mut inbound_packets).await
+                            {
+                                break 'recv;
+                            }
+                        }
                     }
                 }
             })

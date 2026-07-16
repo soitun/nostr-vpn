@@ -2,25 +2,18 @@ use std::collections::{BTreeMap, HashMap};
 
 use nostr_sdk::ToBech32;
 use nostr_sdk::prelude::Keys;
-use nostr_sdk::prelude::{Event, JsonUtil};
 use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::{
     CANONICAL_NETWORK_NAME_FACT, CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND,
-    CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE, NostrIdentityCapabilities,
-    NostrIdentityDeviceApprovalSidecarRequest, NostrIdentityId, NostrIdentityKeyPurpose,
-    NostrIdentityRosterOp, RosterAppKeyRole, RosterAppKeySidecarEventRequest,
-    RosterIdentityBridgeSource, build_device_approval_for_link_request,
-    build_device_approval_sidecar, build_identity_link_request_from_manual_npub,
+    CANONICAL_NOSTR_IDENTITY_ROSTER_TYPE, NostrIdentityCapabilities, NostrIdentityId,
+    NostrIdentityKeyPurpose, RosterAppKeyRole, RosterAppKeySidecarEventRequest,
+    RosterIdentityBridgeSource, build_identity_link_request_from_manual_npub,
     build_roster_app_key_sidecar_event, build_roster_app_key_sidecar_event_with_network_name,
     parse_identity_link_request_event_for_invite_pubkey, parse_identity_roster_bridge_event,
-    parse_nostr_identity_device_approval_receipt_event,
-    parse_nostr_identity_device_approval_receipt_roster_op, parse_nostr_identity_roster_op_event,
-    parse_roster_app_key_sidecar_event, project_nostr_identity_roster, roster_app_key_identities,
+    parse_roster_app_key_sidecar_event, roster_app_key_identities,
     signed_roster_app_key_identities,
 };
 use uuid::Uuid;
-
-const APPROVAL_SECRET: &str = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
 
 #[test]
 fn bridge_represents_roster_members_as_canonical_app_keys() {
@@ -311,145 +304,4 @@ fn scan_to_approve_link_request_accepts_manual_npub_inputs() {
     );
     assert_eq!(parsed.content.client_nonce, "join request from phone");
     assert_eq!(parsed.content.label.as_deref(), Some("phone"));
-}
-
-#[test]
-fn approval_can_be_built_directly_from_a_scanned_link_request() {
-    let admin = Keys::generate();
-    let joining_device = Keys::generate();
-    let profile_id = NostrIdentityId::from_uuid(
-        Uuid::parse_str("35353535-4646-4747-8888-999999999999").expect("uuid"),
-    );
-    let request = build_identity_link_request_from_manual_npub(
-        &joining_device,
-        profile_id,
-        &admin.public_key().to_bech32().expect("admin npub"),
-        &admin.public_key().to_bech32().expect("invite npub"),
-        APPROVAL_SECRET,
-        Some("Laptop".to_string()),
-        1_726_000_250,
-    )
-    .expect("build link request");
-    let signed_request = parse_identity_link_request_event_for_invite_pubkey(
-        &request,
-        &admin,
-        admin.public_key().to_hex(),
-    )
-    .expect("parse link request");
-
-    let approval = build_device_approval_for_link_request(
-        &admin,
-        &signed_request,
-        Vec::new(),
-        None,
-        1_726_000_260,
-    )
-    .expect("build approval from link request");
-
-    let receipt = parse_nostr_identity_device_approval_receipt_event(
-        &approval.receipt_event,
-        &joining_device,
-    )
-    .expect("parse approval receipt");
-    assert_eq!(receipt.profile_id, profile_id);
-    assert_eq!(receipt.request_pubkey, joining_device.public_key().to_hex());
-    assert_eq!(
-        receipt.device_app_key_pubkey,
-        joining_device.public_key().to_hex()
-    );
-    assert_eq!(receipt.approved_by_pubkey, admin.public_key().to_hex());
-    assert_eq!(receipt.request_secret, APPROVAL_SECRET);
-}
-
-#[test]
-fn approval_sidecar_embeds_canonical_roster_op_and_parses_receipt() {
-    let admin = Keys::generate();
-    let request = Keys::generate();
-    let device = Keys::generate();
-    let profile_id = NostrIdentityId::from_uuid(
-        Uuid::parse_str("44444444-5555-4666-8777-888888888888").expect("uuid"),
-    );
-
-    let approval = build_device_approval_sidecar(
-        &admin,
-        NostrIdentityDeviceApprovalSidecarRequest {
-            profile_id,
-            network_name: Some("Home Mesh".to_string()),
-            request_pubkey: request.public_key().to_bech32().expect("request npub"),
-            device_app_key_pubkey: device.public_key().to_bech32().expect("device npub"),
-            request_secret: APPROVAL_SECRET.to_string(),
-            canonical_profile_is_fresh: true,
-            approved_at: 1_726_000_300,
-        },
-    )
-    .expect("build approval sidecar");
-
-    assert_eq!(approval.canonical_roster_events.len(), 2);
-    let roster_op_event = approval
-        .approved_device_roster_op()
-        .expect("approved device roster op");
-
-    assert_ne!(u16::from(roster_op_event.kind), 30_388);
-    assert_eq!(
-        u16::from(roster_op_event.kind),
-        CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND
-    );
-    assert_eq!(
-        u16::from(approval.receipt_event.kind),
-        CANONICAL_NOSTR_IDENTITY_FACT_OP_KIND
-    );
-
-    let receipt =
-        parse_nostr_identity_device_approval_receipt_event(&approval.receipt_event, &request)
-            .expect("parse receipt");
-    assert_eq!(receipt.profile_id, profile_id);
-    assert_eq!(receipt.request_pubkey, request.public_key().to_hex());
-    assert_eq!(receipt.device_app_key_pubkey, device.public_key().to_hex());
-    assert_eq!(receipt.approved_by_pubkey, admin.public_key().to_hex());
-    assert_eq!(receipt.request_secret, APPROVAL_SECRET);
-    assert_eq!(
-        receipt.signed_roster_event.as_deref(),
-        Some(
-            Event::from_json(roster_op_event.as_json())
-                .unwrap()
-                .as_json()
-        )
-        .as_deref()
-    );
-
-    let roster_op = parse_nostr_identity_device_approval_receipt_roster_op(&receipt)
-        .expect("receipt roster op");
-    let bridged = parse_identity_roster_bridge_event(roster_op_event, &BTreeMap::new())
-        .expect("parse bridge event")
-        .expect("approval roster op");
-    assert_eq!(bridged.network_name.as_deref(), Some("Home Mesh"));
-    match roster_op.content.op {
-        NostrIdentityRosterOp::AddFacet { facet } => {
-            assert_eq!(facet.pubkey, device.public_key().to_hex());
-            assert_eq!(facet.profile_id, Some(profile_id));
-            assert_eq!(facet.capabilities, NostrIdentityCapabilities::app_writer());
-        }
-        other => panic!("expected add facet, got {other:?}"),
-    }
-
-    let signed_ops = approval
-        .canonical_roster_events
-        .iter()
-        .map(parse_nostr_identity_roster_op_event)
-        .collect::<Result<Vec<_>, _>>()
-        .expect("parse canonical chain");
-    let projection = project_nostr_identity_roster(profile_id, signed_ops);
-    assert_eq!(projection.accepted_op_ids.len(), 2);
-    assert!(projection.rejected_op_ids.is_empty());
-    assert!(
-        projection
-            .active_facets
-            .get(&admin.public_key().to_hex())
-            .is_some_and(|facet| facet.capabilities.can_admin_profile)
-    );
-    assert!(
-        projection
-            .active_facets
-            .contains_key(&device.public_key().to_hex())
-    );
 }

@@ -1,4 +1,3 @@
-type ControlFragmentBuffer = FipsControlFragmentBuffer;
 pub(crate) type ParticipantPubkeyBytes = [u8; 32];
 type FipsPeerActivityMap = HashMap<ParticipantPubkeyBytes, Arc<FipsPeerActivity>>;
 

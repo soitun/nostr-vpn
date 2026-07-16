@@ -443,7 +443,7 @@
         let mut alice_saw_carol = false;
         for _ in 0..80 {
             let _ = alice_runtime
-                .send_control_frame(&carol_pubkey, &frame)
+                .send_probe_frame(&carol_pubkey, &frame)
                 .await;
 
             let _ = tokio::time::timeout(

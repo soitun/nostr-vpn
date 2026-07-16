@@ -118,18 +118,20 @@
     fn bind_local_mobile_endpoint<'a>(
         scope: &'a str,
         mobile: &'a MobileTunnelConfig,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = FipsEndpoint> + 'a>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Arc<FipsEndpoint>> + 'a>> {
         Box::pin(async move {
-            Box::pin(
-                FipsEndpoint::builder()
-                    .config(local_mobile_fips_config(scope, mobile))
-                    .identity_nsec(mobile.identity_nsec.clone())
-                    .discovery_scope(scope.to_string())
-                    .without_system_tun()
-                    .bind(),
+            Arc::new(
+                Box::pin(
+                    FipsEndpoint::builder()
+                        .config(local_mobile_fips_config(scope, mobile))
+                        .identity_nsec(mobile.identity_nsec.clone())
+                        .discovery_scope(scope.to_string())
+                        .without_system_tun()
+                        .bind(),
+                )
+                .await
+                .expect("bind local mobile FIPS endpoint"),
             )
-            .await
-            .expect("bind local mobile FIPS endpoint")
         })
     }
 
@@ -298,35 +300,34 @@
     }
 
     async fn send_pending_mobile_join_request(
-        requester_endpoint: &FipsEndpoint,
-        admin_endpoint: &FipsEndpoint,
+        requester_endpoint: &Arc<FipsEndpoint>,
+        admin_endpoint: &Arc<FipsEndpoint>,
         requester_mobile: &MobileTunnelConfig,
-    ) -> FipsEndpointMessage {
+    ) -> (
+        ReceivedFipsControlFrame,
+        FipsControlTcpRuntime,
+        FipsControlTcpRuntime,
+    ) {
         let (recipient_npub, frame) = pending_mobile_join_request_frame(requester_mobile)
             .expect("pending join request frame")
             .expect("pending join request should exist");
         let recipient_peer =
             PeerIdentity::from_npub(&recipient_npub).expect("recipient endpoint identity");
-        let encoded = encode_fips_control_frame(&frame).expect("encode join request");
-        let mut messages = Vec::with_capacity(1);
-
-        for _ in 0..50 {
-            requester_endpoint
-                .send_batch_to_peer(recipient_peer, vec![encoded.clone()])
-                .await
-                .expect("send join request over FIPS");
-            match tokio::time::timeout(
-                Duration::from_millis(100),
-                admin_endpoint.recv_batch_into(&mut messages, 1),
-            )
+        let requester_control = FipsControlTcpRuntime::start(Arc::clone(requester_endpoint))
             .await
-            {
-                Ok(Some(received)) if received > 0 => return messages.remove(0),
-                Ok(Some(_) | None) | Err(_) => {}
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        panic!("admin should receive mobile join request over FIPS");
+            .expect("start requester state control");
+        let mut admin_control = FipsControlTcpRuntime::start(Arc::clone(admin_endpoint))
+            .await
+            .expect("start admin state control");
+        let (sent, received) = tokio::join!(
+            requester_control.send(recipient_peer, &frame),
+            tokio::time::timeout(Duration::from_secs(5), admin_control.recv()),
+        );
+        sent.expect("send join request over FIPS-TCP");
+        let received = received
+            .expect("admin state-control receive timeout")
+            .expect("admin state-control service closed");
+        (received, requester_control, admin_control)
     }
 
     async fn send_mobile_packets_until_received(
@@ -413,7 +414,8 @@
         admin_mobile: MobileTunnelConfig,
         config_path: &Path,
         network_id: &str,
-        message: &FipsEndpointMessage,
+        state_control: &FipsControlTcpSender,
+        received: ReceivedFipsControlFrame,
     ) -> (Arc<RwLock<AppConfig>>, AtomicBool) {
         let admin_app_config = Arc::new(RwLock::new(admin_app));
         let app_config_dirty = AtomicBool::new(false);
@@ -427,7 +429,6 @@
         let presence = Arc::new(RwLock::new(HashMap::new()));
         let config_state = Arc::new(RwLock::new(admin_mobile));
         let join_request_active = AtomicBool::new(false);
-        let mut control_fragments = FipsControlFragmentBuffer::default();
         let control = MobileEndpointReceiveContext {
             endpoint: admin_endpoint,
             mesh: &mesh,
@@ -441,13 +442,12 @@
             config_path: Some(config_path),
             network_id,
             join_request_active: &join_request_active,
+            state_control,
         };
 
-        let handled = handle_mobile_control_frame(&control, &mut control_fragments, message)
+        handle_mobile_state_control_frame(&control, received)
             .await
             .expect("handle mobile join request frame");
-
-        assert!(handled);
         (admin_app_config, app_config_dirty)
     }
 
@@ -504,20 +504,22 @@
         );
         let requester_endpoint = bind_local_mobile_endpoint(&scope, &requester_mobile).await;
 
-        let message = send_pending_mobile_join_request(
+        let (received, requester_control, admin_control) = send_pending_mobile_join_request(
             &requester_endpoint,
             &admin_endpoint,
             &requester_mobile,
         )
         .await;
-        assert_eq!(message.source_peer.npub(), requester_endpoint.npub());
+        assert_eq!(received.source_peer.npub(), requester_endpoint.npub());
+        let admin_control_sender = admin_control.sender();
         let (admin_app_config, app_config_dirty) = handle_admin_mobile_join_request(
             &admin_endpoint,
             admin_app,
             admin_mobile,
             &config_path,
             &network_id,
-            &message,
+            &admin_control_sender,
+            received,
         )
         .await;
 
@@ -537,6 +539,8 @@
             requester_pubkey
         );
 
+        requester_control.stop().await;
+        admin_control.stop().await;
         requester_endpoint
             .shutdown()
             .await

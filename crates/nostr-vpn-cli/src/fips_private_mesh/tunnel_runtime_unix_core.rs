@@ -92,11 +92,7 @@ impl FipsPrivateTunnelRuntime {
             Some(config.control_pubsub_store_path.clone()),
         )
         .await?;
-        let join_approval_ack = if manage_host_dns {
-            Some(DirectJoinApprovalAckRuntime::start(Arc::clone(mesh.endpoint())).await?)
-        } else {
-            None
-        };
+        let state_control = FipsControlTcpRuntime::start(Arc::clone(mesh.endpoint())).await?;
         let tun = Arc::new(
             SystemTun::new(&config.iface)
                 .with_context(|| fips_tun_create_context(&config.iface))?
@@ -114,7 +110,7 @@ impl FipsPrivateTunnelRuntime {
             iface,
             mesh,
             control_pubsub,
-            join_approval_ack,
+            state_control,
             nostr_relay_adapter: None,
             secure_dns: None,
             manages_secure_dns: manage_host_dns,
@@ -243,9 +239,7 @@ impl FipsPrivateTunnelRuntime {
         if let Some(control_pubsub) = runtime.control_pubsub.take() {
             control_pubsub.stop().await;
         }
-        if let Some(join_approval_ack) = runtime.join_approval_ack.take() {
-            join_approval_ack.stop().await;
-        }
+        runtime.state_control.stop().await;
         runtime.event_rx.close();
         stop_tun_send_worker(runtime.tun_send_worker).await;
         stop_mesh_recv_worker(runtime.mesh_recv_worker, &runtime.mesh).await;
@@ -691,12 +685,6 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.peer_statuses()
     }
 
-    pub(crate) fn drain_join_approval_acks(&mut self) -> Vec<ReceivedJoinApprovalAck> {
-        self.join_approval_ack
-            .as_mut()
-            .map_or_else(Vec::new, DirectJoinApprovalAckRuntime::drain)
-    }
-
     #[cfg(feature = "paid-exit")]
     pub(crate) fn drain_paid_route_usage(&self, participant: &str) -> Result<PaidRouteUsage> {
         self.mesh.drain_paid_route_usage(participant)
@@ -759,28 +747,13 @@ impl FipsPrivateTunnelRuntime {
         request: MeshJoinRequest,
     ) -> Result<()> {
         self.mesh
-            .send_join_request(participant, requested_at, request)
+            .send_join_request(&self.state_control, participant, requested_at, request)
             .await
     }
 
-    pub(crate) async fn send_join_approval_event(
-        &self,
-        participant: &str,
-        routed_recipient: Option<&str>,
-        request_pubkey: &str,
-        event: &nostr_sdk::Event,
-    ) -> Result<()> {
-        self.mesh
-            .send_join_approval_event(participant, routed_recipient, request_pubkey, event)
-            .await
-    }
-
-    pub(crate) async fn ensure_join_approval_route(&self, route_pubkey: &str) -> Result<()> {
-        let (route_npub, peers) = prioritize_direct_join_approval_route(
-            self.config.endpoint_peers.clone(),
-            route_pubkey,
-            self.config.nostr_relay_fallback_enabled(),
-        )?;
+    pub(crate) async fn ensure_join_roster_route(&self, route_pubkey: &str) -> Result<()> {
+        let (route_npub, peers) =
+            prioritize_join_roster_route(self.config.endpoint_peers.clone(), route_pubkey)?;
         self.mesh.update_peers(&peers).await?;
         let deadline = tokio::time::Instant::now() + DIRECT_JOIN_APPROVAL_ROUTE_CONNECT_TIMEOUT;
         loop {
@@ -795,7 +768,7 @@ impl FipsPrivateTunnelRuntime {
                 return Ok(());
             }
             if tokio::time::Instant::now() >= deadline {
-                return Err(anyhow!("direct join approval FIPS route did not connect"));
+                return Err(anyhow!("join roster FIPS route did not connect"));
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
@@ -806,7 +779,9 @@ impl FipsPrivateTunnelRuntime {
         participant: &str,
         signed_roster: SignedRoster,
     ) -> Result<()> {
-        self.mesh.send_roster(participant, signed_roster).await
+        self.mesh
+            .send_roster(&self.state_control, participant, signed_roster)
+            .await
     }
 
     pub(crate) async fn send_capabilities(
@@ -816,7 +791,7 @@ impl FipsPrivateTunnelRuntime {
         capabilities: PeerCapabilities,
     ) -> Result<()> {
         self.mesh
-            .send_capabilities(participant, network_id, capabilities)
+            .send_capabilities(&self.state_control, participant, network_id, capabilities)
             .await
     }
 
@@ -828,13 +803,15 @@ impl FipsPrivateTunnelRuntime {
         envelope: StreamingRoutePaymentEnvelope,
     ) -> Result<()> {
         self.mesh
-            .send_paid_route_payment(seller, id, envelope)
+            .send_paid_route_payment(&self.state_control, seller, id, envelope)
             .await
     }
 
     #[cfg(feature = "paid-exit")]
     pub(crate) async fn send_paid_route_payment_ack(&self, buyer: &str, id: String) -> Result<()> {
-        self.mesh.send_paid_route_payment_ack(buyer, id).await
+        self.mesh
+            .send_paid_route_payment_ack(&self.state_control, buyer, id)
+            .await
     }
 
     pub(crate) fn peer_advertised_routes(&self, participant: &str) -> Vec<String> {
@@ -842,6 +819,15 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) fn drain_events(&mut self) -> Vec<FipsPrivateMeshEvent> {
-        drain_event_batch(&mut self.event_rx, FIPS_MESH_EVENT_DRAIN_LIMIT)
+        let mut events = drain_event_batch(&mut self.event_rx, FIPS_MESH_EVENT_DRAIN_LIMIT);
+        let remaining = FIPS_MESH_EVENT_DRAIN_LIMIT.saturating_sub(events.len());
+        for received in self.state_control.drain().into_iter().take(remaining) {
+            match self.mesh.received_stateful_control_frame(received) {
+                Ok(Some(event)) => events.push(event),
+                Ok(None) => {}
+                Err(error) => eprintln!("discarding invalid FIPS-TCP control record: {error}"),
+            }
+        }
+        events
     }
 }

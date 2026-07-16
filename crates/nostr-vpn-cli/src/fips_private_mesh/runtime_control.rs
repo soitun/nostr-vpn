@@ -8,7 +8,7 @@ impl FipsPrivateMeshRuntime {
         let mut sent = 0usize;
         for participant in participants.into_iter().take(FIPS_PEER_PING_MAX_PER_TICK) {
             self.note_ping_attempt(&participant, now)?;
-            if self.send_control_frame(&participant, &frame).await.is_ok() {
+            if self.send_probe_frame(&participant, &frame).await.is_ok() {
                 sent += 1;
             }
         }
@@ -17,11 +17,13 @@ impl FipsPrivateMeshRuntime {
 
     pub(crate) async fn send_join_request(
         &self,
+        control: &FipsControlTcpRuntime,
         participant: &str,
         requested_at: u64,
         request: MeshJoinRequest,
     ) -> Result<()> {
-        self.send_control_frame(
+        self.send_stateful_control_frame(
+            control,
             participant,
             &FipsControlFrame::JoinRequest {
                 requested_at,
@@ -31,49 +33,16 @@ impl FipsPrivateMeshRuntime {
         .await
     }
 
-    pub(crate) async fn send_join_approval_event(
-        &self,
-        participant: &str,
-        routed_recipient: Option<&str>,
-        request_pubkey: &str,
-        event: &nostr_sdk::Event,
-    ) -> Result<()> {
-        let participant_key = participant_pubkey_bytes(participant);
-        let destination = if routed_recipient.is_some() {
-            direct_join_approval_destination_peer(participant)?
-        } else {
-            let mesh = self.mesh.load();
-            let peer_identities = self.peer_identities.load();
-            control_frame_destination_peer(&mesh, &peer_identities, participant)?
-        };
-        let datagram = if let Some(recipient) = routed_recipient {
-            routed_approval_event_datagram(recipient, request_pubkey, event)?
-        } else {
-            delivered_approval_event_datagram(request_pubkey, event)?
-        };
-        let sent_len = datagram.payload.len();
-        self.endpoint
-            .send_datagram_batch_to_peer(
-                destination,
-                vec![FipsEndpointOutboundDatagram::new(
-                    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
-                    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
-                    datagram.payload,
-                )],
-            )
-            .await
-            .with_context(|| format!("failed to send direct FIPS join approval to {participant}"))?;
-        self.note_tx(Some(participant), participant_key.as_ref(), sent_len)
-    }
-
     pub(crate) async fn send_roster(
         &self,
+        control: &FipsControlTcpRuntime,
         participant: &str,
         signed_roster: SignedRoster,
     ) -> Result<()> {
         let network_id = signed_roster.network_id()?;
         let roster = signed_roster.roster()?;
-        self.send_control_frame(
+        self.send_stateful_control_frame(
+            control,
             participant,
             &FipsControlFrame::Roster {
                 network_id,
@@ -86,11 +55,13 @@ impl FipsPrivateMeshRuntime {
 
     pub(crate) async fn send_capabilities(
         &self,
+        control: &FipsControlTcpRuntime,
         participant: &str,
         network_id: &str,
         capabilities: PeerCapabilities,
     ) -> Result<()> {
-        self.send_control_frame(
+        self.send_stateful_control_frame(
+            control,
             participant,
             &FipsControlFrame::Capabilities {
                 network_id: network_id.to_string(),
@@ -103,39 +74,71 @@ impl FipsPrivateMeshRuntime {
     #[cfg(feature = "paid-exit")]
     pub(crate) async fn send_paid_route_payment(
         &self,
+        control: &FipsControlTcpRuntime,
         seller: &str,
         id: String,
         envelope: StreamingRoutePaymentEnvelope,
     ) -> Result<()> {
-        self.send_control_frame(seller, &FipsControlFrame::PaidRoutePayment { id, envelope })
-            .await
+        self.send_stateful_control_frame(
+            control,
+            seller,
+            &FipsControlFrame::PaidRoutePayment { id, envelope },
+        )
+        .await
     }
 
     #[cfg(feature = "paid-exit")]
     pub(crate) async fn send_paid_route_payment_ack(
         &self,
+        control: &FipsControlTcpRuntime,
         buyer: &str,
         id: String,
     ) -> Result<()> {
-        self.send_control_frame(buyer, &FipsControlFrame::PaidRoutePaymentAck { id })
-            .await
+        self.send_stateful_control_frame(
+            control,
+            buyer,
+            &FipsControlFrame::PaidRoutePaymentAck { id },
+        )
+        .await
     }
 
-    async fn send_control_frame(&self, participant: &str, frame: &FipsControlFrame) -> Result<()> {
+    async fn send_stateful_control_frame(
+        &self,
+        control: &FipsControlTcpRuntime,
+        participant: &str,
+        frame: &FipsControlFrame,
+    ) -> Result<()> {
         let participant_key = participant_pubkey_bytes(participant);
         let destination = {
             let mesh = self.mesh.load();
             let peer_identities = self.peer_identities.load();
             control_frame_destination_peer(&mesh, &peer_identities, participant)?
         };
-        let messages = encode_fips_control_messages(frame)?;
-        let sent_len = messages.iter().map(Vec::len).sum();
-        self.endpoint
-            .send_batch_to_peer(destination, messages)
+        let sent_len = control
+            .send(destination, frame)
             .await
-            .with_context(|| format!("failed to send FIPS control frame to {participant}"))?;
+            .with_context(|| format!("failed to send FIPS-TCP control frame to {participant}"))?;
         self.note_tx(Some(participant), participant_key.as_ref(), sent_len)?;
         Ok(())
+    }
+
+    async fn send_probe_frame(&self, participant: &str, frame: &FipsControlFrame) -> Result<()> {
+        if !matches!(frame, FipsControlFrame::Ping { .. } | FipsControlFrame::Pong { .. }) {
+            return Err(anyhow!("stateful control frames require FIPS-TCP"));
+        }
+        let participant_key = participant_pubkey_bytes(participant);
+        let destination = {
+            let mesh = self.mesh.load();
+            let peer_identities = self.peer_identities.load();
+            control_frame_destination_peer(&mesh, &peer_identities, participant)?
+        };
+        let encoded = encode_fips_control_frame(frame)?;
+        let sent_len = encoded.len();
+        self.endpoint
+            .send_batch_to_peer(destination, vec![encoded])
+            .await
+            .with_context(|| format!("failed to send FIPS probe to {participant}"))?;
+        self.note_tx(Some(participant), participant_key.as_ref(), sent_len)
     }
 
     fn note_tx(

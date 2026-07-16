@@ -17,7 +17,7 @@ pub(crate) fn args_from_daemon(args: &DaemonArgs) -> Result<Option<WebvmGuestArg
         config: args.config.clone().unwrap_or_else(default_config_path),
         ethernet_interface: ethernet_interface.clone(),
         discovery_scope: discovery_scope.clone(),
-        join_pubsub_port: NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
+        host_hint_port: FIPS_NOSTR_PUBSUB_SERVICE_PORT,
         pairing_uri_file: PathBuf::from(DEFAULT_WEBVM_PAIRING_URI_PATH),
         tun_interface: args.iface.clone(),
     }))

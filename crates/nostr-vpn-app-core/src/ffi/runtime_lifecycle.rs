@@ -79,7 +79,7 @@ impl NativeAppRuntime {
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
             exchange_rate_service,
             #[cfg(test)]
-            published_join_approval_events: Vec::new(),
+            queued_join_rosters: Vec::new(),
             #[cfg(target_os = "macos")]
             privileged_command_runner: None,
         };
@@ -140,7 +140,7 @@ impl NativeAppRuntime {
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
             exchange_rate_service,
             #[cfg(test)]
-            published_join_approval_events: Vec::new(),
+            queued_join_rosters: Vec::new(),
             #[cfg(target_os = "macos")]
             privileged_command_runner: None,
         }

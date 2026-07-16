@@ -43,79 +43,6 @@ fn paid_route_channel_open_frame(
 }
 
 #[cfg(feature = "paid-exit")]
-async fn send_control_messages_until_received(
-    sender: &FipsEndpoint,
-    recipient: &FipsEndpoint,
-    recipient_peer: PeerIdentity,
-    frame: &FipsControlFrame,
-) -> Vec<FipsEndpointMessage> {
-    let encoded = encode_fips_control_messages(frame).expect("encode FIPS control messages");
-    let mut received = Vec::with_capacity(encoded.len());
-    let mut batch = Vec::with_capacity(encoded.len());
-    for _ in 0..50 {
-        sender
-            .send_batch_to_peer(recipient_peer, encoded.clone())
-            .await
-            .expect("send FIPS control messages");
-        match tokio::time::timeout(
-            Duration::from_millis(100),
-            recipient.recv_batch_into(&mut batch, encoded.len()),
-        )
-        .await
-        {
-            Ok(Some(count)) if count > 0 => {
-                for message in batch.drain(..) {
-                    if message.source_peer.npub() == sender.npub()
-                        && encoded.iter().any(|expected| {
-                            expected.as_slice() == message.data.as_slice()
-                        })
-                        && !received.iter().any(|existing: &FipsEndpointMessage| {
-                            existing.data.as_slice() == message.data.as_slice()
-                        })
-                    {
-                        received.push(message);
-                    }
-                }
-                if received.len() == encoded.len() {
-                    return received;
-                }
-            }
-            Ok(Some(_) | None) | Err(_) => {}
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    panic!("recipient should receive complete FIPS control frame");
-}
-
-#[cfg(feature = "paid-exit")]
-async fn receive_control_message_until_received(
-    sender: &FipsEndpoint,
-    recipient: &FipsEndpoint,
-) -> FipsEndpointMessage {
-    let mut messages = Vec::with_capacity(1);
-    for _ in 0..50 {
-        match tokio::time::timeout(
-            Duration::from_millis(100),
-            recipient.recv_batch_into(&mut messages, 1),
-        )
-        .await
-        {
-            Ok(Some(count)) if count > 0 => {
-                if let Some(index) = messages
-                    .iter()
-                    .position(|message| message.source_peer.npub() == sender.npub())
-                {
-                    return messages.swap_remove(index);
-                }
-                messages.clear();
-            }
-            Ok(Some(_) | None) | Err(_) => {}
-        }
-    }
-    panic!("recipient should receive FIPS control reply");
-}
-
-#[cfg(feature = "paid-exit")]
 #[test]
 fn mobile_paid_route_payment_and_ack_roundtrip_over_real_fips_endpoint() {
     std::thread::Builder::new()
@@ -186,6 +113,15 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         ..empty_config()
     };
     let buyer_endpoint = bind_local_mobile_endpoint(&scope, &buyer_mobile).await;
+    let mut seller_state_control =
+        FipsControlTcpRuntime::start(Arc::clone(&seller_endpoint))
+            .await
+            .expect("start seller state control");
+    let seller_state_sender = seller_state_control.sender();
+    let mut buyer_state_control = FipsControlTcpRuntime::start(Arc::clone(&buyer_endpoint))
+        .await
+        .expect("start buyer state control");
+    let buyer_state_sender = buyer_state_control.sender();
 
     let now_unix = unix_timestamp();
     let payment =
@@ -194,10 +130,10 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         FipsControlFrame::PaidRoutePayment { id, envelope } => (id.clone(), envelope.clone()),
         _ => panic!("expected payment frame"),
     };
-    let encoded = encode_fips_control_messages(&payment).expect("encode payment fragments");
+    let encoded = encode_fips_control_frame(&payment).expect("encode payment record");
     assert!(
-        encoded.len() > 1,
-        "test payment must exercise fragmentation"
+        encoded.len() > 1_100,
+        "test payment must exceed the old datagram fragment threshold"
     );
 
     let outbox =
@@ -247,6 +183,7 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         config_path: Some(&seller_config_path),
         network_id: &network_id,
         join_request_active: &seller_join,
+        state_control: &seller_state_sender,
     };
     let seller_identity =
         PeerIdentity::from_npub(seller_endpoint.npub()).expect("seller endpoint identity");
@@ -256,38 +193,23 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         .expect("forged buyer npub");
     let forged_payment =
         paid_route_channel_open_frame(&forged_buyer, &seller_npub, &seller_pubkey, now_unix);
-    let forged_messages = send_control_messages_until_received(
-        &buyer_endpoint,
-        &seller_endpoint,
-        seller_identity,
-        &forged_payment,
-    )
-    .await;
-    let mut forged_fragments = FipsControlFragmentBuffer::default();
-    let mut forged_packets = Vec::new();
-    let mut forged_error = None;
-    for message in forged_messages {
-        match handle_mobile_endpoint_message(
-            &seller_control,
-            &mut forged_fragments,
-            &mut forged_packets,
-            message,
-        )
-        .await
-        {
-            Ok(true) => {}
-            Ok(false) => panic!("payment control must be consumed"),
-            Err(error) => forged_error = Some(error),
-        }
-    }
-    assert!(
-        forged_packets.is_empty(),
-        "rejected payment is never tunnel data"
+    let (forged_sent, forged_received) = tokio::join!(
+        buyer_state_sender.send(seller_identity, &forged_payment),
+        tokio::time::timeout(Duration::from_secs(5), seller_state_control.recv()),
     );
+    forged_sent.expect("send forged payment record over FIPS-TCP");
+    let forged_error = handle_mobile_state_control_frame(
+        &seller_control,
+        forged_received
+            .expect("forged payment receive timeout")
+            .expect("seller state-control service closed"),
+    )
+    .await
+    .expect_err("spoofed payment must be rejected");
     assert!(
-        forged_error.is_some_and(|error| error
+        forged_error
             .to_string()
-            .contains("buyer does not match authenticated FIPS source")),
+            .contains("buyer does not match authenticated FIPS source"),
         "spoofed payment must be source-bound"
     );
     assert!(
@@ -295,31 +217,19 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         "rejected payment must not create seller state"
     );
 
-    let payment_messages = send_control_messages_until_received(
-        &buyer_endpoint,
-        &seller_endpoint,
-        seller_identity,
-        &payment,
-    )
-    .await;
-    let mut seller_fragments = FipsControlFragmentBuffer::default();
-    let mut seller_packets = Vec::new();
-    for message in payment_messages {
-        assert!(
-            handle_mobile_endpoint_message(
-                &seller_control,
-                &mut seller_fragments,
-                &mut seller_packets,
-                message,
-            )
-            .await
-            .expect("handle mobile payment control")
-        );
-    }
-    assert!(
-        seller_packets.is_empty(),
-        "control fragments are never tunnel data"
+    let (payment_sent, payment_received) = tokio::join!(
+        buyer_state_sender.send(seller_identity, &payment),
+        tokio::time::timeout(Duration::from_secs(5), seller_state_control.recv()),
     );
+    payment_sent.expect("send payment record over FIPS-TCP");
+    handle_mobile_state_control_frame(
+        &seller_control,
+        payment_received
+            .expect("payment receive timeout")
+            .expect("seller state-control service closed"),
+    )
+    .await
+    .expect("handle mobile payment control");
 
     let seller_store_path =
         nostr_vpn_core::paid_route_store::paid_route_store_file_path(&seller_config_path);
@@ -327,11 +237,13 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         .expect("load seller paid route store");
     assert!(seller_store.channels.contains_key("mobile-channel-1"));
 
-    let ack_message =
-        receive_control_message_until_received(&seller_endpoint, &buyer_endpoint).await;
+    let ack_message = tokio::time::timeout(Duration::from_secs(5), buyer_state_control.recv())
+        .await
+        .expect("payment acknowledgment receive timeout")
+        .expect("buyer state-control service closed");
     assert!(matches!(
-        decode_fips_control_frame(ack_message.data.as_slice()).expect("decode payment ack"),
-        Some(FipsControlFrame::PaidRoutePaymentAck { id }) if id == payment_id
+        &ack_message.frame,
+        FipsControlFrame::PaidRoutePaymentAck { id } if id == &payment_id
     ));
     let wrong_source = nostr_vpn_core::paid_route_store::acknowledge_paid_route_payment_outbox(
         &buyer_config_path,
@@ -375,25 +287,18 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         config_path: Some(&buyer_config_path),
         network_id: &network_id,
         join_request_active: &buyer_join,
+        state_control: &buyer_state_sender,
     };
-    let mut buyer_fragments = FipsControlFragmentBuffer::default();
-    let mut buyer_packets = Vec::new();
-    assert!(
-        handle_mobile_endpoint_message(
-            &buyer_control,
-            &mut buyer_fragments,
-            &mut buyer_packets,
-            ack_message,
-        )
+    handle_mobile_state_control_frame(&buyer_control, ack_message)
         .await
-        .expect("handle mobile payment ack")
-    );
-    assert!(buyer_packets.is_empty(), "payment ack is never tunnel data");
+        .expect("handle mobile payment ack");
     assert!(
         !outbox_entry.exists(),
         "seller-bound ack clears payment outbox"
     );
 
+    buyer_state_control.stop().await;
+    seller_state_control.stop().await;
     let _ = buyer_endpoint.shutdown().await;
     let _ = seller_endpoint.shutdown().await;
     let _ = std::fs::remove_dir_all(dir);

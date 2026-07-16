@@ -26,6 +26,9 @@ cashu-service = { workspace = true, optional = true, features = ["spilman"] }
 # only — uses kqueue/epoll), so leave it off in the default dep set
 # and let target-specific overrides below opt back in.
 boringtun = { workspace = true }
+fips-core.workspace = true
+fips-tcp.workspace = true
+fips-tcp-endpoint.workspace = true
 nostr-sdk.workspace = true
 nostr-identity.workspace = true
 nostr-pubsub.workspace = true
@@ -39,6 +42,7 @@ tracing.workspace = true
 uuid.workspace = true
 hex.workspace = true
 hickory-proto.workspace = true
+hmac.workspace = true
 hostname.workspace = true
 hashtree-updater = { workspace = true, optional = true }
 netdev.workspace = true

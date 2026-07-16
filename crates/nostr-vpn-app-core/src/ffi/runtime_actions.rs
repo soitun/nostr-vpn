@@ -416,7 +416,11 @@ impl NativeAppRuntime {
             prepare_join_approval(&self.config, &network_id, bootstrap, unix_timestamp())?;
         self.config = prepared.updated_config;
         self.save_reload_and_refresh()?;
-        self.queue_direct_join_request_approval(bootstrap, fips_route_npub, &prepared.events)?;
+        self.queue_join_roster_delivery(
+            bootstrap,
+            fips_route_npub,
+            &prepared.signed_roster,
+        )?;
         if !self.vpn_enabled {
             self.connect_vpn()?;
         }
@@ -425,30 +429,28 @@ impl NativeAppRuntime {
 
     #[cfg(test)]
     #[allow(clippy::unnecessary_wraps)]
-    fn queue_direct_join_request_approval(
+    fn queue_join_roster_delivery(
         &mut self,
         _bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
         _fips_route_npub: Option<&str>,
-        events: &[Event],
+        signed_roster: &nostr_vpn_core::fips_control::SignedRoster,
     ) -> Result<()> {
-        self.published_join_approval_events
-            .extend(events.iter().cloned());
+        self.queued_join_rosters.push(signed_roster.clone());
         Ok(())
     }
 
     #[cfg(not(test))]
-    fn queue_direct_join_request_approval(
+    fn queue_join_roster_delivery(
         &self,
         bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
         fips_route_npub: Option<&str>,
-        events: &[Event],
+        signed_roster: &nostr_vpn_core::fips_control::SignedRoster,
     ) -> Result<()> {
-        nostr_vpn_core::join_pubsub::queue_direct_join_approval(
+        nostr_vpn_core::join_delivery::queue_join_roster(
             &self.config_path,
             &bootstrap.device_app_key_npub,
             fips_route_npub,
-            &bootstrap.request_npub,
-            events,
+            signed_roster,
         )?;
         Ok(())
     }

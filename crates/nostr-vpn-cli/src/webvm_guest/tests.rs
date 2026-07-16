@@ -90,7 +90,7 @@ fn invalid_webvm_arguments_are_rejected_before_networking() {
         config: PathBuf::from("/tmp/config.toml"),
         ethernet_interface: "eth0".to_string(),
         discovery_scope: "fips-overlay-v1".to_string(),
-        join_pubsub_port: NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT + 1,
+        host_hint_port: FIPS_NOSTR_PUBSUB_SERVICE_PORT + 1,
         pairing_uri_file: PathBuf::from("/run/webvm/pairing-uri"),
         tun_interface: "nvpn0".to_string(),
     };

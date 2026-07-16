@@ -256,9 +256,7 @@
             .pending_nostr_join_request
             .as_ref()
             .expect("pending request");
-        let request_keys = pending.request_keys().expect("request keys");
         let request_secret = pending.request.request_secret.clone();
-        let request_pubkey = pending.request.request_pubkey.clone();
         let bootstrap = nostr_vpn_core::identity_bridge::nostr_identity_device_approval_bootstrap(
             &pending.request,
         )
@@ -293,74 +291,16 @@
             .expect("import compact join request");
 
         assert!(admin.last_error.is_empty(), "{}", admin.last_error);
-        assert_eq!(admin.published_join_approval_events.len(), 5);
-        let canonical_admin =
-            nostr_vpn_core::identity_bridge::parse_roster_app_key_sidecar_event(
-                &admin.published_join_approval_events[0],
-            )
-            .expect("parse canonical admin genesis")
-            .expect("canonical admin identity");
-        assert_eq!(canonical_admin.facet.pubkey, admin_pubkey);
-        assert_eq!(canonical_admin.role, nostr_vpn_core::identity_bridge::RosterAppKeyRole::Admin);
-        let roster_identity =
-            nostr_vpn_core::identity_bridge::parse_roster_app_key_sidecar_event(
-                &admin.published_join_approval_events[1],
-            )
-            .expect("parse roster sidecar")
-            .expect("roster sidecar identity");
-        assert_eq!(roster_identity.facet.pubkey, joiner_pubkey);
-        let receipt =
-            nostr_identity::parse_nostr_identity_device_approval_receipt_event_for_bootstrap(
-                &admin.published_join_approval_events[3],
-                &request_keys,
-                &parsed_bootstrap,
-            )
-            .expect("decrypt approval receipt");
-        assert_eq!(receipt.request_pubkey, request_pubkey);
-        assert_eq!(receipt.device_app_key_pubkey, joiner_pubkey);
-        assert_eq!(receipt.approved_by_pubkey, admin.config.own_nostr_pubkey_hex().unwrap());
-        assert_eq!(receipt.request_secret, request_secret);
-        let roster_op_event_id = admin.published_join_approval_events[1].id.to_hex();
+        assert_eq!(admin.queued_join_rosters.len(), 1);
+        let signed_roster = &admin.queued_join_rosters[0];
+        signed_roster.verify().expect("verify queued roster");
+        let roster = signed_roster.roster().expect("decode queued roster");
+        assert_eq!(signed_roster.network_id().unwrap(), "8d4f34f5425bc50e");
+        assert!(roster.devices.contains(&joiner_pubkey));
+        assert!(roster.admins.contains(&admin_pubkey));
         assert_eq!(
-            receipt.roster_op_id.as_deref(),
-            Some(roster_op_event_id.as_str())
-        );
-        let receipt_roster_op =
-            nostr_vpn_core::identity_bridge::parse_nostr_identity_device_approval_receipt_roster_op(
-                &receipt,
-            )
-            .expect("receipt embeds roster op");
-        assert_eq!(receipt_roster_op.op_id, roster_op_event_id);
-        assert!(
-            !admin.published_join_approval_events[3]
-                .content
-                .contains(&request_secret)
-        );
-        let vpn_context =
-            nostr_vpn_core::identity_bridge::parse_nostr_vpn_join_approval_context_event(
-                &admin.published_join_approval_events[4],
-                &request_keys,
-            )
-            .expect("decrypt Nostr VPN approval context");
-        assert_eq!(vpn_context.request_pubkey, request_pubkey);
-        assert_eq!(vpn_context.device_app_key_pubkey, joiner_pubkey);
-        assert_eq!(
-            vpn_context.approved_by_pubkey,
+            signed_roster.signer_pubkey_hex().unwrap(),
             admin.config.own_nostr_pubkey_hex().unwrap()
-        );
-        assert_eq!(vpn_context.request_secret, request_secret);
-        assert_eq!(vpn_context.mesh_network_id, "8d4f34f5425bc50e");
-        assert_eq!(vpn_context.network_name.as_deref(), Some("Home"));
-        assert_eq!(vpn_context.roster_op_id.as_deref(), Some(roster_op_event_id.as_str()));
-        assert!(
-            !admin.published_join_approval_events[4]
-                .content
-                .contains(&request_secret)
-        );
-        assert!(
-            !admin.published_join_approval_events[4]
-                .content
-                .contains("8d4f34f5425bc50e")
         );
         assert!(admin.config.networks[0].devices.contains(&joiner_pubkey));
         assert!(admin.config.networks[0].inbound_join_requests.is_empty());
@@ -381,11 +321,8 @@
         assert!(
             joiner
                 .config
-                .apply_nostr_join_approval_events(
-                    &admin.published_join_approval_events,
-                    unix_timestamp(),
-                )
-                .expect("apply direct FIPS approval events")
+                .apply_nostr_join_roster(&admin.queued_join_rosters[0], unix_timestamp())
+                .expect("apply direct FIPS roster")
                 .is_some(),
             "joiner should apply the accepted network"
         );
@@ -436,7 +373,7 @@
             admin.last_error
         );
         assert!(!admin.config.networks[0].devices.contains(&joiner_pubkey));
-        assert!(admin.published_join_approval_events.is_empty());
+        assert!(admin.queued_join_rosters.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }

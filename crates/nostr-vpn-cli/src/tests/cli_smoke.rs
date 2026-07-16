@@ -47,7 +47,7 @@ fn clap_parses_complete_webvm_guest_contract() {
         "eth0",
         "--discovery-scope",
         "fips-overlay-v1",
-        "--join-pubsub-port",
+        "--host-hint-port",
         "7368",
         "--pairing-uri-file",
         "/run/nvpn/pairing-uri",
@@ -60,7 +60,7 @@ fn clap_parses_complete_webvm_guest_contract() {
     assert_eq!(args.config.to_string_lossy(), "/etc/nvpn/webvm.toml");
     assert_eq!(args.ethernet_interface, "eth0");
     assert_eq!(args.discovery_scope, "fips-overlay-v1");
-    assert_eq!(args.join_pubsub_port, 7_368);
+    assert_eq!(args.host_hint_port, 7_368);
     assert_eq!(
         args.pairing_uri_file.to_string_lossy(),
         "/run/nvpn/pairing-uri"

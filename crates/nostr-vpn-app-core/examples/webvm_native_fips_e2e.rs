@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use nostr_vpn_app_core::HeadlessDirectApprovalRuntime;
+use nostr_vpn_app_core::HeadlessJoinRosterRuntime;
 use nostr_vpn_app_core::join_approval::prepare_join_approval;
 use nostr_vpn_app_core::join_request_link::parse_join_request_qr_code_or_link;
 use nostr_vpn_core::config::AppConfig;
-use nostr_vpn_core::join_pubsub::queue_direct_join_approval;
+use nostr_vpn_core::join_delivery::queue_join_roster;
 use serde_json::json;
 
 const REAL_E2E_GUARD: &str = "NVPN_WEBVM_REAL_E2E";
@@ -149,7 +149,7 @@ fn run() -> HarnessResult<()> {
     }
     let args = Args::parse()?;
     let (exit_node, network_id) = prepare_admin_config(&args.config_path)?;
-    let transport = HeadlessDirectApprovalRuntime::start(&args.config_path)
+    let transport = HeadlessJoinRosterRuntime::start(&args.config_path)
         .map_err(|_| HarnessError::new("preflight", "headless-fips-start-failed"))?;
     emit_status(&json!({ "status": "ready", "exitNode": exit_node }))?;
 
@@ -171,32 +171,31 @@ fn run() -> HarnessResult<()> {
         .map_err(|_| HarnessError::new("import", "clock-unavailable"))?
         .as_secs();
     let prepared = prepare_join_approval(&config, &network_id, &parsed.bootstrap, approved_at)
-        .map_err(|_| HarnessError::new("import", "approval-prepare-failed"))?;
+        .map_err(|_| HarnessError::new("import", "roster-prepare-failed"))?;
     config = prepared.updated_config;
     config
         .save(&args.config_path)
         .map_err(|_| HarnessError::new("import", "config-save-failed"))?;
-    queue_direct_join_approval(
+    queue_join_roster(
         &args.config_path,
         &parsed.bootstrap.device_app_key_npub,
         parsed.fips_route_npub.as_deref(),
-        &parsed.bootstrap.request_npub,
-        &prepared.events,
+        &prepared.signed_roster,
     )
-    .map_err(|_| HarnessError::new("import", "approval-queue-failed"))?;
+    .map_err(|_| HarnessError::new("import", "roster-queue-failed"))?;
     if config.participant_pubkeys_hex().len() != before_count + 1 {
         return Err(HarnessError::new("import", "participant-not-added"));
     }
-    let direct_events = transport
-        .send_queued_approvals(&args.config_path)
+    let direct_rosters = transport
+        .send_queued_join_rosters(&args.config_path)
         .map_err(|error| {
-            eprintln!("direct FIPS approval send failed: {error:#}");
+            eprintln!("FIPS-TCP join roster send failed: {error:#}");
             HarnessError::new("runtime", "direct-fips-send-failed")
         })?;
     emit_status(&json!({
         "status": "imported",
         "participantAdded": true,
-        "directEvents": direct_events,
+        "directRosters": direct_rosters,
         "exitNode": exit_node,
     }))?;
     let _ = read_command(&mut input)?;

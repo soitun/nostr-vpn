@@ -8,21 +8,16 @@ pub(crate) use daemon::{args_from_daemon, run_daemon};
 #[cfg(any(target_os = "linux", test))]
 #[path = "webvm_guest/pairing_storage.rs"]
 mod pairing_storage;
-#[cfg(target_os = "linux")]
-use pairing_storage::{load_approval_ack, persist_approval_ack};
 #[cfg(any(target_os = "linux", test))]
 use pairing_storage::{remove_pairing_uri, write_pairing_uri};
 
 #[cfg(target_os = "linux")]
-use fips_core::{FipsEndpointServiceDatagram, FipsEndpointServiceReceiver};
-#[cfg(target_os = "linux")]
 use fips_endpoint::{FipsEndpoint, PeerIdentity};
-use nostr_vpn_core::join_pubsub::NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT;
+use nostr_pubsub_fips::FIPS_NOSTR_PUBSUB_SERVICE_PORT;
 #[cfg(target_os = "linux")]
-use nostr_vpn_core::join_pubsub::{
-    NostrJoinFipsPubsubClient, NostrJoinFipsPubsubDatagram, approval_applied_ack_datagram,
-    approval_event_datagram_matches_ack, parse_approval_applied_ack_datagram,
-};
+use nostr_vpn_core::fips_control::FipsControlFrame;
+#[cfg(target_os = "linux")]
+use nostr_vpn_core::fips_control_tcp::FipsControlTcpRuntime;
 #[cfg(any(target_os = "linux", test))]
 use std::io::Write as _;
 #[cfg(all(unix, any(target_os = "linux", test)))]
@@ -34,13 +29,9 @@ use std::sync::{Arc, RwLock};
 #[cfg(any(target_os = "linux", test))]
 const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
 #[cfg(target_os = "linux")]
-const PAIRING_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(500);
+const PAIRING_STATE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 #[cfg(target_os = "linux")]
 const BROWSER_HOST_POLL_INTERVAL: Duration = Duration::from_millis(100);
-#[cfg(target_os = "linux")]
-const SERVICE_RECV_BATCH: usize = 8;
-#[cfg(target_os = "linux")]
-const WEBVM_APPROVAL_ROUTE_REGISTRATION: &[u8; 9] = b"NVPNPAIR1";
 #[cfg(any(target_os = "linux", test))]
 const WEBVM_MESH_INGRESS_HINT_MAGIC: &[u8; 9] = b"NVPNMESH1";
 const DEFAULT_WEBVM_PAIRING_URI_PATH: &str = "/run/webvm/join-request";
@@ -90,9 +81,9 @@ fn validate_args(args: &WebvmGuestArgs) -> Result<()> {
     if args.discovery_scope.trim().is_empty() {
         return Err(anyhow!("--discovery-scope must not be empty"));
     }
-    if args.join_pubsub_port != NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT {
+    if args.host_hint_port != FIPS_NOSTR_PUBSUB_SERVICE_PORT {
         return Err(anyhow!(
-            "--join-pubsub-port must be {NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT}"
+            "--host-hint-port must be {FIPS_NOSTR_PUBSUB_SERVICE_PORT}"
         ));
     }
     if args.pairing_uri_file.as_os_str().is_empty() {
@@ -139,17 +130,14 @@ async fn run_linux(args: WebvmGuestArgs) -> Result<()> {
         Arc::clone(&peer_status_snapshot),
         shutdown_tx,
     ));
-    let approval_receiver = match endpoint
-        .register_service_receiver(args.join_pubsub_port)
-        .await
-    {
-        Ok(receiver) => receiver,
+    let mut pairing_control = match FipsControlTcpRuntime::start(Arc::clone(&endpoint)).await {
+        Ok(runtime) => runtime,
         Err(error) => {
             supervisor.abort();
             let _ = supervisor.await;
             let _ = host_network.stop().await;
             let _ = endpoint.shutdown().await;
-            return Err(error).context("failed to register WebVM join pubsub service");
+            return Err(error).context("failed to start WebVM state-control service");
         }
     };
     let setup_result = async {
@@ -157,7 +145,7 @@ async fn run_linux(args: WebvmGuestArgs) -> Result<()> {
             match pair_over_fips(
                 &args,
                 &endpoint,
-                &approval_receiver,
+                &mut pairing_control,
                 &mut app,
                 shutdown_rx.clone(),
             )
@@ -174,18 +162,19 @@ async fn run_linux(args: WebvmGuestArgs) -> Result<()> {
     }
     .await;
     if let Err(error) = setup_result {
+        pairing_control.stop().await;
         supervisor.abort();
         let _ = supervisor.await;
         let _ = host_network.stop().await;
         let _ = endpoint.shutdown().await;
         return Err(error);
     }
+    pairing_control.stop().await;
     let result = run_tunnel(
         &args,
         app,
         shared,
         host_network,
-        approval_receiver,
         peer_status_snapshot,
         shutdown_rx,
     )
@@ -486,53 +475,30 @@ fn webvm_pairing_uri(app: &AppConfig, fips_route_npub: &str) -> Result<String> {
 async fn pair_over_fips(
     args: &WebvmGuestArgs,
     endpoint: &FipsEndpoint,
-    approval_receiver: &FipsEndpointServiceReceiver,
+    pairing_control: &mut FipsControlTcpRuntime,
     app: &mut AppConfig,
     shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
     let browser_host = wait_for_browser_host(endpoint, shutdown.clone()).await?;
     let browser_identity = PeerIdentity::from_npub(&browser_host)
         .context("invalid WebVM browser FIPS return route")?;
-    register_approval_route(endpoint, browser_identity, args.join_pubsub_port)
-        .await
-        .context("failed to register WebVM approval return route")?;
     let pairing_uri = webvm_pairing_uri(app, &browser_host)?;
     write_pairing_uri(&args.pairing_uri_file, &pairing_uri)?;
 
     println!(
-        "webvm: awaiting direct approval over FIPS service {}",
-        args.join_pubsub_port
+        "webvm: awaiting one signed roster over FIPS-TCP service {}",
+        nostr_vpn_core::fips_control_tcp::FIPS_STATE_CONTROL_SERVICE_PORT
     );
-    let mut client = NostrJoinFipsPubsubClient::new(app)?;
-    wait_for_approval(
-        endpoint,
-        approval_receiver,
+    wait_for_join_roster(
+        pairing_control,
         browser_identity,
         &args.config,
         app,
-        &mut client,
         shutdown,
     )
     .await?;
     remove_pairing_uri(&args.pairing_uri_file)?;
     Ok(())
-}
-
-#[cfg(target_os = "linux")]
-async fn register_approval_route(
-    endpoint: &FipsEndpoint,
-    browser_identity: PeerIdentity,
-    port: u16,
-) -> Result<()> {
-    endpoint
-        .send_datagram(
-            browser_identity,
-            port,
-            port,
-            WEBVM_APPROVAL_ROUTE_REGISTRATION.to_vec(),
-        )
-        .await
-        .context("failed to announce WebVM approval readiness")
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -584,21 +550,18 @@ async fn wait_for_browser_host(
 }
 
 #[cfg(target_os = "linux")]
-async fn wait_for_approval(
-    endpoint: &FipsEndpoint,
-    approval_receiver: &FipsEndpointServiceReceiver,
+async fn wait_for_join_roster(
+    pairing_control: &mut FipsControlTcpRuntime,
     browser_identity: PeerIdentity,
     config_path: &Path,
     app: &mut AppConfig,
-    client: &mut NostrJoinFipsPubsubClient,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let mut datagrams = Vec::<FipsEndpointServiceDatagram>::with_capacity(SERVICE_RECV_BATCH);
-    let mut host_poll = tokio::time::interval_at(
-        tokio::time::Instant::now() + PAIRING_HEARTBEAT_INTERVAL,
-        PAIRING_HEARTBEAT_INTERVAL,
+    let mut state_poll = tokio::time::interval_at(
+        tokio::time::Instant::now() + PAIRING_STATE_POLL_INTERVAL,
+        PAIRING_STATE_POLL_INTERVAL,
     );
-    host_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    state_poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
@@ -607,69 +570,45 @@ async fn wait_for_approval(
                     return Err(anyhow::Error::new(WebvmStop));
                 }
             }
-            _ = host_poll.tick() => {
+            _ = state_poll.tick() => {
                 if pending_join_request_changed(config_path, app)? {
                     return Err(anyhow::Error::new(WebvmReloadJoinRequest));
                 }
-                if let Err(error) = register_approval_route(
-                    endpoint,
-                    browser_identity,
-                    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
-                ).await {
-                    eprintln!("webvm: approval readiness heartbeat failed; will retry: {error:#}");
-                }
             }
-            received = approval_receiver.recv_batch_into(&mut datagrams, SERVICE_RECV_BATCH) => {
-                let Some(_) = received else {
-                    return Err(anyhow!("WebVM pairing FIPS endpoint closed"));
+            received = pairing_control.recv() => {
+                let Some(received) = received else {
+                    return Err(anyhow!("WebVM pairing FIPS-TCP service closed"));
                 };
-                for datagram in &datagrams {
-                    // FIPS is routed, so the authenticated source can be an admin
-                    // reached through a transit peer. The signed payload and request
-                    // secret still authorize the approval itself.
-                    let inbound = NostrJoinFipsPubsubDatagram {
-                        source_port: datagram.source_port,
-                        destination_port: datagram.destination_port,
-                        payload: datagram.data.as_ref().to_vec(),
-                    };
-                    println!("webvm: received approval candidate over FIPS");
-                    let mut candidate = app.clone();
-                    if let Some(applied) = client.ingest_datagram(
-                        &mut candidate,
-                        &inbound,
-                        unix_timestamp(),
-                    )? {
-                        validate_approved_config(&candidate)?;
-                        let ack_datagram = approval_applied_ack_datagram(
-                            &candidate.nostr_keys()?,
-                            &applied,
-                        )?;
-                        persist_approval_ack(config_path, &ack_datagram)?;
-                        candidate.save(config_path).with_context(|| {
-                            format!("failed to persist approved config {}", config_path.display())
-                        })?;
-                        *app = candidate;
-                        if let Err(error) = endpoint
-                            .send_datagram(
-                                datagram.source_peer,
-                                NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
-                                NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
-                                ack_datagram.payload,
-                            )
-                            .await
-                        {
-                            eprintln!(
-                                "webvm: approval applied ack send failed; duplicate approval will retry it: {error:#}"
-                            );
-                        }
-                        println!(
-                            "webvm: approval applied for network {} by {}",
-                            applied.network_id,
-                            applied.approved_by_pubkey,
-                        );
-                        return Ok(());
-                    }
+                if received.source_peer != browser_identity {
+                    eprintln!("webvm: ignoring join roster from an unexpected local FIPS peer");
+                    continue;
                 }
+                let FipsControlFrame::Roster {
+                    signed_roster: Some(signed_roster),
+                    ..
+                } = received.frame else {
+                    eprintln!("webvm: ignoring non-roster record while awaiting approval");
+                    continue;
+                };
+                println!("webvm: received signed join roster over FIPS-TCP");
+                let mut candidate = app.clone();
+                let Some(applied) = candidate.apply_nostr_join_roster(
+                    signed_roster.as_ref(),
+                    unix_timestamp(),
+                )? else {
+                    continue;
+                };
+                validate_approved_config(&candidate)?;
+                candidate.save(config_path).with_context(|| {
+                    format!("failed to persist approved config {}", config_path.display())
+                })?;
+                *app = candidate;
+                println!(
+                    "webvm: join roster applied for network {} by {}",
+                    applied.network_id,
+                    applied.signed_by_pubkey,
+                );
+                return Ok(());
             }
         }
     }
@@ -696,7 +635,6 @@ async fn run_tunnel(
     mut app: AppConfig,
     shared: crate::fips_private_mesh::FipsSharedEndpoint,
     host_network: crate::fips_private_mesh::WebvmFipsHostNetworkRuntime,
-    approval_receiver: FipsEndpointServiceReceiver,
     peer_status_snapshot: WebvmPeerStatusSnapshot,
     mut shutdown: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
@@ -744,13 +682,6 @@ async fn run_tunnel(
     let mut heartbeat = tokio::time::interval(Duration::from_secs(2));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut status = String::new();
-    let approval_ack_datagram = load_approval_ack(&args.config)?;
-    let approval_ack = approval_ack_datagram
-        .as_ref()
-        .map(parse_approval_applied_ack_datagram)
-        .transpose()?;
-    let mut approval_datagrams =
-        Vec::<FipsEndpointServiceDatagram>::with_capacity(SERVICE_RECV_BATCH);
     let run_result = loop {
         tokio::select! {
             changed = shutdown.changed() => {
@@ -762,8 +693,8 @@ async fn run_tunnel(
                 if let Err(error) = endpoint
                     .send_datagram(
                         browser_identity,
-                        args.join_pubsub_port,
-                        args.join_pubsub_port,
+                        args.host_hint_port,
+                        args.host_hint_port,
                         mesh_ingress_hint.clone(),
                     )
                     .await
@@ -802,38 +733,6 @@ async fn run_tunnel(
                     &peer_status_snapshot,
                     runtime.peer_statuses(),
                 )?;
-            }
-            received = approval_receiver.recv_batch_into(
-                &mut approval_datagrams,
-                SERVICE_RECV_BATCH,
-            ) => {
-                let Some(_) = received else {
-                    break Err(anyhow!("WebVM join approval service closed"));
-                };
-                let (Some(ack_datagram), Some(ack)) =
-                    (approval_ack_datagram.as_ref(), approval_ack.as_ref())
-                else {
-                    continue;
-                };
-                for datagram in &approval_datagrams {
-                    let inbound = NostrJoinFipsPubsubDatagram {
-                        source_port: datagram.source_port,
-                        destination_port: datagram.destination_port,
-                        payload: datagram.data.as_ref().to_vec(),
-                    };
-                    if approval_event_datagram_matches_ack(&inbound, ack)
-                        && let Err(error) = endpoint
-                            .send_datagram(
-                                datagram.source_peer,
-                                args.join_pubsub_port,
-                                args.join_pubsub_port,
-                                ack_datagram.payload.clone(),
-                            )
-                            .await
-                    {
-                        eprintln!("webvm: approval applied ack replay failed: {error:#}");
-                    }
-                }
             }
         }
     };

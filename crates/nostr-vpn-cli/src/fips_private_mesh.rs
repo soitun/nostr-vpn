@@ -2,7 +2,6 @@ use anyhow::{Context, Result, anyhow};
 use arc_swap::ArcSwap;
 #[cfg(feature = "paid-exit")]
 use cashu_service::StreamingRoutePaymentEnvelope;
-use fips_core::FipsEndpointOutboundDatagram;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
 use fips_endpoint::EthernetConfig;
@@ -24,10 +23,10 @@ use nostr_vpn_core::config::{
 };
 use nostr_vpn_core::data_plane::MeshPeerStatus;
 use nostr_vpn_core::fips_control::{
-    FipsControlFragmentBuffer, FipsControlFrame, PeerCapabilities, PeerEndpointHint, SignedRoster,
-    decode_fips_control_frame, encode_fips_control_frame, encode_fips_control_messages,
-    is_fips_control_frame,
+    FipsControlFrame, PeerCapabilities, PeerEndpointHint, SignedRoster, decode_fips_control_frame,
+    encode_fips_control_frame, is_fips_control_frame,
 };
+use nostr_vpn_core::fips_control_tcp::{FipsControlTcpRuntime, ReceivedFipsControlFrame};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nostr_vpn_core::fips_mesh::RoutedFipsPeer;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -35,10 +34,6 @@ use nostr_vpn_core::fips_mesh::packet_endpoints;
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use nostr_vpn_core::fips_mesh::{FipsEndpointAdmissionCache, FipsEndpointSourceAdmitter};
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime, FipsPaidRouteAdmission};
-use nostr_vpn_core::join_pubsub::{
-    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, delivered_approval_event_datagram,
-    routed_approval_event_datagram,
-};
 use nostr_vpn_core::join_requests::MeshJoinRequest;
 use nostr_vpn_core::magic_dns::build_magic_dns_records;
 #[cfg(feature = "paid-exit")]
@@ -221,7 +216,6 @@ pub(crate) struct FipsPrivateMeshRuntime {
     link_status: RwLock<HashMap<String, FipsEndpointPeer>>,
     other_link_status: RwLock<HashMap<String, FipsEndpointPeer>>,
     peer_capabilities: RwLock<HashMap<String, PeerCapabilitiesEntry>>,
-    control_fragments: Mutex<ControlFragmentBuffer>,
     #[cfg(feature = "paid-exit")]
     paid_route_accounting: Mutex<FipsPaidRouteAccounting>,
 }
@@ -255,7 +249,6 @@ include!("fips_private_mesh/runtime_status.rs");
 include!("fips_private_mesh/runtime_control.rs");
 include!("fips_private_mesh/control_frame.rs");
 include!("fips_private_mesh/endpoint_config.rs");
-include!("fips_private_mesh/join_approval_ack.rs");
 include!("fips_private_mesh/tunnel_config.rs");
 include!("fips_private_mesh/tunnel_runtime_unix_core.rs");
 include!("fips_private_mesh/tunnel_runtime_linux.rs");

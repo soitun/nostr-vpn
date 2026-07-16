@@ -1,4 +1,74 @@
 impl FipsPrivateMeshRuntime {
+    fn received_stateful_control_frame(
+        &self,
+        received: ReceivedFipsControlFrame,
+    ) -> Result<Option<FipsPrivateMeshEvent>> {
+        let mesh = self.mesh.load();
+        let source_pubkey =
+            control_frame_source_pubkey(&mesh, received.source_peer, &received.frame);
+        let Some(source_pubkey) = source_pubkey else {
+            return Ok(None);
+        };
+        let now = unix_timestamp();
+        let encoded_len = encode_fips_control_frame(&received.frame)?.len();
+        self.note_control_rx(&source_pubkey, encoded_len, now)?;
+        match received.frame {
+            FipsControlFrame::JoinRequest {
+                requested_at,
+                request,
+            } => Ok(Some(FipsPrivateMeshEvent::JoinRequest {
+                sender_pubkey: source_pubkey,
+                requested_at,
+                request,
+            })),
+            FipsControlFrame::Roster { signed_roster, .. } => {
+                Ok(Some(FipsPrivateMeshEvent::Roster {
+                    sender_pubkey: source_pubkey,
+                    signed_roster,
+                }))
+            }
+            FipsControlFrame::Capabilities {
+                network_id,
+                capabilities,
+            } => {
+                self.record_peer_capabilities(&source_pubkey, &capabilities, now)?;
+                Ok(Some(FipsPrivateMeshEvent::Capabilities {
+                    sender_pubkey: source_pubkey,
+                    network_id,
+                    capabilities,
+                }))
+            }
+            #[cfg(feature = "paid-exit")]
+            FipsControlFrame::PaidRoutePayment { id, envelope } => {
+                let encoded = serde_json::to_vec(&envelope)
+                    .context("failed to encode received paid route payment")?;
+                if id != hex::encode(Sha256::digest(encoded)) {
+                    return Err(anyhow!("paid route payment id does not match envelope"));
+                }
+                let buyer_pubkey = normalize_nostr_pubkey(&envelope.buyer)
+                    .context("invalid paid route payment buyer")?;
+                if buyer_pubkey != source_pubkey {
+                    return Err(anyhow!(
+                        "paid route payment buyer does not match authenticated FIPS source"
+                    ));
+                }
+                Ok(Some(FipsPrivateMeshEvent::PaidRoutePayment {
+                    sender_pubkey: source_pubkey,
+                    id,
+                    envelope: Box::new(envelope),
+                }))
+            }
+            #[cfg(feature = "paid-exit")]
+            FipsControlFrame::PaidRoutePaymentAck { id } => {
+                Ok(Some(FipsPrivateMeshEvent::PaidRoutePaymentAck {
+                    sender_pubkey: source_pubkey,
+                    id,
+                }))
+            }
+            FipsControlFrame::Ping { .. } | FipsControlFrame::Pong { .. } => Ok(None),
+        }
+    }
+
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
     fn recv_direct_endpoint_tun_batch_blocking(
         &self,
@@ -121,7 +191,7 @@ impl FipsPrivateMeshRuntime {
         now: Option<u64>,
         mesh: &FipsMeshRuntime,
     ) -> Result<FipsEndpointMessageOutcome> {
-        if let Some(frame) = self.decode_endpoint_control_frame(&message)? {
+        if let Some(frame) = decode_endpoint_control_frame(&message)? {
             let source_pubkey = control_frame_source_pubkey(mesh, message.source_peer, &frame);
             let Some(source_pubkey) = source_pubkey else {
                 return Ok(FipsEndpointMessageOutcome::none());
@@ -157,77 +227,7 @@ impl FipsPrivateMeshRuntime {
                         },
                     ));
                 }
-                FipsControlFrame::JoinRequest {
-                    requested_at,
-                    request,
-                } => {
-                    return Ok(FipsEndpointMessageOutcome::event(
-                        FipsPrivateMeshEvent::JoinRequest {
-                            sender_pubkey: source_pubkey,
-                            requested_at,
-                            request,
-                        },
-                    ));
-                }
-                FipsControlFrame::Roster {
-                    network_id: _,
-                    roster: _,
-                    signed_roster,
-                } => {
-                    return Ok(FipsEndpointMessageOutcome::event(
-                        FipsPrivateMeshEvent::Roster {
-                            sender_pubkey: source_pubkey,
-                            signed_roster,
-                        },
-                    ));
-                }
-                FipsControlFrame::Capabilities {
-                    network_id,
-                    capabilities,
-                } => {
-                    self.record_peer_capabilities(&source_pubkey, &capabilities, now)?;
-                    return Ok(FipsEndpointMessageOutcome::event(
-                        FipsPrivateMeshEvent::Capabilities {
-                            sender_pubkey: source_pubkey,
-                            network_id,
-                            capabilities,
-                        },
-                    ));
-                }
-                #[cfg(feature = "paid-exit")]
-                FipsControlFrame::PaidRoutePayment { id, envelope } => {
-                    let encoded = serde_json::to_vec(&envelope)
-                        .context("failed to encode received paid route payment")?;
-                    if id != hex::encode(Sha256::digest(encoded)) {
-                        return Err(anyhow!("paid route payment id does not match envelope"));
-                    }
-                    let buyer_pubkey = normalize_nostr_pubkey(&envelope.buyer)
-                        .context("invalid paid route payment buyer")?;
-                    if buyer_pubkey != source_pubkey {
-                        return Err(anyhow!(
-                            "paid route payment buyer does not match authenticated FIPS source"
-                        ));
-                    }
-                    return Ok(FipsEndpointMessageOutcome::event(
-                        FipsPrivateMeshEvent::PaidRoutePayment {
-                            sender_pubkey: source_pubkey,
-                            id,
-                            envelope: Box::new(envelope),
-                        },
-                    ));
-                }
-                #[cfg(feature = "paid-exit")]
-                FipsControlFrame::PaidRoutePaymentAck { id } => {
-                    return Ok(FipsEndpointMessageOutcome::event(
-                        FipsPrivateMeshEvent::PaidRoutePaymentAck {
-                            sender_pubkey: source_pubkey,
-                            id,
-                        },
-                    ));
-                }
-                FipsControlFrame::Fragment { .. } => {
-                    return Ok(FipsEndpointMessageOutcome::none());
-                }
+                _ => return Ok(FipsEndpointMessageOutcome::none()),
             }
         }
 
@@ -314,35 +314,6 @@ impl FipsPrivateMeshRuntime {
             }
         }
         Ok(())
-    }
-
-    fn decode_endpoint_control_frame(
-        &self,
-        message: &FipsEndpointMessage,
-    ) -> Result<Option<FipsControlFrame>> {
-        let Some(frame) = decode_fips_control_frame(message.data.as_slice())? else {
-            return Ok(None);
-        };
-        let FipsControlFrame::Fragment {
-            id,
-            index,
-            total,
-            data,
-        } = frame
-        else {
-            return Ok(Some(frame));
-        };
-
-        let source_key = *message.source_peer.node_addr().as_bytes();
-        let Some(reassembled) = self
-            .control_fragments
-            .lock()
-            .map_err(|_| anyhow!("FIPS control fragment buffer lock poisoned"))?
-            .push(source_key, id, index, total, data, unix_timestamp())?
-        else {
-            return Ok(None);
-        };
-        decode_fips_control_frame(&reassembled)
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -467,6 +438,12 @@ impl FipsPrivateMeshRuntime {
         batch_outputs.push_run(run);
         Ok(accepted_count)
     }
+}
+
+fn decode_endpoint_control_frame(
+    message: &FipsEndpointMessage,
+) -> Result<Option<FipsControlFrame>> {
+    decode_fips_control_frame(message.data.as_slice())
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

@@ -17,10 +17,6 @@ impl FipsPrivateTunnelRuntime {
         Vec::new()
     }
 
-    pub(crate) fn drain_join_approval_acks(&mut self) -> Vec<ReceivedJoinApprovalAck> {
-        Vec::new()
-    }
-
     #[cfg(feature = "paid-exit")]
     pub(crate) fn drain_paid_route_usage(&self, _participant: &str) -> Result<PaidRouteUsage> {
         Ok(PaidRouteUsage::default())
@@ -93,18 +89,8 @@ impl FipsPrivateTunnelRuntime {
         Ok(())
     }
 
-    pub(crate) async fn send_join_approval_event(
-        &self,
-        _participant: &str,
-        _routed_recipient: Option<&str>,
-        _request_pubkey: &str,
-        _event: &nostr_sdk::Event,
-    ) -> Result<()> {
-        Err(anyhow!("direct FIPS join approval is unsupported on this platform"))
-    }
-
-    pub(crate) async fn ensure_join_approval_route(&self, _route_pubkey: &str) -> Result<()> {
-        Err(anyhow!("direct FIPS join approval is unsupported on this platform"))
+    pub(crate) async fn ensure_join_roster_route(&self, _route_pubkey: &str) -> Result<()> {
+        Err(anyhow!("FIPS join roster delivery is unsupported on this platform"))
     }
 
     pub(crate) async fn send_roster(

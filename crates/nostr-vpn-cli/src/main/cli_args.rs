@@ -168,9 +168,9 @@ struct WebvmGuestArgs {
     /// Ethernet beacon scope shared with the browser FIPS host.
     #[arg(long)]
     discovery_scope: String,
-    /// Authenticated FSP service port for targeted approval pubsub.
+    /// FIPS datagram port for the transient browser mesh-ingress hint.
     #[arg(long)]
-    join_pubsub_port: u16,
+    host_hint_port: u16,
     /// Atomically updated file containing the pending pairing bootstrap URI.
     #[arg(long)]
     pairing_uri_file: PathBuf,

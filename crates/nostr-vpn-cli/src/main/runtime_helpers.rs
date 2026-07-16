@@ -514,19 +514,18 @@ fn fips_tunnel_config_from_app(
         recent_peers,
         live_peer_endpoints,
     )?;
-    for (_, approval) in nostr_vpn_core::join_pubsub::load_direct_join_approvals(config_path) {
-        let route_pubkey = approval
+    for (_, queued) in nostr_vpn_core::join_delivery::load_join_rosters(config_path) {
+        let route_pubkey = queued
             .fips_route_npub
             .as_deref()
-            .unwrap_or(&approval.recipient_npub);
-        match crate::fips_private_mesh::prioritize_direct_join_approval_route(
+            .unwrap_or(&queued.recipient_npub);
+        match crate::fips_private_mesh::prioritize_join_roster_route(
             config.endpoint_peers.clone(),
             route_pubkey,
-            config.nostr_relay_fallback_enabled(),
         ) {
             Ok((_, peers)) => config.endpoint_peers = peers,
             Err(error) => {
-                eprintln!("ignoring invalid pending direct join approval route: {error}");
+                eprintln!("ignoring invalid pending join roster route: {error}");
             }
         }
     }

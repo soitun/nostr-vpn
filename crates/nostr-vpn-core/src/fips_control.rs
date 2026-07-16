@@ -1,11 +1,11 @@
 use crate::join_requests::MeshJoinRequest;
 use anyhow::{Context, Result, anyhow};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 #[cfg(feature = "paid-exit")]
 use cashu_service::StreamingRoutePaymentEnvelope;
+use hmac::{Hmac, Mac};
 use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, Timestamp};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
+use sha2::Sha256;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -28,6 +28,9 @@ pub struct SignedRoster {
 const SIGNED_ROSTER_KIND: u16 = 30_388;
 const SIGNED_ROSTER_VERSION: &str = "1";
 const SIGNED_ROSTER_APP: &str = "nostr-vpn/shared-roster";
+const JOIN_ROSTER_PROOF_TAG: &str = "join-proof";
+const JOIN_ROSTER_PROOF_DOMAIN: &[u8] = b"nostr-vpn/join-roster/v1";
+type HmacSha256 = Hmac<Sha256>;
 impl SignedRoster {
     pub fn sign(network_id: impl Into<String>, roster: NetworkRoster, keys: &Keys) -> Result<Self> {
         let event = EventBuilder::new(Kind::Custom(SIGNED_ROSTER_KIND), "")
@@ -37,6 +40,48 @@ impl SignedRoster {
             .map_err(|error| anyhow!("failed to sign roster event: {error}"))?;
         let signed = Self { event };
         signed.verify()?;
+        Ok(signed)
+    }
+
+    pub fn sign_for_join(
+        network_id: impl Into<String>,
+        roster: NetworkRoster,
+        keys: &Keys,
+        request_pubkey: &str,
+        device_pubkey: &str,
+        request_secret: &str,
+    ) -> Result<Self> {
+        if request_secret.is_empty() {
+            return Err(anyhow!("join request secret must not be empty"));
+        }
+        let network_id = network_id.into();
+        let request_pubkey = normalize_roster_pubkey(request_pubkey, "join request")?;
+        let device_pubkey = normalize_roster_pubkey(device_pubkey, "join device")?;
+        let signer_pubkey = keys.public_key().to_hex();
+        let mut tags = signed_roster_tags(&network_id, &roster)?;
+        let proof = join_roster_mac(
+            request_secret.as_bytes(),
+            &request_pubkey,
+            &device_pubkey,
+            &signer_pubkey,
+            roster.signed_at,
+            &tags,
+        )
+        .finalize()
+        .into_bytes();
+        tags.push(roster_tag(&[
+            JOIN_ROSTER_PROOF_TAG,
+            &request_pubkey,
+            &device_pubkey,
+            &hex::encode(proof),
+        ])?);
+        let event = EventBuilder::new(Kind::Custom(SIGNED_ROSTER_KIND), "")
+            .tags(tags)
+            .custom_created_at(Timestamp::from(roster.signed_at))
+            .sign_with_keys(keys)
+            .map_err(|error| anyhow!("failed to sign join roster event: {error}"))?;
+        let signed = Self { event };
+        signed.verify_join_request(&request_pubkey, &device_pubkey, request_secret)?;
         Ok(signed)
     }
 
@@ -60,6 +105,59 @@ impl SignedRoster {
             .verify()
             .map_err(|error| anyhow!("invalid roster event signature: {error}"))?;
         let _ = self.to_network_roster()?;
+        Ok(())
+    }
+
+    pub fn verify_join_request(
+        &self,
+        request_pubkey: &str,
+        device_pubkey: &str,
+        request_secret: &str,
+    ) -> Result<()> {
+        self.verify()?;
+        if request_secret.is_empty() {
+            return Err(anyhow!("join request secret must not be empty"));
+        }
+        let expected_request = normalize_roster_pubkey(request_pubkey, "join request")?;
+        let expected_device = normalize_roster_pubkey(device_pubkey, "join device")?;
+        let mut proof_tag = None;
+        for tag in self.event.tags.iter() {
+            let parts = tag.as_slice();
+            if parts.first().map(String::as_str) != Some(JOIN_ROSTER_PROOF_TAG) {
+                continue;
+            }
+            if proof_tag.replace(parts).is_some() {
+                return Err(anyhow!("signed join roster has duplicate proof tags"));
+            }
+        }
+        let parts = proof_tag.ok_or_else(|| anyhow!("signed join roster has no request proof"))?;
+        if parts.len() != 4 {
+            return Err(anyhow!("signed join roster has malformed request proof"));
+        }
+        let request = normalize_roster_pubkey(&parts[1], "join request")?;
+        let device = normalize_roster_pubkey(&parts[2], "join device")?;
+        if request != expected_request || device != expected_device {
+            return Err(anyhow!(
+                "signed join roster targets a different join request"
+            ));
+        }
+        let supplied = hex::decode(&parts[3])
+            .map_err(|_| anyhow!("signed join roster has malformed request proof"))?;
+        if supplied.len() != 32 {
+            return Err(anyhow!("signed join roster has malformed request proof"));
+        }
+        let roster = self.roster()?;
+        let canonical_tags = signed_roster_tags(&self.network_id()?, &roster)?;
+        join_roster_mac(
+            request_secret.as_bytes(),
+            &expected_request,
+            &expected_device,
+            &self.signer_pubkey_hex()?,
+            self.signed_at(),
+            &canonical_tags,
+        )
+        .verify_slice(&supplied)
+        .map_err(|_| anyhow!("signed join roster request proof is invalid"))?;
         Ok(())
     }
 
@@ -90,6 +188,36 @@ impl SignedRoster {
     fn to_network_roster(&self) -> Result<(String, NetworkRoster)> {
         signed_roster_from_tags(self.event.tags.as_slice(), self.event.created_at.as_secs())
     }
+}
+
+fn join_roster_mac(
+    request_secret: &[u8],
+    request_pubkey: &str,
+    device_pubkey: &str,
+    signer_pubkey: &str,
+    signed_at: u64,
+    roster_tags: &[Tag],
+) -> HmacSha256 {
+    let mut mac = HmacSha256::new_from_slice(request_secret)
+        .expect("HMAC-SHA256 accepts request secrets of any size");
+    update_join_proof_field(&mut mac, JOIN_ROSTER_PROOF_DOMAIN);
+    update_join_proof_field(&mut mac, request_pubkey.as_bytes());
+    update_join_proof_field(&mut mac, device_pubkey.as_bytes());
+    update_join_proof_field(&mut mac, signer_pubkey.as_bytes());
+    update_join_proof_field(&mut mac, &signed_at.to_be_bytes());
+    update_join_proof_field(&mut mac, &(roster_tags.len() as u64).to_be_bytes());
+    for tag in roster_tags {
+        update_join_proof_field(&mut mac, &(tag.as_slice().len() as u64).to_be_bytes());
+        for part in tag.as_slice() {
+            update_join_proof_field(&mut mac, part.as_bytes());
+        }
+    }
+    mac
+}
+
+fn update_join_proof_field(mac: &mut HmacSha256, value: &[u8]) {
+    mac.update(&(value.len() as u64).to_be_bytes());
+    mac.update(value);
 }
 
 fn signed_roster_tags(network_id: &str, roster: &NetworkRoster) -> Result<Vec<Tag>> {
@@ -274,14 +402,6 @@ fn default_peer_endpoint_hint_transport() -> String {
 
 const FIPS_CONTROL_MAGIC: &[u8] = b"NVPN-FIPS-CTRL\0";
 const FIPS_CONTROL_VERSION: u8 = 1;
-pub const FIPS_CONTROL_DIRECT_FRAME_LIMIT: usize = 1100;
-pub const FIPS_CONTROL_FRAGMENT_CHUNK_LEN: usize = 700;
-pub const FIPS_CONTROL_FRAGMENT_TTL_SECS: u64 = 120;
-pub const FIPS_CONTROL_MAX_FRAGMENTS: u16 = 128;
-pub const FIPS_CONTROL_MAX_REASSEMBLED_LEN: usize = 128 * 1024;
-const FIPS_CONTROL_MAX_FRAGMENT_ID_LEN: usize = 128;
-const FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES: usize = 1024;
-const FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -320,12 +440,6 @@ pub enum FipsControlFrame {
     PaidRoutePaymentAck {
         id: String,
     },
-    Fragment {
-        id: String,
-        index: u16,
-        total: u16,
-        data: String,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -346,30 +460,6 @@ pub fn encode_fips_control_frame(frame: &FipsControlFrame) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-pub fn encode_fips_control_messages(frame: &FipsControlFrame) -> Result<Vec<Vec<u8>>> {
-    let encoded = encode_fips_control_frame(frame)?;
-    if encoded.len() <= FIPS_CONTROL_DIRECT_FRAME_LIMIT {
-        return Ok(vec![encoded]);
-    }
-
-    let total = encoded.len().div_ceil(FIPS_CONTROL_FRAGMENT_CHUNK_LEN);
-    let total = u16::try_from(total).context("FIPS control frame has too many fragments")?;
-    let id = fips_control_fragment_id(&encoded);
-    encoded
-        .chunks(FIPS_CONTROL_FRAGMENT_CHUNK_LEN)
-        .enumerate()
-        .map(|(index, chunk)| {
-            let fragment = FipsControlFrame::Fragment {
-                id: id.clone(),
-                index: u16::try_from(index).context("FIPS control fragment index overflow")?,
-                total,
-                data: URL_SAFE_NO_PAD.encode(chunk),
-            };
-            encode_fips_control_frame(&fragment)
-        })
-        .collect()
-}
-
 #[inline]
 pub fn is_fips_control_frame(data: &[u8]) -> bool {
     data.starts_with(FIPS_CONTROL_MAGIC)
@@ -388,145 +478,6 @@ pub fn decode_fips_control_frame(data: &[u8]) -> Result<Option<FipsControlFrame>
         return Ok(None);
     }
     Ok(Some(envelope.frame))
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct FipsControlFragmentBuffer {
-    entries: HashMap<ControlFragmentKey, PendingControlFragment>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ControlFragmentKey {
-    source_key: Vec<u8>,
-    id: String,
-}
-
-#[derive(Debug, Clone)]
-struct PendingControlFragment {
-    total: u16,
-    received_at: u64,
-    chunks: Vec<Option<Vec<u8>>>,
-    received_len: usize,
-}
-
-impl FipsControlFragmentBuffer {
-    pub fn decode(
-        &mut self,
-        source_key: impl AsRef<[u8]>,
-        data: &[u8],
-        now: u64,
-    ) -> Result<Option<FipsControlFrame>> {
-        let source_key = source_key.as_ref();
-        let Some(frame) = decode_fips_control_frame(data)? else {
-            return Ok(None);
-        };
-        let FipsControlFrame::Fragment {
-            id,
-            index,
-            total,
-            data,
-        } = frame
-        else {
-            return Ok(Some(frame));
-        };
-
-        let Some(reassembled) = self.push(source_key, id, index, total, data, now)? else {
-            return Ok(None);
-        };
-        decode_fips_control_frame(&reassembled)
-    }
-
-    pub fn push(
-        &mut self,
-        source_key: impl AsRef<[u8]>,
-        id: String,
-        index: u16,
-        total: u16,
-        data: String,
-        now: u64,
-    ) -> Result<Option<Vec<u8>>> {
-        let source_key = source_key.as_ref();
-        if total == 0
-            || total > FIPS_CONTROL_MAX_FRAGMENTS
-            || index >= total
-            || id.len() > FIPS_CONTROL_MAX_FRAGMENT_ID_LEN
-        {
-            return Ok(None);
-        }
-
-        self.entries.retain(|_, entry| {
-            now.saturating_sub(entry.received_at) <= FIPS_CONTROL_FRAGMENT_TTL_SECS
-        });
-
-        let Ok(decoded) = URL_SAFE_NO_PAD.decode(data.as_bytes()) else {
-            return Ok(None);
-        };
-        if decoded.len() > FIPS_CONTROL_FRAGMENT_CHUNK_LEN {
-            return Ok(None);
-        }
-
-        let key = ControlFragmentKey {
-            source_key: source_key.to_vec(),
-            id,
-        };
-        if !self.entries.contains_key(&key) && !self.can_allocate_fragment_entry(source_key) {
-            return Ok(None);
-        }
-        let entry = self
-            .entries
-            .entry(key.clone())
-            .or_insert_with(|| PendingControlFragment {
-                total,
-                received_at: now,
-                chunks: vec![None; usize::from(total)],
-                received_len: 0,
-            });
-        if entry.total != total {
-            *entry = PendingControlFragment {
-                total,
-                received_at: now,
-                chunks: vec![None; usize::from(total)],
-                received_len: 0,
-            };
-        }
-        entry.received_at = now;
-
-        let slot = &mut entry.chunks[usize::from(index)];
-        if let Some(existing) = slot.as_ref() {
-            entry.received_len = entry.received_len.saturating_sub(existing.len());
-        }
-        entry.received_len += decoded.len();
-        if entry.received_len > FIPS_CONTROL_MAX_REASSEMBLED_LEN {
-            self.entries.remove(&key);
-            return Ok(None);
-        }
-        *slot = Some(decoded);
-
-        if !entry.chunks.iter().all(|chunk| chunk.is_some()) {
-            return Ok(None);
-        }
-
-        let entry = self
-            .entries
-            .remove(&key)
-            .expect("complete fragment entry should exist");
-        let mut reassembled = Vec::with_capacity(entry.received_len);
-        for chunk in entry.chunks.into_iter().flatten() {
-            reassembled.extend_from_slice(&chunk);
-        }
-        Ok(Some(reassembled))
-    }
-
-    fn can_allocate_fragment_entry(&self, source_key: &[u8]) -> bool {
-        if self.entries.len() >= FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES {
-            return false;
-        }
-        self.entries
-            .keys()
-            .filter(|key| key.source_key == source_key)
-            .count()
-            < FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE
-    }
 }
 
 pub fn peer_endpoint_hint_addr(hint: &PeerEndpointHint) -> Option<String> {
@@ -614,10 +565,6 @@ fn ipv4_is_documentation(ip: Ipv4Addr) -> bool {
 fn host_looks_like_nostr_pubkey(host: &str) -> bool {
     let host = host.trim().to_ascii_lowercase();
     host.len() >= 60 && host.starts_with("npub1")
-}
-
-fn fips_control_fragment_id(data: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(data))
 }
 
 pub fn roster_control_frame(

@@ -54,7 +54,6 @@ impl FipsPrivateMeshRuntime {
             link_status: RwLock::new(HashMap::new()),
             other_link_status: RwLock::new(HashMap::new()),
             peer_capabilities: RwLock::new(HashMap::new()),
-            control_fragments: Mutex::new(ControlFragmentBuffer::default()),
             #[cfg(feature = "paid-exit")]
             paid_route_accounting: Mutex::new(FipsPaidRouteAccounting::default()),
         })
@@ -88,7 +87,6 @@ impl FipsPrivateMeshRuntime {
             link_status: RwLock::new(HashMap::new()),
             other_link_status: RwLock::new(HashMap::new()),
             peer_capabilities: RwLock::new(HashMap::new()),
-            control_fragments: Mutex::new(ControlFragmentBuffer::default()),
             #[cfg(feature = "paid-exit")]
             paid_route_accounting: Mutex::new(FipsPaidRouteAccounting::default()),
         }

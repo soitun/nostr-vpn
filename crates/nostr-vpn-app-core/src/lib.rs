@@ -17,7 +17,7 @@ mod wg_upstream_nat;
 pub use actions::NativeAppAction;
 pub use ffi::FfiApp;
 #[doc(hidden)]
-pub use headless_fips::HeadlessDirectApprovalRuntime;
+pub use headless_fips::HeadlessJoinRosterRuntime;
 pub use native_state::{NativeAppState, NativeNetworkState, NativeParticipantState};
 pub use nostr_vpn_core::updater::UpdateAutoCheckPolicy;
 pub use platform::{

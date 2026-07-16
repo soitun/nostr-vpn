@@ -38,29 +38,23 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
     pub(crate) discovery_fallback_transit: bool,
 }
 
-pub(crate) fn prioritize_direct_join_approval_route(
+pub(crate) fn prioritize_join_roster_route(
     peers: Vec<FipsEndpointPeerTransportConfig>,
     route_pubkey: &str,
-    nostr_relay_fallback_enabled: bool,
 ) -> Result<(String, Vec<FipsEndpointPeerTransportConfig>)> {
     let route_pubkey = normalize_nostr_pubkey(route_pubkey)
-        .with_context(|| format!("invalid direct join approval recipient {route_pubkey}"))?;
+        .with_context(|| format!("invalid join roster recipient {route_pubkey}"))?;
     let route_npub = PublicKey::from_hex(&route_pubkey)?.to_bech32()?;
     let route_address = FipsPeerAddressHint {
         addr: format!("webrtc:02{route_pubkey}"),
         seen_at_ms: None,
         priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
     };
-    let mut peers = prioritize_join_approval_route(peers, &route_npub, route_address);
-    if nostr_relay_fallback_enabled
-        && let Some(route_peer) = peers.iter_mut().find(|peer| peer.npub == route_npub)
-    {
-        add_nostr_relay_fallback_address(route_peer);
-    }
+    let peers = prioritize_join_roster_peer(peers, &route_npub, route_address);
     Ok((route_npub, peers))
 }
 
-fn prioritize_join_approval_route(
+fn prioritize_join_roster_peer(
     mut peers: Vec<FipsEndpointPeerTransportConfig>,
     route_npub: &str,
     route_address: FipsPeerAddressHint,
@@ -78,6 +72,9 @@ fn prioritize_join_approval_route(
     if !route_peer.addresses.contains(&route_address) {
         route_peer.addresses.push(route_address);
     }
+    route_peer
+        .addresses
+        .retain(|hint| split_peer_transport_addr(&hint.addr).0 != "nostr_relay");
     route_peer.auto_reconnect = true;
     peers.insert(0, route_peer);
     peers
@@ -750,7 +747,7 @@ mod endpoint_config_tests {
     }
 
     #[test]
-    fn relay_fallback_is_added_only_to_roster_and_approval_peers() {
+    fn relay_fallback_is_kept_for_roster_but_removed_from_join_route() {
         let roster = test_peer();
         let roster_npub = normalize_fips_endpoint_npub(&roster.endpoint_npub);
         let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
@@ -774,8 +771,8 @@ mod endpoint_config_tests {
             Vec::new(),
         );
         add_nostr_relay_fallback_for_mesh_peers(&mut peers, std::slice::from_ref(&roster));
-        let (_, peers) = prioritize_direct_join_approval_route(peers, &browser_pubkey, true)
-            .expect("explicit browser route");
+        let (_, peers) =
+            prioritize_join_roster_route(peers, &browser_pubkey).expect("explicit browser route");
 
         let roster_peer = peers
             .iter()
@@ -800,7 +797,7 @@ mod endpoint_config_tests {
         assert_eq!(relay_priority(&roster_npub), Some(FIPS_NOSTR_RELAY_FALLBACK_PRIORITY));
         assert_eq!(
             relay_priority(&normalize_fips_endpoint_npub(&browser_pubkey)),
-            Some(FIPS_NOSTR_RELAY_FALLBACK_PRIORITY)
+            None
         );
         assert_eq!(relay_priority(&ambient_npub), None);
     }
@@ -831,8 +828,8 @@ mod endpoint_config_tests {
         }];
 
         retain_enabled_peer_transport_addresses(&mut peers, false);
-        let (_, peers) = prioritize_direct_join_approval_route(peers, &browser_pubkey, false)
-            .expect("explicit browser route");
+        let (_, peers) =
+            prioritize_join_roster_route(peers, &browser_pubkey).expect("explicit browser route");
 
         let webrtc_addresses = peers
             .iter()

@@ -223,7 +223,7 @@ mod tests {
     }
 
     #[test]
-    fn large_control_frame_fragments_under_direct_limit() {
+    fn large_stateful_control_frame_roundtrips_as_one_record() {
         let roster = NetworkRoster {
             network_name: "Network 1".to_string(),
             devices: (0..12).map(|value| format!("{value:064x}")).collect(),
@@ -239,179 +239,11 @@ mod tests {
             signed_roster: None,
         };
 
-        let messages = encode_fips_control_messages(&frame).expect("fragment");
-
-        assert!(messages.len() > 1);
-        for message in messages {
-            assert!(message.len() <= FIPS_CONTROL_DIRECT_FRAME_LIMIT);
-            assert!(matches!(
-                decode_fips_control_frame(&message).expect("decode"),
-                Some(FipsControlFrame::Fragment { .. })
-            ));
-        }
-    }
-
-    #[test]
-    fn fragment_buffer_decodes_fragmented_frame() {
-        let roster = NetworkRoster {
-            network_name: "Network 1".to_string(),
-            devices: (0..12).map(|value| format!("{value:064x}")).collect(),
-            admins: vec!["f".repeat(64)],
-            aliases: (0..12)
-                .map(|value| (format!("{value:064x}"), format!("node-{value}")))
-                .collect(),
-            signed_at: 123,
-        };
-        let frame = FipsControlFrame::Roster {
-            network_id: "mesh".to_string(),
-            roster,
-            signed_roster: None,
-        };
-        let messages = encode_fips_control_messages(&frame).expect("fragment messages");
-        let mut buffer = FipsControlFragmentBuffer::default();
-        let mut decoded = None;
-
-        for message in messages {
-            decoded = buffer
-                .decode("npub1source", &message, 1)
-                .expect("decode with fragments")
-                .or(decoded);
-        }
-
-        assert_eq!(decoded, Some(frame));
-    }
-
-    #[test]
-    fn fragment_buffer_keys_sources_by_bytes() {
-        let roster = NetworkRoster {
-            network_name: "Network 1".to_string(),
-            devices: (0..12).map(|value| format!("{value:064x}")).collect(),
-            admins: vec!["f".repeat(64)],
-            aliases: (0..12)
-                .map(|value| (format!("{value:064x}"), format!("node-{value}")))
-                .collect(),
-            signed_at: 123,
-        };
-        let frame = FipsControlFrame::Roster {
-            network_id: "mesh".to_string(),
-            roster,
-            signed_roster: None,
-        };
-        let messages = encode_fips_control_messages(&frame).expect("fragment messages");
-        assert!(messages.len() > 1);
-        let fragments: Vec<_> = messages
-            .iter()
-            .map(|message| {
-                let fragment = decode_fips_control_frame(message)
-                    .expect("decode fragment")
-                    .expect("fragment frame");
-                let FipsControlFrame::Fragment {
-                    id,
-                    index,
-                    total,
-                    data,
-                } = fragment
-                else {
-                    panic!("expected fragment");
-                };
-                (id, index, total, data)
-            })
-            .collect();
-
-        let mut buffer = FipsControlFragmentBuffer::default();
-        let source_a = [1u8; 16];
-        let source_b = [2u8; 16];
-
-        for (offset, (id, index, total, data)) in fragments.iter().cloned().enumerate() {
-            let source = if offset == 0 { source_a } else { source_b };
-            assert!(
-                buffer
-                    .push(source, id, index, total, data, 1)
-                    .expect("push mixed source fragment")
-                    .is_none()
-            );
-        }
-
-        let mut reassembled = None;
-        for (id, index, total, data) in fragments.into_iter().skip(1) {
-            reassembled = buffer
-                .push(source_a, id, index, total, data, 1)
-                .expect("push same source fragment")
-                .or(reassembled);
-        }
-        let decoded = decode_fips_control_frame(&reassembled.expect("reassembled frame"))
-            .expect("decode reassembled")
-            .expect("control frame");
-        assert_eq!(decoded, frame);
-    }
-
-    #[test]
-    fn fragment_buffer_limits_pending_entries_per_source() {
-        let mut buffer = FipsControlFragmentBuffer::default();
-        let source = [7u8; 16];
-        let data = URL_SAFE_NO_PAD.encode(b"x");
-
-        for index in 0..FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE {
-            assert!(
-                buffer
-                    .push(source, format!("fragment-{index}"), 0, 2, data.clone(), 1)
-                    .expect("push fragment")
-                    .is_none()
-            );
-        }
+        let encoded = encode_fips_control_frame(&frame).expect("encode one state-control record");
+        assert!(encoded.len() > 1_100);
         assert_eq!(
-            buffer.entries.len(),
-            FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE
-        );
-
-        assert!(
-            buffer
-                .push(source, "overflow".to_string(), 0, 2, data, 1)
-                .expect("push overflow fragment")
-                .is_none()
-        );
-        assert_eq!(
-            buffer.entries.len(),
-            FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE
-        );
-    }
-
-    #[test]
-    fn fragment_buffer_limits_pending_entries_globally() {
-        let mut buffer = FipsControlFragmentBuffer::default();
-        let data = URL_SAFE_NO_PAD.encode(b"x");
-        let mut inserted = 0usize;
-
-        'outer: for source_index in 0u16.. {
-            let source = source_index.to_be_bytes();
-            for entry_index in 0..FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES_PER_SOURCE {
-                buffer
-                    .push(
-                        source,
-                        format!("fragment-{source_index}-{entry_index}"),
-                        0,
-                        2,
-                        data.clone(),
-                        1,
-                    )
-                    .expect("push fragment");
-                inserted += 1;
-                if inserted == FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES {
-                    break 'outer;
-                }
-            }
-        }
-        assert_eq!(
-            buffer.entries.len(),
-            FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES
-        );
-
-        buffer
-            .push([0xff, 0xff], "global-overflow".to_string(), 0, 2, data, 1)
-            .expect("push overflow fragment");
-        assert_eq!(
-            buffer.entries.len(),
-            FIPS_CONTROL_MAX_PENDING_FRAGMENT_ENTRIES
+            decode_fips_control_frame(&encoded).expect("decode state-control record"),
+            Some(frame)
         );
     }
 

@@ -51,11 +51,3 @@ fn control_frame_destination_peer(
         .and_then(|npub| PeerIdentity::from_npub(&npub).ok())
         .ok_or_else(|| anyhow!("invalid FIPS control frame recipient {participant}"))
 }
-
-fn direct_join_approval_destination_peer(route_pubkey: &str) -> Result<PeerIdentity> {
-    let route_pubkey = normalize_nostr_pubkey(route_pubkey)
-        .with_context(|| format!("invalid direct join approval recipient {route_pubkey}"))?;
-    let route_npub = PublicKey::from_hex(&route_pubkey)?.to_bech32()?;
-    PeerIdentity::from_npub(&route_npub)
-        .map_err(|error| anyhow!("invalid direct join approval recipient: {error}"))
-}

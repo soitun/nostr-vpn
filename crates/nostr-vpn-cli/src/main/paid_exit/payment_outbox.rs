@@ -40,7 +40,7 @@ fn queue_paid_exit_payment(
         id: id.clone(),
         envelope: envelope.clone(),
     };
-    nostr_vpn_core::fips_control::encode_fips_control_messages(&frame)
+    nostr_vpn_core::fips_control::encode_fips_control_frame(&frame)
         .context("paid route payment does not fit the FIPS control envelope")?;
     let directory = paid_exit_payment_outbox_directory(config_path);
     fs::create_dir_all(&directory)

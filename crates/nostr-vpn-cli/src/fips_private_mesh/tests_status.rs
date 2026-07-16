@@ -213,52 +213,6 @@
     }
 
     #[test]
-    fn fragmented_control_frames_reassemble_to_original_frame() {
-        let roster = NetworkRoster {
-            network_name: "Network 1".to_string(),
-            devices: (0..12).map(|value| format!("{value:064x}")).collect(),
-            admins: vec!["f".repeat(64)],
-            aliases: (0..12)
-                .map(|value| (format!("{value:064x}"), format!("node-{value}")))
-                .collect(),
-            signed_at: 123,
-        };
-        let frame = FipsControlFrame::Roster {
-            network_id: "mesh".to_string(),
-            roster,
-            signed_roster: None,
-        };
-        let messages = encode_fips_control_messages(&frame).expect("fragment messages");
-        let mut buffer = ControlFragmentBuffer::default();
-        let mut reassembled = None;
-        let source_key = [7u8; 16];
-
-        for message in messages {
-            let decoded = decode_fips_control_frame(&message)
-                .expect("decode fragment")
-                .expect("fragment frame");
-            let FipsControlFrame::Fragment {
-                id,
-                index,
-                total,
-                data,
-            } = decoded
-            else {
-                panic!("expected fragment");
-            };
-            reassembled = buffer
-                .push(source_key, id, index, total, data, 1)
-                .expect("push fragment")
-                .or(reassembled);
-        }
-
-        let decoded = decode_fips_control_frame(&reassembled.expect("reassembled frame"))
-            .expect("decode reassembled")
-            .expect("control frame");
-        assert_eq!(decoded, frame);
-    }
-
-    #[test]
     fn private_mesh_mtu_defaults_to_safe_budget() {
         let mtu = super::resolve_private_mesh_mtu(None, None, None);
 
@@ -630,18 +584,6 @@
     }
 
     #[test]
-    fn direct_join_approval_destinations_use_requested_browser_identity() {
-        let browser_keys = Keys::generate();
-        let browser_pubkey = browser_keys.public_key().to_hex();
-        let browser_npub = browser_keys.public_key().to_bech32().expect("npub");
-
-        let destination = direct_join_approval_destination_peer(&browser_pubkey)
-            .expect("direct browser destination identity");
-
-        assert_eq!(destination.npub(), browser_npub);
-    }
-
-    #[test]
     fn direct_join_approval_route_is_prioritized_ahead_of_ambient_peers() {
         let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
         let browser_npub = Keys::generate().public_key().to_bech32().expect("npub");
@@ -666,7 +608,7 @@
         ];
 
         let prioritized =
-            prioritize_join_approval_route(peers, &browser_npub, browser_address.clone());
+            prioritize_join_roster_peer(peers, &browser_npub, browser_address.clone());
 
         assert_eq!(prioritized[0].npub, browser_npub);
         assert!(prioritized[0].addresses.contains(&browser_address));

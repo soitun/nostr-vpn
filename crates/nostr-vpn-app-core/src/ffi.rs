@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
-use nostr_sdk::prelude::{Event, Keys};
+use nostr_sdk::prelude::Keys;
 use nostr_vpn_core::config::{
     AppConfig, FiatCurrency, InternetSource, NetworkConfig, NostrPubsubMode,
     PendingInboundJoinRequest, PendingOutboundJoinRequest, derive_mesh_tunnel_ip,
@@ -205,7 +205,7 @@ struct NativeAppRuntime {
     paid_route_payment_last_action: NativePaidRoutePaymentActionState,
     exchange_rate_service: ExchangeRateService,
     #[cfg(test)]
-    published_join_approval_events: Vec<Event>,
+    queued_join_rosters: Vec<nostr_vpn_core::fips_control::SignedRoster>,
     #[cfg(target_os = "macos")]
     privileged_command_runner: Option<PrivilegedCommandRunnerHandle>,
 }

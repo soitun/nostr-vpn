@@ -1,5 +1,5 @@
     use super::{
-        ControlFragmentBuffer, FIPS_DISCOVERY_BACKOFF_BASE_SECS, FIPS_DISCOVERY_BACKOFF_MAX_SECS,
+        FIPS_DISCOVERY_BACKOFF_BASE_SECS, FIPS_DISCOVERY_BACKOFF_MAX_SECS,
         FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS, FIPS_DYNAMIC_PEER_ENDPOINT_PRIORITY,
         FIPS_ENDPOINT_FAST_LINK_DEAD_TIMEOUT_SECS, FIPS_ENDPOINT_HEARTBEAT_INTERVAL_SECS,
         FIPS_ENDPOINT_LINK_DEAD_TIMEOUT_SECS, FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST,
@@ -17,7 +17,7 @@
         FipsPrivateMeshEvent,
         FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
         cap_recent_non_roster_transit_endpoints, control_frame_destination_peer,
-        control_frame_source_pubkey, direct_join_approval_destination_peer, drain_event_batch,
+        control_frame_source_pubkey, decode_endpoint_control_frame, drain_event_batch,
         endpoint_identity_for_send,
         filter_stamped_tunnel_endpoints, filter_static_tunnel_endpoints_with_policy,
         filter_static_tunnel_endpoints_with_policy_and_route_check,
@@ -30,7 +30,7 @@
         macos_route_get_has_direct_private_endpoint_route, mesh_status_from_endpoint_peer,
         other_endpoint_peer_statuses, parse_fips_nostr_discovery_policy,
         parse_linux_tun_tx_queue_len, participant_pubkey_bytes, peer_activity_map, peer_identity_map,
-        prioritize_join_approval_route,
+        prioritize_join_roster_peer,
         static_endpoint_allowed_on_current_underlay_with_route_check, strip_cidr,
         tag_authenticated_transport_addr, unix_timestamp,
     };
@@ -48,8 +48,7 @@
         AppConfig, InternetSource, PendingOutboundJoinRequest, derive_mesh_tunnel_ip,
     };
     use nostr_vpn_core::fips_control::{
-        FipsControlFrame, NetworkRoster, PeerEndpointHint, decode_fips_control_frame,
-        encode_fips_control_messages,
+        FipsControlFrame, NetworkRoster, PeerEndpointHint, encode_fips_control_frame,
     };
     use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
     use nostr_vpn_core::join_requests::MeshJoinRequest;
@@ -573,6 +572,28 @@
 
         assert_eq!(drained.len(), FIPS_MESH_EVENT_DRAIN_LIMIT);
         assert_eq!(rx.len(), 5);
+    }
+
+    #[test]
+    fn stateful_control_datagram_is_recognized_for_drop_before_tunnel_data() {
+        let source = Keys::generate();
+        let source_npub = source.public_key().to_bech32().expect("source npub");
+        let frame = FipsControlFrame::Capabilities {
+            network_id: "network".to_string(),
+            capabilities: Default::default(),
+        };
+        let message = FipsEndpointMessage {
+            source_peer: PeerIdentity::from_npub(&source_npub).expect("source identity"),
+            data: FipsEndpointData::new(
+                encode_fips_control_frame(&frame).expect("encode stateful frame"),
+            ),
+            enqueued_at_ms: 0,
+        };
+
+        assert_eq!(
+            decode_endpoint_control_frame(&message).expect("decode control datagram"),
+            Some(frame)
+        );
     }
 
     #[test]

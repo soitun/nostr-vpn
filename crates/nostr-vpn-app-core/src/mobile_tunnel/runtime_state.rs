@@ -578,7 +578,7 @@ async fn refresh_mobile_endpoint_peers(
 }
 
 async fn broadcast_mobile_capabilities(
-    endpoint: &FipsEndpoint,
+    state_control: &FipsControlTcpSender,
     mesh_peers: &Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
     peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
     network_id: &str,
@@ -601,14 +601,13 @@ async fn broadcast_mobile_capabilities(
             signed_at: unix_timestamp(),
         },
     };
-    let encoded = encode_fips_control_frame(&frame)?;
     let mut sent = 0usize;
     for peer in peers {
-        if send_mobile_endpoint_data(
-            endpoint,
+        if send_mobile_state_control(
+            state_control,
             peer_identities,
             &peer.participant_pubkey,
-            encoded.clone(),
+            &frame,
         )
         .await
         .is_ok()
@@ -627,12 +626,12 @@ struct MobileRosterSentState {
 #[derive(Default)]
 struct MobileRosterSyncState {
     source: Option<(String, u64, String)>,
-    encoded: Option<(String, Vec<Vec<u8>>)>,
+    encoded: Option<(String, FipsControlFrame)>,
     sent_by_peer: HashMap<String, MobileRosterSentState>,
 }
 
 async fn sync_mobile_signed_roster_with_connected_peers(
-    endpoint: &FipsEndpoint,
+    state_control: &FipsControlTcpSender,
     mesh: &MobileMesh,
     peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
     presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
@@ -661,12 +660,12 @@ async fn sync_mobile_signed_roster_with_connected_peers(
                     roster: signed_roster.roster()?,
                     signed_roster: Some(Box::new(signed_roster)),
                 };
-                Ok::<_, anyhow::Error>((roster_hash, encode_fips_control_messages(&frame)?))
+                Ok::<_, anyhow::Error>((roster_hash, frame))
             })
             .transpose()?;
         state.source = state.encoded.as_ref().map(|_| source).unwrap_or_default();
     }
-    let Some((roster_hash, messages)) = state.encoded.as_ref() else {
+    let Some((roster_hash, frame)) = state.encoded.as_ref() else {
         state.sent_by_peer.clear();
         return Ok(0);
     };
@@ -684,17 +683,10 @@ async fn sync_mobile_signed_roster_with_connected_peers(
         }) {
             continue;
         }
-        let mut all_sent = true;
-        for message in messages {
-            if send_mobile_endpoint_data(endpoint, peer_identities, &participant, message.clone())
-                .await
-                .is_err()
-            {
-                all_sent = false;
-                break;
-            }
-        }
-        if all_sent {
+        if send_mobile_state_control(state_control, peer_identities, &participant, frame)
+            .await
+            .is_ok()
+        {
             state.sent_by_peer.insert(
                 participant,
                 MobileRosterSentState {

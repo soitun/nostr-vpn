@@ -49,6 +49,7 @@ struct MobileEndpointReceiveContext<'a> {
     config_path: Option<&'a Path>,
     network_id: &'a str,
     join_request_active: &'a AtomicBool,
+    state_control: &'a FipsControlTcpSender,
 }
 
 fn mobile_timestamp_within_grace(now: u64, timestamp: u64, grace_secs: u64) -> bool {
@@ -75,11 +76,10 @@ fn mobile_elapsed_at_least(now: u64, timestamp: u64, interval_secs: u64) -> bool
 
 async fn handle_mobile_endpoint_message(
     control: &MobileEndpointReceiveContext<'_>,
-    control_fragments: &mut FipsControlFragmentBuffer,
     inbound_packets: &mut Vec<Vec<u8>>,
     message: FipsEndpointMessage,
 ) -> Result<bool> {
-    if handle_mobile_control_frame(control, control_fragments, &message).await? {
+    if handle_mobile_probe_datagram(control, &message).await? {
         return Ok(true);
     }
 
@@ -105,30 +105,50 @@ async fn handle_mobile_endpoint_message(
     Ok(true)
 }
 
-async fn handle_mobile_control_frame(
+async fn handle_mobile_probe_datagram(
     control: &MobileEndpointReceiveContext<'_>,
-    control_fragments: &mut FipsControlFragmentBuffer,
     message: &FipsEndpointMessage,
 ) -> Result<bool> {
-    let (is_control, frame) = decode_mobile_control_frame(control_fragments, message)?;
-    if !is_control {
+    let Some(frame) = decode_fips_control_frame(message.data.as_slice())? else {
         return Ok(false);
-    }
-    let Some(frame) = frame else {
-        return Ok(true);
     };
-    if !control_frame_network_matches(control.network_id, &frame) {
+    if !matches!(frame, FipsControlFrame::Ping { .. } | FipsControlFrame::Pong { .. }) {
         return Ok(true);
     }
-    let Some(source_pubkey) =
-        mobile_control_source_pubkey(control.mesh, message.source_peer, &frame)?
-    else {
-        return Ok(true);
+    handle_mobile_control_frame(control, message.source_peer, message.data.len(), frame).await?;
+    Ok(true)
+}
+
+async fn handle_mobile_state_control_frame(
+    control: &MobileEndpointReceiveContext<'_>,
+    received: ReceivedFipsControlFrame,
+) -> Result<()> {
+    let encoded_len = encode_fips_control_frame(&received.frame)?.len();
+    handle_mobile_control_frame(
+        control,
+        received.source_peer,
+        encoded_len,
+        received.frame,
+    )
+    .await
+}
+
+async fn handle_mobile_control_frame(
+    control: &MobileEndpointReceiveContext<'_>,
+    source_peer: PeerIdentity,
+    encoded_len: usize,
+    frame: FipsControlFrame,
+) -> Result<()> {
+    if !control_frame_network_matches(control.network_id, &frame) {
+        return Ok(());
+    }
+    let Some(source_pubkey) = mobile_control_source_pubkey(control.mesh, source_peer, &frame)? else {
+        return Ok(());
     };
     note_mobile_peer_rx(
         control.presence,
         &source_pubkey,
-        message.data.len(),
+        encoded_len,
         MobilePeerRxKind::Control,
     );
 
@@ -157,7 +177,7 @@ async fn handle_mobile_control_frame(
             network_id,
             sent_at,
         } => {
-            reply_mobile_ping(control.endpoint, message.source_peer, network_id, sent_at).await?;
+            reply_mobile_ping(control.endpoint, source_peer, network_id, sent_at).await?;
         }
         FipsControlFrame::JoinRequest {
             requested_at,
@@ -177,16 +197,15 @@ async fn handle_mobile_control_frame(
         }
         #[cfg(feature = "paid-exit")]
         payment @ FipsControlFrame::PaidRoutePayment { .. } => {
-            handle_mobile_paid_route_payment(control, message.source_peer, &source_pubkey, payment)
+            handle_mobile_paid_route_payment(control, source_peer, &source_pubkey, payment)
                 .await?;
         }
         #[cfg(feature = "paid-exit")]
         FipsControlFrame::PaidRoutePaymentAck { id } => {
             handle_mobile_paid_route_payment_ack(control, &source_pubkey, &id)?;
         }
-        FipsControlFrame::Fragment { .. } => {}
     }
-    Ok(true)
+    Ok(())
 }
 
 #[cfg(feature = "paid-exit")]
@@ -234,9 +253,10 @@ async fn handle_mobile_paid_route_payment(
     )?;
     let ack = FipsControlFrame::PaidRoutePaymentAck { id };
     control
-        .endpoint
-        .send_batch_to_peer(source_peer, encode_fips_control_messages(&ack)?)
+        .state_control
+        .send(source_peer, &ack)
         .await
+        .map(|_| ())
         .context("failed to acknowledge mobile paid route payment")
 }
 
@@ -346,22 +366,6 @@ fn mobile_control_source_pubkey(
     Ok(control_frame_source_pubkey(&mesh, source_peer, frame))
 }
 
-fn decode_mobile_control_frame(
-    control_fragments: &mut FipsControlFragmentBuffer,
-    message: &FipsEndpointMessage,
-) -> Result<(bool, Option<FipsControlFrame>)> {
-    let Some(frame) = decode_fips_control_frame(message.data.as_slice())? else {
-        return Ok((false, None));
-    };
-    let FipsControlFrame::Fragment { .. } = frame else {
-        return Ok((true, Some(frame)));
-    };
-    let source_key = endpoint_source_key(message.source_peer);
-    control_fragments
-        .decode(&source_key, message.data.as_slice(), unix_timestamp())
-        .map(|frame| (true, frame))
-}
-
 fn control_frame_network_matches(expected_network_id: &str, frame: &FipsControlFrame) -> bool {
     let frame_network_id = match frame {
         FipsControlFrame::Ping { network_id, .. }
@@ -372,7 +376,6 @@ fn control_frame_network_matches(expected_network_id: &str, frame: &FipsControlF
         #[cfg(feature = "paid-exit")]
         FipsControlFrame::PaidRoutePayment { .. }
         | FipsControlFrame::PaidRoutePaymentAck { .. } => return true,
-        FipsControlFrame::Fragment { .. } => return false,
     };
     normalize_runtime_network_id(expected_network_id)
         == normalize_runtime_network_id(frame_network_id)
@@ -391,10 +394,6 @@ fn control_frame_source_pubkey(
                 allow_unknown || matches!(frame, FipsControlFrame::PaidRoutePayment { .. });
             allow_unknown.then(|| source_peer.pubkey().to_string())
         })
-}
-
-fn endpoint_source_key(source_peer: PeerIdentity) -> String {
-    source_peer.node_addr().to_string()
 }
 
 #[derive(Debug, Clone, Default)]
@@ -764,4 +763,26 @@ async fn send_mobile_endpoint_data(
         .send_batch_to_peer(identity, vec![data])
         .await
         .context("failed to send mobile FIPS endpoint data")
+}
+
+async fn send_mobile_state_control(
+    state_control: &FipsControlTcpSender,
+    peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
+    participant: &str,
+    frame: &FipsControlFrame,
+) -> Result<usize> {
+    let participant_key = mobile_participant_pubkey_bytes(participant);
+    let identity = peer_identities.read().ok().and_then(|identities| {
+        participant_key
+            .as_ref()
+            .and_then(|participant| identities.identity_for_participant_bytes(participant))
+            .or_else(|| identities.identity_for_participant(participant))
+    });
+    let identity = identity.ok_or_else(|| {
+        anyhow!("missing mobile FIPS endpoint identity for participant {participant}")
+    })?;
+    state_control
+        .send(identity, frame)
+        .await
+        .with_context(|| format!("failed to send mobile FIPS-TCP control to {participant}"))
 }

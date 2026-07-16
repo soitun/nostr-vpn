@@ -83,7 +83,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         try_load_paid_exit_spilman_receiver(&config_path, &app.paid_exit).await;
     #[cfg(feature = "paid-exit")]
     let mut automatic_paid_exit = PaidExitAutomaticBuyer::default();
-    let mut direct_join_approval_delivery = DirectJoinApprovalDeliveryState::default();
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -160,7 +159,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     })
                     .await;
                     if let Some(runtime) = fips_tunnel_runtime.as_mut() {
-                        direct_join_approval_delivery.flush(runtime, &app, &config_path).await;
+                        send_queued_join_rosters_once(runtime, &app, &config_path).await;
                     }
                 }
                 if !vpn_active {
