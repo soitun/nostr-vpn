@@ -10,6 +10,11 @@ All notable changes to this project are documented in this file.
   headless endpoints as a priority-250 fallback for explicit roster and
   approval peers. Direct UDP, TCP, and WebRTC links remain application-owned
   and independently active.
+- Updated the embedded FIPS Core and Endpoint crates from 0.4.4 to exact
+  published 0.4.5 for bounded TCP/Tor FSP record framing, deterministic
+  simultaneous stream convergence, endpoint send-receipt correlation, and
+  tree-dependent Bloom-filter convergence. FMP, FSP, discovery, and the
+  application-owned UDP roster path are unchanged.
 
 ### Fixed
 
