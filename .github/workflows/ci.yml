@@ -38,3 +38,15 @@ jobs:
           NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE: '0'
           NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E: '0'
         run: ./scripts/release-gate.sh
+
+  macos-sdk-compat:
+    name: Xcode 15 macOS compatibility
+    runs-on: macos-14
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Type-check scanner with Xcode 15.4
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_15.4.app/Contents/Developer
+        run: ./scripts/check-macos-swift-sdk-compat.sh
