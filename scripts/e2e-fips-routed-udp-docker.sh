@@ -167,12 +167,14 @@ disable_nat_discovery() {
 }
 
 block_direct_alice_bob_udp() {
+  # Drop each peer's direct ingress so the A<->B path is completely unusable
+  # while local UDP sends still behave like ordinary NAT/firewall packet loss.
+  # An OUTPUT DROP can make Linux return EPERM from sendto(2), which tests a
+  # local socket failure instead of the routed-overlay behavior in this gate.
   "${COMPOSE[@]}" exec -T node-a sh -lc '
-    iptables -I OUTPUT -p udp -d 10.203.0.11 -j DROP
     iptables -I INPUT -p udp -s 10.203.0.11 -j DROP
   '
   "${COMPOSE[@]}" exec -T node-b sh -lc '
-    iptables -I OUTPUT -p udp -d 10.203.0.10 -j DROP
     iptables -I INPUT -p udp -s 10.203.0.10 -j DROP
   '
 }
