@@ -216,16 +216,12 @@ pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> 
     config.node.limits.max_peers = MOBILE_MAX_FIPS_PEERS;
     config.node.limits.max_connections = MOBILE_MAX_FIPS_CONNECTIONS;
     config.node.limits.max_links = MOBILE_MAX_FIPS_LINKS;
-    let join_request_pending = !mobile.pending_join_request_recipient.trim().is_empty()
-        && mobile.pending_join_requested_at != 0;
+    let join_request_pending = mobile_join_request_pending(mobile);
     let include_non_roster_transit = mobile.connect_to_non_roster_fips_peers
         || mobile.join_requests_enabled
         || join_request_pending;
-    let nostr_enabled = mobile.nostr_discovery_enabled
-        && (mobile.join_requests_enabled
-            || join_request_pending
-            || !mobile.peers.is_empty()
-            || !mobile.peer_hints.is_empty());
+    let nostr_enabled = mobile_nostr_enabled(mobile);
+    let nostr_relay_fallback_enabled = mobile_nostr_relay_fallback_enabled(mobile);
     config.node.discovery.nostr.enabled = nostr_enabled;
     // Publish only the generic `udp:nat` overlay advert so roster peers can
     // bootstrap encrypted traversal offers to mobile nodes. LAN addresses are
@@ -272,6 +268,9 @@ pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> 
             &mobile.stun_servers,
         );
     }
+    if nostr_relay_fallback_enabled {
+        crate::fips_nostr_relay::enable_transport(&mut config);
+    }
     config.transports.udp = TransportInstances::Single(UdpConfig {
         bind_addr: Some(mobile_udp_bind_addr(mobile.listen_port)),
         outbound_only: Some(false),
@@ -286,6 +285,9 @@ pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> 
         &mobile.bootstrap_peers,
         include_non_roster_transit,
     );
+    if nostr_relay_fallback_enabled {
+        add_mobile_nostr_relay_fallback_peers(&mut config.peers, mobile);
+    }
     // Outbound TCP transport so peers reachable only over tcp:443 (UDP-blocked
     // networks) can still be dialed. bind_addr=None keeps it outbound-only.
     let needs_tcp = config.peers.iter().any(|peer| {
@@ -303,6 +305,51 @@ pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> 
         }
     }
     config
+}
+
+fn mobile_join_request_pending(mobile: &MobileTunnelConfig) -> bool {
+    !mobile.pending_join_request_recipient.trim().is_empty()
+        && mobile.pending_join_requested_at != 0
+}
+
+fn mobile_nostr_enabled(mobile: &MobileTunnelConfig) -> bool {
+    mobile.nostr_discovery_enabled
+        && (mobile.join_requests_enabled
+            || mobile_join_request_pending(mobile)
+            || !mobile.peers.is_empty()
+            || !mobile.peer_hints.is_empty())
+}
+
+fn mobile_nostr_relay_fallback_enabled(mobile: &MobileTunnelConfig) -> bool {
+    fips_nostr_relay_fallback_enabled(
+        mobile_nostr_enabled(mobile),
+        mobile.webrtc_enabled,
+        &mobile.nostr_relays,
+    )
+}
+
+fn add_mobile_nostr_relay_fallback_peers(
+    peers: &mut Vec<FipsPeerConfig>,
+    mobile: &MobileTunnelConfig,
+) {
+    let mut explicit = mobile
+        .peers
+        .iter()
+        .map(|peer| normalize_mobile_endpoint_npub(&peer.endpoint_npub))
+        .collect::<HashSet<_>>();
+    if mobile_join_request_pending(mobile)
+        && let Ok(peer) = FipsMeshPeerConfig::from_participant_pubkey(
+            &mobile.pending_join_request_recipient,
+            Vec::new(),
+        )
+    {
+        explicit.insert(normalize_mobile_endpoint_npub(&peer.endpoint_npub));
+    }
+
+    for npub in explicit {
+        crate::fips_nostr_relay::upsert_peer(peers, &npub, false, true);
+    }
+    peers.sort_by(|left, right| left.npub.cmp(&right.npub));
 }
 
 fn native_config_path(data_dir: &str) -> PathBuf {
@@ -546,11 +593,25 @@ mod endpoint_config_tests {
 
     #[test]
     fn mobile_endpoint_config_configures_webrtc_when_discovery_on() {
+        let roster = test_peer();
+        let pending = test_peer();
+        let transit = test_peer();
         let mobile = MobileTunnelConfig {
-            peers: vec![test_peer()],
+            peers: vec![roster.clone()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             webrtc_enabled: true,
+            connect_to_non_roster_fips_peers: true,
+            pending_join_request_recipient: pending.participant_pubkey.clone(),
+            pending_join_requested_at: 1,
+            bootstrap_peers: HashMap::from([(
+                transit.participant_pubkey.clone(),
+                vec![FipsPeerAddressHint {
+                    addr: "203.0.113.20:51820".to_string(),
+                    seen_at_ms: None,
+                    priority: FIPS_STATIC_PEER_ENDPOINT_PRIORITY,
+                }],
+            )]),
             ..empty_config()
         };
         let config = fips_endpoint_config("nostr-vpn:test", &mobile);
@@ -568,6 +629,48 @@ mod endpoint_config_tests {
             webrtc.stun_servers.as_ref().expect("stun servers"),
             &mobile.stun_servers
         );
+        let TransportInstances::Single(relay) = &config.transports.nostr_relay else {
+            panic!("expected one application-owned Nostr relay fallback transport");
+        };
+        assert_eq!(relay.auto_connect, Some(false));
+        assert_eq!(relay.accept_connections, Some(false));
+        let relay_priority = |npub: &str| {
+            config
+                .peers
+                .iter()
+                .find(|peer| peer.npub == npub)
+                .and_then(|peer| {
+                    peer.addresses
+                        .iter()
+                        .find(|address| address.transport == "nostr_relay" && address.addr == npub)
+                })
+                .map(|address| address.priority)
+        };
+        assert_eq!(
+            relay_priority(&roster.endpoint_npub),
+            Some(nostr_vpn_core::config::FIPS_NOSTR_RELAY_FALLBACK_PRIORITY)
+        );
+        assert_eq!(
+            relay_priority(&pending.endpoint_npub),
+            Some(nostr_vpn_core::config::FIPS_NOSTR_RELAY_FALLBACK_PRIORITY)
+        );
+        assert_eq!(relay_priority(&transit.endpoint_npub), None);
+    }
+
+    #[test]
+    fn mobile_relay_fallback_ignores_stale_join_recipient() {
+        let stale = test_peer();
+        let mobile = MobileTunnelConfig {
+            peers: vec![test_peer()],
+            nostr_relays: vec!["wss://relay.example.org".to_string()],
+            webrtc_enabled: true,
+            pending_join_request_recipient: stale.participant_pubkey,
+            pending_join_requested_at: 0,
+            ..empty_config()
+        };
+
+        let config = fips_endpoint_config("nostr-vpn:test", &mobile);
+        assert!(config.peers.iter().all(|peer| peer.npub != stale.endpoint_npub));
     }
 
     #[test]
@@ -581,6 +684,7 @@ mod endpoint_config_tests {
 
         assert!(!config.node.discovery.nostr.enabled);
         assert!(config.transports.webrtc.is_empty());
+        assert!(config.transports.nostr_relay.is_empty());
     }
 
     #[test]
@@ -596,6 +700,7 @@ mod endpoint_config_tests {
         assert!(config.node.discovery.nostr.enabled);
         assert!(config.node.discovery.nostr.advertise);
         assert!(config.transports.webrtc.is_empty());
+        assert!(config.transports.nostr_relay.is_empty());
         assert!(!config.transports.udp.is_empty());
     }
 }

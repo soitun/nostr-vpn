@@ -4,6 +4,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     mesh: Arc<FipsPrivateMeshRuntime>,
     control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
     join_approval_ack: Option<DirectJoinApprovalAckRuntime>,
+    nostr_relay_adapter: Option<NostrRelayAdapter>,
     secure_dns: Option<crate::secure_dns_runtime::SecureDnsRuntime>,
     config: FipsPrivateTunnelConfig,
     session: Arc<Session>,

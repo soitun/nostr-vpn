@@ -23,7 +23,7 @@ pub fn default_fips_bootstrap_peers() -> HashMap<String, Vec<String>> {
 /// and direct WebRTC peer IDs into fips `PeerAddress` values.
 pub fn split_peer_transport_addr(value: &str) -> (String, String) {
     let value = value.trim();
-    for transport in ["udp", "tcp", "tor", "webrtc"] {
+    for transport in ["udp", "tcp", "tor", "webrtc", "nostr_relay"] {
         if let Some(rest) = value.strip_prefix(&format!("{transport}:")) {
             return (transport.to_string(), rest.trim().to_string());
         }

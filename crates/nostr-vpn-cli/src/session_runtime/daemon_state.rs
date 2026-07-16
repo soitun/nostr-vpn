@@ -17,6 +17,7 @@ pub(crate) struct DaemonRuntimeStateInput<'a> {
 type OpenFileDescriptorTypes = std::collections::BTreeMap<String, u64>;
 type OpenFileDescriptorSnapshot = (u64, OpenFileDescriptorTypes);
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn increment_fd_type(types: &mut OpenFileDescriptorTypes, fd_type: &str) {
     *types.entry(fd_type.to_string()).or_default() += 1;
 }

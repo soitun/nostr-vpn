@@ -19,14 +19,14 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use fips_endpoint::{
     Config as FipsConfig, ConnectPolicy, FipsEndpoint, FipsEndpointMessage, FipsEndpointPeer,
-    FipsEndpointRelayStatus, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
-    PeerIdentity, TransportInstances, UdpConfig,
+    FipsEndpointRelayStatus, NostrDiscoveryPolicy, NostrRelayAdapter, PeerAddress,
+    PeerConfig as FipsPeerConfig, PeerIdentity, TransportInstances, UdpConfig,
 };
 use nostr_sdk::prelude::PublicKey;
 use nostr_vpn_core::config::{
     AppConfig, MESH_TUNNEL_IPV4_CIDR, WireGuardExitConfig, derive_mesh_tunnel_ip,
-    maybe_autoconfigure_node, normalize_nostr_pubkey, normalize_runtime_network_id,
-    split_peer_transport_addr,
+    fips_nostr_relay_fallback_enabled, maybe_autoconfigure_node, normalize_nostr_pubkey,
+    normalize_runtime_network_id, split_peer_transport_addr,
 };
 #[cfg(test)]
 use nostr_vpn_core::fips_control::NetworkRoster;

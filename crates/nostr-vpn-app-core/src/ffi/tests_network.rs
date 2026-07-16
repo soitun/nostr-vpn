@@ -861,6 +861,7 @@ exit 0
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn desktop_tick_reloads_roster_edits_from_disk() {
         use std::os::unix::fs::PermissionsExt;

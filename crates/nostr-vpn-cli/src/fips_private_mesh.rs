@@ -8,8 +8,8 @@ use fips_core::discovery::nostr::OverlayEndpointAdvert;
 use fips_endpoint::EthernetConfig;
 use fips_endpoint::{
     Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointMessage, FipsEndpointPeer,
-    NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode,
-    TransportInstances, UdpConfig,
+    NostrDiscoveryPolicy, NostrRelayAdapter, NostrRelayConfig, PeerAddress,
+    PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
 };
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use fips_endpoint::{
@@ -18,7 +18,8 @@ use fips_endpoint::{
 };
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
-    AppConfig, InternetSource, WireGuardExitConfig, derive_mesh_tunnel_ip, normalize_nostr_pubkey,
+    AppConfig, FIPS_NOSTR_RELAY_FALLBACK_PRIORITY, InternetSource, WireGuardExitConfig,
+    derive_mesh_tunnel_ip, fips_nostr_relay_fallback_enabled, normalize_nostr_pubkey,
     split_peer_transport_addr,
 };
 use nostr_vpn_core::data_plane::MeshPeerStatus;

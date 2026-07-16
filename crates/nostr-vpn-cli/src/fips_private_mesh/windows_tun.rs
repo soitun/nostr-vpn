@@ -144,7 +144,7 @@ fn spawn_windows_fips_mesh_recv_task(
             match received {
                 Ok(Some(drained)) => {
                     if let Err(error) =
-                        mesh.finalize_direct_endpoint_tun_batch_blocking(&mut packet_batch)
+                        mesh.finalize_direct_endpoint_tun_batch_blocking(&packet_batch)
                     {
                         packet_batch.clear();
                         eprintln!("fips: failed to finalize Windows tunnel packet batch: {error}");
@@ -168,7 +168,7 @@ fn spawn_windows_fips_mesh_recv_task(
                 }
                 Ok(None) => {
                     if let Err(error) =
-                        mesh.finalize_direct_endpoint_tun_batch_blocking(&mut packet_batch)
+                        mesh.finalize_direct_endpoint_tun_batch_blocking(&packet_batch)
                     {
                         packet_batch.clear();
                         eprintln!("fips: failed to finalize Windows tunnel packet batch: {error}");

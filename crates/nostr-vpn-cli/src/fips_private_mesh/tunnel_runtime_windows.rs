@@ -105,6 +105,7 @@ impl FipsPrivateTunnelRuntime {
             mesh,
             control_pubsub,
             join_approval_ack,
+            nostr_relay_adapter: None,
             secure_dns,
             config: config.clone(),
             session,
@@ -133,6 +134,8 @@ impl FipsPrivateTunnelRuntime {
             };
             secure_dns.update_config(config.magic_dns_records.clone(), servers)?;
         }
+        runtime.nostr_relay_adapter =
+            start_nostr_relay_fallback(runtime.mesh.endpoint(), &config).await?;
         Ok(runtime)
     }
 
@@ -319,6 +322,9 @@ impl FipsPrivateTunnelRuntime {
         // revert lands while we still have a sane working tree.
         if let Some(handle) = runtime.wg_upstream.take() {
             handle.cleanup().await;
+        }
+        if let Some(adapter) = runtime.nostr_relay_adapter.take() {
+            adapter.stop().await;
         }
         if let Some(control_pubsub) = runtime.control_pubsub.take() {
             control_pubsub.stop().await;

@@ -6,11 +6,13 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use fips_core::FipsEndpointServiceReceiver;
 use fips_endpoint::{
-    FipsEndpoint, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig, PeerIdentity,
-    TransportInstances,
+    FipsEndpoint, NostrDiscoveryPolicy, NostrRelayAdapter, PeerAddress,
+    PeerConfig as FipsPeerConfig, PeerIdentity, TransportInstances,
 };
 use nostr_sdk::prelude::{Keys, PublicKey, ToBech32};
-use nostr_vpn_core::config::{AppConfig, normalize_nostr_pubkey};
+use nostr_vpn_core::config::{
+    AppConfig, fips_nostr_relay_fallback_enabled, normalize_nostr_pubkey,
+};
 use nostr_vpn_core::join_pubsub::{
     NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT, NostrJoinFipsPubsubDatagram,
     approval_applied_ack_matches_queued, delivered_approval_event_datagram,
@@ -33,6 +35,7 @@ const DIRECT_APPROVAL_ACK_TIMEOUT: Duration = Duration::from_secs(10);
 pub struct HeadlessDirectApprovalRuntime {
     runtime: Runtime,
     endpoint: Arc<FipsEndpoint>,
+    nostr_relay_adapter: Option<NostrRelayAdapter>,
     approval_ack_receiver: FipsEndpointServiceReceiver,
     base_peers: Vec<FipsPeerConfig>,
 }
@@ -86,6 +89,11 @@ impl HeadlessDirectApprovalRuntime {
         webrtc.auto_connect = Some(false);
         webrtc.accept_connections = Some(false);
         webrtc.stun_servers = Some(config.stun_servers.clone());
+        let nostr_relay_fallback_enabled =
+            fips_nostr_relay_fallback_enabled(true, true, &config.nostr_relays);
+        if nostr_relay_fallback_enabled {
+            crate::fips_nostr_relay::enable_transport(&mut endpoint_config);
+        }
         let base_peers = endpoint_config.peers.clone();
         let runtime = RuntimeBuilder::new_multi_thread()
             .enable_all()
@@ -107,9 +115,15 @@ impl HeadlessDirectApprovalRuntime {
         let endpoint = Arc::new(endpoint);
         let approval_ack_receiver = runtime
             .block_on(endpoint.register_service_receiver(NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT))?;
+        let nostr_relay_adapter = runtime.block_on(crate::fips_nostr_relay::start_adapter(
+            &endpoint,
+            nostr_relay_fallback_enabled,
+            &config.nostr_relays,
+        ))?;
         Ok(Self {
             runtime,
             endpoint,
+            nostr_relay_adapter,
             approval_ack_receiver,
             base_peers,
         })
@@ -140,23 +154,13 @@ impl HeadlessDirectApprovalRuntime {
                     .to_bech32()
                     .context("failed to encode direct join approval FIPS return route")?;
                 let mut peers = self.base_peers.clone();
-                let route_address = PeerAddress::new("webrtc", format!("02{route}"));
-                if let Some(peer) = peers.iter_mut().find(|peer| peer.npub == route_npub) {
-                    if !peer
-                        .addresses
-                        .iter()
-                        .any(|address| address == &route_address)
-                    {
-                        peer.addresses.push(route_address);
-                    }
-                } else {
-                    peers.push(FipsPeerConfig {
-                        npub: route_npub.clone(),
-                        addresses: vec![route_address],
-                        discovery_fallback_transit: true,
-                        ..FipsPeerConfig::default()
-                    });
-                }
+                let peer = crate::fips_nostr_relay::upsert_peer(
+                    &mut peers,
+                    &route_npub,
+                    true,
+                    self.nostr_relay_adapter.is_some(),
+                );
+                add_headless_approval_webrtc_address(peer, route);
                 self.runtime.block_on(self.endpoint.update_peers(peers))?;
                 self.runtime.block_on(async {
                     let deadline = tokio::time::Instant::now() + DIRECT_APPROVAL_ROUTE_TIMEOUT;
@@ -284,8 +288,43 @@ impl HeadlessDirectApprovalRuntime {
     }
 }
 
+fn add_headless_approval_webrtc_address(peer: &mut FipsPeerConfig, route_pubkey: &str) {
+    let route_address = PeerAddress::new("webrtc", format!("02{route_pubkey}"));
+    if !peer.addresses.contains(&route_address) {
+        peer.addresses.push(route_address);
+    }
+}
+
 impl Drop for HeadlessDirectApprovalRuntime {
     fn drop(&mut self) {
+        if let Some(adapter) = self.nostr_relay_adapter.take() {
+            self.runtime.block_on(adapter.stop());
+        }
         let _ = self.runtime.block_on(self.endpoint.shutdown());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nostr_sdk::prelude::ToBech32;
+
+    #[test]
+    fn headless_approval_keeps_webrtc_and_scopes_relay_fallback() {
+        let keys = Keys::generate();
+        let route_pubkey = keys.public_key().to_hex();
+        let route_npub = keys.public_key().to_bech32().expect("npub");
+        let mut peers = Vec::new();
+        let peer = crate::fips_nostr_relay::upsert_peer(&mut peers, &route_npub, true, true);
+        add_headless_approval_webrtc_address(peer, &route_pubkey);
+
+        assert!(peer.addresses.iter().any(|address| {
+            address.transport == "webrtc" && address.addr == format!("02{route_pubkey}")
+        }));
+        assert!(peer.addresses.iter().any(|address| {
+            address.transport == "nostr_relay"
+                && address.addr == route_npub
+                && address.priority == nostr_vpn_core::config::FIPS_NOSTR_RELAY_FALLBACK_PRIORITY
+        }));
     }
 }

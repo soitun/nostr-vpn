@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Added the application-owned FIPS Nostr-relay carrier to desktop, mobile, and
+  headless endpoints as a priority-250 fallback for explicit roster and
+  approval peers. Direct UDP, TCP, and WebRTC links remain application-owned
+  and independently active.
+
+### Fixed
+
+- Restored the Windows all-target build by correctly scoping Unix-only tests
+  and helpers.
+
 ## 4.0.94 - 2026-07-16
 
 ### Changed

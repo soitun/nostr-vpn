@@ -2,8 +2,8 @@
 mod tests {
     use super::{
         AdminSignedSharedRosterUpdate, AppConfig, InternetSource, PendingOutboundJoinRequest,
-        normalize_nostr_pubkey, parse_wireguard_exit_config, split_peer_transport_addr,
-        wireguard_exit_config_text,
+        fips_nostr_relay_fallback_enabled, normalize_nostr_pubkey, parse_wireguard_exit_config,
+        split_peer_transport_addr, wireguard_exit_config_text,
     };
     use crate::config_defaults::generate_nostr_identity;
 
@@ -19,6 +19,31 @@ mod tests {
             split_peer_transport_addr(&route),
             ("webrtc".to_string(), format!("02{}", "ab".repeat(32)))
         );
+    }
+
+    #[test]
+    fn split_peer_transport_addr_preserves_nostr_relay_transport() {
+        let npub = "npub1relaypeer";
+
+        assert_eq!(
+            split_peer_transport_addr(&format!("nostr_relay:{npub}")),
+            ("nostr_relay".to_string(), npub.to_string())
+        );
+    }
+
+    #[test]
+    fn relay_fallback_requires_discovery_webrtc_and_a_relay() {
+        let relays = vec!["wss://relay.example".to_string()];
+
+        assert!(fips_nostr_relay_fallback_enabled(true, true, &relays));
+        assert!(!fips_nostr_relay_fallback_enabled(false, true, &relays));
+        assert!(!fips_nostr_relay_fallback_enabled(true, false, &relays));
+        assert!(!fips_nostr_relay_fallback_enabled(true, true, &[]));
+        assert!(!fips_nostr_relay_fallback_enabled(
+            true,
+            true,
+            &["  ".to_string()]
+        ));
     }
 
     #[test]

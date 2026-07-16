@@ -17,6 +17,8 @@
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];
         app.networks[0].admins = vec![admin_pubkey.clone()];
+        app.fips_webrtc_enabled = true;
+        app.nostr.relays = vec!["wss://relay.example.org".to_string()];
 
         let config = FipsPrivateTunnelConfig::from_app(
             &app,
@@ -42,18 +44,20 @@
             .iter()
             .find(|peer| peer.npub == bob_npub)
             .expect("bob endpoint peer");
-        assert_eq!(bob.addresses.len(), 1);
+        assert_eq!(bob.addresses.len(), 2);
         assert_eq!(bob.addresses[0].addr, "203.0.113.22:51820");
         assert_eq!(bob.addresses[0].seen_at_ms, Some(123_000));
+        assert!(bob.addresses.iter().any(|address| address.addr == format!("nostr_relay:{bob_npub}")));
 
         let admin = config
             .endpoint_peers
             .iter()
             .find(|peer| peer.npub == admin_npub)
             .expect("admin endpoint peer");
-        assert_eq!(admin.addresses.len(), 1);
+        assert_eq!(admin.addresses.len(), 2);
         assert_eq!(admin.addresses[0].addr, "203.0.113.33:51820");
         assert_eq!(admin.addresses[0].seen_at_ms, Some(123_000));
+        assert!(admin.addresses.iter().any(|address| address.addr == format!("nostr_relay:{admin_npub}")));
     }
 
     #[cfg(feature = "paid-exit")]
@@ -297,6 +301,25 @@
             fips_tunnel_requires_endpoint_restart(&refreshed, &changed_port),
             "transport bind changes still require a real endpoint restart",
         );
+    }
+
+    #[test]
+    fn webrtc_toggle_requires_endpoint_restart() {
+        let app = AppConfig::generated();
+        let network_id = app.effective_network_id();
+        let current = FipsPrivateTunnelConfig::from_app(
+            &app,
+            &network_id,
+            "utun-webrtc-toggle",
+            app.own_nostr_pubkey_hex().ok().as_deref(),
+            None,
+            &[],
+        )
+        .expect("fips tunnel config");
+        let mut changed = current.clone();
+        changed.webrtc_enabled = !changed.webrtc_enabled;
+
+        assert!(fips_tunnel_requires_endpoint_restart(&current, &changed));
     }
 
     #[test]

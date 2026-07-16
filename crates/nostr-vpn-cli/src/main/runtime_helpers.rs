@@ -146,7 +146,7 @@ fn parse_exit_node_arg(value: &str) -> Result<Option<String>> {
     normalize_nostr_pubkey(value).map(Some)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn is_exit_node_route(route: &str) -> bool {
     route == "0.0.0.0/0" || route == "::/0"
 }
@@ -537,6 +537,7 @@ fn fips_tunnel_config_from_app(
         match crate::fips_private_mesh::prioritize_direct_join_approval_route(
             config.endpoint_peers.clone(),
             route_pubkey,
+            config.nostr_relay_fallback_enabled(),
         ) {
             Ok((_, peers)) => config.endpoint_peers = peers,
             Err(error) => {

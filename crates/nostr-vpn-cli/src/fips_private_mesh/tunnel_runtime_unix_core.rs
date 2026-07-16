@@ -115,6 +115,7 @@ impl FipsPrivateTunnelRuntime {
             mesh,
             control_pubsub,
             join_approval_ack,
+            nostr_relay_adapter: None,
             secure_dns: None,
             manages_secure_dns: manage_host_dns,
             config: config.clone(),
@@ -143,6 +144,8 @@ impl FipsPrivateTunnelRuntime {
         runtime
             .reconcile_fips_host_runtime(config.fips_host.clone())
             .await?;
+        runtime.nostr_relay_adapter =
+            start_nostr_relay_fallback(runtime.mesh.endpoint(), &config).await?;
         Ok(runtime)
     }
 
@@ -229,6 +232,9 @@ impl FipsPrivateTunnelRuntime {
         #[cfg(target_os = "macos")]
         if let Some(handle) = runtime.wg_upstream.take() {
             handle.cleanup().await;
+        }
+        if let Some(adapter) = runtime.nostr_relay_adapter.take() {
+            adapter.stop().await;
         }
         if let Some(secure_dns) = runtime.secure_dns.take() {
             secure_dns.stop().await;
@@ -773,6 +779,7 @@ impl FipsPrivateTunnelRuntime {
         let (route_npub, peers) = prioritize_direct_join_approval_route(
             self.config.endpoint_peers.clone(),
             route_pubkey,
+            self.config.nostr_relay_fallback_enabled(),
         )?;
         self.mesh.update_peers(&peers).await?;
         let deadline = tokio::time::Instant::now() + DIRECT_JOIN_APPROVAL_ROUTE_CONNECT_TIMEOUT;
