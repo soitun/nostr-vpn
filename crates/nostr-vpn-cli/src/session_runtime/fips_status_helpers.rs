@@ -128,9 +128,9 @@ pub(crate) fn fips_link_event_refresh(
     endpoint_changed: bool,
     resumed_after_sleep: bool,
 ) -> FipsLinkEventRefresh {
-    if platform_network_event || network_changed || resumed_after_sleep {
+    if network_changed || resumed_after_sleep {
         FipsLinkEventRefresh::RestartEndpoint
-    } else if endpoint_changed {
+    } else if platform_network_event || endpoint_changed {
         FipsLinkEventRefresh::RefreshPaths
     } else {
         FipsLinkEventRefresh::None

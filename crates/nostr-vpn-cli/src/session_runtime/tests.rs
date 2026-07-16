@@ -93,13 +93,16 @@ mod tests {
         assert_eq!(idle, FipsLinkEventRefresh::None);
 
         for restart in [
-            fips_link_event_refresh(true, false, false, false),
             fips_link_event_refresh(false, true, false, false),
             fips_link_event_refresh(false, false, false, true),
         ] {
             assert_eq!(restart, FipsLinkEventRefresh::RestartEndpoint);
         }
 
+        assert_eq!(
+            fips_link_event_refresh(true, false, false, false),
+            FipsLinkEventRefresh::RefreshPaths
+        );
         assert_eq!(
             fips_link_event_refresh(false, false, true, false),
             FipsLinkEventRefresh::RefreshPaths
