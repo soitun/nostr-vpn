@@ -7,11 +7,9 @@ mod daemon_vpn_join_approval;
 mod daemon_vpn_paid_exit;
 #[path = "daemon_vpn/startup.rs"]
 mod daemon_vpn_startup;
-use daemon_vpn_heartbeat::*;
-use daemon_vpn_join_approval::*;
+use {daemon_vpn_heartbeat::*, daemon_vpn_join_approval::*, daemon_vpn_startup::*};
 #[cfg(feature = "paid-exit")]
 use daemon_vpn_paid_exit::*;
-use daemon_vpn_startup::*;
 pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     if let Some(webvm_args) = crate::webvm_guest::args_from_daemon(&args)? {
         return crate::webvm_guest::run_daemon(webvm_args, args.service).await;
@@ -432,7 +430,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 network_id = reload.network_id;
                                 expected_peers = reload.expected_peers;
                                 own_pubkey = reload.own_pubkey;
-
                                 fips_join_request_sends.clear();
                                 if let Err(error) = refresh_fips_tunnel_config(
                                     runtime,
@@ -773,7 +770,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                             if let Some(rt) = magic_dns_runtime.as_ref() {
                                                 rt.refresh_records(&app);
                                             }
-
                                             let join_requests_active = app.join_requests_enabled();
                                             let vpn_active =
                                                 daemon_vpn_active(vpn_enabled, expected_peers);
@@ -789,7 +785,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                             } else {
                                                 "Config reloaded (paused)".to_string()
                                             };
-
                                             if vpn_active {
                                                 let runtime_listen_port = tunnel_runtime
                                                     .active_listen_port
