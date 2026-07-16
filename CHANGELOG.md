@@ -26,6 +26,9 @@ All notable changes to this project are documented in this file.
   backpressure instead of dropping them after transport acknowledgement.
 - Avoid oversized async test futures on worker stacks in the mobile FIPS
   integration fixture.
+- Invalidate a different Linux underlay default route before installing a
+  WireGuard-exit default, preventing activation-time route clones from
+  bypassing the encrypted upstream.
 
 ## 4.0.95 - 2026-07-16
 

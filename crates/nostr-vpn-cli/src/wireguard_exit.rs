@@ -251,6 +251,11 @@ fn linux_wireguard_exit_endpoint_bypass_specs(
 }
 
 fn apply_linux_wireguard_exit_default_route(iface: &str, address: &str) -> Result<()> {
+    let current_default_device = crate::linux_default_route().ok().map(|route| route.dev);
+    if linux_wireguard_exit_must_delete_underlay_default(current_default_device.as_deref(), iface) {
+        crate::delete_linux_default_route()
+            .context("failed to invalidate the underlay default route")?;
+    }
     let mut command = ProcessCommand::new("ip");
     command
         .arg("-4")
@@ -263,6 +268,13 @@ fn apply_linux_wireguard_exit_default_route(iface: &str, address: &str) -> Resul
         command.arg("src").arg(source.to_string());
     }
     crate::run_checked(&mut command)
+}
+
+fn linux_wireguard_exit_must_delete_underlay_default(
+    current_device: Option<&str>,
+    wireguard_iface: &str,
+) -> bool {
+    current_device.is_some_and(|current| current != wireguard_iface)
 }
 
 fn restore_linux_wireguard_exit_default_route(runtime: &crate::LinuxWireGuardExitRuntime) {
@@ -439,8 +451,8 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use super::{
-        linux_wireguard_exit_policy_rule_exists, wireguard_exit_endpoint_ipv4_hosts,
-        write_temp_secret_file,
+        linux_wireguard_exit_must_delete_underlay_default, linux_wireguard_exit_policy_rule_exists,
+        wireguard_exit_endpoint_ipv4_hosts, write_temp_secret_file,
     };
 
     #[test]
@@ -467,6 +479,22 @@ mod tests {
             wireguard_exit_endpoint_ipv4_hosts("198.51.100.20:51830"),
             vec!["198.51.100.20".parse::<Ipv4Addr>().unwrap()]
         );
+    }
+
+    #[test]
+    fn wireguard_default_transition_invalidates_a_different_underlay_route() {
+        assert!(linux_wireguard_exit_must_delete_underlay_default(
+            Some("eth0"),
+            "nvpn-wg-exit"
+        ));
+        assert!(!linux_wireguard_exit_must_delete_underlay_default(
+            Some("nvpn-wg-exit"),
+            "nvpn-wg-exit"
+        ));
+        assert!(!linux_wireguard_exit_must_delete_underlay_default(
+            None,
+            "nvpn-wg-exit"
+        ));
     }
 
     #[test]
