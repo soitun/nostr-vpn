@@ -20,6 +20,9 @@ All notable changes to this project are documented in this file.
 
 - Restored the Windows all-target build by correctly scoping Unix-only tests
   and helpers.
+- Made the native WebVM approval harness retry the complete routed event batch
+  while awaiting the durable apply receipt, matching the daemon when a FIPS
+  route is replaced between approval records.
 
 ## 4.0.94 - 2026-07-16
 

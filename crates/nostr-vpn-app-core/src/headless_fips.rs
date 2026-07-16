@@ -26,6 +26,7 @@ use crate::mobile_tunnel::{MobileTunnelConfig, fips_endpoint_config};
 const HEADLESS_FIPS_WORKER_STACK_SIZE: usize = 4 * 1024 * 1024;
 const DIRECT_APPROVAL_ROUTE_TIMEOUT: Duration = Duration::from_secs(30);
 const DIRECT_APPROVAL_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+const DIRECT_APPROVAL_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Unprivileged FIPS endpoint used by production-like integration tests.
 ///
@@ -188,6 +189,7 @@ impl HeadlessDirectApprovalRuntime {
                 .context("failed to encode direct join approval delivery peer")?;
             let remote = PeerIdentity::from_npub(&recipient_npub)
                 .context("invalid direct join approval delivery peer")?;
+            let mut datagrams = Vec::with_capacity(approval.events.len());
             for event in &approval.events {
                 let datagram = if delivery_route.is_some() {
                     routed_approval_event_datagram(
@@ -198,50 +200,62 @@ impl HeadlessDirectApprovalRuntime {
                 } else {
                     delivered_approval_event_datagram(&approval.request_pubkey, event)?
                 };
-                self.runtime.block_on(self.endpoint.send_datagram(
-                    remote,
-                    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
-                    NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
-                    datagram.payload,
-                ))?;
-                sent += 1;
+                datagrams.push(datagram);
             }
-            self.wait_for_approval_ack(&approval, delivery_route)?;
+            self.send_approval_until_ack(remote, &datagrams, &approval, delivery_route)?;
+            sent += datagrams.len();
             fs::remove_file(&path)
                 .with_context(|| format!("failed to remove {}", path.display()))?;
         }
         Ok(sent)
     }
 
-    fn wait_for_approval_ack(
+    fn send_approval_until_ack(
         &self,
+        remote: PeerIdentity,
+        approval_datagrams: &[NostrJoinFipsPubsubDatagram],
         approval: &nostr_vpn_core::join_pubsub::QueuedNostrJoinApproval,
         delivery_route: Option<&str>,
     ) -> Result<()> {
         let expected_source = delivery_route.unwrap_or(&approval.recipient_npub);
         self.runtime.block_on(async {
             let deadline = tokio::time::Instant::now() + DIRECT_APPROVAL_ACK_TIMEOUT;
-            let mut datagrams = Vec::with_capacity(8);
+            let mut received_datagrams = Vec::with_capacity(8);
             loop {
+                for datagram in approval_datagrams {
+                    // A successful endpoint send only means the current route
+                    // accepted the datagram. Retry the complete approval while
+                    // waiting for the durable apply acknowledgment so a route
+                    // replacement cannot strand one event of the batch.
+                    let _ = self
+                        .endpoint
+                        .send_datagram(
+                            remote,
+                            NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
+                            NOSTR_JOIN_PUBSUB_FIPS_SERVICE_PORT,
+                            datagram.payload.clone(),
+                        )
+                        .await;
+                }
                 let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
                 if remaining.is_zero() {
                     return Err(self.approval_ack_timeout_error(expected_source).await);
                 }
                 let Ok(received) = tokio::time::timeout(
-                    remaining,
+                    remaining.min(DIRECT_APPROVAL_RETRY_INTERVAL),
                     self.approval_ack_receiver
-                        .recv_batch_into(&mut datagrams, 8),
+                        .recv_batch_into(&mut received_datagrams, 8),
                 )
                 .await
                 else {
-                    return Err(self.approval_ack_timeout_error(expected_source).await);
+                    continue;
                 };
                 let Some(_) = received else {
                     return Err(anyhow!(
                         "direct join approval acknowledgment service closed"
                     ));
                 };
-                for datagram in &datagrams {
+                for datagram in &received_datagrams {
                     let Ok(source_peer) = normalize_nostr_pubkey(&datagram.source_peer.npub())
                     else {
                         continue;
