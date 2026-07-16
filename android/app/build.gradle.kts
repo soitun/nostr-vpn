@@ -33,8 +33,8 @@ android {
         applicationId = androidPackageName
         minSdk = 26
         targetSdk = 36
-        versionCode = 40093
-        versionName = "4.0.93"
+        versionCode = 40094
+        versionName = "4.0.94"
         buildConfigField("String", "NVPN_BUILD_GIT_SHA", buildConfigString(buildGitSha))
         buildConfigField("String", "NVPN_BUILD_TIMESTAMP_UTC", buildConfigString(buildTimestampUtc))
 

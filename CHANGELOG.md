@@ -4,15 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.94 - 2026-07-16
+
 ### Changed
 
 - Replaced Nostr VPN's private reliable record carrier and Inv/WANT wrappers
   with the shared `nostr-pubsub-fips` TCP/FIPS driver while preserving the
   `nvpn.control.pubsub/1` service, 56 KiB event bound, application-owned UDP
   roster links, standalone operation, and bounded reconnect replay.
-- Updated desktop, mobile, Linux, and WebRTC configuration to FIPS 0.4.0;
-  authenticated FIPS sessions now carry link negotiation without the removed
-  direct-message and WebRTC signaling-relay configuration fields.
+- Updated desktop, mobile, Linux, and WebRTC configuration to exact published
+  FIPS Core and Endpoint 0.4.1 and Nostr identity storage 0.4.0. Authenticated
+  FIPS sessions now carry link negotiation without the removed direct-message
+  and signaling-relay fields, and WebRTC reconnect tolerates individually
+  unavailable mDNS candidates.
+- Added a two-process product gate that moves roster traffic in both directions
+  over explicitly configured UDP links while a signed control event traverses
+  the shared TCP/FIPS pubsub service.
 
 ### Fixed
 
