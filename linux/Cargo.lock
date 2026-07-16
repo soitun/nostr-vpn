@@ -1560,6 +1560,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "fips-tcp"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d18861c5eca7c472fbbdbbfb498f8d2525405081a9a24b42633c600ba6f6e42a"
+
+[[package]]
+name = "fips-tcp-endpoint"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e3e01e352b709b80f4261e2cd7d0ffde2d3aaf175267b3960997e70f7305c12"
+dependencies = [
+ "fips-core",
+ "fips-tcp",
+]
+
+[[package]]
 name = "flate2"
 version = "1.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3352,7 +3368,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.95"
+version = "4.0.96"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3381,7 +3397,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.95"
+version = "4.0.96"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -3391,6 +3407,9 @@ dependencies = [
  "cashu-service",
  "core-foundation",
  "core-foundation-sys",
+ "fips-core",
+ "fips-tcp",
+ "fips-tcp-endpoint",
  "hashtree-updater",
  "hex",
  "hickory-proto",
@@ -3418,7 +3437,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-linux"
-version = "4.0.95"
+version = "4.0.96"
 dependencies = [
  "gio",
  "glib",
@@ -6223,7 +6242,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

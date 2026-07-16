@@ -4,6 +4,29 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.96 - 2026-07-16
+
+### Changed
+
+- Moved join requests, signed roster updates, capabilities, and paid-route
+  control records onto the existing wire-compatible FIPS-TCP 0.2.0 stream.
+  Only ping/pong probes remain on the FIPS datagram path.
+- Reduced first-join approval to one ordinary signed roster plus the existing
+  one-time QR request secret in the encrypted nVPN control record. Removed the
+  identity receipt/context batch, forwarding and apply-ACK envelopes, custom
+  replay/retry machinery, and relay fallback; an unsuccessful join uses the
+  normal join-request flow again.
+- Updated the WebVM guest and native/mobile receivers for the same FIPS-only
+  first-join record while keeping later roster updates on the generic roster
+  event format.
+
+### Fixed
+
+- Retain completed FIPS-TCP control records under bounded local receive-queue
+  backpressure instead of dropping them after transport acknowledgement.
+- Avoid oversized async test futures on worker stacks in the mobile FIPS
+  integration fixture.
+
 ## 4.0.95 - 2026-07-16
 
 ### Changed
