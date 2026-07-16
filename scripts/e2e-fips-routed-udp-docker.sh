@@ -336,7 +336,13 @@ run_continuity_ping() {
     while [ \$(date +%s) -lt \$end ]; do
       seq=\$((seq + 1))
       printf 'sample=%s label=%s target=%s\n' \"\$seq\" '$label' '$target_ip'
-      ping -M do -s '$PING_PAYLOAD_SIZE' -c 1 -W 2 '$target_ip'
+      if ! ping -M do -s '$PING_PAYLOAD_SIZE' -c 1 -W 2 '$target_ip'; then
+        # FIPS data packets intentionally use datagrams. One lost ICMP packet
+        # is not an overlay outage; require the immediate retry to succeed so
+        # a sustained path break still fails the release gate.
+        printf 'sample_retry=%s label=%s target=%s\n' \"\$seq\" '$label' '$target_ip'
+        ping -M do -s '$PING_PAYLOAD_SIZE' -c 1 -W 2 '$target_ip'
+      fi
       sleep '$CONTINUITY_INTERVAL_SECS'
     done
     printf 'continuity_samples=%s label=%s\n' \"\$seq\" '$label'
