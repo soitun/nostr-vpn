@@ -784,6 +784,16 @@ impl FipsPrivateTunnelRuntime {
             .await
     }
 
+    pub(crate) async fn send_join_roster(
+        &self,
+        participant: &str,
+        join_roster: JoinRosterControl,
+    ) -> Result<()> {
+        self.mesh
+            .send_join_roster(&self.state_control, participant, join_roster)
+            .await
+    }
+
     pub(crate) async fn send_capabilities(
         &self,
         participant: &str,

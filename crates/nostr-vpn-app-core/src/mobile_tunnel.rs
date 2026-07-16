@@ -31,8 +31,9 @@ use nostr_vpn_core::config::{
 #[cfg(test)]
 use nostr_vpn_core::fips_control::NetworkRoster;
 use nostr_vpn_core::fips_control::{
-    FipsControlFrame, PeerCapabilities, PeerEndpointHint, SignedRoster, decode_fips_control_frame,
-    encode_fips_control_frame, local_fips_dataplane_features, peer_endpoint_hint_addr,
+    FipsControlFrame, JoinRosterControl, PeerCapabilities, PeerEndpointHint, SignedRoster,
+    decode_fips_control_frame, encode_fips_control_frame, local_fips_dataplane_features,
+    peer_endpoint_hint_addr,
 };
 use nostr_vpn_core::fips_control_tcp::{
     FipsControlTcpRuntime, FipsControlTcpSender, ReceivedFipsControlFrame,

@@ -723,6 +723,10 @@ pub(crate) enum FipsPrivateMeshEvent {
         requested_at: u64,
         request: MeshJoinRequest,
     },
+    JoinRoster {
+        sender_pubkey: String,
+        control: Box<JoinRosterControl>,
+    },
     Roster {
         sender_pubkey: String,
         signed_roster: Option<Box<SignedRoster>>,

@@ -137,6 +137,42 @@ mod tests {
     }
 
     #[test]
+    fn join_binding_lives_in_control_data_without_changing_the_roster_event() {
+        let admin = Keys::generate();
+        let device = Keys::generate().public_key().to_hex();
+        let roster = SignedRoster::sign(
+            "mesh",
+            NetworkRoster {
+                network_name: "Home".to_string(),
+                devices: vec![device.clone()],
+                admins: vec![admin.public_key().to_hex()],
+                aliases: HashMap::new(),
+                signed_at: 123,
+            },
+            &admin,
+        )
+        .expect("sign ordinary roster");
+        let join = JoinRosterControl::new(roster.clone(), "qr-request-secret")
+            .expect("bind roster to join request");
+
+        join.verify_for_request("qr-request-secret")
+            .expect("verify join control data");
+        assert_eq!(join.signed_roster, roster);
+        assert!(!format!("{join:?}").contains("qr-request-secret"));
+        assert!(
+            join.verify_for_request("wrong-secret")
+                .is_err()
+        );
+
+        let frame = join_roster_control_frame(join.clone());
+        let encoded = encode_fips_control_frame(&frame).expect("encode join control record");
+        assert_eq!(
+            decode_fips_control_frame(&encoded).expect("decode join control record"),
+            Some(frame)
+        );
+    }
+
+    #[test]
     fn signed_roster_rejects_tampered_content() {
         let admin = Keys::generate();
         let member = Keys::generate().public_key().to_hex();

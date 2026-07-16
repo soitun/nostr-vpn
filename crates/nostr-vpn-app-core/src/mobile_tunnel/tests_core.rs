@@ -159,6 +159,49 @@
     }
 
     #[test]
+    fn mobile_first_join_applies_one_generic_roster_with_the_qr_secret() {
+        let now = unix_timestamp();
+        let admin = Keys::generate();
+        let mut joiner = AppConfig::generated_without_networks();
+        joiner
+            .ensure_pending_nostr_join_request(now)
+            .expect("pending join request");
+        let own = joiner.own_nostr_pubkey_hex().expect("joiner pubkey");
+        let request_secret = joiner
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("pending request")
+            .request
+            .request_secret
+            .clone();
+        let signed = SignedRoster::sign(
+            "mobile-mesh",
+            NetworkRoster {
+                network_name: "Mobile Mesh".to_string(),
+                devices: vec![own],
+                admins: vec![admin.public_key().to_hex()],
+                aliases: HashMap::new(),
+                signed_at: now,
+            },
+            &admin,
+        )
+        .expect("sign ordinary roster");
+        let join_roster =
+            JoinRosterControl::new(signed, &request_secret).expect("join control record");
+        let app = Arc::new(RwLock::new(joiner));
+        let dirty = AtomicBool::new(false);
+
+        let updated = apply_mobile_join_roster(&app, &dirty, None, &join_roster)
+            .expect("apply first join roster");
+
+        assert!(updated.is_some());
+        assert!(dirty.load(Ordering::Relaxed));
+        let app = app.read().expect("app config");
+        assert!(app.pending_nostr_join_request.is_none());
+        assert_eq!(app.active_network().network_id, "mobile-mesh");
+    }
+
+    #[test]
     fn mobile_config_stays_split_tunnel_without_exit() {
         let mut app = AppConfig::generated();
         app.ensure_defaults();
@@ -817,7 +860,7 @@
     }
 
     #[test]
-    fn mobile_control_source_accepts_unknown_sender_only_for_join_request() {
+    fn mobile_control_source_accepts_unknown_sender_for_first_contact_records() {
         let roster_peer =
             "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc".to_string();
         let peer = FipsMeshPeerConfig::from_participant_pubkey(&roster_peer, Vec::new())
@@ -841,6 +884,25 @@
                 requester_node_name: "iPhone".to_string(),
             },
         };
+        let admin = Keys::generate();
+        let signed_roster = SignedRoster::sign(
+            "mesh-home",
+            NetworkRoster {
+                network_name: "Home".to_string(),
+                devices: vec![Keys::generate().public_key().to_hex()],
+                admins: vec![admin.public_key().to_hex()],
+                aliases: HashMap::new(),
+                signed_at: 2,
+            },
+            &admin,
+        )
+        .expect("signed roster");
+        let join_roster = FipsControlFrame::JoinRoster {
+            control: Box::new(
+                JoinRosterControl::new(signed_roster, "request-secret")
+                    .expect("join control"),
+            ),
+        };
 
         assert_eq!(
             control_frame_source_pubkey(&mesh, peer_identity, &ping),
@@ -852,6 +914,10 @@
         );
         assert_eq!(
             control_frame_source_pubkey(&mesh, unknown_identity, &join_request),
+            Some(unknown_hex.clone())
+        );
+        assert_eq!(
+            control_frame_source_pubkey(&mesh, unknown_identity, &join_roster),
             Some(unknown_hex)
         );
     }

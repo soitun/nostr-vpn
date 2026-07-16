@@ -583,19 +583,15 @@ async fn wait_for_join_roster(
                     eprintln!("webvm: ignoring join roster from an unexpected local FIPS peer");
                     continue;
                 }
-                let FipsControlFrame::Roster {
-                    signed_roster: Some(signed_roster),
-                    ..
-                } = received.frame else {
+                let FipsControlFrame::JoinRoster { control } = received.frame else {
                     eprintln!("webvm: ignoring non-roster record while awaiting approval");
                     continue;
                 };
                 println!("webvm: received signed join roster over FIPS-TCP");
                 let mut candidate = app.clone();
-                let Some(applied) = candidate.apply_nostr_join_roster(
-                    signed_roster.as_ref(),
-                    unix_timestamp(),
-                )? else {
+                let Some(applied) =
+                    candidate.apply_nostr_join_roster(control.as_ref(), unix_timestamp())?
+                else {
                     continue;
                 };
                 validate_approved_config(&candidate)?;

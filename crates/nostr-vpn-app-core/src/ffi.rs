@@ -205,7 +205,7 @@ struct NativeAppRuntime {
     paid_route_payment_last_action: NativePaidRoutePaymentActionState,
     exchange_rate_service: ExchangeRateService,
     #[cfg(test)]
-    queued_join_rosters: Vec<nostr_vpn_core::fips_control::SignedRoster>,
+    queued_join_rosters: Vec<nostr_vpn_core::fips_control::JoinRosterControl>,
     #[cfg(target_os = "macos")]
     privileged_command_runner: Option<PrivilegedCommandRunnerHandle>,
 }

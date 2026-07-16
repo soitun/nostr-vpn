@@ -153,6 +153,9 @@ async fn handle_mobile_control_frame(
     );
 
     match frame {
+        FipsControlFrame::JoinRoster { control: join_roster } => {
+            apply_mobile_join_roster_frame(control, join_roster.as_ref()).await?;
+        }
         FipsControlFrame::Roster { signed_roster, .. } => {
             apply_mobile_roster_frame(control, signed_roster.as_deref()).await?;
         }
@@ -290,6 +293,13 @@ async fn apply_mobile_roster_frame(
     else {
         return Ok(());
     };
+    apply_mobile_roster_runtime_update(control, updated).await
+}
+
+async fn apply_mobile_roster_runtime_update(
+    control: &MobileEndpointReceiveContext<'_>,
+    updated: MobileTunnelConfig,
+) -> Result<()> {
     let local_routes = vec![updated.local_address.clone()];
     let updated_peers = updated.peers.clone();
     let updated_peer_identities = mobile_peer_identity_map(&updated_peers);
@@ -336,6 +346,22 @@ async fn apply_mobile_roster_frame(
     .await
 }
 
+async fn apply_mobile_join_roster_frame(
+    control: &MobileEndpointReceiveContext<'_>,
+    join_roster: &JoinRosterControl,
+) -> Result<()> {
+    let Some(updated) = apply_mobile_join_roster(
+        control.app_config,
+        control.app_config_dirty,
+        control.config_path,
+        join_roster,
+    )?
+    else {
+        return Ok(());
+    };
+    apply_mobile_roster_runtime_update(control, updated).await
+}
+
 async fn reply_mobile_ping(
     endpoint: &FipsEndpoint,
     source_peer: PeerIdentity,
@@ -372,6 +398,7 @@ fn control_frame_network_matches(expected_network_id: &str, frame: &FipsControlF
         | FipsControlFrame::Pong { network_id, .. }
         | FipsControlFrame::Roster { network_id, .. }
         | FipsControlFrame::Capabilities { network_id, .. } => network_id,
+        FipsControlFrame::JoinRoster { .. } => return true,
         FipsControlFrame::JoinRequest { request, .. } => &request.network_id,
         #[cfg(feature = "paid-exit")]
         FipsControlFrame::PaidRoutePayment { .. }
@@ -388,7 +415,10 @@ fn control_frame_source_pubkey(
 ) -> Option<String> {
     mesh.participant_for_endpoint_node_addr(source_peer.node_addr().as_bytes())
         .or_else(|| {
-            let allow_unknown = matches!(frame, FipsControlFrame::JoinRequest { .. });
+            let allow_unknown = matches!(
+                frame,
+                FipsControlFrame::JoinRequest { .. } | FipsControlFrame::JoinRoster { .. }
+            );
             #[cfg(feature = "paid-exit")]
             let allow_unknown =
                 allow_unknown || matches!(frame, FipsControlFrame::PaidRoutePayment { .. });

@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use nostr_sdk::prelude::Keys;
 use nostr_vpn_core::config::AppConfig;
-use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
+use nostr_vpn_core::fips_control::{JoinRosterControl, NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::{
     CreateNostrIdentityDeviceApprovalRequestOptions, create_nostr_identity_device_approval_request,
 };
@@ -30,12 +30,12 @@ fn pending_joiner() -> AppConfig {
     config
 }
 
-fn signed_roster(joiner: &AppConfig, signer: &Keys, signed_at: u64) -> SignedRoster {
+fn signed_roster(joiner: &AppConfig, signer: &Keys, signed_at: u64) -> JoinRosterControl {
     let pending = joiner
         .pending_nostr_join_request
         .as_ref()
         .expect("pending request");
-    SignedRoster::sign_for_join(
+    let roster = SignedRoster::sign(
         "8d4f34f5425bc50e",
         NetworkRoster {
             network_name: "Home Mesh".to_string(),
@@ -45,11 +45,9 @@ fn signed_roster(joiner: &AppConfig, signer: &Keys, signed_at: u64) -> SignedRos
             signed_at,
         },
         signer,
-        &pending.request.request_pubkey,
-        &pending.request.device_app_key_pubkey,
-        &pending.request.request_secret,
     )
-    .expect("sign roster")
+    .expect("sign roster");
+    JoinRosterControl::new(roster, &pending.request.request_secret).expect("join roster control")
 }
 
 fn unique_temp_config_path(name: &str) -> std::path::PathBuf {
@@ -125,7 +123,7 @@ fn roster_for_another_device_is_rejected_without_mutating_the_joiner() {
 }
 
 #[test]
-fn self_signed_admin_roster_without_the_request_proof_is_rejected() {
+fn self_signed_admin_roster_with_the_wrong_request_secret_is_rejected() {
     let mut joiner = pending_joiner();
     let attacker = Keys::generate();
     let roster = SignedRoster::sign(
@@ -140,11 +138,12 @@ fn self_signed_admin_roster_without_the_request_proof_is_rejected() {
         &attacker,
     )
     .expect("sign attacker roster");
+    let roster = JoinRosterControl::new(roster, "attacker-secret").expect("join control");
 
     let error = joiner
         .apply_nostr_join_roster(&roster, SIGNED_AT + 1)
-        .expect_err("unbound roster must fail");
-    assert!(error.to_string().contains("no request proof"));
+        .expect_err("roster carrying the wrong request secret must fail");
+    assert!(error.to_string().contains("different join request"));
     assert!(joiner.networks.is_empty());
     assert!(joiner.pending_nostr_join_request.is_some());
 }
@@ -152,12 +151,8 @@ fn self_signed_admin_roster_without_the_request_proof_is_rejected() {
 #[test]
 fn roster_with_the_wrong_request_secret_is_rejected() {
     let mut joiner = pending_joiner();
-    let pending = joiner
-        .pending_nostr_join_request
-        .as_ref()
-        .expect("pending request");
     let signer = Keys::generate();
-    let roster = SignedRoster::sign_for_join(
+    let roster = SignedRoster::sign(
         "8d4f34f5425bc50e",
         NetworkRoster {
             network_name: "Home Mesh".to_string(),
@@ -167,16 +162,15 @@ fn roster_with_the_wrong_request_secret_is_rejected() {
             signed_at: SIGNED_AT,
         },
         &signer,
-        &pending.request.request_pubkey,
-        &pending.request.device_app_key_pubkey,
-        "not-the-qr-request-secret",
     )
-    .expect("sign roster with unrelated secret");
+    .expect("sign roster");
+    let roster =
+        JoinRosterControl::new(roster, "not-the-qr-request-secret").expect("bind unrelated secret");
 
     let error = joiner
         .apply_nostr_join_roster(&roster, SIGNED_AT + 1)
-        .expect_err("wrong proof must fail");
-    assert!(error.to_string().contains("request proof is invalid"));
+        .expect_err("wrong request secret must fail");
+    assert!(error.to_string().contains("different join request"));
     assert!(joiner.networks.is_empty());
     assert!(joiner.pending_nostr_join_request.is_some());
 }
@@ -190,7 +184,7 @@ fn roster_signer_must_be_listed_as_an_admin() {
         .pending_nostr_join_request
         .as_ref()
         .expect("pending request");
-    let roster = SignedRoster::sign_for_join(
+    let roster = SignedRoster::sign(
         "8d4f34f5425bc50e",
         NetworkRoster {
             network_name: "Home Mesh".to_string(),
@@ -200,11 +194,10 @@ fn roster_signer_must_be_listed_as_an_admin() {
             signed_at: SIGNED_AT,
         },
         &signer,
-        &pending.request.request_pubkey,
-        &pending.request.device_app_key_pubkey,
-        &pending.request.request_secret,
     )
     .expect("sign roster");
+    let roster = JoinRosterControl::new(roster, &pending.request.request_secret)
+        .expect("join roster control");
 
     let error = joiner
         .apply_nostr_join_roster(&roster, SIGNED_AT + 1)
@@ -217,7 +210,7 @@ fn invalid_roster_signature_is_rejected() {
     let mut joiner = pending_joiner();
     let signer = Keys::generate();
     let mut roster = signed_roster(&joiner, &signer, SIGNED_AT);
-    roster.event.content = "tampered".to_string();
+    roster.signed_roster.event.content = "tampered".to_string();
 
     assert!(
         joiner
@@ -302,7 +295,7 @@ fn expired_pending_request_rejects_the_roster() {
 }
 
 #[test]
-fn durable_delivery_contains_only_the_recipient_route_and_signed_roster() {
+fn durable_delivery_contains_only_the_recipient_route_and_join_roster_control() {
     let joiner = pending_joiner();
     let signer = Keys::generate();
     let roster = signed_roster(&joiner, &signer, SIGNED_AT);
@@ -324,12 +317,15 @@ fn durable_delivery_contains_only_the_recipient_route_and_signed_roster() {
         keys,
         [
             "fips_route_npub",
+            "join_roster",
             "recipient_npub",
-            "signed_roster",
             "version"
         ]
     );
-    assert!(!raw.contains("request_secret"));
+    assert_eq!(
+        value["join_roster"]["request_secret"],
+        roster.request_secret
+    );
     assert!(!raw.contains("receipt"));
     assert!(!raw.contains("context"));
     #[cfg(unix)]
@@ -343,7 +339,7 @@ fn durable_delivery_contains_only_the_recipient_route_and_signed_roster() {
     );
     let queued = load_join_rosters(&config_path);
     assert_eq!(queued.len(), 1);
-    assert_eq!(queued[0].1.signed_roster, roster);
+    assert_eq!(queued[0].1.join_roster, roster);
 
     fs::remove_file(path).expect("remove queued roster");
     fs::remove_dir(join_roster_outbox_directory(&config_path)).expect("remove outbox");

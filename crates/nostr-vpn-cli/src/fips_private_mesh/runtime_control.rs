@@ -53,6 +53,22 @@ impl FipsPrivateMeshRuntime {
         .await
     }
 
+    pub(crate) async fn send_join_roster(
+        &self,
+        control: &FipsControlTcpRuntime,
+        participant: &str,
+        join_roster: JoinRosterControl,
+    ) -> Result<()> {
+        self.send_stateful_control_frame(
+            control,
+            participant,
+            &FipsControlFrame::JoinRoster {
+                control: Box::new(join_roster),
+            },
+        )
+        .await
+    }
+
     pub(crate) async fn send_capabilities(
         &self,
         control: &FipsControlTcpRuntime,

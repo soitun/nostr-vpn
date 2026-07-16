@@ -23,8 +23,8 @@ use nostr_vpn_core::config::{
 };
 use nostr_vpn_core::data_plane::MeshPeerStatus;
 use nostr_vpn_core::fips_control::{
-    FipsControlFrame, PeerCapabilities, PeerEndpointHint, SignedRoster, decode_fips_control_frame,
-    encode_fips_control_frame, is_fips_control_frame,
+    FipsControlFrame, JoinRosterControl, PeerCapabilities, PeerEndpointHint, SignedRoster,
+    decode_fips_control_frame, encode_fips_control_frame, is_fips_control_frame,
 };
 use nostr_vpn_core::fips_control_tcp::{FipsControlTcpRuntime, ReceivedFipsControlFrame};
 #[cfg(any(target_os = "linux", target_os = "macos"))]

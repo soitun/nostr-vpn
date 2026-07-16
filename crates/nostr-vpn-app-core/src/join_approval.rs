@@ -1,13 +1,13 @@
 use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::config::{AppConfig, SharedNetworkRoster, normalize_nostr_pubkey};
-use nostr_vpn_core::fips_control::{NetworkRoster, SignedRoster};
+use nostr_vpn_core::fips_control::{JoinRosterControl, NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap;
 use nostr_vpn_core::join_requests::AppliedNostrJoinRoster;
 
 #[derive(Debug, Clone)]
 pub struct PreparedJoinApproval {
     pub updated_config: AppConfig,
-    pub signed_roster: SignedRoster,
+    pub join_roster: JoinRosterControl,
 }
 
 pub fn prepare_join_approval(
@@ -26,7 +26,7 @@ pub fn prepare_join_approval(
     }
 
     let (updated_config, shared) = stage_approved_config(config, network_entry_id, bootstrap)?;
-    let signed_roster = SignedRoster::sign_for_join(
+    let signed_roster = SignedRoster::sign(
         shared.network_id.clone(),
         NetworkRoster {
             network_name: shared.name.clone(),
@@ -36,14 +36,13 @@ pub fn prepare_join_approval(
             signed_at: approved_at,
         },
         &signer_keys,
-        &bootstrap.request_npub,
-        &bootstrap.device_app_key_npub,
-        &bootstrap.request_secret,
     )
     .context("failed to sign approved Nostr VPN network roster")?;
+    let join_roster = JoinRosterControl::new(signed_roster, &bootstrap.request_secret)
+        .context("failed to bind approved roster to the join request")?;
     Ok(PreparedJoinApproval {
         updated_config,
-        signed_roster,
+        join_roster,
     })
 }
 
@@ -74,10 +73,10 @@ fn stage_approved_config(
 
 pub fn apply_join_roster(
     config: &mut AppConfig,
-    signed_roster: &SignedRoster,
+    join_roster: &JoinRosterControl,
     now: u64,
 ) -> Result<Option<AppliedNostrJoinRoster>> {
-    config.apply_nostr_join_roster(signed_roster, now)
+    config.apply_nostr_join_roster(join_roster, now)
 }
 
 #[cfg(test)]
@@ -130,13 +129,25 @@ mod tests {
 
         let prepared = prepare_join_approval(&admin, &network_id, &bootstrap, REQUESTED_AT + 1)
             .expect("prepare signed roster");
-        prepared.signed_roster.verify().expect("verify roster");
-        let roster = prepared.signed_roster.roster().expect("decode roster");
+        prepared
+            .join_roster
+            .signed_roster
+            .verify()
+            .expect("verify roster");
+        let roster = prepared
+            .join_roster
+            .signed_roster
+            .roster()
+            .expect("decode roster");
         assert!(roster.devices.contains(
             &normalize_nostr_pubkey(&bootstrap.device_app_key_npub).expect("device pubkey")
         ));
         assert_eq!(
-            prepared.signed_roster.signer_pubkey_hex().expect("signer"),
+            prepared
+                .join_roster
+                .signed_roster
+                .signer_pubkey_hex()
+                .expect("signer"),
             admin.own_nostr_pubkey_hex().expect("admin pubkey")
         );
     }
@@ -156,7 +167,7 @@ mod tests {
         let prepared = prepare_join_approval(&admin, &network_id, &bootstrap, REQUESTED_AT + 30)
             .expect("prepare signed roster");
 
-        let applied = apply_join_roster(&mut joiner, &prepared.signed_roster, REQUESTED_AT + 31)
+        let applied = apply_join_roster(&mut joiner, &prepared.join_roster, REQUESTED_AT + 31)
             .expect("apply roster")
             .expect("roster applied");
         assert_eq!(applied.request_pubkey, request_pubkey);

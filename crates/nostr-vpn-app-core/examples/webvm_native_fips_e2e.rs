@@ -180,7 +180,7 @@ fn run() -> HarnessResult<()> {
         &args.config_path,
         &parsed.bootstrap.device_app_key_npub,
         parsed.fips_route_npub.as_deref(),
-        &prepared.signed_roster,
+        &prepared.join_roster,
     )
     .map_err(|_| HarnessError::new("import", "roster-queue-failed"))?;
     if config.participant_pubkeys_hex().len() != before_count + 1 {

@@ -42,7 +42,6 @@ tracing.workspace = true
 uuid.workspace = true
 hex.workspace = true
 hickory-proto.workspace = true
-hmac.workspace = true
 hostname.workspace = true
 hashtree-updater = { workspace = true, optional = true }
 netdev.workspace = true

@@ -2,10 +2,8 @@ use crate::join_requests::MeshJoinRequest;
 use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "paid-exit")]
 use cashu_service::StreamingRoutePaymentEnvelope;
-use hmac::{Hmac, Mac};
 use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, Timestamp};
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -25,12 +23,48 @@ pub struct NetworkRoster {
 pub struct SignedRoster {
     pub event: Event,
 }
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct JoinRosterControl {
+    pub signed_roster: SignedRoster,
+    pub request_secret: String,
+}
+
+impl std::fmt::Debug for JoinRosterControl {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("JoinRosterControl")
+            .field("signed_roster", &self.signed_roster)
+            .field("request_secret", &"<redacted>")
+            .finish()
+    }
+}
 const SIGNED_ROSTER_KIND: u16 = 30_388;
 const SIGNED_ROSTER_VERSION: &str = "1";
 const SIGNED_ROSTER_APP: &str = "nostr-vpn/shared-roster";
-const JOIN_ROSTER_PROOF_TAG: &str = "join-proof";
-const JOIN_ROSTER_PROOF_DOMAIN: &[u8] = b"nostr-vpn/join-roster/v1";
-type HmacSha256 = Hmac<Sha256>;
+impl JoinRosterControl {
+    pub fn new(signed_roster: SignedRoster, request_secret: &str) -> Result<Self> {
+        signed_roster.verify()?;
+        if request_secret.is_empty() {
+            return Err(anyhow!("join request secret must not be empty"));
+        }
+        Ok(Self {
+            signed_roster,
+            request_secret: request_secret.to_string(),
+        })
+    }
+
+    pub fn verify_for_request(&self, request_secret: &str) -> Result<()> {
+        self.signed_roster.verify()?;
+        if request_secret.is_empty() || self.request_secret.is_empty() {
+            return Err(anyhow!("join request secret must not be empty"));
+        }
+        if self.request_secret != request_secret {
+            return Err(anyhow!("join roster targets a different join request"));
+        }
+        Ok(())
+    }
+}
+
 impl SignedRoster {
     pub fn sign(network_id: impl Into<String>, roster: NetworkRoster, keys: &Keys) -> Result<Self> {
         let event = EventBuilder::new(Kind::Custom(SIGNED_ROSTER_KIND), "")
@@ -40,48 +74,6 @@ impl SignedRoster {
             .map_err(|error| anyhow!("failed to sign roster event: {error}"))?;
         let signed = Self { event };
         signed.verify()?;
-        Ok(signed)
-    }
-
-    pub fn sign_for_join(
-        network_id: impl Into<String>,
-        roster: NetworkRoster,
-        keys: &Keys,
-        request_pubkey: &str,
-        device_pubkey: &str,
-        request_secret: &str,
-    ) -> Result<Self> {
-        if request_secret.is_empty() {
-            return Err(anyhow!("join request secret must not be empty"));
-        }
-        let network_id = network_id.into();
-        let request_pubkey = normalize_roster_pubkey(request_pubkey, "join request")?;
-        let device_pubkey = normalize_roster_pubkey(device_pubkey, "join device")?;
-        let signer_pubkey = keys.public_key().to_hex();
-        let mut tags = signed_roster_tags(&network_id, &roster)?;
-        let proof = join_roster_mac(
-            request_secret.as_bytes(),
-            &request_pubkey,
-            &device_pubkey,
-            &signer_pubkey,
-            roster.signed_at,
-            &tags,
-        )
-        .finalize()
-        .into_bytes();
-        tags.push(roster_tag(&[
-            JOIN_ROSTER_PROOF_TAG,
-            &request_pubkey,
-            &device_pubkey,
-            &hex::encode(proof),
-        ])?);
-        let event = EventBuilder::new(Kind::Custom(SIGNED_ROSTER_KIND), "")
-            .tags(tags)
-            .custom_created_at(Timestamp::from(roster.signed_at))
-            .sign_with_keys(keys)
-            .map_err(|error| anyhow!("failed to sign join roster event: {error}"))?;
-        let signed = Self { event };
-        signed.verify_join_request(&request_pubkey, &device_pubkey, request_secret)?;
         Ok(signed)
     }
 
@@ -105,59 +97,6 @@ impl SignedRoster {
             .verify()
             .map_err(|error| anyhow!("invalid roster event signature: {error}"))?;
         let _ = self.to_network_roster()?;
-        Ok(())
-    }
-
-    pub fn verify_join_request(
-        &self,
-        request_pubkey: &str,
-        device_pubkey: &str,
-        request_secret: &str,
-    ) -> Result<()> {
-        self.verify()?;
-        if request_secret.is_empty() {
-            return Err(anyhow!("join request secret must not be empty"));
-        }
-        let expected_request = normalize_roster_pubkey(request_pubkey, "join request")?;
-        let expected_device = normalize_roster_pubkey(device_pubkey, "join device")?;
-        let mut proof_tag = None;
-        for tag in self.event.tags.iter() {
-            let parts = tag.as_slice();
-            if parts.first().map(String::as_str) != Some(JOIN_ROSTER_PROOF_TAG) {
-                continue;
-            }
-            if proof_tag.replace(parts).is_some() {
-                return Err(anyhow!("signed join roster has duplicate proof tags"));
-            }
-        }
-        let parts = proof_tag.ok_or_else(|| anyhow!("signed join roster has no request proof"))?;
-        if parts.len() != 4 {
-            return Err(anyhow!("signed join roster has malformed request proof"));
-        }
-        let request = normalize_roster_pubkey(&parts[1], "join request")?;
-        let device = normalize_roster_pubkey(&parts[2], "join device")?;
-        if request != expected_request || device != expected_device {
-            return Err(anyhow!(
-                "signed join roster targets a different join request"
-            ));
-        }
-        let supplied = hex::decode(&parts[3])
-            .map_err(|_| anyhow!("signed join roster has malformed request proof"))?;
-        if supplied.len() != 32 {
-            return Err(anyhow!("signed join roster has malformed request proof"));
-        }
-        let roster = self.roster()?;
-        let canonical_tags = signed_roster_tags(&self.network_id()?, &roster)?;
-        join_roster_mac(
-            request_secret.as_bytes(),
-            &expected_request,
-            &expected_device,
-            &self.signer_pubkey_hex()?,
-            self.signed_at(),
-            &canonical_tags,
-        )
-        .verify_slice(&supplied)
-        .map_err(|_| anyhow!("signed join roster request proof is invalid"))?;
         Ok(())
     }
 
@@ -188,36 +127,6 @@ impl SignedRoster {
     fn to_network_roster(&self) -> Result<(String, NetworkRoster)> {
         signed_roster_from_tags(self.event.tags.as_slice(), self.event.created_at.as_secs())
     }
-}
-
-fn join_roster_mac(
-    request_secret: &[u8],
-    request_pubkey: &str,
-    device_pubkey: &str,
-    signer_pubkey: &str,
-    signed_at: u64,
-    roster_tags: &[Tag],
-) -> HmacSha256 {
-    let mut mac = HmacSha256::new_from_slice(request_secret)
-        .expect("HMAC-SHA256 accepts request secrets of any size");
-    update_join_proof_field(&mut mac, JOIN_ROSTER_PROOF_DOMAIN);
-    update_join_proof_field(&mut mac, request_pubkey.as_bytes());
-    update_join_proof_field(&mut mac, device_pubkey.as_bytes());
-    update_join_proof_field(&mut mac, signer_pubkey.as_bytes());
-    update_join_proof_field(&mut mac, &signed_at.to_be_bytes());
-    update_join_proof_field(&mut mac, &(roster_tags.len() as u64).to_be_bytes());
-    for tag in roster_tags {
-        update_join_proof_field(&mut mac, &(tag.as_slice().len() as u64).to_be_bytes());
-        for part in tag.as_slice() {
-            update_join_proof_field(&mut mac, part.as_bytes());
-        }
-    }
-    mac
-}
-
-fn update_join_proof_field(mac: &mut HmacSha256, value: &[u8]) {
-    mac.update(&(value.len() as u64).to_be_bytes());
-    mac.update(value);
 }
 
 fn signed_roster_tags(network_id: &str, roster: &NetworkRoster) -> Result<Vec<Tag>> {
@@ -421,6 +330,9 @@ pub enum FipsControlFrame {
         requested_at: u64,
         request: MeshJoinRequest,
     },
+    JoinRoster {
+        control: Box<JoinRosterControl>,
+    },
     Roster {
         network_id: String,
         roster: NetworkRoster,
@@ -591,6 +503,12 @@ pub fn signed_roster_control_frame(signed_roster: SignedRoster) -> FipsControlFr
         network_id,
         roster,
         signed_roster: Some(Box::new(signed_roster)),
+    }
+}
+
+pub fn join_roster_control_frame(control: JoinRosterControl) -> FipsControlFrame {
+    FipsControlFrame::JoinRoster {
+        control: Box::new(control),
     }
 }
 

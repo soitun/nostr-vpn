@@ -292,7 +292,7 @@
 
         assert!(admin.last_error.is_empty(), "{}", admin.last_error);
         assert_eq!(admin.queued_join_rosters.len(), 1);
-        let signed_roster = &admin.queued_join_rosters[0];
+        let signed_roster = &admin.queued_join_rosters[0].signed_roster;
         signed_roster.verify().expect("verify queued roster");
         let roster = signed_roster.roster().expect("decode queued roster");
         assert_eq!(signed_roster.network_id().unwrap(), "8d4f34f5425bc50e");

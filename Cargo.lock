@@ -3747,7 +3747,6 @@ dependencies = [
  "hashtree-updater",
  "hex",
  "hickory-proto",
- "hmac",
  "hostname",
  "keyring-core",
  "libc",

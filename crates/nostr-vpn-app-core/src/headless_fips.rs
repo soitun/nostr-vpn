@@ -10,7 +10,7 @@ use fips_endpoint::{
 };
 use nostr_sdk::prelude::{Keys, PublicKey, ToBech32};
 use nostr_vpn_core::config::AppConfig;
-use nostr_vpn_core::fips_control::signed_roster_control_frame;
+use nostr_vpn_core::fips_control::join_roster_control_frame;
 use nostr_vpn_core::fips_control_tcp::FipsControlTcpRuntime;
 use nostr_vpn_core::join_delivery::load_join_rosters;
 use tokio::runtime::{Builder as RuntimeBuilder, Runtime};
@@ -134,7 +134,7 @@ impl HeadlessJoinRosterRuntime {
                 .context("failed to encode join roster delivery peer")?;
             let remote = PeerIdentity::from_npub(&recipient_npub)
                 .context("invalid join roster delivery peer")?;
-            let frame = signed_roster_control_frame(queued.signed_roster);
+            let frame = join_roster_control_frame(queued.join_roster);
             self.runtime.block_on(control.send(remote, &frame))?;
             fs::remove_file(&path)
                 .with_context(|| format!("failed to remove {}", path.display()))?;

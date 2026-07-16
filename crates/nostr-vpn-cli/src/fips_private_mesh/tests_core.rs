@@ -48,7 +48,8 @@
         AppConfig, InternetSource, PendingOutboundJoinRequest, derive_mesh_tunnel_ip,
     };
     use nostr_vpn_core::fips_control::{
-        FipsControlFrame, NetworkRoster, PeerEndpointHint, encode_fips_control_frame,
+        FipsControlFrame, JoinRosterControl, NetworkRoster, PeerEndpointHint, SignedRoster,
+        encode_fips_control_frame,
     };
     use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
     use nostr_vpn_core::join_requests::MeshJoinRequest;

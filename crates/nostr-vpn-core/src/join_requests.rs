@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::config::{
     AppConfig, InternetSource, normalize_nostr_pubkey, normalize_runtime_network_id,
 };
-use crate::fips_control::SignedRoster;
+use crate::fips_control::{JoinRosterControl, SignedRoster};
 use crate::identity_bridge::{
     CreateNostrIdentityDeviceApprovalRequestOptions, NostrIdentityDeviceApprovalRequest,
     create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_bootstrap,
@@ -144,7 +144,7 @@ impl AppConfig {
 
     pub fn apply_nostr_join_roster(
         &mut self,
-        signed_roster: &SignedRoster,
+        join_control: &JoinRosterControl,
         now: u64,
     ) -> Result<Option<AppliedNostrJoinRoster>> {
         let Some(pending) = self.pending_nostr_join_request.as_ref() else {
@@ -152,11 +152,8 @@ impl AppConfig {
         };
         let own_pubkey = self.own_nostr_pubkey_hex()?;
         pending.validate_for_device(&own_pubkey)?;
-        signed_roster.verify_join_request(
-            &pending.request.request_pubkey,
-            &pending.request.device_app_key_pubkey,
-            &pending.request.request_secret,
-        )?;
+        join_control.verify_for_request(&pending.request.request_secret)?;
+        let signed_roster = &join_control.signed_roster;
         validate_join_roster_freshness(pending, signed_roster.signed_at(), now)?;
 
         let roster = signed_roster.roster()?;

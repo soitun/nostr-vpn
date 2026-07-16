@@ -44,6 +44,44 @@ fn apply_mobile_roster(
     MobileTunnelConfig::from_app_with_config_path(&app, config_path).map(Some)
 }
 
+fn apply_mobile_join_roster(
+    app_config: &Arc<RwLock<AppConfig>>,
+    app_config_dirty: &AtomicBool,
+    config_path: Option<&Path>,
+    join_roster: &JoinRosterControl,
+) -> Result<Option<MobileTunnelConfig>> {
+    let mut app = app_config
+        .write()
+        .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+    app.ensure_defaults();
+    let Some(_applied) = app.apply_nostr_join_roster(join_roster, unix_timestamp())? else {
+        return Ok(None);
+    };
+    if let Some(config_path) = config_path
+        && let Err(error) = upsert_signed_roster(
+            &signed_rosters_file_path(config_path),
+            join_roster.signed_roster.clone(),
+        )
+    {
+        mobile_debug_log(format!(
+            "mobile: join roster saved in config but artifact save failed: {error:#}"
+        ));
+        tracing::warn!(?error, "mobile: join roster artifact save failed");
+    }
+    maybe_autoconfigure_node(&mut app);
+    if let Some(config_path) = config_path
+        && let Err(error) = app.save(config_path)
+    {
+        mobile_debug_log(format!(
+            "mobile: join roster applied in memory but config save failed: {error:#}"
+        ));
+        tracing::warn!(?error, "mobile: join roster applied in memory but config save failed");
+    }
+    app_config_dirty.store(true, Ordering::Relaxed);
+    let config_path = config_path.unwrap_or_else(|| Path::new(""));
+    MobileTunnelConfig::from_app_with_config_path(&app, config_path).map(Some)
+}
+
 fn mobile_signed_roster_is_current_for_app(
     app: &AppConfig,
     network_id: &str,

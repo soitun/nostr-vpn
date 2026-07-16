@@ -21,6 +21,12 @@ impl FipsPrivateMeshRuntime {
                 requested_at,
                 request,
             })),
+            FipsControlFrame::JoinRoster { control } => {
+                Ok(Some(FipsPrivateMeshEvent::JoinRoster {
+                    sender_pubkey: source_pubkey,
+                    control,
+                }))
+            }
             FipsControlFrame::Roster { signed_roster, .. } => {
                 Ok(Some(FipsPrivateMeshEvent::Roster {
                     sender_pubkey: source_pubkey,

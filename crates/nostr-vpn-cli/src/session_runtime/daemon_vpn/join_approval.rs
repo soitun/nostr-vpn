@@ -33,7 +33,7 @@ pub(super) async fn send_queued_join_rosters_once(
                 .as_deref()
                 .unwrap_or(&queued.recipient_npub);
             runtime
-                .send_roster(delivery_peer, queued.signed_roster)
+                .send_join_roster(delivery_peer, queued.join_roster)
                 .await
         };
 

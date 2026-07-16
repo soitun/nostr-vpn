@@ -419,7 +419,7 @@ impl NativeAppRuntime {
         self.queue_join_roster_delivery(
             bootstrap,
             fips_route_npub,
-            &prepared.signed_roster,
+            &prepared.join_roster,
         )?;
         if !self.vpn_enabled {
             self.connect_vpn()?;
@@ -433,9 +433,9 @@ impl NativeAppRuntime {
         &mut self,
         _bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
         _fips_route_npub: Option<&str>,
-        signed_roster: &nostr_vpn_core::fips_control::SignedRoster,
+        join_roster: &nostr_vpn_core::fips_control::JoinRosterControl,
     ) -> Result<()> {
-        self.queued_join_rosters.push(signed_roster.clone());
+        self.queued_join_rosters.push(join_roster.clone());
         Ok(())
     }
 
@@ -444,13 +444,13 @@ impl NativeAppRuntime {
         &self,
         bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
         fips_route_npub: Option<&str>,
-        signed_roster: &nostr_vpn_core::fips_control::SignedRoster,
+        join_roster: &nostr_vpn_core::fips_control::JoinRosterControl,
     ) -> Result<()> {
         nostr_vpn_core::join_delivery::queue_join_roster(
             &self.config_path,
             &bootstrap.device_app_key_npub,
             fips_route_npub,
-            signed_roster,
+            join_roster,
         )?;
         Ok(())
     }

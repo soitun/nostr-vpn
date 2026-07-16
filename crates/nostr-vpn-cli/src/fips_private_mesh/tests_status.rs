@@ -509,7 +509,7 @@
     }
 
     #[test]
-    fn control_frames_from_unknown_endpoints_are_limited_to_join_requests() {
+    fn control_frames_from_unknown_endpoints_are_limited_to_first_contact_records() {
         let keys = Keys::generate();
         let unknown_pubkey = keys.public_key().to_hex();
         let unknown_npub = keys.public_key().to_bech32().expect("npub");
@@ -538,11 +538,34 @@
                 requester_node_name: "new-device".to_string(),
             },
         };
+        let admin = Keys::generate();
+        let signed_roster = SignedRoster::sign(
+            "network",
+            NetworkRoster {
+                network_name: "network".to_string(),
+                devices: vec![Keys::generate().public_key().to_hex()],
+                admins: vec![admin.public_key().to_hex()],
+                aliases: HashMap::new(),
+                signed_at: 42,
+            },
+            &admin,
+        )
+        .expect("signed roster");
+        let join_roster = FipsControlFrame::JoinRoster {
+            control: Box::new(
+                JoinRosterControl::new(signed_roster, "request-secret")
+                    .expect("join control"),
+            ),
+        };
 
         assert!(control_frame_source_pubkey(&mesh, unknown_peer, &ping).is_none());
         assert!(control_frame_source_pubkey(&mesh, unknown_peer, &roster).is_none());
         assert_eq!(
             control_frame_source_pubkey(&mesh, unknown_peer, &join_request),
+            Some(unknown_pubkey.clone())
+        );
+        assert_eq!(
+            control_frame_source_pubkey(&mesh, unknown_peer, &join_roster),
             Some(unknown_pubkey)
         );
     }
