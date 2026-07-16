@@ -151,11 +151,13 @@ struct QRCodeScannerView: NSViewRepresentable {
                     return
                 }
                 nextSession.addInput(input)
+#if compiler(>=6.2)
                 if #available(macOS 26.0, *) {
                     // QR recognition does not use Cinematic Video. AVFoundation throws an
                     // Objective-C exception if QR-only metadata is selected while this is on.
                     input.isCinematicVideoCaptureEnabled = false
                 }
+#endif
                 nextSession.addOutput(output)
                 nextSession.commitConfiguration()
                 output.setSampleBufferDelegate(self, queue: sessionQueue)

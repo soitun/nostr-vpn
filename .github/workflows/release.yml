@@ -300,6 +300,11 @@ jobs:
             echo "NVPN_ASC_AUTH_KEY_ISSUER_ID=${ASC_AUTH_KEY_ISSUER_ID}"
           } >> "${GITHUB_ENV}"
 
+      - name: Compile-check macOS 14 SDK compatibility
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_15.4.app/Contents/Developer
+        run: ./scripts/check-macos-swift-sdk-compat.sh
+
       - name: macOS service install/uninstall e2e
         env:
           NVPN_RUN_MACOS_SERVICE_E2E: '1'

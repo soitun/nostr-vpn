@@ -23,6 +23,8 @@ All notable changes to this project are documented in this file.
 - Made the native WebVM approval harness retry the complete routed event batch
   while awaiting the durable apply receipt, matching the daemon when a FIPS
   route is replaced between approval records.
+- Kept the macOS QR scanner buildable with the release workflow's Xcode 15.4
+  toolchain while retaining the macOS 26 Cinematic Video crash safeguard.
 
 ## 4.0.94 - 2026-07-16
 
