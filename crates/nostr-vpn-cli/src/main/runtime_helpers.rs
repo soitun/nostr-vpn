@@ -345,34 +345,6 @@ fn persist_shared_network_roster(
     Ok(Some(network_name))
 }
 
-fn persist_join_roster(
-    app: &mut AppConfig,
-    config_path: &Path,
-    control: &JoinRosterControl,
-    vpn_status: &mut String,
-) -> Result<Option<String>> {
-    let Some(applied) = app.apply_nostr_join_roster(control, unix_timestamp())? else {
-        return Ok(None);
-    };
-    let signed_roster = &control.signed_roster;
-    upsert_signed_roster(
-        &signed_rosters_file_path(config_path),
-        signed_roster.clone(),
-    )?;
-    maybe_autoconfigure_node(app);
-    app.save(config_path)?;
-    let network_name = app
-        .networks
-        .iter()
-        .find(|network| {
-            normalize_runtime_network_id(&network.network_id)
-                == normalize_runtime_network_id(&applied.network_id)
-        })
-        .map(|network| network.name.clone())
-        .unwrap_or(applied.network_id);
-    *vpn_status = format!("Join approved for {network_name}.");
-    Ok(Some(network_name))
-}
 fn endpoint_hint_refresh_participant(
     active_network_id: Option<&str>,
     roster_participants: &HashSet<String>,
