@@ -3,7 +3,7 @@
 #
 # Usage:
 #   ./scripts/publish.sh           # Publish all publishable crates
-#   ./scripts/publish.sh --dry-run # Verify package/publish metadata only
+#   ./scripts/publish.sh --dry-run # Verify independent crates and local dependents
 #   ./scripts/publish.sh --plan    # Print publish order
 
 set -euo pipefail
@@ -51,7 +51,6 @@ ALL_CRATES=(
 
 publish_crate() {
     local crate="$1"
-    local extra_flags="${2:-}"
     local output
 
     echo ""
@@ -59,7 +58,7 @@ publish_crate() {
     echo "Publishing: ${crate}"
     echo "=========================================="
 
-    if output=$(cargo publish -p "$crate" $DRY_RUN $ALLOW_DIRTY $extra_flags 2>&1); then
+    if output=$(cargo publish --locked -p "$crate" $DRY_RUN $ALLOW_DIRTY 2>&1); then
         echo "$output"
         echo "[ok] ${crate} published successfully"
     elif echo "$output" | grep -q "already exists"; then
@@ -73,10 +72,24 @@ publish_crate() {
     return 0
 }
 
+verify_dependent_dry_run() {
+    local crate="$1"
+
+    echo ""
+    echo "=========================================="
+    echo "Verifying unpublished dependent: ${crate}"
+    echo "=========================================="
+    if cargo package --locked -p "$crate" --list $ALLOW_DIRTY >/dev/null \
+        && cargo check --locked -p "$crate"; then
+        echo "[ok] ${crate} package contents and local dependency build verified"
+    else
+        FAILED_CRATES+=("$crate")
+    fi
+}
+
 publish_tier() {
     local tier_name="$1"
-    local dry_run_extra_flags="$2"
-    shift 2
+    shift
 
     local crates=("$@")
     local log_dir
@@ -88,11 +101,7 @@ publish_tier() {
     echo "=== ${tier_name}: ${crates[*]} ==="
 
     for crate in "${crates[@]}"; do
-        if [[ -n "$DRY_RUN" && -n "$dry_run_extra_flags" ]]; then
-            publish_crate "$crate" "$dry_run_extra_flags" >"${log_dir}/${crate}.log" 2>&1 &
-        else
-            publish_crate "$crate" >"${log_dir}/${crate}.log" 2>&1 &
-        fi
+        publish_crate "$crate" >"${log_dir}/${crate}.log" 2>&1 &
         pids+=("$!")
     done
 
@@ -135,13 +144,24 @@ fi
 echo "Publishing Nostr VPN crates to crates.io"
 cd "$REPO_DIR"
 
-publish_tier "Tier 1" "" "${TIER_1_CRATES[@]}"
-publish_tier "Tier 2" "--no-verify" "${TIER_2_CRATES[@]}"
+publish_tier "Tier 1" "${TIER_1_CRATES[@]}"
+if [[ -n "$DRY_RUN" ]]; then
+    echo "Tier 2 registry resolution is deferred until this release's Tier 1 crates are indexed."
+    for crate in "${TIER_2_CRATES[@]}"; do
+        verify_dependent_dry_run "$crate"
+    done
+else
+    publish_tier "Tier 2" "${TIER_2_CRATES[@]}"
+fi
 
 echo ""
 echo "=========================================="
 if [[ ${#FAILED_CRATES[@]} -eq 0 ]]; then
-    echo "[ok] All crates published successfully!"
+    if [[ -n "$DRY_RUN" ]]; then
+        echo "[ok] All available pre-publication checks passed!"
+    else
+        echo "[ok] All crates published successfully!"
+    fi
 else
     echo "[fail] Failed to publish: ${FAILED_CRATES[*]}"
     exit 1

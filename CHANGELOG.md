@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.95 - 2026-07-16
+
 ### Changed
 
 - Added the application-owned FIPS Nostr-relay carrier to desktop, mobile, and
