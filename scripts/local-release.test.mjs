@@ -228,6 +228,21 @@ test('Linux desktop package bundles nvpn CLI helper', () => {
   assert.match(githubRelease, /cargo build --release --locked -p nvpn/)
 })
 
+test('Linux release reclaims Docker smoke storage before host packaging', () => {
+  const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
+  const linuxJobStart = workflow.indexOf('  build-linux-app:')
+  const linuxJobEnd = workflow.indexOf('  build-windows-app:', linuxJobStart)
+  const linuxJob = workflow.slice(linuxJobStart, linuxJobEnd)
+  const smoke = linuxJob.indexOf('- name: Smoke launch Linux GUI')
+  const cleanup = linuxJob.indexOf('- name: Reclaim Linux GUI smoke storage')
+  const desktopPackage = linuxJob.indexOf('- name: Build Linux desktop package')
+
+  assert.ok(linuxJobStart >= 0 && linuxJobEnd > linuxJobStart)
+  assert.ok(smoke >= 0 && cleanup > smoke && desktopPackage > cleanup)
+  assert.match(linuxJob, /docker compose down --volumes --remove-orphans/)
+  assert.match(linuxJob, /docker system prune --all --force --volumes/)
+})
+
 test('autoDetectWindowsVmName returns the only running Windows VM', () => {
   const name = autoDetectWindowsVmName(`
 UUID                                    STATUS       IP_ADDR         NAME

@@ -381,6 +381,14 @@ jobs:
       - name: Smoke launch Linux GUI
         run: ./tools/run-linux ./scripts/e2e-smoke.sh
 
+      - name: Reclaim Linux GUI smoke storage
+        run: |
+          set -euo pipefail
+          df -h /
+          (cd linux && docker compose down --volumes --remove-orphans)
+          docker system prune --all --force --volumes
+          df -h /
+
       - name: Build Linux desktop package
         run: |
           set -euo pipefail
