@@ -598,7 +598,7 @@ jobs:
         run: |
           node scripts/render-release-notes.mjs \
             --tag "${RELEASE_TAG}" \
-            --commit "${GITHUB_SHA}" \
+            --commit "$(git rev-parse HEAD)" \
             --asset-dir artifacts \
             --asset-base-url "https://github.com/${RELEASE_REPOSITORY}/releases/download/${RELEASE_TAG}" \
             --changelog CHANGELOG.md \

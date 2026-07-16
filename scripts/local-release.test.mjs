@@ -243,6 +243,13 @@ test('Linux release reclaims Docker smoke storage before host packaging', () => 
   assert.match(linuxJob, /docker system prune --all --force --volumes/)
 })
 
+test('dispatched release notes record the checked-out tag source commit', () => {
+  const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
+
+  assert.match(workflow, /--commit "\$\(git rev-parse HEAD\)"/)
+  assert.doesNotMatch(workflow, /--commit "\$\{GITHUB_SHA\}"/)
+})
+
 test('autoDetectWindowsVmName returns the only running Windows VM', () => {
   const name = autoDetectWindowsVmName(`
 UUID                                    STATUS       IP_ADDR         NAME
