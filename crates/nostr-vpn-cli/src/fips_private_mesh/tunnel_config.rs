@@ -215,6 +215,13 @@ impl FipsPrivateTunnelConfig {
         // and configured peer hints are ambient routes, however, and must not
         // wake that transport or contend with the approval session.
         retain_enabled_peer_transport_addresses(&mut endpoint_peers, app.fips_webrtc_enabled);
+        if fips_nostr_relay_fallback_enabled(
+            app.fips_nostr_discovery_enabled,
+            app.fips_webrtc_enabled,
+            &app.nostr.relays,
+        ) {
+            add_nostr_relay_fallback_for_mesh_peers(&mut endpoint_peers, &peers);
+        }
         if !stamped_endpoint_hints_enabled {
             for peer in &mut endpoint_peers {
                 if peer.auto_reconnect {
@@ -329,6 +336,14 @@ impl FipsPrivateTunnelConfig {
             clamp_mesh_mtu_to_underlay_interface_mtu(self.mesh_mtu, underlay_interface_mtu);
     }
 
+    pub(crate) fn nostr_relay_fallback_enabled(&self) -> bool {
+        fips_nostr_relay_fallback_enabled(
+            self.nostr_discovery_enabled,
+            self.webrtc_enabled,
+            &self.nostr_relays,
+        )
+    }
+
     fn local_allowed_ips(&self) -> Vec<String> {
         let mut routes = vec![self.local_address.clone()];
         routes.extend(self.local_advertised_routes.iter().cloned());
@@ -437,6 +452,18 @@ fn tag_authenticated_transport_addr(
     }
 }
 
+async fn start_nostr_relay_fallback(
+    endpoint: &Arc<FipsEndpoint>,
+    config: &FipsPrivateTunnelConfig,
+) -> Result<Option<NostrRelayAdapter>> {
+    if !config.nostr_relay_fallback_enabled() {
+        return Ok(None);
+    }
+    NostrRelayAdapter::start(Arc::clone(endpoint), &config.nostr_relays)
+        .await
+        .map_err(anyhow::Error::msg)
+}
+
 fn fips_tunnel_requires_endpoint_restart(
     current: &FipsPrivateTunnelConfig,
     next: &FipsPrivateTunnelConfig,
@@ -455,6 +482,7 @@ fn fips_tunnel_requires_endpoint_restart(
         || current.nostr_pubsub != next.nostr_pubsub
         || current.control_pubsub_store_path != next.control_pubsub_store_path
         || current.nostr_discovery_enabled != next.nostr_discovery_enabled
+        || current.webrtc_enabled != next.webrtc_enabled
         || current.share_local_candidates != next.share_local_candidates
         || current.nostr_discovery_policy != next.nostr_discovery_policy
         || current.open_discovery_max_pending != next.open_discovery_max_pending
@@ -481,6 +509,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     mesh: Arc<FipsPrivateMeshRuntime>,
     control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
     join_approval_ack: Option<DirectJoinApprovalAckRuntime>,
+    nostr_relay_adapter: Option<NostrRelayAdapter>,
     secure_dns: Option<crate::secure_dns_runtime::SecureDnsRuntime>,
     manages_secure_dns: bool,
     config: FipsPrivateTunnelConfig,

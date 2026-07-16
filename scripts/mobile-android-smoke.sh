@@ -10,12 +10,13 @@ load_release_env "$ROOT"
 load_mobile_env "$ROOT"
 resolve_shared_build_metadata "$ROOT"
 PACKAGE_NAME="${NVPN_ANDROID_PACKAGE:-${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}}"
+ACTION_PACKAGE_NAME="${NVPN_ANDROID_ACTION_PACKAGE:-${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}}"
 MAIN_ACTIVITY="${NVPN_ANDROID_ACTIVITY:-$PACKAGE_NAME/org.nostrvpn.app.MainActivity}"
-DEBUG_ACTION_EXTRA="${NVPN_ANDROID_DEBUG_ACTION_EXTRA:-$PACKAGE_NAME.DEBUG_ACTION}"
-DEBUG_INVITE_EXTRA="${NVPN_ANDROID_DEBUG_INVITE_EXTRA:-$PACKAGE_NAME.DEBUG_INVITE}"
-DEBUG_EXIT_NODE_EXTRA="${NVPN_ANDROID_DEBUG_EXIT_NODE_EXTRA:-$PACKAGE_NAME.DEBUG_EXIT_NODE}"
-DEBUG_NETWORK_NAME_EXTRA="${NVPN_ANDROID_DEBUG_NETWORK_NAME_EXTRA:-$PACKAGE_NAME.DEBUG_NETWORK_NAME}"
-DEBUG_WIREGUARD_CONFIG_BASE64_EXTRA="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_BASE64_EXTRA:-$PACKAGE_NAME.DEBUG_WIREGUARD_CONFIG_BASE64}"
+DEBUG_ACTION_EXTRA="${NVPN_ANDROID_DEBUG_ACTION_EXTRA:-$ACTION_PACKAGE_NAME.DEBUG_ACTION}"
+DEBUG_INVITE_EXTRA="${NVPN_ANDROID_DEBUG_INVITE_EXTRA:-$ACTION_PACKAGE_NAME.DEBUG_INVITE}"
+DEBUG_EXIT_NODE_EXTRA="${NVPN_ANDROID_DEBUG_EXIT_NODE_EXTRA:-$ACTION_PACKAGE_NAME.DEBUG_EXIT_NODE}"
+DEBUG_NETWORK_NAME_EXTRA="${NVPN_ANDROID_DEBUG_NETWORK_NAME_EXTRA:-$ACTION_PACKAGE_NAME.DEBUG_NETWORK_NAME}"
+DEBUG_WIREGUARD_CONFIG_BASE64_EXTRA="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_BASE64_EXTRA:-$ACTION_PACKAGE_NAME.DEBUG_WIREGUARD_CONFIG_BASE64}"
 APK_PATH="${NVPN_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/debug/app-debug.apk}"
 VPN_START_WAIT_SECS="${NVPN_ANDROID_VPN_START_WAIT_SECS:-15}"
 VPN_STOP_WAIT_SECS="${NVPN_ANDROID_VPN_STOP_WAIT_SECS:-10}"
@@ -54,6 +55,7 @@ create_network="${NVPN_ANDROID_DEBUG_CREATE_NETWORK:-0}"
 accept_vpn_dialog="${NVPN_ANDROID_ACCEPT_VPN_DIALOG:-0}"
 vpn_cycle=0
 serial="${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
+PACKAGE_UID=""
 
 usage() {
   cat >&2 <<'EOF'
@@ -203,7 +205,26 @@ select_serial() {
     printf '%s\n' "$serial"
     return
   fi
-  "$adb" devices | awk 'NR > 1 && $2 == "device" { print $1; exit }'
+  "$adb" devices | awk '
+    NR > 1 && $2 == "device" {
+      if (first == "") first = $1
+      if ($1 ~ /^emulator-/) {
+        print $1
+        selected = 1
+        exit
+      }
+    }
+    END { if (!selected && first != "") print first }
+  '
+}
+
+resolve_package_uid() {
+  local adb="$1"
+  local target_serial="$2"
+  "$adb" -s "$target_serial" shell cmd package list packages -U "$PACKAGE_NAME" \
+    | tr -d '\r' \
+    | awk -F '[: ]+' -v package="$PACKAGE_NAME" \
+      '$1 == "package" && $2 == package && $3 == "uid" { print $4; exit }'
 }
 
 vpn_service_running() {
@@ -228,7 +249,8 @@ vpn_service_running() {
 vpn_network_active() {
   local connectivity
   connectivity="$("$ADB" -s "$serial" shell dumpsys connectivity 2>/dev/null | tr -d '\r')" || return 1
-  grep -Eq 'NetworkAgentInfo\{.*ni\{VPN CONNECTED' <<<"$connectivity"
+  grep -F 'ni{VPN CONNECTED' <<<"$connectivity" \
+    | grep -Fq "OwnerUid: $PACKAGE_UID"
 }
 
 vpn_active() {
@@ -1294,6 +1316,11 @@ fi
 
 "$ADB" -s "$serial" wait-for-device
 "$ADB" -s "$serial" install -r "$APK_PATH"
+PACKAGE_UID="$(resolve_package_uid "$ADB" "$serial")"
+if [[ -z "$PACKAGE_UID" ]]; then
+  echo "Could not resolve Android uid for installed package $PACKAGE_NAME" >&2
+  exit 1
+fi
 
 if [[ "$clear_state" -eq 1 ]]; then
   "$ADB" -s "$serial" shell pm clear "$PACKAGE_NAME" >/dev/null

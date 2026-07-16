@@ -552,38 +552,26 @@ fn persist_mobile_peer_hints(
 
 async fn refresh_mobile_endpoint_peers(
     endpoint: &FipsEndpoint,
-    mesh_peers: &Arc<RwLock<Vec<FipsMeshPeerConfig>>>,
-    peer_hints: &Arc<RwLock<HashMap<String, Vec<FipsPeerAddressHint>>>>,
     config_state: &Arc<RwLock<MobileTunnelConfig>>,
 ) -> Result<()> {
-    let peers = mesh_peers
+    let config = config_state
         .read()
-        .map_err(|_| anyhow!("mobile FIPS peer lock poisoned"))?
+        .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
         .clone();
-    let hints = peer_hints
-        .read()
-        .map_err(|_| anyhow!("mobile FIPS peer hint lock poisoned"))?
-        .clone();
-    let (bootstrap, include_non_roster_transit) = {
-        let config = config_state
-            .read()
-            .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
-        let join_request_pending = !config.pending_join_request_recipient.trim().is_empty()
-            && config.pending_join_requested_at != 0;
-        (
-            config.bootstrap_peers.clone(),
-            config.connect_to_non_roster_fips_peers
-                || config.join_requests_enabled
-                || join_request_pending,
-        )
-    };
+    let include_non_roster_transit = config.connect_to_non_roster_fips_peers
+        || config.join_requests_enabled
+        || mobile_join_request_pending(&config);
+    let mut peers = fips_peer_configs_from_mesh(
+        &config.peers,
+        &config.peer_hints,
+        &config.bootstrap_peers,
+        include_non_roster_transit,
+    );
+    if mobile_nostr_relay_fallback_enabled(&config) {
+        add_mobile_nostr_relay_fallback_peers(&mut peers, &config);
+    }
     endpoint
-        .update_peers(fips_peer_configs_from_mesh(
-            &peers,
-            &hints,
-            &bootstrap,
-            include_non_roster_transit,
-        ))
+        .update_peers(peers)
         .await
         .context("mobile FIPS peer update failed")?;
     Ok(())

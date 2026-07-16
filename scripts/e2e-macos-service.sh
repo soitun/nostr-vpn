@@ -55,8 +55,19 @@ fi
 SUFFIX="e2e-$(date +%s)-$$"
 TEST_DIR="$(mktemp -d -t nvpn-svc-e2e)"
 TEST_CONFIG="$TEST_DIR/$SUFFIX.toml"
+TEST_CONFIG_REAL="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$TEST_CONFIG")"
 PEER_CONFIG="$TEST_DIR/$SUFFIX-peer.toml"
 TEST_PORT="$((52000 + $$ % 1000))"
+UNDERLAY_IFACE="$(route -n get default 2>/dev/null | awk '/interface:/{print $2; exit}' || true)"
+if [ -z "$UNDERLAY_IFACE" ]; then
+  echo "FAIL: could not resolve the macOS runner's default underlay interface" >&2
+  exit 1
+fi
+UNDERLAY_IP="$(ipconfig getifaddr "$UNDERLAY_IFACE" 2>/dev/null || true)"
+if [ -z "$UNDERLAY_IP" ]; then
+  echo "FAIL: could not resolve the macOS runner's default underlay IPv4 address" >&2
+  exit 1
+fi
 SERVICE_LABEL="to.nostrvpn.nvpn.$(printf '%s' "$TEST_DIR/$SUFFIX" \
   | sed -e 's:/:_:g' -e 's:^_*::' -e 's:^Users_:u_:' )"
 
@@ -74,9 +85,8 @@ peer_npub="$(sed -n 's/^public_key = "\([^"]*\)"/\1/p' "$PEER_CONFIG" | head -1)
 test -n "$own_npub" && test -n "$peer_npub"
 "$NVPN_BIN" set --config "$TEST_CONFIG" \
   --participant "$own_npub" --participant "$peer_npub" \
-  --network-id macos-idle-cpu \
-  --endpoint "127.0.0.1:$TEST_PORT" --listen-port "$TEST_PORT" \
-  --fips-peer-endpoint "$peer_npub=127.0.0.1:$((TEST_PORT + 1))" \
+  --endpoint "$UNDERLAY_IP:$TEST_PORT" --listen-port "$TEST_PORT" \
+  --fips-peer-endpoint "$peer_npub=$UNDERLAY_IP:$((TEST_PORT + 1))" \
   --fips-advertise-endpoint true \
   --fips-nostr-discovery-enabled false --fips-bootstrap-enabled false >/dev/null
 
@@ -113,10 +123,15 @@ ok = s.get("supported") and s.get("installed") and s.get("loaded") and s.get("ru
 print(p if ok else "")
 ')"
 daemon_binary="$(printf '%s' "$service_json" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("binary_path") or "")')"
-daemon_command="$(ps -p "$daemon_pid" -o command= 2>/dev/null || true)"
+daemon_command="$(ps -ww -p "$daemon_pid" -o command= 2>/dev/null || true)"
 case "$daemon_command" in
-  "$daemon_binary daemon --service --config $TEST_CONFIG"*) ;;
-  *) echo "FAIL: service PID no longer matches the isolated nvpn daemon" >&2; exit 1 ;;
+  "$daemon_binary daemon --service --config $TEST_CONFIG_REAL"*) ;;
+  *)
+    echo "FAIL: service PID no longer matches the isolated nvpn daemon" >&2
+    echo "expected prefix: $daemon_binary daemon --service --config $TEST_CONFIG_REAL" >&2
+    echo "observed: $daemon_command" >&2
+    exit 1
+    ;;
 esac
 
 "$ROOT/scripts/idle-cpu-gate.py" host-pid \

@@ -1,3 +1,18 @@
+/// Whether an embedded endpoint can use the application-owned Nostr relay
+/// carrier as a last-resort path. The carrier exists to bootstrap a WebRTC
+/// upgrade, so keep the three prerequisites coupled.
+pub fn fips_nostr_relay_fallback_enabled(
+    nostr_discovery_enabled: bool,
+    webrtc_enabled: bool,
+    relays: &[String],
+) -> bool {
+    nostr_discovery_enabled
+        && webrtc_enabled
+        && relays.iter().any(|relay| !relay.trim().is_empty())
+}
+
+pub const FIPS_NOSTR_RELAY_FALLBACK_PRIORITY: u8 = 250;
+
 impl AppConfig {
     pub fn mesh_members_pubkeys(&self) -> Vec<String> {
         let mut members = self.participant_pubkeys_hex();

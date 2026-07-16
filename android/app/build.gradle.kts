@@ -19,6 +19,8 @@ val hasReleaseSigning =
         releaseKeyPassword.isPresent
 val buildGitSha = providers.environmentVariable("NVPN_BUILD_GIT_SHA").orElse("").get()
 val buildTimestampUtc = providers.environmentVariable("NVPN_BUILD_TIMESTAMP_UTC").orElse("").get()
+val androidPackageName =
+    providers.environmentVariable("NVPN_ANDROID_PACKAGE").orElse("fi.siriusbusiness.nvpn").get()
 
 fun buildConfigString(value: String): String =
     "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
@@ -28,11 +30,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "fi.siriusbusiness.nvpn"
+        applicationId = androidPackageName
         minSdk = 26
         targetSdk = 36
-        versionCode = 40092
-        versionName = "4.0.92"
+        versionCode = 40094
+        versionName = "4.0.94"
         buildConfigField("String", "NVPN_BUILD_GIT_SHA", buildConfigString(buildGitSha))
         buildConfigField("String", "NVPN_BUILD_TIMESTAMP_UTC", buildConfigString(buildTimestampUtc))
 

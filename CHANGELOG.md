@@ -4,11 +4,64 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Added the application-owned FIPS Nostr-relay carrier to desktop, mobile, and
+  headless endpoints as a priority-250 fallback for explicit roster and
+  approval peers. Direct UDP, TCP, and WebRTC links remain application-owned
+  and independently active.
+
+### Fixed
+
+- Restored the Windows all-target build by correctly scoping Unix-only tests
+  and helpers.
+
+## 4.0.94 - 2026-07-16
+
+### Changed
+
+- Replaced Nostr VPN's private reliable record carrier and Inv/WANT wrappers
+  with the shared `nostr-pubsub-fips` TCP/FIPS driver while preserving the
+  `nvpn.control.pubsub/1` service, 56 KiB event bound, application-owned UDP
+  roster links, standalone operation, and bounded reconnect replay.
+- Updated desktop, mobile, Linux, and WebRTC configuration to exact published
+  FIPS Core and Endpoint 0.4.1 and Nostr identity storage 0.4.0. Authenticated
+  FIPS sessions now carry link negotiation without the removed direct-message
+  and signaling-relay fields, and WebRTC reconnect tolerates individually
+  unavailable mDNS candidates.
+- Added a two-process product gate that moves roster traffic in both directions
+  over explicitly configured UDP links while a signed control event traverses
+  the shared TCP/FIPS pubsub service.
+
+### Fixed
+
+- Treat an authenticated FIPS link-id change as a pubsub stream reconnect, so
+  cached control events replay after a peer process or endpoint restarts.
+- Fail closed on peer-policy errors instead of converting policy failures into
+  unknown-but-eligible peers, while explicit unknown peers remain eligible
+  under the default shared reputation policy.
+
+## 4.0.93 - 2026-07-14
+
+### Changed
+
+- Control-event pubsub now carries bounded framed records over TCP/FIPS 0.1.0.
+  Persistent peer streams provide ordered retransmission, replacing the local
+  three-attempt `Inventory`/`Want` datagram retry layer while reconnects
+  resubscribe the cached update root.
+- Kept tunnel packets, liveness probes, and routed WebVM approval forwarding as
+  FIPS datagrams to avoid head-of-line blocking and preserve payload routing.
+  Join-approval and paid-route acknowledgments remain application receipts
+  because they prove applied configuration and committed payment state, not
+  transport delivery.
+
 ### Fixed
 
 - Native wallets no longer show placeholder balances or routine exchange-rate
   refresh labels, render Lightning top-up invoices as QR codes, and
   automatically claim paid invoices while the receive flow is open.
+- WebVM's approval wait helper now stays within the strict Clippy argument
+  limit used by release CI.
 
 ## 4.0.92 - 2026-07-13
 

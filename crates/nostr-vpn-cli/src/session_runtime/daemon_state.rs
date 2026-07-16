@@ -14,16 +14,52 @@ pub(crate) struct DaemonRuntimeStateInput<'a> {
     pub(crate) port_mapping: &'a PortMappingStatus,
 }
 
+type OpenFileDescriptorTypes = std::collections::BTreeMap<String, u64>;
+type OpenFileDescriptorSnapshot = (u64, OpenFileDescriptorTypes);
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn increment_fd_type(types: &mut OpenFileDescriptorTypes, fd_type: &str) {
+    *types.entry(fd_type.to_string()).or_default() += 1;
+}
+
 #[cfg(target_os = "linux")]
-fn open_file_descriptor_count() -> Option<u64> {
-    Some(fs::read_dir("/proc/self/fd").ok()?.count() as u64)
+fn open_file_descriptor_snapshot() -> Option<OpenFileDescriptorSnapshot> {
+    let entries = fs::read_dir("/proc/self/fd").ok()?;
+    let mut count = 0_u64;
+    let mut types = std::collections::BTreeMap::new();
+    for entry in entries.flatten() {
+        count += 1;
+        let fd_type = match fs::read_link(entry.path()) {
+            Ok(target) => {
+                let target = target.to_string_lossy();
+                if target.starts_with("socket:[") {
+                    "socket"
+                } else if target.starts_with("pipe:[") {
+                    "pipe"
+                } else if target.starts_with("anon_inode:[eventpoll]")
+                    || target.starts_with("anon_inode:[eventfd]")
+                {
+                    "event"
+                } else if target.starts_with("anon_inode:") {
+                    "other"
+                } else {
+                    "file"
+                }
+            }
+            Err(_) => "other",
+        };
+        increment_fd_type(&mut types, fd_type);
+    }
+    Some((count, types))
 }
 
 #[cfg(target_os = "macos")]
-fn open_file_descriptor_count() -> Option<u64> {
+fn open_file_descriptor_snapshot() -> Option<OpenFileDescriptorSnapshot> {
     let entry_size = std::mem::size_of::<libc::proc_fdinfo>();
     let capacity = usize::try_from(unsafe { libc::getdtablesize() }).ok()?;
-    let buffer_size = capacity.checked_mul(entry_size)?.min(i32::MAX as usize);
+    let buffer_size = capacity
+        .checked_mul(entry_size)
+        .map(|size| size.min(i32::MAX as usize))?;
     let mut buffer = vec![0_u8; buffer_size];
     let bytes = unsafe {
         libc::proc_pidinfo(
@@ -34,11 +70,32 @@ fn open_file_descriptor_count() -> Option<u64> {
             buffer_size as i32,
         )
     };
-    (bytes >= 0).then_some(bytes as u64 / entry_size as u64)
+    (bytes >= 0).then_some(())?;
+    let count = bytes as usize / entry_size;
+    let mut types = std::collections::BTreeMap::new();
+    for index in 0..count {
+        let info = unsafe {
+            std::ptr::read_unaligned(
+                buffer
+                    .as_ptr()
+                    .add(index * entry_size)
+                    .cast::<libc::proc_fdinfo>(),
+            )
+        };
+        let fd_type = match info.proc_fdtype as i32 {
+            libc::PROX_FDTYPE_SOCKET => "socket",
+            libc::PROX_FDTYPE_PIPE => "pipe",
+            libc::PROX_FDTYPE_VNODE => "file",
+            libc::PROX_FDTYPE_KQUEUE | libc::PROX_FDTYPE_FSEVENTS => "event",
+            _ => "other",
+        };
+        increment_fd_type(&mut types, fd_type);
+    }
+    Some((count as u64, types))
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
-fn open_file_descriptor_count() -> Option<u64> {
+fn open_file_descriptor_snapshot() -> Option<OpenFileDescriptorSnapshot> {
     None
 }
 
@@ -352,9 +409,12 @@ pub(crate) fn build_daemon_runtime_state(input: DaemonRuntimeStateInput<'_>) -> 
     };
     let mesh_ready = vpn_active;
     let health = build_health_issues(app, vpn_active, mesh_ready, network, port_mapping, &peers);
+    let (open_file_descriptor_count, open_file_descriptor_types) =
+        open_file_descriptor_snapshot().unzip();
     DaemonRuntimeState {
         updated_at: now,
-        open_file_descriptor_count: open_file_descriptor_count(),
+        open_file_descriptor_count,
+        open_file_descriptor_types,
         open_file_descriptor_soft_limit: open_file_descriptor_soft_limit(),
         binary_version: PRODUCT_VERSION.to_string(),
         fips_core_version: fips_core_build_version(),
@@ -457,9 +517,12 @@ pub(crate) fn disconnected_daemon_runtime_state(
     expected_peers: usize,
     network: &NetworkSummary,
 ) -> DaemonRuntimeState {
+    let (open_file_descriptor_count, open_file_descriptor_types) =
+        open_file_descriptor_snapshot().unzip();
     DaemonRuntimeState {
         updated_at: unix_timestamp(),
-        open_file_descriptor_count: open_file_descriptor_count(),
+        open_file_descriptor_count,
+        open_file_descriptor_types,
         open_file_descriptor_soft_limit: open_file_descriptor_soft_limit(),
         binary_version: PRODUCT_VERSION.to_string(),
         fips_core_version: fips_core_build_version(),

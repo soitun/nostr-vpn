@@ -37,7 +37,7 @@ assert_fails_with() {
   shift 2
   local err
   err="$(mktemp)"
-  if "$@" 2>"$err"; then
+  if ("$@") 2>"$err"; then
     cat "$err" >&2
     rm -f "$err"
     fail "$label: command unexpectedly passed"

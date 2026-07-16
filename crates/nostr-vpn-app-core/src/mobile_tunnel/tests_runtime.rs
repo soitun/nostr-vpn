@@ -78,6 +78,7 @@
     async fn shutdown_started_mobile_tunnel(started: MobileTunnelStarted) {
         let MobileTunnelStarted {
             endpoint,
+            nostr_relay_adapter,
             tasks,
             wg_upstream,
             ..
@@ -87,6 +88,9 @@
         }
         for task in tasks {
             let _ = task.await;
+        }
+        if let Some(adapter) = nostr_relay_adapter {
+            adapter.stop().await;
         }
         if let Some(wg) = wg_upstream {
             wg.shutdown().await;

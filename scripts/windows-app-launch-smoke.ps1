@@ -62,8 +62,8 @@ if ([string]::IsNullOrWhiteSpace($IdleCpuGateValue)) {
 }
 $IdleCpuGateEnabled = !(Test-NvpnFalsey $IdleCpuGateValue)
 $IdleCpuMaxPercent = Get-NvpnNumberSetting $IdleCpuMaxPercent "NVPN_WINDOWS_APP_IDLE_CPU_MAX_PERCENT" "NVPN_IDLE_CPU_MAX_PERCENT" 5
-$IdleCpuSampleSeconds = Get-NvpnNumberSetting $IdleCpuSampleSeconds "NVPN_WINDOWS_APP_IDLE_CPU_SAMPLE_SECONDS" "NVPN_IDLE_CPU_SAMPLE_SECONDS" 10
-$IdleCpuSettleSeconds = Get-NvpnNumberSetting $IdleCpuSettleSeconds "NVPN_WINDOWS_APP_IDLE_CPU_SETTLE_SECONDS" "NVPN_IDLE_CPU_SETTLE_SECONDS" 3
+$IdleCpuSampleSeconds = Get-NvpnNumberSetting $IdleCpuSampleSeconds "NVPN_WINDOWS_APP_IDLE_CPU_SAMPLE_SECONDS" "NVPN_IDLE_CPU_SAMPLE_SECONDS" 60
+$IdleCpuSettleSeconds = Get-NvpnNumberSetting $IdleCpuSettleSeconds "NVPN_WINDOWS_APP_IDLE_CPU_SETTLE_SECONDS" "NVPN_IDLE_CPU_SETTLE_SECONDS" 20
 
 function Stop-NostrVpnWindows {
   Get-Process -Name NostrVpn.Windows -ErrorAction SilentlyContinue |
@@ -183,6 +183,7 @@ function Invoke-IdleCpuGate {
   New-Item -ItemType Directory -Force -Path $ArtifactRoot | Out-Null
   $result | ConvertTo-Json -Depth 4 | Out-File -Encoding utf8 $IdleCpuResultPath
   if (!$ok) {
+    $result | ConvertTo-Json -Depth 4 | Write-Host
     throw ("Windows app idle CPU gate failed: {0:N3}% > {1:N3}%. Result: {2}" -f $cpuPercent, $IdleCpuMaxPercent, $IdleCpuResultPath)
   }
   Write-Host ("Windows app idle CPU ok: {0:N3}% <= {1:N3}%" -f $cpuPercent, $IdleCpuMaxPercent)

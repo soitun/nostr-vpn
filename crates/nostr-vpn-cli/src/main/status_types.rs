@@ -53,6 +53,8 @@ struct DaemonRuntimeState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     open_file_descriptor_count: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    open_file_descriptor_types: Option<std::collections::BTreeMap<String, u64>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     open_file_descriptor_soft_limit: Option<u64>,
     #[serde(default)]
     binary_version: String,

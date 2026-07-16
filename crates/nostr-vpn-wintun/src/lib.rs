@@ -1,13 +1,10 @@
-#[cfg(target_os = "windows")]
-use std::path::{Path, PathBuf};
-
-#[cfg(test)]
+#[cfg(any(target_os = "windows", test))]
 use std::path::{Path, PathBuf};
 
 #[cfg(target_os = "windows")]
-use anyhow::{Context, Result, anyhow};
+use anyhow::Context;
 
-#[cfg(test)]
+#[cfg(any(target_os = "windows", test))]
 use anyhow::{Result, anyhow};
 
 #[cfg(target_os = "windows")]

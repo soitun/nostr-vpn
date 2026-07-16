@@ -148,8 +148,6 @@ async fn handle_mobile_control_frame(
                 )?;
                 refresh_mobile_endpoint_peers(
                     control.endpoint,
-                    control.mesh_peers,
-                    control.peer_hints,
                     control.config_state,
                 )
                 .await?;
@@ -313,8 +311,6 @@ async fn apply_mobile_roster_frame(
     }
     refresh_mobile_endpoint_peers(
         control.endpoint,
-        control.mesh_peers,
-        control.peer_hints,
         control.config_state,
     )
     .await

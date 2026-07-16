@@ -1,10 +1,10 @@
 use std::collections::{HashMap, VecDeque};
 
-use nostr_pubsub::MeshPeer;
+use nostr_pubsub::{InvWantAction, InvWantCodec, InvWantMesh, InvWantWireMessage, MeshPeer};
 use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind};
 use nostr_vpn_core::control_pubsub::{
-    CONTROL_PUBSUB_PROTOCOL, ControlPubsubAction, ControlPubsubCodec, ControlPubsubMesh,
-    ControlPubsubOptions, ControlPubsubWireMessage,
+    CONTROL_PUBSUB_MAX_WIRE_BYTES, CONTROL_PUBSUB_PROTOCOL, CONTROL_PUBSUB_VERSION,
+    ControlPubsubOptions,
 };
 
 fn signed_event(kind: u16, content: &str) -> Event {
@@ -25,9 +25,18 @@ fn three_node_line_delivers_after_relay_bootstrap_is_gone() {
         ..ControlPubsubOptions::default()
     };
     let mut nodes = HashMap::from([
-        ("a".to_string(), ControlPubsubMesh::new(options.clone())),
-        ("b".to_string(), ControlPubsubMesh::new(options.clone())),
-        ("c".to_string(), ControlPubsubMesh::new(options)),
+        (
+            "a".to_string(),
+            InvWantMesh::new(options.clone().into_mesh_options()),
+        ),
+        (
+            "b".to_string(),
+            InvWantMesh::new(options.clone().into_mesh_options()),
+        ),
+        (
+            "c".to_string(),
+            InvWantMesh::new(options.into_mesh_options()),
+        ),
     ]);
     let peers = HashMap::from([
         ("a".to_string(), vec![peer("b")]),
@@ -54,7 +63,7 @@ fn three_node_line_delivers_after_relay_bootstrap_is_gone() {
 
     while let Some((sender, action)) = queue.pop_front() {
         match action {
-            ControlPubsubAction::Send { peer_id, message } => {
+            InvWantAction::Send { peer_id, message } => {
                 let next_actions = nodes
                     .get_mut(&peer_id)
                     .expect("recipient")
@@ -69,7 +78,7 @@ fn three_node_line_delivers_after_relay_bootstrap_is_gone() {
                     queue.push_back((peer_id.clone(), next));
                 }
             }
-            ControlPubsubAction::Deliver { event, .. } => {
+            InvWantAction::Deliver { event, .. } => {
                 delivered.push((sender, event.id.to_hex()));
             }
         }
@@ -88,7 +97,7 @@ fn three_node_line_delivers_after_relay_bootstrap_is_gone() {
         .expect("subscriber")
         .receive(
             "b",
-            ControlPubsubWireMessage::Frame {
+            InvWantWireMessage::Frame {
                 event_id,
                 event: Box::new(event),
             },
@@ -99,13 +108,13 @@ fn three_node_line_delivers_after_relay_bootstrap_is_gone() {
     assert!(
         duplicate
             .iter()
-            .all(|action| !matches!(action, ControlPubsubAction::Deliver { .. }))
+            .all(|action| !matches!(action, InvWantAction::Deliver { .. }))
     );
 }
 
 #[test]
 fn control_pubsub_rejects_non_control_event_kinds() {
-    let mut mesh = ControlPubsubMesh::new(ControlPubsubOptions::default());
+    let mut mesh = InvWantMesh::new(ControlPubsubOptions::default().into_mesh_options());
     let error = mesh
         .publish(signed_event(1, "ordinary note"), &[peer("peer")], 1_000)
         .expect_err("ordinary notes must not enter the nvpn control stream");
@@ -118,7 +127,7 @@ fn control_pubsub_accepts_additional_subscription_kinds() {
     for kind in [30_064, 30_078] {
         let mut options = ControlPubsubOptions::default();
         options.allowed_kinds.insert(kind);
-        let mut mesh = ControlPubsubMesh::new(options);
+        let mut mesh = InvWantMesh::new(options.into_mesh_options());
         assert_eq!(
             mesh.publish(signed_event(kind, "subscribed event"), &peers, 1_000)
                 .expect("additional subscription belongs on the control mesh")
@@ -130,7 +139,7 @@ fn control_pubsub_accepts_additional_subscription_kinds() {
 
 #[test]
 fn relay_echo_does_not_reannounce_an_event() {
-    let mut mesh = ControlPubsubMesh::new(ControlPubsubOptions::default());
+    let mut mesh = InvWantMesh::new(ControlPubsubOptions::default().into_mesh_options());
     let event = signed_event(37_195, "peer advert");
     let peers = [peer("peer")];
 
@@ -149,8 +158,12 @@ fn relay_echo_does_not_reannounce_an_event() {
 
 #[test]
 fn control_pubsub_codec_is_versioned_and_bounded() {
-    let codec = ControlPubsubCodec::default();
-    let message = ControlPubsubWireMessage::Inventory {
+    let codec = InvWantCodec::new(
+        CONTROL_PUBSUB_PROTOCOL,
+        CONTROL_PUBSUB_VERSION,
+        CONTROL_PUBSUB_MAX_WIRE_BYTES,
+    );
+    let message = InvWantWireMessage::Inventory {
         event_id: "11".repeat(32),
         event_kind: 37_195,
         payload_bytes: 512,
@@ -171,6 +184,10 @@ fn control_pubsub_codec_is_versioned_and_bounded() {
             .contains("unsupported inv/want version 2")
     );
 
-    let tiny = ControlPubsubCodec::new(encoded.len() - 1);
+    let tiny = InvWantCodec::new(
+        CONTROL_PUBSUB_PROTOCOL,
+        CONTROL_PUBSUB_VERSION,
+        encoded.len() - 1,
+    );
     assert!(tiny.encode(&message).is_err());
 }

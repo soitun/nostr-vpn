@@ -3,12 +3,10 @@ struct FipsEndpointTransportConfig {
     listen_port: u16,
     advertised_endpoint: String,
     advertise_public_endpoint: bool,
-    /// Find and advertise peers through Nostr pubsub. When false, the endpoint
-    /// dials only configured static/bootstrap peers and does not enable
-    /// ambient relay, LAN, or same-host endpoint discovery.
+    /// Find/advertise peers over Nostr relays. When false, the endpoint dials
+    /// only configured static/bootstrap peers and does not enable ambient
+    /// relay, LAN, or same-host endpoint discovery.
     nostr_discovery_enabled: bool,
-    #[cfg(feature = "fips-external-pubsub")]
-    external_pubsub_enabled: bool,
     webrtc_enabled: bool,
     stun_servers: Vec<String>,
     nostr_relays: Vec<String>,
@@ -43,6 +41,7 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
 pub(crate) fn prioritize_direct_join_approval_route(
     peers: Vec<FipsEndpointPeerTransportConfig>,
     route_pubkey: &str,
+    nostr_relay_fallback_enabled: bool,
 ) -> Result<(String, Vec<FipsEndpointPeerTransportConfig>)> {
     let route_pubkey = normalize_nostr_pubkey(route_pubkey)
         .with_context(|| format!("invalid direct join approval recipient {route_pubkey}"))?;
@@ -52,10 +51,13 @@ pub(crate) fn prioritize_direct_join_approval_route(
         seen_at_ms: None,
         priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
     };
-    Ok((
-        route_npub.clone(),
-        prioritize_join_approval_route(peers, &route_npub, route_address),
-    ))
+    let mut peers = prioritize_join_approval_route(peers, &route_npub, route_address);
+    if nostr_relay_fallback_enabled
+        && let Some(route_peer) = peers.iter_mut().find(|peer| peer.npub == route_npub)
+    {
+        add_nostr_relay_fallback_address(route_peer);
+    }
+    Ok((route_npub, peers))
 }
 
 fn prioritize_join_approval_route(
@@ -177,8 +179,8 @@ fn fips_endpoint_config_with_open_discovery_limit(
     let advertise_public_endpoint = transport
         .map(|transport| transport.advertise_public_endpoint)
         .unwrap_or(false);
-    // The "find peers over Nostr" toggle. When off we neither publish nor
-    // consume peerfinding events, and we keep the endpoint surface deterministic:
+    // The "find peers over Nostr relays" toggle. When off we neither advertise
+    // nor stream adverts/DMs, and we keep the endpoint surface deterministic:
     // static/bootstrap peers below are dialed directly without ambient LAN or
     // same-host discovery side paths.
     let nostr_discovery_enabled = transport
@@ -188,17 +190,15 @@ fn fips_endpoint_config_with_open_discovery_limit(
     let nostr_enabled = nostr_discovery_enabled && (transport.is_some() || !peers.is_empty());
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.advertise = advertise_on_nostr;
-    #[cfg(feature = "fips-external-pubsub")]
-    let external_pubsub_enabled = transport
-        .map(|transport| transport.external_pubsub_enabled)
-        .unwrap_or(false);
-    #[cfg(feature = "fips-external-pubsub")]
-    {
-        config.node.discovery.nostr.peerfinding_source = if external_pubsub_enabled {
-            NostrPeerfindingSource::External
-        } else {
-            NostrPeerfindingSource::Relays
-        };
+    let nostr_relay_fallback_enabled = transport.is_some_and(|transport| {
+        fips_nostr_relay_fallback_enabled(
+            transport.nostr_discovery_enabled,
+            transport.webrtc_enabled,
+            &transport.nostr_relays,
+        )
+    });
+    if nostr_relay_fallback_enabled {
+        enable_nostr_relay_fallback_transport(&mut config);
     }
     // Open discovery by default (unless the user opts into configured-only
     // discovery) so we can FIPS-handshake with any nvpn node we see on relays,
@@ -239,24 +239,8 @@ fn fips_endpoint_config_with_open_discovery_limit(
         .and_then(fips_udp_external_addr);
     if let Some(transport) = transport {
         config.node.discovery.nostr.stun_servers = transport.stun_servers.clone();
-        #[cfg(feature = "fips-external-pubsub")]
-        {
-            config.node.discovery.nostr.advert_relays = if external_pubsub_enabled {
-                Vec::new()
-            } else {
-                transport.nostr_relays.clone()
-            };
-        }
-        #[cfg(not(feature = "fips-external-pubsub"))]
-        {
+        if !transport.nostr_relays.is_empty() {
             config.node.discovery.nostr.advert_relays = transport.nostr_relays.clone();
-        }
-        #[cfg(feature = "fips-external-pubsub")]
-        if nostr_enabled && external_pubsub_enabled {
-            config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig {
-                mtu: Some(mesh_mtu.underlay_udp),
-                ..NostrRelayConfig::default()
-            });
         }
         // Keep a dormant outbound WebRTC transport available even when
         // ambient WebRTC discovery is disabled. Browser join approvals carry
@@ -473,6 +457,41 @@ fn fips_endpoint_peers_from_mesh(
     peers
 }
 
+fn add_nostr_relay_fallback_for_mesh_peers(
+    peers: &mut [FipsEndpointPeerTransportConfig],
+    mesh_peers: &[FipsMeshPeerConfig],
+) {
+    let roster = mesh_peers
+        .iter()
+        .map(|peer| normalize_fips_endpoint_npub(&peer.endpoint_npub))
+        .collect::<HashSet<_>>();
+    for peer in peers {
+        if roster.contains(&peer.npub) {
+            add_nostr_relay_fallback_address(peer);
+        }
+    }
+}
+
+fn enable_nostr_relay_fallback_transport(config: &mut Config) {
+    config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig {
+        auto_connect: Some(false),
+        accept_connections: Some(false),
+        ..NostrRelayConfig::default()
+    });
+}
+
+fn add_nostr_relay_fallback_address(peer: &mut FipsEndpointPeerTransportConfig) {
+    let address = format!("nostr_relay:{}", peer.npub);
+    if peer.addresses.iter().any(|hint| hint.addr == address) {
+        return;
+    }
+    peer.addresses.push(FipsPeerAddressHint {
+        addr: address,
+        seen_at_ms: None,
+        priority: FIPS_NOSTR_RELAY_FALLBACK_PRIORITY,
+    });
+}
+
 #[cfg(feature = "paid-exit")]
 pub(crate) fn fips_endpoint_peers_with_paid_route_admissions(
     endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
@@ -645,8 +664,6 @@ mod endpoint_config_tests {
             advertised_endpoint: "192.168.50.20:51820".to_string(),
             advertise_public_endpoint: false,
             nostr_discovery_enabled,
-            #[cfg(feature = "fips-external-pubsub")]
-            external_pubsub_enabled: true,
             webrtc_enabled,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
@@ -678,21 +695,15 @@ mod endpoint_config_tests {
         assert_eq!(webrtc.auto_connect, Some(true));
         assert_eq!(webrtc.accept_connections, Some(true));
         assert_eq!(webrtc.mtu, Some(mesh_mtu.underlay_udp));
-        #[cfg(feature = "fips-external-pubsub")]
-        {
-            assert_eq!(
-                config.node.discovery.nostr.peerfinding_source,
-                NostrPeerfindingSource::External
-            );
-            assert!(config.node.discovery.nostr.advert_relays.is_empty());
-            assert!(!config.transports.nostr_relay.is_empty());
-        }
-        #[cfg(not(feature = "fips-external-pubsub"))]
-        assert_eq!(config.node.discovery.nostr.advert_relays, transport.nostr_relays);
         assert_eq!(
             webrtc.stun_servers.as_ref().expect("stun servers"),
             &transport.stun_servers
         );
+        let TransportInstances::Single(relay) = &config.transports.nostr_relay else {
+            panic!("expected one application-owned Nostr relay fallback transport");
+        };
+        assert_eq!(relay.auto_connect, Some(false));
+        assert_eq!(relay.accept_connections, Some(false));
     }
 
     #[test]
@@ -710,6 +721,7 @@ mod endpoint_config_tests {
 
         assert!(!config.node.discovery.nostr.enabled);
         assert!(config.transports.webrtc.is_empty());
+        assert!(config.transports.nostr_relay.is_empty());
     }
 
     #[test]
@@ -733,9 +745,64 @@ mod endpoint_config_tests {
         assert_eq!(webrtc.advertise_on_nostr, Some(false));
         assert_eq!(webrtc.auto_connect, Some(false));
         assert_eq!(webrtc.accept_connections, Some(false));
-        #[cfg(feature = "fips-external-pubsub")]
-        assert!(!config.transports.nostr_relay.is_empty());
         assert!(!config.transports.udp.is_empty());
+        assert!(config.transports.nostr_relay.is_empty());
+    }
+
+    #[test]
+    fn relay_fallback_is_added_only_to_roster_and_approval_peers() {
+        let roster = test_peer();
+        let roster_npub = normalize_fips_endpoint_npub(&roster.endpoint_npub);
+        let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
+        let browser_pubkey = Keys::generate().public_key().to_hex();
+        let mut peers = fips_endpoint_peers_from_mesh(
+            std::slice::from_ref(&roster),
+            vec![
+                (
+                    roster_npub.clone(),
+                    vec![
+                        "203.0.113.10:51820".to_string(),
+                        "tcp:203.0.113.10:443".to_string(),
+                        format!("webrtc:02{}", Keys::generate().public_key().to_hex()),
+                    ],
+                ),
+                (
+                    ambient_npub.clone(),
+                    vec!["203.0.113.20:51820".to_string()],
+                ),
+            ],
+            Vec::new(),
+        );
+        add_nostr_relay_fallback_for_mesh_peers(&mut peers, std::slice::from_ref(&roster));
+        let (_, peers) = prioritize_direct_join_approval_route(peers, &browser_pubkey, true)
+            .expect("explicit browser route");
+
+        let roster_peer = peers
+            .iter()
+            .find(|peer| peer.npub == roster_npub)
+            .expect("roster endpoint peer");
+        for transport in ["udp", "tcp", "webrtc", "nostr_relay"] {
+            assert!(roster_peer.addresses.iter().any(|address| {
+                split_peer_transport_addr(&address.addr).0 == transport
+            }));
+        }
+        let relay_priority = |npub: &str| {
+            peers
+                .iter()
+                .find(|peer| peer.npub == npub)
+                .and_then(|peer| {
+                    peer.addresses.iter().find(|address| {
+                        split_peer_transport_addr(&address.addr).0 == "nostr_relay"
+                    })
+                })
+                .map(|address| address.priority)
+        };
+        assert_eq!(relay_priority(&roster_npub), Some(FIPS_NOSTR_RELAY_FALLBACK_PRIORITY));
+        assert_eq!(
+            relay_priority(&normalize_fips_endpoint_npub(&browser_pubkey)),
+            Some(FIPS_NOSTR_RELAY_FALLBACK_PRIORITY)
+        );
+        assert_eq!(relay_priority(&ambient_npub), None);
     }
 
     #[test]
@@ -764,7 +831,7 @@ mod endpoint_config_tests {
         }];
 
         retain_enabled_peer_transport_addresses(&mut peers, false);
-        let (_, peers) = prioritize_direct_join_approval_route(peers, &browser_pubkey)
+        let (_, peers) = prioritize_direct_join_approval_route(peers, &browser_pubkey, false)
             .expect("explicit browser route");
 
         let webrtc_addresses = peers

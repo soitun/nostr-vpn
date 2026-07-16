@@ -80,6 +80,8 @@ else
 fi
 EXTRA_ENV="${NVPN_PERF_EXTRA_ENV:-}"
 DIRECT_COUNTER_COMMENT="nvpn-direct-underlay"
+# shellcheck source=scripts/lib-docker-direct-udp.sh
+source "$ROOT_DIR/scripts/lib-docker-direct-udp.sh"
 PERF_OUTPUT_DIR="${NVPN_PERF_OUTPUT_DIR:-}"
 PHASE_SUMMARY=""
 PHASE_NOTES=""
@@ -272,41 +274,6 @@ wait_for_mesh() {
 
 assert_native_nvpn_pair() {
   docker_bench_assert_native_processes "nvpn+FIPS perf regression e2e" nvpn node-a node-b
-}
-
-install_direct_underlay_counter() {
-  local service="$1"
-  local peer_ip="$2"
-  "${COMPOSE[@]}" exec -T "$service" sh -s -- "$peer_ip" "$DIRECT_COUNTER_COMMENT" <<'SH'
-set -eu
-peer_ip="$1"
-comment="$2"
-while iptables -D OUTPUT -p udp -d "$peer_ip" --dport 51820 -m comment --comment "$comment" 2>/dev/null; do :; done
-iptables -I OUTPUT 1 -p udp -d "$peer_ip" --dport 51820 -m comment --comment "$comment"
-SH
-}
-
-direct_underlay_bytes() {
-  local service="$1"
-  "${COMPOSE[@]}" exec -T "$service" sh -s -- "$DIRECT_COUNTER_COMMENT" <<'SH' | tr -d '\r'
-set -eu
-comment="$1"
-iptables-save -c 2>/dev/null | awk -v comment="$comment" '
-  index($0, comment) {
-    gsub(/^\[/, "", $1)
-    gsub(/\]$/, "", $1)
-    split($1, counters, ":")
-    print counters[2]
-    found = 1
-    exit
-  }
-  END {
-    if (!found) {
-      print 0
-    }
-  }
-'
-SH
 }
 
 assert_direct_counter_advanced() {

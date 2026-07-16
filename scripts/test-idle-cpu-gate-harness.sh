@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPT="$ROOT_DIR/scripts/idle-cpu-gate.py"
 RELEASE_GATE="$ROOT_DIR/scripts/release-gate.sh"
 MOBILE_IOS_SMOKE="$ROOT_DIR/scripts/mobile-ios-smoke.sh"
+MOBILE_ANDROID_SMOKE="$ROOT_DIR/scripts/mobile-android-smoke.sh"
 
 fail() {
   printf 'idle CPU gate harness failed: %s\n' "$*" >&2
@@ -162,6 +163,16 @@ grep -Fq './scripts/mobile-ios-smoke.sh simulator' "$RELEASE_GATE" \
   || fail "release gate does not run the iOS app idle CPU smoke"
 grep -Fq './scripts/mobile-android-smoke.sh --vpn-cycle --create-network' "$RELEASE_GATE" \
   || fail "release gate does not run the Android background active-VPN idle CPU smoke"
+grep -Fq 'NVPN_ANDROID_PACKAGE="fi.siriusbusiness.nvpn.releasegate"' "$RELEASE_GATE" \
+  || fail "release gate Android smoke does not use an isolated package"
+grep -Fq 'environmentVariable("NVPN_ANDROID_PACKAGE")' "$ROOT_DIR/android/app/build.gradle.kts" \
+  || fail "Android Gradle application id cannot follow the smoke package override"
+grep -Fq 'ACTION_PACKAGE_NAME="${NVPN_ANDROID_ACTION_PACKAGE:-${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}}"' "$MOBILE_ANDROID_SMOKE" \
+  || fail "Android smoke action name incorrectly follows the overridable package id"
+grep -Fq 'OwnerUid: $PACKAGE_UID' "$MOBILE_ANDROID_SMOKE" \
+  || fail "Android smoke VPN state is not scoped to the candidate package uid"
+grep -Fq '$1 ~ /^emulator-/' "$MOBILE_ANDROID_SMOKE" \
+  || fail "Android smoke does not prefer an isolated emulator over a physical device"
 grep -Fq 'NVPN_IDLE_CPU_SAMPLE_SECONDS:-60' "$RELEASE_GATE" \
   || fail "release gate does not cover a full mDNS cadence in CPU samples"
 grep -Fq 'env NVPN_MACOS_RUST_PROFILE=release NVPN_MACOS_XCODE_CONFIGURATION=Release' "$RELEASE_GATE" \
@@ -170,9 +181,31 @@ grep -Fq 'run_macos_daemon_idle_cpu_gate' "$RELEASE_GATE" \
   || fail "release gate does not run the macOS daemon idle CPU check"
 grep -Fq -- '--fips-peer-endpoint' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon idle CPU check does not exercise an active mesh fixture"
+grep -Fq 'ps -ww -p "$daemon_pid"' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
+  || fail "macOS daemon identity check may truncate the launchd command"
+grep -Fq 'os.path.realpath(sys.argv[1])' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
+  || fail "macOS daemon identity check does not account for launchd path canonicalization"
+grep -Fq 'NVPN_MACOS_SWIFT_COMPILATION_MODE:-singlefile' "$ROOT_DIR/scripts/macos-build" \
+  || fail "macOS release build does not avoid hosted whole-module Swift compiler failures"
+grep -Fq 'NVPN_MACOS_SWIFT_ENABLE_BATCH_MODE:-NO' "$ROOT_DIR/scripts/macos-build" \
+  || fail "macOS release build does not disable hosted Swift batch compilation"
+grep -Fq 'NVPN_MACOS_XCODE_JOBS:-1' "$ROOT_DIR/scripts/macos-build" \
+  || fail "macOS release build does not serialize hosted Xcode compilation"
+grep -Fq 'NVPN_MACOS_SWIFTC_MAXIMUM_DETERMINISM:-1' "$ROOT_DIR/scripts/macos-build" \
+  || fail "macOS release build does not serialize Swift driver jobs"
+grep -Fq 'build >&2' "$ROOT_DIR/scripts/macos-build" \
+  || fail "macOS release build can discard Xcode diagnostics"
+grep -Fq 'docker compose exec -T nostr-vpn-linux true' "$ROOT_DIR/tools/run-linux" \
+  || fail "Linux runner does not verify that its desktop container stayed ready"
+grep -Fq 'docker compose logs --no-color --tail 200 nostr-vpn-linux' "$ROOT_DIR/tools/run-linux" \
+  || fail "Linux runner does not preserve early container failure diagnostics"
 grep -Fq 'assert_idle_daemon_cpu_below node-a' "$ROOT_DIR/scripts/e2e-fips-routed-udp-docker.sh" \
   || fail "release-gated Linux active-tunnel e2e has no daemon idle CPU check"
 grep -Fq 'windows-daemon-idle-cpu.ps1' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
   || fail "release-gated Windows VM smoke has no daemon idle CPU check"
+grep -Fq '"NVPN_IDLE_CPU_SAMPLE_SECONDS" 60' "$ROOT_DIR/scripts/windows-app-launch-smoke.ps1" \
+  || fail "Windows app idle CPU gate does not sample a full minute"
+grep -Fq '"NVPN_IDLE_CPU_SETTLE_SECONDS" 20' "$ROOT_DIR/scripts/windows-app-launch-smoke.ps1" \
+  || fail "Windows app idle CPU gate does not exclude startup warm-up"
 
 printf 'idle CPU gate harness passed\n'

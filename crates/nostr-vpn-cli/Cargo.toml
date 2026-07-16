@@ -10,7 +10,6 @@ readme = "README.md"
 
 [features]
 default = ["paid-exit"]
-fips-external-pubsub = []
 paid-exit = [
   "dep:cashu",
   "dep:cashu-service",
@@ -20,6 +19,7 @@ paid-exit = [
 [dependencies]
 anyhow.workspace = true
 arc-swap.workspace = true
+async-trait.workspace = true
 base64.workspace = true
 clap.workspace = true
 dirs.workspace = true

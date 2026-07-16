@@ -259,25 +259,16 @@ run_core() {
 run_nvpn_hotpath() {
   run cargo_test -p nvpn raw_tun_write_keeps_fd_open_and_writes_platform_frame
   run cargo_test -p nvpn blocking_tun_write_keeps_fd_open_and_writes_platform_frame
-  run cargo_test -p nvpn tun_to_mesh_classifier_reserves_liveness_and_tcp_control_packets
-  run cargo_test -p nvpn full_tun_to_mesh_queue_drops_bulk_without_waiting
-  run cargo_test -p nvpn tun_to_mesh_queue_counts_bulk_capacity_by_packets
-  run cargo_test -p nvpn tun_to_mesh_release_bulk_packet_slots_subtracts_exact_count
+  run cargo_test -p nvpn tun_pipeline_packet_caches_destination_for_send_route
+  run cargo_test -p nvpn local_tun_pipeline_packets_are_detected_before_mesh_send
+  run cargo_test -p nvpn drain_event_batch_respects_limit
   run cargo_test -p nvpn percentile_uses_observed_histogram_count_when_stage_count_leads
-  run cargo_test -p nvpn tun_to_mesh_queue_releases_bulk_packet_slots_on_recv
-  run cargo_test -p nvpn full_tun_to_mesh_queue_preserves_priority_progress
-  run cargo_test -p nvpn tun_to_mesh_queue_splits_mixed_batch_into_priority_and_bulk_lanes
-  run cargo_test -p nvpn closed_tun_to_mesh_queue_stops_reader
   run cargo_test -p nvpn peer_activity_map_preserves_existing_configured_peer_activity
   run cargo_test -p nvpn peer_identity_map_resolves_endpoint_identities_and_skips_invalid_npubs
-  run cargo_test -p nvpn endpoint_send_run_batches_configured_peer_without_participant_string
   run cargo_test -p nvpn control_frame_destinations_can_target_pending_join_requester
   run cargo_test -p nvpn endpoint_data_runtime_sends_and_receives_raw_packet_batch
   run cargo_test -p nvpn endpoint_data_runtime_sends_tun_pipeline_batch_without_repacking
-  run cargo_test -p nvpn endpoint_data_runtime_recv_batch_into_reuses_buffers_and_respects_limit
-  run cargo_test -p nvpn endpoint_data_runtime_blocking_recv_batch_into_reuses_buffers_and_respects_limit
-  run cargo_test -p nvpn endpoint_data_runtime_blocking_recv_batch_into_stages_before_event_handling
-  run cargo_test -p nvpn endpoint_data_runtime_direct_tun_batch_respects_limit
+  run cargo_test -p nvpn endpoint_data_runtime_recv_batch_into_reuses_buffers
 }
 
 run_nvpn_reliability() {
@@ -292,10 +283,11 @@ run_nvpn_reliability() {
 
 run_macos_route() {
   run cargo_test -p nvpn captive_portal -- --nocapture
-  run cargo_test -p nvpn macos_underlay_route_check_throttles_route_event_storms
-  run cargo_test -p nvpn macos_underlay_route_repair_defers_only_for_confirmed_captive_portal
   run cargo_test -p nvpn macos_default_routes_from_netstat_finds_underlay_and_utun_routes
-  run cargo_test -p nvpn macos_underlay_default_route_detection_requires_real_underlay_route
+  run cargo_test -p nvpn macos_route_parser_keeps_private_routes_via_local_underlay_gateway
+  run cargo_test -p nvpn macos_route_get_rejects_private_endpoint_via_hotspot_default_gateway
+  run cargo_test -p nvpn macos_route_get_keeps_private_endpoint_on_direct_lan
+  run cargo_test -p nvpn macos_route_monitor_ignores_self_host_route_churn
 }
 
 run_nvpn() {

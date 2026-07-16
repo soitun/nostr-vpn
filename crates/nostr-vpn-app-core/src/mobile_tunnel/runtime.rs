@@ -41,6 +41,7 @@ impl MobileTunnel {
         Ok(Self {
             runtime,
             endpoint: Some(started.endpoint),
+            nostr_relay_adapter: started.nostr_relay_adapter,
             mesh: started.mesh,
             presence: started.presence,
             config: started.config,
@@ -453,8 +454,16 @@ impl MobileTunnel {
         };
         tasks.push(recv_task);
 
+        let nostr_relay_adapter = crate::fips_nostr_relay::start_adapter(
+            &endpoint,
+            mobile_nostr_relay_fallback_enabled(&config),
+            &config.nostr_relays,
+        )
+        .await?;
+
         Ok(MobileTunnelStarted {
             endpoint,
+            nostr_relay_adapter,
             mesh,
             presence,
             config: config_state,
@@ -618,6 +627,7 @@ async fn push_mobile_wg_inbound_batch(
 
 struct MobileTunnelStarted {
     endpoint: Arc<FipsEndpoint>,
+    nostr_relay_adapter: Option<NostrRelayAdapter>,
     mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: Arc<RwLock<MobileTunnelConfig>>,
@@ -647,8 +657,12 @@ impl Drop for MobileTunnel {
         }
         let tasks = std::mem::take(&mut self.tasks);
         let endpoint = self.endpoint.take();
+        let nostr_relay_adapter = self.nostr_relay_adapter.take();
         let wg_upstream = self.wg_upstream.take();
         self.runtime.block_on(async move {
+            if let Some(adapter) = nostr_relay_adapter {
+                adapter.stop().await;
+            }
             for task in tasks {
                 let _ = task.await;
             }

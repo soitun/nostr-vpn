@@ -712,10 +712,6 @@
             vec!["wss://relay.example".to_string()]
         );
         assert_eq!(
-            config.node.discovery.nostr.dm_relays,
-            vec!["wss://relay.example".to_string()]
-        );
-        assert_eq!(
             config.node.discovery.nostr.stun_servers,
             vec!["stun:stun.example:3478".to_string()]
         );

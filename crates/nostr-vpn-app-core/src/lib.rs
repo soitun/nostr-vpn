@@ -2,6 +2,7 @@ pub mod actions;
 pub mod c_abi;
 mod exchange_rate;
 mod ffi;
+mod fips_nostr_relay;
 mod headless_fips;
 mod invite;
 pub mod join_approval;

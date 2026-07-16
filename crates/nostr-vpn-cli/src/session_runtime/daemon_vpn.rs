@@ -31,7 +31,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         tokio::time::interval(Duration::from_secs(DAEMON_NETWORK_REFRESH_INTERVAL_SECS));
     network_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut platform_network_change_rx = spawn_platform_network_change_monitor();
-
     #[cfg(unix)]
     let mut terminate_signal =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
@@ -43,7 +42,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     #[cfg(not(unix))]
     let terminate_wait = std::future::pending::<()>();
     tokio::pin!(terminate_wait);
-
     let loop_state = initialize_daemon_vpn_loop(&args, &startup).await?;
     let DaemonVpnStartup {
         config_path,
@@ -88,7 +86,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     #[cfg(feature = "paid-exit")]
     let mut automatic_paid_exit = PaidExitAutomaticBuyer::default();
     let mut direct_join_approval_delivery = DirectJoinApprovalDeliveryState::default();
-
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -251,7 +248,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 } else {
                     false
                 };
-
                 if !platform_network_event
                     && !network_changed
                     && !endpoint_changed
@@ -311,9 +307,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         underlay_interface_mtu: network_snapshot
                                             .default_interface_mtu,
                                         own_pubkey: own_pubkey.as_deref(),
-                                        // Recent endpoints are only dial hints; fips still has to
-                                        // authenticate them. Keeping these hints lets mobile/link
-                                        // churn recover quickly without trusting stale live paths.
+                                        // Authenticated dial hints retained across link churn.
                                         recent_peers: Some(&recent_peers),
                                         last_endpoint_peer_signature:
                                             &mut last_fips_endpoint_peer_signature,

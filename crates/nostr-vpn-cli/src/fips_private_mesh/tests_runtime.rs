@@ -635,8 +635,6 @@
             advertised_endpoint: "192.168.50.20:51820".to_string(),
             advertise_public_endpoint: false,
             nostr_discovery_enabled: false,
-            #[cfg(feature = "fips-external-pubsub")]
-            external_pubsub_enabled: false,
             webrtc_enabled: false,
             stun_servers: Vec::new(),
             nostr_relays: Vec::new(),
@@ -686,8 +684,6 @@
             advertised_endpoint: "192.168.50.20:51820".to_string(),
             advertise_public_endpoint: true,
             nostr_discovery_enabled: true,
-            #[cfg(feature = "fips-external-pubsub")]
-            external_pubsub_enabled: true,
             webrtc_enabled: false,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
@@ -728,16 +724,6 @@
             config.node.discovery.nostr.stun_servers,
             vec!["stun:stun.example.org:3478".to_string()]
         );
-        #[cfg(feature = "fips-external-pubsub")]
-        {
-            assert_eq!(
-                config.node.discovery.nostr.peerfinding_source,
-                fips_endpoint::NostrPeerfindingSource::External
-            );
-            assert!(config.node.discovery.nostr.advert_relays.is_empty());
-            assert!(!config.transports.nostr_relay.is_empty());
-        }
-        #[cfg(not(feature = "fips-external-pubsub"))]
         assert_eq!(
             config.node.discovery.nostr.advert_relays,
             vec!["wss://relay.example.org".to_string()]
@@ -762,8 +748,6 @@
             advertised_endpoint: "198.51.100.20:51820".to_string(),
             advertise_public_endpoint: true,
             nostr_discovery_enabled: true,
-            #[cfg(feature = "fips-external-pubsub")]
-            external_pubsub_enabled: true,
             webrtc_enabled: false,
             stun_servers: Vec::new(),
             nostr_relays: Vec::new(),
@@ -801,8 +785,6 @@
             advertised_endpoint: "192.168.50.20:51820".to_string(),
             advertise_public_endpoint: true,
             nostr_discovery_enabled: false,
-            #[cfg(feature = "fips-external-pubsub")]
-            external_pubsub_enabled: false,
             webrtc_enabled: false,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
@@ -850,8 +832,6 @@
             advertised_endpoint: "10.203.0.10:51820".to_string(),
             advertise_public_endpoint: false,
             nostr_discovery_enabled: true,
-            #[cfg(feature = "fips-external-pubsub")]
-            external_pubsub_enabled: true,
             webrtc_enabled: false,
             stun_servers: Vec::new(),
             nostr_relays: Vec::new(),
