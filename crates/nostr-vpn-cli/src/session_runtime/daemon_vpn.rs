@@ -334,7 +334,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if let Err(error) = fips_result {
                         vpn_status = format!("Network route refresh failed ({error})");
                     } else {
-                        if matches!(fips_refresh, FipsLinkEventRefresh::RestartEndpoint) {
+                        if !matches!(fips_refresh, FipsLinkEventRefresh::None) {
                             platform_network_event_pending = false;
                             drain_platform_network_changes(&mut platform_network_change_rx);
                             platform_network_event_suppressed_until =
