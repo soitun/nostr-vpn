@@ -28,7 +28,8 @@ All notable changes to this project are documented in this file.
   integration fixture.
 - Invalidate a different Linux underlay default route before installing a
   WireGuard-exit default, preventing activation-time route clones from
-  bypassing the encrypted upstream.
+  bypassing the encrypted upstream, while keeping the FIPS underlay snapshot
+  stable when the managed WireGuard interface becomes the system default.
 
 ## 4.0.95 - 2026-07-16
 

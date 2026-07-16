@@ -23,7 +23,8 @@ mod tests {
             gateway_ipv6: None,
         };
 
-        let preferred = prefer_nonself_tunnel_snapshot(&tunnel_runtime, &previous, latest);
+        let preferred =
+            prefer_nonself_tunnel_snapshot(&tunnel_runtime, None, &previous, latest);
 
         assert_eq!(preferred.default_interface.as_deref(), Some("eth0"));
         assert_eq!(preferred.primary_ipv4, Some(Ipv4Addr::new(192, 168, 64, 2)));
@@ -49,11 +50,42 @@ mod tests {
             gateway_ipv6: "fe80::1".parse().ok(),
         };
 
-        let preferred = prefer_nonself_tunnel_snapshot(&tunnel_runtime, &previous, latest);
+        let preferred =
+            prefer_nonself_tunnel_snapshot(&tunnel_runtime, None, &previous, latest);
 
         assert_eq!(preferred.primary_ipv4, Some(Ipv4Addr::new(192, 168, 64, 5)));
         assert_eq!(preferred.gateway_ipv4, Some(Ipv4Addr::new(192, 168, 64, 1)));
         assert!(preferred.primary_ipv6.is_none());
+    }
+
+    #[test]
+    fn prefer_nonself_tunnel_snapshot_ignores_managed_wireguard_exit() {
+        let tunnel_runtime = CliTunnelRuntime::new("utun100");
+        let previous = crate::diagnostics::NetworkSnapshot {
+            default_interface: Some("eth0".to_string()),
+            default_interface_mtu: Some(1500),
+            primary_ipv4: Some(Ipv4Addr::new(10, 203, 0, 10)),
+            primary_ipv6: None,
+            gateway_ipv4: Some(Ipv4Addr::new(10, 203, 0, 1)),
+            gateway_ipv6: None,
+        };
+        let latest = crate::diagnostics::NetworkSnapshot {
+            default_interface: Some("nvpn-wg-exit".to_string()),
+            default_interface_mtu: Some(1420),
+            primary_ipv4: Some(Ipv4Addr::new(10, 99, 99, 2)),
+            primary_ipv6: None,
+            gateway_ipv4: None,
+            gateway_ipv6: None,
+        };
+
+        let preferred = prefer_nonself_tunnel_snapshot(
+            &tunnel_runtime,
+            Some("nvpn-wg-exit"),
+            &previous,
+            latest,
+        );
+
+        assert_eq!(preferred, previous);
     }
     #[test]
     fn endpoint_peer_signature_tracks_address_hint_metadata() {

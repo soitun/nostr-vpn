@@ -189,6 +189,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 }
                 let latest_snapshot = prefer_nonself_tunnel_snapshot(
                     &tunnel_runtime,
+                    (app.wireguard_exit.enabled && app.wireguard_exit.configured())
+                        .then_some(app.wireguard_exit.interface.trim()),
                     &network_snapshot,
                     capture_network_snapshot_for_daemon().await,
                 );
