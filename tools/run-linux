@@ -31,7 +31,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 compose_exec=(docker compose exec)
-if [ ! -t 0 ]; then
+if [ ! -t 0 ] || [ "${NVPN_LINUX_NONINTERACTIVE:-0}" = "1" ]; then
     compose_exec+=(-T)
 fi
 

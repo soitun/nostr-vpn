@@ -199,6 +199,10 @@ grep -Fq 'docker compose exec -T nostr-vpn-linux true' "$ROOT_DIR/tools/run-linu
   || fail "Linux runner does not verify that its desktop container stayed ready"
 grep -Fq 'docker compose logs --no-color --tail 200 nostr-vpn-linux' "$ROOT_DIR/tools/run-linux" \
   || fail "Linux runner does not preserve early container failure diagnostics"
+grep -Fq 'NVPN_LINUX_NONINTERACTIVE=1' "$RELEASE_GATE" \
+  || fail "release gate can allocate an interactive Docker exec and wedge the Linux GUI smoke"
+grep -Fq 'NVPN_LINUX_NONINTERACTIVE:-0' "$ROOT_DIR/tools/run-linux" \
+  || fail "Linux runner cannot force a non-interactive Docker exec from a terminal"
 grep -Fq 'assert_idle_daemon_cpu_below node-a' "$ROOT_DIR/scripts/e2e-fips-routed-udp-docker.sh" \
   || fail "release-gated Linux active-tunnel e2e has no daemon idle CPU check"
 grep -Fq 'windows-daemon-idle-cpu.ps1' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
