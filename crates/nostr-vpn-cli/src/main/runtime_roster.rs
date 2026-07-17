@@ -1,4 +1,4 @@
-async fn publish_fips_active_network_roster_to(
+fn publish_fips_active_network_roster_to(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
     config_path: &Path,
@@ -26,7 +26,7 @@ async fn publish_fips_active_network_roster_to(
     let (ready_recipients, mut retry) = split_ready_fips_roster_recipients(recipients);
     let mut sent = 0usize;
     for recipient in ready_recipients {
-        match runtime.send_roster(&recipient, signed_roster.clone()).await {
+        match runtime.enqueue_roster(&recipient, signed_roster.clone()) {
             Ok(()) => sent += 1,
             Err(error) => {
                 eprintln!("fips: roster send to {recipient} failed: {error}");

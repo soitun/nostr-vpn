@@ -98,7 +98,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &app,
                         &config_path,
                         &mut pending_fips_roster_recipients,
-                    ).await {
+                    ) {
                         eprintln!("fips: roster publish failed: {error}");
                     }
                     if let Err(error) = broadcast_local_fips_capabilities(runtime, &app).await {
@@ -835,7 +835,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             &pre_sync_fips_roster_recipients,
                             &mut pending_fips_roster_recipients,
                         )
-                        .await
                     {
                         eprintln!(
                             "fips: roster publish failed before peer-set refresh: {error}"
@@ -877,7 +876,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             &config_path,
                             &mut pending_fips_roster_recipients,
                         )
-                        .await
                         {
                             eprintln!(
                                 "fips: roster publish failed after control request: {error}"

@@ -26,7 +26,9 @@ use nostr_vpn_core::fips_control::{
     FipsControlFrame, JoinRosterControl, PeerCapabilities, PeerEndpointHint, SignedRoster,
     decode_fips_control_frame, encode_fips_control_frame, is_fips_control_frame,
 };
-use nostr_vpn_core::fips_control_tcp::{FipsControlTcpRuntime, ReceivedFipsControlFrame};
+use nostr_vpn_core::fips_control_tcp::{
+    FipsControlTcpRuntime, FipsControlTcpSender, ReceivedFipsControlFrame,
+};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nostr_vpn_core::fips_mesh::RoutedFipsPeer;
 #[cfg(any(target_os = "linux", target_os = "macos"))]

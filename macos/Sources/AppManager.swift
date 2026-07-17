@@ -115,7 +115,7 @@ final class AppManager: ObservableObject {
     /// Status line shown next to the VPN switch in the header and the tray.
     /// Single source of truth so both stay in sync.
     var vpnStatusText: String {
-        if actionInFlight, !actionStatus.isEmpty {
+        if !actionStatus.isEmpty {
             return actionStatus
         }
         if state.exitNodeBlocked {

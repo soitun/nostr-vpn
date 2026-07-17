@@ -88,7 +88,6 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                         &config_path,
                         &mut fips_roster_sync_state,
                     )
-                    .await
                     {
                         eprintln!("fips: roster peer sync failed: {error}");
                     }
@@ -97,8 +96,7 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                         &app,
                         &config_path,
                         &mut pending_fips_roster_recipients,
-                    )
-                    .await;
+                    );
                     match drain_fips_mesh_events(
                         runtime,
                         &mut app,
@@ -173,7 +171,7 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                         &app,
                         &config_path,
                         &mut pending_fips_roster_recipients,
-                    ).await {
+                    ) {
                         eprintln!("fips: roster publish failed: {error}");
                     }
                     if let Err(error) = broadcast_local_fips_capabilities(runtime, &app).await {

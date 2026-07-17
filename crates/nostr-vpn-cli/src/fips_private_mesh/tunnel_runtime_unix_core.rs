@@ -774,14 +774,13 @@ impl FipsPrivateTunnelRuntime {
         }
     }
 
-    pub(crate) async fn send_roster(
+    pub(crate) fn enqueue_roster(
         &self,
         participant: &str,
         signed_roster: SignedRoster,
     ) -> Result<()> {
         self.mesh
-            .send_roster(&self.state_control, participant, signed_roster)
-            .await
+            .enqueue_roster(&self.state_control.sender(), participant, signed_roster)
     }
 
     pub(crate) async fn send_join_roster(
@@ -794,15 +793,18 @@ impl FipsPrivateTunnelRuntime {
             .await
     }
 
-    pub(crate) async fn send_capabilities(
+    pub(crate) fn enqueue_capabilities(
         &self,
         participant: &str,
         network_id: &str,
         capabilities: PeerCapabilities,
     ) -> Result<()> {
-        self.mesh
-            .send_capabilities(&self.state_control, participant, network_id, capabilities)
-            .await
+        self.mesh.enqueue_capabilities(
+            &self.state_control.sender(),
+            participant,
+            network_id,
+            capabilities,
+        )
     }
 
     #[cfg(feature = "paid-exit")]

@@ -805,13 +805,13 @@ fn pending_fips_join_request_recipients(app: &AppConfig) -> Vec<String> {
     recipients.dedup();
     recipients
 }
-async fn publish_fips_active_network_roster(
+fn publish_fips_active_network_roster(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
     config_path: &Path,
     pending_recipients: &mut HashSet<String>,
 ) -> Result<usize> {
-    publish_fips_active_network_roster_to(runtime, app, config_path, &[], pending_recipients).await
+    publish_fips_active_network_roster_to(runtime, app, config_path, &[], pending_recipients)
 }
 async fn broadcast_local_fips_capabilities(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
@@ -847,8 +847,7 @@ async fn broadcast_local_fips_capabilities(
             signed_at,
         };
         if runtime
-            .send_capabilities(&participant, &network.id, capabilities)
-            .await
+            .enqueue_capabilities(&participant, &network.id, capabilities)
             .is_ok()
         {
             sent += 1;

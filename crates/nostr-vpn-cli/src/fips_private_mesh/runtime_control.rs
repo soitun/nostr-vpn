@@ -33,15 +33,15 @@ impl FipsPrivateMeshRuntime {
         .await
     }
 
-    pub(crate) async fn send_roster(
+    pub(crate) fn enqueue_roster(
         &self,
-        control: &FipsControlTcpRuntime,
+        control: &FipsControlTcpSender,
         participant: &str,
         signed_roster: SignedRoster,
     ) -> Result<()> {
         let network_id = signed_roster.network_id()?;
         let roster = signed_roster.roster()?;
-        self.send_stateful_control_frame(
+        self.enqueue_stateful_control_frame(
             control,
             participant,
             &FipsControlFrame::Roster {
@@ -50,7 +50,6 @@ impl FipsPrivateMeshRuntime {
                 signed_roster: Some(Box::new(signed_roster)),
             },
         )
-        .await
     }
 
     pub(crate) async fn send_join_roster(
@@ -69,14 +68,14 @@ impl FipsPrivateMeshRuntime {
         .await
     }
 
-    pub(crate) async fn send_capabilities(
+    pub(crate) fn enqueue_capabilities(
         &self,
-        control: &FipsControlTcpRuntime,
+        control: &FipsControlTcpSender,
         participant: &str,
         network_id: &str,
         capabilities: PeerCapabilities,
     ) -> Result<()> {
-        self.send_stateful_control_frame(
+        self.enqueue_stateful_control_frame(
             control,
             participant,
             &FipsControlFrame::Capabilities {
@@ -84,7 +83,6 @@ impl FipsPrivateMeshRuntime {
                 capabilities,
             },
         )
-        .await
     }
 
     #[cfg(feature = "paid-exit")]
@@ -136,6 +134,24 @@ impl FipsPrivateMeshRuntime {
             .with_context(|| format!("failed to send FIPS-TCP control frame to {participant}"))?;
         self.note_tx(Some(participant), participant_key.as_ref(), sent_len)?;
         Ok(())
+    }
+
+    fn enqueue_stateful_control_frame(
+        &self,
+        control: &FipsControlTcpSender,
+        participant: &str,
+        frame: &FipsControlFrame,
+    ) -> Result<()> {
+        let participant_key = participant_pubkey_bytes(participant);
+        let destination = {
+            let mesh = self.mesh.load();
+            let peer_identities = self.peer_identities.load();
+            control_frame_destination_peer(&mesh, &peer_identities, participant)?
+        };
+        let queued_len = control
+            .enqueue(destination, frame)
+            .with_context(|| format!("failed to queue FIPS-TCP control frame to {participant}"))?;
+        self.note_tx(Some(participant), participant_key.as_ref(), queued_len)
     }
 
     async fn send_probe_frame(&self, participant: &str, frame: &FipsControlFrame) -> Result<()> {

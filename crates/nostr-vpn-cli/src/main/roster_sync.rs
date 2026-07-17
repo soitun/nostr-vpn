@@ -202,7 +202,7 @@ struct FipsRosterSentState {
     hash: String,
     sent_at: u64,
 }
-async fn sync_fips_roster_with_connected_peers(
+fn sync_fips_roster_with_connected_peers(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
     config_path: &Path,
@@ -249,7 +249,7 @@ async fn sync_fips_roster_with_connected_peers(
         }) {
             continue;
         }
-        runtime.send_roster(&peer, signed_roster.clone()).await?;
+        runtime.enqueue_roster(&peer, signed_roster.clone())?;
         state.sent_by_peer.insert(
             peer,
             FipsRosterSentState {

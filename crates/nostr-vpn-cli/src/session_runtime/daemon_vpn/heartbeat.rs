@@ -128,12 +128,11 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
         return;
     };
     if let Err(error) =
-        sync_fips_roster_with_connected_peers(runtime, app, config_path, roster_sync_state).await
+        sync_fips_roster_with_connected_peers(runtime, app, config_path, roster_sync_state)
     {
         eprintln!("fips: roster peer sync failed: {error}");
     }
-    flush_pending_fips_roster_recipients(runtime, app, config_path, pending_roster_recipients)
-        .await;
+    flush_pending_fips_roster_recipients(runtime, app, config_path, pending_roster_recipients);
     if let Err(error) = send_pending_fips_join_requests(runtime, app, join_request_sends, now).await
     {
         eprintln!("fips: join request send failed: {error}");

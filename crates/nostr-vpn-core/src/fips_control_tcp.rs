@@ -38,7 +38,7 @@ pub struct ReceivedFipsControlFrame {
 struct SendRequest {
     peer: PeerIdentity,
     bytes: Vec<u8>,
-    response: oneshot::Sender<std::result::Result<usize, String>>,
+    response: Option<oneshot::Sender<std::result::Result<usize, String>>>,
 }
 
 struct OutboundRecord {
@@ -74,22 +74,13 @@ pub struct FipsControlTcpSender {
 
 impl FipsControlTcpSender {
     pub async fn send(&self, peer: PeerIdentity, frame: &FipsControlFrame) -> Result<usize> {
-        if !is_stateful(frame) {
-            return Err(anyhow!("ping/pong must use the FIPS datagram probe path"));
-        }
-        let bytes = encode_fips_control_frame(frame)?;
-        if bytes.len() > FIPS_STATE_CONTROL_MAX_RECORD_BYTES {
-            return Err(anyhow!(
-                "FIPS state-control record is {} bytes; maximum is {FIPS_STATE_CONTROL_MAX_RECORD_BYTES}",
-                bytes.len()
-            ));
-        }
+        let bytes = encode_stateful_record(frame)?;
         let (response, result) = oneshot::channel();
         self.command_tx
             .send(SendRequest {
                 peer,
                 bytes,
-                response,
+                response: Some(response),
             })
             .await
             .context("FIPS-TCP state-control runtime stopped before send")?;
@@ -98,6 +89,36 @@ impl FipsControlTcpSender {
             .context("FIPS-TCP state-control runtime stopped during send")?
             .map_err(anyhow::Error::msg)
     }
+
+    /// Admit a periodic state-control record to the bounded delivery queue
+    /// without waiting for the remote TCP acknowledgement. Transactional
+    /// callers should keep using [`Self::send`].
+    pub fn enqueue(&self, peer: PeerIdentity, frame: &FipsControlFrame) -> Result<usize> {
+        let bytes = encode_stateful_record(frame)?;
+        let len = bytes.len();
+        self.command_tx
+            .try_send(SendRequest {
+                peer,
+                bytes,
+                response: None,
+            })
+            .map_err(|error| anyhow!("FIPS-TCP state-control queue unavailable: {error}"))?;
+        Ok(len)
+    }
+}
+
+fn encode_stateful_record(frame: &FipsControlFrame) -> Result<Vec<u8>> {
+    if !is_stateful(frame) {
+        return Err(anyhow!("ping/pong must use the FIPS datagram probe path"));
+    }
+    let bytes = encode_fips_control_frame(frame)?;
+    if bytes.len() > FIPS_STATE_CONTROL_MAX_RECORD_BYTES {
+        return Err(anyhow!(
+            "FIPS state-control record is {} bytes; maximum is {FIPS_STATE_CONTROL_MAX_RECORD_BYTES}",
+            bytes.len()
+        ));
+    }
+    Ok(bytes)
 }
 
 impl FipsControlTcpRuntime {
@@ -197,11 +218,13 @@ async fn run(
                             offset: 0,
                             final_marker: None,
                             started: Instant::now(),
-                            response: Some(command.response),
+                            response: command.response,
                         });
                     }
                     Err(error) => {
-                        let _ = command.response.send(Err(error.to_string()));
+                        if let Some(response) = command.response {
+                            let _ = response.send(Err(error.to_string()));
+                        }
                     }
                 }
             }
@@ -471,6 +494,47 @@ mod tests {
             .expect("state-control receive timed out")
             .expect("receive state-control frame");
         assert_eq!(received.source_peer, local);
+        assert_eq!(received.frame, frame);
+
+        control.stop().await;
+        endpoint.shutdown().await.expect("shutdown endpoint");
+    }
+
+    #[tokio::test]
+    async fn enqueue_returns_before_stateful_delivery_completes() {
+        let endpoint = Arc::new(
+            FipsEndpoint::builder()
+                .without_system_tun()
+                .bind()
+                .await
+                .expect("bind embedded FIPS endpoint"),
+        );
+        let local = PeerIdentity::from_npub(endpoint.npub()).expect("local peer identity");
+        let mut control = FipsControlTcpRuntime::start(Arc::clone(&endpoint))
+            .await
+            .expect("start state-control runtime");
+        let frame = FipsControlFrame::Capabilities {
+            network_id: "network".to_string(),
+            capabilities: Default::default(),
+        };
+
+        let started = Instant::now();
+        let queued = control
+            .sender()
+            .enqueue(local, &frame)
+            .expect("queue frame");
+        assert!(
+            started.elapsed() < Duration::from_millis(100),
+            "queue admission must not wait for FIPS-TCP acknowledgement"
+        );
+        assert_eq!(
+            queued,
+            encode_fips_control_frame(&frame).expect("encode").len()
+        );
+        let received = tokio::time::timeout(Duration::from_secs(3), control.recv())
+            .await
+            .expect("state-control receive timed out")
+            .expect("receive queued state-control frame");
         assert_eq!(received.frame, frame);
 
         control.stop().await;

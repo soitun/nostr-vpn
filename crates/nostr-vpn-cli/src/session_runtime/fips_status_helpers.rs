@@ -80,7 +80,7 @@ fn credible_daemon_peer_timestamp(now: u64, timestamp: Option<u64>) -> Option<u6
     }
     Some(timestamp)
 }
-async fn flush_pending_fips_roster_recipients(
+fn flush_pending_fips_roster_recipients(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &AppConfig,
     config_path: &Path,
@@ -89,7 +89,7 @@ async fn flush_pending_fips_roster_recipients(
     if pending_recipients.is_empty() {
         return;
     }
-    match publish_fips_active_network_roster(runtime, app, config_path, pending_recipients).await {
+    match publish_fips_active_network_roster(runtime, app, config_path, pending_recipients) {
         Ok(_) => {}
         Err(error) => eprintln!("fips: queued roster publish failed: {error}"),
     }

@@ -93,7 +93,7 @@ impl FipsPrivateTunnelRuntime {
         Err(anyhow!("FIPS join roster delivery is unsupported on this platform"))
     }
 
-    pub(crate) async fn send_roster(
+    pub(crate) fn enqueue_roster(
         &self,
         _participant: &str,
         _signed_roster: SignedRoster,
@@ -109,7 +109,7 @@ impl FipsPrivateTunnelRuntime {
         Ok(())
     }
 
-    pub(crate) async fn send_capabilities(
+    pub(crate) fn enqueue_capabilities(
         &self,
         _participant: &str,
         _network_id: &str,

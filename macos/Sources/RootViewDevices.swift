@@ -401,16 +401,15 @@ extension RootView {
                 get: { pendingParticipantRemoval != nil },
                 set: { if !$0 { pendingParticipantRemoval = nil } }
             ),
-            titleVisibility: .visible
-        ) {
+            titleVisibility: .visible,
+            presenting: pendingParticipantRemoval
+        ) { target in
             Button("Remove", role: .destructive) {
-                if let target = pendingParticipantRemoval {
-                    manager.removeParticipant(networkId: target.networkId, npub: target.npub)
-                }
+                manager.removeParticipant(networkId: target.networkId, npub: target.npub)
                 pendingParticipantRemoval = nil
             }
             Button("Cancel", role: .cancel) { pendingParticipantRemoval = nil }
-        } message: {
+        } message: { _ in
             Text("This removes the device from the network's roster. They keep the network locally but won't be in this roster anymore.")
         }
     }
@@ -753,4 +752,3 @@ extension RootView {
         return secs == 0 ? "\(minutes)m" : String(format: "%dm%02ds", minutes, secs)
     }
 }
-

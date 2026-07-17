@@ -372,16 +372,15 @@ extension RootView {
                                 get: { pendingNetworkRemoval?.id == network.id },
                                 set: { if !$0 { pendingNetworkRemoval = nil } }
                             ),
-                            titleVisibility: .visible
-                        ) {
+                            titleVisibility: .visible,
+                            presenting: pendingNetworkRemoval
+                        ) { target in
                             Button("Remove", role: .destructive) {
-                                if let target = pendingNetworkRemoval {
-                                    manager.removeNetwork(target.id)
-                                }
+                                manager.removeNetwork(target.id)
                                 pendingNetworkRemoval = nil
                             }
                             Button("Cancel", role: .cancel) { pendingNetworkRemoval = nil }
-                        } message: {
+                        } message: { _ in
                             Text("This deletes the network from this device.")
                         }
                     }
@@ -438,16 +437,15 @@ extension RootView {
                 get: { pendingNetworkRemoval?.id == network.id },
                 set: { if !$0 { pendingNetworkRemoval = nil } }
             ),
-            titleVisibility: .visible
-        ) {
+            titleVisibility: .visible,
+            presenting: pendingNetworkRemoval
+        ) { target in
             Button("Remove", role: .destructive) {
-                if let target = pendingNetworkRemoval {
-                    manager.removeNetwork(target.id)
-                }
+                manager.removeNetwork(target.id)
                 pendingNetworkRemoval = nil
             }
             Button("Cancel", role: .cancel) { pendingNetworkRemoval = nil }
-        } message: {
+        } message: { _ in
             Text("This deletes the network from this device.")
         }
     }
