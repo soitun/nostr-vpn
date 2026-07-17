@@ -19,9 +19,17 @@ All notable changes to this project are documented in this file.
 - Updated the WebVM guest and native/mobile receivers for the same FIPS-only
   first-join record while keeping later roster updates on the generic roster
   event format.
+- Updated embedded FIPS Core and Endpoint to 0.4.6 for bounded production
+  control polling and corrected no-wire routing/session behavior.
 
 ### Fixed
 
+- Reduce idle control-runtime wakeups while keeping inbound records and local
+  publish commands event-driven.
+- Let the WebVM guest identify its local FIPS-TCP control endpoint with one
+  transient readiness hint before it waits for the signed roster.
+- Bootstrap the headless WebVM approval route through the authenticated FIPS
+  carrier before sending its single FIPS-TCP roster record.
 - Retain completed FIPS-TCP control records under bounded local receive-queue
   backpressure instead of dropping them after transport acknowledgement.
 - Avoid oversized async test futures on worker stacks in the mobile FIPS

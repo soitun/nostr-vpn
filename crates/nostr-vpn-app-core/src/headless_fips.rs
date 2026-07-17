@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use fips_endpoint::{
-    FipsEndpoint, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig, PeerIdentity,
-    TransportInstances,
+    FipsEndpoint, NostrDiscoveryPolicy, NostrRelayAdapter, PeerAddress,
+    PeerConfig as FipsPeerConfig, PeerIdentity, TransportInstances,
 };
 use nostr_sdk::prelude::{Keys, PublicKey, ToBech32};
 use nostr_vpn_core::config::AppConfig;
@@ -27,6 +27,7 @@ const JOIN_ROSTER_ROUTE_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct HeadlessJoinRosterRuntime {
     runtime: Runtime,
     endpoint: Arc<FipsEndpoint>,
+    nostr_relay_adapter: Option<NostrRelayAdapter>,
     control: Option<FipsControlTcpRuntime>,
     base_peers: Vec<FipsPeerConfig>,
 }
@@ -76,6 +77,13 @@ impl HeadlessJoinRosterRuntime {
         webrtc.auto_connect = Some(false);
         webrtc.accept_connections = Some(false);
         webrtc.stun_servers = Some(config.stun_servers.clone());
+        let relay_carrier_enabled = !config.nostr_relays.is_empty();
+        if relay_carrier_enabled {
+            // WebRTC negotiation and the FIPS-TCP stream both remain inside an
+            // authenticated FIPS session; this is not an application Nostr
+            // approval event or a second delivery path.
+            crate::fips_nostr_relay::enable_transport(&mut endpoint_config);
+        }
         let base_peers = endpoint_config.peers.clone();
         let runtime = RuntimeBuilder::new_multi_thread()
             .enable_all()
@@ -95,10 +103,16 @@ impl HeadlessJoinRosterRuntime {
             .await
         })?;
         let endpoint = Arc::new(endpoint);
+        let nostr_relay_adapter = runtime.block_on(crate::fips_nostr_relay::start_adapter(
+            &endpoint,
+            relay_carrier_enabled,
+            &config.nostr_relays,
+        ))?;
         let control = runtime.block_on(FipsControlTcpRuntime::start(Arc::clone(&endpoint)))?;
         Ok(Self {
             runtime,
             endpoint,
+            nostr_relay_adapter,
             control: Some(control),
             base_peers,
         })
@@ -149,7 +163,12 @@ impl HeadlessJoinRosterRuntime {
             .to_bech32()
             .context("failed to encode join roster FIPS route")?;
         let mut peers = self.base_peers.clone();
-        let peer = crate::fips_nostr_relay::upsert_peer(&mut peers, &route_npub, true, false);
+        let peer = crate::fips_nostr_relay::upsert_peer(
+            &mut peers,
+            &route_npub,
+            false,
+            self.nostr_relay_adapter.is_some(),
+        );
         add_headless_roster_webrtc_address(peer, route);
         self.runtime.block_on(self.endpoint.update_peers(peers))?;
         self.runtime.block_on(async {
@@ -196,21 +215,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn headless_join_roster_uses_webrtc_without_relay_transport() {
+    fn headless_join_roster_configures_fips_carriers() {
         let keys = Keys::generate();
         let route_pubkey = keys.public_key().to_hex();
         let route_npub = keys.public_key().to_bech32().expect("npub");
         let mut peers = Vec::new();
-        let peer = crate::fips_nostr_relay::upsert_peer(&mut peers, &route_npub, true, false);
+        let peer = crate::fips_nostr_relay::upsert_peer(&mut peers, &route_npub, false, true);
         add_headless_roster_webrtc_address(peer, &route_pubkey);
 
         assert!(peer.addresses.iter().any(|address| {
             address.transport == "webrtc" && address.addr == format!("02{route_pubkey}")
         }));
         assert!(
-            peer.addresses
-                .iter()
-                .all(|address| address.transport != "nostr_relay")
+            peer.addresses.iter().any(|address| {
+                address.transport == "nostr_relay" && address.addr == route_npub
+            })
         );
     }
 }

@@ -36,9 +36,9 @@ const MAX_PUBSUB_PEERS: usize = 64;
 const MAX_QUEUED_RECORDS_PER_PEER: usize = 1_024;
 const MAX_QUEUED_BYTES_PER_PEER: usize = 4 * 1024 * 1024;
 const MAX_IO_BYTES_PER_DRIVE: usize = 256 * 1024;
-const DRIVER_TICK_INTERVAL: Duration = Duration::from_millis(25);
-const MAINTENANCE_TICK_INTERVAL: Duration = Duration::from_millis(100);
-const OUTBOX_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const DRIVER_TICK_INTERVAL: Duration = Duration::from_millis(100);
+const MAINTENANCE_TICK_INTERVAL: Duration = Duration::from_secs(1);
+const OUTBOX_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const OUTBOX_BATCH: usize = 8;
 
 struct PublishRequest {

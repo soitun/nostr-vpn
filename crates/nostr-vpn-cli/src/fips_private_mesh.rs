@@ -54,9 +54,11 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
+#[cfg(feature = "paid-exit")]
+use std::sync::Mutex;
+use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
-use std::sync::{Mutex, RwLock};
 #[cfg(target_os = "windows")]
 use std::thread::{self, JoinHandle as ThreadJoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

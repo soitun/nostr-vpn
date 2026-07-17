@@ -34,6 +34,8 @@ const PAIRING_STATE_POLL_INTERVAL: Duration = Duration::from_millis(500);
 const BROWSER_HOST_POLL_INTERVAL: Duration = Duration::from_millis(100);
 #[cfg(any(target_os = "linux", test))]
 const WEBVM_MESH_INGRESS_HINT_MAGIC: &[u8; 9] = b"NVPNMESH1";
+#[cfg(target_os = "linux")]
+const WEBVM_STATE_CONTROL_READY_MAGIC: &[u8; 9] = b"NVPNCTRL1";
 const DEFAULT_WEBVM_PAIRING_URI_PATH: &str = "/run/webvm/join-request";
 
 #[cfg(target_os = "linux")]
@@ -484,6 +486,15 @@ async fn pair_over_fips(
         .context("invalid WebVM browser FIPS return route")?;
     let pairing_uri = webvm_pairing_uri(app, &browser_host)?;
     write_pairing_uri(&args.pairing_uri_file, &pairing_uri)?;
+    endpoint
+        .send_datagram(
+            browser_identity,
+            args.host_hint_port,
+            args.host_hint_port,
+            WEBVM_STATE_CONTROL_READY_MAGIC.to_vec(),
+        )
+        .await
+        .context("failed to announce WebVM state-control readiness")?;
 
     println!(
         "webvm: awaiting one signed roster over FIPS-TCP service {}",
