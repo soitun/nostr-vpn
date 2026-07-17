@@ -24,6 +24,8 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Apply a complete FIPS-TCP control record as soon as its bytes arrive instead
+  of depending on a later stream-close frame.
 - Reduce idle control-runtime wakeups while keeping inbound records and local
   publish commands event-driven.
 - Let the WebVM guest identify its local FIPS-TCP control endpoint with one

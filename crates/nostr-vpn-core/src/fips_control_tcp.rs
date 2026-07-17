@@ -378,16 +378,24 @@ async fn drive_inbound(
             .await
             .map_err(|_| ())?;
         record.bytes.extend(bytes);
+        if let Some(frame) = decode_complete_stateful_record(&record.bytes) {
+            tcp.close(id, now_ms).await.map_err(|_| ())?;
+            return Ok(Some(frame));
+        }
     }
     if !tcp.is_read_closed(id) {
         return Ok(None);
     }
     tcp.close(id, now_ms).await.map_err(|_| ())?;
-    let frame = decode_fips_control_frame(&record.bytes)
-        .map_err(|_| ())?
-        .filter(is_stateful)
-        .ok_or(())?;
+    let frame = decode_complete_stateful_record(&record.bytes).ok_or(())?;
     Ok(Some(frame))
+}
+
+fn decode_complete_stateful_record(bytes: &[u8]) -> Option<FipsControlFrame> {
+    decode_fips_control_frame(bytes)
+        .ok()
+        .flatten()
+        .filter(is_stateful)
 }
 
 fn is_stateful(frame: &FipsControlFrame) -> bool {
@@ -495,6 +503,17 @@ mod tests {
         assert!(error.to_string().contains("datagram probe"));
         control.stop().await;
         endpoint.shutdown().await.expect("shutdown endpoint");
+    }
+
+    #[test]
+    fn complete_record_is_ready_without_waiting_for_stream_close() {
+        let frame = FipsControlFrame::Capabilities {
+            network_id: "network".to_string(),
+            capabilities: Default::default(),
+        };
+        let bytes = encode_fips_control_frame(&frame).expect("encode state-control frame");
+        assert_eq!(decode_complete_stateful_record(&bytes), Some(frame));
+        assert!(decode_complete_stateful_record(&bytes[..bytes.len() - 1]).is_none());
     }
 
     #[tokio::test]
