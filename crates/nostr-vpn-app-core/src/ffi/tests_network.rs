@@ -341,6 +341,92 @@
         let _ = fs::remove_dir_all(&joiner_dir);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn join_approval_respects_disabled_autoconnect() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-offline-approval-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let script_path = dir.join("nvpn");
+        let calls_path = dir.join("calls.txt");
+        let calls_literal = calls_path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let script = r#"#!/bin/sh
+printf '%s\n' "$*" >> "__CALLS__"
+if [ "$1" = "service" ] && [ "$2" = "status" ]; then
+  cat <<'JSON'
+{"supported":false,"installed":false,"disabled":false,"loaded":false,"running":false,"pid":null,"label":"","binary_version":""}
+JSON
+  exit 0
+fi
+if [ "$1" = "status" ]; then
+  cat <<'JSON'
+{"daemon":{"running":false,"state":null}}
+JSON
+  exit 0
+fi
+if [ "$1" = "start" ]; then
+  exit 17
+fi
+exit 0
+"#
+        .replace("__CALLS__", &calls_literal);
+        fs::write(&script_path, script).expect("write fake nvpn");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("fake nvpn metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make fake nvpn executable");
+
+        let error = anyhow!("boom");
+        let mut admin = NativeAppRuntime::from_startup_error(&error);
+        admin.startup_error = None;
+        admin.last_error.clear();
+        admin.mobile_runtime = false;
+        admin.config_path = dir.join("config.toml");
+        admin.nvpn_bin = Some(script_path);
+        let admin_pubkey = admin
+            .config
+            .own_nostr_pubkey_hex()
+            .expect("admin pubkey");
+        create_test_network(&mut admin, "Home");
+        admin.config.networks[0].admins = vec![admin_pubkey];
+        admin.config.autoconnect = false;
+        admin
+            .config
+            .save(&admin.config_path)
+            .expect("save admin config");
+
+        let mut joiner = AppConfig::generated_without_networks();
+        joiner
+            .ensure_pending_nostr_join_request(1_778_998_000)
+            .expect("pending join request");
+        let joiner_pubkey = joiner.own_nostr_pubkey_hex().expect("joiner pubkey");
+        let request = joiner
+            .pending_nostr_join_request_link(crate::join_request_link::JOIN_REQUEST_LINK_PREFIX)
+            .expect("join request link");
+
+        admin.dispatch(NativeAppAction::ImportJoinRequest { request });
+
+        assert!(admin.last_error.is_empty(), "{}", admin.last_error);
+        assert!(admin.config.networks[0].devices.contains(&joiner_pubkey));
+        assert_eq!(admin.queued_join_rosters.len(), 1);
+        let calls = fs::read_to_string(calls_path).expect("read fake nvpn calls");
+        assert!(
+            !calls.lines().any(|line| line.starts_with("start ")),
+            "autoconnect-disabled approval started networking: {calls}"
+        );
+
+        let _ = fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn unsupported_compact_join_request_is_rejected_without_adding_device() {
         let nonce = SystemTime::now()

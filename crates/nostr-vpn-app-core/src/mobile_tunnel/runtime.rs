@@ -42,6 +42,7 @@ impl MobileTunnel {
             runtime,
             endpoint: Some(started.endpoint),
             nostr_relay_adapter: started.nostr_relay_adapter,
+            state_control: started.state_control,
             mesh: started.mesh,
             presence: started.presence,
             config: started.config,
@@ -459,6 +460,7 @@ impl MobileTunnel {
         Ok(MobileTunnelStarted {
             endpoint,
             nostr_relay_adapter,
+            state_control: state_control_sender,
             mesh,
             presence,
             config: config_state,
@@ -592,6 +594,37 @@ impl MobileTunnel {
             }
         }
     }
+
+    pub(crate) fn send_join_roster(
+        &self,
+        recipient: &str,
+        join_roster: &JoinRosterControl,
+        timeout: Duration,
+    ) -> Result<()> {
+        let recipient = normalize_nostr_pubkey(recipient)?;
+        let endpoint_npub = self
+            .config
+            .read()
+            .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
+            .peers
+            .iter()
+            .find(|peer| peer.participant_pubkey == recipient)
+            .map(|peer| peer.endpoint_npub.clone())
+            .with_context(|| {
+                format!("missing FIPS endpoint identity for participant {recipient}")
+            })?;
+        let destination = PeerIdentity::from_npub(&endpoint_npub)
+            .with_context(|| format!("invalid FIPS endpoint identity {endpoint_npub}"))?;
+        let frame = FipsControlFrame::JoinRoster {
+            control: Box::new(join_roster.clone()),
+        };
+        self.runtime.block_on(async {
+            tokio::time::timeout(timeout, self.state_control.send(destination, &frame))
+                .await
+                .with_context(|| format!("join roster delivery to {recipient} timed out"))??;
+            Ok(())
+        })
+    }
 }
 
 async fn push_mobile_wg_inbound_batch(
@@ -623,6 +656,7 @@ async fn push_mobile_wg_inbound_batch(
 struct MobileTunnelStarted {
     endpoint: Arc<FipsEndpoint>,
     nostr_relay_adapter: Option<NostrRelayAdapter>,
+    state_control: FipsControlTcpSender,
     mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: Arc<RwLock<MobileTunnelConfig>>,

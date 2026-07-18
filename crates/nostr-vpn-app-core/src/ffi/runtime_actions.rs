@@ -416,8 +416,11 @@ impl NativeAppRuntime {
         self.config = prepared.updated_config;
         self.save_reload_and_refresh()?;
         self.queue_join_roster_delivery(bootstrap, &prepared.join_roster)?;
-        if !self.vpn_enabled {
-            self.connect_vpn()?;
+        if self.config.autoconnect && !self.vpn_enabled {
+            // Approval and its durable roster outbox are already committed.
+            // Failure to auto-start networking must not report the approval
+            // itself as failed; the queued delivery remains retryable.
+            let _ = self.connect_vpn();
         }
         Ok(())
     }

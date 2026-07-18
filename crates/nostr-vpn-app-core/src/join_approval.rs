@@ -1,8 +1,15 @@
+use std::fs;
+use std::path::Path;
+use std::time::Duration;
+
 use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::config::{AppConfig, SharedNetworkRoster, normalize_nostr_pubkey};
 use nostr_vpn_core::fips_control::{JoinRosterControl, NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap;
+use nostr_vpn_core::join_delivery::load_join_rosters;
 use nostr_vpn_core::join_requests::AppliedNostrJoinRoster;
+
+use crate::mobile_tunnel::{MobileTunnel, MobileTunnelConfig};
 
 #[derive(Debug, Clone)]
 pub struct PreparedJoinApproval {
@@ -77,6 +84,52 @@ pub fn apply_join_roster(
     now: u64,
 ) -> Result<Option<AppliedNostrJoinRoster>> {
     config.apply_nostr_join_roster(join_roster, now)
+}
+
+/// Delivers the ordinary queued join-roster outbox through the embedded FIPS
+/// control plane. The runtime has no system tunnel and does not install or
+/// control a platform service.
+pub fn deliver_queued_join_rosters(config_path: &Path, timeout: Duration) -> Result<usize> {
+    let app = AppConfig::load(config_path)?;
+    let queued = load_join_rosters(config_path);
+    if queued.is_empty() {
+        return Ok(0);
+    }
+
+    let participants = app.participant_pubkeys_hex();
+    for (_, delivery) in &queued {
+        if !participants.contains(&delivery.recipient_npub) {
+            return Err(anyhow!(
+                "join roster recipient {} is not in the active roster",
+                delivery.recipient_npub
+            ));
+        }
+    }
+
+    let mut runtime_config = MobileTunnelConfig::from_app_with_config_path(&app, config_path)?;
+    runtime_config.config_path.clear();
+    runtime_config.advertised_endpoint.clear();
+    runtime_config.listen_port = 0;
+    runtime_config.route_targets.clear();
+    runtime_config.share_local_candidates = false;
+    runtime_config.stun_servers.clear();
+    runtime_config.webrtc_enabled = false;
+    runtime_config.excluded_routes.clear();
+    runtime_config.dns_servers.clear();
+    runtime_config.magic_dns_server.clear();
+    runtime_config.wireguard_exit = None;
+    let runtime_json =
+        serde_json::to_string(&runtime_config).context("encode FIPS join delivery runtime")?;
+    let runtime = MobileTunnel::start(&runtime_json)?;
+
+    let mut delivered = 0;
+    for (path, delivery) in queued {
+        runtime.send_join_roster(&delivery.recipient_npub, &delivery.join_roster, timeout)?;
+        fs::remove_file(&path)
+            .with_context(|| format!("remove delivered join roster {}", path.display()))?;
+        delivered += 1;
+    }
+    Ok(delivered)
 }
 
 #[cfg(test)]

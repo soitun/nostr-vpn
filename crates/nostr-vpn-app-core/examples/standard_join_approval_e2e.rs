@@ -3,9 +3,10 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
+use nostr_vpn_app_core::join_approval::deliver_queued_join_rosters;
 use nostr_vpn_app_core::join_request_link::parse_join_request_qr_code_or_link;
 use nostr_vpn_app_core::{FfiApp, NativeAppAction};
 use nostr_vpn_core::config::{AppConfig, normalize_nostr_pubkey};
@@ -56,7 +57,12 @@ fn parse_args() -> Result<Args> {
 
 fn initialize_or_load_admin(config_path: &Path, network_name: &str) -> Result<AppConfig> {
     if config_path.exists() {
-        return AppConfig::load(config_path);
+        let mut config = AppConfig::load(config_path)?;
+        if config.autoconnect {
+            config.autoconnect = false;
+            config.save(config_path)?;
+        }
+        return Ok(config);
     }
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)
@@ -67,7 +73,7 @@ fn initialize_or_load_admin(config_path: &Path, network_name: &str) -> Result<Ap
     let network_id = config.add_owned_network(network_name);
     config.set_network_enabled(&network_id, true)?;
     config.set_network_join_requests_enabled(&network_id, true)?;
-    config.autoconnect = true;
+    config.autoconnect = false;
     config.save(config_path)?;
     Ok(config)
 }
@@ -102,6 +108,9 @@ fn run() -> Result<()> {
         bail!("normal ImportJoinRequest action did not add the requested device");
     }
     let initial_queue = load_join_rosters(&config_path);
+    if initial_queue.is_empty() {
+        bail!("normal ImportJoinRequest action did not queue roster delivery");
+    }
     emit(&json!({
         "ok": true,
         "event": "approved",
@@ -111,30 +120,21 @@ fn run() -> Result<()> {
         "queueDepth": initial_queue.len(),
     }));
 
-    let deadline = Instant::now() + args.timeout;
-    loop {
-        let queued = load_join_rosters(&config_path);
-        if queued.is_empty() {
-            emit(&json!({
-                "ok": true,
-                "event": "delivered",
-                "configPath": config_path,
-                "networkId": network_id,
-                "recipient": recipient,
-                "queueDrained": true,
-                "vpnStatus": runtime.state().vpn_status,
-            }));
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            bail!(
-                "ordinary queued roster delivery did not drain within {} seconds",
-                args.timeout.as_secs()
-            );
-        }
-        let _ = runtime.dispatch(NativeAppAction::Tick);
-        std::thread::sleep(Duration::from_millis(100));
+    let delivered = deliver_queued_join_rosters(&config_path, args.timeout)?;
+    if !load_join_rosters(&config_path).is_empty() {
+        bail!("ordinary queued roster delivery did not drain");
     }
+    emit(&json!({
+        "ok": true,
+        "event": "delivered",
+        "configPath": config_path,
+        "networkId": network_id,
+        "recipient": recipient,
+        "delivered": delivered,
+        "queueDrained": true,
+        "vpnStatus": runtime.state().vpn_status,
+    }));
+    Ok(())
 }
 
 fn emit(value: &serde_json::Value) {

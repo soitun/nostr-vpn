@@ -520,6 +520,7 @@ pub(crate) struct MobileTunnel {
     runtime: Runtime,
     endpoint: Option<Arc<FipsEndpoint>>,
     nostr_relay_adapter: Option<NostrRelayAdapter>,
+    state_control: FipsControlTcpSender,
     mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
     config: Arc<RwLock<MobileTunnelConfig>>,
