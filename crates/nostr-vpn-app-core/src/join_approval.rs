@@ -90,7 +90,7 @@ mod tests {
 
     fn pending_joiner() -> AppConfig {
         let mut joiner = AppConfig::generated_without_networks();
-        joiner.node_name = "WebVM Guest".to_string();
+        joiner.node_name = "Joining device".to_string();
         joiner
             .ensure_pending_nostr_join_request(REQUESTED_AT)
             .expect("pending request");

@@ -89,10 +89,6 @@ impl FipsPrivateTunnelRuntime {
         Ok(())
     }
 
-    pub(crate) async fn ensure_join_roster_route(&self, _route_pubkey: &str) -> Result<()> {
-        Err(anyhow!("FIPS join roster delivery is unsupported on this platform"))
-    }
-
     pub(crate) fn enqueue_roster(
         &self,
         _participant: &str,

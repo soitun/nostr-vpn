@@ -15,8 +15,8 @@ use tokio::task::JoinHandle;
 
 use crate::fips_control::{FipsControlFrame, decode_fips_control_frame, encode_fips_control_frame};
 
-/// Reliable nVPN state-control records. Ping/pong and transient WebVM hints
-/// remain datagrams because delayed delivery would make them misleading.
+/// Reliable nVPN state-control records. Ping/pong remains datagram-based because
+/// delayed delivery would make liveness misleading.
 pub const FIPS_STATE_CONTROL_SERVICE_PORT: u16 = 7_370;
 pub const FIPS_STATE_CONTROL_MAX_RECORD_BYTES: usize = 128 * 1024;
 

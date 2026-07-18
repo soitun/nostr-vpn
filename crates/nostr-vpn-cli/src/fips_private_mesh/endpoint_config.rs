@@ -38,26 +38,19 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
     pub(crate) discovery_fallback_transit: bool,
 }
 
-pub(crate) fn prioritize_join_roster_route(
+pub(crate) fn prioritize_join_roster_recipient(
     peers: Vec<FipsEndpointPeerTransportConfig>,
-    route_pubkey: &str,
-) -> Result<(String, Vec<FipsEndpointPeerTransportConfig>)> {
-    let route_pubkey = normalize_nostr_pubkey(route_pubkey)
-        .with_context(|| format!("invalid join roster recipient {route_pubkey}"))?;
-    let route_npub = PublicKey::from_hex(&route_pubkey)?.to_bech32()?;
-    let route_address = FipsPeerAddressHint {
-        addr: format!("webrtc:02{route_pubkey}"),
-        seen_at_ms: None,
-        priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
-    };
-    let peers = prioritize_join_roster_peer(peers, &route_npub, route_address);
-    Ok((route_npub, peers))
+    recipient_pubkey: &str,
+) -> Result<Vec<FipsEndpointPeerTransportConfig>> {
+    let recipient_pubkey = normalize_nostr_pubkey(recipient_pubkey)
+        .with_context(|| format!("invalid join roster recipient {recipient_pubkey}"))?;
+    let recipient_npub = PublicKey::from_hex(&recipient_pubkey)?.to_bech32()?;
+    Ok(prioritize_join_roster_peer(peers, &recipient_npub))
 }
 
 fn prioritize_join_roster_peer(
     mut peers: Vec<FipsEndpointPeerTransportConfig>,
     route_npub: &str,
-    route_address: FipsPeerAddressHint,
 ) -> Vec<FipsEndpointPeerTransportConfig> {
     let mut route_peer = peers
         .iter()
@@ -69,12 +62,6 @@ fn prioritize_join_roster_peer(
             auto_reconnect: true,
             discovery_fallback_transit: true,
         });
-    if !route_peer.addresses.contains(&route_address) {
-        route_peer.addresses.push(route_address);
-    }
-    route_peer
-        .addresses
-        .retain(|hint| split_peer_transport_addr(&hint.addr).0 != "nostr_relay");
     route_peer.auto_reconnect = true;
     peers.insert(0, route_peer);
     peers
@@ -239,14 +226,10 @@ fn fips_endpoint_config_with_open_discovery_limit(
         if !transport.nostr_relays.is_empty() {
             config.node.discovery.nostr.advert_relays = transport.nostr_relays.clone();
         }
-        // Keep a dormant outbound WebRTC transport available even when
-        // ambient WebRTC discovery is disabled. Browser join approvals carry
-        // an explicit WebRTC return address and must not depend on the mesh
-        // discovery preference that controls advertising and auto-connect.
-        if nostr_enabled {
+        if nostr_enabled && transport.webrtc_enabled {
             configure_fips_webrtc_transport(
                 &mut config,
-                transport.webrtc_enabled && advertise_on_nostr,
+                advertise_on_nostr,
                 &transport.stun_servers,
                 mesh_mtu.underlay_udp,
             );
@@ -300,59 +283,6 @@ fn fips_endpoint_config_with_open_discovery_limit(
         })
         .collect();
     config
-}
-
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
-fn fips_endpoint_config_for_local_ethernet(
-    peers: &[FipsEndpointPeerTransportConfig],
-    ethernet: &FipsLocalEthernetUnderlayConfig,
-    mesh_mtu: MeshMtu,
-) -> Config {
-    let mut config = fips_endpoint_config_with_open_discovery_limit(
-        peers,
-        None,
-        mesh_mtu,
-        NostrDiscoveryPolicy::ConfiguredOnly,
-        0,
-    );
-    config.node.discovery.nostr.enabled = false;
-    config.node.discovery.nostr.advertise = false;
-    config.node.discovery.nostr.share_local_candidates = false;
-    config.node.discovery.nostr.advert_relays.clear();
-    config.node.discovery.nostr.stun_servers.clear();
-    config.node.discovery.lan.enabled = false;
-    config.node.discovery.lan.scope = Some(ethernet.discovery_scope.clone());
-    config.node.discovery.local.enabled = false;
-    config.transports = Default::default();
-    config.transports.ethernet = TransportInstances::Single(EthernetConfig {
-        interface: ethernet.interface.clone(),
-        discovery: Some(true),
-        announce: Some(true),
-        auto_connect: Some(true),
-        accept_connections: Some(true),
-        discovery_scope: Some(ethernet.discovery_scope.clone()),
-        mtu: Some(mesh_mtu.underlay_udp),
-        ..EthernetConfig::default()
-    });
-    for peer in &mut config.peers {
-        peer.addresses.clear();
-    }
-    config
-}
-
-#[cfg(any(target_os = "linux", test))]
-pub(crate) fn local_ethernet_only_endpoint_config(
-    interface: &str,
-    discovery_scope: &str,
-) -> Config {
-    fips_endpoint_config_for_local_ethernet(
-        &[],
-        &FipsLocalEthernetUnderlayConfig {
-            interface: interface.to_string(),
-            discovery_scope: discovery_scope.to_string(),
-        },
-        resolve_private_mesh_mtu(None, None, None),
-    )
 }
 
 fn fips_endpoint_peers_from_mesh(
@@ -588,12 +518,6 @@ fn configure_fips_webrtc_transport(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FipsLocalEthernetUnderlayConfig {
-    interface: String,
-    discovery_scope: String,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) identity_nsec: String,
@@ -638,7 +562,6 @@ pub(crate) struct FipsPrivateTunnelConfig {
     mesh_mtu: MeshMtu,
     #[cfg(target_os = "linux")]
     pub(crate) control_plane_bypass_hosts: Vec<Ipv4Addr>,
-    local_ethernet_underlay: Option<FipsLocalEthernetUnderlayConfig>,
 }
 
 #[cfg(test)]
@@ -722,7 +645,7 @@ mod endpoint_config_tests {
     }
 
     #[test]
-    fn endpoint_config_keeps_dormant_webrtc_for_explicit_browser_routes() {
+    fn endpoint_config_leaves_webrtc_empty_when_webrtc_is_disabled() {
         let peer = test_peer();
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
         let transport = test_transport(true, false);
@@ -736,22 +659,16 @@ mod endpoint_config_tests {
 
         assert!(config.node.discovery.nostr.enabled);
         assert!(config.node.discovery.nostr.advertise);
-        let TransportInstances::Single(webrtc) = &config.transports.webrtc else {
-            panic!("expected a dormant WebRTC transport for explicit browser routes");
-        };
-        assert_eq!(webrtc.advertise_on_nostr, Some(false));
-        assert_eq!(webrtc.auto_connect, Some(false));
-        assert_eq!(webrtc.accept_connections, Some(false));
+        assert!(config.transports.webrtc.is_empty());
         assert!(!config.transports.udp.is_empty());
         assert!(config.transports.nostr_relay.is_empty());
     }
 
     #[test]
-    fn relay_fallback_is_kept_for_roster_but_removed_from_join_route() {
+    fn join_roster_recipient_keeps_enabled_roster_transports() {
         let roster = test_peer();
         let roster_npub = normalize_fips_endpoint_npub(&roster.endpoint_npub);
         let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
-        let browser_pubkey = Keys::generate().public_key().to_hex();
         let mut peers = fips_endpoint_peers_from_mesh(
             std::slice::from_ref(&roster),
             vec![
@@ -771,13 +688,11 @@ mod endpoint_config_tests {
             Vec::new(),
         );
         add_nostr_relay_fallback_for_mesh_peers(&mut peers, std::slice::from_ref(&roster));
-        let (_, peers) =
-            prioritize_join_roster_route(peers, &browser_pubkey).expect("explicit browser route");
+        let peers = prioritize_join_roster_recipient(peers, &roster.endpoint_npub)
+            .expect("join roster recipient");
 
-        let roster_peer = peers
-            .iter()
-            .find(|peer| peer.npub == roster_npub)
-            .expect("roster endpoint peer");
+        let roster_peer = &peers[0];
+        assert_eq!(roster_peer.npub, roster_npub);
         for transport in ["udp", "tcp", "webrtc", "nostr_relay"] {
             assert!(roster_peer.addresses.iter().any(|address| {
                 split_peer_transport_addr(&address.addr).0 == transport
@@ -795,19 +710,15 @@ mod endpoint_config_tests {
                 .map(|address| address.priority)
         };
         assert_eq!(relay_priority(&roster_npub), Some(FIPS_NOSTR_RELAY_FALLBACK_PRIORITY));
-        assert_eq!(
-            relay_priority(&normalize_fips_endpoint_npub(&browser_pubkey)),
-            None
-        );
         assert_eq!(relay_priority(&ambient_npub), None);
     }
 
     #[test]
-    fn disabled_webrtc_keeps_only_an_explicit_browser_route() {
-        let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
-        let browser_pubkey = Keys::generate().public_key().to_hex();
+    fn disabled_webrtc_remains_disabled_for_join_roster_recipient() {
+        let recipient_pubkey = Keys::generate().public_key().to_hex();
+        let recipient_npub = normalize_fips_endpoint_npub(&recipient_pubkey);
         let mut peers = vec![FipsEndpointPeerTransportConfig {
-            npub: ambient_npub,
+            npub: recipient_npub.clone(),
             addresses: vec![
                 FipsPeerAddressHint {
                     addr: "udp:203.0.113.20:51820".to_string(),
@@ -828,19 +739,16 @@ mod endpoint_config_tests {
         }];
 
         retain_enabled_peer_transport_addresses(&mut peers, false);
-        let (_, peers) =
-            prioritize_join_roster_route(peers, &browser_pubkey).expect("explicit browser route");
+        let peers = prioritize_join_roster_recipient(peers, &recipient_pubkey)
+            .expect("join roster recipient");
 
         let webrtc_addresses = peers
             .iter()
             .flat_map(|peer| peer.addresses.iter())
             .filter(|hint| split_peer_transport_addr(&hint.addr).0 == "webrtc")
             .collect::<Vec<_>>();
-        assert_eq!(webrtc_addresses.len(), 1);
-        assert_eq!(
-            webrtc_addresses[0].addr,
-            format!("webrtc:02{browser_pubkey}")
-        );
+        assert!(webrtc_addresses.is_empty());
+        assert_eq!(peers[0].npub, recipient_npub);
         assert!(peers.iter().any(|peer| {
             peer.addresses
                 .iter()
@@ -848,33 +756,4 @@ mod endpoint_config_tests {
         }));
     }
 
-    #[test]
-    fn webvm_endpoint_configures_only_scoped_local_ethernet() {
-        let config = local_ethernet_only_endpoint_config("eth0", "fips-overlay-v1");
-
-        config
-            .validate()
-            .expect("Ethernet-only WebVM endpoint config should validate");
-        assert!(!config.node.discovery.nostr.enabled);
-        assert!(!config.node.discovery.nostr.advertise);
-        assert!(config.node.discovery.nostr.advert_relays.is_empty());
-        assert!(config.node.discovery.nostr.stun_servers.is_empty());
-        assert!(!config.node.discovery.lan.enabled);
-        assert!(!config.node.discovery.local.enabled);
-        assert!(config.peers.is_empty());
-        assert!(config.transports.udp.is_empty());
-        assert!(config.transports.tcp.is_empty());
-        assert!(config.transports.tor.is_empty());
-        assert!(config.transports.webrtc.is_empty());
-        assert!(config.transports.ble.is_empty());
-        let TransportInstances::Single(ethernet) = &config.transports.ethernet else {
-            panic!("expected exactly one Ethernet transport");
-        };
-        assert_eq!(ethernet.interface, "eth0");
-        assert_eq!(ethernet.discovery_scope.as_deref(), Some("fips-overlay-v1"));
-        assert_eq!(ethernet.discovery, Some(true));
-        assert_eq!(ethernet.announce, Some(true));
-        assert_eq!(ethernet.auto_connect, Some(true));
-        assert_eq!(ethernet.accept_connections, Some(true));
-    }
 }

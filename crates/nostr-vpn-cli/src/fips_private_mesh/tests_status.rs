@@ -607,14 +607,9 @@
     }
 
     #[test]
-    fn direct_join_approval_route_is_prioritized_ahead_of_ambient_peers() {
+    fn join_roster_recipient_is_prioritized_ahead_of_ambient_peers() {
         let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
-        let browser_npub = Keys::generate().public_key().to_bech32().expect("npub");
-        let browser_address = FipsPeerAddressHint {
-            addr: format!("webrtc:02{}", Keys::generate().public_key().to_hex()),
-            seen_at_ms: None,
-            priority: FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY,
-        };
+        let recipient_npub = Keys::generate().public_key().to_bech32().expect("npub");
         let peers = vec![
             FipsEndpointPeerTransportConfig {
                 npub: ambient_npub.clone(),
@@ -623,18 +618,16 @@
                 discovery_fallback_transit: true,
             },
             FipsEndpointPeerTransportConfig {
-                npub: browser_npub.clone(),
+                npub: recipient_npub.clone(),
                 addresses: Vec::new(),
                 auto_reconnect: false,
                 discovery_fallback_transit: true,
             },
         ];
 
-        let prioritized =
-            prioritize_join_roster_peer(peers, &browser_npub, browser_address.clone());
+        let prioritized = prioritize_join_roster_peer(peers, &recipient_npub);
 
-        assert_eq!(prioritized[0].npub, browser_npub);
-        assert!(prioritized[0].addresses.contains(&browser_address));
+        assert_eq!(prioritized[0].npub, recipient_npub);
         assert!(prioritized[0].auto_reconnect);
         assert_eq!(prioritized[1].npub, ambient_npub);
     }

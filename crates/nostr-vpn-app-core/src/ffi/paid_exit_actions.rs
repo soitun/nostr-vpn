@@ -47,9 +47,10 @@ impl NativeAppRuntime {
         url: &str,
         label: Option<&str>,
     ) -> Result<()> {
+        let url = normalize_paid_route_mint_url(url)?;
         let label = label.unwrap_or_default();
         self.mutate_paid_route_store(|store| {
-            store.upsert_wallet_mint(url, label, None, unix_timestamp())
+            store.upsert_wallet_mint(&url, label, None, unix_timestamp())
         })
     }
 

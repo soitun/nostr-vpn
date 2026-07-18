@@ -2,14 +2,8 @@
 impl FipsPrivateTunnelRuntime {
     pub(crate) async fn start(config: FipsPrivateTunnelConfig) -> Result<Self> {
         let scope = config
-            .local_ethernet_underlay
-            .is_none()
-            .then(|| {
-                config
-                    .nostr_discovery_enabled
-                    .then(|| fips_lan_discovery_scope(&config.network_id))
-            })
-            .flatten();
+            .nostr_discovery_enabled
+            .then(|| fips_lan_discovery_scope(&config.network_id));
         let transport = FipsEndpointTransportConfig {
             listen_port: config.listen_port,
             advertised_endpoint: config.advertised_endpoint.clone(),
@@ -20,21 +14,13 @@ impl FipsPrivateTunnelRuntime {
             nostr_relays: config.nostr_relays.clone(),
             share_local_candidates: config.share_local_candidates,
         };
-        let endpoint_config = if let Some(ethernet) = config.local_ethernet_underlay.as_ref() {
-            fips_endpoint_config_for_local_ethernet(
-                &config.endpoint_peers,
-                ethernet,
-                config.mesh_mtu,
-            )
-        } else {
-            fips_endpoint_config_with_open_discovery_limit(
-                &config.endpoint_peers,
-                Some(&transport),
-                config.mesh_mtu,
-                config.nostr_discovery_policy,
-                config.open_discovery_max_pending,
-            )
-        };
+        let endpoint_config = fips_endpoint_config_with_open_discovery_limit(
+            &config.endpoint_peers,
+            Some(&transport),
+            config.mesh_mtu,
+            config.nostr_discovery_policy,
+            config.open_discovery_max_pending,
+        );
         let local_allowed_ips = config.local_allowed_ips();
         let local_tunnel_ips = config.local_tunnel_ips();
         let mesh = Arc::new(
@@ -49,36 +35,12 @@ impl FipsPrivateTunnelRuntime {
             )
             .await?,
         );
-        Self::start_with_mesh(config, mesh, true).await
-    }
-
-    #[cfg(target_os = "linux")]
-    pub(crate) async fn start_with_shared_endpoint(
-        config: FipsPrivateTunnelConfig,
-        shared: FipsSharedEndpoint,
-    ) -> Result<Self> {
-        if config.local_ethernet_underlay.is_none() {
-            return Err(anyhow!(
-                "shared FIPS endpoint requires a local-Ethernet-only tunnel config"
-            ));
-        }
-        let local_allowed_ips = config.local_allowed_ips();
-        let local_tunnel_ips = config.local_tunnel_ips();
-        let mesh = Arc::new(FipsPrivateMeshRuntime::from_shared_endpoint(
-            shared,
-            config.peers.clone(),
-            local_allowed_ips,
-            local_tunnel_ips,
-            config.paid_route_admissions.clone(),
-        ));
-        // The WebVM host network owns its local secure DNS listener.
-        Self::start_with_mesh(config, mesh, false).await
+        Self::start_with_mesh(config, mesh).await
     }
 
     async fn start_with_mesh(
         config: FipsPrivateTunnelConfig,
         mesh: Arc<FipsPrivateMeshRuntime>,
-        manage_host_dns: bool,
     ) -> Result<Self> {
         crate::pipeline_profile::maybe_spawn_reporter();
         #[cfg(target_os = "linux")]
@@ -113,7 +75,7 @@ impl FipsPrivateTunnelRuntime {
             state_control,
             nostr_relay_adapter: None,
             secure_dns: None,
-            manages_secure_dns: manage_host_dns,
+            manages_secure_dns: true,
             config: config.clone(),
             _tun: tun,
             fips_host: None,
@@ -194,10 +156,7 @@ impl FipsPrivateTunnelRuntime {
     pub(crate) async fn refresh_peer_dependent_routes(&mut self) -> Result<()> {
         #[cfg(target_os = "linux")]
         {
-            if !linux_route_targets_require_ip_endpoint_bypass(
-                &self.config,
-                &self.config.route_targets,
-            ) {
+            if !linux_route_targets_require_ip_endpoint_bypass(&self.config.route_targets) {
                 return Ok(());
             }
 
@@ -749,29 +708,6 @@ impl FipsPrivateTunnelRuntime {
         self.mesh
             .send_join_request(&self.state_control, participant, requested_at, request)
             .await
-    }
-
-    pub(crate) async fn ensure_join_roster_route(&self, route_pubkey: &str) -> Result<()> {
-        let (route_npub, peers) =
-            prioritize_join_roster_route(self.config.endpoint_peers.clone(), route_pubkey)?;
-        self.mesh.update_peers(&peers).await?;
-        let deadline = tokio::time::Instant::now() + DIRECT_JOIN_APPROVAL_ROUTE_CONNECT_TIMEOUT;
-        loop {
-            if self
-                .mesh
-                .endpoint()
-                .peers()
-                .await?
-                .iter()
-                .any(|peer| peer.npub == route_npub && peer.connected)
-            {
-                return Ok(());
-            }
-            if tokio::time::Instant::now() >= deadline {
-                return Err(anyhow!("join roster FIPS route did not connect"));
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
     }
 
     pub(crate) fn enqueue_roster(

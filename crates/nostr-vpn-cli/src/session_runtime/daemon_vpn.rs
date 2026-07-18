@@ -11,9 +11,6 @@ use {daemon_vpn_heartbeat::*, daemon_vpn_join_approval::*, daemon_vpn_startup::*
 #[cfg(feature = "paid-exit")]
 use daemon_vpn_paid_exit::*;
 pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
-    if let Some(webvm_args) = crate::webvm_guest::args_from_daemon(&args)? {
-        return crate::webvm_guest::run_daemon(webvm_args, args.service).await;
-    }
     let startup = initialize_daemon_vpn(&args).await?;
     let mut magic_dns_runtime = start_split_magic_dns(&startup.app);
     let (mut announce_interval, mut recent_peer_refresh_interval) = daemon_refresh_intervals(&args);

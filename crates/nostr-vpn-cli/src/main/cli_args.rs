@@ -74,9 +74,6 @@ enum Command {
     Resume(ControlArgs),
     /// Run a FIPS private mesh session from config.
     Connect(ConnectArgs),
-    /// Run the Ethernet-only guest runtime used by WebVM.
-    #[command(name = "webvm-guest", hide = true)]
-    WebvmGuest(WebvmGuestArgs),
     /// Show this device's join-request link and QR, then wait for approval.
     #[command(name = "join-request")]
     JoinRequest(JoinRequestArgs),
@@ -155,28 +152,6 @@ struct JoinRequestArgs {
     /// Replace the still-pending request, invalidating previously shared links.
     #[arg(long)]
     reset: bool,
-}
-
-#[derive(Debug, Clone, Args)]
-struct WebvmGuestArgs {
-    /// Persistent nvpn configuration path.
-    #[arg(long)]
-    config: PathBuf,
-    /// Guest Ethernet interface connected to the browser FIPS host.
-    #[arg(long)]
-    ethernet_interface: String,
-    /// Ethernet beacon scope shared with the browser FIPS host.
-    #[arg(long)]
-    discovery_scope: String,
-    /// FIPS datagram port for the transient browser mesh-ingress hint.
-    #[arg(long)]
-    host_hint_port: u16,
-    /// Atomically updated file containing the pending pairing bootstrap URI.
-    #[arg(long)]
-    pairing_uri_file: PathBuf,
-    /// Guest TUN interface used after approval.
-    #[arg(long)]
-    tun_interface: String,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -382,12 +357,6 @@ struct DaemonArgs {
     paused: bool,
     #[arg(long, hide = true, default_value_t = false)]
     service: bool,
-    /// Layer-2-only Ethernet interface used by a WebVM guest.
-    #[arg(long, hide = true, requires = "webvm_discovery_scope")]
-    webvm_ethernet_interface: Option<String>,
-    /// Ethernet discovery scope shared with the WebVM browser host.
-    #[arg(long, hide = true, requires = "webvm_ethernet_interface")]
-    webvm_discovery_scope: Option<String>,
 }
 
 #[derive(Debug, Args)]

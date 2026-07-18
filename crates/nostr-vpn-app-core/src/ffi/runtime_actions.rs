@@ -403,24 +403,19 @@ impl NativeAppRuntime {
 
     fn import_join_request(&mut self, request: &str) -> Result<()> {
         let parsed = parse_join_request_qr_code_or_link(request)?;
-        self.import_parsed_join_request(&parsed.bootstrap, parsed.fips_route_npub.as_deref())
+        self.import_parsed_join_request(&parsed.bootstrap)
     }
 
     fn import_parsed_join_request(
         &mut self,
         bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
-        fips_route_npub: Option<&str>,
     ) -> Result<()> {
         let network_id = self.active_admin_network_id()?;
         let prepared =
             prepare_join_approval(&self.config, &network_id, bootstrap, unix_timestamp())?;
         self.config = prepared.updated_config;
         self.save_reload_and_refresh()?;
-        self.queue_join_roster_delivery(
-            bootstrap,
-            fips_route_npub,
-            &prepared.join_roster,
-        )?;
+        self.queue_join_roster_delivery(bootstrap, &prepared.join_roster)?;
         if !self.vpn_enabled {
             self.connect_vpn()?;
         }
@@ -432,7 +427,6 @@ impl NativeAppRuntime {
     fn queue_join_roster_delivery(
         &mut self,
         _bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
-        _fips_route_npub: Option<&str>,
         join_roster: &nostr_vpn_core::fips_control::JoinRosterControl,
     ) -> Result<()> {
         self.queued_join_rosters.push(join_roster.clone());
@@ -443,13 +437,11 @@ impl NativeAppRuntime {
     fn queue_join_roster_delivery(
         &self,
         bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
-        fips_route_npub: Option<&str>,
         join_roster: &nostr_vpn_core::fips_control::JoinRosterControl,
     ) -> Result<()> {
         nostr_vpn_core::join_delivery::queue_join_roster(
             &self.config_path,
             &bootstrap.device_app_key_npub,
-            fips_route_npub,
             join_roster,
         )?;
         Ok(())

@@ -19,21 +19,8 @@ pub(super) async fn send_queued_join_rosters_once(
                 queued.recipient_npub
             ))
         } else {
-            if let Some(route) = queued.fips_route_npub.as_deref()
-                && let Err(error) = runtime.ensure_join_roster_route(route).await
-            {
-                consume_join_roster(&path);
-                eprintln!(
-                    "join roster was not delivered over FIPS-TCP ({error}); the joiner must request again"
-                );
-                continue;
-            }
-            let delivery_peer = queued
-                .fips_route_npub
-                .as_deref()
-                .unwrap_or(&queued.recipient_npub);
             runtime
-                .send_join_roster(delivery_peer, queued.join_roster)
+                .send_join_roster(&queued.recipient_npub, queued.join_roster)
                 .await
         };
 

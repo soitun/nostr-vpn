@@ -3,8 +3,6 @@ use arc_swap::ArcSwap;
 #[cfg(feature = "paid-exit")]
 use cashu_service::StreamingRoutePaymentEnvelope;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
-#[cfg(any(target_os = "linux", target_os = "macos", test))]
-use fips_endpoint::EthernetConfig;
 use fips_endpoint::{
     Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointMessage, FipsEndpointPeer,
     NostrDiscoveryPolicy, NostrRelayAdapter, NostrRelayConfig, PeerAddress,
@@ -97,7 +95,6 @@ const FIPS_PEER_LINK_PING_INTERVAL_SECS: u64 = 5;
 const FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 30;
 const FIPS_PEER_PING_MAX_PER_TICK: usize = 2;
 const FIPS_CONTROL_RTT_MAX_ACCEPT_MS: u128 = 10_000;
-const DIRECT_JOIN_APPROVAL_ROUTE_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const MESH_LAN_UNDERLAY_UDP_MTU: u16 = 1452;
 const MESH_LAN_TUNNEL_MTU: u16 = 1322;
 const MESH_MIN_UNDERLAY_UDP_MTU: u16 = 1280;
@@ -230,19 +227,6 @@ impl FipsPrivateMeshRuntime {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) struct FipsSharedEndpoint {
-    endpoint: Arc<FipsEndpoint>,
-    direct_endpoint_rx: FipsEndpointDirectReceiver,
-}
-
-#[cfg(target_os = "linux")]
-impl FipsSharedEndpoint {
-    pub(crate) fn endpoint(&self) -> &Arc<FipsEndpoint> {
-        &self.endpoint
-    }
-}
-
 include!("fips_private_mesh/types_and_mtu.rs");
 include!("fips_private_mesh/mtu_and_policy.rs");
 include!("fips_private_mesh/peer_status_and_events.rs");
@@ -263,11 +247,6 @@ include!("fips_private_mesh/tunnel_runtime_windows.rs");
 include!("fips_private_mesh/windows_tun.rs");
 include!("fips_private_mesh/tunnel_runtime_unsupported.rs");
 include!("fips_private_mesh/time.rs");
-#[cfg(any(target_os = "linux", test))]
-include!("fips_private_mesh/webvm_dns.rs");
-#[cfg(target_os = "linux")]
-include!("fips_private_mesh/webvm_host_network.rs");
-
 #[cfg(test)]
 mod tests {
     include!("fips_private_mesh/tests_core.rs");

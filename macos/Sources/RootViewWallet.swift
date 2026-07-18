@@ -1,5 +1,6 @@
 import AppKit
 import CoreImage
+import Foundation
 import SwiftUI
 
 enum PaidRouteWalletFlow: String, Identifiable {
@@ -12,6 +13,22 @@ enum PaidRouteWalletFlow: String, Identifiable {
 private func isLikelyCashuToken(_ value: String) -> Bool {
     let token = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return token.count > 12 && token.lowercased().hasPrefix("cashu")
+}
+
+private func validatedCashuMintURL(_ value: String) -> String? {
+    let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard
+        !candidate.isEmpty,
+        let components = URLComponents(string: candidate),
+        let scheme = components.scheme?.lowercased(),
+        scheme == "http" || scheme == "https",
+        components.host?.isEmpty == false,
+        components.query == nil,
+        components.fragment == nil
+    else {
+        return nil
+    }
+    return candidate
 }
 
 extension RootView {
@@ -100,12 +117,20 @@ extension RootView {
 
             HStack(spacing: 8) {
                 TextField("Mint URL", text: $paidRouteMintUrl)
+                    .onSubmit(addPaidRouteMintFromInput)
                 Button {
-                    manager.addPaidRouteWalletMint(url: paidRouteMintUrl)
+                    addPaidRouteMintFromInput()
                 } label: {
                     Label("Add", systemImage: "plus.circle.fill")
                 }
-                .disabled(manager.actionInFlight || paidRouteMintUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(manager.actionInFlight || validatedCashuMintURL(paidRouteMintUrl) == nil)
+            }
+
+            if !paidRouteMintUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               validatedCashuMintURL(paidRouteMintUrl) == nil {
+                Text("Enter an http(s) mint URL without a query or fragment.")
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
 
             if wallet.mints.isEmpty {
@@ -413,5 +438,12 @@ extension RootView {
             .buttonStyle(.plain)
             .disabled(manager.actionInFlight)
         }
+    }
+
+    func addPaidRouteMintFromInput() {
+        guard !manager.actionInFlight else { return }
+        guard let url = validatedCashuMintURL(paidRouteMintUrl) else { return }
+        manager.addPaidRouteWalletMint(url: url)
+        paidRouteMintUrl = ""
     }
 }

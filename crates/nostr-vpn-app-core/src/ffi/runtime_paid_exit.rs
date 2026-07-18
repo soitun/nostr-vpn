@@ -9,7 +9,7 @@ mod paid_exit {
         OpenPaidRouteBuyerSessionRequest, PaidRouteChannelRecord, PaidRouteChannelRole,
         PaidRouteLifecycleStatus, PaidRouteSellerCollectionState, PaidRouteStore,
         PaidRouteWalletState, UpdatePaidRouteSessionProbeRequest, load_paid_route_store,
-        paid_route_store_file_path, write_paid_route_store,
+        normalize_paid_route_mint_url, paid_route_store_file_path, write_paid_route_store,
     };
     use nostr_vpn_core::paid_routes::{
         ExitNetworkClass, PaidExitConfig, PaidExitUpstream, PaidRouteAccessState,
@@ -109,6 +109,32 @@ mod paid_exit {
             assert!(!state.balance_known);
             assert!(state.total_balance_text.is_empty());
             assert!(state.mints[0].balance_text.is_empty());
+        }
+
+        #[test]
+        fn native_wallet_state_keeps_multiple_mints_for_gui_rows() {
+            let mut store = PaidRouteStore::default();
+            assert!(store.upsert_wallet_mint(
+                "https://mint-one.example",
+                "One",
+                None,
+                1,
+            ));
+            assert!(store.upsert_wallet_mint(
+                "https://mint-two.example",
+                "Two",
+                None,
+                2,
+            ));
+
+            let state = paid_route_wallet_state(
+                &store.wallet,
+                &NativePaidRouteWalletActionState::default(),
+            );
+
+            assert_eq!(state.mints.len(), 2);
+            assert_ne!(state.mints[0].url, state.mints[1].url);
+            assert_eq!(state.mints.iter().filter(|mint| mint.is_default).count(), 1);
         }
 
         #[test]

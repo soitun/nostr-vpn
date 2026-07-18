@@ -198,46 +198,6 @@
     }
 
     #[test]
-    fn local_ethernet_underlay_keeps_default_route_without_ip_endpoint_bypass() {
-        let alice_keys = Keys::generate();
-        let bob_keys = Keys::generate();
-        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
-        let alice_pubkey = alice_keys.public_key().to_hex();
-        let bob_pubkey = bob_keys.public_key().to_hex();
-
-        let mut app = AppConfig::default();
-        app.nostr.secret_key = alice_nsec;
-        app.networks[0].enabled = true;
-        app.networks[0].network_id = "webvm-ethernet-exit-test".to_string();
-        app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];
-        app.networks[0].admins = vec![alice_pubkey.clone()];
-        app.exit_node = bob_pubkey;
-
-        let mut config = FipsPrivateTunnelConfig::from_app(
-            &app,
-            "webvm-ethernet-exit-test",
-            "nvpn0",
-            Some(&alice_pubkey),
-            None,
-            &[],
-        )
-        .expect("FIPS tunnel config");
-        assert!(config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
-        assert!(super::linux_route_targets_require_ip_endpoint_bypass(
-            &config,
-            &config.route_targets,
-        ));
-
-        config.use_local_ethernet_only("eth0", "fips-overlay-v1");
-
-        assert!(config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
-        assert!(!super::linux_route_targets_require_ip_endpoint_bypass(
-            &config,
-            &config.route_targets,
-        ));
-    }
-
-    #[test]
     fn link_event_path_hint_refresh_does_not_require_endpoint_restart() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();

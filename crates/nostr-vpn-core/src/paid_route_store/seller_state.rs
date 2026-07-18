@@ -283,17 +283,23 @@ impl PaidRouteStore {
                     paid_route_offer_store_key(&offer.seller_npub, &offer.offer_id) == *key
                 })
         });
-        self.wallet.mints.retain(|mint| !mint.url.trim().is_empty());
+        self.wallet.mints.retain_mut(|mint| {
+            let Ok(url) = normalize_paid_route_mint_url(&mint.url) else {
+                return false;
+            };
+            mint.url = url;
+            true
+        });
         self.wallet
             .mints
             .sort_by(|left, right| left.url.cmp(&right.url));
         self.wallet
             .mints
             .dedup_by(|left, right| left.url == right.url);
-        if self.wallet.default_mint.trim().is_empty()
-            && let Some(first) = self.wallet.mints.first()
-        {
-            self.wallet.default_mint = first.url.clone();
-        }
+        self.wallet.default_mint = normalize_paid_route_mint_url(&self.wallet.default_mint)
+            .ok()
+            .filter(|url| self.wallet.mints.iter().any(|mint| mint.url == *url))
+            .or_else(|| self.wallet.mints.first().map(|mint| mint.url.clone()))
+            .unwrap_or_default();
     }
 }

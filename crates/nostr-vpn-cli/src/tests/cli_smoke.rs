@@ -37,38 +37,6 @@ fn clap_supports_root_version_flag() {
 }
 
 #[test]
-fn clap_parses_complete_webvm_guest_contract() {
-    let cli = Cli::parse_from([
-        "nvpn",
-        "webvm-guest",
-        "--config",
-        "/etc/nvpn/webvm.toml",
-        "--ethernet-interface",
-        "eth0",
-        "--discovery-scope",
-        "fips-overlay-v1",
-        "--host-hint-port",
-        "7368",
-        "--pairing-uri-file",
-        "/run/nvpn/pairing-uri",
-        "--tun-interface",
-        "nvpn0",
-    ]);
-    let Command::WebvmGuest(args) = cli.command else {
-        panic!("expected webvm-guest command");
-    };
-    assert_eq!(args.config.to_string_lossy(), "/etc/nvpn/webvm.toml");
-    assert_eq!(args.ethernet_interface, "eth0");
-    assert_eq!(args.discovery_scope, "fips-overlay-v1");
-    assert_eq!(args.host_hint_port, 7_368);
-    assert_eq!(
-        args.pairing_uri_file.to_string_lossy(),
-        "/run/nvpn/pairing-uri"
-    );
-    assert_eq!(args.tun_interface, "nvpn0");
-}
-
-#[test]
 fn clap_parses_join_request_wait_controls() {
     let cli = Cli::parse_from([
         "nvpn",
@@ -89,35 +57,6 @@ fn clap_parses_join_request_wait_controls() {
     assert!(args.no_wait);
     assert!(args.no_qr);
     assert!(args.reset);
-}
-
-#[test]
-fn clap_parses_webvm_ethernet_mode_on_normal_daemon() {
-    let cli = Cli::parse_from([
-        "nvpn",
-        "daemon",
-        "--config",
-        "/etc/nvpn/webvm.toml",
-        "--webvm-ethernet-interface",
-        "eth0",
-        "--webvm-discovery-scope",
-        "fips-overlay-v1",
-        "--iface",
-        "nvpn0",
-    ]);
-    let Command::Daemon(args) = cli.command else {
-        panic!("expected daemon command");
-    };
-    assert_eq!(
-        args.config.expect("config").to_string_lossy(),
-        "/etc/nvpn/webvm.toml"
-    );
-    assert_eq!(args.webvm_ethernet_interface.as_deref(), Some("eth0"));
-    assert_eq!(
-        args.webvm_discovery_scope.as_deref(),
-        Some("fips-overlay-v1")
-    );
-    assert_eq!(args.iface, "nvpn0");
 }
 
 #[test]

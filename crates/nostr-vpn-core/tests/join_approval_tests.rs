@@ -23,7 +23,7 @@ const SIGNED_AT: u64 = REQUESTED_AT + 30;
 
 fn pending_joiner() -> AppConfig {
     let mut config = AppConfig::generated_without_networks();
-    config.node_name = "WebVM Guest".to_string();
+    config.node_name = "Joining device".to_string();
     config
         .ensure_pending_nostr_join_request(REQUESTED_AT)
         .expect("create pending join request");
@@ -275,7 +275,7 @@ fn expired_pending_request_rejects_the_roster() {
             expires_at: Some((SIGNED_AT - 1) as i64),
             profile_id: None,
             admin_app_key_pubkey: None,
-            label: Some("WebVM Guest".to_string()),
+            label: Some("Joining device".to_string()),
         },
     )
     .expect("create expiring request");
@@ -295,16 +295,14 @@ fn expired_pending_request_rejects_the_roster() {
 }
 
 #[test]
-fn durable_delivery_contains_only_the_recipient_route_and_join_roster_control() {
+fn durable_delivery_contains_only_the_recipient_and_join_roster_control() {
     let joiner = pending_joiner();
     let signer = Keys::generate();
     let roster = signed_roster(&joiner, &signer, SIGNED_AT);
     let config_path = unique_temp_config_path("signed-roster-outbox");
     let recipient = joiner.own_nostr_pubkey_hex().expect("recipient");
-    let route = Keys::generate().public_key().to_hex();
 
-    let path = queue_join_roster(&config_path, &recipient, Some(&route), &roster)
-        .expect("queue signed roster");
+    let path = queue_join_roster(&config_path, &recipient, &roster).expect("queue signed roster");
     let raw = fs::read_to_string(&path).expect("read queued roster");
     let value: serde_json::Value = serde_json::from_str(&raw).expect("parse queued roster");
     let keys = value
@@ -313,15 +311,7 @@ fn durable_delivery_contains_only_the_recipient_route_and_join_roster_control() 
         .keys()
         .cloned()
         .collect::<Vec<_>>();
-    assert_eq!(
-        keys,
-        [
-            "fips_route_npub",
-            "join_roster",
-            "recipient_npub",
-            "version"
-        ]
-    );
+    assert_eq!(keys, ["join_roster", "recipient_npub", "version"]);
     assert_eq!(
         value["join_roster"]["request_secret"],
         roster.request_secret

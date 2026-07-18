@@ -179,6 +179,7 @@ fn paid_route_wallet_mints_can_be_defaulted_and_removed() {
     assert_eq!(store.wallet.mints.len(), 1);
 
     assert!(store.upsert_wallet_mint("https://mint.example", "Example", Some(10_000), 100));
+    assert_eq!(store.wallet.mints.len(), 2);
     assert!(store.set_default_mint("https://mint.example"));
     assert_eq!(store.wallet.default_mint, "https://mint.example");
 
@@ -188,6 +189,34 @@ fn paid_route_wallet_mints_can_be_defaulted_and_removed() {
         "https://mint.minibits.cash/Bitcoin"
     );
     assert!(!store.remove_wallet_mint("https://missing.example"));
+}
+
+#[test]
+fn paid_route_wallet_discards_invalid_mints_and_normalizes_valid_urls() {
+    let mut store = PaidRouteStore::default();
+    store.wallet.default_mint = "nvpn://join-request/bootstrap".to_string();
+    store.wallet.mints = vec![
+        PaidRouteWalletMint {
+            url: "nvpn://join-request/bootstrap".to_string(),
+            label: "Invalid paste".to_string(),
+            balance_msat: None,
+            last_checked_unix: 1,
+        },
+        PaidRouteWalletMint {
+            url: "https://mint.example/path/".to_string(),
+            label: "Valid".to_string(),
+            balance_msat: None,
+            last_checked_unix: 2,
+        },
+    ];
+
+    store.retain_valid();
+
+    assert_eq!(store.wallet.mints.len(), 1);
+    assert_eq!(store.wallet.mints[0].url, "https://mint.example/path");
+    assert_eq!(store.wallet.default_mint, "https://mint.example/path");
+    assert!(normalize_paid_route_mint_url("not a URL").is_err());
+    assert!(normalize_paid_route_mint_url("ftp://mint.example").is_err());
 }
 
 #[test]

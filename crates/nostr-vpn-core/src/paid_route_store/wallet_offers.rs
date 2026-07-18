@@ -1,5 +1,24 @@
 use super::{persistence::*, *};
 
+pub fn normalize_paid_route_mint_url(raw: &str) -> Result<String> {
+    let raw = raw.trim();
+    let mut url = Url::parse(raw).with_context(|| format!("invalid mint URL: {raw}"))?;
+    match url.scheme() {
+        "http" | "https" => {}
+        scheme => return Err(anyhow!("unsupported mint URL scheme: {scheme}")),
+    }
+    if url.host_str().is_none_or(str::is_empty) {
+        return Err(anyhow!("mint URL must include a host"));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(anyhow!("mint URL must not include a query or fragment"));
+    }
+
+    let trimmed_path = url.path().trim_end_matches('/').to_string();
+    url.set_path(&trimmed_path);
+    Ok(url.to_string().trim_end_matches('/').to_string())
+}
+
 impl PaidRouteStore {
     pub fn upsert_wallet_mint(
         &mut self,

@@ -17,7 +17,6 @@ const MAX_QUEUED_JOIN_ROSTERS: usize = 8;
 pub struct QueuedJoinRoster {
     pub version: u8,
     pub recipient_npub: String,
-    pub fips_route_npub: Option<String>,
     pub join_roster: JoinRosterControl,
 }
 
@@ -36,15 +35,10 @@ pub fn join_roster_outbox_directory(config_path: &Path) -> PathBuf {
 pub fn queue_join_roster(
     config_path: &Path,
     recipient_npub: &str,
-    fips_route_npub: Option<&str>,
     join_roster: &JoinRosterControl,
 ) -> Result<PathBuf> {
     let recipient_npub =
         normalize_nostr_pubkey(recipient_npub).context("invalid join roster recipient")?;
-    let fips_route_npub = fips_route_npub
-        .map(normalize_nostr_pubkey)
-        .transpose()
-        .context("invalid join roster FIPS route")?;
     join_roster
         .signed_roster
         .verify()
@@ -52,7 +46,6 @@ pub fn queue_join_roster(
     let queued = QueuedJoinRoster {
         version: JOIN_ROSTER_OUTBOX_VERSION,
         recipient_npub: recipient_npub.clone(),
-        fips_route_npub,
         join_roster: join_roster.clone(),
     };
     let directory = join_roster_outbox_directory(config_path);
@@ -186,8 +179,8 @@ mod tests {
                 .as_nanos()
         ));
 
-        let path = queue_join_roster(&config_path, &recipient, None, &join_roster)
-            .expect("queue signed roster");
+        let path =
+            queue_join_roster(&config_path, &recipient, &join_roster).expect("queue signed roster");
         let queued = load_join_rosters(&config_path);
         assert_eq!(queued.len(), 1);
         assert_eq!(queued[0].1.join_roster.signed_roster, roster);

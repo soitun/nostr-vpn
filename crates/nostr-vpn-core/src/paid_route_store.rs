@@ -18,7 +18,7 @@ use cashu_service::{
     streaming_route_cashu_capacity_sat, validate_streaming_route_cashu_payment_claim,
     validate_streaming_route_cashu_payment_progress,
 };
-use nostr_sdk::prelude::{PublicKey, ToBech32};
+use nostr_sdk::prelude::{PublicKey, ToBech32, Url};
 use serde::{Deserialize, Serialize};
 
 use crate::config::normalize_nostr_pubkey;
@@ -506,6 +506,8 @@ mod persistence;
 mod seller_payment;
 mod seller_state;
 mod wallet_offers;
+
+pub use wallet_offers::normalize_paid_route_mint_url;
 
 pub use automatic_selection::{
     PAID_ROUTE_AUTO_MAX_CHANNEL_CAPACITY_SAT, PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GIB,

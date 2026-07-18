@@ -16,9 +16,6 @@ All notable changes to this project are documented in this file.
   identity receipt/context batch, forwarding and apply-ACK envelopes, custom
   replay/retry machinery, and relay fallback; an unsuccessful join uses the
   normal join-request flow again.
-- Updated the WebVM guest and native/mobile receivers for the same FIPS-only
-  first-join record while keeping later roster updates on the generic roster
-  event format.
 - Updated embedded FIPS Core and Endpoint to 0.4.6 for bounded production
   control polling and corrected no-wire routing/session behavior.
 
@@ -28,10 +25,6 @@ All notable changes to this project are documented in this file.
   of depending on a later stream-close frame.
 - Reduce idle control-runtime wakeups while keeping inbound records and local
   publish commands event-driven.
-- Let the WebVM guest identify its local FIPS-TCP control endpoint with one
-  transient readiness hint before it waits for the signed roster.
-- Bootstrap the headless WebVM approval route through the authenticated FIPS
-  carrier before sending its single FIPS-TCP roster record.
 - Retain completed FIPS-TCP control records under bounded local receive-queue
   backpressure instead of dropping them after transport acknowledgement.
 - Avoid oversized async test futures on worker stacks in the mobile FIPS
@@ -59,9 +52,6 @@ All notable changes to this project are documented in this file.
 
 - Restored the Windows all-target build by correctly scoping Unix-only tests
   and helpers.
-- Made the native WebVM approval harness retry the complete routed event batch
-  while awaiting the durable apply receipt, matching the daemon when a FIPS
-  route is replaced between approval records.
 - Kept the macOS QR scanner buildable with the release workflow's Xcode 15.4
   toolchain while retaining the macOS 26 Cinematic Video crash safeguard.
 
@@ -98,19 +88,12 @@ All notable changes to this project are documented in this file.
   Persistent peer streams provide ordered retransmission, replacing the local
   three-attempt `Inventory`/`Want` datagram retry layer while reconnects
   resubscribe the cached update root.
-- Kept tunnel packets, liveness probes, and routed WebVM approval forwarding as
-  FIPS datagrams to avoid head-of-line blocking and preserve payload routing.
-  Join-approval and paid-route acknowledgments remain application receipts
-  because they prove applied configuration and committed payment state, not
-  transport delivery.
 
 ### Fixed
 
 - Native wallets no longer show placeholder balances or routine exchange-rate
   refresh labels, render Lightning top-up invoices as QR codes, and
   automatically claim paid invoices while the receive flow is open.
-- WebVM's approval wait helper now stays within the strict Clippy argument
-  limit used by release CI.
 
 ## 4.0.92 - 2026-07-13
 
@@ -123,7 +106,7 @@ All notable changes to this project are documented in this file.
   reviewed with their amount and mint before redemption; failed redemption
   keeps or follows the confirmation with the mint error.
 - Exit routes now force public DNS through a local fail-closed stub on Linux,
-  macOS, Windows, Android, iOS, and WebVM. MagicDNS stays local. A selected
+  macOS, Windows, Android, and iOS. MagicDNS stays local. A selected
   WireGuard exit uses only that profile's configured DNS through the encrypted
   WireGuard path; other exits use authenticated DNS-over-HTTPS and never expose
   or trust underlay resolvers.
@@ -140,9 +123,6 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
-- WebVM approvals now return directly over the authenticated FIPS path through
-  the scanned browser and host, without depending on a public relay; routed
-  pairing waits for the browser path and surfaces administrator daemon errors.
 - Added buyer-side stateful ingress filtering for selected FIPS exits: only
   replies to locally originated flows and narrowly valid ICMP errors are
   admitted, while unsolicited, malformed, private, loopback, link-local, and
@@ -161,8 +141,6 @@ All notable changes to this project are documented in this file.
   enabled by default.
 - Restored joining-device request links and QR approval as the onboarding flow;
   legacy network-invite commands remain hidden for migration compatibility.
-- The normal daemon now accepts WebVM's Ethernet-only FIPS transport and reports
-  its pre-approval peers and readiness through `nvpn status`.
 - Added `nvpn join-request`, which reuses the pending request, shows live FIPS
   reachability changes, waits for approval by default, and rotates only with
   explicit `--reset`.
@@ -175,12 +153,6 @@ All notable changes to this project are documented in this file.
   priority without overriding the explicit priority of static peer hints.
 
 ## 4.0.90 - 2026-07-10
-
-### Added
-
-- Added the WebVM guest pairing flow, which prints both a terminal QR code and
-  its canonical request-event-free approval URI and automatically applies the
-  signed native-app approval over the shared FIPS transport.
 
 ### Changed
 

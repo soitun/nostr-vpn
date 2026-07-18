@@ -97,9 +97,6 @@ async fn run_command(command: Command) -> Result<()> {
         Command::Connect(args) => {
             connect_vpn(args).await?;
         }
-        Command::WebvmGuest(args) => {
-            webvm_guest::run(args).await?;
-        }
         Command::JoinRequest(args) => {
             pairing_qr::run_join_request(args).await?;
         }

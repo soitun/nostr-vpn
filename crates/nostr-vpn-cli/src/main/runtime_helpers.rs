@@ -528,17 +528,13 @@ fn fips_tunnel_config_from_app(
         live_peer_endpoints,
     )?;
     for (_, queued) in nostr_vpn_core::join_delivery::load_join_rosters(config_path) {
-        let route_pubkey = queued
-            .fips_route_npub
-            .as_deref()
-            .unwrap_or(&queued.recipient_npub);
-        match crate::fips_private_mesh::prioritize_join_roster_route(
+        match crate::fips_private_mesh::prioritize_join_roster_recipient(
             config.endpoint_peers.clone(),
-            route_pubkey,
+            &queued.recipient_npub,
         ) {
-            Ok((_, peers)) => config.endpoint_peers = peers,
+            Ok(peers) => config.endpoint_peers = peers,
             Err(error) => {
-                eprintln!("ignoring invalid pending join roster route: {error}");
+                eprintln!("ignoring invalid pending join roster recipient: {error}");
             }
         }
     }
