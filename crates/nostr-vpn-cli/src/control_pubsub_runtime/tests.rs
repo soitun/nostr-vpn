@@ -177,6 +177,19 @@ async fn wait_pubsub_connected(runtime: &ControlPubsubFipsRuntime) {
     .expect("reliable TCP/FIPS pubsub stream connected");
 }
 
+async fn wait_pubsub_transport_connected(runtime: &ControlPubsubFipsRuntime) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if runtime.connected_peer_count().await.unwrap_or_default() > 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("reliable TCP/FIPS pubsub transport connected");
+}
+
 #[test]
 fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency() {
     std::thread::Builder::new()
@@ -575,7 +588,7 @@ async fn peer_policy_rejects_events_from_authenticated_udp_fips_peer_run() {
     .await
     .expect("start policy-bound FIPS pubsub")
     .expect("FIPS pubsub enabled");
-    wait_pubsub_connected(&alice_pubsub).await;
+    wait_pubsub_transport_connected(&alice_pubsub).await;
     let root = signed_update_root(&publisher, tree_name, 1, "66");
     assert!(
         alice_pubsub
