@@ -19,8 +19,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use fips_endpoint::{
     Config as FipsConfig, ConnectPolicy, FipsEndpoint, FipsEndpointMessage, FipsEndpointPeer,
-    FipsEndpointRelayStatus, NostrDiscoveryPolicy, NostrRelayAdapter, PeerAddress,
-    PeerConfig as FipsPeerConfig, PeerIdentity, TransportInstances, UdpConfig,
+    FipsEndpointRelayStatus, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
+    PeerIdentity, TransportInstances, UdpConfig,
 };
 use nostr_sdk::prelude::PublicKey;
 use nostr_vpn_core::config::{
@@ -39,6 +39,7 @@ use nostr_vpn_core::fips_control_tcp::{
     FipsControlTcpRuntime, FipsControlTcpSender, ReceivedFipsControlFrame,
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
+use nostr_vpn_core::fips_pubsub_relay::FipsPubsubNostrRelayAdapter;
 use nostr_vpn_core::join_requests::{FIPS_JOIN_REQUEST_RETRY_SECS, MeshJoinRequest};
 use nostr_vpn_core::magic_dns::{
     build_magic_dns_records, build_magic_dns_response_if_handled,

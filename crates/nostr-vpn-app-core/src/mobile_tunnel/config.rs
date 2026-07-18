@@ -519,7 +519,7 @@ fn replace_mobile_mesh(mesh: &MobileMesh, mut runtime: FipsMeshRuntime) -> Resul
 pub(crate) struct MobileTunnel {
     runtime: Runtime,
     endpoint: Option<Arc<FipsEndpoint>>,
-    nostr_relay_adapter: Option<NostrRelayAdapter>,
+    nostr_relay_adapter: Option<FipsPubsubNostrRelayAdapter>,
     state_control: FipsControlTcpSender,
     mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,

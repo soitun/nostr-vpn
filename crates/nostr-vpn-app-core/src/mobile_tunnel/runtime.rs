@@ -655,7 +655,7 @@ async fn push_mobile_wg_inbound_batch(
 
 struct MobileTunnelStarted {
     endpoint: Arc<FipsEndpoint>,
-    nostr_relay_adapter: Option<NostrRelayAdapter>,
+    nostr_relay_adapter: Option<FipsPubsubNostrRelayAdapter>,
     state_control: FipsControlTcpSender,
     mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,

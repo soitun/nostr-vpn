@@ -2,10 +2,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use fips_endpoint::{
-    Config, FipsEndpoint, NostrRelayAdapter, NostrRelayConfig, PeerAddress, PeerConfig,
-    TransportInstances,
+    Config, FipsEndpoint, NostrRelayConfig, PeerAddress, PeerConfig, TransportInstances,
 };
 use nostr_vpn_core::config::FIPS_NOSTR_RELAY_FALLBACK_PRIORITY;
+use nostr_vpn_core::fips_pubsub_relay::FipsPubsubNostrRelayAdapter;
 
 pub(crate) fn enable_transport(config: &mut Config) {
     config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig {
@@ -19,13 +19,13 @@ pub(crate) async fn start_adapter(
     endpoint: &Arc<FipsEndpoint>,
     enabled: bool,
     relays: &[String],
-) -> Result<Option<NostrRelayAdapter>> {
+) -> Result<Option<FipsPubsubNostrRelayAdapter>> {
     if !enabled {
         return Ok(None);
     }
-    NostrRelayAdapter::start(Arc::clone(endpoint), relays)
+    FipsPubsubNostrRelayAdapter::start(Arc::clone(endpoint), relays)
         .await
-        .map_err(anyhow::Error::msg)
+        .map(Some)
 }
 
 pub(crate) fn upsert_peer<'a>(
