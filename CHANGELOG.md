@@ -29,8 +29,10 @@ All notable changes to this project are documented in this file.
   before selecting a default mint.
 - Reduced routed-peer idle work with adaptive relay-event polling and a
   10-second fresh-presence ping cadence while retaining FIPS link heartbeats.
-- Updated FIPS Core and Endpoint to 0.4.7 so repeated direct-path upgrades are
-  paced while a healthy routed fallback remains active.
+- Updated FIPS Core and Endpoint to 0.4.9 so repeated direct-path upgrades are
+  paced while a healthy routed fallback remains active, application-owned
+  relay polling stays idle-efficient, and discovery cannot discard endpoint
+  data owned by an in-progress FSP handshake.
 
 ### Fixed
 
@@ -40,6 +42,12 @@ All notable changes to this project are documented in this file.
   and resolve roster actions against the active network consistently.
 - Run the CDK wallet service on its own worker so asynchronous hosts such as
   `nostr-vpn-web` can open, use, and close it without nested-runtime failures.
+- Admit fresh relay peers while device approval is pending, exclude the Nostr
+  relay carrier from using itself as an authenticated pubsub underlay, and
+  prevent recursive relay-event envelopes.
+- Rotate blocked authenticated relay events behind newer datagrams and publish
+  direct-relay events with bounded concurrency, so ordinary roster approval is
+  not stranded behind older provider attempts.
 
 ## 4.0.96 - 2026-07-16
 
