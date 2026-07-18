@@ -16,6 +16,7 @@ const RELAY_PENDING_EVENTS: usize = 1_024;
 const RELAY_ACTIVE_PUMP_INTERVAL: Duration = Duration::from_millis(50);
 const RELAY_IDLE_PUMP_INTERVAL: Duration = Duration::from_millis(250);
 const RELAY_PROVIDER_TIMEOUT: Duration = Duration::from_secs(2);
+const RELAY_DIRECT_PUBLISH_CONCURRENCY: usize = 32;
 const RELAY_SUBSCRIPTION_LIMIT: usize = 8;
 const NOSTR_RELAY_TRANSPORT: &str = "nostr_relay";
 
@@ -236,33 +237,57 @@ async fn start_relay_provider(relays: &[String], filter: Filter) -> Result<Optio
     Ok(Some(provider))
 }
 
-async fn run_direct_relay_publisher<B: EventBus>(
+async fn run_direct_relay_publisher<B>(
     provider: B,
     source: EventSource,
     mut events: tokio::sync::mpsc::Receiver<VerifiedEvent>,
+) where
+    B: EventBus + Clone + Send + Sync + 'static,
+{
+    let mut input_closed = false;
+    let mut in_flight = tokio::task::JoinSet::new();
+
+    while !input_closed || !in_flight.is_empty() {
+        tokio::select! {
+            event = events.recv(), if !input_closed && in_flight.len() < RELAY_DIRECT_PUBLISH_CONCURRENCY => {
+                match event {
+                    Some(event) => {
+                        let provider = provider.clone();
+                        let source = source.clone();
+                        in_flight.spawn(async move {
+                            publish_direct_relay_event(provider, source, event).await;
+                        });
+                    }
+                    None => input_closed = true,
+                }
+            }
+            completed = in_flight.join_next(), if !in_flight.is_empty() => {
+                if let Some(Err(error)) = completed {
+                    tracing::debug!(%error, "direct Nostr pubsub publisher task failed");
+                }
+            }
+        }
+    }
+}
+
+async fn publish_direct_relay_event<B: EventBus>(
+    provider: B,
+    source: EventSource,
+    event: VerifiedEvent,
 ) {
-    while let Some(event) = events.recv().await {
-        match tokio::time::timeout(
-            RELAY_PROVIDER_TIMEOUT,
-            provider.publish(event, source.clone()),
-        )
-        .await
-        {
-            Ok(Ok(report)) if report.accepted => {}
-            Ok(Ok(report)) => {
-                tracing::trace!(
-                    reason = report.reason.as_deref().unwrap_or("unspecified"),
-                    "direct Nostr pubsub provider rejected FIPS relay event"
-                );
-            }
-            Ok(Err(error)) => {
-                tracing::trace!(%error, "direct Nostr pubsub provider did not publish FIPS relay event");
-            }
-            Err(_) => {
-                tracing::trace!(
-                    "direct Nostr pubsub provider timed out publishing FIPS relay event"
-                );
-            }
+    match tokio::time::timeout(RELAY_PROVIDER_TIMEOUT, provider.publish(event, source)).await {
+        Ok(Ok(report)) if report.accepted => {}
+        Ok(Ok(report)) => {
+            tracing::trace!(
+                reason = report.reason.as_deref().unwrap_or("unspecified"),
+                "direct Nostr pubsub provider rejected FIPS relay event"
+            );
+        }
+        Ok(Err(error)) => {
+            tracing::trace!(%error, "direct Nostr pubsub provider did not publish FIPS relay event");
+        }
+        Err(_) => {
+            tracing::trace!("direct Nostr pubsub provider timed out publishing FIPS relay event");
         }
     }
 }
@@ -377,6 +402,49 @@ mod fips_pubsub_relay_adapter_tests {
         }
     }
 
+    #[derive(Clone)]
+    struct BlockingPublishes {
+        blocked_event_ids: Arc<Vec<String>>,
+        attempted: Arc<Mutex<Vec<String>>>,
+        completed: Arc<Mutex<Vec<String>>>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl EventBus for BlockingPublishes {
+        async fn publish(
+            &self,
+            event: VerifiedEvent,
+            _source: EventSource,
+        ) -> PubsubResult<PublishReport> {
+            let event_id = event.as_event().id.to_hex();
+            self.attempted
+                .lock()
+                .expect("attempted event lock")
+                .push(event_id.clone());
+            if self.blocked_event_ids.contains(&event_id) {
+                self.release.notified().await;
+            }
+            self.completed
+                .lock()
+                .expect("completed event lock")
+                .push(event_id);
+            Ok(PublishReport {
+                accepted: true,
+                priority: 0,
+                reason: None,
+            })
+        }
+
+        async fn query(
+            &self,
+            _filters: Vec<Filter>,
+            _options: QueryOptions,
+        ) -> PubsubResult<QueryReport> {
+            Ok(QueryReport::default())
+        }
+    }
+
     #[tokio::test]
     async fn rejected_direct_relay_publication_does_not_block_the_next_datagram() {
         let keys = Keys::generate();
@@ -415,6 +483,71 @@ mod fips_pubsub_relay_adapter_tests {
             attempted.lock().expect("attempted event lock").as_slice(),
             [first_event_id, second_event_id]
         );
+    }
+
+    #[tokio::test]
+    async fn slow_direct_relay_publications_do_not_serialize_later_datagrams() {
+        const BLOCKED_EVENTS: usize = 25;
+        let keys = Keys::generate();
+        let events = (0..=BLOCKED_EVENTS)
+            .map(|index| {
+                VerifiedEvent::try_from(
+                    EventBuilder::new(Kind::Custom(21_060), format!("event-{index}"))
+                        .sign_with_keys(&keys)
+                        .expect("sign relay event"),
+                )
+                .expect("verify relay event")
+            })
+            .collect::<Vec<_>>();
+        let event_ids = events
+            .iter()
+            .map(|event| event.as_event().id.to_hex())
+            .collect::<Vec<_>>();
+        let last_event_id = event_ids.last().expect("later relay event").clone();
+        let attempted = Arc::new(Mutex::new(Vec::new()));
+        let completed = Arc::new(Mutex::new(Vec::new()));
+        let release = Arc::new(tokio::sync::Notify::new());
+        let provider = BlockingPublishes {
+            blocked_event_ids: Arc::new(event_ids[..BLOCKED_EVENTS].to_vec()),
+            attempted: Arc::clone(&attempted),
+            completed: Arc::clone(&completed),
+            release: Arc::clone(&release),
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(events.len());
+        for event in events {
+            tx.send(event).await.expect("queue relay event");
+        }
+        drop(tx);
+        let publisher = tokio::spawn(run_direct_relay_publisher(
+            provider,
+            EventSource::local_index("test"),
+            rx,
+        ));
+
+        timeout(Duration::from_millis(500), async {
+            loop {
+                if completed
+                    .lock()
+                    .expect("completed event lock")
+                    .contains(&last_event_id)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("later relay event must not wait for 25 slow provider attempts");
+        assert_eq!(
+            attempted.lock().expect("attempted event lock").len(),
+            BLOCKED_EVENTS + 1
+        );
+
+        release.notify_waiters();
+        timeout(Duration::from_millis(500), publisher)
+            .await
+            .expect("publisher should drain released attempts")
+            .expect("publisher task");
     }
 
     #[tokio::test]
