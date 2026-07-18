@@ -34,6 +34,7 @@ const MAX_PUBSUB_PEERS: usize = 64;
 const MAINTENANCE_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const OUTBOX_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const OUTBOX_BATCH: usize = 8;
+const RELAY_REPLAY_LIMIT: usize = 32;
 
 struct PublishRequest {
     event: Box<Event>,
@@ -247,12 +248,13 @@ impl RelayBridge {
                 .with_context(|| format!("failed to add control pubsub relay {relay}"))?;
         }
         client.connect().await;
+        let [control_filter, update_filter] = relay_subscription_filters(update_events);
         client
-            .subscribe(Filter::new().kinds(control_kinds()), None)
+            .subscribe(control_filter, None)
             .await
             .context("failed to subscribe to control pubsub relays")?;
         client
-            .subscribe(update_events.filter().clone(), None)
+            .subscribe(update_filter, None)
             .await
             .context("failed to subscribe to Hashtree update roots")?;
         Ok(Some(Self {
@@ -724,6 +726,15 @@ fn control_kinds() -> [Kind; 3] {
         Kind::Custom(FIPS_PEER_ADVERT_KIND),
         Kind::Custom(PAID_EXIT_OFFER_KIND),
         Kind::Custom(RATING_FACT_KIND),
+    ]
+}
+
+fn relay_subscription_filters(update_events: &UpdateEventCache) -> [Filter; 2] {
+    [
+        Filter::new()
+            .kinds(control_kinds())
+            .limit(RELAY_REPLAY_LIMIT),
+        update_events.filter().clone().limit(RELAY_REPLAY_LIMIT),
     ]
 }
 

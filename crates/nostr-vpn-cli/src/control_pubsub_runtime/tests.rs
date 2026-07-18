@@ -178,6 +178,22 @@ async fn wait_pubsub_connected(runtime: &ControlPubsubFipsRuntime) {
 }
 
 #[test]
+fn relay_subscriptions_bound_retained_replay() {
+    let publisher = Keys::generate();
+    let update_events = update_events(&publisher, "releases/bounded-relay-replay");
+
+    let filters = relay_subscription_filters(&update_events);
+
+    assert_eq!(filters.len(), 2);
+    assert!(
+        filters
+            .iter()
+            .all(|filter| filter.limit == Some(RELAY_REPLAY_LIMIT)),
+        "every public-relay subscription must bound retained replay"
+    );
+}
+
+#[test]
 fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency() {
     std::thread::Builder::new()
         .name("websocket-fips-pubsub".to_string())
