@@ -178,21 +178,7 @@ async fn run_fips_pubsub_relay_adapter(
                     Err(error) => tracing::debug!(%error, "failed to drain FIPS Nostr relay events"),
                 }
 
-                for _ in 0..RELAY_DRAIN_BATCH {
-                    let Some(event) = pending.front().cloned() else { break; };
-                    let accepted = match client.publish(event, source.clone()).await {
-                        Ok(report) => report.accepted,
-                        Err(error) => {
-                            tracing::trace!(%error, "FIPS Nostr relay publication is waiting for an authenticated pubsub peer");
-                            false
-                        }
-                    };
-                    if accepted {
-                        pending.pop_front();
-                    } else {
-                        break;
-                    }
-                }
+                publish_pending_fips_events(&client, &source, &mut pending).await;
                 pump.as_mut().reset(
                     tokio::time::Instant::now()
                         + relay_pump_interval(did_work, !pending.is_empty()),
@@ -212,6 +198,29 @@ async fn run_fips_pubsub_relay_adapter(
     }
 }
 
+async fn publish_pending_fips_events<B: EventBus>(
+    provider: &B,
+    source: &EventSource,
+    pending: &mut VecDeque<VerifiedEvent>,
+) {
+    let attempts = pending.len().min(RELAY_DRAIN_BATCH);
+    for _ in 0..attempts {
+        let Some(event) = pending.pop_front() else {
+            break;
+        };
+        let accepted = match provider.publish(event.clone(), source.clone()).await {
+            Ok(report) => report.accepted,
+            Err(error) => {
+                tracing::trace!(%error, "FIPS Nostr relay publication is waiting for an authenticated pubsub peer");
+                false
+            }
+        };
+        if !accepted {
+            pending.push_back(event);
+        }
+    }
+}
+
 async fn start_relay_provider(relays: &[String], filter: Filter) -> Result<Option<RelayEventBus>> {
     if relays.is_empty() {
         return Ok(None);
@@ -227,33 +236,33 @@ async fn start_relay_provider(relays: &[String], filter: Filter) -> Result<Optio
     Ok(Some(provider))
 }
 
-async fn run_direct_relay_publisher(
-    provider: RelayEventBus,
+async fn run_direct_relay_publisher<B: EventBus>(
+    provider: B,
     source: EventSource,
     mut events: tokio::sync::mpsc::Receiver<VerifiedEvent>,
 ) {
     while let Some(event) = events.recv().await {
-        loop {
-            match tokio::time::timeout(
-                RELAY_PROVIDER_TIMEOUT,
-                provider.publish(event.clone(), source.clone()),
-            )
-            .await
-            {
-                Ok(Ok(report)) if report.accepted => break,
-                Ok(Ok(_)) => {
-                    tracing::trace!("direct Nostr pubsub provider rejected FIPS relay event");
-                }
-                Ok(Err(error)) => {
-                    tracing::trace!(%error, "direct Nostr pubsub provider did not publish FIPS relay event");
-                }
-                Err(_) => {
-                    tracing::trace!(
-                        "direct Nostr pubsub provider timed out publishing FIPS relay event"
-                    );
-                }
+        match tokio::time::timeout(
+            RELAY_PROVIDER_TIMEOUT,
+            provider.publish(event, source.clone()),
+        )
+        .await
+        {
+            Ok(Ok(report)) if report.accepted => {}
+            Ok(Ok(report)) => {
+                tracing::trace!(
+                    reason = report.reason.as_deref().unwrap_or("unspecified"),
+                    "direct Nostr pubsub provider rejected FIPS relay event"
+                );
             }
-            tokio::time::sleep(RELAY_ACTIVE_PUMP_INTERVAL).await;
+            Ok(Err(error)) => {
+                tracing::trace!(%error, "direct Nostr pubsub provider did not publish FIPS relay event");
+            }
+            Err(_) => {
+                tracing::trace!(
+                    "direct Nostr pubsub provider timed out publishing FIPS relay event"
+                );
+            }
         }
     }
 }
@@ -304,15 +313,19 @@ mod fips_pubsub_relay_adapter_tests {
     use super::*;
     use crate::fips_control::{FipsControlFrame, JoinRosterControl, NetworkRoster, SignedRoster};
     use crate::fips_control_tcp::FipsControlTcpRuntime;
+    use async_trait::async_trait;
     use fips_core::config::{IdentityConfig, NostrRelayConfig, PeerConfig, TransportInstances};
     use fips_core::{
         Config, FipsEndpoint, Identity, SimNetwork, SimTransportConfig, register_sim_network,
         unregister_sim_network,
     };
     use fips_endpoint::PeerIdentity;
-    use nostr_pubsub::EventBus;
+    use nostr_pubsub::{
+        EventBus, PublishReport, QueryOptions, QueryReport, Result as PubsubResult,
+    };
     use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
-    use nostr_sdk::prelude::{Filter, Keys, Kind, PublicKey};
+    use nostr_sdk::prelude::{EventBuilder, Filter, Keys, Kind, PublicKey};
+    use std::sync::Mutex;
     use tokio::time::timeout;
 
     #[test]
@@ -320,6 +333,131 @@ mod fips_pubsub_relay_adapter_tests {
         assert_eq!(relay_pump_interval(false, false), RELAY_IDLE_PUMP_INTERVAL);
         assert_eq!(relay_pump_interval(true, false), RELAY_ACTIVE_PUMP_INTERVAL);
         assert_eq!(relay_pump_interval(false, true), RELAY_ACTIVE_PUMP_INTERVAL);
+    }
+
+    #[derive(Clone)]
+    struct FirstPublishRejected {
+        first_event_id: String,
+        attempted: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait]
+    impl EventBus for FirstPublishRejected {
+        async fn publish(
+            &self,
+            event: VerifiedEvent,
+            _source: EventSource,
+        ) -> PubsubResult<PublishReport> {
+            let event_id = event.as_event().id.to_hex();
+            self.attempted
+                .lock()
+                .expect("attempted event lock")
+                .push(event_id.clone());
+            if event_id == self.first_event_id {
+                Ok(PublishReport {
+                    accepted: false,
+                    priority: 0,
+                    reason: Some("relay did not acknowledge the event".to_string()),
+                })
+            } else {
+                Ok(PublishReport {
+                    accepted: true,
+                    priority: 0,
+                    reason: None,
+                })
+            }
+        }
+
+        async fn query(
+            &self,
+            _filters: Vec<Filter>,
+            _options: QueryOptions,
+        ) -> PubsubResult<QueryReport> {
+            Ok(QueryReport::default())
+        }
+    }
+
+    #[tokio::test]
+    async fn rejected_direct_relay_publication_does_not_block_the_next_datagram() {
+        let keys = Keys::generate();
+        let first = VerifiedEvent::try_from(
+            EventBuilder::new(Kind::Custom(21_060), "first")
+                .sign_with_keys(&keys)
+                .expect("sign first event"),
+        )
+        .expect("verify first event");
+        let second = VerifiedEvent::try_from(
+            EventBuilder::new(Kind::Custom(21_060), "second")
+                .sign_with_keys(&keys)
+                .expect("sign second event"),
+        )
+        .expect("verify second event");
+        let first_event_id = first.as_event().id.to_hex();
+        let second_event_id = second.as_event().id.to_hex();
+        let attempted = Arc::new(Mutex::new(Vec::new()));
+        let provider = FirstPublishRejected {
+            first_event_id: first_event_id.clone(),
+            attempted: Arc::clone(&attempted),
+        };
+        let (tx, rx) = tokio::sync::mpsc::channel(2);
+        tx.send(first).await.expect("queue first event");
+        tx.send(second).await.expect("queue second event");
+        drop(tx);
+
+        timeout(
+            Duration::from_millis(200),
+            run_direct_relay_publisher(provider, EventSource::local_index("test"), rx),
+        )
+        .await
+        .expect("publisher must advance after a stalled event");
+
+        assert_eq!(
+            attempted.lock().expect("attempted event lock").as_slice(),
+            [first_event_id, second_event_id]
+        );
+    }
+
+    #[tokio::test]
+    async fn rejected_fips_pubsub_publication_rotates_behind_newer_datagrams() {
+        let keys = Keys::generate();
+        let first = VerifiedEvent::try_from(
+            EventBuilder::new(Kind::Custom(21_060), "first")
+                .sign_with_keys(&keys)
+                .expect("sign first event"),
+        )
+        .expect("verify first event");
+        let second = VerifiedEvent::try_from(
+            EventBuilder::new(Kind::Custom(21_060), "second")
+                .sign_with_keys(&keys)
+                .expect("sign second event"),
+        )
+        .expect("verify second event");
+        let first_event_id = first.as_event().id.to_hex();
+        let second_event_id = second.as_event().id.to_hex();
+        let attempted = Arc::new(Mutex::new(Vec::new()));
+        let provider = FirstPublishRejected {
+            first_event_id: first_event_id.clone(),
+            attempted: Arc::clone(&attempted),
+        };
+        let mut pending = VecDeque::from([first, second]);
+
+        publish_pending_fips_events(&provider, &EventSource::local_index("test"), &mut pending)
+            .await;
+
+        assert_eq!(
+            attempted.lock().expect("attempted event lock").as_slice(),
+            [first_event_id.clone(), second_event_id]
+        );
+        assert_eq!(pending.len(), 1);
+        assert_eq!(
+            pending
+                .front()
+                .expect("rejected event remains queued")
+                .as_event()
+                .id
+                .to_hex(),
+            first_event_id
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
