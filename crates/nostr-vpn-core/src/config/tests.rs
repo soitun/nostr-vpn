@@ -2,8 +2,8 @@
 mod tests {
     use super::{
         AdminSignedSharedRosterUpdate, AppConfig, InternetSource, PendingOutboundJoinRequest,
-        fips_nostr_relay_fallback_enabled, normalize_nostr_pubkey, parse_wireguard_exit_config,
-        split_peer_transport_addr, wireguard_exit_config_text,
+        effective_fips_nostr_relays, fips_nostr_relay_fallback_enabled, normalize_nostr_pubkey,
+        parse_wireguard_exit_config, split_peer_transport_addr, wireguard_exit_config_text,
     };
     use crate::config_defaults::generate_nostr_identity;
 
@@ -32,18 +32,28 @@ mod tests {
     }
 
     #[test]
-    fn relay_fallback_requires_discovery_webrtc_and_a_relay() {
+    fn relay_fallback_requires_discovery_and_a_relay_not_webrtc() {
         let relays = vec!["wss://relay.example".to_string()];
 
-        assert!(fips_nostr_relay_fallback_enabled(true, true, &relays));
-        assert!(!fips_nostr_relay_fallback_enabled(false, true, &relays));
-        assert!(!fips_nostr_relay_fallback_enabled(true, false, &relays));
-        assert!(!fips_nostr_relay_fallback_enabled(true, true, &[]));
+        assert!(fips_nostr_relay_fallback_enabled(true, &relays));
+        assert!(!fips_nostr_relay_fallback_enabled(false, &relays));
+        assert!(!fips_nostr_relay_fallback_enabled(true, &[]));
         assert!(!fips_nostr_relay_fallback_enabled(
-            true,
             true,
             &["  ".to_string()]
         ));
+    }
+
+    #[test]
+    fn empty_application_relay_list_uses_fips_discovery_defaults() {
+        let relays = effective_fips_nostr_relays(&[]);
+
+        assert!(!relays.is_empty());
+        assert!(fips_nostr_relay_fallback_enabled(true, &relays));
+        assert_eq!(
+            effective_fips_nostr_relays(&["  wss://relay.example  ".to_string()]),
+            vec!["wss://relay.example"]
+        );
     }
 
     #[test]

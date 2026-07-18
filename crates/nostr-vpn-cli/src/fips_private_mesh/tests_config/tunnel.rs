@@ -17,8 +17,8 @@
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];
         app.networks[0].admins = vec![admin_pubkey.clone()];
-        app.fips_webrtc_enabled = true;
-        app.nostr.relays = vec!["wss://relay.example.org".to_string()];
+        app.fips_webrtc_enabled = false;
+        app.nostr.relays.clear();
 
         let config = FipsPrivateTunnelConfig::from_app(
             &app,
@@ -38,6 +38,8 @@
             ],
         )
         .expect("fips tunnel config");
+
+        assert!(!config.nostr_relays.is_empty());
 
         let bob = config
             .endpoint_peers

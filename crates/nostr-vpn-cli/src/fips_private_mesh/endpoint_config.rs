@@ -177,7 +177,6 @@ fn fips_endpoint_config_with_open_discovery_limit(
     let nostr_relay_fallback_enabled = transport.is_some_and(|transport| {
         fips_nostr_relay_fallback_enabled(
             transport.nostr_discovery_enabled,
-            transport.webrtc_enabled,
             &transport.nostr_relays,
         )
     });
@@ -645,7 +644,7 @@ mod endpoint_config_tests {
     }
 
     #[test]
-    fn endpoint_config_leaves_webrtc_empty_when_webrtc_is_disabled() {
+    fn endpoint_config_keeps_relay_fallback_without_ambient_webrtc() {
         let peer = test_peer();
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
         let transport = test_transport(true, false);
@@ -661,7 +660,11 @@ mod endpoint_config_tests {
         assert!(config.node.discovery.nostr.advertise);
         assert!(config.transports.webrtc.is_empty());
         assert!(!config.transports.udp.is_empty());
-        assert!(config.transports.nostr_relay.is_empty());
+        let TransportInstances::Single(relay) = &config.transports.nostr_relay else {
+            panic!("expected one application-owned Nostr relay fallback transport");
+        };
+        assert_eq!(relay.auto_connect, Some(false));
+        assert_eq!(relay.accept_connections, Some(false));
     }
 
     #[test]

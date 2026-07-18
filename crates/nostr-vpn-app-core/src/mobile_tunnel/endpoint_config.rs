@@ -323,7 +323,6 @@ fn mobile_nostr_enabled(mobile: &MobileTunnelConfig) -> bool {
 fn mobile_nostr_relay_fallback_enabled(mobile: &MobileTunnelConfig) -> bool {
     fips_nostr_relay_fallback_enabled(
         mobile_nostr_enabled(mobile),
-        mobile.webrtc_enabled,
         &mobile.nostr_relays,
     )
 }
@@ -688,11 +687,12 @@ mod endpoint_config_tests {
     }
 
     #[test]
-    fn mobile_endpoint_config_keeps_nostr_discovery_without_webrtc_by_default() {
+    fn mobile_endpoint_config_keeps_relay_fallback_without_webrtc() {
         let mobile = MobileTunnelConfig {
             peers: vec![test_peer()],
             nostr_discovery_enabled: true,
             webrtc_enabled: false,
+            nostr_relays: vec!["wss://relay.example.org".to_string()],
             ..empty_config()
         };
         let config = fips_endpoint_config("nostr-vpn:test", &mobile);
@@ -700,7 +700,7 @@ mod endpoint_config_tests {
         assert!(config.node.discovery.nostr.enabled);
         assert!(config.node.discovery.nostr.advertise);
         assert!(config.transports.webrtc.is_empty());
-        assert!(config.transports.nostr_relay.is_empty());
+        assert!(!config.transports.nostr_relay.is_empty());
         assert!(!config.transports.udp.is_empty());
     }
 }

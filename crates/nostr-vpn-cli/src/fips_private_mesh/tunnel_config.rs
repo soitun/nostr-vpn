@@ -213,10 +213,10 @@ impl FipsPrivateTunnelConfig {
         // Keep configured and cached WebRTC hints out of the endpoint when the
         // transport is disabled.
         retain_enabled_peer_transport_addresses(&mut endpoint_peers, app.fips_webrtc_enabled);
+        let nostr_relays = effective_fips_nostr_relays(&app.nostr.relays);
         if fips_nostr_relay_fallback_enabled(
             app.fips_nostr_discovery_enabled,
-            app.fips_webrtc_enabled,
-            &app.nostr.relays,
+            &nostr_relays,
         ) {
             add_nostr_relay_fallback_for_mesh_peers(&mut endpoint_peers, &peers);
         }
@@ -251,7 +251,7 @@ impl FipsPrivateTunnelConfig {
             advertised_endpoint: app.node.endpoint.clone(),
             advertise_public_endpoint: app.fips_advertise_public_endpoint,
             stun_servers: app.nat.stun_servers.clone(),
-            nostr_relays: app.nostr.relays.clone(),
+            nostr_relays,
             nostr_pubsub: app.nostr.pubsub.clone(),
             control_pubsub_store_path: PathBuf::new(),
             share_local_candidates: app.lan_discovery_enabled,
@@ -308,7 +308,6 @@ impl FipsPrivateTunnelConfig {
     pub(crate) fn nostr_relay_fallback_enabled(&self) -> bool {
         fips_nostr_relay_fallback_enabled(
             self.nostr_discovery_enabled,
-            self.webrtc_enabled,
             &self.nostr_relays,
         )
     }

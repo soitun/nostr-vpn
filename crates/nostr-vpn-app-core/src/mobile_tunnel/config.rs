@@ -391,7 +391,7 @@ impl MobileTunnelConfig {
             peer_hints: mobile_static_peer_hints(app),
             bootstrap_peers: mobile_bootstrap_peer_hints(app),
             route_targets,
-            nostr_relays: app.nostr.relays.clone(),
+            nostr_relays: effective_fips_nostr_relays(&app.nostr.relays),
             stun_servers: app.nat.stun_servers.clone(),
             share_local_candidates: app.lan_discovery_enabled,
             connect_to_non_roster_fips_peers: app.connect_to_non_roster_fips_peers,
