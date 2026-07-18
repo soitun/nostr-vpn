@@ -175,6 +175,14 @@ impl FipsPrivateTunnelRuntime {
             }
 
             let config = self.config.clone();
+            let mut bypass_hosts = config.control_plane_bypass_hosts.clone();
+            bypass_hosts.extend(self.endpoint_bypass_ipv4_hosts(&config).await?);
+            if linux_endpoint_bypass_hosts_unchanged(
+                &self.endpoint_bypass_routes,
+                &bypass_hosts,
+            ) {
+                return Ok(());
+            }
             return self.apply_interface_config(&config).await;
         }
 

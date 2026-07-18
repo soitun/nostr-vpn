@@ -36,6 +36,7 @@
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{BorrowedTunFd, TunPipelinePacket, raw_write_packet_to_tun};
+    use super::linux_endpoint_bypass_hosts_unchanged;
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
     use fips_endpoint::{
@@ -58,6 +59,29 @@
     use std::time::Duration;
 
     const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
+
+    #[test]
+    fn unchanged_linux_endpoint_bypass_hosts_skip_route_reconciliation() {
+        let current = vec![
+            "198.51.100.7/32".to_string(),
+            "203.0.113.8/32".to_string(),
+        ];
+        let same_hosts = vec![
+            "203.0.113.8".parse().unwrap(),
+            "198.51.100.7".parse().unwrap(),
+            "203.0.113.8".parse().unwrap(),
+        ];
+        let changed_hosts = vec![
+            "198.51.100.7".parse().unwrap(),
+            "203.0.113.9".parse().unwrap(),
+        ];
+
+        assert!(linux_endpoint_bypass_hosts_unchanged(&current, &same_hosts));
+        assert!(!linux_endpoint_bypass_hosts_unchanged(
+            &current,
+            &changed_hosts,
+        ));
+    }
 
     fn send_tunnel_packet_batch_owned_with_capacity(
         runtime: &FipsPrivateMeshRuntime,

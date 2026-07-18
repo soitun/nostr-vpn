@@ -5,6 +5,25 @@ fn linux_route_targets_require_ip_endpoint_bypass(
     crate::route_targets_require_endpoint_bypass(route_targets)
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn linux_endpoint_bypass_hosts_unchanged(
+    current_targets: &[String],
+    desired_hosts: &[Ipv4Addr],
+) -> bool {
+    let mut current_targets = current_targets.to_vec();
+    current_targets.sort_unstable();
+    current_targets.dedup();
+
+    let mut desired_targets = desired_hosts
+        .iter()
+        .map(|host| format!("{host}/32"))
+        .collect::<Vec<_>>();
+    desired_targets.sort_unstable();
+    desired_targets.dedup();
+
+    current_targets == desired_targets
+}
+
 impl FipsPrivateTunnelRuntime {
     #[cfg(target_os = "linux")]
     async fn apply_linux_network_state(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
