@@ -90,7 +90,10 @@ const FIPS_ENDPOINT_FAST_LINK_DEAD_TIMEOUT_SECS: u64 = 5;
 const FIPS_ENDPOINT_SESSION_IDLE_TIMEOUT_SECS: u64 = 0;
 const FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST: usize = 64;
 const FIPS_ENDPOINT_REKEY_AFTER_SECS: u64 = 3600;
-const FIPS_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 5;
+// FIPS maintains its own two-second link heartbeat. App-level presence pings
+// only need two chances inside the 20-second online grace; a ten-second cadence
+// also avoids repeatedly rediscovering healthy routed peers.
+const FIPS_PEER_ACTIVE_PING_INTERVAL_SECS: u64 = 10;
 const FIPS_PEER_LINK_PING_INTERVAL_SECS: u64 = 5;
 const FIPS_PEER_DISCOVERY_PROBE_INTERVAL_SECS: u64 = 30;
 const FIPS_CONTROL_RTT_MAX_ACCEPT_MS: u128 = 10_000;

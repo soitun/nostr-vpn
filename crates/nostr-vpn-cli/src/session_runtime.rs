@@ -23,6 +23,20 @@ macro_rules! current_fips_endpoint_peer_states {
 
 include!("session_runtime/fips_status_helpers.rs");
 include!("session_runtime/connect_vpn.rs");
+
+#[path = "session_runtime/daemon_vpn/heartbeat.rs"]
+mod daemon_vpn_heartbeat;
+#[path = "session_runtime/daemon_vpn/join_approval.rs"]
+mod daemon_vpn_join_approval;
+#[cfg(feature = "paid-exit")]
+#[path = "session_runtime/daemon_vpn/paid_exit.rs"]
+mod daemon_vpn_paid_exit;
+#[path = "session_runtime/daemon_vpn/startup.rs"]
+mod daemon_vpn_startup;
+#[cfg(feature = "paid-exit")]
+use daemon_vpn_paid_exit::*;
+use {daemon_vpn_heartbeat::*, daemon_vpn_join_approval::*, daemon_vpn_startup::*};
+
 include!("session_runtime/daemon_vpn.rs");
 include!("session_runtime/daemon_state.rs");
 include!("session_runtime/tests.rs");

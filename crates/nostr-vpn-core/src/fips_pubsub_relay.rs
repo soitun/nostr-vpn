@@ -13,7 +13,8 @@ use tokio::task::JoinHandle;
 
 const RELAY_DRAIN_BATCH: usize = 64;
 const RELAY_PENDING_EVENTS: usize = 1_024;
-const RELAY_PUMP_INTERVAL: Duration = Duration::from_millis(50);
+const RELAY_ACTIVE_PUMP_INTERVAL: Duration = Duration::from_millis(50);
+const RELAY_IDLE_PUMP_INTERVAL: Duration = Duration::from_millis(250);
 const RELAY_PROVIDER_TIMEOUT: Duration = Duration::from_secs(2);
 const RELAY_SUBSCRIPTION_LIMIT: usize = 8;
 
@@ -103,8 +104,8 @@ async fn run_fips_pubsub_relay_adapter(
             )
         })
         .unwrap_or((None, None));
-    let mut tick = tokio::time::interval(RELAY_PUMP_INTERVAL);
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let pump = tokio::time::sleep(Duration::ZERO);
+    tokio::pin!(pump);
 
     loop {
         tokio::select! {
@@ -127,7 +128,8 @@ async fn run_fips_pubsub_relay_adapter(
                     tracing::debug!(%error, "failed to ingest FIPS Nostr relay event from direct relay pubsub");
                 }
             }
-            _ = tick.tick() => {
+            _ = &mut pump => {
+                let mut did_work = !pending.is_empty();
                 if subscription.is_none() {
                     match client.subscribe(vec![filter.clone()]).await {
                         Ok(active) => {
@@ -146,6 +148,7 @@ async fn run_fips_pubsub_relay_adapter(
 
                 match endpoint.drain_nostr_relay_events(RELAY_DRAIN_BATCH).await {
                     Ok(events) => {
+                        did_work |= !events.is_empty();
                         for event in events {
                             let event = match VerifiedEvent::try_from(event) {
                                 Ok(event) => event,
@@ -184,6 +187,10 @@ async fn run_fips_pubsub_relay_adapter(
                         break;
                     }
                 }
+                pump.as_mut().reset(
+                    tokio::time::Instant::now()
+                        + relay_pump_interval(did_work, !pending.is_empty()),
+                );
             }
         }
     }
@@ -240,8 +247,16 @@ async fn run_direct_relay_publisher(
                     );
                 }
             }
-            tokio::time::sleep(RELAY_PUMP_INTERVAL).await;
+            tokio::time::sleep(RELAY_ACTIVE_PUMP_INTERVAL).await;
         }
+    }
+}
+
+fn relay_pump_interval(did_work: bool, has_pending: bool) -> Duration {
+    if did_work || has_pending {
+        RELAY_ACTIVE_PUMP_INTERVAL
+    } else {
+        RELAY_IDLE_PUMP_INTERVAL
     }
 }
 
@@ -294,6 +309,13 @@ mod fips_pubsub_relay_adapter_tests {
     use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
     use nostr_sdk::prelude::{Filter, Keys, Kind, PublicKey};
     use tokio::time::timeout;
+
+    #[test]
+    fn relay_pump_slows_only_when_idle() {
+        assert_eq!(relay_pump_interval(false, false), RELAY_IDLE_PUMP_INTERVAL);
+        assert_eq!(relay_pump_interval(true, false), RELAY_ACTIVE_PUMP_INTERVAL);
+        assert_eq!(relay_pump_interval(false, true), RELAY_ACTIVE_PUMP_INTERVAL);
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn standard_join_and_roster_cross_the_fips_pubsub_relay_carrier() {

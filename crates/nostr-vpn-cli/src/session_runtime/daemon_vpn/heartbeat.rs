@@ -9,8 +9,7 @@ pub(super) struct FipsHeartbeatContext<'a> {
     pub(super) underlay_interface_mtu: Option<u32>,
     pub(super) own_pubkey: Option<&'a str>,
     pub(super) recent_peers: &'a nostr_vpn_core::recent_peers::RecentPeerEndpoints,
-    pub(super) ethernet_underlay:
-        Option<&'a crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
+    pub(super) ethernet_underlay: Option<&'a crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
     pub(super) expected_peers: usize,
     pub(super) last_endpoint_peer_signature: &'a mut EndpointPeerSignature,
     pub(super) last_stale_participant_restart_at: &'a mut Option<u64>,
@@ -70,7 +69,8 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
                     .await;
                     match recovery {
                         Ok(()) => {
-                            *pending_roster_restart_state = FipsPendingRosterRestartState::default();
+                            *pending_roster_restart_state =
+                                FipsPendingRosterRestartState::default();
                             *roster_sync_state = FipsRosterSyncState::default();
                         }
                         Err(error) => {

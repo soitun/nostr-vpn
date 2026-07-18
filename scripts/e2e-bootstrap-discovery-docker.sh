@@ -34,6 +34,8 @@ dump_debug() {
     "${COMPOSE[@]}" exec -T "$service" sh -lc "cat /root/.config/nvpn/config.toml 2>/dev/null || true" || true
     echo "--- $service daemon.log ---"
     "${COMPOSE[@]}" exec -T "$service" sh -lc "tail -n 200 /root/.config/nvpn/daemon.log 2>/dev/null || true" || true
+    echo "--- $service web.log ---"
+    "${COMPOSE[@]}" exec -T "$service" sh -lc "tail -n 100 /tmp/nvpn-web.log 2>/dev/null || true" || true
   done
 }
 
@@ -237,6 +239,11 @@ accept_join_request_through_gui_api() {
     fi
     sleep 1
   done
+  if ! "${COMPOSE[@]}" exec -T "$service" curl -fsS http://127.0.0.1:8081/api/health >/dev/null 2>&1; then
+    echo "bootstrap-discovery docker e2e failed: GUI API did not start on $service" >&2
+    "${COMPOSE[@]}" exec -T "$service" sh -lc 'tail -n 100 /tmp/nvpn-web.log' >&2 || true
+    exit 1
+  fi
   network_id="$("${COMPOSE[@]}" exec -T "$service" sh -lc \
     "curl -fsS -X POST http://127.0.0.1:8081/api/tick | perl -0ne 'print \$1 if /\"networks\"\\s*:\\s*\\[\\s*\\{.*?\"id\"\\s*:\\s*\"([^\"]+)\"/s'" | tr -d '\r')"
   if [[ -z "$network_id" ]]; then

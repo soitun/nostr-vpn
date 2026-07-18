@@ -1170,7 +1170,7 @@ test_dockerfile_supports_local_base_images() {
   assert_file_contains "$dockerfile" 'FROM ${NVPN_E2E_RUNTIME_IMAGE} AS runtime' "runtime image from"
   assert_file_contains "$dockerfile" "ARG NVPN_E2E_BUILDER_APT_INSTALL=1" "builder apt arg"
   assert_file_contains "$dockerfile" "ARG NVPN_E2E_RUNTIME_APT_INSTALL=1" "runtime apt arg"
-  assert_file_not_contains "$dockerfile" "[patch.crates-io]" "duplicate Cargo patch table"
+  assert_file_contains "$dockerfile" "[patch.crates-io]" "local FIPS Cargo patch table"
 
   for compose in \
     "$ROOT_DIR/docker-compose.e2e.yml" \

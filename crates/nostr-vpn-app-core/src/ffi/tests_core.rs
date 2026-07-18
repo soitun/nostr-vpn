@@ -127,6 +127,36 @@
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(feature = "paid-exit")]
+    #[test]
+    fn cashu_wallet_runtime_is_safe_inside_async_host() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-async-wallet-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let outer_runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .expect("create async host runtime");
+
+        outer_runtime.block_on(async {
+            let mut runtime = NativeAppRuntime::new(
+                dir.to_str().expect("utf8 temp dir"),
+                String::new(),
+            )
+            .expect("wallet opens inside async host");
+            runtime
+                .refresh_paid_route_wallet(false)
+                .expect("wallet command runs inside async host");
+            drop(runtime);
+        });
+
+        drop(outer_runtime);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn startup_migrates_plaintext_config_secrets() {
         let nonce = SystemTime::now()

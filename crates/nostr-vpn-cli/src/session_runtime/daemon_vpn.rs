@@ -1,15 +1,3 @@
-#[path = "daemon_vpn/heartbeat.rs"]
-mod daemon_vpn_heartbeat;
-#[path = "daemon_vpn/join_approval.rs"]
-mod daemon_vpn_join_approval;
-#[cfg(feature = "paid-exit")]
-#[path = "daemon_vpn/paid_exit.rs"]
-mod daemon_vpn_paid_exit;
-#[path = "daemon_vpn/startup.rs"]
-mod daemon_vpn_startup;
-use {daemon_vpn_heartbeat::*, daemon_vpn_join_approval::*, daemon_vpn_startup::*};
-#[cfg(feature = "paid-exit")]
-use daemon_vpn_paid_exit::*;
 pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let startup = initialize_daemon_vpn(&args).await?;
     let mut magic_dns_runtime = start_split_magic_dns(&startup.app);

@@ -425,8 +425,8 @@
     #[test]
     fn fips_peer_ping_due_uses_peer_state_intervals() {
         assert!(super::fips_peer_ping_due(Some(100), None, true, 120));
-        assert!(!super::fips_peer_ping_due(Some(100), Some(116), true, 120));
-        assert!(super::fips_peer_ping_due(Some(100), Some(115), true, 120));
+        assert!(!super::fips_peer_ping_due(Some(100), Some(111), true, 120));
+        assert!(super::fips_peer_ping_due(Some(100), Some(110), true, 120));
 
         assert!(!super::fips_peer_ping_due(None, Some(116), true, 120));
         assert!(super::fips_peer_ping_due(None, Some(115), true, 120));

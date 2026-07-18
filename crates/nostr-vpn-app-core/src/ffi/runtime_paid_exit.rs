@@ -39,6 +39,7 @@ mod paid_exit {
 
     include!("paid_exit_wallet_runtime.rs");
     include!("paid_exit_actions.rs");
+    include!("paid_exit_wallet_helpers.rs");
     include!("paid_exit_state.rs");
     include!("paid_exit_text.rs");
     include!("paid_exit_json.rs");

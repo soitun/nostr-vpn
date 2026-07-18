@@ -1,9 +1,7 @@
 use super::*;
 use nostr_sdk::prelude::{Keys, ToBech32};
 use nostr_vpn_core::config::InternetSource;
-use nostr_vpn_core::paid_routes::{
-    PaidRouteChannelTerms, PaidRouteIpSupport, PaidRoutePricing,
-};
+use nostr_vpn_core::paid_routes::{PaidRouteChannelTerms, PaidRouteIpSupport, PaidRoutePricing};
 
 #[test]
 fn automatic_selection_opens_only_an_unfunded_probe_session() {

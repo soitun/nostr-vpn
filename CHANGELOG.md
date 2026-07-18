@@ -4,17 +4,42 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.97 - 2026-07-18
+
 ### Added
 
 - Added paired `nvpn daemon` options for scoped raw-Ethernet FIPS discovery
   and adjacency while keeping ordinary join requests and roster approval on
   the standard control path.
+- Added a single-owner CDK 0.17.3 Cashu wallet runtime with exact legacy-seed
+  migration into the existing iOS Keychain and Android Keystore facilities,
+  cross-process writer exclusion, startup recovery, and SQLite WAL-family
+  preservation without database-at-rest encryption.
 
 ### Changed
 
 - Made the application-owned FIPS Nostr relay transport independent of the
   endpoint underlay and carried its signed events through both standard
   authenticated FIPS pubsub peers and configured direct-relay pubsub.
+- Removed the obsolete platform-specific guest runtime and kept browser-based
+  joining on the ordinary nVPN daemon and signed-roster approval flow.
+- Moved native wallet operations from short-lived CLI processes onto the
+  application-owned CDK repository and updated `cdk-spilman` to 0.17.0.
+- Normalize wallet mint URLs and discard invalid or unsupported mint entries
+  before selecting a default mint.
+- Reduced routed-peer idle work with adaptive relay-event polling and a
+  10-second fresh-presence ping cadence while retaining FIPS link heartbeats.
+- Updated FIPS Core and Endpoint to 0.4.7 so repeated direct-path upgrades are
+  paced while a healthy routed fallback remains active.
+
+### Fixed
+
+- Probe every due roster peer during each heartbeat so one peer cannot starve
+  liveness updates for the rest of the roster.
+- Keep configured relay fallback available when WebRTC discovery is disabled,
+  and resolve roster actions against the active network consistently.
+- Run the CDK wallet service on its own worker so asynchronous hosts such as
+  `nostr-vpn-web` can open, use, and close it without nested-runtime failures.
 
 ## 4.0.96 - 2026-07-16
 
