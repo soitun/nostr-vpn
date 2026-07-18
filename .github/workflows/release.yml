@@ -565,9 +565,65 @@ jobs:
             dist/nostr-vpn-${{ env.RELEASE_TAG }}-android-arm64.aab
           retention-days: 7
 
+  build-startos:
+    name: Build StartOS package (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    needs: verify
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86
+            arch: x86_64
+            runner: ubuntu-latest
+          - target: arm
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+    env:
+      RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - name: Reclaim runner disk for the StartOS image build
+        uses: Start9Labs/start-technologies/.github/actions/free-disk-space@ded16ed19378f8503ad1fed5fca608650a77a6f6
+
+      - name: Set up StartOS build environment
+        uses: Start9Labs/start-technologies/.github/actions/setup-build-env@ded16ed19378f8503ad1fed5fca608650a77a6f6
+
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Install StartOS developer signing key
+        shell: bash
+        env:
+          STARTOS_DEV_KEY: ${{ secrets.STARTOS_DEV_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${STARTOS_DEV_KEY}" ]]; then
+            echo "::error::STARTOS_DEV_KEY is required to sign stable StartOS release packages."
+            exit 1
+          fi
+          umask 077
+          mkdir -p "${HOME}/.startos" .startos
+          printf '%s' "${STARTOS_DEV_KEY}" > "${HOME}/.startos/developer.key.pem"
+          cp "${HOME}/.startos/developer.key.pem" .startos/build-key
+
+      - name: Build and validate StartOS package
+        run: node scripts/startos-release.mjs --tag "${RELEASE_TAG}" --target "${{ matrix.target }}"
+
+      - name: Upload StartOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: startos-${{ matrix.arch }}
+          path: dist/nostr-vpn-${{ env.RELEASE_TAG }}-startos-${{ matrix.arch }}.s9pk
+          retention-days: 7
+          compression-level: 0
+
   release:
     name: Create GitHub release
-    if: ${{ always() && needs.verify.result == 'success' && needs.build-cli.result == 'success' && needs.build-macos-app.result == 'success' && needs.build-linux-app.result == 'success' && needs.build-windows-app.result == 'success' && needs.build-android-app.result == 'success' }}
+    if: ${{ always() && needs.verify.result == 'success' && needs.build-cli.result == 'success' && needs.build-macos-app.result == 'success' && needs.build-linux-app.result == 'success' && needs.build-windows-app.result == 'success' && needs.build-android-app.result == 'success' && needs.build-startos.result == 'success' }}
     needs:
       - verify
       - build-cli
@@ -575,6 +631,7 @@ jobs:
       - build-linux-app
       - build-windows-app
       - build-android-app
+      - build-startos
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -606,6 +663,7 @@ jobs:
             --built-line "Built Linux x64 desktop Debian package." \
             --built-line "Built Windows x64 installer." \
             --built-line "Built signed Android arm64 APK/AAB." \
+            --built-line "Built signed StartOS packages for x86_64 and aarch64." \
             --out release-notes.md
 
       - name: Create GitHub release

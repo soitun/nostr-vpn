@@ -191,6 +191,9 @@ release_cargo() {
 }
 
 node scripts/sync-versions.mjs
+npm ci
+npm run check
+npm run build
 ./scripts/check-source-file-lines.sh
 ./scripts/security-audit-rust.sh
 ./scripts/test-idle-cpu-gate-harness.sh

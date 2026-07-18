@@ -107,6 +107,8 @@ export function validateReleaseAssetSet(
   const hasWindowsX64Setup = names.some((name) => /^nostr-vpn-.*-windows-x64-setup\.exe$/.test(name))
   const hasSignedAndroidApk = names.some((name) => /^nostr-vpn-.*-android-arm64\.apk$/.test(name))
   const hasUnsignedAndroid = names.some((name) => /^nostr-vpn-.*-android-arm64-unsigned\.(apk|aab)$/.test(name))
+  const hasStartosX86 = names.some((name) => /^nostr-vpn-.*-startos-x86_64\.s9pk$/.test(name))
+  const hasStartosArm = names.some((name) => /^nostr-vpn-.*-startos-aarch64\.s9pk$/.test(name))
 
   if (hasMacosZip) {
     throw new Error(
@@ -148,6 +150,12 @@ export function validateReleaseAssetSet(
     }
     if (!hasSignedAndroidApk) {
       missing.push('signed Android APK')
+    }
+    if (!hasStartosX86) {
+      missing.push('StartOS x86_64 package')
+    }
+    if (!hasStartosArm) {
+      missing.push('StartOS aarch64 package')
     }
     if (missing.length > 0) {
       throw new Error(`Release is missing required app artifact(s): ${missing.join(', ')}.`)
@@ -318,6 +326,12 @@ export function describeAsset(name) {
   if (/^nostr-vpn-.*-android-arm64(?:-unsigned)?\.aab$/.test(name)) {
     return name.includes('-unsigned.') ? 'Android arm64 AAB (unsigned)' : 'Android arm64 AAB'
   }
+  if (/^nostr-vpn-.*-startos-x86_64\.s9pk$/.test(name)) {
+    return 'StartOS x86_64 package'
+  }
+  if (/^nostr-vpn-.*-startos-aarch64\.s9pk$/.test(name)) {
+    return 'StartOS aarch64 package'
+  }
   if (/^nvpn-.*-aarch64-apple-darwin\.tar\.gz$/.test(name)) {
     return name.startsWith('nvpn-v') ? 'Apple Silicon CLI (versioned)' : 'Apple Silicon CLI'
   }
@@ -393,6 +407,12 @@ function pushDownloadSections(lines, assetNames, assetBaseUrl = '') {
   ], assetBaseUrl)
   pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for Android', [
     /^nostr-vpn-.*-android-arm64\.apk$/,
+  ], assetBaseUrl)
+  pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for StartOS (x86_64)', [
+    /^nostr-vpn-.*-startos-x86_64\.s9pk$/,
+  ], assetBaseUrl)
+  pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for StartOS (aarch64)', [
+    /^nostr-vpn-.*-startos-aarch64\.s9pk$/,
   ], assetBaseUrl)
 
   const cliLines = []

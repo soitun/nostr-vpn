@@ -24,6 +24,17 @@ make arm
 make clean
 ```
 
+To produce the versioned x86_64 and aarch64 artifacts used by tagged releases:
+
+```bash
+just release-startos
+```
+
+The local release pipeline includes the same StartOS build. Tagged GitHub
+releases build both architectures on native runners, sign them with the
+`STARTOS_DEV_KEY` repository secret, and attach the `.s9pk` files to the
+release.
+
 `make install` sideloads the newest local `.s9pk` to the StartOS host configured
 in `~/.startos/config.yaml`.
 

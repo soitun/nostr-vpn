@@ -203,7 +203,7 @@ test('validateReleaseAssetSet can require complete app release artifacts', () =>
         'nostr-vpn-v4.0.1-macos-arm64.app.tar.gz',
         'nostr-vpn-v4.0.1-macos-arm64.dmg',
       ], { requireCompleteAppRelease: true }),
-    /Linux x64 desktop package, Windows x64 installer, signed Android APK/,
+    /Linux x64 desktop package, Windows x64 installer, signed Android APK, StartOS x86_64 package, StartOS aarch64 package/,
   )
 
   assert.doesNotThrow(() =>
@@ -213,6 +213,8 @@ test('validateReleaseAssetSet can require complete app release artifacts', () =>
       'nostr-vpn-v4.0.1-linux-x64.deb',
       'nostr-vpn-v4.0.1-macos-arm64.app.tar.gz',
       'nostr-vpn-v4.0.1-macos-arm64.dmg',
+      'nostr-vpn-v4.0.1-startos-aarch64.s9pk',
+      'nostr-vpn-v4.0.1-startos-x86_64.s9pk',
       'nostr-vpn-v4.0.1-windows-x64-setup.exe',
     ], { requireCompleteAppRelease: true }),
   )
@@ -250,6 +252,23 @@ test('dispatched release notes record the checked-out tag source commit', () => 
   assert.doesNotMatch(workflow, /--commit "\$\{GITHUB_SHA\}"/)
 })
 
+test('GitHub release requires and publishes both StartOS package architectures', () => {
+  const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
+  const startosJobStart = workflow.indexOf('  build-startos:')
+  const releaseJobStart = workflow.indexOf('  release:')
+  const startosJob = workflow.slice(startosJobStart, releaseJobStart)
+  const releaseJob = workflow.slice(releaseJobStart)
+
+  assert.ok(startosJobStart >= 0 && releaseJobStart > startosJobStart)
+  assert.match(startosJob, /STARTOS_DEV_KEY/)
+  assert.match(startosJob, /target: x86/)
+  assert.match(startosJob, /target: arm/)
+  assert.match(startosJob, /scripts\/startos-release\.mjs/)
+  assert.match(releaseJob, /needs\.build-startos\.result == 'success'/)
+  assert.match(releaseJob, /- build-startos/)
+  assert.match(releaseJob, /Built signed StartOS packages for x86_64 and aarch64\./)
+})
+
 test('autoDetectWindowsVmName returns the only running Windows VM', () => {
   const name = autoDetectWindowsVmName(`
 UUID                                    STATUS       IP_ADDR         NAME
@@ -277,6 +296,10 @@ test('describeAsset maps release filenames to readable labels', () => {
   assert.equal(
     describeAsset('nvpn-v0.2.27-aarch64-pc-windows-msvc.zip'),
     'Windows ARM64 CLI',
+  )
+  assert.equal(
+    describeAsset('nostr-vpn-v4.0.97-startos-x86_64.s9pk'),
+    'StartOS x86_64 package',
   )
   assert.equal(
     describeAsset('nostr-vpn-v0.3.23-linux-arm64.AppImage'),

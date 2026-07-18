@@ -78,7 +78,7 @@ Options:
   --release-tree <name>    htree release tree name (default: releases/nostr-vpn)
   --stage-dir <path>       Directory used for staged release metadata
   --env-file <path>        Extra dotenv file to load (repeatable)
-  --only <csv>             Limit steps to platform-versions,verify,macos,ios,linux,windows,android
+  --only <csv>             Limit steps to platform-versions,verify,startos,macos,ios,linux,windows,android
   --skip <csv>             Skip steps by name
   --allow-partial          Stage/publish even if a selected platform build fails
   --help                   Show this help
@@ -881,6 +881,21 @@ function runVerify({ dryRun, builtLines }) {
   builtLines.push('Ran release gate: sync-versions, fmt, clippy, tests, FIPS Docker e2e, WireGuard exit Docker/platform e2e, and desktop launch smokes.')
 }
 
+function buildStartosArtifacts({ tag, dryRun, builtLines }) {
+  run(
+    'node',
+    [
+      join(repoRoot, 'scripts', 'startos-release.mjs'),
+      '--tag',
+      tag,
+      '--output-dir',
+      distDir,
+    ],
+    { dryRun },
+  )
+  builtLines.push('Built signed StartOS packages for x86_64 and aarch64.')
+}
+
 function shouldRunStep(step, options) {
   if (options.skipVerify && step === 'verify') {
     return false
@@ -1206,6 +1221,7 @@ function main() {
   const steps = [
     ['platform-versions', () => syncPlatformVersions({ tag, dryRun: options.dryRun, builtLines })],
     ['verify', () => runVerify({ dryRun: options.dryRun, builtLines })],
+    ['startos', () => buildStartosArtifacts({ tag, dryRun: options.dryRun, builtLines })],
     ['macos', () => buildMacosArtifacts({ tag, dryRun: options.dryRun, builtLines })],
     ['ios', () => buildIosArtifacts({ tag, dryRun: options.dryRun, builtLines })],
     ['android', () => buildAndroidArtifacts({ env, tag, dryRun: options.dryRun, builtLines })],

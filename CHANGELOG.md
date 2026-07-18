@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Integrated the existing StartOS package into the release gate and both
+  release pipelines. Tagged releases now publish signed, manifest-validated
+  x86_64 and aarch64 `.s9pk` artifacts alongside the native apps.
+
 ## 4.0.97 - 2026-07-18
 
 ### Added

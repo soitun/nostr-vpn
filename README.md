@@ -16,7 +16,7 @@
 - [iOS App Store](https://apps.apple.com/app/nostr-vpn/id6785410348)
 - [iOS TestFlight beta](https://testflight.apple.com/join/58sg4agv)
 
-Release artifacts currently cover native Apple Silicon macOS, Linux x64, Windows x64, Android arm64, and headless CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64. Intel macOS is source-only for now.
+Release artifacts currently cover native Apple Silicon macOS, Linux x64, Windows x64, Android arm64, StartOS x86_64/aarch64 service packages, and headless CLI archives for Apple Silicon macOS, Windows x64, Linux x86_64, and Linux arm64. Intel macOS is source-only for now.
 
 ## Quick Start
 
