@@ -9,7 +9,7 @@ use nostr_vpn_core::config::AppConfig;
 
 use crate::{
     DaemonRuntimeState, JoinRequestArgs, daemon_state_file_path, default_config_path,
-    read_daemon_state, unix_timestamp,
+    maybe_reload_running_daemon, read_daemon_state, unix_timestamp,
 };
 
 const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
@@ -30,7 +30,11 @@ pub(crate) fn render_pairing_output(uri: &str) -> Result<String> {
 
 pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
-    let app = ensure_pending_join_request(&config_path, args.reset)?;
+    let app = ensure_pending_join_request_and_reload(
+        &config_path,
+        args.reset,
+        maybe_reload_running_daemon,
+    )?;
     if app.active_network_has_confirmed_local_identity() {
         println!(
             "Already approved for network {}.",
@@ -80,6 +84,18 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
             }
         }
     }
+}
+
+fn ensure_pending_join_request_and_reload(
+    config_path: &Path,
+    reset: bool,
+    reload_running_daemon: impl FnOnce(&Path),
+) -> Result<AppConfig> {
+    let app = ensure_pending_join_request(config_path, reset)?;
+    if !app.active_network_has_confirmed_local_identity() {
+        reload_running_daemon(config_path);
+    }
+    Ok(app)
 }
 
 fn ensure_pending_join_request(config_path: &Path, reset: bool) -> Result<AppConfig> {
@@ -217,6 +233,70 @@ mod tests {
 
         assert_eq!(first_uri, reused_uri);
         assert_ne!(first_uri, reset_uri);
+        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete secrets");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pending_request_reload_is_requested_after_the_request_is_persisted() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-join-request-reload-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        let mut reloads = 0;
+
+        let app = ensure_pending_join_request_and_reload(&path, false, |reload_path| {
+            reloads += 1;
+            assert_eq!(reload_path, path);
+            let persisted = AppConfig::load(reload_path).expect("persisted pending request");
+            assert!(
+                persisted
+                    .pending_nostr_join_request_link(JOIN_REQUEST_LINK_PREFIX)
+                    .is_ok()
+            );
+        })
+        .expect("prepare pending request");
+
+        assert_eq!(reloads, 1);
+        assert!(!app.active_network_has_confirmed_local_identity());
+        AppConfig::delete_persisted_secrets_for_path(&path).expect("delete secrets");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn approved_request_does_not_reload_the_daemon() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-approved-join-request-reload-{}-{nonce}.toml",
+            std::process::id()
+        ));
+        let mut approved = AppConfig::generated_without_networks();
+        let network_id = approved.add_owned_network("Approved network");
+        let own_pubkey = approved.own_nostr_pubkey_hex().expect("own public key");
+        approved
+            .network_by_id_mut(&network_id)
+            .expect("owned network")
+            .devices
+            .push(own_pubkey);
+        approved
+            .set_network_enabled(&network_id, true)
+            .expect("enable owned network");
+        assert!(approved.active_network_has_confirmed_local_identity());
+        approved.save(&path).expect("save approved config");
+        let mut reloads = 0;
+
+        let app = ensure_pending_join_request_and_reload(&path, false, |_| reloads += 1)
+            .expect("load approved request state");
+
+        assert!(app.active_network_has_confirmed_local_identity());
+        assert_eq!(reloads, 0);
         AppConfig::delete_persisted_secrets_for_path(&path).expect("delete secrets");
         let _ = std::fs::remove_file(path);
     }
