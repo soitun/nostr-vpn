@@ -1,5 +1,10 @@
 impl AppConfig {
     pub fn ensure_defaults(&mut self) {
+        self.fips_websocket_seed_urls = normalize_relay_urls(std::mem::take(
+            &mut self.fips_websocket_seed_urls,
+        ));
+        self.fips_websocket_bind_addr = self.fips_websocket_bind_addr.trim().to_string();
+        self.fips_websocket_public_url = self.fips_websocket_public_url.trim().to_string();
         self.ensure_nostr_identity();
         let own_pubkey_hex = self.own_nostr_pubkey_hex().ok();
         if uses_default_node_name(&self.node_name, own_pubkey_hex.as_deref()) {

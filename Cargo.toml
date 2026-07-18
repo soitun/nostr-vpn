@@ -29,8 +29,8 @@ cashu-service = { version = "0.4.0", default-features = false }
 cashu = { version = "=0.17.3", default-features = false }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-endpoint = "=0.4.9"
-fips-core = { version = "=0.4.9", features = ["webrtc-transport"] }
+fips-endpoint = "=0.4.10"
+fips-core = { version = "=0.4.10", features = ["webrtc-transport"] }
 fips-tcp = "=0.2.0"
 fips-tcp-endpoint = "=0.2.0"
 futures = "0.3"
@@ -54,10 +54,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
-nostr-sdk = { version = "0.44", default-features = false, features = ["nip44", "nip59"] }
+nostr-sdk = { version = "0.44", default-features = false, features = ["nip44"] }
 nostr-pubsub = "0.1.11"
 nostr-pubsub-fips = "0.3.2"
-nostr-pubsub-relay = "0.1.9"
 nostr-pubsub-social-graph = "0.2.2"
 nostr-social-graph = "0.1.4"
 nostr-social-memory = "0.1.1"

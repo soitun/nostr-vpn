@@ -526,7 +526,6 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
 
         assert!(!config.node.control.enabled);
@@ -585,7 +584,6 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::ConfiguredOnly,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
         assert_eq!(
             configured_only_config.node.discovery.nostr.policy,
@@ -640,6 +638,7 @@
             webrtc_enabled: false,
             stun_servers: Vec::new(),
             nostr_relays: Vec::new(),
+            websocket: fips_endpoint::WebSocketConfig::default(),
             share_local_candidates: true,
         };
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
@@ -649,7 +648,6 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::ConfiguredOnly,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
 
         assert!(!config.node.discovery.nostr.enabled);
@@ -690,6 +688,7 @@
             webrtc_enabled: false,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
+            websocket: fips_endpoint::WebSocketConfig::default(),
             share_local_candidates: true,
         };
 
@@ -700,7 +699,6 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
 
         assert!(config.node.discovery.nostr.enabled);
@@ -755,6 +753,7 @@
             webrtc_enabled: false,
             stun_servers: Vec::new(),
             nostr_relays: Vec::new(),
+            websocket: fips_endpoint::WebSocketConfig::default(),
             share_local_candidates: false,
         };
 
@@ -764,7 +763,6 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
         let udp = match config.transports.udp {
             fips_endpoint::TransportInstances::Single(udp) => udp,
@@ -793,6 +791,7 @@
             webrtc_enabled: false,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
+            websocket: fips_endpoint::WebSocketConfig::default(),
             share_local_candidates: true,
         };
 
@@ -803,7 +802,6 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
 
         // Relay discovery + advertising are off, but the peer is still dialed
@@ -841,6 +839,7 @@
             webrtc_enabled: false,
             stun_servers: Vec::new(),
             nostr_relays: Vec::new(),
+            websocket: fips_endpoint::WebSocketConfig::default(),
             share_local_candidates: false,
         };
 
@@ -850,7 +849,6 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
 
         assert!(config.node.discovery.nostr.enabled);

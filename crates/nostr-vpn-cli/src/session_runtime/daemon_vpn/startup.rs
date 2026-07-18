@@ -81,12 +81,22 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
     }
     let network_override = args.network_id.clone();
     let participants_override = args.devices.clone();
-    let (app, network_id) = load_config_with_overrides(
+    let (mut app, network_id) = load_config_with_overrides(
         &config_path,
         network_override.clone(),
         participants_override.clone(),
         ConfigLoadMode::Persist,
     )?;
+    if !args.fips_websocket_seed_urls.is_empty() {
+        app.fips_websocket_seed_urls = args.fips_websocket_seed_urls.clone();
+    }
+    if let Some(bind_addr) = args.fips_websocket_bind.as_deref() {
+        app.fips_websocket_bind_addr = bind_addr.trim().to_string();
+    }
+    if let Some(public_url) = args.fips_websocket_public_url.as_deref() {
+        app.fips_websocket_public_url = public_url.to_string();
+    }
+    app.ensure_defaults();
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
     let expected_peers = expected_peer_count(&app);
     let state_file = daemon_state_file_path(&config_path);

@@ -75,10 +75,17 @@
             .port()
     }
 
+    fn available_tcp_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .expect("bind test TCP port")
+            .local_addr()
+            .expect("local TCP addr")
+            .port()
+    }
+
     async fn shutdown_started_mobile_tunnel(started: MobileTunnelStarted) {
         let MobileTunnelStarted {
             endpoint,
-            nostr_relay_adapter,
             tasks,
             wg_upstream,
             ..
@@ -88,9 +95,6 @@
         }
         for task in tasks {
             let _ = task.await;
-        }
-        if let Some(adapter) = nostr_relay_adapter {
-            adapter.stop().await;
         }
         if let Some(wg) = wg_upstream {
             wg.shutdown().await;
@@ -550,6 +554,181 @@
             .await
             .expect("shutdown admin endpoint");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn websocket_seed_delivers_join_roster_to_guest_without_preconfigured_admin() {
+        std::thread::Builder::new()
+            .name("mobile-wss-join-roster".to_string())
+            .stack_size(8 * 1024 * 1024)
+            .spawn(|| {
+                tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .expect("WSS join test runtime")
+                    .block_on(websocket_seed_join_roster_roundtrip());
+            })
+            .expect("spawn WSS join test")
+            .join()
+            .expect("WSS join test thread");
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn websocket_seed_join_roster_roundtrip() {
+        let requested_at = unix_timestamp().saturating_sub(1);
+        let approved_at = unix_timestamp();
+
+        let seed_keys = Keys::generate();
+        let seed_nsec = seed_keys.secret_key().to_bech32().expect("seed nsec");
+        let seed_port = available_tcp_port();
+        let seed_url = format!("ws://127.0.0.1:{seed_port}/fips");
+        let mut seed_config = FipsConfig::new();
+        seed_config.node.routing.mode = fips_endpoint::RoutingMode::ReplyLearned;
+        seed_config.node.discovery.nostr.enabled = false;
+        seed_config.node.discovery.nostr.advertise = false;
+        seed_config.node.discovery.lan.enabled = false;
+        seed_config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+            bind_addr: Some(format!("127.0.0.1:{seed_port}")),
+            ..WebSocketConfig::default()
+        });
+        let seed = Arc::new(
+            Box::pin(
+                FipsEndpoint::builder()
+                    .config(seed_config)
+                    .identity_nsec(seed_nsec)
+                    .without_system_tun()
+                    .bind(),
+            )
+                .await
+                .expect("bind WebSocket seed"),
+        );
+
+        let mut guest_app = AppConfig::generated_without_networks();
+        guest_app.node_name = "Joining device".to_string();
+        guest_app.fips_websocket_seed_urls = vec![seed_url.clone()];
+        guest_app.fips_nostr_discovery_enabled = false;
+        guest_app.fips_webrtc_enabled = false;
+        guest_app
+            .ensure_pending_nostr_join_request(requested_at)
+            .expect("pending guest join request");
+        let bootstrap = nostr_vpn_core::identity_bridge::nostr_identity_device_approval_bootstrap(
+            &guest_app
+                .pending_nostr_join_request
+                .as_ref()
+                .expect("pending request")
+                .request,
+        )
+        .expect("guest join bootstrap");
+
+        let admin_keys = Keys::generate();
+        let mut admin_app = AppConfig::generated();
+        admin_app.nostr.secret_key = admin_keys.secret_key().to_secret_hex();
+        admin_app.nostr.public_key = admin_keys.public_key().to_hex();
+        admin_app.networks[0].name = "Home".to_string();
+        admin_app.networks[0].enabled = true;
+        admin_app.networks[0].network_id = "wss-join-roster".to_string();
+        admin_app.networks[0].devices = vec![admin_keys.public_key().to_hex()];
+        admin_app.networks[0].admins = vec![admin_keys.public_key().to_hex()];
+        admin_app.ensure_defaults();
+        let network_entry_id = admin_app.networks[0].id.clone();
+        let prepared = crate::join_approval::prepare_join_approval(
+            &admin_app,
+            &network_entry_id,
+            &bootstrap,
+            approved_at,
+        )
+        .expect("prepare ordinary signed join roster");
+        admin_app = prepared.updated_config;
+        admin_app.fips_websocket_seed_urls = vec![seed_url];
+        admin_app.fips_nostr_discovery_enabled = false;
+        admin_app.fips_webrtc_enabled = false;
+
+        let mut guest_mobile = MobileTunnelConfig::from_app(&guest_app).expect("guest config");
+        guest_mobile.listen_port = available_udp_port();
+        let mut admin_mobile = MobileTunnelConfig::from_app(&admin_app).expect("admin config");
+        admin_mobile.listen_port = available_udp_port();
+        assert!(guest_mobile.peers.is_empty(), "guest must not know the admin");
+
+        let guest = Box::pin(MobileTunnel::start_async(guest_mobile, guest_app))
+            .await
+            .expect("start guest through WebSocket seed");
+        let admin = Box::pin(MobileTunnel::start_async(admin_mobile, admin_app))
+            .await
+            .expect("start admin through WebSocket seed");
+
+        let seed_npub = seed.npub().to_string();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let guest_ready = guest
+                    .endpoint
+                    .peers()
+                    .await
+                    .is_ok_and(|peers| {
+                        peers
+                            .iter()
+                            .any(|peer| peer.npub == seed_npub && peer.connected)
+                    });
+                let admin_ready = admin
+                    .endpoint
+                    .peers()
+                    .await
+                    .is_ok_and(|peers| {
+                        peers
+                            .iter()
+                            .any(|peer| peer.npub == seed_npub && peer.connected)
+                    });
+                let seed_ready = seed.peers().await.is_ok_and(|peers| {
+                    peers.iter().filter(|peer| peer.connected).count() == 2
+                });
+                if guest_ready && admin_ready && seed_ready {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("admin and guest should authenticate the WSS seed");
+
+        let guest_identity = PeerIdentity::from_npub(guest.endpoint.npub())
+            .expect("guest endpoint identity");
+        let frame = FipsControlFrame::JoinRoster {
+            control: Box::new(prepared.join_roster),
+        };
+        let delivery = tokio::time::timeout(
+            Duration::from_secs(20),
+            admin.state_control.send(guest_identity, &frame),
+        )
+        .await
+        .expect("join roster delivery timeout");
+        if let Err(error) = delivery {
+            panic!(
+                "deliver join roster through WSS seed: {error:#}; admin={:?}; guest={:?}; seed={:?}",
+                admin.endpoint.peers().await,
+                guest.endpoint.peers().await,
+                seed.peers().await,
+            );
+        }
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let applied = guest.app_config.read().is_ok_and(|app| {
+                    app.pending_nostr_join_request.is_none()
+                        && app
+                            .active_network_opt()
+                            .is_some_and(|network| network.network_id == "wss-join-roster")
+                });
+                if applied {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("guest should apply the signed roster");
+
+        shutdown_started_mobile_tunnel(admin).await;
+        shutdown_started_mobile_tunnel(guest).await;
+        seed.shutdown().await.expect("shutdown WebSocket seed");
     }
 
     #[test]

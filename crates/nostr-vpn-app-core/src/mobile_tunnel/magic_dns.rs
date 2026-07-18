@@ -297,6 +297,7 @@ fn empty_config() -> MobileTunnelConfig {
         bootstrap_peers: HashMap::new(),
         route_targets: Vec::new(),
         nostr_relays: Vec::new(),
+        websocket_seed_urls: Vec::new(),
         stun_servers: Vec::new(),
         share_local_candidates: false,
         connect_to_non_roster_fips_peers: false,

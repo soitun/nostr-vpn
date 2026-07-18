@@ -21,6 +21,7 @@ struct Args {
     nvpn_bin: Option<PathBuf>,
     timeout: Duration,
     network_name: String,
+    fips_websocket_seed_urls: Vec<String>,
 }
 
 fn parse_args() -> Result<Args> {
@@ -30,6 +31,7 @@ fn parse_args() -> Result<Args> {
     let mut nvpn_bin = None;
     let mut timeout_secs = 30_u64;
     let mut network_name = DEFAULT_NETWORK_NAME.to_string();
+    let mut fips_websocket_seed_urls = Vec::new();
     while let Some(flag) = values.next() {
         let mut value = || {
             values
@@ -43,6 +45,7 @@ fn parse_args() -> Result<Args> {
             "--nvpn-bin" => nvpn_bin = Some(PathBuf::from(value()?)),
             "--timeout-secs" => timeout_secs = value()?.parse().context("invalid timeout")?,
             "--network-name" => network_name = value()?,
+            "--fips-websocket-seed-url" => fips_websocket_seed_urls.push(value()?),
             _ => bail!("unknown argument {flag}"),
         }
     }
@@ -52,14 +55,30 @@ fn parse_args() -> Result<Args> {
         nvpn_bin,
         timeout: Duration::from_secs(timeout_secs.max(1)),
         network_name,
+        fips_websocket_seed_urls,
     })
 }
 
-fn initialize_or_load_admin(config_path: &Path, network_name: &str) -> Result<AppConfig> {
+fn initialize_or_load_admin(
+    config_path: &Path,
+    network_name: &str,
+    fips_websocket_seed_urls: &[String],
+) -> Result<AppConfig> {
     if config_path.exists() {
         let mut config = AppConfig::load(config_path)?;
+        let mut changed = false;
         if config.autoconnect {
             config.autoconnect = false;
+            changed = true;
+        }
+        if !fips_websocket_seed_urls.is_empty()
+            && config.fips_websocket_seed_urls != fips_websocket_seed_urls
+        {
+            config.fips_websocket_seed_urls = fips_websocket_seed_urls.to_vec();
+            config.ensure_defaults();
+            changed = true;
+        }
+        if changed {
             config.save(config_path)?;
         }
         return Ok(config);
@@ -74,6 +93,8 @@ fn initialize_or_load_admin(config_path: &Path, network_name: &str) -> Result<Ap
     config.set_network_enabled(&network_id, true)?;
     config.set_network_join_requests_enabled(&network_id, true)?;
     config.autoconnect = false;
+    config.fips_websocket_seed_urls = fips_websocket_seed_urls.to_vec();
+    config.ensure_defaults();
     config.save(config_path)?;
     Ok(config)
 }
@@ -83,7 +104,18 @@ fn run() -> Result<()> {
     let parsed = parse_join_request_qr_code_or_link(&args.join_request)?;
     let recipient = normalize_nostr_pubkey(&parsed.bootstrap.device_app_key_npub)?;
     let config_path = args.data_dir.join("config.toml");
-    let admin = initialize_or_load_admin(&config_path, &args.network_name)?;
+    let websocket = fips_core::config::WebSocketConfig {
+        seed_urls: args.fips_websocket_seed_urls.clone(),
+        ..Default::default()
+    };
+    websocket
+        .validate()
+        .map_err(|error| anyhow!("invalid FIPS WebSocket seed: {error}"))?;
+    let admin = initialize_or_load_admin(
+        &config_path,
+        &args.network_name,
+        &args.fips_websocket_seed_urls,
+    )?;
     let network_id = admin
         .active_network_opt()
         .context("isolated admin has no active network")?

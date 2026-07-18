@@ -73,7 +73,6 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
 
         assert_eq!(

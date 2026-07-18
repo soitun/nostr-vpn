@@ -11,7 +11,6 @@ pub mod diagnostics;
 pub mod fips_control;
 pub mod fips_control_tcp;
 pub mod fips_mesh;
-pub mod fips_pubsub_relay;
 pub mod identity_bridge;
 pub mod invite;
 pub mod join_delivery;

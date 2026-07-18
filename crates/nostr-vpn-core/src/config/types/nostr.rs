@@ -43,8 +43,8 @@ impl std::str::FromStr for NostrPubsubMode {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NostrPubsubConfig {
-    /// `client` removes the runtime relay dependency after FIPS bootstrap;
-    /// `relay` keeps this node as a bootstrap/recovery bridge for the mesh.
+    /// `client` exchanges events only with FIPS peers; `relay` also bridges
+    /// signed announcement/control events to configured Nostr relays.
     #[serde(default)]
     pub mode: NostrPubsubMode,
     #[serde(default = "default_nostr_pubsub_fanout")]
@@ -73,6 +73,7 @@ impl NostrPubsubConfig {
     pub fn forwarding(&self) -> bool {
         self.mode.forwarding()
     }
+
 }
 
 impl Default for NostrPubsubConfig {

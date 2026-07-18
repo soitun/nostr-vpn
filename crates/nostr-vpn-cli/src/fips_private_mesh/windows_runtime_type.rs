@@ -4,7 +4,6 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     mesh: Arc<FipsPrivateMeshRuntime>,
     control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
     state_control: FipsControlTcpRuntime,
-    nostr_relay_adapter: Option<FipsPubsubNostrRelayAdapter>,
     secure_dns: Option<crate::secure_dns_runtime::SecureDnsRuntime>,
     config: FipsPrivateTunnelConfig,
     session: Arc<Session>,

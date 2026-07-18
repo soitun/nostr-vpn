@@ -1,6 +1,5 @@
-/// Relays used by embedded FIPS discovery and its authenticated fallback
-/// carrier. An empty application list means "use FIPS defaults", matching the
-/// discovery configuration instead of silently disabling only the carrier.
+/// Relays used by signed FIPS peer/service announcements. Physical FIPS
+/// datagrams are never carried through these relays.
 pub fn effective_fips_nostr_relays(configured: &[String]) -> Vec<String> {
     let configured = configured
         .iter()
@@ -13,19 +12,6 @@ pub fn effective_fips_nostr_relays(configured: &[String]) -> Vec<String> {
     }
     fips_core::Config::new().node.discovery.nostr.advert_relays
 }
-
-/// Whether an embedded endpoint can use the application-owned Nostr relay
-/// carrier as a last-resort path. The authenticated carrier is independent of
-/// WebRTC and must remain available when direct UDP traversal cannot converge.
-pub fn fips_nostr_relay_fallback_enabled(
-    nostr_discovery_enabled: bool,
-    relays: &[String],
-) -> bool {
-    nostr_discovery_enabled
-        && relays.iter().any(|relay| !relay.trim().is_empty())
-}
-
-pub const FIPS_NOSTR_RELAY_FALLBACK_PRIORITY: u8 = 250;
 
 impl AppConfig {
     pub fn mesh_members_pubkeys(&self) -> Vec<String> {

@@ -359,10 +359,40 @@ struct DaemonArgs {
     /// Discovery scope shared by FIPS peers on the local Ethernet segment.
     #[arg(long, requires = "fips_ethernet_interface")]
     fips_ethernet_discovery_scope: Option<String>,
+    /// Authenticated FIPS WebSocket seed URL. Repeat for multiple independent seeds.
+    #[arg(long = "fips-websocket-seed-url", value_parser = parse_fips_websocket_seed_url)]
+    fips_websocket_seed_urls: Vec<String>,
+    /// Optional native plain-WebSocket listener, normally private or loopback behind TLS.
+    #[arg(long)]
+    fips_websocket_bind: Option<String>,
+    /// Public WSS URL advertised separately from the native listener address.
+    #[arg(long, requires = "fips_websocket_bind", value_parser = parse_fips_websocket_public_url)]
+    fips_websocket_public_url: Option<String>,
     #[arg(long, hide = true, default_value_t = false)]
     paused: bool,
     #[arg(long, hide = true, default_value_t = false)]
     service: bool,
+}
+
+fn parse_fips_websocket_seed_url(value: &str) -> Result<String, String> {
+    let value = value.trim().to_string();
+    fips_core::config::WebSocketConfig {
+        seed_urls: vec![value.clone()],
+        ..Default::default()
+    }
+    .validate()?;
+    Ok(value)
+}
+
+fn parse_fips_websocket_public_url(value: &str) -> Result<String, String> {
+    let value = value.trim().to_string();
+    fips_core::config::WebSocketConfig {
+        bind_addr: Some("127.0.0.1:1".into()),
+        public_url: Some(value.clone()),
+        ..Default::default()
+    }
+    .validate()?;
+    Ok(value)
 }
 
 #[derive(Debug, Args)]

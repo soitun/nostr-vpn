@@ -11,6 +11,10 @@ All notable changes to this project are documented in this file.
 - Added paired `nvpn daemon` options for scoped raw-Ethernet FIPS discovery
   and adjacency while keeping ordinary join requests and roster approval on
   the standard control path.
+- Added repeatable authenticated FIPS WebSocket seed URLs and an optional
+  bounded native plain-WS listener for deployment behind a TLS reverse proxy.
+  URL-only seeds provide the first adjacency without a preconfigured peer
+  identity.
 - Added a single-owner CDK 0.17.3 Cashu wallet runtime with exact legacy-seed
   migration into the existing iOS Keychain and Android Keystore facilities,
   cross-process writer exclusion, startup recovery, and SQLite WAL-family
@@ -18,36 +22,36 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
-- Made the application-owned FIPS Nostr relay transport independent of the
-  endpoint underlay and carried its signed events through both standard
-  authenticated FIPS pubsub peers and configured direct-relay pubsub.
+- Removed the kind-21060 Nostr relay FIPS packet carrier and its direct relay
+  adapter. Configured Nostr relays remain available to standard
+  `nostr-pubsub` for low-rate signed peer/service announcements and ordinary
+  events; physical FIPS records use WebSocket, WebRTC, Ethernet, UDP, TCP, or
+  Tor links.
+- Moved control pubsub onto the standard port-7368 `nostr-pubsub-fips`
+  service, including relay-backed announcement bridging after a physical FIPS
+  adjacency exists.
 - Removed the obsolete platform-specific guest runtime and kept browser-based
   joining on the ordinary nVPN daemon and signed-roster approval flow.
 - Moved native wallet operations from short-lived CLI processes onto the
   application-owned CDK repository and updated `cdk-spilman` to 0.17.0.
 - Normalize wallet mint URLs and discard invalid or unsupported mint entries
   before selecting a default mint.
-- Reduced routed-peer idle work with adaptive relay-event polling and a
-  10-second fresh-presence ping cadence while retaining FIPS link heartbeats.
-- Updated FIPS Core and Endpoint to 0.4.9 so repeated direct-path upgrades are
-  paced while a healthy routed fallback remains active, application-owned
-  relay polling stays idle-efficient, and discovery cannot discard endpoint
-  data owned by an in-progress FSP handshake.
+- Updated FIPS Core and Endpoint to 0.4.10 for the bounded WebSocket physical
+  transport, relay-packet-carrier removal, and URL-only first adjacency.
 
 ### Fixed
 
 - Probe every due roster peer during each heartbeat so one peer cannot starve
   liveness updates for the rest of the roster.
-- Keep configured relay fallback available when WebRTC discovery is disabled,
-  and resolve roster actions against the active network consistently.
+- Keep authenticated in-FIPS WebRTC negotiation available when public Nostr
+  discovery is disabled, and resolve roster actions against the active network
+  consistently.
 - Run the CDK wallet service on its own worker so asynchronous hosts such as
   `nostr-vpn-web` can open, use, and close it without nested-runtime failures.
-- Admit fresh relay peers while device approval is pending, exclude the Nostr
-  relay carrier from using itself as an authenticated pubsub underlay, and
-  prevent recursive relay-event envelopes.
-- Rotate blocked authenticated relay events behind newer datagrams and publish
-  direct-relay events with bounded concurrency, so ordinary roster approval is
-  not stranded behind older provider attempts.
+- Activate the private control runtime for an ordinary pending device-approval
+  join and safely reload a running daemon after persisting a new join request.
+- Preserve an intentionally paused running daemon during exact GUI join
+  approval while still queueing and delivering the signed roster.
 
 ## 4.0.96 - 2026-07-16
 

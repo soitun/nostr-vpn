@@ -214,7 +214,17 @@ impl FipsPrivateTunnelConfig {
         // transport is disabled.
         retain_enabled_peer_transport_addresses(&mut endpoint_peers, app.fips_webrtc_enabled);
         let nostr_relays = effective_fips_nostr_relays(&app.nostr.relays);
-        add_nostr_relay_transport_for_mesh_peers(&mut endpoint_peers, &peers);
+        let websocket = WebSocketConfig {
+            bind_addr: (!app.fips_websocket_bind_addr.is_empty())
+                .then(|| app.fips_websocket_bind_addr.clone()),
+            public_url: (!app.fips_websocket_public_url.is_empty())
+                .then(|| app.fips_websocket_public_url.clone()),
+            seed_urls: app.fips_websocket_seed_urls.clone(),
+            ..WebSocketConfig::default()
+        };
+        websocket
+            .validate()
+            .map_err(|error| anyhow!("invalid FIPS WebSocket configuration: {error}"))?;
         if !stamped_endpoint_hints_enabled {
             for peer in &mut endpoint_peers {
                 if peer.auto_reconnect {
@@ -250,12 +260,7 @@ impl FipsPrivateTunnelConfig {
             nostr_pubsub: app.nostr.pubsub.clone(),
             control_pubsub_store_path: PathBuf::new(),
             ethernet_underlay: None,
-            // Fresh relay handshakes are admitted only while the user has
-            // explicitly opened a join window or this device is waiting for
-            // an ordinary device-approval roster. FIPS authenticates the
-            // remote identity; invite/roster checks authorize it above FIPS.
-            accept_nostr_relay_connections: app.join_requests_enabled()
-                || app.pending_nostr_join_request.is_some(),
+            websocket,
             share_local_candidates: app.lan_discovery_enabled,
             peers,
             endpoint_peers,
@@ -415,13 +420,6 @@ fn tag_authenticated_transport_addr(
     }
 }
 
-async fn start_nostr_relay_carrier(
-    endpoint: &Arc<FipsEndpoint>,
-    relays: &[String],
-) -> Result<FipsPubsubNostrRelayAdapter> {
-    FipsPubsubNostrRelayAdapter::start(Arc::clone(endpoint), relays).await
-}
-
 fn fips_tunnel_requires_endpoint_restart(
     current: &FipsPrivateTunnelConfig,
     next: &FipsPrivateTunnelConfig,
@@ -440,7 +438,7 @@ fn fips_tunnel_requires_endpoint_restart(
         || current.nostr_pubsub != next.nostr_pubsub
         || current.control_pubsub_store_path != next.control_pubsub_store_path
         || current.ethernet_underlay != next.ethernet_underlay
-        || current.accept_nostr_relay_connections != next.accept_nostr_relay_connections
+        || current.websocket != next.websocket
         || current.nostr_discovery_enabled != next.nostr_discovery_enabled
         || current.webrtc_enabled != next.webrtc_enabled
         || current.share_local_candidates != next.share_local_candidates
@@ -468,7 +466,6 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     mesh: Arc<FipsPrivateMeshRuntime>,
     control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
     state_control: FipsControlTcpRuntime,
-    nostr_relay_adapter: Option<FipsPubsubNostrRelayAdapter>,
     secure_dns: Option<crate::secure_dns_runtime::SecureDnsRuntime>,
     manages_secure_dns: bool,
     config: FipsPrivateTunnelConfig,

@@ -46,20 +46,18 @@
             .iter()
             .find(|peer| peer.npub == bob_npub)
             .expect("bob endpoint peer");
-        assert_eq!(bob.addresses.len(), 2);
+        assert_eq!(bob.addresses.len(), 1);
         assert_eq!(bob.addresses[0].addr, "203.0.113.22:51820");
         assert_eq!(bob.addresses[0].seen_at_ms, Some(123_000));
-        assert!(bob.addresses.iter().any(|address| address.addr == format!("nostr_relay:{bob_npub}")));
 
         let admin = config
             .endpoint_peers
             .iter()
             .find(|peer| peer.npub == admin_npub)
             .expect("admin endpoint peer");
-        assert_eq!(admin.addresses.len(), 2);
+        assert_eq!(admin.addresses.len(), 1);
         assert_eq!(admin.addresses[0].addr, "203.0.113.33:51820");
         assert_eq!(admin.addresses[0].seen_at_ms, Some(123_000));
-        assert!(admin.addresses.iter().any(|address| address.addr == format!("nostr_relay:{admin_npub}")));
     }
 
     #[cfg(feature = "paid-exit")]
@@ -99,13 +97,9 @@
             .iter()
             .find(|peer| peer.npub == seller_npub)
             .expect("seller endpoint peer");
-        assert_eq!(seller.addresses.len(), 2);
+        assert_eq!(seller.addresses.len(), 1);
         assert_eq!(seller.addresses[0].addr, "203.0.113.44:51821");
         assert_eq!(seller.addresses[0].seen_at_ms, Some(123_000));
-        assert!(seller
-            .addresses
-            .iter()
-            .any(|address| address.addr == format!("nostr_relay:{seller_npub}")));
         assert!(config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
         assert!(config.secure_dns_required());
         assert_eq!(
@@ -246,15 +240,14 @@
             .iter()
             .find(|peer| peer.npub == bob_npub)
             .expect("current bob endpoint peer");
-        assert_eq!(current_bob.addresses.len(), 2);
+        assert_eq!(current_bob.addresses.len(), 1);
         let refreshed_bob = refreshed
             .endpoint_peers
             .iter()
             .find(|peer| peer.npub == bob_npub)
             .expect("refreshed bob endpoint peer");
         assert!(
-            refreshed_bob.addresses.len() == 1
-                && refreshed_bob.addresses[0].addr == format!("nostr_relay:{bob_npub}"),
+            refreshed_bob.addresses.is_empty(),
             "link-event refreshes must not carry stale live direct hints forward",
         );
         assert!(
@@ -354,13 +347,9 @@
             .iter()
             .find(|peer| peer.npub == admin_npub)
             .expect("admin endpoint peer");
-        assert_eq!(admin.addresses.len(), 2);
+        assert_eq!(admin.addresses.len(), 1);
         assert_eq!(admin.addresses[0].addr, "203.0.113.10:51820");
         assert_eq!(admin.addresses[0].seen_at_ms, None);
-        assert!(admin
-            .addresses
-            .iter()
-            .any(|address| address.addr == format!("nostr_relay:{admin_npub}")));
     }
 
     #[test]
@@ -515,13 +504,9 @@
             .iter()
             .find(|peer| peer.npub == bob_npub)
             .expect("bob endpoint peer");
-        assert_eq!(bob.addresses.len(), 2);
+        assert_eq!(bob.addresses.len(), 1);
         assert_eq!(bob.addresses[0].addr, "192.168.64.5:52528");
         assert_eq!(bob.addresses[0].seen_at_ms, None);
-        assert!(bob
-            .addresses
-            .iter()
-            .any(|address| address.addr == format!("nostr_relay:{bob_npub}")));
         assert!(
             !bob.discovery_fallback_transit,
             "static-only peers must not become lookup transit"
@@ -574,12 +559,8 @@
             .iter()
             .find(|peer| peer.npub == bob_npub)
             .expect("roster peer recent hint should be retained");
-        assert_eq!(bob.addresses.len(), 2);
+        assert_eq!(bob.addresses.len(), 1);
         assert_eq!(bob.addresses[0].addr, "1.1.1.1:51820");
-        assert!(bob
-            .addresses
-            .iter()
-            .any(|address| address.addr == format!("nostr_relay:{bob_npub}")));
 
         let seeded_recent_non_roster = config
             .endpoint_peers

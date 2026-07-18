@@ -10,6 +10,7 @@ struct FipsEndpointTransportConfig {
     webrtc_enabled: bool,
     stun_servers: Vec<String>,
     nostr_relays: Vec<String>,
+    websocket: WebSocketConfig,
     share_local_candidates: bool,
 }
 
@@ -168,7 +169,6 @@ fn fips_endpoint_config_with_open_discovery_limit(
     mesh_mtu: MeshMtu,
     nostr_discovery_policy: NostrDiscoveryPolicy,
     open_discovery_max_pending: usize,
-    accept_nostr_relay_connections: bool,
 ) -> Config {
     let mut config = Config::new();
     config.node.control.enabled = false;
@@ -205,7 +205,6 @@ fn fips_endpoint_config_with_open_discovery_limit(
     let nostr_enabled = nostr_discovery_enabled && (transport.is_some() || !peers.is_empty());
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.advertise = advertise_on_nostr;
-    enable_nostr_relay_transport(&mut config, accept_nostr_relay_connections);
     // Open discovery by default (unless the user opts into configured-only
     // discovery) so we can FIPS-handshake with any nvpn node we see on relays,
     // not just configured roster peers. This is what lets us route app-mesh
@@ -248,13 +247,19 @@ fn fips_endpoint_config_with_open_discovery_limit(
         if !transport.nostr_relays.is_empty() {
             config.node.discovery.nostr.advert_relays = transport.nostr_relays.clone();
         }
-        if nostr_enabled && transport.webrtc_enabled {
+        if transport.webrtc_enabled {
             configure_fips_webrtc_transport(
                 &mut config,
                 advertise_on_nostr,
                 &transport.stun_servers,
                 mesh_mtu.underlay_udp,
             );
+        }
+        if !transport.websocket.seed_urls.is_empty()
+            || transport.websocket.bind_addr.is_some()
+        {
+            config.transports.websocket =
+                TransportInstances::Single(transport.websocket.clone());
         }
     }
     config.transports.udp = TransportInstances::Single(UdpConfig {
@@ -309,24 +314,17 @@ fn fips_endpoint_config_with_open_discovery_limit(
 
 fn fips_endpoint_config_for_ethernet(
     peers: &[FipsEndpointPeerTransportConfig],
+    transport: Option<&FipsEndpointTransportConfig>,
     ethernet: &FipsEthernetUnderlayConfig,
     mesh_mtu: MeshMtu,
-    accept_nostr_relay_connections: bool,
 ) -> Config {
     let mut config = fips_endpoint_config_with_open_discovery_limit(
         peers,
-        None,
+        transport,
         mesh_mtu,
         NostrDiscoveryPolicy::ConfiguredOnly,
         0,
-        accept_nostr_relay_connections,
     );
-    config.node.discovery.nostr.enabled = false;
-    config.node.discovery.nostr.advertise = false;
-    config.node.discovery.nostr.advert_relays.clear();
-    config.node.discovery.lan.enabled = false;
-    config.node.discovery.local.enabled = false;
-    config.transports = Default::default();
     config.transports.ethernet = TransportInstances::Single(EthernetConfig {
         interface: ethernet.interface.clone(),
         discovery: Some(true),
@@ -337,11 +335,6 @@ fn fips_endpoint_config_for_ethernet(
         mtu: Some(mesh_mtu.underlay_udp),
         ..EthernetConfig::default()
     });
-    enable_nostr_relay_transport(&mut config, accept_nostr_relay_connections);
-    for peer in &mut config.peers {
-        peer.addresses
-            .retain(|address| address.transport.as_str() == "nostr_relay");
-    }
     config
 }
 
@@ -442,41 +435,6 @@ fn fips_endpoint_peers_from_mesh(
     }
     peers.sort_by(|left, right| left.npub.cmp(&right.npub));
     peers
-}
-
-fn add_nostr_relay_transport_for_mesh_peers(
-    peers: &mut [FipsEndpointPeerTransportConfig],
-    mesh_peers: &[FipsMeshPeerConfig],
-) {
-    let roster = mesh_peers
-        .iter()
-        .map(|peer| normalize_fips_endpoint_npub(&peer.endpoint_npub))
-        .collect::<HashSet<_>>();
-    for peer in peers {
-        if roster.contains(&peer.npub) {
-            add_nostr_relay_transport_address(peer);
-        }
-    }
-}
-
-fn enable_nostr_relay_transport(config: &mut Config, accept_connections: bool) {
-    config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig {
-        auto_connect: Some(false),
-        accept_connections: Some(accept_connections),
-        ..NostrRelayConfig::default()
-    });
-}
-
-fn add_nostr_relay_transport_address(peer: &mut FipsEndpointPeerTransportConfig) {
-    let address = format!("nostr_relay:{}", peer.npub);
-    if peer.addresses.iter().any(|hint| hint.addr == address) {
-        return;
-    }
-    peer.addresses.push(FipsPeerAddressHint {
-        addr: address,
-        seen_at_ms: None,
-        priority: FIPS_NOSTR_RELAY_TRANSPORT_PRIORITY,
-    });
 }
 
 #[cfg(feature = "paid-exit")]
@@ -592,7 +550,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) nostr_pubsub: nostr_vpn_core::config::NostrPubsubConfig,
     pub(crate) control_pubsub_store_path: PathBuf,
     pub(crate) ethernet_underlay: Option<FipsEthernetUnderlayConfig>,
-    pub(crate) accept_nostr_relay_connections: bool,
+    pub(crate) websocket: WebSocketConfig,
     pub(crate) share_local_candidates: bool,
     pub(crate) peers: Vec<FipsMeshPeerConfig>,
     pub(crate) endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
@@ -649,6 +607,10 @@ mod endpoint_config_tests {
             webrtc_enabled,
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
+            websocket: WebSocketConfig {
+                seed_urls: vec!["wss://seed.example.org/fips".to_string()],
+                ..WebSocketConfig::default()
+            },
             share_local_candidates: true,
         }
     }
@@ -665,7 +627,6 @@ mod endpoint_config_tests {
             mesh_mtu,
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
 
         config
@@ -682,15 +643,14 @@ mod endpoint_config_tests {
             webrtc.stun_servers.as_ref().expect("stun servers"),
             &transport.stun_servers
         );
-        let TransportInstances::Single(relay) = &config.transports.nostr_relay else {
-            panic!("expected one application-owned Nostr relay transport");
+        let TransportInstances::Single(websocket) = &config.transports.websocket else {
+            panic!("expected one WebSocket transport");
         };
-        assert_eq!(relay.auto_connect, Some(false));
-        assert_eq!(relay.accept_connections, Some(false));
+        assert_eq!(websocket.seed_urls, transport.websocket.seed_urls);
     }
 
     #[test]
-    fn endpoint_config_leaves_webrtc_empty_when_nostr_discovery_off() {
+    fn endpoint_config_keeps_in_fips_webrtc_when_nostr_discovery_off() {
         let peer = test_peer();
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
         let transport = test_transport(false, true);
@@ -700,16 +660,15 @@ mod endpoint_config_tests {
             resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::ConfiguredOnly,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
 
         assert!(!config.node.discovery.nostr.enabled);
-        assert!(config.transports.webrtc.is_empty());
-        assert!(!config.transports.nostr_relay.is_empty());
+        assert!(!config.transports.webrtc.is_empty());
+        assert!(!config.transports.websocket.is_empty());
     }
 
     #[test]
-    fn endpoint_config_keeps_relay_transport_without_ambient_webrtc() {
+    fn endpoint_config_keeps_websocket_transport_without_webrtc() {
         let peer = test_peer();
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
         let transport = test_transport(true, false);
@@ -719,18 +678,16 @@ mod endpoint_config_tests {
             resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
 
         assert!(config.node.discovery.nostr.enabled);
         assert!(config.node.discovery.nostr.advertise);
         assert!(config.transports.webrtc.is_empty());
         assert!(!config.transports.udp.is_empty());
-        let TransportInstances::Single(relay) = &config.transports.nostr_relay else {
-            panic!("expected one application-owned Nostr relay transport");
+        let TransportInstances::Single(websocket) = &config.transports.websocket else {
+            panic!("expected one WebSocket transport");
         };
-        assert_eq!(relay.auto_connect, Some(false));
-        assert_eq!(relay.accept_connections, Some(false));
+        assert_eq!(websocket.seed_urls, transport.websocket.seed_urls);
     }
 
     #[test]
@@ -738,7 +695,7 @@ mod endpoint_config_tests {
         let roster = test_peer();
         let roster_npub = normalize_fips_endpoint_npub(&roster.endpoint_npub);
         let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
-        let mut peers = fips_endpoint_peers_from_mesh(
+        let peers = fips_endpoint_peers_from_mesh(
             std::slice::from_ref(&roster),
             vec![
                 (
@@ -756,33 +713,17 @@ mod endpoint_config_tests {
             ],
             Vec::new(),
         );
-        add_nostr_relay_transport_for_mesh_peers(&mut peers, std::slice::from_ref(&roster));
         let peers = prioritize_join_roster_recipient(peers, &roster.endpoint_npub)
             .expect("join roster recipient");
 
         let roster_peer = &peers[0];
         assert_eq!(roster_peer.npub, roster_npub);
-        for transport in ["udp", "tcp", "webrtc", "nostr_relay"] {
+        for transport in ["udp", "tcp", "webrtc"] {
             assert!(roster_peer.addresses.iter().any(|address| {
                 split_peer_transport_addr(&address.addr).0 == transport
             }));
         }
-        let relay_priority = |npub: &str| {
-            peers
-                .iter()
-                .find(|peer| peer.npub == npub)
-                .and_then(|peer| {
-                    peer.addresses.iter().find(|address| {
-                        split_peer_transport_addr(&address.addr).0 == "nostr_relay"
-                    })
-                })
-                .map(|address| address.priority)
-        };
-        assert_eq!(
-            relay_priority(&roster_npub),
-            Some(FIPS_NOSTR_RELAY_TRANSPORT_PRIORITY)
-        );
-        assert_eq!(relay_priority(&ambient_npub), None);
+        assert!(peers.iter().any(|peer| peer.npub == ambient_npub));
     }
 
     #[test]
@@ -840,25 +781,26 @@ mod endpoint_config_tests {
     }
 
     #[test]
-    fn ethernet_underlay_uses_only_ethernet_and_canonical_nostr_relay() {
+    fn ethernet_underlay_is_additive_to_ordinary_transports() {
         let peer = test_peer();
-        let mut endpoint_peers =
+        let endpoint_peers =
             fips_endpoint_peers_from_mesh(std::slice::from_ref(&peer), Vec::new(), Vec::new());
-        add_nostr_relay_transport_for_mesh_peers(
-            &mut endpoint_peers,
-            std::slice::from_ref(&peer),
-        );
+        let transport = test_transport(false, true);
         let ethernet =
             FipsEthernetUnderlayConfig::parse("eth0", "local-pairing").expect("underlay");
         let mesh_mtu = resolve_private_mesh_mtu(None, None, None);
-        let config =
-            fips_endpoint_config_for_ethernet(&endpoint_peers, &ethernet, mesh_mtu, false);
+        let config = fips_endpoint_config_for_ethernet(
+            &endpoint_peers,
+            Some(&transport),
+            &ethernet,
+            mesh_mtu,
+        );
 
         config.validate().expect("Ethernet endpoint config");
-        assert!(config.transports.udp.is_empty());
+        assert!(!config.transports.udp.is_empty());
         assert!(config.transports.tcp.is_empty());
-        assert!(config.transports.webrtc.is_empty());
-        assert!(!config.transports.nostr_relay.is_empty());
+        assert!(!config.transports.webrtc.is_empty());
+        assert!(!config.transports.websocket.is_empty());
         let TransportInstances::Single(raw) = &config.transports.ethernet else {
             panic!("expected one Ethernet transport");
         };
@@ -869,12 +811,11 @@ mod endpoint_config_tests {
         assert_eq!(raw.auto_connect, Some(true));
         assert_eq!(raw.accept_connections, Some(true));
         assert_eq!(config.peers.len(), 1);
-        assert_eq!(config.peers[0].addresses.len(), 1);
-        assert_eq!(config.peers[0].addresses[0].transport, "nostr_relay");
+        assert!(config.peers[0].addresses.is_empty());
     }
 
     #[test]
-    fn pending_device_approval_admits_fresh_relay_handshakes_without_a_known_admin() {
+    fn pending_device_approval_uses_url_only_websocket_seed_without_known_admin() {
         let keys = Keys::generate();
         let own_pubkey = keys.public_key().to_hex();
         let mut app = AppConfig::default();
@@ -884,6 +825,7 @@ mod endpoint_config_tests {
         app.networks[0].devices.clear();
         app.networks[0].admins.clear();
         app.networks[0].listen_for_join_requests = false;
+        app.fips_websocket_seed_urls = vec!["wss://seed.example.org/fips".to_string()];
         app.ensure_pending_nostr_join_request(1_778_998_000)
             .expect("pending device approval");
 
@@ -897,31 +839,10 @@ mod endpoint_config_tests {
         )
         .expect("pending join tunnel config");
         assert!(tunnel.endpoint_peers.is_empty());
-        assert!(tunnel.accept_nostr_relay_connections);
-
-        let transport = test_transport(true, false);
-        let mesh_mtu = resolve_private_mesh_mtu(None, None, None);
-        let ordinary = fips_endpoint_config_with_open_discovery_limit(
-            &tunnel.endpoint_peers,
-            Some(&transport),
-            mesh_mtu,
-            NostrDiscoveryPolicy::Open,
-            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            tunnel.accept_nostr_relay_connections,
+        assert_eq!(
+            tunnel.websocket.seed_urls,
+            ["wss://seed.example.org/fips"]
         );
-        let ethernet = fips_endpoint_config_for_ethernet(
-            &tunnel.endpoint_peers,
-            &FipsEthernetUnderlayConfig::parse("eth0", "pairing").expect("Ethernet underlay"),
-            mesh_mtu,
-            tunnel.accept_nostr_relay_connections,
-        );
-        for config in [ordinary, ethernet] {
-            let TransportInstances::Single(relay) = config.transports.nostr_relay else {
-                panic!("expected one Nostr relay transport");
-            };
-            assert_eq!(relay.auto_connect, Some(false));
-            assert_eq!(relay.accept_connections, Some(true));
-        }
 
         app.clear_pending_nostr_join_request();
         let closed = FipsPrivateTunnelConfig::from_app(
@@ -933,8 +854,7 @@ mod endpoint_config_tests {
             &[],
         )
         .expect("closed join tunnel config");
-        assert!(!closed.accept_nostr_relay_connections);
-        assert!(fips_tunnel_requires_endpoint_restart(&tunnel, &closed));
+        assert_eq!(closed.websocket, tunnel.websocket);
     }
 
 }

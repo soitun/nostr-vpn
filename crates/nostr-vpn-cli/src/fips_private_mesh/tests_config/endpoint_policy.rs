@@ -431,10 +431,8 @@ destination: 192.168.178.57
             .iter()
             .map(|hint| hint.addr.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(addrs.len(), 3);
         assert_eq!(
-            &addrs[..2],
-            &["203.0.113.23:51820", "203.0.113.24:51820"]
+            addrs,
+            ["203.0.113.23:51820", "203.0.113.24:51820"]
         );
-        assert_eq!(addrs[2], format!("nostr_relay:{bob_npub}"));
     }

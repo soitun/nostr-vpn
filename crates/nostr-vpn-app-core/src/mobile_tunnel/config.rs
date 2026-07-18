@@ -127,6 +127,8 @@ pub(crate) struct MobileTunnelConfig {
     #[serde(default)]
     pub(crate) nostr_relays: Vec<String>,
     #[serde(default)]
+    pub(crate) websocket_seed_urls: Vec<String>,
+    #[serde(default)]
     pub(crate) stun_servers: Vec<String>,
     #[serde(default)]
     pub(crate) share_local_candidates: bool,
@@ -392,6 +394,7 @@ impl MobileTunnelConfig {
             bootstrap_peers: mobile_bootstrap_peer_hints(app),
             route_targets,
             nostr_relays: effective_fips_nostr_relays(&app.nostr.relays),
+            websocket_seed_urls: app.fips_websocket_seed_urls.clone(),
             stun_servers: app.nat.stun_servers.clone(),
             share_local_candidates: app.lan_discovery_enabled,
             connect_to_non_roster_fips_peers: app.connect_to_non_roster_fips_peers,
@@ -519,7 +522,6 @@ fn replace_mobile_mesh(mesh: &MobileMesh, mut runtime: FipsMeshRuntime) -> Resul
 pub(crate) struct MobileTunnel {
     runtime: Runtime,
     endpoint: Option<Arc<FipsEndpoint>>,
-    nostr_relay_adapter: Option<FipsPubsubNostrRelayAdapter>,
     state_control: FipsControlTcpSender,
     mesh: MobileMesh,
     presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,

@@ -1901,9 +1901,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.9"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83f5336cc29d4efd54aac90090b24b50ef423d6f6454d31a2e1650c1c1f07c4c"
+checksum = "02e8c2448e32533c48ff73e21aac404bdcedb0d4d6ef4c28fa2fe226fe0c4c04"
 dependencies = [
  "base64 0.22.1",
  "bluer",
@@ -1934,6 +1934,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-socks",
+ "tokio-tungstenite 0.26.2",
  "tracing",
  "tun",
  "uuid",
@@ -1944,9 +1945,9 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.4.9"
+version = "0.4.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "362e827e56e70459a5b931f810541cdfd214ae82c3bd82976146c49eeb4af1ea"
+checksum = "09f3f08f25af83caa4d385b54732801544476e32f0d93e3dfd1dc0cd5a64bbaa"
 dependencies = [
  "fips-core",
 ]
@@ -3634,19 +3635,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nostr-pubsub-relay"
-version = "0.1.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9094d60559110cc0b7ba3b14703ae6ed88287abe8fdfd1a54c7b09bc0aea9bf"
-dependencies = [
- "async-trait",
- "nostr-pubsub",
- "nostr-sdk",
- "thiserror 2.0.18",
- "tokio",
-]
-
-[[package]]
 name = "nostr-pubsub-social-graph"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3780,9 +3768,6 @@ dependencies = [
  "libc",
  "netdev",
  "nostr-identity 0.4.0",
- "nostr-pubsub",
- "nostr-pubsub-fips",
- "nostr-pubsub-relay",
  "nostr-sdk",
  "rcgen",
  "reqwest",
@@ -3808,6 +3793,7 @@ dependencies = [
  "anyhow",
  "fips-core",
  "hex",
+ "nostr-pubsub-fips",
  "nostr-pubsub-social-graph",
  "nostr-sdk",
  "nostr-social-graph",
@@ -6881,7 +6867,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -87,6 +87,38 @@ fn daemon_rejects_unpaired_fips_ethernet_options() {
 }
 
 #[test]
+fn daemon_accepts_multiple_valid_fips_websocket_seeds() {
+    let cli = Cli::parse_from([
+        "nvpn",
+        "daemon",
+        "--fips-websocket-seed-url",
+        "wss://seed-a.example/fips",
+        "--fips-websocket-seed-url",
+        "wss://seed-b.example/fips",
+    ]);
+    let Command::Daemon(args) = cli.command else {
+        panic!("expected daemon command");
+    };
+    assert_eq!(
+        args.fips_websocket_seed_urls,
+        ["wss://seed-a.example/fips", "wss://seed-b.example/fips"]
+    );
+}
+
+#[test]
+fn daemon_rejects_invalid_or_remote_plaintext_fips_websocket_seeds() {
+    for value in [
+        "bootstrap garbage",
+        "https://seed.example/fips",
+        "ws://seed.example/fips",
+    ] {
+        let error = Cli::try_parse_from(["nvpn", "daemon", "--fips-websocket-seed-url", value])
+            .expect_err("invalid FIPS WebSocket seed must be rejected");
+        assert_eq!(error.kind(), ErrorKind::ValueValidation);
+    }
+}
+
+#[test]
 fn build_reports_fips_core_component_version() {
     let version = crate::fips_core_build_version();
     assert!(!version.trim().is_empty());

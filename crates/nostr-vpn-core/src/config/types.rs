@@ -23,7 +23,7 @@ pub fn default_fips_bootstrap_peers() -> HashMap<String, Vec<String>> {
 /// and direct WebRTC peer IDs into fips `PeerAddress` values.
 pub fn split_peer_transport_addr(value: &str) -> (String, String) {
     let value = value.trim();
-    for transport in ["udp", "tcp", "tor", "webrtc", "nostr_relay"] {
+    for transport in ["udp", "tcp", "tor", "webrtc", "websocket"] {
         if let Some(rest) = value.strip_prefix(&format!("{transport}:")) {
             return (transport.to_string(), rest.trim().to_string());
         }
@@ -124,6 +124,17 @@ pub struct AppConfig {
         skip_serializing_if = "is_false"
     )]
     pub fips_webrtc_enabled: bool,
+    /// Authenticated FIPS WebSocket seed URLs. Each entry must be `wss://`;
+    /// loopback-only `ws://` is accepted by FIPS for local development.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fips_websocket_seed_urls: Vec<String>,
+    /// Optional native plain-WebSocket listener, normally bound to loopback or
+    /// a private address behind a TLS-terminating reverse proxy.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub fips_websocket_bind_addr: String,
+    /// Public `wss://` URL advertised separately from the native bind address.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub fips_websocket_public_url: String,
     /// Master switch for dialing the bootstrap/transit peer list below. When off,
     /// the list is kept but not dialed.
     #[serde(
@@ -837,6 +848,9 @@ impl Default for AppConfig {
             connect_to_non_roster_fips_peers: default_connect_to_non_roster_fips_peers(),
             fips_nostr_discovery_enabled: default_fips_nostr_discovery_enabled(),
             fips_webrtc_enabled: default_fips_webrtc_enabled(),
+            fips_websocket_seed_urls: Vec::new(),
+            fips_websocket_bind_addr: String::new(),
+            fips_websocket_public_url: String::new(),
             fips_bootstrap_enabled: default_fips_bootstrap_enabled(),
             fips_bootstrap_peers: default_fips_bootstrap_peers(),
             fips_host_inbound_tcp_ports: Vec::new(),

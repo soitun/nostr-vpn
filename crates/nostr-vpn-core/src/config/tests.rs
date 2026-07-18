@@ -2,8 +2,8 @@
 mod tests {
     use super::{
         AdminSignedSharedRosterUpdate, AppConfig, InternetSource, PendingOutboundJoinRequest,
-        effective_fips_nostr_relays, fips_nostr_relay_fallback_enabled, normalize_nostr_pubkey,
-        parse_wireguard_exit_config, split_peer_transport_addr, wireguard_exit_config_text,
+        effective_fips_nostr_relays, normalize_nostr_pubkey, parse_wireguard_exit_config,
+        split_peer_transport_addr, wireguard_exit_config_text,
     };
     use crate::config_defaults::generate_nostr_identity;
 
@@ -22,26 +22,30 @@ mod tests {
     }
 
     #[test]
-    fn split_peer_transport_addr_preserves_nostr_relay_transport() {
-        let npub = "npub1relaypeer";
-
+    fn split_peer_transport_addr_preserves_websocket_transport() {
         assert_eq!(
-            split_peer_transport_addr(&format!("nostr_relay:{npub}")),
-            ("nostr_relay".to_string(), npub.to_string())
+            split_peer_transport_addr("websocket:wss://seed.example/fips"),
+            ("websocket".to_string(), "wss://seed.example/fips".to_string())
         );
     }
 
     #[test]
-    fn relay_fallback_requires_discovery_and_a_relay_not_webrtc() {
-        let relays = vec!["wss://relay.example".to_string()];
+    fn websocket_seed_urls_are_trimmed_deduplicated_and_preserved_as_multiple_seeds() {
+        let mut config = AppConfig::generated();
+        config.fips_websocket_seed_urls = vec![
+            " wss://seed-b.example/fips ".to_string(),
+            "wss://seed-a.example/fips\nwss://seed-b.example/fips".to_string(),
+        ];
 
-        assert!(fips_nostr_relay_fallback_enabled(true, &relays));
-        assert!(!fips_nostr_relay_fallback_enabled(false, &relays));
-        assert!(!fips_nostr_relay_fallback_enabled(true, &[]));
-        assert!(!fips_nostr_relay_fallback_enabled(
-            true,
-            &["  ".to_string()]
-        ));
+        config.ensure_defaults();
+
+        assert_eq!(
+            config.fips_websocket_seed_urls,
+            [
+                "wss://seed-a.example/fips",
+                "wss://seed-b.example/fips"
+            ]
+        );
     }
 
     #[test]
@@ -49,7 +53,6 @@ mod tests {
         let relays = effective_fips_nostr_relays(&[]);
 
         assert!(!relays.is_empty());
-        assert!(fips_nostr_relay_fallback_enabled(true, &relays));
         assert_eq!(
             effective_fips_nostr_relays(&["  wss://relay.example  ".to_string()]),
             vec!["wss://relay.example"]

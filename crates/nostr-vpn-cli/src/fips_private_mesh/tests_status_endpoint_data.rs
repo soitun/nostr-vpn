@@ -11,7 +11,6 @@
             super::private_mesh_mtu_from_app(None),
             fips_endpoint::NostrDiscoveryPolicy::ConfiguredOnly,
             super::FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            false,
         );
         FipsPrivateMeshRuntime::bind_with_config_scoped(
             identity_nsec,

@@ -2,7 +2,10 @@ use std::net::UdpSocket;
 use std::sync::Arc;
 use std::time::Duration;
 
-use fips_endpoint::{Config, PeerConfig, RoutingMode, TransportInstances, UdpConfig};
+use fips_core::PeerIdentity;
+use fips_endpoint::{
+    Config, PeerConfig, RoutingMode, TransportInstances, UdpConfig, WebSocketConfig,
+};
 use nostr_pubsub::MeshPeer;
 use nostr_sdk::prelude::{EventBuilder, EventId, Keys, Kind, Tag, TagKind, Timestamp, ToBech32};
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
@@ -36,6 +39,36 @@ fn endpoint_config(local_port: u16, peers: &[(&str, u16)]) -> Config {
             .iter()
             .map(|(npub, port)| PeerConfig::new(*npub, "udp", format!("127.0.0.1:{port}"))),
     );
+    config
+}
+
+fn available_tcp_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("bind ephemeral TCP port")
+        .local_addr()
+        .expect("ephemeral TCP address")
+        .port()
+}
+
+fn websocket_listener_config(port: u16) -> Config {
+    let mut config = Config::new();
+    config.node.routing.mode = RoutingMode::ReplyLearned;
+    config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+        bind_addr: Some(format!("127.0.0.1:{port}")),
+        ..WebSocketConfig::default()
+    });
+    config
+}
+
+fn websocket_seed_config(seed_url: &str) -> Config {
+    let mut config = Config::new();
+    config.node.routing.mode = RoutingMode::ReplyLearned;
+    config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+        seed_urls: vec![seed_url.to_string()],
+        reconnect_initial_ms: Some(10),
+        reconnect_max_ms: Some(40),
+        ..WebSocketConfig::default()
+    });
     config
 }
 
@@ -126,6 +159,61 @@ async fn wait_for_event(runtime: &ControlPubsubFipsRuntime, event_id: EventId) {
     })
     .await
     .expect("signed update root arrived over FIPS");
+}
+
+#[test]
+fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency() {
+    std::thread::Builder::new()
+        .name("websocket-fips-pubsub".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("local WebSocket pubsub test runtime")
+                .block_on(standard_pubsub_delivers_over_url_only_websocket_first_adjacency_run());
+        })
+        .expect("spawn WebSocket pubsub test thread")
+        .join()
+        .expect("WebSocket pubsub test thread");
+}
+
+async fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency_run() {
+    let seed = Keys::generate();
+    let client = Keys::generate();
+    let publisher = Keys::generate();
+    let seed_npub = seed.public_key().to_bech32().expect("seed npub");
+    let client_npub = client.public_key().to_bech32().expect("client npub");
+    let port = available_tcp_port();
+    let seed_url = format!("ws://127.0.0.1:{port}/fips");
+
+    let seed_endpoint = endpoint(&seed, websocket_listener_config(port)).await;
+    let client_endpoint = endpoint(&client, websocket_seed_config(&seed_url)).await;
+    wait_connected(&seed_endpoint, &client_npub).await;
+    wait_connected(&client_endpoint, &seed_npub).await;
+
+    let updates = update_events(&publisher, "releases/websocket-test");
+    let seed_pubsub = start_pubsub(Arc::clone(&seed_endpoint), updates.clone()).await;
+    let client_pubsub = start_pubsub(Arc::clone(&client_endpoint), updates).await;
+    let event = signed_update_root(&publisher, "releases/websocket-test", 1, "cc");
+    let event_id = event.id;
+    assert!(
+        client_pubsub
+            .publish(event)
+            .await
+            .expect("publish over WSS")
+    );
+    wait_for_event(&seed_pubsub, event_id).await;
+
+    let peers = client_endpoint.peers().await.expect("client peers");
+    assert!(peers.iter().any(|peer| {
+        peer.npub == seed_npub && peer.transport_type.as_deref() == Some("websocket")
+    }));
+
+    client_pubsub.stop().await;
+    seed_pubsub.stop().await;
+    client_endpoint.shutdown().await.expect("shutdown client");
+    seed_endpoint.shutdown().await.expect("shutdown seed");
 }
 
 #[test]

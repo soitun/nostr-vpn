@@ -192,6 +192,11 @@ fn non_empty_path(value: &str) -> Option<PathBuf> {
 
 pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> FipsConfig {
     let mut config = FipsConfig::new();
+    // A first-adjacency seed may authenticate before its tree/bloom adverts
+    // have converged. Reply-learned discovery can ask that live adjacency for
+    // an addressless roster peer immediately instead of recording a bloom
+    // miss and suppressing the ordinary control request for the full backoff.
+    config.node.routing.mode = RoutingMode::ReplyLearned;
     // The fips control socket binds a UNIX socket at
     // `/tmp/fips-control.sock` by default. Inside an iOS app extension
     // the sandbox forbids /tmp writes, which crashes the
@@ -221,7 +226,6 @@ pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> 
         || mobile.join_requests_enabled
         || join_request_pending;
     let nostr_enabled = mobile_nostr_enabled(mobile);
-    let nostr_relay_fallback_enabled = mobile_nostr_relay_fallback_enabled(mobile);
     config.node.discovery.nostr.enabled = nostr_enabled;
     // Publish only the generic `udp:nat` overlay advert so roster peers can
     // bootstrap encrypted traversal offers to mobile nodes. LAN addresses are
@@ -268,8 +272,11 @@ pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> 
             &mobile.stun_servers,
         );
     }
-    if nostr_relay_fallback_enabled {
-        crate::fips_nostr_relay::enable_transport(&mut config);
+    if !mobile.websocket_seed_urls.is_empty() {
+        config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+            seed_urls: mobile.websocket_seed_urls.clone(),
+            ..WebSocketConfig::default()
+        });
     }
     config.transports.udp = TransportInstances::Single(UdpConfig {
         bind_addr: Some(mobile_udp_bind_addr(mobile.listen_port)),
@@ -285,9 +292,6 @@ pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> 
         &mobile.bootstrap_peers,
         include_non_roster_transit,
     );
-    if nostr_relay_fallback_enabled {
-        add_mobile_nostr_relay_fallback_peers(&mut config.peers, mobile);
-    }
     // Outbound TCP transport so peers reachable only over tcp:443 (UDP-blocked
     // networks) can still be dialed. bind_addr=None keeps it outbound-only.
     let needs_tcp = config.peers.iter().any(|peer| {
@@ -318,37 +322,6 @@ fn mobile_nostr_enabled(mobile: &MobileTunnelConfig) -> bool {
             || mobile_join_request_pending(mobile)
             || !mobile.peers.is_empty()
             || !mobile.peer_hints.is_empty())
-}
-
-fn mobile_nostr_relay_fallback_enabled(mobile: &MobileTunnelConfig) -> bool {
-    fips_nostr_relay_fallback_enabled(
-        mobile_nostr_enabled(mobile),
-        &mobile.nostr_relays,
-    )
-}
-
-fn add_mobile_nostr_relay_fallback_peers(
-    peers: &mut Vec<FipsPeerConfig>,
-    mobile: &MobileTunnelConfig,
-) {
-    let mut explicit = mobile
-        .peers
-        .iter()
-        .map(|peer| normalize_mobile_endpoint_npub(&peer.endpoint_npub))
-        .collect::<HashSet<_>>();
-    if mobile_join_request_pending(mobile)
-        && let Ok(peer) = FipsMeshPeerConfig::from_participant_pubkey(
-            &mobile.pending_join_request_recipient,
-            Vec::new(),
-        )
-    {
-        explicit.insert(normalize_mobile_endpoint_npub(&peer.endpoint_npub));
-    }
-
-    for npub in explicit {
-        crate::fips_nostr_relay::upsert_peer(peers, &npub, false, true);
-    }
-    peers.sort_by(|left, right| left.npub.cmp(&right.npub));
 }
 
 fn native_config_path(data_dir: &str) -> PathBuf {
@@ -598,6 +571,7 @@ mod endpoint_config_tests {
         let mobile = MobileTunnelConfig {
             peers: vec![roster.clone()],
             nostr_relays: vec!["wss://relay.example.org".to_string()],
+            websocket_seed_urls: vec!["wss://seed.example.org/fips".to_string()],
             stun_servers: vec!["stun:stun.example.org:3478".to_string()],
             webrtc_enabled: true,
             connect_to_non_roster_fips_peers: true,
@@ -618,6 +592,7 @@ mod endpoint_config_tests {
         config
             .validate()
             .expect("WebRTC-enabled mobile FIPS config should validate");
+        assert_eq!(config.node.routing.mode, RoutingMode::ReplyLearned);
         let TransportInstances::Single(webrtc) = &config.transports.webrtc else {
             panic!("expected one WebRTC transport");
         };
@@ -628,36 +603,14 @@ mod endpoint_config_tests {
             webrtc.stun_servers.as_ref().expect("stun servers"),
             &mobile.stun_servers
         );
-        let TransportInstances::Single(relay) = &config.transports.nostr_relay else {
-            panic!("expected one application-owned Nostr relay fallback transport");
+        let TransportInstances::Single(websocket) = &config.transports.websocket else {
+            panic!("expected one WebSocket transport");
         };
-        assert_eq!(relay.auto_connect, Some(false));
-        assert_eq!(relay.accept_connections, Some(false));
-        let relay_priority = |npub: &str| {
-            config
-                .peers
-                .iter()
-                .find(|peer| peer.npub == npub)
-                .and_then(|peer| {
-                    peer.addresses
-                        .iter()
-                        .find(|address| address.transport == "nostr_relay" && address.addr == npub)
-                })
-                .map(|address| address.priority)
-        };
-        assert_eq!(
-            relay_priority(&roster.endpoint_npub),
-            Some(nostr_vpn_core::config::FIPS_NOSTR_RELAY_FALLBACK_PRIORITY)
-        );
-        assert_eq!(
-            relay_priority(&pending.endpoint_npub),
-            Some(nostr_vpn_core::config::FIPS_NOSTR_RELAY_FALLBACK_PRIORITY)
-        );
-        assert_eq!(relay_priority(&transit.endpoint_npub), None);
+        assert_eq!(websocket.seed_urls, mobile.websocket_seed_urls);
     }
 
     #[test]
-    fn mobile_relay_fallback_ignores_stale_join_recipient() {
+    fn mobile_config_ignores_stale_join_recipient() {
         let stale = test_peer();
         let mobile = MobileTunnelConfig {
             peers: vec![test_peer()],
@@ -683,16 +636,17 @@ mod endpoint_config_tests {
 
         assert!(!config.node.discovery.nostr.enabled);
         assert!(config.transports.webrtc.is_empty());
-        assert!(config.transports.nostr_relay.is_empty());
+        assert!(config.transports.websocket.is_empty());
     }
 
     #[test]
-    fn mobile_endpoint_config_keeps_relay_fallback_without_webrtc() {
+    fn mobile_endpoint_config_keeps_websocket_without_webrtc() {
         let mobile = MobileTunnelConfig {
             peers: vec![test_peer()],
             nostr_discovery_enabled: true,
             webrtc_enabled: false,
             nostr_relays: vec!["wss://relay.example.org".to_string()],
+            websocket_seed_urls: vec!["wss://seed.example.org/fips".to_string()],
             ..empty_config()
         };
         let config = fips_endpoint_config("nostr-vpn:test", &mobile);
@@ -700,7 +654,7 @@ mod endpoint_config_tests {
         assert!(config.node.discovery.nostr.enabled);
         assert!(config.node.discovery.nostr.advertise);
         assert!(config.transports.webrtc.is_empty());
-        assert!(!config.transports.nostr_relay.is_empty());
+        assert!(!config.transports.websocket.is_empty());
         assert!(!config.transports.udp.is_empty());
     }
 }

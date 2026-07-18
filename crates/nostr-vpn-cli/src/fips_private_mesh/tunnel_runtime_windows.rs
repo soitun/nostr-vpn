@@ -19,15 +19,16 @@ impl FipsPrivateTunnelRuntime {
             webrtc_enabled: config.webrtc_enabled,
             stun_servers: config.stun_servers.clone(),
             nostr_relays: config.nostr_relays.clone(),
+            websocket: config.websocket.clone(),
             share_local_candidates: config.share_local_candidates,
         };
         let endpoint_config = match config.ethernet_underlay.as_ref() {
             Some(ethernet) => {
                 fips_endpoint_config_for_ethernet(
                     &config.endpoint_peers,
+                    Some(&transport),
                     ethernet,
                     config.mesh_mtu,
-                    config.accept_nostr_relay_connections,
                 )
             }
             None => fips_endpoint_config_with_open_discovery_limit(
@@ -36,7 +37,6 @@ impl FipsPrivateTunnelRuntime {
                 config.mesh_mtu,
                 config.nostr_discovery_policy,
                 config.open_discovery_max_pending,
-                config.accept_nostr_relay_connections,
             ),
         };
         let mesh = Arc::new(
@@ -121,7 +121,6 @@ impl FipsPrivateTunnelRuntime {
             mesh,
             control_pubsub,
             state_control,
-            nostr_relay_adapter: None,
             secure_dns,
             config: config.clone(),
             session,
@@ -150,9 +149,6 @@ impl FipsPrivateTunnelRuntime {
             };
             secure_dns.update_config(config.magic_dns_records.clone(), servers)?;
         }
-        runtime.nostr_relay_adapter = Some(
-            start_nostr_relay_carrier(runtime.mesh.endpoint(), &config.nostr_relays).await?,
-        );
         Ok(runtime)
     }
 
@@ -339,9 +335,6 @@ impl FipsPrivateTunnelRuntime {
         // revert lands while we still have a sane working tree.
         if let Some(handle) = runtime.wg_upstream.take() {
             handle.cleanup().await;
-        }
-        if let Some(adapter) = runtime.nostr_relay_adapter.take() {
-            adapter.stop().await;
         }
         if let Some(control_pubsub) = runtime.control_pubsub.take() {
             control_pubsub.stop().await;

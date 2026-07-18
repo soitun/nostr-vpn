@@ -9,13 +9,12 @@ use fips_core::{
     Config, FipsEndpoint, Identity, PeerIdentity, SimLink, SimNetwork, SimNetworkStats,
     SimTransportConfig, register_sim_network, unregister_sim_network,
 };
+use nostr_pubsub_fips::FIPS_NOSTR_PUBSUB_SERVICE_PORT;
 use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, Timestamp};
 use nostr_social_graph::RatingGraphConfig;
 use nostr_social_memory::rating_from_event;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
-use nostr_vpn_core::control_pubsub::{
-    CONTROL_PUBSUB_FIPS_SERVICE_PORT, FIPS_PEER_ADVERT_KIND, RATING_FACT_KIND,
-};
+use nostr_vpn_core::control_pubsub::{FIPS_PEER_ADVERT_KIND, RATING_FACT_KIND};
 use nvpn::control_pubsub_runtime::ControlPubsubFipsRuntime;
 use serde::{Deserialize, Serialize};
 
@@ -314,8 +313,8 @@ impl SimulationRuntime {
                     if self.endpoints[attacker]
                         .send_datagram(
                             self.specs[*target].peer_identity,
-                            CONTROL_PUBSUB_FIPS_SERVICE_PORT,
-                            CONTROL_PUBSUB_FIPS_SERVICE_PORT,
+                            FIPS_NOSTR_PUBSUB_SERVICE_PORT,
+                            FIPS_NOSTR_PUBSUB_SERVICE_PORT,
                             payload,
                         )
                         .await

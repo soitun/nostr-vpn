@@ -18,15 +18,16 @@ impl FipsPrivateTunnelRuntime {
             webrtc_enabled: config.webrtc_enabled,
             stun_servers: config.stun_servers.clone(),
             nostr_relays: config.nostr_relays.clone(),
+            websocket: config.websocket.clone(),
             share_local_candidates: config.share_local_candidates,
         };
         let endpoint_config = match config.ethernet_underlay.as_ref() {
             Some(ethernet) => {
                 fips_endpoint_config_for_ethernet(
                     &config.endpoint_peers,
+                    Some(&transport),
                     ethernet,
                     config.mesh_mtu,
-                    config.accept_nostr_relay_connections,
                 )
             }
             None => fips_endpoint_config_with_open_discovery_limit(
@@ -35,7 +36,6 @@ impl FipsPrivateTunnelRuntime {
                 config.mesh_mtu,
                 config.nostr_discovery_policy,
                 config.open_discovery_max_pending,
-                config.accept_nostr_relay_connections,
             ),
         };
         let local_allowed_ips = config.local_allowed_ips();
@@ -90,7 +90,6 @@ impl FipsPrivateTunnelRuntime {
             mesh,
             control_pubsub,
             state_control,
-            nostr_relay_adapter: None,
             secure_dns: None,
             manages_secure_dns: true,
             config: config.clone(),
@@ -119,9 +118,6 @@ impl FipsPrivateTunnelRuntime {
         runtime
             .reconcile_fips_host_runtime(config.fips_host.clone())
             .await?;
-        runtime.nostr_relay_adapter = Some(
-            start_nostr_relay_carrier(runtime.mesh.endpoint(), &config.nostr_relays).await?,
-        );
         Ok(runtime)
     }
 
@@ -205,9 +201,6 @@ impl FipsPrivateTunnelRuntime {
         #[cfg(target_os = "macos")]
         if let Some(handle) = runtime.wg_upstream.take() {
             handle.cleanup().await;
-        }
-        if let Some(adapter) = runtime.nostr_relay_adapter.take() {
-            adapter.stop().await;
         }
         if let Some(secure_dns) = runtime.secure_dns.take() {
             secure_dns.stop().await;
