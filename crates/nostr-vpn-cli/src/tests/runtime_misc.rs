@@ -439,6 +439,7 @@ fn fips_tunnel_config_carries_paid_route_payment_streaming_inputs() {
         own_pubkey: Some(&own_pubkey),
         recent_peers: None,
         live_peer_endpoints: &[],
+        ethernet_underlay: None,
     })
     .expect("build fips config");
 

@@ -60,6 +60,33 @@ fn clap_parses_join_request_wait_controls() {
 }
 
 #[test]
+fn daemon_parses_paired_fips_ethernet_options() {
+    let cli = Cli::parse_from([
+        "nvpn",
+        "daemon",
+        "--fips-ethernet-interface",
+        "eth0",
+        "--fips-ethernet-discovery-scope",
+        "local-pairing",
+    ]);
+    let Command::Daemon(args) = cli.command else {
+        panic!("expected daemon command");
+    };
+    assert_eq!(args.fips_ethernet_interface.as_deref(), Some("eth0"));
+    assert_eq!(
+        args.fips_ethernet_discovery_scope.as_deref(),
+        Some("local-pairing")
+    );
+}
+
+#[test]
+fn daemon_rejects_unpaired_fips_ethernet_options() {
+    let error = Cli::try_parse_from(["nvpn", "daemon", "--fips-ethernet-interface", "eth0"])
+        .expect_err("Ethernet interface must require its discovery scope");
+    assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+}
+
+#[test]
 fn build_reports_fips_core_component_version() {
     let version = crate::fips_core_build_version();
     assert!(!version.trim().is_empty());

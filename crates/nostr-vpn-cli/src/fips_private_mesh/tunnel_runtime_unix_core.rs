@@ -2,8 +2,14 @@
 impl FipsPrivateTunnelRuntime {
     pub(crate) async fn start(config: FipsPrivateTunnelConfig) -> Result<Self> {
         let scope = config
-            .nostr_discovery_enabled
-            .then(|| fips_lan_discovery_scope(&config.network_id));
+            .ethernet_underlay
+            .is_none()
+            .then(|| {
+                config
+                    .nostr_discovery_enabled
+                    .then(|| fips_lan_discovery_scope(&config.network_id))
+            })
+            .flatten();
         let transport = FipsEndpointTransportConfig {
             listen_port: config.listen_port,
             advertised_endpoint: config.advertised_endpoint.clone(),
@@ -14,13 +20,18 @@ impl FipsPrivateTunnelRuntime {
             nostr_relays: config.nostr_relays.clone(),
             share_local_candidates: config.share_local_candidates,
         };
-        let endpoint_config = fips_endpoint_config_with_open_discovery_limit(
-            &config.endpoint_peers,
-            Some(&transport),
-            config.mesh_mtu,
-            config.nostr_discovery_policy,
-            config.open_discovery_max_pending,
-        );
+        let endpoint_config = match config.ethernet_underlay.as_ref() {
+            Some(ethernet) => {
+                fips_endpoint_config_for_ethernet(&config.endpoint_peers, ethernet, config.mesh_mtu)
+            }
+            None => fips_endpoint_config_with_open_discovery_limit(
+                &config.endpoint_peers,
+                Some(&transport),
+                config.mesh_mtu,
+                config.nostr_discovery_policy,
+                config.open_discovery_max_pending,
+            ),
+        };
         let local_allowed_ips = config.local_allowed_ips();
         let local_tunnel_ips = config.local_tunnel_ips();
         let mesh = Arc::new(
@@ -102,8 +113,9 @@ impl FipsPrivateTunnelRuntime {
         runtime
             .reconcile_fips_host_runtime(config.fips_host.clone())
             .await?;
-        runtime.nostr_relay_adapter =
-            start_nostr_relay_fallback(runtime.mesh.endpoint(), &config).await?;
+        runtime.nostr_relay_adapter = Some(
+            start_nostr_relay_carrier(runtime.mesh.endpoint(), &config.nostr_relays).await?,
+        );
         Ok(runtime)
     }
 
@@ -638,6 +650,10 @@ impl FipsPrivateTunnelRuntime {
 impl FipsPrivateTunnelRuntime {
     pub(crate) fn iface(&self) -> &str {
         &self.iface
+    }
+
+    pub(crate) fn ethernet_underlay(&self) -> Option<&FipsEthernetUnderlayConfig> {
+        self.config.ethernet_underlay.as_ref()
     }
 
     pub(crate) fn peer_statuses(&self) -> Vec<MeshPeerStatus> {

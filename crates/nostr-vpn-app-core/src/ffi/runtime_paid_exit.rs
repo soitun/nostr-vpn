@@ -233,6 +233,10 @@ impl NativeAppRuntime {
         self.paid_exit_not_built()
     }
 
+    fn preview_paid_route_wallet_token(&mut self, _token: &str) -> Result<()> {
+        self.paid_exit_not_built()
+    }
+
     fn send_paid_route_wallet_token(
         &mut self,
         _mint_url: Option<&str>,

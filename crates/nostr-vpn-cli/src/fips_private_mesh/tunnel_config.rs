@@ -214,12 +214,7 @@ impl FipsPrivateTunnelConfig {
         // transport is disabled.
         retain_enabled_peer_transport_addresses(&mut endpoint_peers, app.fips_webrtc_enabled);
         let nostr_relays = effective_fips_nostr_relays(&app.nostr.relays);
-        if fips_nostr_relay_fallback_enabled(
-            app.fips_nostr_discovery_enabled,
-            &nostr_relays,
-        ) {
-            add_nostr_relay_fallback_for_mesh_peers(&mut endpoint_peers, &peers);
-        }
+        add_nostr_relay_transport_for_mesh_peers(&mut endpoint_peers, &peers);
         if !stamped_endpoint_hints_enabled {
             for peer in &mut endpoint_peers {
                 if peer.auto_reconnect {
@@ -254,6 +249,7 @@ impl FipsPrivateTunnelConfig {
             nostr_relays,
             nostr_pubsub: app.nostr.pubsub.clone(),
             control_pubsub_store_path: PathBuf::new(),
+            ethernet_underlay: None,
             share_local_candidates: app.lan_discovery_enabled,
             peers,
             endpoint_peers,
@@ -303,13 +299,6 @@ impl FipsPrivateTunnelConfig {
     ) {
         self.mesh_mtu =
             clamp_mesh_mtu_to_underlay_interface_mtu(self.mesh_mtu, underlay_interface_mtu);
-    }
-
-    pub(crate) fn nostr_relay_fallback_enabled(&self) -> bool {
-        fips_nostr_relay_fallback_enabled(
-            self.nostr_discovery_enabled,
-            &self.nostr_relays,
-        )
     }
 
     fn local_allowed_ips(&self) -> Vec<String> {
@@ -420,16 +409,11 @@ fn tag_authenticated_transport_addr(
     }
 }
 
-async fn start_nostr_relay_fallback(
+async fn start_nostr_relay_carrier(
     endpoint: &Arc<FipsEndpoint>,
-    config: &FipsPrivateTunnelConfig,
-) -> Result<Option<NostrRelayAdapter>> {
-    if !config.nostr_relay_fallback_enabled() {
-        return Ok(None);
-    }
-    NostrRelayAdapter::start(Arc::clone(endpoint), &config.nostr_relays)
-        .await
-        .map_err(anyhow::Error::msg)
+    relays: &[String],
+) -> Result<FipsPubsubNostrRelayAdapter> {
+    FipsPubsubNostrRelayAdapter::start(Arc::clone(endpoint), relays).await
 }
 
 fn fips_tunnel_requires_endpoint_restart(
@@ -449,6 +433,7 @@ fn fips_tunnel_requires_endpoint_restart(
         || current.nostr_relays != next.nostr_relays
         || current.nostr_pubsub != next.nostr_pubsub
         || current.control_pubsub_store_path != next.control_pubsub_store_path
+        || current.ethernet_underlay != next.ethernet_underlay
         || current.nostr_discovery_enabled != next.nostr_discovery_enabled
         || current.webrtc_enabled != next.webrtc_enabled
         || current.share_local_candidates != next.share_local_candidates
@@ -476,7 +461,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     mesh: Arc<FipsPrivateMeshRuntime>,
     control_pubsub: Option<crate::control_pubsub_runtime::ControlPubsubFipsRuntime>,
     state_control: FipsControlTcpRuntime,
-    nostr_relay_adapter: Option<NostrRelayAdapter>,
+    nostr_relay_adapter: Option<FipsPubsubNostrRelayAdapter>,
     secure_dns: Option<crate::secure_dns_runtime::SecureDnsRuntime>,
     manages_secure_dns: bool,
     config: FipsPrivateTunnelConfig,

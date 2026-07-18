@@ -56,6 +56,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         mut last_fips_stale_participant_restart_at,
         mut fips_pending_roster_restart_state,
         iface,
+        ethernet_underlay,
         mut tunnel_runtime,
         mut network_snapshot,
         mut network_changed_at,
@@ -145,6 +146,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         underlay_interface_mtu: network_snapshot.default_interface_mtu,
                         own_pubkey: own_pubkey.as_deref(),
                         recent_peers: &recent_peers,
+                        ethernet_underlay: ethernet_underlay.as_ref(),
                         expected_peers,
                         last_endpoint_peer_signature: &mut last_fips_endpoint_peer_signature,
                         last_stale_participant_restart_at:
@@ -305,6 +307,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         own_pubkey: own_pubkey.as_deref(),
                                         // Authenticated dial hints retained across link churn.
                                         recent_peers: Some(&recent_peers),
+                                        ethernet_underlay: ethernet_underlay.as_ref(),
                                         last_endpoint_peer_signature:
                                             &mut last_fips_endpoint_peer_signature,
                                     },
@@ -395,6 +398,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 iface: &iface,
                                 underlay_interface_mtu: network_snapshot.default_interface_mtu,
                                 own_pubkey: own_pubkey.as_deref(),
+                                ethernet_underlay: ethernet_underlay.as_ref(),
                                 vpn_enabled,
                                 expected_peers,
                             },
@@ -459,6 +463,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                                 .default_interface_mtu,
                                             own_pubkey: own_pubkey.as_deref(),
                                             recent_peers: Some(&recent_peers),
+                                            ethernet_underlay: ethernet_underlay.as_ref(),
                                             last_endpoint_peer_signature:
                                                 &mut last_fips_endpoint_peer_signature,
                                         },
@@ -650,6 +655,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             iface: &iface,
                             underlay_interface_mtu: network_snapshot.default_interface_mtu,
                             own_pubkey: own_pubkey.as_deref(),
+                            ethernet_underlay: ethernet_underlay.as_ref(),
                             vpn_enabled,
                             expected_peers,
                         },
@@ -846,6 +852,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             iface: &iface,
                             underlay_interface_mtu: network_snapshot.default_interface_mtu,
                             own_pubkey: own_pubkey.as_deref(),
+                            ethernet_underlay: ethernet_underlay.as_ref(),
                             vpn_enabled,
                             expected_peers,
                         },

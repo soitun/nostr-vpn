@@ -13,6 +13,36 @@ struct FipsEndpointTransportConfig {
     share_local_candidates: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FipsEthernetUnderlayConfig {
+    pub(crate) interface: String,
+    pub(crate) discovery_scope: String,
+}
+
+impl FipsEthernetUnderlayConfig {
+    pub(crate) fn parse(interface: &str, discovery_scope: &str) -> Result<Self> {
+        let interface = interface.trim();
+        if interface.is_empty() {
+            return Err(anyhow!("--fips-ethernet-interface must not be empty"));
+        }
+        let discovery_scope = discovery_scope.trim();
+        if discovery_scope.is_empty() {
+            return Err(anyhow!(
+                "--fips-ethernet-discovery-scope must not be empty"
+            ));
+        }
+        if discovery_scope.len() > u8::MAX as usize {
+            return Err(anyhow!(
+                "--fips-ethernet-discovery-scope must not exceed 255 UTF-8 bytes"
+            ));
+        }
+        Ok(Self {
+            interface: interface.to_string(),
+            discovery_scope: discovery_scope.to_string(),
+        })
+    }
+}
+
 /// Address hint carried through nvpn's intermediate config types before
 /// being lowered into a fips `PeerAddress`. `seen_at_ms` is the
 /// most-recent observation timestamp (Unix ms) when we have one — set for
@@ -174,15 +204,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
     let nostr_enabled = nostr_discovery_enabled && (transport.is_some() || !peers.is_empty());
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.advertise = advertise_on_nostr;
-    let nostr_relay_fallback_enabled = transport.is_some_and(|transport| {
-        fips_nostr_relay_fallback_enabled(
-            transport.nostr_discovery_enabled,
-            &transport.nostr_relays,
-        )
-    });
-    if nostr_relay_fallback_enabled {
-        enable_nostr_relay_fallback_transport(&mut config);
-    }
+    enable_nostr_relay_transport(&mut config);
     // Open discovery by default (unless the user opts into configured-only
     // discovery) so we can FIPS-handshake with any nvpn node we see on relays,
     // not just configured roster peers. This is what lets us route app-mesh
@@ -281,6 +303,42 @@ fn fips_endpoint_config_with_open_discovery_limit(
             discovery_fallback_transit: peer.discovery_fallback_transit,
         })
         .collect();
+    config
+}
+
+fn fips_endpoint_config_for_ethernet(
+    peers: &[FipsEndpointPeerTransportConfig],
+    ethernet: &FipsEthernetUnderlayConfig,
+    mesh_mtu: MeshMtu,
+) -> Config {
+    let mut config = fips_endpoint_config_with_open_discovery_limit(
+        peers,
+        None,
+        mesh_mtu,
+        NostrDiscoveryPolicy::ConfiguredOnly,
+        0,
+    );
+    config.node.discovery.nostr.enabled = false;
+    config.node.discovery.nostr.advertise = false;
+    config.node.discovery.nostr.advert_relays.clear();
+    config.node.discovery.lan.enabled = false;
+    config.node.discovery.local.enabled = false;
+    config.transports = Default::default();
+    config.transports.ethernet = TransportInstances::Single(EthernetConfig {
+        interface: ethernet.interface.clone(),
+        discovery: Some(true),
+        announce: Some(true),
+        auto_connect: Some(true),
+        accept_connections: Some(true),
+        discovery_scope: Some(ethernet.discovery_scope.clone()),
+        mtu: Some(mesh_mtu.underlay_udp),
+        ..EthernetConfig::default()
+    });
+    enable_nostr_relay_transport(&mut config);
+    for peer in &mut config.peers {
+        peer.addresses
+            .retain(|address| address.transport.as_str() == "nostr_relay");
+    }
     config
 }
 
@@ -383,7 +441,7 @@ fn fips_endpoint_peers_from_mesh(
     peers
 }
 
-fn add_nostr_relay_fallback_for_mesh_peers(
+fn add_nostr_relay_transport_for_mesh_peers(
     peers: &mut [FipsEndpointPeerTransportConfig],
     mesh_peers: &[FipsMeshPeerConfig],
 ) {
@@ -393,12 +451,12 @@ fn add_nostr_relay_fallback_for_mesh_peers(
         .collect::<HashSet<_>>();
     for peer in peers {
         if roster.contains(&peer.npub) {
-            add_nostr_relay_fallback_address(peer);
+            add_nostr_relay_transport_address(peer);
         }
     }
 }
 
-fn enable_nostr_relay_fallback_transport(config: &mut Config) {
+fn enable_nostr_relay_transport(config: &mut Config) {
     config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig {
         auto_connect: Some(false),
         accept_connections: Some(false),
@@ -406,7 +464,7 @@ fn enable_nostr_relay_fallback_transport(config: &mut Config) {
     });
 }
 
-fn add_nostr_relay_fallback_address(peer: &mut FipsEndpointPeerTransportConfig) {
+fn add_nostr_relay_transport_address(peer: &mut FipsEndpointPeerTransportConfig) {
     let address = format!("nostr_relay:{}", peer.npub);
     if peer.addresses.iter().any(|hint| hint.addr == address) {
         return;
@@ -414,7 +472,7 @@ fn add_nostr_relay_fallback_address(peer: &mut FipsEndpointPeerTransportConfig) 
     peer.addresses.push(FipsPeerAddressHint {
         addr: address,
         seen_at_ms: None,
-        priority: FIPS_NOSTR_RELAY_FALLBACK_PRIORITY,
+        priority: FIPS_NOSTR_RELAY_TRANSPORT_PRIORITY,
     });
 }
 
@@ -530,6 +588,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) nostr_relays: Vec<String>,
     pub(crate) nostr_pubsub: nostr_vpn_core::config::NostrPubsubConfig,
     pub(crate) control_pubsub_store_path: PathBuf,
+    pub(crate) ethernet_underlay: Option<FipsEthernetUnderlayConfig>,
     pub(crate) share_local_candidates: bool,
     pub(crate) peers: Vec<FipsMeshPeerConfig>,
     pub(crate) endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
@@ -619,7 +678,7 @@ mod endpoint_config_tests {
             &transport.stun_servers
         );
         let TransportInstances::Single(relay) = &config.transports.nostr_relay else {
-            panic!("expected one application-owned Nostr relay fallback transport");
+            panic!("expected one application-owned Nostr relay transport");
         };
         assert_eq!(relay.auto_connect, Some(false));
         assert_eq!(relay.accept_connections, Some(false));
@@ -640,11 +699,11 @@ mod endpoint_config_tests {
 
         assert!(!config.node.discovery.nostr.enabled);
         assert!(config.transports.webrtc.is_empty());
-        assert!(config.transports.nostr_relay.is_empty());
+        assert!(!config.transports.nostr_relay.is_empty());
     }
 
     #[test]
-    fn endpoint_config_keeps_relay_fallback_without_ambient_webrtc() {
+    fn endpoint_config_keeps_relay_transport_without_ambient_webrtc() {
         let peer = test_peer();
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
         let transport = test_transport(true, false);
@@ -661,7 +720,7 @@ mod endpoint_config_tests {
         assert!(config.transports.webrtc.is_empty());
         assert!(!config.transports.udp.is_empty());
         let TransportInstances::Single(relay) = &config.transports.nostr_relay else {
-            panic!("expected one application-owned Nostr relay fallback transport");
+            panic!("expected one application-owned Nostr relay transport");
         };
         assert_eq!(relay.auto_connect, Some(false));
         assert_eq!(relay.accept_connections, Some(false));
@@ -690,7 +749,7 @@ mod endpoint_config_tests {
             ],
             Vec::new(),
         );
-        add_nostr_relay_fallback_for_mesh_peers(&mut peers, std::slice::from_ref(&roster));
+        add_nostr_relay_transport_for_mesh_peers(&mut peers, std::slice::from_ref(&roster));
         let peers = prioritize_join_roster_recipient(peers, &roster.endpoint_npub)
             .expect("join roster recipient");
 
@@ -712,7 +771,10 @@ mod endpoint_config_tests {
                 })
                 .map(|address| address.priority)
         };
-        assert_eq!(relay_priority(&roster_npub), Some(FIPS_NOSTR_RELAY_FALLBACK_PRIORITY));
+        assert_eq!(
+            relay_priority(&roster_npub),
+            Some(FIPS_NOSTR_RELAY_TRANSPORT_PRIORITY)
+        );
         assert_eq!(relay_priority(&ambient_npub), None);
     }
 
@@ -757,6 +819,50 @@ mod endpoint_config_tests {
                 .iter()
                 .any(|hint| hint.addr == "udp:203.0.113.20:51820")
         }));
+    }
+
+    #[test]
+    fn ethernet_underlay_validates_interface_and_scope() {
+        let parsed = FipsEthernetUnderlayConfig::parse(" eth0 ", " local-pairing ")
+            .expect("valid Ethernet underlay");
+        assert_eq!(parsed.interface, "eth0");
+        assert_eq!(parsed.discovery_scope, "local-pairing");
+        assert!(FipsEthernetUnderlayConfig::parse("", "scope").is_err());
+        assert!(FipsEthernetUnderlayConfig::parse("eth0", " ").is_err());
+        assert!(FipsEthernetUnderlayConfig::parse("eth0", &"x".repeat(256)).is_err());
+    }
+
+    #[test]
+    fn ethernet_underlay_uses_only_ethernet_and_canonical_nostr_relay() {
+        let peer = test_peer();
+        let mut endpoint_peers =
+            fips_endpoint_peers_from_mesh(std::slice::from_ref(&peer), Vec::new(), Vec::new());
+        add_nostr_relay_transport_for_mesh_peers(
+            &mut endpoint_peers,
+            std::slice::from_ref(&peer),
+        );
+        let ethernet =
+            FipsEthernetUnderlayConfig::parse("eth0", "local-pairing").expect("underlay");
+        let mesh_mtu = resolve_private_mesh_mtu(None, None, None);
+        let config = fips_endpoint_config_for_ethernet(&endpoint_peers, &ethernet, mesh_mtu);
+
+        config.validate().expect("Ethernet endpoint config");
+        assert!(config.transports.udp.is_empty());
+        assert!(config.transports.tcp.is_empty());
+        assert!(config.transports.webrtc.is_empty());
+        assert!(!config.transports.nostr_relay.is_empty());
+        let TransportInstances::Single(raw) = &config.transports.ethernet else {
+            panic!("expected one Ethernet transport");
+        };
+        assert_eq!(raw.interface, "eth0");
+        assert_eq!(raw.discovery_scope.as_deref(), Some("local-pairing"));
+        assert_eq!(raw.discovery, Some(true));
+        assert_eq!(raw.announce, Some(true));
+        assert_eq!(raw.auto_connect, Some(true));
+        assert_eq!(raw.accept_connections, Some(true));
+        assert_eq!(config.peers.len(), 1);
+        assert_eq!(config.peers[0].addresses.len(), 1);
+        assert_eq!(config.peers[0].addresses[0].transport, "nostr_relay");
     }
 
 }

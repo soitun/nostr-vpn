@@ -49,6 +49,7 @@ struct MobileEndpointReceiveContext<'a> {
     config_path: Option<&'a Path>,
     network_id: &'a str,
     join_request_active: &'a AtomicBool,
+    #[cfg_attr(not(feature = "paid-exit"), allow(dead_code))]
     state_control: &'a FipsControlTcpSender,
 }
 

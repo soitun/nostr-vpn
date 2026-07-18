@@ -18,6 +18,7 @@ pub(super) struct DaemonVpnStartup {
     pub(super) last_fips_stale_participant_restart_at: Option<u64>,
     pub(super) fips_pending_roster_restart_state: FipsPendingRosterRestartState,
     pub(super) iface: String,
+    pub(super) ethernet_underlay: Option<crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
     pub(super) tunnel_runtime: CliTunnelRuntime,
     pub(super) network_snapshot: crate::diagnostics::NetworkSnapshot,
     pub(super) network_changed_at: Option<u64>,
@@ -33,6 +34,20 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
     if args.iface.trim().is_empty() {
         return Err(anyhow!("--iface must not be empty"));
     }
+    let ethernet_underlay = match (
+        args.fips_ethernet_interface.as_deref(),
+        args.fips_ethernet_discovery_scope.as_deref(),
+    ) {
+        (Some(interface), Some(scope)) => Some(
+            crate::fips_private_mesh::FipsEthernetUnderlayConfig::parse(interface, scope)?,
+        ),
+        (None, None) => None,
+        _ => {
+            return Err(anyhow!(
+                "--fips-ethernet-interface and --fips-ethernet-discovery-scope must be provided together"
+            ));
+        }
+    };
 
     let config_path = args.config.clone().unwrap_or_else(default_config_path);
     if args.service
@@ -121,6 +136,7 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
                 own_pubkey: own_pubkey.as_deref(),
                 recent_peers: Some(&recent_peers),
                 live_peer_endpoints: &[],
+                ethernet_underlay: ethernet_underlay.as_ref(),
             }) {
                 Ok(config) => config,
                 Err(error) => {
@@ -213,6 +229,7 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
         last_fips_stale_participant_restart_at,
         fips_pending_roster_restart_state,
         iface,
+        ethernet_underlay,
         tunnel_runtime,
         network_snapshot,
         network_changed_at,

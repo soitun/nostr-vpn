@@ -4,8 +4,8 @@ use arc_swap::ArcSwap;
 use cashu_service::StreamingRoutePaymentEnvelope;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
 use fips_endpoint::{
-    Config, ConnectPolicy, FipsEndpoint, FipsEndpointData, FipsEndpointMessage, FipsEndpointPeer,
-    NostrDiscoveryPolicy, NostrRelayAdapter, NostrRelayConfig, PeerAddress,
+    Config, ConnectPolicy, EthernetConfig, FipsEndpoint, FipsEndpointData, FipsEndpointMessage,
+    FipsEndpointPeer, NostrDiscoveryPolicy, NostrRelayConfig, PeerAddress,
     PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
 };
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
@@ -15,9 +15,8 @@ use fips_endpoint::{
 };
 use nostr_sdk::prelude::{PublicKey, ToBech32};
 use nostr_vpn_core::config::{
-    AppConfig, FIPS_NOSTR_RELAY_FALLBACK_PRIORITY, InternetSource, WireGuardExitConfig,
-    derive_mesh_tunnel_ip, effective_fips_nostr_relays, fips_nostr_relay_fallback_enabled,
-    normalize_nostr_pubkey, split_peer_transport_addr,
+    AppConfig, InternetSource, WireGuardExitConfig, derive_mesh_tunnel_ip,
+    effective_fips_nostr_relays, normalize_nostr_pubkey, split_peer_transport_addr,
 };
 use nostr_vpn_core::data_plane::MeshPeerStatus;
 use nostr_vpn_core::fips_control::{
@@ -75,6 +74,7 @@ const FIPS_DISCOVERY_BACKOFF_BASE_SECS: u64 = 30;
 const FIPS_DISCOVERY_BACKOFF_MAX_SECS: u64 = 300;
 const FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS: u64 = 30;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
+const FIPS_NOSTR_RELAY_TRANSPORT_PRIORITY: u8 = 250;
 const FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
 const FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 2;
 const FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 4;
@@ -236,6 +236,7 @@ include!("fips_private_mesh/runtime_status.rs");
 include!("fips_private_mesh/runtime_control.rs");
 include!("fips_private_mesh/control_frame.rs");
 include!("fips_private_mesh/endpoint_config.rs");
+include!("fips_private_mesh/fips_pubsub_relay_adapter.rs");
 include!("fips_private_mesh/tunnel_config.rs");
 include!("fips_private_mesh/tunnel_runtime_unix_core.rs");
 include!("fips_private_mesh/tunnel_runtime_linux.rs");

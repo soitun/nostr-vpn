@@ -353,6 +353,12 @@ struct DaemonArgs {
     iface: String,
     #[arg(long, alias = "announce-interval-secs", default_value_t = 60)]
     mesh_refresh_interval_secs: u64,
+    /// Raw Ethernet interface used for local FIPS discovery and transport.
+    #[arg(long, requires = "fips_ethernet_discovery_scope")]
+    fips_ethernet_interface: Option<String>,
+    /// Discovery scope shared by FIPS peers on the local Ethernet segment.
+    #[arg(long, requires = "fips_ethernet_interface")]
+    fips_ethernet_discovery_scope: Option<String>,
     #[arg(long, hide = true, default_value_t = false)]
     paused: bool,
     #[arg(long, hide = true, default_value_t = false)]

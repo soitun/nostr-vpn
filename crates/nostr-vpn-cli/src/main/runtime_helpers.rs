@@ -480,6 +480,8 @@ async fn refresh_fips_tunnel_config(
     underlay_interface_mtu: Option<u32>,
     own_pubkey: Option<&str>,
 ) -> Result<()> {
+    let ethernet_underlay = runtime.ethernet_underlay().cloned();
+    let live_peer_endpoints = runtime.peer_endpoint_hints();
     let config = fips_tunnel_config_from_app_async(FipsTunnelConfigInput {
         app,
         config_path,
@@ -488,7 +490,8 @@ async fn refresh_fips_tunnel_config(
         underlay_interface_mtu,
         own_pubkey,
         recent_peers: None,
-        live_peer_endpoints: &runtime.peer_endpoint_hints(),
+        live_peer_endpoints: &live_peer_endpoints,
+        ethernet_underlay: ethernet_underlay.as_ref(),
     })
     .await?;
     runtime.apply_config(config).await
@@ -503,6 +506,8 @@ pub(crate) struct FipsTunnelConfigInput<'a> {
     pub(crate) own_pubkey: Option<&'a str>,
     pub(crate) recent_peers: Option<&'a nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
     pub(crate) live_peer_endpoints: &'a [(String, Vec<(String, u64)>)],
+    pub(crate) ethernet_underlay:
+        Option<&'a crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
 }
 
 fn fips_tunnel_config_from_app(
@@ -517,6 +522,7 @@ fn fips_tunnel_config_from_app(
         own_pubkey,
         recent_peers,
         live_peer_endpoints,
+        ethernet_underlay,
     } = input;
 
     let mut config = crate::fips_private_mesh::FipsPrivateTunnelConfig::from_app(
@@ -527,6 +533,7 @@ fn fips_tunnel_config_from_app(
         recent_peers,
         live_peer_endpoints,
     )?;
+    config.ethernet_underlay = ethernet_underlay.cloned();
     for (_, queued) in nostr_vpn_core::join_delivery::load_join_rosters(config_path) {
         match crate::fips_private_mesh::prioritize_join_roster_recipient(
             config.endpoint_peers.clone(),
@@ -631,6 +638,7 @@ async fn fips_tunnel_config_from_app_async(
     let own_pubkey = input.own_pubkey.map(ToOwned::to_owned);
     let recent_peers = input.recent_peers.cloned();
     let live_peer_endpoints = input.live_peer_endpoints.to_vec();
+    let ethernet_underlay = input.ethernet_underlay.cloned();
 
     tokio::task::spawn_blocking(move || {
         fips_tunnel_config_from_app(FipsTunnelConfigInput {
@@ -642,6 +650,7 @@ async fn fips_tunnel_config_from_app_async(
             own_pubkey: own_pubkey.as_deref(),
             recent_peers: recent_peers.as_ref(),
             live_peer_endpoints: &live_peer_endpoints,
+            ethernet_underlay: ethernet_underlay.as_ref(),
         })
     })
     .await
@@ -679,6 +688,7 @@ struct SyncFipsPrivateRuntimeContext<'a> {
     iface: &'a str,
     underlay_interface_mtu: Option<u32>,
     own_pubkey: Option<&'a str>,
+    ethernet_underlay: Option<&'a crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
     vpn_enabled: bool,
     expected_peers: usize,
 }
@@ -705,6 +715,10 @@ async fn sync_fips_private_runtime(
         .as_ref()
         .map(|runtime| runtime.peer_endpoint_hints())
         .unwrap_or_default();
+    let ethernet_underlay = runtime
+        .as_ref()
+        .and_then(crate::fips_private_mesh::FipsPrivateTunnelRuntime::ethernet_underlay)
+        .or(context.ethernet_underlay);
     let config = fips_tunnel_config_from_app_async(FipsTunnelConfigInput {
         app: context.app,
         config_path: context.config_path,
@@ -714,6 +728,7 @@ async fn sync_fips_private_runtime(
         own_pubkey: context.own_pubkey,
         recent_peers: None,
         live_peer_endpoints: &live_peer_endpoints,
+        ethernet_underlay,
     })
     .await?;
 

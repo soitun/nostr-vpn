@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Added
+
+- Added paired `nvpn daemon` options for scoped raw-Ethernet FIPS discovery
+  and adjacency while keeping ordinary join requests and roster approval on
+  the standard control path.
+
+### Changed
+
+- Made the application-owned FIPS Nostr relay transport independent of the
+  endpoint underlay and carried its signed events through both standard
+  authenticated FIPS pubsub peers and configured direct-relay pubsub.
+
 ## 4.0.96 - 2026-07-16
 
 ### Changed

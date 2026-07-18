@@ -109,6 +109,7 @@ struct FipsRestartContext<'a> {
     underlay_interface_mtu: Option<u32>,
     own_pubkey: Option<&'a str>,
     recent_peers: Option<&'a nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
+    ethernet_underlay: Option<&'a crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
     last_endpoint_peer_signature: &'a mut EndpointPeerSignature,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -413,6 +414,7 @@ async fn refresh_fips_tunnel_runtime_after_link_event(
             own_pubkey: context.own_pubkey,
             recent_peers: context.recent_peers,
             live_peer_endpoints: &live_peer_endpoints,
+            ethernet_underlay: context.ethernet_underlay,
         },
     )
     .await?;
@@ -468,6 +470,7 @@ async fn rebuild_fips_tunnel_runtime_after_control_failure(
         own_pubkey: context.own_pubkey,
         recent_peers: context.recent_peers,
         live_peer_endpoints: &live_peer_endpoints,
+        ethernet_underlay: context.ethernet_underlay,
     })
     .await?;
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
@@ -542,6 +545,7 @@ async fn refresh_fips_tunnel_runtime_peer_paths_in_place(
             own_pubkey: context.own_pubkey,
             recent_peers: context.recent_peers,
             live_peer_endpoints: &live_peer_endpoints,
+            ethernet_underlay: context.ethernet_underlay,
         },
     )
     .await?;

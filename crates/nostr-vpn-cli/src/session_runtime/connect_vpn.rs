@@ -45,6 +45,7 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                 own_pubkey: own_pubkey.as_deref(),
                 recent_peers: None,
                 live_peer_endpoints: &[],
+                ethernet_underlay: None,
             },
         )?;
         let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
@@ -137,6 +138,7 @@ pub(crate) async fn connect_vpn(args: ConnectArgs) -> Result<()> {
                                                 .default_interface_mtu,
                                             own_pubkey: own_pubkey.as_deref(),
                                             recent_peers: None,
+                                            ethernet_underlay: None,
                                             last_endpoint_peer_signature:
                                                 &mut last_fips_endpoint_peer_signature,
                                         },

@@ -13,6 +13,10 @@ impl FipsPrivateTunnelRuntime {
         ""
     }
 
+    pub(crate) fn ethernet_underlay(&self) -> Option<&FipsEthernetUnderlayConfig> {
+        None
+    }
+
     pub(crate) fn peer_statuses(&self) -> Vec<MeshPeerStatus> {
         Vec::new()
     }
