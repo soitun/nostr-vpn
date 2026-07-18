@@ -1,7 +1,3 @@
-fn decode_paid_route_wallet_json_output(output: Output) -> Result<serde_json::Value> {
-    decode_paid_route_command_json_output(output, "nvpn paid-exit wallet")
-}
-
 #[allow(clippy::needless_pass_by_value)]
 fn decode_paid_route_command_json_output(
     output: Output,
@@ -11,16 +7,6 @@ fn decode_paid_route_command_json_output(
     let stdout = String::from_utf8_lossy(&output.stdout);
     let document = extract_json_document(&stdout)?;
     serde_json::from_str(document).context("failed to decode paid route command JSON")
-}
-
-fn push_optional_wallet_mint(args: &mut Vec<String>, mint_url: Option<&str>) {
-    if let Some(mint_url) = mint_url
-        .map(str::trim)
-        .filter(|mint_url| !mint_url.is_empty())
-    {
-        args.push("--mint".to_string());
-        args.push(mint_url.to_string());
-    }
 }
 
 fn paid_route_wallet_configured_for_channel_open(
@@ -154,40 +140,6 @@ fn paid_route_payment_send_action_state(
         buyer_npub: json_string(value, "buyer"),
         seller_npub: json_string(value, "seller"),
         ..NativePaidRoutePaymentActionState::default()
-    }
-}
-
-fn paid_route_payment_settle_action_state(
-    value: &serde_json::Value,
-) -> Result<NativePaidRoutePaymentActionState> {
-    let mut state = paid_route_payment_action_state("close", value)?;
-    let publish_requested = json_bool(value, "publish_requested");
-    let persisted = json_bool(value, "persisted");
-    if publish_requested {
-        state.status_text = paid_route_payment_close_sent_status_text(value, persisted);
-        if persisted {
-            state.envelope_json.clear();
-        }
-    } else {
-        state.status_text = "Channel settled".to_string();
-    }
-    Ok(state)
-}
-
-fn paid_route_payment_close_sent_status_text(value: &serde_json::Value, persisted: bool) -> String {
-    let (success_count, failed_count) = paid_route_payment_publish_counts(value);
-    if persisted && success_count > 0 {
-        if failed_count > 0 {
-            format!(
-                "Settled channel and sent close to {success_count} relays, {failed_count} failed"
-            )
-        } else {
-            format!("Settled channel and sent close to {success_count} relays")
-        }
-    } else if failed_count > 0 {
-        format!("Close not sent; channel kept open ({failed_count} relays failed)")
-    } else {
-        "Close not sent; channel kept open".to_string()
     }
 }
 

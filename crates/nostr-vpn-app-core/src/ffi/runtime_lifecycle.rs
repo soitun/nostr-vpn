@@ -44,6 +44,8 @@ impl NativeAppRuntime {
         let capabilities = current_runtime_capabilities();
         let exchange_rate_service =
             ExchangeRateService::for_currency(config.wallet_fiat_currency);
+        #[cfg(feature = "paid-exit")]
+        let cashu_wallet_runtime = Some(paid_exit::PaidRouteWalletRuntime::open(&config_path)?);
         let mut runtime = Self {
             rev: 0,
             app_version,
@@ -76,6 +78,8 @@ impl NativeAppRuntime {
             paid_route_wallet_last_action: NativePaidRouteWalletActionState::default(),
             #[cfg(feature = "paid-exit")]
             paid_route_wallet_next_refresh_at: None,
+            #[cfg(feature = "paid-exit")]
+            cashu_wallet_runtime,
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
             exchange_rate_service,
             #[cfg(test)]
@@ -137,6 +141,8 @@ impl NativeAppRuntime {
             paid_route_wallet_last_action: NativePaidRouteWalletActionState::default(),
             #[cfg(feature = "paid-exit")]
             paid_route_wallet_next_refresh_at: None,
+            #[cfg(feature = "paid-exit")]
+            cashu_wallet_runtime: None,
             paid_route_payment_last_action: NativePaidRoutePaymentActionState::default(),
             exchange_rate_service,
             #[cfg(test)]

@@ -14,11 +14,21 @@ crate-type = ["cdylib", "staticlib", "rlib"]
 
 [features]
 default = ["paid-exit"]
-paid-exit = ["nostr-vpn-core/paid-exit"]
+paid-exit = [
+  "nostr-vpn-core/paid-exit",
+  "nostr-vpn-core/cashu-wallet",
+  "dep:cashu-service",
+  "dep:cashu",
+]
 
 [dependencies]
 anyhow.workspace = true
 base64.workspace = true
+cashu = { workspace = true, optional = true }
+cashu-service = { workspace = true, optional = true, features = [
+  "wallet",
+  "spilman-wallet-http",
+] }
 dirs.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 fips-core.workspace = true

@@ -57,4 +57,13 @@ mod tests {
             assert!(is_redacted_secret(marker));
         }
     }
+
+    #[cfg(feature = "cashu-wallet")]
+    #[test]
+    fn cashu_wallet_seed_decoder_requires_exact_64_bytes() {
+        let seed = [42_u8; 64];
+        assert_eq!(super::decode_cashu_wallet_seed(&hex::encode(seed)).unwrap(), seed);
+        assert!(super::decode_cashu_wallet_seed(&hex::encode([42_u8; 63])).is_err());
+        assert!(super::decode_cashu_wallet_seed("not hex").is_err());
+    }
 }

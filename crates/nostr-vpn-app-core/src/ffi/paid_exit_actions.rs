@@ -1,3 +1,14 @@
+const DEFAULT_PAID_EXIT_WALLET_MINT: &str = "https://mint.minibits.cash/Bitcoin";
+
+struct PaidRouteWalletTokenPreview {
+    mint_url: String,
+    amount_sat: u64,
+    memo: String,
+    state: &'static str,
+    status_text: String,
+    redeemable: bool,
+}
+
 impl NativeAppRuntime {
     pub(super) fn paid_exit_seller_state(
         &self,
@@ -65,16 +76,19 @@ impl NativeAppRuntime {
     pub(super) fn refresh_paid_route_wallet(&mut self, refresh: bool) -> Result<()> {
         let pending_top_up = (self.paid_route_wallet_last_action.kind == "topup")
             .then(|| self.paid_route_wallet_last_action.clone());
-        let mut args = vec!["show".to_string()];
-        if refresh {
-            args.push("--refresh".to_string());
-            if pending_top_up.is_some() {
-                args.push("--activity".to_string());
-            }
-        }
-        let value = self.run_paid_route_wallet_json(args)?;
+        let (overview, activity) = {
+            let wallet = self.cashu_wallet()?;
+            let overview = wallet.overview(refresh)?;
+            let activity = if refresh && pending_top_up.is_some() {
+                wallet.activity()?
+            } else {
+                Vec::new()
+            };
+            (overview, activity)
+        };
+        self.sync_paid_route_wallet_overview(&overview)?;
         if let Some(mut top_up) = pending_top_up {
-            let status = paid_route_top_up_activity_status(&value, &top_up.quote_id);
+            let status = cashu_top_up_activity_status(&activity, &top_up.quote_id);
             if status == Some(PaidRouteTopUpActivityStatus::Complete) {
                 top_up.kind = "topup_complete".to_string();
                 top_up.status_text = format!("Received {} sat", top_up.amount_sat);
@@ -84,8 +98,7 @@ impl NativeAppRuntime {
                 return Ok(());
             }
             if status == Some(PaidRouteTopUpActivityStatus::Expired)
-                || (top_up.expires_at_unix > 0
-                    && top_up.expires_at_unix <= unix_timestamp())
+                || (top_up.expires_at_unix > 0 && top_up.expires_at_unix <= unix_timestamp())
             {
                 top_up.kind = "topup_expired".to_string();
                 top_up.status_text = "Invoice expired".to_string();
@@ -111,21 +124,20 @@ impl NativeAppRuntime {
         mint_url: Option<&str>,
         amount_sat: u64,
     ) -> Result<()> {
-        let mut args = vec!["topup".to_string(), amount_sat.to_string()];
-        push_optional_wallet_mint(&mut args, mint_url);
-        let value = self.run_paid_route_wallet_json(args)?;
-        let quote = value
-            .get("quote")
-            .ok_or_else(|| anyhow!("wallet top-up output is missing quote"))?;
+        let mint_url = self.paid_route_wallet_mint(mint_url)?;
+        let quote = self
+            .cashu_wallet()?
+            .create_topup_quote(&mint_url, amount_sat)?;
+        self.ensure_paid_route_wallet_mint(&quote.mint_url, None)?;
         self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
             kind: "topup".to_string(),
             status_text: format!("Top-up invoice for {amount_sat} sat"),
-            mint_url: json_string(quote, "mint_url"),
-            amount_sat: json_u64(quote, "amount_sat"),
+            mint_url: quote.mint_url,
+            amount_sat: quote.amount,
             amount_text: paid_route_sat_text(amount_sat),
-            quote_id: json_string(quote, "quote_id"),
-            payment_request: json_string(quote, "payment_request"),
-            expires_at_unix: json_u64(quote, "expiry_unix"),
+            quote_id: quote.quote_id,
+            payment_request: quote.payment_request,
+            expires_at_unix: quote.expiry_unix,
             ..NativePaidRouteWalletActionState::default()
         };
         self.paid_route_wallet_next_refresh_at =
@@ -145,8 +157,7 @@ impl NativeAppRuntime {
         {
             return;
         }
-        self.paid_route_wallet_next_refresh_at =
-            Some(now + PAID_ROUTE_WALLET_TOP_UP_POLL_CADENCE);
+        self.paid_route_wallet_next_refresh_at = Some(now + PAID_ROUTE_WALLET_TOP_UP_POLL_CADENCE);
         let _ = self.refresh_paid_route_wallet(true);
     }
 
@@ -155,18 +166,14 @@ impl NativeAppRuntime {
         if token.is_empty() {
             return Err(anyhow!("Token is empty"));
         }
-        let value = self.run_paid_route_wallet_json_with_stdin(
-            vec!["receive".to_string(), "--token-stdin".to_string()],
-            token.as_bytes(),
-        )?;
-        let received = value
-            .get("received")
-            .ok_or_else(|| anyhow!("wallet receive output is missing received payment"))?;
-        let amount_sat = json_u64(received, "amount_sat");
+        let received = self.cashu_wallet()?.receive_token(token)?;
+        let amount_sat = received.amount_sat;
+        let overview = self.cashu_wallet()?.overview(false)?;
+        self.sync_paid_route_wallet_overview(&overview)?;
         self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
             kind: "receive".to_string(),
             status_text: format!("Received {amount_sat} sat"),
-            mint_url: json_string(received, "mint_url"),
+            mint_url: received.mint_url,
             amount_sat,
             amount_text: paid_route_sat_text(amount_sat),
             ..NativePaidRouteWalletActionState::default()
@@ -184,26 +191,17 @@ impl NativeAppRuntime {
             status_text: "Checking token".to_string(),
             ..NativePaidRouteWalletActionState::default()
         };
-        let value = self.run_paid_route_wallet_json_with_stdin(
-            vec!["inspect".to_string(), "--token-stdin".to_string()],
-            token.as_bytes(),
-        )?;
-        let preview = value
-            .get("token_preview")
-            .ok_or_else(|| anyhow!("wallet inspect output is missing token preview"))?;
-        let amount_sat = json_u64(preview, "amount_sat");
+        let preview = inspect_paid_route_wallet_token(token)?;
+        let amount_sat = preview.amount_sat;
         self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
             kind: "preview".to_string(),
-            status_text: json_string(preview, "status_text"),
-            mint_url: json_string(preview, "mint_url"),
+            status_text: preview.status_text,
+            mint_url: preview.mint_url,
             amount_sat,
             amount_text: paid_route_sat_text(amount_sat),
-            token_state: json_string(preview, "state"),
-            token_redeemable: preview
-                .get("redeemable")
-                .and_then(serde_json::Value::as_bool)
-                .unwrap_or(false),
-            token_memo: json_string(preview, "memo"),
+            token_state: preview.state.to_string(),
+            token_redeemable: preview.redeemable,
+            token_memo: preview.memo,
             ..NativePaidRouteWalletActionState::default()
         };
         Ok(())
@@ -214,24 +212,22 @@ impl NativeAppRuntime {
         mint_url: Option<&str>,
         amount_sat: u64,
     ) -> Result<()> {
-        let mut args = vec!["send".to_string(), amount_sat.to_string()];
-        push_optional_wallet_mint(&mut args, mint_url);
-        let value = self.run_paid_route_wallet_json(args)?;
-        let sent = value
-            .get("sent")
-            .ok_or_else(|| anyhow!("wallet send output is missing sent payment"))?;
-        let amount_sat = json_u64(sent, "amount_sat");
-        let fee_sat = json_u64(sent, "send_fee_sat");
+        let mint_url = self.paid_route_wallet_mint(mint_url)?;
+        let sent = self.cashu_wallet()?.send_token(&mint_url, amount_sat)?;
+        let amount_sat = sent.amount_sat;
+        let fee_sat = sent.send_fee_sat;
+        let overview = self.cashu_wallet()?.overview(false)?;
+        self.sync_paid_route_wallet_overview(&overview)?;
         self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
             kind: "send".to_string(),
             status_text: format!("Created token for {amount_sat} sat"),
-            mint_url: json_string(sent, "mint_url"),
+            mint_url: sent.mint_url,
             amount_sat,
             amount_text: paid_route_sat_text(amount_sat),
             fee_sat,
             fee_text: paid_route_fee_text(fee_sat),
-            operation_id: json_string(sent, "operation_id"),
-            token: json_string(sent, "token"),
+            operation_id: sent.operation_id,
+            token: sent.token,
             ..NativePaidRouteWalletActionState::default()
         };
         Ok(())
@@ -246,58 +242,113 @@ impl NativeAppRuntime {
         if invoice.is_empty() {
             return Err(anyhow!("Lightning invoice is empty"));
         }
-        let mut args = vec!["withdraw".to_string(), invoice.to_string()];
-        push_optional_wallet_mint(&mut args, mint_url);
-        let value = self.run_paid_route_wallet_json(args)?;
-        let withdrawal = value
-            .get("withdrawal")
-            .ok_or_else(|| anyhow!("wallet withdraw output is missing withdrawal"))?;
-        let amount_sat = json_u64(withdrawal, "amount_sat");
-        let fee_sat = json_u64(withdrawal, "fee_paid_sat");
+        let mint_url = self.paid_route_wallet_mint(mint_url)?;
+        let withdrawal = self.cashu_wallet()?.pay_lightning(&mint_url, invoice)?;
+        let amount_sat = withdrawal.amount_sat;
+        let fee_sat = withdrawal.fee_paid_sat;
+        let overview = self.cashu_wallet()?.overview(false)?;
+        self.sync_paid_route_wallet_overview(&overview)?;
         self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
             kind: "withdraw".to_string(),
             status_text: format!("Paid Lightning invoice for {amount_sat} sat"),
-            mint_url: json_string(withdrawal, "mint_url"),
+            mint_url: withdrawal.mint_url,
             amount_sat,
             amount_text: paid_route_sat_text(amount_sat),
             fee_sat,
             fee_text: paid_route_fee_text(fee_sat),
-            quote_id: json_string(withdrawal, "quote_id"),
-            preimage: json_string(withdrawal, "preimage"),
+            quote_id: withdrawal.quote_id,
+            preimage: withdrawal.preimage,
             ..NativePaidRouteWalletActionState::default()
         };
         Ok(())
     }
 
-    fn run_paid_route_wallet_json(
-        &self,
-        mut wallet_args: Vec<String>,
-    ) -> Result<serde_json::Value> {
-        let args = self.paid_route_wallet_args(&mut wallet_args)?;
-        let output = self.run_nvpn_vec(&args)?;
-        decode_paid_route_wallet_json_output(output)
+    fn cashu_wallet(&self) -> Result<&PaidRouteWalletRuntime> {
+        self.cashu_wallet_runtime
+            .as_ref()
+            .ok_or_else(|| anyhow!("Cashu wallet runtime is unavailable"))
     }
 
-    fn run_paid_route_wallet_json_with_stdin(
-        &self,
-        mut wallet_args: Vec<String>,
-        stdin: &[u8],
-    ) -> Result<serde_json::Value> {
-        let args = self.paid_route_wallet_args(&mut wallet_args)?;
-        let output = self.run_nvpn_vec_with_stdin(&args, stdin)?;
-        decode_paid_route_wallet_json_output(output)
+    fn wallet_data_dir(&self) -> PathBuf {
+        self.config_path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf)
     }
 
-    fn paid_route_wallet_args(&self, wallet_args: &mut Vec<String>) -> Result<Vec<String>> {
-        let mut args = vec![
-            "paid-exit".to_string(),
-            "wallet".to_string(),
-            "--config".to_string(),
-            self.config_path_str()?.to_string(),
-            "--json".to_string(),
-        ];
-        args.append(wallet_args);
-        Ok(args)
+    fn paid_route_wallet_mint(&self, explicit: Option<&str>) -> Result<String> {
+        if let Some(mint) = explicit.map(str::trim).filter(|mint| !mint.is_empty()) {
+            return normalize_paid_route_mint_url(mint);
+        }
+        let store = load_paid_route_store(&self.paid_route_store_path())?;
+        if !store.wallet.default_mint.trim().is_empty() {
+            return normalize_paid_route_mint_url(&store.wallet.default_mint);
+        }
+        Err(anyhow!(
+            "No mint configured; add a mint before using the Cashu wallet"
+        ))
+    }
+
+    fn ensure_paid_route_wallet_mint(
+        &mut self,
+        mint_url: &str,
+        balance_msat: Option<u64>,
+    ) -> Result<()> {
+        let mint_url = normalize_paid_route_mint_url(mint_url)?;
+        self.mutate_paid_route_store(|store| {
+            let label = store
+                .wallet
+                .mints
+                .iter()
+                .find(|mint| mint.url == mint_url)
+                .map_or_else(
+                    || {
+                        if mint_url == DEFAULT_PAID_EXIT_WALLET_MINT {
+                            "Minibits".to_string()
+                        } else {
+                            String::new()
+                        }
+                    },
+                    |mint| mint.label.clone(),
+                );
+            store.upsert_wallet_mint(&mint_url, label, balance_msat, unix_timestamp())
+        })
+    }
+
+    fn sync_paid_route_wallet_overview(
+        &mut self,
+        overview: &cashu_service::CashuWalletOverview,
+    ) -> Result<()> {
+        self.mutate_paid_route_store(|store| {
+            let mut changed = false;
+            for entry in &overview.entries {
+                if entry.unit != "sat" {
+                    continue;
+                }
+                let label = store
+                    .wallet
+                    .mints
+                    .iter()
+                    .find(|mint| mint.url == entry.mint_url)
+                    .map_or_else(
+                        || {
+                            if entry.mint_url == DEFAULT_PAID_EXIT_WALLET_MINT {
+                                "Minibits".to_string()
+                            } else {
+                                String::new()
+                            }
+                        },
+                        |mint| mint.label.clone(),
+                    );
+                changed |= store.upsert_wallet_mint(
+                    &entry.mint_url,
+                    label,
+                    Some(entry.balance.saturating_mul(1000)),
+                    unix_timestamp(),
+                );
+            }
+            changed
+        })
     }
 
     pub(super) fn buy_paid_route_offer(
@@ -482,56 +533,65 @@ impl NativeAppRuntime {
         max_amount_per_output: Option<u64>,
         keyset_id: Option<&str>,
     ) -> Result<()> {
-        let mut args = vec![
-            "paid-exit".to_string(),
-            "create-payment".to_string(),
-            "--config".to_string(),
-            self.config_path_str()?.to_string(),
-            "--json".to_string(),
-            session_id.trim().to_string(),
-            "--kind".to_string(),
-            "channel-open".to_string(),
-            "--open-from-wallet".to_string(),
-        ];
-        push_optional_wallet_mint(&mut args, mint_url);
-        if let Some(paid_msat) = paid_msat {
-            args.push("--paid-msat".to_string());
-            args.push(paid_msat.to_string());
+        let session_id = session_id.trim();
+        if session_id.is_empty() {
+            return Err(anyhow!("paid route session id is empty"));
         }
-        if let Some(max_amount_per_output) = max_amount_per_output {
-            args.push("--max-amount-per-output".to_string());
-            args.push(max_amount_per_output.to_string());
+        let buyer_npub = self
+            .config
+            .nostr_keys()?
+            .public_key()
+            .to_bech32()
+            .context("failed to encode buyer npub")?;
+        let store_path = self.paid_route_store_path();
+        let mut store = load_paid_route_store(&store_path)?;
+        let request = paid_route_wallet_channel_open_request(
+            &store,
+            session_id,
+            mint_url,
+            paid_msat,
+            max_amount_per_output,
+            keyset_id,
+        )?;
+        let opened = self.cashu_wallet()?.open_spilman_channel(request)?;
+        let attach =
+            store.attach_buyer_spilman_channel(AttachPaidRouteBuyerSpilmanChannelRequest {
+                session_id: session_id.to_string(),
+                channel_id: opened.channel.channel_id.clone(),
+                cashu_unit: opened.channel.unit.clone(),
+                capacity_sat: opened.channel.capacity_sat,
+                paid_msat: Some(opened.channel.opening_paid_msat),
+                payment: opened.channel.payment.clone(),
+                now_unix: unix_timestamp(),
+            })?;
+        let payment =
+            store.build_buyer_payment_envelope(BuildPaidRouteBuyerPaymentEnvelopeRequest {
+                session_id: session_id.to_string(),
+                buyer_npub,
+                kind: BuildPaidRouteBuyerPaymentEnvelopeKind::ChannelOpen,
+                payment: opened.channel.payment.clone(),
+                delivered_units: None,
+                paid_msat: Some(opened.channel.opening_paid_msat),
+                now_unix: unix_timestamp(),
+            })?;
+        if attach.changed || payment.changed {
+            write_paid_route_store(&store_path, &store)?;
         }
-        if let Some(keyset_id) = keyset_id
-            .map(str::trim)
-            .filter(|keyset_id| !keyset_id.is_empty())
-        {
-            args.push("--keyset-id".to_string());
-            args.push(keyset_id.to_string());
-        }
-
-        let output = self.run_nvpn_vec(&args)?;
-        let value = decode_paid_route_command_json_output(output, "nvpn paid-exit create-payment")?;
         self.paid_route_payment_last_action =
-            paid_route_payment_action_state("open_channel", &value)?;
-        if let Some(wallet_send) = value
-            .get("wallet_open")
-            .and_then(|wallet_open| wallet_open.get("wallet_send"))
-        {
-            let amount_sat = json_u64(wallet_send, "amount_sat");
-            let fee_sat = json_u64(wallet_send, "send_fee_sat");
-            self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
-                kind: "open_channel".to_string(),
-                status_text: format!("Opened payment channel with {amount_sat} sat"),
-                mint_url: json_string(wallet_send, "mint_url"),
-                amount_sat,
-                amount_text: paid_route_sat_text(amount_sat),
-                fee_sat,
-                fee_text: paid_route_fee_text(fee_sat),
-                operation_id: json_string(wallet_send, "operation_id"),
-                ..NativePaidRouteWalletActionState::default()
-            };
-        }
+            paid_route_payment_action_state("open_channel", &json!({ "payment": payment }))?;
+        let amount_sat = opened.wallet_send.amount_sat;
+        let fee_sat = opened.wallet_send.send_fee_sat;
+        self.paid_route_wallet_last_action = NativePaidRouteWalletActionState {
+            kind: "open_channel".to_string(),
+            status_text: format!("Opened payment channel with {amount_sat} sat"),
+            mint_url: opened.wallet_send.mint_url,
+            amount_sat,
+            amount_text: paid_route_sat_text(amount_sat),
+            fee_sat,
+            fee_text: paid_route_fee_text(fee_sat),
+            operation_id: opened.wallet_send.operation_id,
+            ..NativePaidRouteWalletActionState::default()
+        };
         Ok(())
     }
 
@@ -542,29 +602,42 @@ impl NativeAppRuntime {
         delivered_units: Option<u64>,
         paid_msat: Option<u64>,
     ) -> Result<()> {
-        let mut args = vec![
-            "paid-exit".to_string(),
-            "create-payment".to_string(),
-            "--config".to_string(),
-            self.config_path_str()?.to_string(),
-            "--json".to_string(),
-            session_id.trim().to_string(),
-            "--kind".to_string(),
-            kind.trim().to_string(),
-            "--sign-from-wallet".to_string(),
-        ];
-        if let Some(delivered_units) = delivered_units {
-            args.push("--delivered-units".to_string());
-            args.push(delivered_units.to_string());
+        let kind = match kind.trim() {
+            "channel-open" | "channel_open" => BuildPaidRouteBuyerPaymentEnvelopeKind::ChannelOpen,
+            "balance-update" | "balance_update" => {
+                BuildPaidRouteBuyerPaymentEnvelopeKind::BalanceUpdate
+            }
+            "cooperative-close" | "cooperative_close" => {
+                BuildPaidRouteBuyerPaymentEnvelopeKind::CooperativeClose
+            }
+            other => return Err(anyhow!("unsupported paid route payment kind {other:?}")),
+        };
+        let buyer_npub = self
+            .config
+            .nostr_keys()?
+            .public_key()
+            .to_bech32()
+            .context("failed to encode buyer npub")?;
+        let signer = cashu_service::FileSpilmanPaymentSigner::load(&self.wallet_data_dir())
+            .map_err(|error| anyhow!(error))?;
+        let store_path = self.paid_route_store_path();
+        let mut store = load_paid_route_store(&store_path)?;
+        let result = store.build_buyer_signed_payment_envelope(
+            &signer,
+            BuildPaidRouteBuyerSignedPaymentEnvelopeRequest {
+                session_id: session_id.trim().to_string(),
+                buyer_npub,
+                kind,
+                delivered_units,
+                paid_msat,
+                now_unix: unix_timestamp(),
+            },
+        )?;
+        if result.changed {
+            write_paid_route_store(&store_path, &store)?;
         }
-        if let Some(paid_msat) = paid_msat {
-            args.push("--paid-msat".to_string());
-            args.push(paid_msat.to_string());
-        }
-
-        let output = self.run_nvpn_vec(&args)?;
-        let value = decode_paid_route_command_json_output(output, "nvpn paid-exit create-payment")?;
-        self.paid_route_payment_last_action = paid_route_payment_action_state("sign", &value)?;
+        self.paid_route_payment_last_action =
+            paid_route_payment_action_state("sign", &json!({ "payment": result }))?;
         Ok(())
     }
 
@@ -573,28 +646,41 @@ impl NativeAppRuntime {
         session_id: &str,
         publish: bool,
     ) -> Result<()> {
-        let mut args = vec![
-            "paid-exit".to_string(),
-            "settle".to_string(),
-            "--config".to_string(),
-            self.config_path_str()?.to_string(),
-            "--json".to_string(),
-            session_id.trim().to_string(),
-        ];
-        if !publish {
-            args.push("--no-publish".to_string());
+        let buyer_npub = self
+            .config
+            .nostr_keys()?
+            .public_key()
+            .to_bech32()
+            .context("failed to encode buyer npub")?;
+        let signer = cashu_service::FileSpilmanPaymentSigner::load(&self.wallet_data_dir())
+            .map_err(|error| anyhow!(error))?;
+        let store_path = self.paid_route_store_path();
+        let mut store = load_paid_route_store(&store_path)?;
+        let result = store.build_buyer_signed_payment_envelope(
+            &signer,
+            BuildPaidRouteBuyerSignedPaymentEnvelopeRequest {
+                session_id: session_id.trim().to_string(),
+                buyer_npub,
+                kind: BuildPaidRouteBuyerPaymentEnvelopeKind::CooperativeClose,
+                delivered_units: None,
+                paid_msat: None,
+                now_unix: unix_timestamp(),
+            },
+        )?;
+        let envelope_json = serde_json::to_string(&result.envelope)
+            .context("failed to encode paid route cooperative close envelope")?;
+        if publish {
+            self.send_paid_route_payment_envelope(&envelope_json)?;
+            if result.changed {
+                write_paid_route_store(&store_path, &store)?;
+            }
         }
-
-        let output = self.run_nvpn_vec(&args)?;
-        let value = decode_paid_route_command_json_output(output, "nvpn paid-exit settle")?;
-        self.paid_route_payment_last_action = paid_route_payment_settle_action_state(&value)?;
+        self.paid_route_payment_last_action =
+            paid_route_payment_action_state("settle", &json!({ "payment": result }))?;
         Ok(())
     }
 
-    pub(super) fn apply_paid_route_payment_envelope(
-        &mut self,
-        envelope_json: &str,
-    ) -> Result<()> {
+    pub(super) fn apply_paid_route_payment_envelope(&mut self, envelope_json: &str) -> Result<()> {
         let args = vec![
             "paid-exit".to_string(),
             "apply-payment".to_string(),
@@ -609,10 +695,7 @@ impl NativeAppRuntime {
         Ok(())
     }
 
-    pub(super) fn send_paid_route_payment_envelope(
-        &mut self,
-        envelope_json: &str,
-    ) -> Result<()> {
+    pub(super) fn send_paid_route_payment_envelope(&mut self, envelope_json: &str) -> Result<()> {
         let value = self.send_paid_route_payment_envelope_value(envelope_json)?;
         self.paid_route_payment_last_action = paid_route_payment_send_action_state(&value);
         Ok(())
@@ -841,6 +924,7 @@ enum PaidRouteTopUpActivityStatus {
     Pending,
 }
 
+#[cfg(test)]
 fn paid_route_top_up_activity_status(
     value: &serde_json::Value,
     quote_id: &str,
@@ -850,8 +934,7 @@ fn paid_route_top_up_activity_status(
         .as_array()?
         .iter()
         .find(|entry| {
-            json_string(entry, "kind") == "top_up"
-                && json_string(entry, "quote_id") == quote_id
+            json_string(entry, "kind") == "top_up" && json_string(entry, "quote_id") == quote_id
         })
         .and_then(|entry| match json_string(entry, "status").as_str() {
             "complete" => Some(PaidRouteTopUpActivityStatus::Complete),
@@ -859,4 +942,115 @@ fn paid_route_top_up_activity_status(
             "pending" => Some(PaidRouteTopUpActivityStatus::Pending),
             _ => None,
         })
+}
+
+fn cashu_top_up_activity_status(
+    activity: &[cashu_service::CashuWalletActivityEntry],
+    quote_id: &str,
+) -> Option<PaidRouteTopUpActivityStatus> {
+    activity
+        .iter()
+        .find(|entry| {
+            entry.kind == cashu_service::CashuWalletActivityKind::TopUp
+                && entry.quote_id.as_deref() == Some(quote_id)
+        })
+        .map(|entry| match entry.status {
+            cashu_service::CashuWalletActivityStatus::Complete => {
+                PaidRouteTopUpActivityStatus::Complete
+            }
+            cashu_service::CashuWalletActivityStatus::Expired
+            | cashu_service::CashuWalletActivityStatus::Reclaimed => {
+                PaidRouteTopUpActivityStatus::Expired
+            }
+            cashu_service::CashuWalletActivityStatus::Pending => {
+                PaidRouteTopUpActivityStatus::Pending
+            }
+        })
+}
+
+fn paid_route_wallet_channel_open_request(
+    store: &PaidRouteStore,
+    session_id: &str,
+    mint_url: Option<&str>,
+    paid_msat: Option<u64>,
+    max_amount_per_output: Option<u64>,
+    keyset_id: Option<&str>,
+) -> Result<cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletRequest> {
+    let session_record = store
+        .sessions
+        .get(session_id)
+        .ok_or_else(|| anyhow!("paid exit buyer session {session_id} does not exist"))?;
+    let lease_record = store
+        .leases
+        .get(&session_record.session.lease_id)
+        .ok_or_else(|| anyhow!("paid exit lease does not exist"))?;
+    let channel_record = store
+        .channels
+        .get(&session_record.session.payment.channel_id)
+        .ok_or_else(|| anyhow!("paid exit channel does not exist"))?;
+    let quote_record = store
+        .quotes
+        .get(&lease_record.lease.quote_id)
+        .ok_or_else(|| anyhow!("paid exit quote does not exist"))?;
+    let mint_url = mint_url
+        .map(str::trim)
+        .filter(|mint| !mint.is_empty())
+        .map_or_else(|| channel_record.mint_url.clone(), ToOwned::to_owned);
+    if mint_url.trim().is_empty() {
+        return Err(anyhow!("paid exit session has no Cashu mint"));
+    }
+    let unit = if session_record.session.payment.cashu_unit.trim().is_empty() {
+        "sat".to_string()
+    } else {
+        session_record.session.payment.cashu_unit.clone()
+    };
+
+    Ok(
+        cashu_service::StreamingRouteOpenCashuSpilmanChannelFromWalletRequest {
+            mint_url,
+            receiver_pubkey_hex: quote_record.quote.receiver_pubkey_hex.clone(),
+            capacity_sat: session_record.session.payment.capacity_sat,
+            expiry_unix: channel_record.expires_at_unix,
+            max_amount_per_output: max_amount_per_output.unwrap_or_default(),
+            unit,
+            opening_paid_msat: paid_msat.unwrap_or(session_record.session.payment.paid_msat),
+            keyset_id: keyset_id
+                .map(str::trim)
+                .filter(|keyset_id| !keyset_id.is_empty())
+                .map(ToOwned::to_owned),
+            keyset_info_json: None,
+        },
+    )
+}
+
+fn inspect_paid_route_wallet_token(token_text: &str) -> Result<PaidRouteWalletTokenPreview> {
+    use cashu::nuts::{CurrencyUnit, Token};
+    use std::str::FromStr as _;
+
+    let token = Token::from_str(token_text).context("invalid Cashu token")?;
+    let mint_url = token
+        .mint_url()
+        .context("Cashu token must contain proofs from one mint")?
+        .to_string();
+    let unit = token.unit().unwrap_or_default();
+    if unit != CurrencyUnit::Sat {
+        return Err(anyhow!("Cashu token unit must be sat, got {unit}"));
+    }
+    let amount_sat = token
+        .value()
+        .context("invalid Cashu token amount")?
+        .to_u64();
+    let memo = token.memo().clone().unwrap_or_default();
+    if token.token_secrets().is_empty() {
+        return Err(anyhow!("Cashu token contains no proofs"));
+    }
+
+    Ok(PaidRouteWalletTokenPreview {
+        mint_url,
+        amount_sat,
+        memo,
+        state: "unchecked",
+        status_text: "Mint will verify when redeemed".to_string(),
+        redeemable: true,
+    })
 }

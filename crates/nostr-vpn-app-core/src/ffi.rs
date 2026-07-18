@@ -202,6 +202,8 @@ struct NativeAppRuntime {
     paid_route_wallet_last_action: NativePaidRouteWalletActionState,
     #[cfg(feature = "paid-exit")]
     paid_route_wallet_next_refresh_at: Option<Instant>,
+    #[cfg(feature = "paid-exit")]
+    cashu_wallet_runtime: Option<paid_exit::PaidRouteWalletRuntime>,
     paid_route_payment_last_action: NativePaidRoutePaymentActionState,
     exchange_rate_service: ExchangeRateService,
     #[cfg(test)]

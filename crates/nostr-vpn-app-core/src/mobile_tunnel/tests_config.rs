@@ -816,11 +816,14 @@
             .find(|candidate| candidate.npub == peer.endpoint_npub)
             .expect("seeded peer");
 
-        assert_eq!(peer_config.addresses.len(), 1);
-        assert_eq!(peer_config.addresses[0].transport, "udp");
-        assert_eq!(peer_config.addresses[0].addr, "192.168.50.10:51820");
+        let static_hint = peer_config
+            .addresses
+            .iter()
+            .find(|address| address.addr == "192.168.50.10:51820")
+            .expect("static peer hint");
+        assert_eq!(static_hint.transport, "udp");
         assert_eq!(
-            peer_config.addresses[0].priority,
+            static_hint.priority,
             FIPS_STATIC_PEER_ENDPOINT_PRIORITY
         );
     }

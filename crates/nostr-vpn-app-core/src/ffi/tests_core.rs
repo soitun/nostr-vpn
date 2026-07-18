@@ -95,10 +95,35 @@
         assert!(!raw.contains(&pending.request.request_secret));
         assert!(!raw.contains(&pending.request_private_key));
 
+        drop(runtime);
         let reloaded = NativeAppRuntime::new(dir.to_str().expect("utf8 temp dir"), String::new())
             .expect("runtime reloads");
         assert_eq!(reloaded.state().join_request_qr_code_or_link, first_join_link);
 
+        drop(reloaded);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(feature = "paid-exit")]
+    #[test]
+    fn only_one_host_runtime_can_own_the_cashu_wallet() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-wallet-owner-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let data_dir = dir.to_str().expect("utf8 temp dir");
+
+        let first = NativeAppRuntime::new(data_dir, String::new()).expect("first runtime starts");
+        let error = NativeAppRuntime::new(data_dir, String::new())
+            .expect_err("second runtime must not open the same wallet");
+
+        assert!(error.to_string().contains("already in use"));
+        drop(first);
+        let reopened =
+            NativeAppRuntime::new(data_dir, String::new()).expect("wallet reopens after drop");
+        drop(reopened);
         let _ = fs::remove_dir_all(&dir);
     }
 

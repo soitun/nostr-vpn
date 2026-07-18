@@ -11,6 +11,7 @@ readme = "README.md"
 [features]
 default = ["paid-exit"]
 paid-exit = ["dep:cashu-service"]
+cashu-wallet = ["dep:cashu-service", "cashu-service/wallet"]
 updater = [
   "dep:hashtree-updater",
   "hashtree-updater/secure-nostr-blossom",

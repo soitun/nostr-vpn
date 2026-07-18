@@ -811,9 +811,9 @@ dependencies = [
 
 [[package]]
 name = "cashu"
-version = "0.16.0-rc.1"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57a4a4ac5bcce2cfb6607d9c6e542cb7f56b3bdce2f270bf5ceba7ab86379503"
+checksum = "92e035322b7e279fc37a110e5fffdcf987fa5414caea1d0576cedb3b3611cbbb"
 dependencies = [
  "bitcoin",
  "cbor-diag",
@@ -837,9 +837,9 @@ dependencies = [
 
 [[package]]
 name = "cashu-service"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe41f2a040b24570c91eaec667c244d0a490a3f5a01ce48721cd1755b91dbc9c"
+checksum = "30aa30e4536f6b9086484fa88a3f348410c12e942cdb0943c6256e6b60aa266f"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -847,6 +847,7 @@ dependencies = [
  "cdk",
  "cdk-spilman",
  "cdk-sqlite",
+ "fs2",
  "hex",
  "rand 0.8.6",
  "reqwest",
@@ -911,9 +912,9 @@ dependencies = [
 
 [[package]]
 name = "cdk"
-version = "0.16.0-rc.1"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d66bb4168121e67a5429811e091e323929f14d34fa26539b79c28c4a9a9dc517"
+checksum = "89e19bcd47376859753f86adf4c2f661419ce619c777f92ac0a4e7c0594d4901"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -948,9 +949,9 @@ dependencies = [
 
 [[package]]
 name = "cdk-common"
-version = "0.16.0-rc.1"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87f1aecce5d6c9939b251cdd5574a397abd8326faeaf373d99b1c5ffa45fa61f"
+checksum = "7cb4f7239c3ed8ce35d8928324cf73147c802eb4f7cc42ef71827954cda96ac3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -961,6 +962,7 @@ dependencies = [
  "ciborium",
  "futures",
  "getrandom 0.2.17",
+ "jsonwebtoken",
  "lightning",
  "lightning-invoice",
  "parking_lot",
@@ -981,9 +983,9 @@ dependencies = [
 
 [[package]]
 name = "cdk-http-client"
-version = "0.16.0-rc.1"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9636cb64f4bd4e7c7553e96fd44afa60368d75ff2f331c5cf1956cb5ae0b7ce7"
+checksum = "e6089ad04be877f3642729ab01a97b62e90a1ebafaac19583444fd72ffb2d25f"
 dependencies = [
  "futures",
  "futures-channel",
@@ -1003,9 +1005,9 @@ dependencies = [
 
 [[package]]
 name = "cdk-signatory"
-version = "0.16.0-rc.1"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7de0c36b477b029221bf1dd54d3bd10d8790347b8ce69b3aae2db0d0303581d"
+checksum = "0bed36ee68cff3260fca23fa485b2c9b31f2a15f6c045f62588c5db006c8964a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1025,9 +1027,9 @@ dependencies = [
 
 [[package]]
 name = "cdk-spilman"
-version = "0.16.0"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42b49bab9a4554ba4b3e778eac26b98071541ff2b242965115b929cc0f17a603"
+checksum = "d7b51f09ed3c97432054d53d4aacad9cef89f503faa83eb62101a2b9dd4ce2b9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1045,9 +1047,9 @@ dependencies = [
 
 [[package]]
 name = "cdk-sql-common"
-version = "0.16.0-rc.1"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f2cbbf0a4494dc9f7a6161116b4321952e74a54b6f77858010a12a1bc3c1fc"
+checksum = "9ed515d34378fa51a5531882ea7c774f1f7af69bd4f50958c120c96f9159ac2f"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -1064,9 +1066,9 @@ dependencies = [
 
 [[package]]
 name = "cdk-sqlite"
-version = "0.16.0-rc.1"
+version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e15229cc883bbc44fba8ac932db210fa59e8f52c4750b39c887d01aa792b385c"
+checksum = "f96798d170b82f860daa83b2fc8f997151e6b77eb9f37c2ff4a92a7b5d650033"
 dependencies = [
  "async-trait",
  "bitcoin",
@@ -2028,6 +2030,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88a41f105fe1d5b6b34b2055e3dc59bb79b46b48b2040b9e6c7b4b5de097aa41"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "fs2"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9564fc758e15025b46aa6643b1b77d047d1a56a1aea6e01002ac0c7026876213"
+dependencies = [
+ "libc",
+ "winapi",
 ]
 
 [[package]]
@@ -3705,6 +3717,8 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "cashu",
+ "cashu-service",
  "dirs 6.0.0",
  "fips-core",
  "fips-endpoint",

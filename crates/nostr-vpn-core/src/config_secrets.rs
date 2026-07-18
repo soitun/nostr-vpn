@@ -84,6 +84,8 @@ enum ConfigSecret {
     WireGuardExitPrivate,
     WireGuardExitPeerPreshared,
     PendingJoinRequest,
+    #[cfg(feature = "cashu-wallet")]
+    CashuWalletSeed,
 }
 
 impl ConfigSecret {
@@ -93,6 +95,8 @@ impl ConfigSecret {
             Self::WireGuardExitPrivate => "wireguard-exit-private-key",
             Self::WireGuardExitPeerPreshared => "wireguard-exit-peer-preshared-key",
             Self::PendingJoinRequest => "pending-join-request",
+            #[cfg(feature = "cashu-wallet")]
+            Self::CashuWalletSeed => "cashu-wallet-seed",
         }
     }
 
@@ -102,8 +106,74 @@ impl ConfigSecret {
             Self::WireGuardExitPrivate => "WireGuard exit private key",
             Self::WireGuardExitPeerPreshared => "WireGuard exit peer preshared key",
             Self::PendingJoinRequest => "pending Nostr join request",
+            #[cfg(feature = "cashu-wallet")]
+            Self::CashuWalletSeed => "Cashu wallet seed",
         }
     }
+}
+
+/// CDK seed adapter backed by Nostr VPN's existing platform secret facility.
+///
+/// On iOS this uses the same generic-password Keychain service as the app's
+/// existing secrets. On Android the backing key is created with user
+/// authentication disabled, so wallet startup adds no biometric or passcode
+/// prompt. The wallet database itself remains ordinary CDK SQLite.
+#[cfg(feature = "cashu-wallet")]
+#[derive(Debug, Clone)]
+pub struct PlatformCashuWalletSeedStore {
+    config_path: std::path::PathBuf,
+}
+
+#[cfg(feature = "cashu-wallet")]
+impl PlatformCashuWalletSeedStore {
+    #[must_use]
+    pub fn new(config_path: impl Into<std::path::PathBuf>) -> Self {
+        Self {
+            config_path: config_path.into(),
+        }
+    }
+}
+
+#[cfg(feature = "cashu-wallet")]
+impl cashu_service::CashuWalletSeedStore for PlatformCashuWalletSeedStore {
+    fn load_seed(&self) -> Result<Option<[u8; 64]>> {
+        platform::read_secret(&self.config_path, ConfigSecret::CashuWalletSeed)?
+            .map(|encoded| decode_cashu_wallet_seed(&encoded))
+            .transpose()
+    }
+
+    fn store_seed(&self, seed: &[u8; 64]) -> Result<()> {
+        if let Some(existing) = self.load_seed()? {
+            if existing != *seed {
+                return Err(anyhow!(
+                    "refusing to replace the existing Cashu wallet seed in {}",
+                    platform::store_name()
+                ));
+            }
+            return Ok(());
+        }
+
+        platform::write_secret(
+            &self.config_path,
+            ConfigSecret::CashuWalletSeed,
+            &hex::encode(seed),
+        )?;
+        if self.load_seed()? != Some(*seed) {
+            return Err(anyhow!(
+                "{} did not preserve the Cashu wallet seed exactly",
+                platform::store_name()
+            ));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "cashu-wallet")]
+fn decode_cashu_wallet_seed(encoded: &str) -> Result<[u8; 64]> {
+    let bytes = hex::decode(encoded.trim()).context("Cashu wallet seed is not valid hex")?;
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("Cashu wallet seed must be exactly 64 bytes"))
 }
 
 const REDACTED_SECRET_MARKERS: &[&str] = &[

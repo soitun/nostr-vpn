@@ -2,6 +2,8 @@ pub mod config;
 mod config_defaults;
 mod config_magic_dns;
 mod config_secrets;
+#[cfg(feature = "cashu-wallet")]
+pub use config_secrets::PlatformCashuWalletSeedStore;
 pub mod control;
 pub mod control_pubsub;
 pub mod data_plane;
