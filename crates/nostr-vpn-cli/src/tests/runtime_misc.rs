@@ -59,6 +59,26 @@ fn fips_private_runtime_active_tolerates_no_active_network() {
     assert!(fips_private_runtime_active(&app, false, 0));
 }
 
+#[test]
+fn pending_nostr_join_request_activates_fips_without_network_peers() {
+    let mut app = AppConfig::generated();
+    app.fips_host_tunnel_enabled = false;
+    for network in &mut app.networks {
+        network.listen_for_join_requests = false;
+    }
+
+    assert!(app.active_network_opt().is_none());
+    assert_eq!(expected_peer_count(&app), 0);
+    assert!(app.pending_nostr_join_request.is_none());
+    assert!(!fips_private_runtime_active(&app, false, 0));
+
+    app.ensure_pending_nostr_join_request(1_778_998_000)
+        .expect("pending device-approval request");
+
+    assert!(app.pending_nostr_join_request.is_some());
+    assert!(fips_private_runtime_active(&app, false, 0));
+}
+
 #[cfg(feature = "paid-exit")]
 #[test]
 fn paid_exit_seller_keeps_private_fips_runtime_active_without_roster() {

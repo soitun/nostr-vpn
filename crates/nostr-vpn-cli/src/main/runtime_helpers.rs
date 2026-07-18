@@ -203,6 +203,7 @@ fn fips_private_runtime_active(app: &AppConfig, vpn_enabled: bool, expected_peer
             .active_network_opt()
             .and_then(|network| network.outbound_join_request.as_ref())
             .is_some()
+        || app.pending_nostr_join_request.is_some()
         || app.has_fips_static_peer_endpoints()
 }
 
