@@ -6,7 +6,7 @@ impl FipsPrivateMeshRuntime {
         };
         let participants = self.ping_due_participants(now)?;
         let mut sent = 0usize;
-        for participant in participants.into_iter().take(FIPS_PEER_PING_MAX_PER_TICK) {
+        for participant in participants {
             self.note_ping_attempt(&participant, now)?;
             if self.send_probe_frame(&participant, &frame).await.is_ok() {
                 sent += 1;
