@@ -531,7 +531,11 @@ fn configure_fips_webrtc_transport(
     };
     webrtc.advertise_on_nostr = Some(ambient_discovery_enabled);
     webrtc.auto_connect = Some(ambient_discovery_enabled);
-    webrtc.accept_connections = Some(ambient_discovery_enabled);
+    // Offers arrive through an existing authenticated FIPS session. Keep
+    // inbound WebRTC available even when ambient relay discovery is disabled;
+    // the node's configured/open discovery policy still decides which
+    // authenticated identities may submit link negotiation.
+    webrtc.accept_connections = Some(true);
     webrtc.mtu = Some(mtu);
     if !stun_servers.is_empty() {
         webrtc.stun_servers = Some(stun_servers.to_vec());
@@ -665,7 +669,16 @@ mod endpoint_config_tests {
         );
 
         assert!(!config.node.discovery.nostr.enabled);
-        assert!(!config.transports.webrtc.is_empty());
+        let TransportInstances::Single(webrtc) = &config.transports.webrtc else {
+            panic!("expected one WebRTC transport");
+        };
+        assert_eq!(webrtc.advertise_on_nostr, Some(false));
+        assert_eq!(webrtc.auto_connect, Some(false));
+        assert_eq!(
+            webrtc.accept_connections,
+            Some(true),
+            "authenticated in-FIPS offers must not depend on relay discovery"
+        );
         assert!(!config.transports.websocket.is_empty());
     }
 
