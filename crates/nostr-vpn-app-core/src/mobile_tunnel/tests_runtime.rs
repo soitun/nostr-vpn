@@ -557,7 +557,7 @@
     }
 
     #[test]
-    fn websocket_seed_delivers_join_roster_to_guest_without_preconfigured_admin() {
+    fn websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin() {
         std::thread::Builder::new()
             .name("mobile-wss-join-roster".to_string())
             .stack_size(8 * 1024 * 1024)
@@ -566,7 +566,7 @@
                     .enable_all()
                     .build()
                     .expect("WSS join test runtime")
-                    .block_on(websocket_seed_join_roster_roundtrip());
+                    .block_on(websocket_seed_router_join_roster_roundtrip());
             })
             .expect("spawn WSS join test")
             .join()
@@ -574,7 +574,7 @@
     }
 
     #[allow(clippy::too_many_lines)]
-    async fn websocket_seed_join_roster_roundtrip() {
+    async fn websocket_seed_router_join_roster_roundtrip() {
         let requested_at = unix_timestamp().saturating_sub(1);
         let approved_at = unix_timestamp();
 
@@ -605,7 +605,6 @@
 
         let mut guest_app = AppConfig::generated_without_networks();
         guest_app.node_name = "Joining device".to_string();
-        guest_app.fips_websocket_seed_urls = vec![seed_url.clone()];
         guest_app.fips_nostr_discovery_enabled = false;
         guest_app.fips_webrtc_enabled = false;
         guest_app
@@ -639,7 +638,7 @@
         )
         .expect("prepare ordinary signed join roster");
         admin_app = prepared.updated_config;
-        admin_app.fips_websocket_seed_urls = vec![seed_url];
+        admin_app.fips_websocket_seed_urls = vec![seed_url.clone()];
         admin_app.fips_nostr_discovery_enabled = false;
         admin_app.fips_webrtc_enabled = false;
 
@@ -649,14 +648,53 @@
         admin_mobile.listen_port = available_udp_port();
         assert!(guest_mobile.peers.is_empty(), "guest must not know the admin");
 
+        let guest_udp_addr = format!("127.0.0.1:{}", guest_mobile.listen_port);
         let guest = Box::pin(MobileTunnel::start_async(guest_mobile, guest_app))
             .await
-            .expect("start guest through WebSocket seed");
+            .expect("start guest on its physical edge");
+
+        let router_keys = Keys::generate();
+        let router_port = available_udp_port();
+        let mut router_config = FipsConfig::new();
+        router_config.node.routing.mode = fips_endpoint::RoutingMode::ReplyLearned;
+        router_config.node.discovery.nostr.enabled = false;
+        router_config.node.discovery.nostr.advertise = false;
+        router_config.node.discovery.lan.enabled = false;
+        router_config.transports.websocket = TransportInstances::Single(WebSocketConfig {
+            seed_urls: vec![seed_url],
+            ..WebSocketConfig::default()
+        });
+        router_config.transports.udp = TransportInstances::Single(UdpConfig {
+            bind_addr: Some(format!("127.0.0.1:{router_port}")),
+            outbound_only: Some(false),
+            accept_connections: Some(true),
+            advertise_on_nostr: Some(false),
+            public: Some(false),
+            ..UdpConfig::default()
+        });
+        router_config.peers = vec![FipsPeerConfig::new(
+            guest.endpoint.npub().to_string(),
+            "udp",
+            guest_udp_addr,
+        )];
+        let router = Arc::new(
+            Box::pin(
+                FipsEndpoint::builder()
+                    .config(router_config)
+                    .identity_nsec(router_keys.secret_key().to_bech32().expect("router nsec"))
+                    .without_system_tun()
+                    .bind(),
+            )
+            .await
+            .expect("bind WSS-to-physical router"),
+        );
         let admin = Box::pin(MobileTunnel::start_async(admin_mobile, admin_app))
             .await
             .expect("start admin through WebSocket seed");
 
         let seed_npub = seed.npub().to_string();
+        let router_npub = router.npub().to_string();
+        let guest_npub = guest.endpoint.npub().to_string();
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 let guest_ready = guest
@@ -666,7 +704,7 @@
                     .is_ok_and(|peers| {
                         peers
                             .iter()
-                            .any(|peer| peer.npub == seed_npub && peer.connected)
+                            .any(|peer| peer.npub == router_npub && peer.connected)
                     });
                 let admin_ready = admin
                     .endpoint
@@ -677,17 +715,23 @@
                             .iter()
                             .any(|peer| peer.npub == seed_npub && peer.connected)
                     });
+                let router_ready = router.peers().await.is_ok_and(|peers| {
+                    peers.iter().any(|peer| peer.npub == seed_npub && peer.connected)
+                        && peers
+                            .iter()
+                            .any(|peer| peer.npub == guest_npub && peer.connected)
+                });
                 let seed_ready = seed.peers().await.is_ok_and(|peers| {
                     peers.iter().filter(|peer| peer.connected).count() == 2
                 });
-                if guest_ready && admin_ready && seed_ready {
+                if guest_ready && admin_ready && router_ready && seed_ready {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
         .await
-        .expect("admin and guest should authenticate the WSS seed");
+        .expect("admin, WSS seed, router, and physical guest should authenticate");
 
         let guest_identity = PeerIdentity::from_npub(guest.endpoint.npub())
             .expect("guest endpoint identity");
@@ -702,9 +746,10 @@
         .expect("join roster delivery timeout");
         if let Err(error) = delivery {
             panic!(
-                "deliver join roster through WSS seed: {error:#}; admin={:?}; guest={:?}; seed={:?}",
+                "deliver join roster through WSS seed and physical router: {error:#}; admin={:?}; guest={:?}; router={:?}; seed={:?}",
                 admin.endpoint.peers().await,
                 guest.endpoint.peers().await,
+                router.peers().await,
                 seed.peers().await,
             );
         }
@@ -728,6 +773,7 @@
 
         shutdown_started_mobile_tunnel(admin).await;
         shutdown_started_mobile_tunnel(guest).await;
+        router.shutdown().await.expect("shutdown router");
         seed.shutdown().await.expect("shutdown WebSocket seed");
     }
 
