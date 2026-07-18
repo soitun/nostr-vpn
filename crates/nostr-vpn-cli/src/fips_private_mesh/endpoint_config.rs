@@ -317,13 +317,15 @@ fn fips_endpoint_config_for_ethernet(
     transport: Option<&FipsEndpointTransportConfig>,
     ethernet: &FipsEthernetUnderlayConfig,
     mesh_mtu: MeshMtu,
+    nostr_discovery_policy: NostrDiscoveryPolicy,
+    open_discovery_max_pending: usize,
 ) -> Config {
     let mut config = fips_endpoint_config_with_open_discovery_limit(
         peers,
         transport,
         mesh_mtu,
-        NostrDiscoveryPolicy::ConfiguredOnly,
-        0,
+        nostr_discovery_policy,
+        open_discovery_max_pending,
     );
     config.transports.ethernet = TransportInstances::Single(EthernetConfig {
         interface: ethernet.interface.clone(),
@@ -794,6 +796,8 @@ mod endpoint_config_tests {
             Some(&transport),
             &ethernet,
             mesh_mtu,
+            NostrDiscoveryPolicy::ConfiguredOnly,
+            0,
         );
 
         config.validate().expect("Ethernet endpoint config");
@@ -843,6 +847,29 @@ mod endpoint_config_tests {
             tunnel.websocket.seed_urls,
             ["wss://seed.example.org/fips"]
         );
+        assert_eq!(
+            tunnel.nostr_discovery_policy,
+            NostrDiscoveryPolicy::Open,
+            "pending ordinary approval must admit authenticated physical adjacency"
+        );
+        assert!(tunnel.open_discovery_max_pending > 0);
+
+        let ethernet =
+            FipsEthernetUnderlayConfig::parse("eth0", "local-pairing").expect("underlay");
+        let endpoint = fips_endpoint_config_for_ethernet(
+            &tunnel.endpoint_peers,
+            Some(&test_transport(false, true)),
+            &ethernet,
+            tunnel.mesh_mtu,
+            tunnel.nostr_discovery_policy,
+            tunnel.open_discovery_max_pending,
+        );
+        assert_eq!(
+            endpoint.node.discovery.nostr.policy,
+            NostrDiscoveryPolicy::Open,
+            "physical underlay must preserve the pending-approval admission policy"
+        );
+        assert!(endpoint.node.discovery.nostr.open_discovery_max_pending > 0);
 
         app.clear_pending_nostr_join_request();
         let closed = FipsPrivateTunnelConfig::from_app(
@@ -855,6 +882,12 @@ mod endpoint_config_tests {
         )
         .expect("closed join tunnel config");
         assert_eq!(closed.websocket, tunnel.websocket);
+        assert_eq!(
+            closed.nostr_discovery_policy,
+            NostrDiscoveryPolicy::ConfiguredOnly,
+            "ordinary admission must close when no approval is pending"
+        );
+        assert_eq!(closed.open_discovery_max_pending, 0);
     }
 
 }

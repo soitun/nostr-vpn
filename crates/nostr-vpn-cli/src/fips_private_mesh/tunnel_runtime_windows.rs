@@ -29,6 +29,8 @@ impl FipsPrivateTunnelRuntime {
                     Some(&transport),
                     ethernet,
                     config.mesh_mtu,
+                    config.nostr_discovery_policy,
+                    config.open_discovery_max_pending,
                 )
             }
             None => fips_endpoint_config_with_open_discovery_limit(
