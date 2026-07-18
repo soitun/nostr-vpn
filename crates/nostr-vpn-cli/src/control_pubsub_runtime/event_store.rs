@@ -58,7 +58,10 @@ impl ControlEventStore {
         }
         let saved_count = saved.events.len();
         for event in saved.events {
-            if event.verify().is_ok() && is_control_event(&event, &store.update_events) {
+            if event.verify().is_ok()
+                && is_control_event(&event, &store.update_events)
+                && control_event_is_persistent(&event)
+            {
                 let _ = store.insert_memory(event);
             }
         }
@@ -69,10 +72,13 @@ impl ControlEventStore {
     }
 
     fn insert(&mut self, event: Event) -> Result<bool> {
+        let persistent = control_event_is_persistent(&event);
         if !self.insert_memory(event) {
             return Ok(false);
         }
-        self.persist()?;
+        if persistent {
+            self.persist()?;
+        }
         Ok(true)
     }
 
@@ -191,7 +197,11 @@ impl ControlEventStore {
         }
         let saved = StoredEventsFile {
             version: STORE_VERSION,
-            events: self.snapshot(),
+            events: self
+                .snapshot()
+                .into_iter()
+                .filter(control_event_is_persistent)
+                .collect(),
         };
         let bytes = serde_json::to_vec(&saved).context("failed to encode control pubsub store")?;
         let temporary = temporary_store_path(path);
@@ -206,6 +216,10 @@ impl ControlEventStore {
         })?;
         Ok(())
     }
+}
+
+fn control_event_is_persistent(event: &Event) -> bool {
+    u16::from(event.kind) != FIPS_PEER_ADVERT_KIND
 }
 
 fn retained_rating_event(event: &Event, now_secs: u64) -> Option<(RatingEventStoreKey, u64)> {
@@ -240,7 +254,7 @@ fn rating_event_store_key(event: &Event) -> Option<(RatingEventStoreKey, u64)> {
 
 #[cfg(test)]
 mod tests {
-    use nostr_sdk::ToBech32;
+    use nostr_sdk::{EventBuilder, ToBech32};
     use nostr_social_graph::Rating;
     use nostr_social_memory::RatingEventExt;
 
@@ -305,6 +319,59 @@ mod tests {
             1
         );
         assert!(store.snapshot().is_empty());
+    }
+
+    #[test]
+    fn peer_adverts_remain_in_memory_but_are_not_persisted() {
+        let keys = Keys::generate();
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos();
+        let directory = std::env::temp_dir().join(format!(
+            "nvpn-control-event-store-{}-{nonce}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).expect("event store directory");
+        let path = directory.join("control-events.json");
+        let update_events = test_update_events();
+        let mut store =
+            ControlEventStore::load(Some(path.clone()), update_events).expect("event store");
+        let advert = EventBuilder::new(Kind::Custom(FIPS_PEER_ADVERT_KIND), "")
+            .sign_with_keys(&keys)
+            .expect("signed peer advert");
+
+        assert!(store.insert(advert.clone()).expect("insert peer advert"));
+        assert_eq!(store.snapshot(), vec![advert.clone()]);
+        assert!(!path.exists(), "ephemeral peer advert must not hit disk");
+
+        let rating = rating_event(
+            &keys,
+            &Keys::generate().public_key().to_hex(),
+            "fips.peer",
+            50,
+            now_ms() / 1_000,
+        );
+        assert!(store.insert(rating.clone()).expect("insert rating"));
+        let saved: StoredEventsFile =
+            serde_json::from_slice(&fs::read(&path).expect("persisted store"))
+                .expect("decode persisted store");
+        assert_eq!(saved.events, vec![rating.clone()]);
+
+        let legacy = StoredEventsFile {
+            version: STORE_VERSION,
+            events: vec![advert, rating.clone()],
+        };
+        fs::write(&path, serde_json::to_vec(&legacy).expect("encode legacy store"))
+            .expect("write legacy store");
+        let reloaded = ControlEventStore::load(Some(path.clone()), test_update_events())
+            .expect("reload event store");
+        assert_eq!(reloaded.snapshot(), vec![rating.clone()]);
+        let cleaned: StoredEventsFile =
+            serde_json::from_slice(&fs::read(path).expect("cleaned store"))
+                .expect("decode cleaned store");
+        assert_eq!(cleaned.events, vec![rating]);
+        fs::remove_dir_all(directory).expect("remove event store directory");
     }
 
     fn test_update_events() -> UpdateEventCache {
