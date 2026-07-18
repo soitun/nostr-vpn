@@ -164,7 +164,10 @@ async fn wait_for_event(runtime: &ControlPubsubFipsRuntime, event_id: EventId) {
 async fn wait_pubsub_connected(runtime: &ControlPubsubFipsRuntime) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
-            if runtime.connected_peer_count().await.unwrap_or_default() > 0 {
+            let peer_count = runtime.connected_peer_count().await.unwrap_or_default();
+            if peer_count > 0
+                && runtime.peer_subscription_count().await.unwrap_or_default() >= peer_count
+            {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;

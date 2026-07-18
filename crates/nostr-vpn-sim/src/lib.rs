@@ -146,7 +146,7 @@ impl SimulationRuntime {
         if connected_pubsub_node_count < config.node_count {
             shutdown_partial(pubsub, &endpoints, &network_id).await;
             bail!(
-                "only {connected_pubsub_node_count}/{} nodes opened a standard FIPS pubsub stream",
+                "only {connected_pubsub_node_count}/{} nodes fully subscribed over standard FIPS pubsub",
                 config.node_count
             );
         }
@@ -655,7 +655,8 @@ async fn wait_for_pubsub_connections(
     loop {
         let mut connected = 0usize;
         for runtime in runtimes {
-            if runtime.connected_peer_count().await? > 0 {
+            let peer_count = runtime.connected_peer_count().await?;
+            if peer_count > 0 && runtime.peer_subscription_count().await? >= peer_count {
                 connected += 1;
             }
         }

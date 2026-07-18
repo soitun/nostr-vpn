@@ -43,6 +43,7 @@ struct PublishRequest {
 enum RuntimeCommand {
     Publish(PublishRequest),
     ConnectedPeerCount(oneshot::Sender<Result<usize>>),
+    PeerSubscriptionCount(oneshot::Sender<Result<usize>>),
 }
 
 include!("control_pubsub_runtime/event_store.rs");
@@ -192,6 +193,17 @@ impl ControlPubsubFipsRuntime {
             .context("control pubsub runtime stopped during peer query")?
     }
 
+    pub async fn peer_subscription_count(&self) -> Result<usize> {
+        let (response, result) = oneshot::channel();
+        self.command_tx
+            .send(RuntimeCommand::PeerSubscriptionCount(response))
+            .await
+            .context("control pubsub runtime stopped before subscription query")?;
+        result
+            .await
+            .context("control pubsub runtime stopped during subscription query")?
+    }
+
     pub async fn stop(mut self) {
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
@@ -336,6 +348,13 @@ async fn run(
                                 .map_err(anyhow::Error::from),
                         );
                     }
+                    RuntimeCommand::PeerSubscriptionCount(response) => {
+                        let _ = response.send(
+                            fips_pubsub
+                                .peer_subscription_count()
+                                .map_err(anyhow::Error::from),
+                        );
+                    }
                 }
             }
             _ = outbox_tick.tick(), if outbox_path.is_some() => {
@@ -358,7 +377,6 @@ async fn run(
                     &endpoint,
                     bridge.as_ref(),
                     &events,
-                    peer_policy.as_ref(),
                     &pubsub_policy,
                     &update_events,
                     delivery,
@@ -538,21 +556,10 @@ async fn process_fips_delivery(
     endpoint: &FipsEndpoint,
     bridge: Option<&RelayBridge>,
     events: &Arc<Mutex<ControlEventStore>>,
-    peer_policy: &dyn MeshPeerPolicy,
     pubsub_policy: &Arc<Mutex<FipsPubsubPolicy>>,
     update_events: &UpdateEventCache,
     delivery: QueryEvent,
 ) {
-    let source_peer = delivery.source.id.as_str();
-    if peer_policy
-        .select_mesh_peer(source_peer)
-        .ok()
-        .flatten()
-        .is_none()
-    {
-        tracing::debug!(%source_peer, "ignored control event from unselected FIPS pubsub peer");
-        return;
-    }
     let event = delivery.event.into_event();
     if !is_control_event(&event, update_events)
         || !event_is_admitted(pubsub_policy, &event, &delivery.source).await
