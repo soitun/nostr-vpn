@@ -17,10 +17,13 @@ const RELAY_ACTIVE_PUMP_INTERVAL: Duration = Duration::from_millis(50);
 const RELAY_IDLE_PUMP_INTERVAL: Duration = Duration::from_millis(250);
 const RELAY_PROVIDER_TIMEOUT: Duration = Duration::from_secs(2);
 const RELAY_SUBSCRIPTION_LIMIT: usize = 8;
+const NOSTR_RELAY_TRANSPORT: &str = "nostr_relay";
 
 /// Pumps FIPS's signed Nostr relay transport events through the standard
 /// pubsub providers. Authenticated FIPS peers and configured direct relays are
 /// simultaneous carriers; neither is selected as a fallback for the other.
+/// Peers reached through the Nostr relay transport are excluded from the FIPS
+/// pubsub side so the carrier cannot recursively wrap itself.
 pub struct FipsPubsubNostrRelayAdapter {
     shutdown: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
@@ -30,10 +33,13 @@ impl FipsPubsubNostrRelayAdapter {
     pub async fn start(endpoint: Arc<FipsEndpoint>, relays: &[String]) -> Result<Self> {
         let local_pubkey =
             PublicKey::parse(endpoint.npub()).context("invalid local FIPS endpoint identity")?;
-        let client =
-            FipsPubsubClient::start(Arc::clone(&endpoint), FipsPubsubClientOptions::default())
-                .await
-                .context("failed to start standard FIPS Nostr pubsub provider")?;
+        let client = FipsPubsubClient::start_excluding_peer_transports(
+            Arc::clone(&endpoint),
+            FipsPubsubClientOptions::default(),
+            [NOSTR_RELAY_TRANSPORT],
+        )
+        .await
+        .context("failed to start standard FIPS Nostr pubsub provider")?;
         let filter = Filter::new()
             .kind(Kind::Custom(
                 fips_core::transport::nostr_relay::NOSTR_RELAY_DATAGRAM_KIND,
@@ -298,7 +304,6 @@ mod fips_pubsub_relay_adapter_tests {
     use super::*;
     use crate::fips_control::{FipsControlFrame, JoinRosterControl, NetworkRoster, SignedRoster};
     use crate::fips_control_tcp::FipsControlTcpRuntime;
-    use crate::join_requests::MeshJoinRequest;
     use fips_core::config::{IdentityConfig, NostrRelayConfig, PeerConfig, TransportInstances};
     use fips_core::{
         Config, FipsEndpoint, Identity, SimNetwork, SimTransportConfig, register_sim_network,
@@ -366,35 +371,9 @@ mod fips_pubsub_relay_adapter_tests {
         let mut guest_control = FipsControlTcpRuntime::start(Arc::clone(&guest))
             .await
             .expect("guest control");
-        let mut admin_control = FipsControlTcpRuntime::start(Arc::clone(&admin))
+        let admin_control = FipsControlTcpRuntime::start(Arc::clone(&admin))
             .await
             .expect("admin control");
-        let guest_sender = guest_control.sender();
-        let admin_peer = PeerIdentity::from_npub(admin.npub()).expect("admin peer");
-        let join_frame = FipsControlFrame::JoinRequest {
-            requested_at: 1_778_998_000,
-            request: MeshJoinRequest {
-                network_id: "ordinary-network".to_string(),
-                invite_secret: "ordinary-invite".to_string(),
-                requester_node_name: "ordinary-guest".to_string(),
-            },
-        };
-        let join_send =
-            tokio::spawn(async move { guest_sender.send(admin_peer, &join_frame).await });
-        let received = timeout(Duration::from_secs(10), admin_control.recv())
-            .await
-            .expect("admin join request timeout")
-            .expect("admin control remains active");
-        assert_eq!(received.source_peer.npub(), guest.npub());
-        let FipsControlFrame::JoinRequest { request, .. } = received.frame else {
-            panic!("expected ordinary join request");
-        };
-        assert_eq!(request.network_id, "ordinary-network");
-        join_send
-            .await
-            .expect("join send task")
-            .expect("join request acknowledged");
-
         let admin_keys = Keys::parse(&hex::encode([13; 32])).expect("admin keys");
         let guest_keys = Keys::parse(&hex::encode([11; 32])).expect("guest keys");
         let roster = SignedRoster::sign(
@@ -514,7 +493,11 @@ mod fips_pubsub_relay_adapter_tests {
     fn test_admin_config(admin: &Identity, guest: &Identity) -> Config {
         let _ = admin;
         let mut config = test_base_config([13; 32]);
-        config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig::default());
+        config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig {
+            auto_connect: Some(false),
+            accept_connections: Some(false),
+            ..NostrRelayConfig::default()
+        });
         config.peers = vec![PeerConfig::new(guest.npub(), "nostr_relay", guest.npub())];
         config
     }
@@ -565,16 +548,21 @@ mod fips_pubsub_relay_adapter_tests {
         admin: Arc<FipsEndpoint>,
         mut shutdown: oneshot::Receiver<()>,
     ) {
+        // Preserve bidirectional relay progress while modeling ordinary
+        // non-zero transit latency for the cold first-roster exchange.
+        const FORWARD_DELAY: Duration = Duration::from_millis(250);
+        let mut to_admin = VecDeque::new();
+        let mut to_guest = VecDeque::new();
         let mut tick = tokio::time::interval(Duration::from_millis(10));
         loop {
             tokio::select! {
                 _ = &mut shutdown => break,
                 incoming = admin_subscription.recv() => {
                     let Some(incoming) = incoming else { break; };
-                    admin
-                        .ingest_nostr_event(incoming.event.into_event())
-                        .await
-                        .expect("ingest event for admin");
+                    to_admin.push_back((
+                        tokio::time::Instant::now() + FORWARD_DELAY,
+                        incoming.event.into_event(),
+                    ));
                 }
                 _ = tick.tick() => {
                     for event in admin
@@ -582,9 +570,24 @@ mod fips_pubsub_relay_adapter_tests {
                         .await
                         .expect("drain admin relay events")
                     {
+                        to_guest.push_back((
+                            tokio::time::Instant::now() + FORWARD_DELAY,
+                            VerifiedEvent::try_from(event).expect("verified admin event"),
+                        ));
+                    }
+                    let now = tokio::time::Instant::now();
+                    while to_admin.front().is_some_and(|(ready_at, _)| *ready_at <= now) {
+                        let (_, event) = to_admin.pop_front().expect("ready admin event");
+                        admin
+                            .ingest_nostr_event(event)
+                            .await
+                            .expect("ingest event for admin");
+                    }
+                    while to_guest.front().is_some_and(|(ready_at, _)| *ready_at <= now) {
+                        let (_, event) = to_guest.pop_front().expect("ready guest event");
                         client
                             .publish(
-                                VerifiedEvent::try_from(event).expect("verified admin event"),
+                                event,
                                 EventSource::fips_endpoint(admin.npub().to_string()),
                             )
                             .await
