@@ -40,10 +40,15 @@ struct PublishRequest {
     response: oneshot::Sender<Result<bool>>,
 }
 
+enum RuntimeCommand {
+    Publish(PublishRequest),
+    ConnectedPeerCount(oneshot::Sender<Result<usize>>),
+}
+
 include!("control_pubsub_runtime/event_store.rs");
 
 pub struct ControlPubsubFipsRuntime {
-    command_tx: mpsc::Sender<PublishRequest>,
+    command_tx: mpsc::Sender<RuntimeCommand>,
     events: Arc<Mutex<ControlEventStore>>,
     relay_client: Option<Client>,
     shutdown: Option<oneshot::Sender<()>>,
@@ -121,6 +126,7 @@ impl ControlPubsubFipsRuntime {
                 max_connected_peers: MAX_PUBSUB_PEERS,
                 max_replay_events: STORE_MAX_EVENTS,
                 receive_batch_size: 64,
+                max_hops: config.max_hops,
                 ..FipsPubsubClientOptions::default()
             },
         )
@@ -164,15 +170,26 @@ impl ControlPubsubFipsRuntime {
     pub async fn publish(&self, event: Event) -> Result<bool> {
         let (response, result) = oneshot::channel();
         self.command_tx
-            .send(PublishRequest {
+            .send(RuntimeCommand::Publish(PublishRequest {
                 event: Box::new(event),
                 response,
-            })
+            }))
             .await
             .context("control pubsub runtime stopped before publish")?;
         result
             .await
             .context("control pubsub runtime stopped while publishing")?
+    }
+
+    pub async fn connected_peer_count(&self) -> Result<usize> {
+        let (response, result) = oneshot::channel();
+        self.command_tx
+            .send(RuntimeCommand::ConnectedPeerCount(response))
+            .await
+            .context("control pubsub runtime stopped before peer query")?;
+        result
+            .await
+            .context("control pubsub runtime stopped during peer query")?
     }
 
     pub async fn stop(mut self) {
@@ -262,7 +279,7 @@ struct PublishContext<'a> {
 async fn run(
     state: PubsubRunState,
     outbox_path: Option<PathBuf>,
-    mut command_rx: mpsc::Receiver<PublishRequest>,
+    mut command_rx: mpsc::Receiver<RuntimeCommand>,
     mut shutdown: oneshot::Receiver<()>,
 ) {
     let PubsubRunState {
@@ -295,20 +312,31 @@ async fn run(
         tokio::select! {
             _ = &mut shutdown => break,
             command = command_rx.recv() => {
-                let Some(PublishRequest { event, response }) = command else { break; };
-                let result = publish_local(
-                    PublishContext {
-                        endpoint: &endpoint,
-                        fips_pubsub: &fips_pubsub,
-                        bridge: bridge.as_ref(),
-                        events: &events,
-                        pubsub_policy: &pubsub_policy,
-                        update_events: &update_events,
-                    },
-                    *event,
-                )
-                .await;
-                let _ = response.send(result);
+                let Some(command) = command else { break; };
+                match command {
+                    RuntimeCommand::Publish(PublishRequest { event, response }) => {
+                        let result = publish_local(
+                            PublishContext {
+                                endpoint: &endpoint,
+                                fips_pubsub: &fips_pubsub,
+                                bridge: bridge.as_ref(),
+                                events: &events,
+                                pubsub_policy: &pubsub_policy,
+                                update_events: &update_events,
+                            },
+                            *event,
+                        )
+                        .await;
+                        let _ = response.send(result);
+                    }
+                    RuntimeCommand::ConnectedPeerCount(response) => {
+                        let _ = response.send(
+                            fips_pubsub
+                                .connected_peer_count()
+                                .map_err(anyhow::Error::from),
+                        );
+                    }
+                }
             }
             _ = outbox_tick.tick(), if outbox_path.is_some() => {
                 publish_outbox_batch(

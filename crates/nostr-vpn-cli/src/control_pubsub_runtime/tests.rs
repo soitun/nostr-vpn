@@ -161,6 +161,19 @@ async fn wait_for_event(runtime: &ControlPubsubFipsRuntime, event_id: EventId) {
     .expect("signed update root arrived over FIPS");
 }
 
+async fn wait_pubsub_connected(runtime: &ControlPubsubFipsRuntime) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if runtime.connected_peer_count().await.unwrap_or_default() > 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("reliable TCP/FIPS pubsub stream connected");
+}
+
 #[test]
 fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency() {
     std::thread::Builder::new()
@@ -195,6 +208,7 @@ async fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency_run() 
     let updates = update_events(&publisher, "releases/websocket-test");
     let seed_pubsub = start_pubsub(Arc::clone(&seed_endpoint), updates.clone()).await;
     let client_pubsub = start_pubsub(Arc::clone(&client_endpoint), updates).await;
+    wait_pubsub_connected(&client_pubsub).await;
     let event = signed_update_root(&publisher, "releases/websocket-test", 1, "cc");
     let event_id = event.id;
     assert!(
@@ -262,6 +276,7 @@ async fn late_connected_fips_peer_receives_cached_update_root_without_relays_run
     let update_events = update_events(&publisher, tree_name);
     let alice_pubsub = start_pubsub(Arc::clone(&alice_endpoint), update_events.clone()).await;
     let bob_pubsub = start_pubsub(Arc::clone(&bob_endpoint), update_events.clone()).await;
+    wait_pubsub_connected(&alice_pubsub).await;
     let root_event = EventBuilder::new(Kind::Custom(30_064), "")
         .tags([
             Tag::identifier(tree_name),
@@ -445,6 +460,7 @@ async fn control_pubsub_preserves_56k_event_limit_over_real_udp_fips_run() {
     let update_events = update_events(&publisher, tree_name);
     let alice_pubsub = start_pubsub(Arc::clone(&alice_endpoint), update_events.clone()).await;
     let bob_pubsub = start_pubsub(Arc::clone(&bob_endpoint), update_events).await;
+    wait_pubsub_connected(&alice_pubsub).await;
     let accepted = signed_update_root_with_content(
         &publisher,
         tree_name,
@@ -556,6 +572,7 @@ async fn peer_policy_rejects_events_from_authenticated_udp_fips_peer_run() {
     .await
     .expect("start policy-bound FIPS pubsub")
     .expect("FIPS pubsub enabled");
+    wait_pubsub_connected(&alice_pubsub).await;
     let root = signed_update_root(&publisher, tree_name, 1, "66");
     assert!(
         alice_pubsub
@@ -617,6 +634,7 @@ async fn restarted_pubsub_resubscribes_after_connection_loss_run() {
     let update_events = update_events(&publisher, tree_name);
     let alice_pubsub = start_pubsub(Arc::clone(&alice_endpoint), update_events.clone()).await;
     let bob_pubsub = start_pubsub(Arc::clone(&bob_endpoint), update_events.clone()).await;
+    wait_pubsub_connected(&bob_pubsub).await;
     let first = signed_update_root(&publisher, tree_name, 1, "11");
     assert!(
         bob_pubsub
@@ -636,6 +654,7 @@ async fn restarted_pubsub_resubscribes_after_connection_loss_run() {
     wait_connected(&restarted_alice_endpoint, &bob_npub).await;
     wait_connected(&bob_endpoint, &alice_npub).await;
     let restarted_alice = start_pubsub(Arc::clone(&restarted_alice_endpoint), update_events).await;
+    wait_pubsub_connected(&restarted_alice).await;
     let second = signed_update_root(&publisher, tree_name, 2, "22");
     assert!(
         bob_pubsub

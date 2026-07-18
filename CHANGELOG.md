@@ -28,16 +28,19 @@ All notable changes to this project are documented in this file.
   events; physical FIPS records use WebSocket, WebRTC, Ethernet, UDP, TCP, or
   Tor links.
 - Moved control pubsub onto the standard port-7368 `nostr-pubsub-fips`
-  service, including relay-backed announcement bridging after a physical FIPS
-  adjacency exists.
+  service. Normal `REQ`/`EVENT`/`CLOSE` frames remain intact, while grouped
+  `INV` and single-event `WANT` frames globally deduplicate both live delivery
+  and stored replay across FIPS, Hashtree indexes, and ordinary Nostr relays.
 - Removed the obsolete platform-specific guest runtime and kept browser-based
   joining on the ordinary nVPN daemon and signed-roster approval flow.
 - Moved native wallet operations from short-lived CLI processes onto the
   application-owned CDK repository and updated `cdk-spilman` to 0.17.0.
 - Normalize wallet mint URLs and discard invalid or unsupported mint entries
   before selecting a default mint.
-- Updated FIPS Core and Endpoint to 0.4.10 for the bounded WebSocket physical
-  transport, relay-packet-carrier removal, and URL-only first adjacency.
+- Updated FIPS Core and Endpoint to 0.4.11, `nostr-pubsub` to 0.1.13, and
+  `nostr-pubsub-fips` to 0.4.1 for the bounded WebSocket physical transport,
+  reliable routed pubsub, relay-packet-carrier removal, and URL-only first
+  adjacency.
 
 ### Fixed
 

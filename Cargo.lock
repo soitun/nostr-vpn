@@ -1901,9 +1901,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02e8c2448e32533c48ff73e21aac404bdcedb0d4d6ef4c28fa2fe226fe0c4c04"
+checksum = "7256624419545fcdc2c0512810ee468b5a3097f1b05f06b576709f377f30947c"
 dependencies = [
  "base64 0.22.1",
  "bluer",
@@ -1945,9 +1945,9 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09f3f08f25af83caa4d385b54732801544476e32f0d93e3dfd1dc0cd5a64bbaa"
+checksum = "0963c8e8ffa75b078bdd78c04ccf975f482a8d11bd6046382fc9cdc13716d773"
 dependencies = [
  "fips-core",
 ]
@@ -3607,9 +3607,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub"
-version = "0.1.11"
+version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f3c509d68c8de0f87de781630cca6d3d4e61b2fe8a1ba3d21463efd7bc4780c6"
+checksum = "84bfacf8bb4c535ad4c80dc14bdef1dfe94b2b7064f8bf83509a137f8068e0e1"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3620,9 +3620,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.3.2"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6dbabf8d80786ad998c8b7f0f694160a323888f9c3af13390bdc6ca437ecb34"
+checksum = "b537942272dbf79ad8ff4176766f6f1c7c49e0a28fe2d4feacea0a3f45b15125"
 dependencies = [
  "async-trait",
  "fips-core",

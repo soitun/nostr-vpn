@@ -131,6 +131,25 @@ impl SimulationRuntime {
         register_sim_network(network_id.clone(), network.clone());
         let endpoints = start_sim_endpoints(&config, &network_id, &specs).await?;
         let pubsub = start_pubsub_runtimes(&network_id, &endpoints, &peer_policies).await?;
+        let connected_pubsub_node_count = match wait_for_pubsub_connections(
+            &pubsub,
+            Duration::from_millis(config.convergence_timeout_ms),
+        )
+        .await
+        {
+            Ok(count) => count,
+            Err(error) => {
+                shutdown_partial(pubsub, &endpoints, &network_id).await;
+                return Err(error).context("failed to query standard FIPS pubsub readiness");
+            }
+        };
+        if connected_pubsub_node_count < config.node_count {
+            shutdown_partial(pubsub, &endpoints, &network_id).await;
+            bail!(
+                "only {connected_pubsub_node_count}/{} nodes opened a standard FIPS pubsub stream",
+                config.node_count
+            );
+        }
 
         Ok(Self {
             config,
@@ -622,6 +641,27 @@ async fn wait_for_connections(
         best = best.max(connected);
         if connected == endpoints.len() || tokio::time::Instant::now() >= deadline {
             return best;
+        }
+        tokio::time::sleep(DELIVERY_POLL_INTERVAL).await;
+    }
+}
+
+async fn wait_for_pubsub_connections(
+    runtimes: &[ControlPubsubFipsRuntime],
+    timeout: Duration,
+) -> Result<usize> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut best = 0usize;
+    loop {
+        let mut connected = 0usize;
+        for runtime in runtimes {
+            if runtime.connected_peer_count().await? > 0 {
+                connected += 1;
+            }
+        }
+        best = best.max(connected);
+        if connected == runtimes.len() || tokio::time::Instant::now() >= deadline {
+            return Ok(best);
         }
         tokio::time::sleep(DELIVERY_POLL_INTERVAL).await;
     }
