@@ -130,23 +130,6 @@ fn other_endpoint_peer_statuses(
     statuses
 }
 
-#[cfg(target_os = "linux")]
-pub(crate) fn endpoint_peer_statuses(
-    peers: &[FipsEndpointPeer],
-    now: u64,
-) -> Vec<MeshPeerStatus> {
-    let mut statuses = peers
-        .iter()
-        .filter_map(|peer| {
-            endpoint_peer_status_pubkey(peer)
-                .map(|pubkey| mesh_status_from_endpoint_peer(pubkey, peer, now))
-        })
-        .collect::<Vec<_>>();
-    statuses.sort_by(|left, right| left.pubkey.cmp(&right.pubkey));
-    statuses.dedup_by(|left, right| left.pubkey == right.pubkey);
-    statuses
-}
-
 fn peer_endpoint_hint_addr(hint: &PeerEndpointHint) -> Option<String> {
     nostr_vpn_core::fips_control::peer_endpoint_hint_addr(hint)
 }
