@@ -35,6 +35,7 @@ const MAINTENANCE_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const OUTBOX_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const OUTBOX_BATCH: usize = 8;
 const RELAY_REPLAY_LIMIT: usize = 32;
+const FIPS_REPLAY_LIMIT: usize = 32;
 
 struct PublishRequest {
     event: Box<Event>,
@@ -121,16 +122,7 @@ impl ControlPubsubFipsRuntime {
         let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
         let fips_pubsub = FipsPubsubClient::start(
             Arc::clone(&endpoint),
-            FipsPubsubClientOptions {
-                max_frame_bytes: max_event_bytes
-                    .saturating_add(4 * 1_024)
-                    .min(CONTROL_PUBSUB_MAX_WIRE_BYTES),
-                max_connected_peers: MAX_PUBSUB_PEERS,
-                max_replay_events: STORE_MAX_EVENTS,
-                receive_batch_size: 64,
-                max_hops: config.max_hops,
-                ..FipsPubsubClientOptions::default()
-            },
+            fips_pubsub_options(max_event_bytes, config.max_hops),
         )
         .await
         .context("failed to bind standard FIPS Nostr pubsub service")?;
@@ -213,6 +205,19 @@ impl ControlPubsubFipsRuntime {
         if let Some(client) = self.relay_client.take() {
             client.shutdown().await;
         }
+    }
+}
+
+fn fips_pubsub_options(max_event_bytes: usize, max_hops: u8) -> FipsPubsubClientOptions {
+    FipsPubsubClientOptions {
+        max_frame_bytes: max_event_bytes
+            .saturating_add(4 * 1_024)
+            .min(CONTROL_PUBSUB_MAX_WIRE_BYTES),
+        max_connected_peers: MAX_PUBSUB_PEERS,
+        max_replay_events: FIPS_REPLAY_LIMIT,
+        receive_batch_size: 64,
+        max_hops,
+        ..FipsPubsubClientOptions::default()
     }
 }
 
@@ -615,10 +620,7 @@ async fn sync_fips_subscription(
     if peers.is_empty() {
         return;
     }
-    let mut filters = vec![Filter::new().kinds(control_kinds())];
-    if update_events.filter().kinds.is_some() {
-        filters.push(update_events.filter().clone());
-    }
+    let filters = fips_subscription_filters(update_events);
     let next = match fips_pubsub.subscribe(filters).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -629,7 +631,7 @@ async fn sync_fips_subscription(
     *subscribed_peer_links = peers;
     *subscription = Some(next);
 
-    for event in events.lock().await.snapshot() {
+    for event in bounded_fips_replay(events.lock().await.snapshot()) {
         let event_id = event.id;
         let Ok(event) = VerifiedEvent::try_from(event) else {
             continue;
@@ -641,6 +643,24 @@ async fn sync_fips_subscription(
             tracing::debug!(%error, %event_id, "stored FIPS pubsub replay deferred");
         }
     }
+}
+
+fn fips_subscription_filters(update_events: &UpdateEventCache) -> Vec<Filter> {
+    let mut filters = vec![
+        Filter::new()
+            .kinds(control_kinds())
+            .limit(FIPS_REPLAY_LIMIT),
+    ];
+    if update_events.filter().kinds.is_some() {
+        filters.push(update_events.filter().clone().limit(FIPS_REPLAY_LIMIT));
+    }
+    filters
+}
+
+fn bounded_fips_replay(mut events: Vec<Event>) -> Vec<Event> {
+    let drop_count = events.len().saturating_sub(FIPS_REPLAY_LIMIT);
+    events.drain(..drop_count);
+    events
 }
 
 async fn connected_peers(

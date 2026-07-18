@@ -194,6 +194,44 @@ fn relay_subscriptions_bound_retained_replay() {
 }
 
 #[test]
+fn standard_fips_pubsub_bounds_retained_replay() {
+    let publisher = Keys::generate();
+    let update_events = update_events(&publisher, "releases/bounded-fips-replay");
+    let options = fips_pubsub_options(CONTROL_PUBSUB_MAX_EVENT_BYTES, 4);
+    let filters = fips_subscription_filters(&update_events);
+
+    assert_eq!(options.max_replay_events, FIPS_REPLAY_LIMIT);
+    assert!(
+        filters
+            .iter()
+            .all(|filter| filter.limit == Some(FIPS_REPLAY_LIMIT)),
+        "every FIPS pubsub subscription must bound retained replay"
+    );
+
+    let stored = (0..80)
+        .map(|index| {
+            EventBuilder::new(
+                Kind::Custom(FIPS_PEER_ADVERT_KIND),
+                format!("advert-{index}"),
+            )
+            .custom_created_at(Timestamp::from(index + 1))
+            .sign_with_keys(&publisher)
+            .expect("signed peer advert")
+        })
+        .collect::<Vec<_>>();
+    let expected_ids = stored[stored.len() - FIPS_REPLAY_LIMIT..]
+        .iter()
+        .map(|event| event.id)
+        .collect::<Vec<_>>();
+    let replay_ids = bounded_fips_replay(stored)
+        .into_iter()
+        .map(|event| event.id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(replay_ids, expected_ids);
+}
+
+#[test]
 fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency() {
     std::thread::Builder::new()
         .name("websocket-fips-pubsub".to_string())
