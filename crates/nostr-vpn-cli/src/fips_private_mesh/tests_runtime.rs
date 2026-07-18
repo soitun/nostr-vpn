@@ -526,6 +526,7 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            false,
         );
 
         assert!(!config.node.control.enabled);
@@ -584,6 +585,7 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::ConfiguredOnly,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            false,
         );
         assert_eq!(
             configured_only_config.node.discovery.nostr.policy,
@@ -647,6 +649,7 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::ConfiguredOnly,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            false,
         );
 
         assert!(!config.node.discovery.nostr.enabled);
@@ -697,6 +700,7 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            false,
         );
 
         assert!(config.node.discovery.nostr.enabled);
@@ -760,6 +764,7 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            false,
         );
         let udp = match config.transports.udp {
             fips_endpoint::TransportInstances::Single(udp) => udp,
@@ -798,6 +803,7 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            false,
         );
 
         // Relay discovery + advertising are off, but the peer is still dialed
@@ -844,6 +850,7 @@
             super::resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            false,
         );
 
         assert!(config.node.discovery.nostr.enabled);

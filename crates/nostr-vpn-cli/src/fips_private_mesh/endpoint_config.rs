@@ -168,6 +168,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
     mesh_mtu: MeshMtu,
     nostr_discovery_policy: NostrDiscoveryPolicy,
     open_discovery_max_pending: usize,
+    accept_nostr_relay_connections: bool,
 ) -> Config {
     let mut config = Config::new();
     config.node.control.enabled = false;
@@ -204,7 +205,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
     let nostr_enabled = nostr_discovery_enabled && (transport.is_some() || !peers.is_empty());
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.advertise = advertise_on_nostr;
-    enable_nostr_relay_transport(&mut config);
+    enable_nostr_relay_transport(&mut config, accept_nostr_relay_connections);
     // Open discovery by default (unless the user opts into configured-only
     // discovery) so we can FIPS-handshake with any nvpn node we see on relays,
     // not just configured roster peers. This is what lets us route app-mesh
@@ -310,6 +311,7 @@ fn fips_endpoint_config_for_ethernet(
     peers: &[FipsEndpointPeerTransportConfig],
     ethernet: &FipsEthernetUnderlayConfig,
     mesh_mtu: MeshMtu,
+    accept_nostr_relay_connections: bool,
 ) -> Config {
     let mut config = fips_endpoint_config_with_open_discovery_limit(
         peers,
@@ -317,6 +319,7 @@ fn fips_endpoint_config_for_ethernet(
         mesh_mtu,
         NostrDiscoveryPolicy::ConfiguredOnly,
         0,
+        accept_nostr_relay_connections,
     );
     config.node.discovery.nostr.enabled = false;
     config.node.discovery.nostr.advertise = false;
@@ -334,7 +337,7 @@ fn fips_endpoint_config_for_ethernet(
         mtu: Some(mesh_mtu.underlay_udp),
         ..EthernetConfig::default()
     });
-    enable_nostr_relay_transport(&mut config);
+    enable_nostr_relay_transport(&mut config, accept_nostr_relay_connections);
     for peer in &mut config.peers {
         peer.addresses
             .retain(|address| address.transport.as_str() == "nostr_relay");
@@ -456,10 +459,10 @@ fn add_nostr_relay_transport_for_mesh_peers(
     }
 }
 
-fn enable_nostr_relay_transport(config: &mut Config) {
+fn enable_nostr_relay_transport(config: &mut Config, accept_connections: bool) {
     config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig {
         auto_connect: Some(false),
-        accept_connections: Some(false),
+        accept_connections: Some(accept_connections),
         ..NostrRelayConfig::default()
     });
 }
@@ -589,6 +592,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) nostr_pubsub: nostr_vpn_core::config::NostrPubsubConfig,
     pub(crate) control_pubsub_store_path: PathBuf,
     pub(crate) ethernet_underlay: Option<FipsEthernetUnderlayConfig>,
+    pub(crate) accept_nostr_relay_connections: bool,
     pub(crate) share_local_candidates: bool,
     pub(crate) peers: Vec<FipsMeshPeerConfig>,
     pub(crate) endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
@@ -661,6 +665,7 @@ mod endpoint_config_tests {
             mesh_mtu,
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            false,
         );
 
         config
@@ -695,6 +700,7 @@ mod endpoint_config_tests {
             resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::ConfiguredOnly,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            false,
         );
 
         assert!(!config.node.discovery.nostr.enabled);
@@ -713,6 +719,7 @@ mod endpoint_config_tests {
             resolve_private_mesh_mtu(None, None, None),
             NostrDiscoveryPolicy::Open,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            false,
         );
 
         assert!(config.node.discovery.nostr.enabled);
@@ -844,7 +851,8 @@ mod endpoint_config_tests {
         let ethernet =
             FipsEthernetUnderlayConfig::parse("eth0", "local-pairing").expect("underlay");
         let mesh_mtu = resolve_private_mesh_mtu(None, None, None);
-        let config = fips_endpoint_config_for_ethernet(&endpoint_peers, &ethernet, mesh_mtu);
+        let config =
+            fips_endpoint_config_for_ethernet(&endpoint_peers, &ethernet, mesh_mtu, false);
 
         config.validate().expect("Ethernet endpoint config");
         assert!(config.transports.udp.is_empty());
@@ -863,6 +871,70 @@ mod endpoint_config_tests {
         assert_eq!(config.peers.len(), 1);
         assert_eq!(config.peers[0].addresses.len(), 1);
         assert_eq!(config.peers[0].addresses[0].transport, "nostr_relay");
+    }
+
+    #[test]
+    fn pending_device_approval_admits_fresh_relay_handshakes_without_a_known_admin() {
+        let keys = Keys::generate();
+        let own_pubkey = keys.public_key().to_hex();
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = keys.secret_key().to_bech32().expect("nsec");
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = "pending-device-approval".to_string();
+        app.networks[0].devices.clear();
+        app.networks[0].admins.clear();
+        app.networks[0].listen_for_join_requests = false;
+        app.ensure_pending_nostr_join_request(1_778_998_000)
+            .expect("pending device approval");
+
+        let tunnel = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "pending-device-approval",
+            "utun-test",
+            Some(&own_pubkey),
+            None,
+            &[],
+        )
+        .expect("pending join tunnel config");
+        assert!(tunnel.endpoint_peers.is_empty());
+        assert!(tunnel.accept_nostr_relay_connections);
+
+        let transport = test_transport(true, false);
+        let mesh_mtu = resolve_private_mesh_mtu(None, None, None);
+        let ordinary = fips_endpoint_config_with_open_discovery_limit(
+            &tunnel.endpoint_peers,
+            Some(&transport),
+            mesh_mtu,
+            NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            tunnel.accept_nostr_relay_connections,
+        );
+        let ethernet = fips_endpoint_config_for_ethernet(
+            &tunnel.endpoint_peers,
+            &FipsEthernetUnderlayConfig::parse("eth0", "pairing").expect("Ethernet underlay"),
+            mesh_mtu,
+            tunnel.accept_nostr_relay_connections,
+        );
+        for config in [ordinary, ethernet] {
+            let TransportInstances::Single(relay) = config.transports.nostr_relay else {
+                panic!("expected one Nostr relay transport");
+            };
+            assert_eq!(relay.auto_connect, Some(false));
+            assert_eq!(relay.accept_connections, Some(true));
+        }
+
+        app.clear_pending_nostr_join_request();
+        let closed = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "pending-device-approval",
+            "utun-test",
+            Some(&own_pubkey),
+            None,
+            &[],
+        )
+        .expect("closed join tunnel config");
+        assert!(!closed.accept_nostr_relay_connections);
+        assert!(fips_tunnel_requires_endpoint_restart(&tunnel, &closed));
     }
 
 }

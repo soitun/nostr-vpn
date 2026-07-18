@@ -22,7 +22,12 @@ impl FipsPrivateTunnelRuntime {
         };
         let endpoint_config = match config.ethernet_underlay.as_ref() {
             Some(ethernet) => {
-                fips_endpoint_config_for_ethernet(&config.endpoint_peers, ethernet, config.mesh_mtu)
+                fips_endpoint_config_for_ethernet(
+                    &config.endpoint_peers,
+                    ethernet,
+                    config.mesh_mtu,
+                    config.accept_nostr_relay_connections,
+                )
             }
             None => fips_endpoint_config_with_open_discovery_limit(
                 &config.endpoint_peers,
@@ -30,6 +35,7 @@ impl FipsPrivateTunnelRuntime {
                 config.mesh_mtu,
                 config.nostr_discovery_policy,
                 config.open_discovery_max_pending,
+                config.accept_nostr_relay_connections,
             ),
         };
         let local_allowed_ips = config.local_allowed_ips();

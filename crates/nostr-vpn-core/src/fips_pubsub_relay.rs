@@ -325,12 +325,7 @@ mod fips_pubsub_relay_adapter_tests {
         let guest_identity = Identity::from_secret_bytes(&[11; 32]).expect("guest identity");
         let provider_identity = Identity::from_secret_bytes(&[12; 32]).expect("provider identity");
         let admin_identity = Identity::from_secret_bytes(&[13; 32]).expect("admin identity");
-        let guest = bind_test_endpoint(test_guest_config(
-            &network,
-            &provider_identity,
-            &admin_identity,
-        ))
-        .await;
+        let guest = bind_test_endpoint(test_guest_config(&network, &provider_identity)).await;
         let provider = bind_test_endpoint(test_provider_config(
             &network,
             &provider_identity,
@@ -481,7 +476,7 @@ mod fips_pubsub_relay_adapter_tests {
         config
     }
 
-    fn test_guest_config(network: &str, provider: &Identity, admin: &Identity) -> Config {
+    fn test_guest_config(network: &str, provider: &Identity) -> Config {
         let mut config = test_base_config([11; 32]);
         config.transports.sim = TransportInstances::Single(SimTransportConfig {
             network: Some(network.to_string()),
@@ -490,11 +485,15 @@ mod fips_pubsub_relay_adapter_tests {
             auto_connect: Some(false),
             accept_connections: Some(true),
         });
-        config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig::default());
-        config.peers = vec![
-            PeerConfig::new(provider.npub(), "sim", "provider"),
-            PeerConfig::new(admin.npub(), "nostr_relay", admin.npub()),
-        ];
+        config.transports.nostr_relay = TransportInstances::Single(NostrRelayConfig {
+            auto_connect: Some(false),
+            accept_connections: Some(true),
+            ..NostrRelayConfig::default()
+        });
+        // The ordinary device-approval join request does not know which admin
+        // will approve it. Exercise the fresh authenticated relay handshake
+        // instead of pre-seeding the admin in the guest's endpoint peer index.
+        config.peers = vec![PeerConfig::new(provider.npub(), "sim", "provider")];
         config
     }
 

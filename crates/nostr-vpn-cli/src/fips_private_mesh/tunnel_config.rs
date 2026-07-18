@@ -250,6 +250,12 @@ impl FipsPrivateTunnelConfig {
             nostr_pubsub: app.nostr.pubsub.clone(),
             control_pubsub_store_path: PathBuf::new(),
             ethernet_underlay: None,
+            // Fresh relay handshakes are admitted only while the user has
+            // explicitly opened a join window or this device is waiting for
+            // an ordinary device-approval roster. FIPS authenticates the
+            // remote identity; invite/roster checks authorize it above FIPS.
+            accept_nostr_relay_connections: app.join_requests_enabled()
+                || app.pending_nostr_join_request.is_some(),
             share_local_candidates: app.lan_discovery_enabled,
             peers,
             endpoint_peers,
@@ -434,6 +440,7 @@ fn fips_tunnel_requires_endpoint_restart(
         || current.nostr_pubsub != next.nostr_pubsub
         || current.control_pubsub_store_path != next.control_pubsub_store_path
         || current.ethernet_underlay != next.ethernet_underlay
+        || current.accept_nostr_relay_connections != next.accept_nostr_relay_connections
         || current.nostr_discovery_enabled != next.nostr_discovery_enabled
         || current.webrtc_enabled != next.webrtc_enabled
         || current.share_local_candidates != next.share_local_candidates
