@@ -44,6 +44,14 @@ All notable changes to this project are documented in this file.
 
 ### Fixed
 
+- Skip Linux interface and firewall reconciliation when the normalized FIPS
+  endpoint-bypass host set is unchanged, avoiding repeated route-tool process
+  launches during idle state refreshes.
+- Keep ephemeral kind-37195 FIPS peer adverts live in memory without rewriting
+  them into the durable control-event cache on every refresh.
+- Keep reliable FIPS pubsub idle when no authenticated peer is eligible: retain
+  signed events in the bounded store/outbox and replay them when a subscribed
+  peer arrives instead of spinning a rejected-publish queue.
 - Probe every due roster peer during each heartbeat so one peer cannot starve
   liveness updates for the rest of the roster.
 - Keep authenticated in-FIPS WebRTC negotiation available when public Nostr
