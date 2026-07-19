@@ -80,10 +80,7 @@ impl AppConfig {
     }
 
     pub fn public_paid_exit_node_pubkey_hex(&self) -> Option<String> {
-        if !self.exit_node_public_paid_exit
-            || !self.connect_to_non_roster_fips_peers
-            || !self.fips_nostr_discovery_enabled
-        {
+        if !self.exit_node_public_paid_exit || !self.connect_to_non_roster_fips_peers {
             return None;
         }
         normalize_nostr_pubkey(&self.exit_node).ok()
@@ -163,4 +160,20 @@ impl AppConfig {
         toml::to_string_pretty(&to_write).with_context(|| "failed to encode TOML")
     }
 
+}
+
+#[cfg(test)]
+mod public_paid_exit_tests {
+    use super::AppConfig;
+
+    #[test]
+    fn configured_public_paid_exit_does_not_require_nostr_discovery() {
+        let seller = "1111111111111111111111111111111111111111111111111111111111111111";
+        let mut app = AppConfig::generated();
+        app.select_public_paid_exit_node(seller)
+            .expect("select public paid exit");
+        app.fips_nostr_discovery_enabled = false;
+
+        assert_eq!(app.public_paid_exit_node_pubkey_hex().as_deref(), Some(seller));
+    }
 }

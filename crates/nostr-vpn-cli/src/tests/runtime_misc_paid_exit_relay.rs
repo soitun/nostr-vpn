@@ -556,6 +556,75 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
 }
 
 #[cfg(feature = "paid-exit")]
+#[test]
+fn paid_exit_buy_selects_route_before_payment_or_free_probe() {
+    use nostr_sdk::prelude::Keys;
+    use nostr_vpn_core::paid_route_store::{
+        PaidRouteStore, load_paid_route_store, write_paid_route_store,
+    };
+    use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock is after epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("nvpn-paid-exit-select-{nonce}"));
+    std::fs::create_dir_all(&dir).expect("create test dir");
+    let config_path = dir.join("config.toml");
+    let app = AppConfig::generated();
+    app.save(&config_path).expect("save buyer config");
+
+    let seller = Keys::generate();
+    let mut offer_config = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
+    offer_config.pricing.price_msat = 1_000;
+    offer_config.pricing.per_units = 1_000_000;
+    offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
+    offer_config.channel.free_probe_units = 0;
+    offer_config.channel.grace_units = 0;
+    let signed_offer =
+        signed_paid_exit_offer_from_config("internet-exit", &seller, &offer_config, None, 123)
+            .expect("sign offer");
+
+    let store_path = paid_route_store_file_path(&config_path);
+    let mut store = PaidRouteStore::default();
+    store.upsert_wallet_mint("https://mint.example", "Example", None, 122);
+    store
+        .upsert_signed_offer(signed_offer, vec!["wss://relay.example".to_string()], 124)
+        .expect("store offer");
+    write_paid_route_store(&store_path, &store).expect("write store");
+
+    let buy = paid_exit_buy_once(PaidExitBuyArgs {
+        config: Some(config_path.clone()),
+        offer: Some("internet-exit".to_string()),
+        best_rated: false,
+        mint: None,
+        channel_capacity_sat: Some(10),
+        initial_paid_msat: 0,
+        no_select_exit_node: false,
+        no_reload_daemon: true,
+        json: false,
+    })
+    .expect("buy paid exit");
+
+    let stored = load_paid_route_store(&store_path).expect("reload bought session");
+    assert!(
+        !stored
+            .buyer_session_allows_routing(&buy.session.session_id, unix_timestamp())
+            .expect("read pre-payment route state")
+    );
+    let seller_hex = seller.public_key().to_hex();
+    assert_eq!(buy.selected_exit_node.as_deref(), Some(seller_hex.as_str()));
+    let saved = AppConfig::load(&config_path).expect("load selected config");
+    assert_eq!(saved.exit_node, seller_hex);
+    assert!(saved.exit_node_public_paid_exit);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(feature = "paid-exit")]
 #[tokio::test]
 async fn paid_exit_create_payment_command_updates_buyer_session() {
     use cashu_service::CashuSpilmanPayment;

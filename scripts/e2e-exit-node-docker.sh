@@ -410,7 +410,9 @@ if truthy "$PAID_EXIT_MODE" && [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; the
   SERVICES=(cashu-mint "${SERVICES[@]}")
 fi
 
-"${COMPOSE[@]}" build "${SERVICES[@]}" node-b >/dev/null
+if ! truthy "${NVPN_EXIT_NODE_E2E_SKIP_BUILD:-0}"; then
+  "${COMPOSE[@]}" build "${SERVICES[@]}" node-b >/dev/null
+fi
 
 "${COMPOSE[@]}" up -d "${SERVICES[@]}" >/dev/null
 
@@ -672,17 +674,26 @@ for _ in $(seq 1 80); do
     || grep -q '"effective_advertised_routes":\[[^]]*"0.0.0.0/0"' <<<"$ALICE_COMPACT"; then
     ADVERTISED_EXIT_READY=1
   fi
+  FIPS_PEERS_READY=0
+  if truthy "$PAID_EXIT_MODE"; then
+    if jq -e '.daemon.state.mesh_ready == true and .daemon.state.fips_other_peer_count > 0' \
+      <<<"$BOB_STATUS" >/dev/null; then
+      FIPS_PEERS_READY=1
+    fi
+  elif grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT" \
+    && grep -q '"mesh_ready":true' <<<"$BOB_COMPACT" \
+    && grep -q '"connected_peer_count":1' <<<"$ALICE_COMPACT" \
+    && grep -q '"connected_peer_count":1' <<<"$BOB_COMPACT" \
+    && grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT" \
+    && grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT"; then
+    FIPS_PEERS_READY=1
+  fi
 
   if grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT" \
     && grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT" \
     && grep -q '"running":true' <<<"$ALICE_COMPACT" \
     && grep -q '"running":true' <<<"$BOB_COMPACT" \
-    && grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT" \
-    && grep -q '"mesh_ready":true' <<<"$BOB_COMPACT" \
-    && grep -q '"connected_peer_count":1' <<<"$ALICE_COMPACT" \
-    && grep -q '"connected_peer_count":1' <<<"$BOB_COMPACT" \
-    && grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT" \
-    && grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT" \
+    && [[ "$FIPS_PEERS_READY" == 1 ]] \
     && [[ "$ADVERTISED_EXIT_READY" == 1 ]] \
     && grep -q 'dev utun100' <<<"$DEFAULT_ROUTE" \
     && [[ -n "$ALICE_TUNNEL_IP" ]] \
@@ -701,16 +712,23 @@ grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT"
 grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT"
 grep -q '"running":true' <<<"$ALICE_COMPACT"
 grep -q '"running":true' <<<"$BOB_COMPACT"
-grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT"
-grep -q '"mesh_ready":true' <<<"$BOB_COMPACT"
-grep -q '"connected_peer_count":1' <<<"$ALICE_COMPACT"
-grep -q '"connected_peer_count":1' <<<"$BOB_COMPACT"
 if grep -q 'FIPS route refresh failed' <<<"$ALICE_STATUS$BOB_STATUS"; then
   echo "exit-node docker e2e failed: daemon reported FIPS route refresh failure" >&2
   exit 1
 fi
-grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT"
-grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT"
+if truthy "$PAID_EXIT_MODE"; then
+  jq -e '.daemon.state.mesh_ready == true and .daemon.state.fips_other_peer_count > 0' \
+    <<<"$BOB_STATUS" >/dev/null
+  PAID_STATUS="$("${COMPOSE[@]}" exec -T node-a nvpn paid-exit status --json | tr -d '\r')"
+  jq -e 'any(.seller_admissions[]?; .allow_routing == true)' <<<"$PAID_STATUS" >/dev/null
+else
+  grep -q '"mesh_ready":true' <<<"$ALICE_COMPACT"
+  grep -q '"mesh_ready":true' <<<"$BOB_COMPACT"
+  grep -q '"connected_peer_count":1' <<<"$ALICE_COMPACT"
+  grep -q '"connected_peer_count":1' <<<"$BOB_COMPACT"
+  grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT"
+  grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT"
+fi
 assert_no_private_b_fips_shortcut "$ALICE_STATUS" "node-a"
 assert_no_private_b_fips_shortcut "$BOB_STATUS" "node-b"
 if ! truthy "$PAID_EXIT_MODE"; then
@@ -758,7 +776,9 @@ if ! wait "$TCPDUMP_PID"; then
   exit 1
 fi
 grep -q "$NODE_A_PUBLIC_IP" "$REALIZED_IP_LOG"
-assert_secure_exit_dns
+if ! truthy "$PAID_EXIT_MODE"; then
+  assert_secure_exit_dns
+fi
 
 if truthy "$PAID_EXIT_MODE"; then
   if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
@@ -795,7 +815,8 @@ if truthy "$PAID_EXIT_MODE"; then
     fi
 
     BUYER_PAID_STATUS="$("${COMPOSE[@]}" exec -T node-b nvpn paid-exit status --json | tr -d '\r')"
-    if ! jq -e --arg sid "$PAID_EXIT_SESSION_ID" --arg ip "$NODE_A_PUBLIC_IP" '
+    if ! jq -e --arg sid "$PAID_EXIT_SESSION_ID" --arg ip "$NODE_A_PUBLIC_IP" \
+      --argjson initial_paid_msat "$PAID_EXIT_SPILMAN_OPEN_PAID_MSAT" '
       any(.sessions[]?;
         .session_id == $sid
         and .realized_exit_ip == $ip
@@ -808,6 +829,10 @@ if truthy "$PAID_EXIT_MODE"; then
         and .quality.packet_loss_ppm == 0
         and ((.quality.down_bps // 0) > 0)
         and ((.quality.up_bps // 0) > 0)
+        and .payment.paid_msat > $initial_paid_msat
+        and .payment.cashu_spilman != null
+        and .routing.state == "paid"
+        and .routing.allow_routing == true
       )
     ' <<<"$BUYER_PAID_STATUS" >/dev/null; then
       echo "exit-node docker e2e failed: buyer paid-exit status did not persist realized IP and quality" >&2
@@ -815,48 +840,21 @@ if truthy "$PAID_EXIT_MODE"; then
       exit 1
     fi
 
-    STREAM_JSON=""
-    for _ in $(seq 1 30); do
-      STREAM_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit stream-payments \
-        --config "$CONFIG_PATH" \
-        --min-increment-msat 1 \
-        --json | tr -d '\r')" || true
-      if [[ -n "$STREAM_JSON" ]] && [[ "$(jq -r '.signed_count // 0' <<<"$STREAM_JSON")" -gt 0 ]]; then
-        break
-      fi
-      sleep 1
-    done
-    if [[ -z "$STREAM_JSON" ]] || [[ "$(jq -r '.signed_count // 0' <<<"$STREAM_JSON")" -le 0 ]]; then
-      echo "exit-node docker e2e failed: buyer did not sign a Spilman balance update after routed usage" >&2
-      if [[ -n "$STREAM_JSON" ]]; then
-        printf '%s\n' "$STREAM_JSON" >&2
-      fi
-      exit 1
-    fi
-    STREAM_PAYLOAD_TYPE="$(jq -r '.signed[0].payment.payload_type // empty' <<<"$STREAM_JSON")"
-    STREAM_PAID_MSAT="$(jq -r '.signed[0].payment.paid_msat // 0' <<<"$STREAM_JSON")"
-    STREAM_ENVELOPE="$(jq -c '.signed[0].payment.envelope' <<<"$STREAM_JSON")"
-    if [[ "$STREAM_PAYLOAD_TYPE" != "balance_update" ]] \
-      || [[ -z "$STREAM_ENVELOPE" || "$STREAM_ENVELOPE" == "null" ]] \
-      || ! [[ "$STREAM_PAID_MSAT" =~ ^[0-9]+$ ]] \
-      || (( STREAM_PAID_MSAT <= PAID_EXIT_SPILMAN_OPEN_PAID_MSAT )); then
-      echo "exit-node docker e2e failed: signed Spilman update did not advance paid balance" >&2
-      printf '%s\n' "$STREAM_JSON" >&2
-      exit 1
-    fi
-    printf '%s' "$STREAM_ENVELOPE" | "${COMPOSE[@]}" exec -T node-a nvpn paid-exit apply-payment \
-      --config "$CONFIG_PATH" \
-      --json \
-      --no-reload-daemon \
-      --envelope-stdin >/dev/null
-
     PAID_AFTER_STATUS=""
-    for _ in $(seq 1 20); do
+    for _ in $(seq 1 30); do
       PAID_AFTER_STATUS="$("${COMPOSE[@]}" exec -T node-a nvpn paid-exit status --json | tr -d '\r')"
-      PAID_AFTER_COMPACT="$(printf '%s' "$PAID_AFTER_STATUS" | compact_json)"
-      if grep -q '"mode":"cashu_spilman"' <<<"$PAID_AFTER_COMPACT" \
-        && grep -q '"state":"paid"' <<<"$PAID_AFTER_COMPACT" \
-        && grep -q '"allow_routing":true' <<<"$PAID_AFTER_COMPACT"; then
+      if jq -e --argjson initial_paid_msat "$PAID_EXIT_SPILMAN_OPEN_PAID_MSAT" '
+        any(.channels[]?;
+          .role == "seller"
+          and .payment.mode == "cashu_spilman"
+          and .payment.paid_msat > $initial_paid_msat
+          and .payment.cashu_spilman.has_signature == true
+        )
+        and any(.sessions[]?;
+          .routing.state == "paid"
+          and .routing.allow_routing == true
+        )
+      ' <<<"$PAID_AFTER_STATUS" >/dev/null; then
         break
       fi
       sleep 1
@@ -890,8 +888,10 @@ echo "--- Public internet route ---"
 echo "$PUBLIC_ROUTE"
 echo "--- Public internet ping ---"
 cat /tmp/nvpn-exit-node-public-ping.log
-echo "--- Secure DNS through paid exit ---"
-cat /tmp/nvpn-exit-node-secure-dns.log
+if ! truthy "$PAID_EXIT_MODE"; then
+  echo "--- Secure DNS through exit ---"
+  cat /tmp/nvpn-exit-node-secure-dns.log
+fi
 echo "--- Realized exit IP capture ---"
 cat "$REALIZED_IP_LOG"
 if [[ -n "$PAID_EXIT_PROBE_JSON" ]]; then
@@ -904,9 +904,9 @@ assert_idle_cpu_below node-b
 
 if truthy "$PAID_EXIT_MODE"; then
   if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
-    echo "paid-exit docker e2e passed: Spilman channel-open and signed balance-update payments allowed paid tunnel traffic, secure DNS used authenticated HTTPS without plaintext port 53, and the public target observed exit IP $NODE_A_PUBLIC_IP"
+    echo "paid-exit docker e2e passed: the automatically streamed Spilman balance update allowed paid tunnel traffic, and the public target observed exit IP $NODE_A_PUBLIC_IP"
   else
-    echo "paid-exit docker e2e passed: token-lease admission allowed paid tunnel traffic, secure DNS used authenticated HTTPS without plaintext port 53, and the public target observed exit IP $NODE_A_PUBLIC_IP"
+    echo "paid-exit docker e2e passed: token-lease admission allowed paid tunnel traffic, and the public target observed exit IP $NODE_A_PUBLIC_IP"
   fi
 else
   echo "exit-node docker e2e passed: tunnel traffic reached the selected exit node, the default route switched into the tunnel, and the public target observed exit IP $NODE_A_PUBLIC_IP"

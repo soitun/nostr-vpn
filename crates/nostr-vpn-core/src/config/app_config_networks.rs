@@ -179,6 +179,14 @@ impl AppConfig {
     }
 
     pub fn set_active_network_id(&mut self, network_id: &str) -> Result<()> {
+        if self.active_network_opt().is_none() {
+            let first_network_entry_id = self
+                .networks
+                .first()
+                .map(|network| network.id.clone())
+                .ok_or_else(|| anyhow::anyhow!("network not found"))?;
+            self.set_network_enabled(&first_network_entry_id, true)?;
+        }
         let active_network_entry_id = self
             .active_network_opt()
             .ok_or_else(|| anyhow::anyhow!("network not found"))?
@@ -394,4 +402,21 @@ impl AppConfig {
             .unwrap_or(false)
     }
 
+}
+
+#[cfg(test)]
+mod active_network_tests {
+    use super::AppConfig;
+
+    #[test]
+    fn setting_mesh_id_activates_the_generated_network() {
+        let mut app = AppConfig::generated();
+        assert!(app.active_network_opt().is_none());
+
+        app.set_active_network_id("independent-paid-seller")
+            .expect("generated network can be configured");
+
+        assert_eq!(app.enabled_network_count(), 1);
+        assert_eq!(app.effective_network_id(), "independent-paid-seller");
+    }
 }

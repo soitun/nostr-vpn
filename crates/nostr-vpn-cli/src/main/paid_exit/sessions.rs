@@ -54,10 +54,7 @@ fn paid_exit_buy_once(args: PaidExitBuyArgs) -> Result<PaidExitBuyResult> {
         write_paid_route_store(&store_path, &store)?;
     }
 
-    let session_allows_routing =
-        store.buyer_session_allows_routing(&result.session_id, unix_timestamp())?;
-    let (selected_exit_node, daemon_reload_attempted) =
-        if args.no_select_exit_node || !session_allows_routing {
+    let (selected_exit_node, daemon_reload_attempted) = if args.no_select_exit_node {
         (None, false)
     } else {
         let selected = app.select_public_paid_exit_node(&result.seller_npub)?;
