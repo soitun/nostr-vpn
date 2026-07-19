@@ -291,6 +291,7 @@ fn paid_exit_rating_matches_scope(rating: &serde_json::Value, expected_scope: &s
             .is_some_and(|scope| scope.trim() == expected_scope)
 }
 
+#[cfg(test)]
 fn paid_exit_rating_fact_matches_scope(
     event_value: &serde_json::Value,
     expected_scope: &str,
@@ -371,6 +372,7 @@ fn paid_exit_signed_offer_rating_score(
         .and_then(|offer| rating_scores.get(&offer.seller_npub).copied())
 }
 
+#[cfg(test)]
 fn paid_exit_rating_fact_filter(limit: usize, since_unix: Option<u64>, scope: &str) -> Filter {
     let mut filter = Filter::new().kind(Kind::Custom(RATING_FACT_KIND as u16));
     if limit > 0 {
@@ -387,165 +389,6 @@ fn paid_exit_rating_fact_filter(limit: usize, since_unix: Option<u64>, scope: &s
         );
     }
     filter
-}
-
-async fn discover_paid_exit_rating_events_from_relays(
-    app: &AppConfig,
-    relays: &[String],
-    duration_secs: u64,
-    limit: usize,
-    since_unix: Option<u64>,
-    scope: &str,
-    trusted_authors: &HashSet<String>,
-) -> Result<serde_json::Value> {
-    if relays.is_empty() {
-        return Err(anyhow!(
-            "no Nostr relays configured for paid exit rating discovery"
-        ));
-    }
-
-    let pubsub_sources = paid_exit_pubsub_relay_sources(relays);
-    let relays = paid_exit_pubsub_relay_urls(&pubsub_sources);
-    let retention_policy = paid_exit_rating_retention_policy(limit, since_unix, scope);
-    let retention_filter = paid_exit_retention_filter(&retention_policy, "rating")?;
-    let effective_limit = retention_policy.max_events;
-    let client = Client::new(app.nostr_keys()?);
-    for relay in &relays {
-        client
-            .add_relay(relay)
-            .await
-            .map_err(|error| anyhow!("failed to add Nostr relay {relay}: {error}"))?;
-    }
-    client.connect().await;
-    let mut notifications = client.notifications();
-    client
-        .subscribe_to(relays.clone(), retention_filter, None)
-        .await
-        .map_err(|error| anyhow!("failed to subscribe paid exit rating facts: {error}"))?;
-
-    let timeout = tokio::time::sleep(Duration::from_secs(duration_secs));
-    tokio::pin!(timeout);
-    let mut seen_events = HashSet::new();
-    let mut events = Vec::new();
-    loop {
-        tokio::select! {
-            () = &mut timeout => break,
-            notification = notifications.recv() => {
-                match notification {
-                    Ok(RelayPoolNotification::Event { event, .. }) => {
-                        let event = (*event).clone();
-                        if !seen_events.insert(event.id.to_string()) {
-                            continue;
-                        }
-                        if event.verify().is_err() {
-                            continue;
-                        }
-                        let Ok(verified_event) = nostr_pubsub::VerifiedEvent::try_from(event.clone()) else {
-                            continue;
-                        };
-                        if !retention_policy.accepts(&verified_event) {
-                            continue;
-                        }
-                        if !trusted_authors.is_empty()
-                            && !trusted_authors.contains(&event.pubkey.to_hex())
-                        {
-                            continue;
-                        }
-                        let value = serde_json::to_value(&event)
-                            .context("failed to encode rating fact event JSON")?;
-                        if paid_exit_fact_optional_scalar(&value, "type").as_deref()
-                            != Some(RATING_FACT_TYPE)
-                        {
-                            continue;
-                        }
-                        if !paid_exit_rating_fact_matches_scope(&value, scope) {
-                            continue;
-                        }
-                        events.push(value);
-                        if events.len() >= effective_limit {
-                            break;
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
-            }
-        }
-    }
-    client.disconnect().await;
-    Ok(json!({ "events": events }))
-}
-
-async fn discover_paid_exit_offers_from_relays(
-    app: &AppConfig,
-    relays: &[String],
-    duration_secs: u64,
-    limit: usize,
-    since_unix: Option<u64>,
-) -> Result<Vec<SignedPaidRouteOffer>> {
-    if relays.is_empty() {
-        return Err(anyhow!(
-            "no Nostr relays configured for paid exit discovery"
-        ));
-    }
-
-    let pubsub_sources = paid_exit_pubsub_relay_sources(relays);
-    let relays = paid_exit_pubsub_relay_urls(&pubsub_sources);
-    let retention_policy = paid_exit_offer_retention_policy(limit, since_unix);
-    let retention_filter = paid_exit_retention_filter(&retention_policy, "offer")?;
-    let effective_limit = retention_policy.max_events;
-    let client = Client::new(app.nostr_keys()?);
-    for relay in &relays {
-        client
-            .add_relay(relay)
-            .await
-            .map_err(|error| anyhow!("failed to add Nostr relay {relay}: {error}"))?;
-    }
-    client.connect().await;
-    let mut notifications = client.notifications();
-    client
-        .subscribe_to(relays.clone(), retention_filter, None)
-        .await
-        .map_err(|error| anyhow!("failed to subscribe paid exit offers: {error}"))?;
-
-    let timeout = tokio::time::sleep(Duration::from_secs(duration_secs));
-    tokio::pin!(timeout);
-    let mut seen_events = HashSet::new();
-    let mut offers = Vec::new();
-    loop {
-        tokio::select! {
-            () = &mut timeout => break,
-            notification = notifications.recv() => {
-                match notification {
-                    Ok(RelayPoolNotification::Event { event, .. }) => {
-                        let event = (*event).clone();
-                        if !seen_events.insert(event.id.to_string()) {
-                            continue;
-                        }
-                        let Ok(verified_event) = nostr_pubsub::VerifiedEvent::try_from(event.clone()) else {
-                            continue;
-                        };
-                        if !retention_policy.accepts(&verified_event) {
-                            continue;
-                        }
-                        if let Ok(signed) = SignedPaidRouteOffer::from_event(event) {
-                            offers.push(signed);
-                            if offers.len() >= effective_limit {
-                                break;
-                            }
-                        }
-                    }
-                    Ok(_) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                }
-            }
-        }
-    }
-    client.disconnect().await;
-    offers.sort_by_key(|signed| std::cmp::Reverse(signed.event.created_at.as_secs()));
-    Ok(offers)
 }
 
 fn paid_exit_offer_results_json(

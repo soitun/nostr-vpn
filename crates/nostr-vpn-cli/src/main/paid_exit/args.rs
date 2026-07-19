@@ -8,6 +8,7 @@ const DEFAULT_FIPS_PEER_RATING_SCOPE: &str = "fips.peer";
 const RATING_FACT_KIND: u64 = 7368;
 const RATING_FACT_TYPE: &str = "rating";
 const RATING_FACT_SCHEMA: &str = "1";
+#[cfg(test)]
 const PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT: usize = 500;
 const PAID_EXIT_OFFER_EVENT_CACHE_LIMIT: usize = 512;
 
@@ -22,7 +23,7 @@ enum PaidExitCommand {
     /// Import a signed paid-exit offer event from JSON.
     #[command(name = "import-offer")]
     ImportOffer(PaidExitImportOfferArgs),
-    /// Discover and verify paid-exit offers from Nostr relays.
+    /// Discover and verify paid-exit offers received over Nostr pubsub.
     Discover(PaidExitDiscoverArgs),
     /// Open a local buyer session for a discovered paid-exit offer.
     Buy(PaidExitBuyArgs),
@@ -76,10 +77,7 @@ struct PaidExitRunArgs {
     /// Stable Nostr d-tag for this seller's paid-exit offer.
     #[arg(long)]
     offer_id: Option<String>,
-    /// Override configured Nostr relays. Can be supplied more than once.
-    #[arg(long = "relay")]
-    relays: Vec<String>,
-    /// Publish the refreshed offer to Nostr relays.
+    /// Publish the refreshed offer over Nostr pubsub.
     #[arg(long)]
     publish: bool,
     /// Do not ask a running daemon to reload after saving seller config.
@@ -134,10 +132,7 @@ struct PaidExitOfferArgs {
     /// Stable Nostr d-tag for this seller's paid-exit offer.
     #[arg(long)]
     offer_id: Option<String>,
-    /// Override configured Nostr relays. Can be supplied more than once.
-    #[arg(long = "relay")]
-    relays: Vec<String>,
-    /// Publish the signed offer to Nostr relays.
+    /// Publish the signed offer over Nostr pubsub.
     #[arg(long)]
     publish: bool,
     #[arg(long)]
@@ -157,9 +152,6 @@ struct PaidExitImportOfferArgs {
     /// File containing signed offer event JSON.
     #[arg(long, conflicts_with = "event_stdin")]
     event_file: Option<PathBuf>,
-    /// Relay URL metadata to store with the imported offer.
-    #[arg(long = "relay")]
-    relays: Vec<String>,
     #[arg(long)]
     json: bool,
 }
@@ -168,11 +160,6 @@ struct PaidExitImportOfferArgs {
 struct PaidExitDiscoverArgs {
     #[arg(long)]
     config: Option<PathBuf>,
-    /// Override configured Nostr relays. Can be supplied more than once.
-    #[arg(long = "relay")]
-    relays: Vec<String>,
-    #[arg(long, default_value_t = 5)]
-    duration_secs: u64,
     #[arg(long, default_value_t = 50)]
     limit: usize,
     /// Ignore offer events older than this many seconds.
@@ -181,9 +168,6 @@ struct PaidExitDiscoverArgs {
     /// FIPS peer ratings JSON exported by `fipsctl ratings export`.
     #[arg(long = "fips-peer-ratings", value_name = "PATH")]
     fips_peer_ratings: Option<PathBuf>,
-    /// Relay to query signed FIPS peer rating fact events from.
-    #[arg(long = "fips-peer-ratings-relay", value_name = "URL")]
-    fips_peer_ratings_relays: Vec<String>,
     /// Trusted Nostr pubkey/npub allowed to publish rating facts. Repeat or comma-separate.
     #[arg(long = "trusted-rating-author", value_name = "NPUB_OR_HEX")]
     trusted_rating_authors: Vec<String>,
@@ -353,9 +337,6 @@ struct PaidExitRatingsPublishArgs {
     /// Buyer paid-route session id whose stored probe should rate the seller.
     #[arg(long)]
     session: String,
-    /// Override configured Nostr relays. Can be supplied more than once.
-    #[arg(long = "relay")]
-    relays: Vec<String>,
     /// Rating scope to write into the fact event.
     #[arg(long = "rating-scope", default_value = DEFAULT_FIPS_PEER_RATING_SCOPE)]
     rating_scope: String,

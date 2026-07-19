@@ -24,14 +24,18 @@ async fn paid_exit_automatic_probe_measurement(
     let (measurement, _, bandwidth_error) =
         paid_exit_probe_measurement(&args, app, now_unix).await?;
     if let Some(error) = bandwidth_error {
-        return Err(anyhow!("paid exit free probe failed: {error}"));
+        eprintln!("paid-exit: automatic bandwidth sample incomplete: {error}");
     }
-    if measurement.quality.down_bps.is_none() || measurement.quality.up_bps.is_none() {
+    if !automatic_probe_observed_public_ip(&measurement) {
         return Err(anyhow!(
-            "paid exit free probe did not verify both traffic directions"
+            "paid exit free probe did not observe a public exit IP"
         ));
     }
     Ok(measurement)
+}
+
+pub(super) fn automatic_probe_observed_public_ip(measurement: &PaidRouteProbeMeasurement) -> bool {
+    measurement.realized_exit_ip.is_some() && measurement.success_count() > 0
 }
 
 pub(crate) async fn update_automatic_paid_exit(
@@ -156,13 +160,13 @@ pub(crate) async fn update_automatic_paid_exit(
         .as_ref()
         .is_some_and(|candidate| candidate.should_failover(now_unix))
     {
-        finalize_automatic_paid_exit(automatic, runtime, app, config_path, now_unix).await?;
+        suspend_automatic_paid_exit(automatic, runtime, config_path, now_unix)?;
         if !PaidExitAutomaticBuyer::enabled(app) {
             return Ok(false);
         }
         app.set_internet_source(nostr_vpn_core::config::InternetSource::PaidAutomatic);
         app.save(config_path)?;
-        automatic.cancel_candidate(true);
+        automatic.cancel_candidate(true, now_unix);
         return Ok(true);
     }
 

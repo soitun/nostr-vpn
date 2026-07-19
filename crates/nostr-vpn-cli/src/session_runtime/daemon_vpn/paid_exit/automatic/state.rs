@@ -1,6 +1,7 @@
 use super::*;
 
 pub(super) const PAID_EXIT_AUTO_HEALTH_TTL_SECS: u64 = 15;
+pub(super) const PAID_EXIT_AUTO_RETRY_COOLDOWN_SECS: u64 = 30;
 const PAID_EXIT_AUTO_PROBE_TIMEOUT_SECS: u64 = 30;
 const PAID_EXIT_AUTO_FAILOVER_SECS: u64 = 60;
 
@@ -8,7 +9,7 @@ const PAID_EXIT_AUTO_FAILOVER_SECS: u64 = 60;
 pub(crate) struct PaidExitAutomaticBuyer {
     pub(super) generation: u64,
     pub(super) candidate: Option<PaidExitAutomaticCandidate>,
-    pub(super) rejected_offers: HashSet<String>,
+    pub(super) rejected_offers: HashMap<String, u64>,
     pub(super) probe: Option<PaidExitAutomaticProbe>,
 }
 
@@ -121,15 +122,21 @@ impl PaidExitAutomaticBuyer {
     }
 
     pub(super) fn selection(
-        &self,
+        &mut self,
         store: &PaidRouteStore,
         now_unix: u64,
     ) -> Result<nostr_vpn_core::paid_route_store::PaidRouteAutomaticOfferSelection> {
+        self.expire_rejected_offers(now_unix);
         let mut candidates = store.clone();
-        for offer in &self.rejected_offers {
+        for offer in self.rejected_offers.keys() {
             candidates.offers.remove(offer);
         }
         candidates.select_automatic_offer(now_unix)
+    }
+
+    pub(super) fn expire_rejected_offers(&mut self, now_unix: u64) {
+        self.rejected_offers
+            .retain(|_, retry_at| *retry_at > now_unix);
     }
 
     pub(super) fn start_candidate(
@@ -158,13 +165,15 @@ impl PaidExitAutomaticBuyer {
         });
     }
 
-    pub(super) fn cancel_candidate(&mut self, reject: bool) {
+    pub(super) fn cancel_candidate(&mut self, reject: bool, now_unix: u64) {
         if let Some(probe) = self.probe.take() {
             probe.task.abort();
         }
         if reject && let Some(candidate) = self.candidate.as_ref() {
-            self.rejected_offers
-                .insert(candidate.selection.offer_key.clone());
+            self.rejected_offers.insert(
+                candidate.selection.offer_key.clone(),
+                now_unix.saturating_add(PAID_EXIT_AUTO_RETRY_COOLDOWN_SECS),
+            );
         }
         self.generation = self.generation.wrapping_add(1);
         self.candidate = None;

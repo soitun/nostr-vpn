@@ -128,7 +128,6 @@ fn paid_exit_run_settings_prepare_public_fips_discovery() {
         &PaidExitRunArgs {
             config: None,
             offer_id: None,
-            relays: Vec::new(),
             publish: false,
             no_reload_daemon: true,
             upstream: None,

@@ -4,7 +4,6 @@ struct PaidExitRunResult {
     store_path: PathBuf,
     offer: PaidRouteOffer,
     event_id: String,
-    relays: Vec<String>,
     stored: bool,
     publish: Option<serde_json::Value>,
     daemon_reload_attempted: bool,
@@ -37,7 +36,6 @@ async fn paid_exit_run_once(args: PaidExitRunArgs) -> Result<PaidExitRunResult> 
     app.save(&config_path)?;
 
     let keys = app.nostr_keys()?;
-    let relays = paid_exit_relay_urls(&app, &args.relays);
     let offer_id = args.offer_id.unwrap_or_else(default_paid_exit_offer_id);
     let receiver_pubkey_hex = paid_exit_spilman_receiver_pubkey_hex(&config_path, &app.paid_exit)?;
     let signed = signed_paid_exit_offer_from_config_with_receiver(
@@ -51,7 +49,7 @@ async fn paid_exit_run_once(args: PaidExitRunArgs) -> Result<PaidExitRunResult> 
     let offer = signed.offer()?;
     let store_path = paid_route_store_file_path(&config_path);
     let stored =
-        persist_paid_exit_offer_snapshot(&store_path, &signed, &relays, &offer, unix_timestamp())?;
+        persist_paid_exit_offer_snapshot(&store_path, &signed, &[], &offer, unix_timestamp())?;
 
     let daemon_reload_attempted = !args.no_reload_daemon;
     if daemon_reload_attempted {
@@ -59,9 +57,7 @@ async fn paid_exit_run_once(args: PaidExitRunArgs) -> Result<PaidExitRunResult> 
     }
 
     let publish = if args.publish {
-        Some(
-            publish_paid_exit_offer_hybrid(&app, &config_path, &signed, &relays).await?,
-        )
+        Some(publish_paid_exit_offer_pubsub(&app, &config_path, &signed)?)
     } else {
         None
     };
@@ -73,7 +69,6 @@ async fn paid_exit_run_once(args: PaidExitRunArgs) -> Result<PaidExitRunResult> 
         store_path,
         offer,
         event_id: signed.event.id.to_string(),
-        relays,
         stored,
         publish,
         daemon_reload_attempted,
@@ -86,9 +81,6 @@ fn apply_paid_exit_run_settings(app: &mut AppConfig, args: &PaidExitRunArgs) -> 
     app.connect_to_non_roster_fips_peers = true;
     app.fips_nostr_discovery_enabled = true;
     app.fips_advertise_public_endpoint = true;
-    if !args.relays.is_empty() {
-        app.nostr.relays = normalize_relay_urls(args.relays.clone());
-    }
     if let Some(value) = args.upstream.as_deref() {
         app.paid_exit.access.upstream = value
             .parse::<PaidExitUpstream>()
@@ -269,7 +261,6 @@ fn paid_exit_run_result_json(result: &PaidExitRunResult) -> serde_json::Value {
         "enabled": true,
         "offer": result.offer,
         "event_id": result.event_id,
-        "relays": result.relays,
         "stored": result.stored,
         "published": result.publish.is_some(),
         "publish": result.publish,
@@ -325,12 +316,10 @@ fn print_paid_exit_run_result(result: &PaidExitRunResult) {
             .map(|asn| asn.to_string())
             .unwrap_or_else(|| "none".to_string())
     );
-    println!("relays: {}", result.relays.join(", "));
     if let Some(publish) = &result.publish {
         println!(
-            "published: {} success, {} failed",
-            publish["success_count"].as_u64().unwrap_or_default(),
-            publish["failed_count"].as_u64().unwrap_or_default()
+            "published: nostr-pubsub queued={}",
+            publish["nostr_pubsub_queued"].as_bool().unwrap_or_default()
         );
     } else {
         println!("published: false");

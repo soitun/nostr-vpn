@@ -4,7 +4,6 @@ async fn paid_exit_offer_command(args: PaidExitOfferArgs) -> Result<()> {
     let app = load_or_default_config(&config_path)?;
     ensure_paid_exit_advertisable(&app)?;
     let keys = app.nostr_keys()?;
-    let relays = paid_exit_relay_urls(&app, &args.relays);
     let offer_id = args.offer_id.unwrap_or_else(default_paid_exit_offer_id);
     let receiver_pubkey_hex = paid_exit_spilman_receiver_pubkey_hex(&config_path, &app.paid_exit)?;
     let signed = signed_paid_exit_offer_from_config_with_receiver(
@@ -18,12 +17,10 @@ async fn paid_exit_offer_command(args: PaidExitOfferArgs) -> Result<()> {
     let offer = signed.offer()?;
     let store_path = paid_route_store_file_path(&config_path);
     let stored =
-        persist_paid_exit_offer_snapshot(&store_path, &signed, &relays, &offer, unix_timestamp())?;
+        persist_paid_exit_offer_snapshot(&store_path, &signed, &[], &offer, unix_timestamp())?;
 
     let publish = if args.publish {
-        Some(
-            publish_paid_exit_offer_hybrid(&app, &config_path, &signed, &relays).await?,
-        )
+        Some(publish_paid_exit_offer_pubsub(&app, &config_path, &signed)?)
     } else {
         None
     };
@@ -34,7 +31,6 @@ async fn paid_exit_offer_command(args: PaidExitOfferArgs) -> Result<()> {
             serde_json::to_string_pretty(&json!({
                 "offer": offer,
                 "event": signed.event,
-                "relays": relays,
                 "publish": publish,
                 "store_path": store_path,
                 "stored": stored,
@@ -67,13 +63,11 @@ async fn paid_exit_offer_command(args: PaidExitOfferArgs) -> Result<()> {
                 .unwrap_or_else(|| "none".to_string())
         );
         println!("event_id: {}", signed.event.id);
-        println!("relays: {}", relays.join(", "));
         println!("store: {} changed={stored}", store_path.display());
         if let Some(publish) = publish {
             println!(
-                "published: {} success, {} failed",
-                publish["success_count"].as_u64().unwrap_or_default(),
-                publish["failed_count"].as_u64().unwrap_or_default()
+                "published: nostr-pubsub queued={}",
+                publish["nostr_pubsub_queued"].as_bool().unwrap_or_default()
             );
         } else {
             println!("published: false");
@@ -92,13 +86,8 @@ fn paid_exit_import_offer_command(args: PaidExitImportOfferArgs) -> Result<()> {
         .context("failed to verify paid route offer event")?;
     let offer = signed.offer()?;
     let store_path = paid_route_store_file_path(&config_path);
-    let relays = normalize_relay_urls(args.relays);
-    let changed = upsert_paid_route_offer(
-        &store_path,
-        signed.clone(),
-        relays.clone(),
-        unix_timestamp(),
-    )?;
+    let changed =
+        upsert_paid_route_offer(&store_path, signed.clone(), vec![], unix_timestamp())?;
 
     if args.json {
         println!(
@@ -106,7 +95,6 @@ fn paid_exit_import_offer_command(args: PaidExitImportOfferArgs) -> Result<()> {
             serde_json::to_string_pretty(&json!({
                 "offer": offer,
                 "event": signed.event,
-                "relays": relays,
                 "store_path": store_path,
                 "stored": changed,
             }))?
@@ -123,8 +111,6 @@ fn paid_exit_import_offer_command(args: PaidExitImportOfferArgs) -> Result<()> {
 
 async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
-    let app = load_or_default_config(&config_path)?;
-    let relays = paid_exit_relay_urls(&app, &args.relays);
     let trusted_rating_authors =
         paid_exit_trusted_rating_author_set(&args.trusted_rating_authors)?;
     let mut rating_scores = args
@@ -153,30 +139,6 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
         )?;
         merge_paid_exit_rating_scores(&mut rating_scores, cached_scores);
     }
-    let rating_relays = normalize_relay_urls(args.fips_peer_ratings_relays.clone());
-    let mut rating_relay_event_count = 0usize;
-    if !rating_relays.is_empty() {
-        let rating_events = discover_paid_exit_rating_events_from_relays(
-            &app,
-            &rating_relays,
-            args.duration_secs,
-            PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT,
-            since_unix,
-            &args.rating_scope,
-            &trusted_rating_authors,
-        )
-        .await?;
-        rating_relay_event_count = rating_events
-            .get("events")
-            .and_then(|events| events.as_array())
-            .map_or(0, Vec::len);
-        let relay_scores = paid_exit_rating_scores_from_value(
-            &rating_events,
-            &args.rating_scope,
-            &trusted_rating_authors,
-        )?;
-        merge_paid_exit_rating_scores(&mut rating_scores, relay_scores);
-    }
     let retention_policy = paid_exit_offer_retention_policy(args.limit, since_unix);
     let cached_offers = cached_control_events
         .into_iter()
@@ -189,20 +151,7 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
         })
         .collect::<Vec<_>>();
     let cached_offer_count = cached_offers.len();
-    let relay_offers = if relays.is_empty() {
-        Vec::new()
-    } else {
-        discover_paid_exit_offers_from_relays(
-            &app,
-            &relays,
-            args.duration_secs,
-            args.limit,
-            since_unix,
-        )
-        .await?
-    };
     let mut offers = cached_offers.clone();
-    offers.extend(relay_offers.iter().cloned());
     offers.sort_by_key(|signed| std::cmp::Reverse(signed.event.created_at.as_secs()));
     let mut seen_offer_ids = HashSet::new();
     offers.retain(|signed| seen_offer_ids.insert(signed.event.id));
@@ -216,23 +165,16 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
         &cached_offers,
         &[],
         rating_scores.as_ref(),
-    )? + persist_paid_exit_discovered_offers(
-        &store_path,
-        &relay_offers,
-        &relays,
-        rating_scores.as_ref(),
     )?;
 
     if args.json {
         let offers_json = paid_exit_offer_results_json(&offers, rating_scores.as_ref())?;
-        let ratings_json = if args.fips_peer_ratings.is_some() || !rating_relays.is_empty() {
+        let ratings_json = if args.fips_peer_ratings.is_some() || cached_rating_event_count > 0 {
             Some(json!({
                 "path": args.fips_peer_ratings.as_ref().map(|path| path.display().to_string()),
                 "scope": args.rating_scope,
                 "subject_count": rating_scores.as_ref().map_or(0, HashMap::len),
-                "relay_count": rating_relays.len(),
-                "relay_event_count": rating_relay_event_count,
-                "relays": rating_relays,
+                "nostr_pubsub_cached_event_count": cached_rating_event_count,
                 "trusted_author_count": trusted_rating_authors.len(),
             }))
         } else {
@@ -241,24 +183,23 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
-                "relays": relays,
                 "count": offers_json.len(),
                 "offers": offers_json,
                 "store_path": store_path,
                 "stored_count": stored_count,
-                "p2p_cached_offer_count": cached_offer_count,
-                "p2p_cached_rating_event_count": cached_rating_event_count,
+                "nostr_pubsub_cached_offer_count": cached_offer_count,
+                "nostr_pubsub_cached_rating_event_count": cached_rating_event_count,
                 "ratings": ratings_json,
             }))?
         );
     } else {
         println!("paid_exit_offers: {}", offers.len());
         println!(
-            "p2p_cache: offers={} rating_events={}",
+            "nostr_pubsub_cache: offers={} rating_events={}",
             cached_offer_count, cached_rating_event_count
         );
         println!("store: {} changed={stored_count}", store_path.display());
-        if args.fips_peer_ratings.is_some() || !rating_relays.is_empty() {
+        if args.fips_peer_ratings.is_some() || cached_rating_event_count > 0 {
             let subject_count = rating_scores.as_ref().map_or(0, HashMap::len);
             let file = args
                 .fips_peer_ratings
@@ -266,12 +207,11 @@ async fn paid_exit_discover_command(args: PaidExitDiscoverArgs) -> Result<()> {
                 .map(|path| path.display().to_string())
                 .unwrap_or_else(|| "-".to_string());
             println!(
-                "ratings: file={} scope={} subjects={} relay_events={} relays={} trusted_authors={}",
+                "ratings: file={} scope={} subjects={} nostr_pubsub_events={} trusted_authors={}",
                 file,
                 args.rating_scope,
                 subject_count,
-                rating_relay_event_count,
-                rating_relays.len(),
+                cached_rating_event_count,
                 trusted_rating_authors.len()
             );
         }

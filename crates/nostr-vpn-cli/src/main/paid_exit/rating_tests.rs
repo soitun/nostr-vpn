@@ -492,7 +492,7 @@ mod paid_exit_rating_tests {
     }
 
     #[test]
-    fn app_relay_config_feeds_pubsub_relay_sources() {
+    fn app_relay_config_excludes_disabled_payment_fallback_relays() {
         let mut app = AppConfig::generated();
         app.nostr.relays = vec![
             "wss://relay-a.example".to_string(),
@@ -501,15 +501,7 @@ mod paid_exit_rating_tests {
         app.nostr.disabled_relays = vec!["wss://relay-disabled.example".to_string()];
         let relays = paid_exit_relay_urls(&app, &[]);
 
-        let routes = paid_exit_pubsub_relay_sources(&relays);
-        let route_urls = paid_exit_pubsub_relay_urls(&routes);
-
         assert_eq!(relays, vec!["wss://relay-a.example".to_string()]);
-        assert_eq!(route_urls, relays);
-        assert_eq!(routes.len(), 1);
-        assert_eq!(routes[0].source.kind, nostr_pubsub::EventSourceKind::Relay);
-        assert_eq!(routes[0].priority, nostr_pubsub::SOURCE_PRIORITY_RELAY);
-        assert_eq!(routes[0].source.url.as_deref(), Some("wss://relay-a.example"));
     }
 
     #[test]

@@ -74,14 +74,10 @@ use cashu_service::{
     send_lightning_payment, send_payment_token,
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
+#[cfg(all(feature = "paid-exit", test))]
+use nostr_sdk::prelude::{Alphabet, Filter, SingleLetterTag};
 #[cfg(feature = "paid-exit")]
-use nostr_sdk::{
-    Client,
-    prelude::{
-        Alphabet, Event, EventBuilder, Filter, Keys, Kind, PublicKey, RelayPoolNotification,
-        SingleLetterTag, Tag, Timestamp, ToBech32,
-    },
-};
+use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, Timestamp, ToBech32};
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::config::normalize_relay_urls;
 use nostr_vpn_core::config::{

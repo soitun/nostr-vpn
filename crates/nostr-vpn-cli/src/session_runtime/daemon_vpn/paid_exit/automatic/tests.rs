@@ -190,6 +190,48 @@ fn automatic_cancellation_never_overwrites_another_internet_mode() {
     assert!(automatic.payments_allowed(&app, 100));
 }
 
+#[test]
+fn automatic_failed_offer_is_retried_after_cooldown() {
+    let mut automatic = PaidExitAutomaticBuyer::default();
+    automatic.start_candidate(
+        serde_json::from_value(json!({
+            "offer_key": "offer",
+            "mint_url": "https://mint.example",
+            "channel_capacity_sat": 10,
+        }))
+        .expect("selection"),
+        "seller".to_string(),
+        "session".to_string(),
+        false,
+        100,
+    );
+    automatic.cancel_candidate(true, 120);
+
+    assert!(automatic.rejected_offers.contains_key("offer"));
+    automatic.expire_rejected_offers(120 + PAID_EXIT_AUTO_RETRY_COOLDOWN_SECS - 1);
+    assert!(automatic.rejected_offers.contains_key("offer"));
+    automatic.expire_rejected_offers(120 + PAID_EXIT_AUTO_RETRY_COOLDOWN_SECS);
+    assert!(!automatic.rejected_offers.contains_key("offer"));
+}
+
+#[test]
+fn automatic_probe_health_does_not_require_a_vendor_bandwidth_sample() {
+    let measurement = PaidRouteProbeMeasurement {
+        realized_exit_ip: Some("203.0.113.10".to_string()),
+        observed_country_code: None,
+        observed_asn: None,
+        quality: Default::default(),
+        samples: vec![PaidRouteProbeSample::success(
+            "203.0.113.10".to_string(),
+            12,
+        )],
+    };
+
+    assert!(runtime::automatic_probe_observed_public_ip(&measurement));
+    assert!(measurement.quality.down_bps.is_none());
+    assert!(measurement.quality.up_bps.is_none());
+}
+
 fn test_candidate(seller_pubkey: &str) -> PaidExitAutomaticCandidate {
     PaidExitAutomaticCandidate {
         selection: serde_json::from_value(json!({

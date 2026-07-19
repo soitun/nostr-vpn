@@ -164,10 +164,18 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
 
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
-async fn paid_exit_offer_publish_and_discover_roundtrips_through_local_relay() {
-    let relay = LocalNostrRelay::spawn().await;
+async fn paid_exit_offer_publish_and_discover_roundtrips_without_relays() {
+    use nostr_vpn_core::config::NostrPubsubMode;
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("nvpn-paid-exit-pubsub-{nonce}"));
+    let config_path = directory.join("config.toml");
     let mut app = AppConfig::generated();
-    app.nostr.relays = vec![relay.url.clone()];
+    app.nostr.relays.clear();
+    app.nostr.pubsub.mode = NostrPubsubMode::Client;
     app.paid_exit.enabled = true;
     app.paid_exit.pricing.price_msat = 750;
     app.paid_exit.pricing.per_units = 1_000_000;
@@ -186,17 +194,19 @@ async fn paid_exit_offer_publish_and_discover_roundtrips_through_local_relay() {
     .expect("signed offer");
     let offer = signed.offer().expect("offer");
 
-    let publish =
-        publish_paid_exit_offer_to_relays(&app, &signed, std::slice::from_ref(&relay.url))
-            .await
-            .expect("publish paid exit offer");
-    assert_eq!(publish["success_count"].as_u64(), Some(1));
-    assert_eq!(publish["failed_count"].as_u64(), Some(0));
+    let publish = publish_paid_exit_offer_pubsub(&app, &config_path, &signed)
+        .expect("publish paid exit offer");
+    assert_eq!(publish["nostr_pubsub_queued"].as_bool(), Some(true));
 
-    let discovered =
-        discover_paid_exit_offers_from_relays(&app, std::slice::from_ref(&relay.url), 1, 10, None)
-            .await
-            .expect("discover paid exit offers");
+    let discovered = std::fs::read_dir(
+        crate::control_pubsub_runtime::control_pubsub_outbox_directory(&config_path),
+    )
+    .expect("read Nostr pubsub outbox")
+    .filter_map(|entry| entry.ok())
+    .filter_map(|entry| std::fs::read(entry.path()).ok())
+    .filter_map(|bytes| serde_json::from_slice::<Event>(&bytes).ok())
+    .filter_map(|event| SignedPaidRouteOffer::from_event(event).ok())
+    .collect::<Vec<_>>();
     assert_eq!(discovered.len(), 1);
     let discovered_offer = discovered[0].offer().expect("discovered offer");
     assert_eq!(discovered_offer.offer_id, offer.offer_id);
@@ -204,12 +214,12 @@ async fn paid_exit_offer_publish_and_discover_roundtrips_through_local_relay() {
     assert_eq!(discovered_offer.location.country_code, "FI");
     assert_eq!(discovered_offer.pricing.price_msat, 750);
 
-    relay.stop().await;
+    let _ = std::fs::remove_dir_all(directory);
 }
 
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
-async fn paid_exit_rating_discovery_filters_untrusted_relay_publishers() {
+async fn paid_exit_rating_cache_filters_untrusted_pubsub_publishers() {
     let trusted_author = Keys::generate();
     let untrusted_author = Keys::generate();
     let trusted_npub = trusted_author.public_key().to_bech32().unwrap();
@@ -238,28 +248,15 @@ async fn paid_exit_rating_discovery_filters_untrusted_relay_publishers() {
         601,
     )
     .expect("spam rating event");
-    let relay = LocalNostrRelay::spawn_with_events(vec![
-        serde_json::to_value(spam_event).expect("encode spam event"),
-        serde_json::to_value(trusted_event).expect("encode trusted event"),
-    ])
-    .await;
-    let app = AppConfig::generated();
     let trusted_authors =
         paid_exit_trusted_rating_author_set(&[trusted_author.public_key().to_hex()]).unwrap();
+    let events = json!({
+        "events": [
+            serde_json::to_value(spam_event).expect("encode spam event"),
+            serde_json::to_value(trusted_event).expect("encode trusted event"),
+        ]
+    });
 
-    let events = discover_paid_exit_rating_events_from_relays(
-        &app,
-        std::slice::from_ref(&relay.url),
-        1,
-        PAID_EXIT_RATING_EVENT_LOOKUP_LIMIT,
-        None,
-        "fips.peer",
-        &trusted_authors,
-    )
-    .await
-    .expect("discover rating facts");
-
-    assert_eq!(events["events"].as_array().expect("events").len(), 1);
     let scores = paid_exit_rating_scores_from_value(&events, "fips.peer", &trusted_authors)
         .expect("rating scores");
     assert_eq!(
@@ -270,13 +267,11 @@ async fn paid_exit_rating_discovery_filters_untrusted_relay_publishers() {
         })
     );
     assert!(!scores.contains_key(&spam_seller_npub));
-
-    relay.stop().await;
 }
 
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
-async fn paid_exit_rating_discovery_replays_historical_facts_from_local_relay() {
+async fn paid_exit_rating_cache_selects_matching_historical_facts() {
     let rater = Keys::generate();
     let rater_npub = rater.public_key().to_bech32().expect("rater npub");
     let seller = Keys::generate();
@@ -306,26 +301,13 @@ async fn paid_exit_rating_discovery_replays_historical_facts_from_local_relay() 
         500,
     )
     .expect("wanted rating event");
-    let relay = LocalNostrRelay::spawn_with_events(vec![
-        serde_json::to_value(other_scope).expect("encode other event"),
-        serde_json::to_value(wanted).expect("encode wanted event"),
-    ])
-    .await;
-    let app = AppConfig::generated();
+    let events = json!({
+        "events": [
+            serde_json::to_value(other_scope).expect("encode other event"),
+            serde_json::to_value(wanted).expect("encode wanted event"),
+        ]
+    });
 
-    let events = discover_paid_exit_rating_events_from_relays(
-        &app,
-        std::slice::from_ref(&relay.url),
-        1,
-        1,
-        None,
-        "fips.peer",
-        &HashSet::new(),
-    )
-    .await
-    .expect("discover rating facts");
-
-    assert_eq!(events["events"].as_array().expect("events").len(), 1);
     let scores = paid_exit_rating_scores_from_value(&events, "fips.peer", &HashSet::new())
         .expect("rating scores");
     assert_eq!(
@@ -336,8 +318,6 @@ async fn paid_exit_rating_discovery_replays_historical_facts_from_local_relay() 
         })
     );
     assert!(!scores.contains_key(&other_seller_npub));
-
-    relay.stop().await;
 }
 
 #[cfg(feature = "paid-exit")]
@@ -350,10 +330,6 @@ struct LocalNostrRelay {
 
 #[cfg(feature = "paid-exit")]
 impl LocalNostrRelay {
-    async fn spawn() -> Self {
-        Self::spawn_with_events(Vec::new()).await
-    }
-
     async fn spawn_with_events(initial_events: Vec<serde_json::Value>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await

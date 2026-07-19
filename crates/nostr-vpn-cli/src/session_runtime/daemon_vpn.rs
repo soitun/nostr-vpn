@@ -722,33 +722,33 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 eprintln!("paid-exit: failed to record FIPS usage: {error}");
                             }
                         }
-                        if app.public_paid_exit_node_pubkey_hex().is_some()
-                            && automatic_paid_exit.payments_allowed(&app, unix_timestamp())
-                        {
-                            match paid_exit_stream_due_payments_for_daemon(
-                                &app,
-                                &config_path,
-                                PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT,
-                                PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT,
-                            ) {
-                                Ok(result)
-                                    if result.signed_count > 0 || result.error_count > 0 =>
-                                {
-                                    eprintln!(
-                                        "paid-exit: streamed buyer payments signed={} persisted={} errors={} due={} processed={} changed={}",
-                                        result.signed_count,
-                                        result.persisted_count,
-                                        result.error_count,
-                                        result.total_due_count,
-                                        result.processed_due_count,
-                                        result.changed
-                                    );
-                                }
-                                Ok(_) => {}
-                                Err(error) => {
-                                    eprintln!(
-                                        "paid-exit: failed to stream buyer payment update: {error}"
-                                    );
+                        if app.public_paid_exit_node_pubkey_hex().is_some() {
+                            if automatic_paid_exit.payments_allowed(&app, unix_timestamp()) {
+                                match paid_exit_stream_due_payments_for_daemon(
+                                    &app,
+                                    &config_path,
+                                    PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT,
+                                    PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT,
+                                ) {
+                                    Ok(result)
+                                        if result.signed_count > 0 || result.error_count > 0 =>
+                                    {
+                                        eprintln!(
+                                            "paid-exit: streamed buyer payments signed={} persisted={} errors={} due={} processed={} changed={}",
+                                            result.signed_count,
+                                            result.persisted_count,
+                                            result.error_count,
+                                            result.total_due_count,
+                                            result.processed_due_count,
+                                            result.changed
+                                        );
+                                    }
+                                    Ok(_) => {}
+                                    Err(error) => {
+                                        eprintln!(
+                                            "paid-exit: failed to stream buyer payment update: {error}"
+                                        );
+                                    }
                                 }
                             }
                             let flushed =

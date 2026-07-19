@@ -9,7 +9,12 @@ use fips_endpoint::{
 };
 use nostr_pubsub::MeshPeer;
 use nostr_sdk::prelude::{EventBuilder, EventId, Keys, Kind, Tag, TagKind, Timestamp, ToBech32};
+use nostr_social_graph::Rating;
+use nostr_social_memory::RatingEventExt;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
+use nostr_vpn_core::paid_routes::{
+    PaidExitConfig, SignedPaidRouteOffer, signed_paid_exit_offer_from_config,
+};
 use nostr_vpn_core::updater::UpdateRef;
 
 use super::*;
@@ -176,7 +181,7 @@ async fn wait_for_event(runtime: &ControlPubsubFipsRuntime, event_id: EventId) {
         }
     })
     .await
-    .expect("signed update root arrived over FIPS");
+    .expect("control event arrived over FIPS pubsub");
 }
 
 async fn wait_pubsub_connected(runtime: &ControlPubsubFipsRuntime) {
@@ -247,6 +252,16 @@ fn standard_fips_pubsub_bounds_retained_replay() {
     let filters = fips_subscription_filters(&update_events);
 
     assert_eq!(options.max_replay_events, FIPS_REPLAY_LIMIT);
+    assert_eq!(filters.len(), 2);
+    assert_eq!(
+        filters[0].kinds.as_ref(),
+        Some(&control_kinds().into_iter().collect())
+    );
+    let update = signed_update_root(&publisher, "releases/bounded-fips-replay", 1, "ab");
+    assert!(
+        filters[1].match_event(&update, MatchEventOptions::new()),
+        "configured hashtree updates must remain in the long-lived FIPS subscription"
+    );
     assert!(
         filters
             .iter()
@@ -275,6 +290,129 @@ fn standard_fips_pubsub_bounds_retained_replay() {
         .collect::<Vec<_>>();
 
     assert_eq!(replay_ids, expected_ids);
+}
+
+#[test]
+fn adverts_offers_ratings_and_updates_are_carried_p2p_without_relays() {
+    std::thread::Builder::new()
+        .name("relayless-control-events".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("local relayless control-event runtime")
+                .block_on(adverts_offers_ratings_and_updates_are_carried_p2p_without_relays_run());
+        })
+        .expect("spawn relayless control-event test")
+        .join()
+        .expect("relayless control-event test thread");
+}
+
+async fn adverts_offers_ratings_and_updates_are_carried_p2p_without_relays_run() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let updater = Keys::generate();
+    let seller_npub = seller.public_key().to_bech32().expect("seller npub");
+    let buyer_npub = buyer.public_key().to_bech32().expect("buyer npub");
+    let [seller_port, buyer_port, advert_port] = available_udp_ports();
+    let seller_config = endpoint_config(seller_port, &[(&buyer_npub, buyer_port)]);
+    let seller_endpoint = endpoint(&seller, seller_config).await;
+    let mut buyer_config = endpoint_config(buyer_port, &[(&seller_npub, seller_port)]);
+    buyer_config.node.discovery.nostr.enabled = true;
+    buyer_config.node.discovery.nostr.peerfinding_source = NostrPeerfindingSource::External;
+    let buyer_endpoint = endpoint(&buyer, buyer_config).await;
+    wait_connected(&seller_endpoint, &buyer_npub).await;
+    wait_connected(&buyer_endpoint, &seller_npub).await;
+
+    let updates = update_events(&updater, "releases/relayless-control-events");
+    let buyer_pubsub = start_pubsub(Arc::clone(&buyer_endpoint), updates.clone()).await;
+    let seller_pubsub = start_pubsub(Arc::clone(&seller_endpoint), updates).await;
+    wait_pubsub_connected(&buyer_pubsub).await;
+    wait_pubsub_connected(&seller_pubsub).await;
+    let advertiser = Keys::generate();
+    let advertiser_endpoint = endpoint(
+        &advertiser,
+        publicly_advertised_endpoint_config(advert_port),
+    )
+    .await;
+    let advert = advertiser_endpoint
+        .local_nostr_discovery_advert_event()
+        .await
+        .expect("build endpoint advert")
+        .expect("public endpoint has an advert");
+    advertiser_endpoint
+        .shutdown()
+        .await
+        .expect("shutdown standalone advertiser");
+    assert!(
+        seller_pubsub
+            .publish(advert.clone())
+            .await
+            .expect("publish endpoint advert")
+    );
+    wait_for_event(&buyer_pubsub, advert.id).await;
+    assert!(advert.content.contains(&format!("8.8.8.8:{advert_port}")));
+
+    let mut paid_exit = PaidExitConfig::default();
+    paid_exit.enabled = true;
+    paid_exit.pricing.price_msat = 25;
+    paid_exit.pricing.per_units = 1_000_000_000;
+    paid_exit.channel.accepted_mints = vec!["https://mint.example".to_string()];
+    paid_exit.location.country_code = "FI".to_string();
+    paid_exit.normalize();
+    let signed_offer =
+        signed_paid_exit_offer_from_config("relayless-exit", &seller, &paid_exit, None, 1_000)
+            .expect("signed paid-exit offer");
+    assert!(
+        seller_pubsub
+            .publish(signed_offer.event.clone())
+            .await
+            .expect("publish paid-exit offer")
+    );
+    wait_for_event(&buyer_pubsub, signed_offer.event.id).await;
+    let received_offer = buyer_pubsub
+        .events()
+        .await
+        .into_iter()
+        .find(|event| event.id == signed_offer.event.id)
+        .and_then(|event| SignedPaidRouteOffer::from_event(event).ok())
+        .expect("buyer validates paid-exit offer received over FIPS pubsub");
+    assert_eq!(
+        received_offer.offer().expect("offer").offer_id,
+        "relayless-exit"
+    );
+
+    let mut rating = Rating::new(
+        buyer.public_key().to_hex(),
+        seller.public_key().to_hex(),
+        80,
+        0,
+        100,
+    );
+    rating.scope = Some("fips.peer".to_string());
+    let rating = rating.to_event(&buyer).expect("signed rating event");
+    assert!(
+        buyer_pubsub
+            .publish(rating.clone())
+            .await
+            .expect("publish rating")
+    );
+    wait_for_event(&seller_pubsub, rating.id).await;
+
+    let update = signed_update_root(&updater, "releases/relayless-control-events", 1, "cd");
+    assert!(
+        seller_pubsub
+            .publish(update.clone())
+            .await
+            .expect("publish update announcement")
+    );
+    wait_for_event(&buyer_pubsub, update.id).await;
+
+    seller_pubsub.stop().await;
+    buyer_pubsub.stop().await;
+    seller_endpoint.shutdown().await.expect("shutdown seller");
+    buyer_endpoint.shutdown().await.expect("shutdown buyer");
 }
 
 #[test]
@@ -551,6 +689,8 @@ async fn standalone_publish_replays_after_udp_roster_peer_appears_run() {
     wait_connected(&bob_endpoint, &alice_npub).await;
     let bob_pubsub = start_pubsub(Arc::clone(&bob_endpoint), update_events).await;
 
+    wait_pubsub_connected(&alice_pubsub).await;
+    wait_pubsub_connected(&bob_pubsub).await;
     wait_for_event(&bob_pubsub, root.id).await;
     assert_udp_link(&alice_endpoint, &bob_npub).await;
     assert_udp_link(&bob_endpoint, &alice_npub).await;

@@ -1,6 +1,6 @@
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
-async fn paid_exit_publish_queues_for_p2p_when_no_relays_are_configured() {
+async fn paid_exit_publish_queues_for_nostr_pubsub_when_no_relays_are_configured() {
     use nostr_vpn_core::config::NostrPubsubMode;
 
     let nonce = std::time::SystemTime::now()
@@ -26,13 +26,11 @@ async fn paid_exit_publish_queues_for_p2p_when_no_relays_are_configured() {
     )
     .expect("signed paid exit offer");
 
-    let output = publish_paid_exit_offer_hybrid(&app, &config_path, &signed, &[])
-        .await
+    let output = publish_paid_exit_offer_pubsub(&app, &config_path, &signed)
         .expect("queue relayless paid exit offer");
 
-    assert_eq!(output["p2p_enabled"].as_bool(), Some(true));
-    assert_eq!(output["p2p_queued"].as_bool(), Some(true));
-    assert_eq!(output["success_count"].as_u64(), Some(0));
+    assert_eq!(output["nostr_pubsub_enabled"].as_bool(), Some(true));
+    assert_eq!(output["nostr_pubsub_queued"].as_bool(), Some(true));
     let queued = std::fs::read_dir(
         crate::control_pubsub_runtime::control_pubsub_outbox_directory(&config_path),
     )

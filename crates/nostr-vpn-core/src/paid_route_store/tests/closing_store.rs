@@ -710,6 +710,63 @@ fn automatic_offer_selection_rejects_unfunded_seller_mint() {
     assert!(store.select_automatic_offer(now_unix).is_err());
 }
 
+#[test]
+fn automatic_offer_selection_reuses_a_funded_channel_when_wallet_balance_is_locked() {
+    let now_unix = 100_000;
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let config = automatic_offer_config();
+    let signed =
+        signed_paid_exit_offer_from_config("auto-exit", &seller, &config, None, now_unix - 1)
+            .expect("signed offer");
+    let offer = signed.offer().expect("offer");
+    let offer_key = paid_route_offer_store_key(&offer.seller_npub, &offer.offer_id);
+    let mint = "https://mint.minibits.cash/Bitcoin";
+    let mut store = PaidRouteStore::default();
+    store.upsert_wallet_mint(mint, "Minibits", Some(0), now_unix - 2);
+    store
+        .upsert_signed_offer(signed, vec![], now_unix - 1)
+        .expect("store offer");
+    let opened = store
+        .open_buyer_session(OpenPaidRouteBuyerSessionRequest {
+            offer_selector: offer_key.clone(),
+            buyer_npub: buyer.public_key().to_bech32().expect("buyer npub"),
+            mint_url: Some(mint.to_string()),
+            channel_capacity_sat: Some(20),
+            initial_paid_msat: 0,
+            now_unix,
+        })
+        .expect("open buyer session");
+    let payment = CashuSpilmanPayment {
+        channel_id: opened.channel_id.clone(),
+        balance: 1,
+        signature: "signed-balance".to_string(),
+        params: None,
+        funding_proofs: None,
+    };
+    store
+        .sessions
+        .get_mut(&opened.session_id)
+        .expect("buyer session")
+        .session
+        .payment
+        .cashu_spilman_payment = Some(payment.clone());
+    store
+        .channels
+        .get_mut(&opened.channel_id)
+        .expect("buyer channel")
+        .payment
+        .cashu_spilman_payment = Some(payment);
+
+    let selected = store
+        .select_automatic_offer(now_unix + 1)
+        .expect("reuse funded channel without free wallet balance");
+
+    assert_eq!(selected.offer_key, offer_key);
+    assert_eq!(selected.mint_url, mint);
+    assert_eq!(selected.channel_capacity_sat, 20);
+}
+
 fn automatic_offer_config() -> PaidExitConfig {
     let mut config = sample_config();
     config.pricing.price_msat = 50;

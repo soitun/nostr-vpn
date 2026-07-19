@@ -80,7 +80,7 @@ impl PaidRouteStore {
         if price_msat_per_gib > PAID_ROUTE_AUTO_MAX_PRICE_MSAT_PER_GIB {
             return None;
         }
-        let (mint_url, capacity_sat) = self.trusted_mint_and_capacity(&offer)?;
+        let (mint_url, capacity_sat) = self.trusted_mint_and_capacity(&offer, now_unix)?;
         let (local_probe, local_probe_count) = self.local_probe_history(&offer, now_unix);
         Some(Candidate {
             offer_key: key.to_string(),
@@ -94,8 +94,37 @@ impl PaidRouteStore {
         })
     }
 
-    fn trusted_mint_and_capacity(&self, offer: &PaidRouteOffer) -> Option<(String, u64)> {
+    fn trusted_mint_and_capacity(
+        &self,
+        offer: &PaidRouteOffer,
+        now_unix: u64,
+    ) -> Option<(String, u64)> {
         let accepted = normalize_mint_list(&offer.channel.accepted_mints);
+        if let Some(existing) = self
+            .sessions
+            .values()
+            .filter_map(|session| {
+                let lease = self.leases.get(&session.session.lease_id)?;
+                let channel = self.channels.get(&session.session.payment.channel_id)?;
+                let mint = channel.mint_url.trim();
+                (channel.role == PaidRouteChannelRole::Buyer
+                    && channel.offer_id == offer.offer_id
+                    && channel.counterparty_npub == offer.seller_npub
+                    && accepted.iter().any(|url| url == mint)
+                    && lease.lease.expires_at_unix.min(channel.expires_at_unix) > now_unix
+                    && paid_route_lifecycle_allows_routing(lease.status)
+                    && paid_route_lifecycle_allows_routing(channel.status)
+                    && paid_route_session_has_payment_material(&session.session, channel))
+                .then_some((
+                    session.updated_at_unix,
+                    mint.to_string(),
+                    session.session.payment.capacity_sat,
+                ))
+            })
+            .max_by_key(|(updated_at, _, _)| *updated_at)
+        {
+            return Some((existing.1, existing.2));
+        }
         let default = self.wallet.default_mint.trim();
         let mut wallet_mints = self
             .wallet

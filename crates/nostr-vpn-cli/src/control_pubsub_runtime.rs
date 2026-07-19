@@ -343,7 +343,8 @@ async fn run(
     endpoint_advert_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut subscription = None;
     let mut subscribed_peer_links = Vec::new();
-    sync_fips_subscription(
+    let mut subscribed_pubsub_readiness = (0, 0);
+    let pubsub_ready = sync_fips_subscription(
         &endpoint,
         &fips_pubsub,
         peer_policy.as_ref(),
@@ -351,8 +352,20 @@ async fn run(
         &update_events,
         &mut subscription,
         &mut subscribed_peer_links,
+        &mut subscribed_pubsub_readiness,
     )
     .await;
+    if pubsub_ready {
+        publish_local_fips_endpoint_advert(PublishContext {
+            endpoint: &endpoint,
+            fips_pubsub: &fips_pubsub,
+            bridge: bridge.as_ref(),
+            events: &events,
+            pubsub_policy: &pubsub_policy,
+            update_events: &update_events,
+        })
+        .await;
+    }
 
     loop {
         tokio::select! {
@@ -474,7 +487,7 @@ async fn run(
                     tcp_poll_turns = delivery.tcp_poll_turns,
                     "standard FIPS pubsub delivery snapshot"
                 );
-                sync_fips_subscription(
+                let pubsub_ready = sync_fips_subscription(
                     &endpoint,
                     &fips_pubsub,
                     peer_policy.as_ref(),
@@ -482,8 +495,20 @@ async fn run(
                     &update_events,
                     &mut subscription,
                     &mut subscribed_peer_links,
+                    &mut subscribed_pubsub_readiness,
                 )
                 .await;
+                if pubsub_ready {
+                    publish_local_fips_endpoint_advert(PublishContext {
+                        endpoint: &endpoint,
+                        fips_pubsub: &fips_pubsub,
+                        bridge: bridge.as_ref(),
+                        events: &events,
+                        pubsub_policy: &pubsub_policy,
+                        update_events: &update_events,
+                    })
+                    .await;
+                }
                 publish_policy_maintenance(
                     PublishContext {
                         endpoint: &endpoint,
@@ -542,7 +567,6 @@ fn validate_control_event_shape(event: &Event, update_events: &UpdateEventCache)
 async fn publish_verified(context: PublishContext<'_>, verified: VerifiedEvent) -> Result<bool> {
     validate_control_event_shape(verified.as_event(), context.update_events)?;
     let event = verified.as_event().clone();
-    validate_fips_discovery_event(context.endpoint, &event).await?;
     let fips_published = match context
         .fips_pubsub
         .publish(
@@ -560,9 +584,7 @@ async fn publish_verified(context: PublishContext<'_>, verified: VerifiedEvent) 
     tracing::debug!(event_id = %event.id, fips_published, "publishing local control event");
     observe_policy_event(context.pubsub_policy, &event).await;
     context.events.lock().await.insert(event.clone())?;
-    if u16::from(event.kind) != FIPS_PEER_ADVERT_KIND {
-        ingest_into_fips_discovery(context.endpoint, &event).await;
-    }
+    ingest_into_fips_discovery(context.endpoint, &event).await;
     if let Some(bridge) = context.bridge {
         bridge.publish(&event).await;
     }
@@ -611,17 +633,6 @@ async fn publish_policy_maintenance(context: PublishContext<'_>) {
     }
 }
 
-async fn validate_fips_discovery_event(endpoint: &FipsEndpoint, event: &Event) -> Result<()> {
-    if u16::from(event.kind) != FIPS_PEER_ADVERT_KIND {
-        return Ok(());
-    }
-    match endpoint.ingest_nostr_discovery_event(event.clone()).await {
-        Ok(true) => Ok(()),
-        Ok(false) => Err(anyhow!("FIPS rejected endpoint advert {}", event.id)),
-        Err(error) => Err(error).context("failed to ingest FIPS endpoint advert"),
-    }
-}
-
 async fn publish_outbox_batch(context: PublishContext<'_>, outbox_path: &Path) {
     for path in control_pubsub_outbox_event_paths(outbox_path) {
         let event = match fs::read(&path)
@@ -666,20 +677,15 @@ async fn process_fips_delivery(
     delivery: QueryEvent,
 ) {
     let verified = delivery.event;
-    if !is_control_event(verified.as_event(), update_events)
-        || !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await
-    {
+    if !is_control_event(verified.as_event(), update_events) {
+        return;
+    }
+    if !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await {
         return;
     }
     let event = verified.into_event();
-    if let Err(error) = validate_fips_discovery_event(endpoint, &event).await {
-        tracing::debug!(%error, event_id = %event.id, "ignored invalid FIPS endpoint advert");
-        return;
-    }
     observe_policy_event(pubsub_policy, &event).await;
-    if u16::from(event.kind) != FIPS_PEER_ADVERT_KIND {
-        ingest_into_fips_discovery(endpoint, &event).await;
-    }
+    ingest_into_fips_discovery(endpoint, &event).await;
     let inserted = match events.lock().await.insert(event.clone()) {
         Ok(inserted) => inserted,
         Err(error) => {
@@ -721,22 +727,31 @@ async fn sync_fips_subscription(
     update_events: &UpdateEventCache,
     subscription: &mut Option<FipsPubsubSubscription>,
     subscribed_peer_links: &mut Vec<(String, u64)>,
-) {
+    subscribed_pubsub_readiness: &mut (usize, usize),
+) -> bool {
     let peers = connected_peers(endpoint, peer_policy).await;
-    if subscription.is_some() && *subscribed_peer_links == peers {
-        return;
+    let pubsub_readiness = (
+        fips_pubsub.connected_peer_count().unwrap_or_default(),
+        fips_pubsub.peer_subscription_count().unwrap_or_default(),
+    );
+    if subscription.is_some()
+        && *subscribed_peer_links == peers
+        && *subscribed_pubsub_readiness == pubsub_readiness
+    {
+        return false;
     }
     subscription.take();
     subscribed_peer_links.clear();
+    *subscribed_pubsub_readiness = pubsub_readiness;
     if peers.is_empty() {
-        return;
+        return false;
     }
     let filters = fips_subscription_filters(update_events);
     let next = match fips_pubsub.subscribe(filters).await {
         Ok(subscription) => subscription,
         Err(error) => {
             tracing::debug!(%error, "standard FIPS pubsub subscription deferred");
-            return;
+            return false;
         }
     };
     *subscribed_peer_links = peers;
@@ -754,6 +769,7 @@ async fn sync_fips_subscription(
             tracing::debug!(%error, %event_id, "stored FIPS pubsub replay deferred");
         }
     }
+    pubsub_readiness.0 > 0 && pubsub_readiness.1 > 0
 }
 
 fn fips_subscription_filters(update_events: &UpdateEventCache) -> Vec<Filter> {

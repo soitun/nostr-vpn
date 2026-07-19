@@ -117,6 +117,51 @@ pub(crate) async fn finalize_automatic_paid_exit(
     Ok(())
 }
 
+pub(super) fn suspend_automatic_paid_exit(
+    automatic: &PaidExitAutomaticBuyer,
+    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+    config_path: &Path,
+    now_unix: u64,
+) -> Result<()> {
+    let Some(candidate) = automatic.candidate.as_ref() else {
+        return Ok(());
+    };
+    drain_paid_exit_buyer_usage(runtime, config_path, &candidate.seller_pubkey, now_unix)?;
+    Ok(())
+}
+
+pub(super) fn queue_recovered_automatic_channel_open(
+    app: &AppConfig,
+    config_path: &Path,
+    store: &mut PaidRouteStore,
+    session_id: &str,
+    now_unix: u64,
+) -> Result<()> {
+    let signer = FileSpilmanPaymentSigner::load(&paid_exit_wallet_data_dir(config_path))
+        .map_err(|error| anyhow!("{error}"))?;
+    let buyer_npub = app
+        .nostr_keys()?
+        .public_key()
+        .to_bech32()
+        .context("failed to encode automatic paid exit buyer npub")?;
+    let payment = store.build_buyer_signed_payment_envelope(
+        &signer,
+        BuildPaidRouteBuyerSignedPaymentEnvelopeRequest {
+            session_id: session_id.to_string(),
+            buyer_npub,
+            kind: BuildPaidRouteBuyerPaymentEnvelopeKind::ChannelOpen,
+            delivered_units: None,
+            paid_msat: None,
+            now_unix,
+        },
+    )?;
+    if payment.changed {
+        write_paid_route_store(&paid_route_store_file_path(config_path), store)?;
+    }
+    queue_paid_exit_payment(app, config_path, &payment.envelope)?;
+    Ok(())
+}
+
 fn drain_paid_exit_buyer_usage(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     config_path: &Path,

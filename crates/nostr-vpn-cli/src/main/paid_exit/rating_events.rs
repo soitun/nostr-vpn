@@ -52,10 +52,11 @@ async fn paid_exit_ratings_publish_command(args: PaidExitRatingsPublishArgs) -> 
         unix_timestamp(),
     )?;
     let app = load_or_default_config(&result.config_path)?;
-    let relays = paid_exit_relay_urls(&app, &args.relays);
-    let publish =
-        publish_paid_exit_rating_event_to_relays(&app.nostr_keys()?, &result.event, &relays)
-            .await?;
+    let publish = publish_paid_exit_rating_event_pubsub(
+        &app,
+        &result.config_path,
+        &result.event,
+    )?;
 
     if json_output {
         println!(
@@ -63,7 +64,6 @@ async fn paid_exit_ratings_publish_command(args: PaidExitRatingsPublishArgs) -> 
             serde_json::to_string_pretty(&json!({
                 "rating": paid_exit_rating_event_result_json(&result),
                 "events": [result.event],
-                "relays": relays,
                 "publish": publish,
             }))?
         );
@@ -297,9 +297,8 @@ fn print_paid_exit_rating_event_result(
     println!("created_at: {}", result.created_at);
     if let Some(publish) = publish {
         println!(
-            "published: {} success, {} failed",
-            publish["success_count"].as_u64().unwrap_or_default(),
-            publish["failed_count"].as_u64().unwrap_or_default()
+            "published: nostr-pubsub queued={}",
+            publish["nostr_pubsub_queued"].as_bool().unwrap_or_default()
         );
     }
 }
