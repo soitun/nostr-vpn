@@ -16,6 +16,7 @@ final class AppManager: ObservableObject {
     @Published var state: NativeAppState
     @Published var actionInFlight = false
     @Published var actionStatus = ""
+    @Published var actionError = ""
     @Published var copiedValue: CopyValue?
     @Published var copiedPeerNpub: String?
     @Published var serviceSettling = false
@@ -264,6 +265,7 @@ final class AppManager: ObservableObject {
         actionStatusClearTask?.cancel()
         actionInFlight = true
         actionStatus = status
+        actionError = ""
         Task {
             let nextState = await Task.detached {
                 app.dispatch(action: action)
@@ -272,6 +274,7 @@ final class AppManager: ObservableObject {
                 self.state = nextState
                 self.actionInFlight = false
                 self.actionStatus = nextState.error.isEmpty ? successStatus : nextState.error
+                self.actionError = nextState.error
                 self.maybePromptServiceUpdate(nextState)
                 if nextState.error.isEmpty, !successStatus.isEmpty {
                     self.clearActionStatus(after: 3)

@@ -58,8 +58,8 @@ extension RootView {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if !state.error.isEmpty {
-                Label(state.error, systemImage: "exclamationmark.triangle.fill")
+            if !manager.actionError.isEmpty {
+                Label(manager.actionError, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.orange)
             }
@@ -136,9 +136,12 @@ extension RootView {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                 if state.internetSource == "paid_manual" && state.exitNode == offer.sellerNpub {
-                    Label("Active", systemImage: "checkmark.circle.fill")
+                    Label(
+                        state.exitNodeActive ? "Active" : "Connecting",
+                        systemImage: state.exitNodeActive ? "checkmark.circle.fill" : "clock.fill"
+                    )
                         .font(.caption)
-                        .foregroundStyle(.green)
+                        .foregroundStyle(state.exitNodeActive ? Color.green : Color.orange)
                 } else if paidRouteOfferHasBuyerChannel(offer) {
                     Label("Ready", systemImage: "checkmark.circle")
                         .font(.caption)
@@ -421,7 +424,13 @@ extension RootView {
 
     func paidRouteBuyerSessionTitle(_ session: NativePaidRouteSessionState, selected: Bool) -> String {
         if selected {
-            return session.allowRouting ? "Connected" : "Selected"
+            if state.exitNodeActive {
+                return "Connected"
+            }
+            if state.exitNodeBlocked {
+                return "Unavailable"
+            }
+            return "Connecting"
         }
         if !session.titleText.isEmpty {
             return session.titleText

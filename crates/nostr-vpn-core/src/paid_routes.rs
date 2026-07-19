@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 /// kind so market/payment terms do not overload endpoint discovery or require
 /// publishing raw transport endpoints.
 pub const PAID_ROUTE_OFFER_KIND: u16 = 37_196;
-pub const PAID_ROUTE_OFFER_VERSION: &str = "2";
+pub const PAID_ROUTE_OFFER_VERSION: &str = "3";
 pub const PAID_ROUTE_OFFER_APP: &str = "fips/paid-route-offer";
 pub const DEFAULT_FIPS_PEER_RATING_SCOPE: &str = "fips.peer";
 

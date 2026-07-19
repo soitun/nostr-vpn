@@ -66,7 +66,7 @@ impl From<PaidRouteSellerAdmission> for FipsPaidRouteAdmission {
         Self {
             participant_pubkey: value.buyer_pubkey,
             session_id: value.session_id,
-            allowed_ips: Vec::new(),
+            allowed_ips: vec![value.buyer_tunnel_ip],
             destination_allowed_ips: Vec::new(),
             allow_routing: value.allow_routing,
             state: value.state,

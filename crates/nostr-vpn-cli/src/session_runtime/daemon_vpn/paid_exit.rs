@@ -32,8 +32,18 @@ pub(super) async fn send_selected_paid_exit_session_open(
         .public_key()
         .to_bech32()
         .context("failed to encode paid route buyer npub")?;
+    let buyer_tunnel_ip = derive_mesh_tunnel_ip(
+        &app.effective_network_id(),
+        &app.nostr_keys()?.public_key().to_hex(),
+    )
+    .ok_or_else(|| anyhow!("failed to derive paid route buyer tunnel IP"))?;
     let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
-    let Some(open) = store.buyer_session_open_for_seller(&seller_pubkey, &buyer_npub, now_unix)?
+    let Some(open) = store.buyer_session_open_for_seller(
+        &seller_pubkey,
+        &buyer_npub,
+        &buyer_tunnel_ip,
+        now_unix,
+    )?
     else {
         return Ok(false);
     };

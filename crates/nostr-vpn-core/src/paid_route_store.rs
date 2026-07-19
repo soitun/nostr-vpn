@@ -28,7 +28,7 @@ use crate::paid_routes::{
     PaidRouteSessionOpen, PaidRouteUsage, SignedPaidRouteOffer,
 };
 
-const CURRENT_VERSION: u8 = 1;
+const CURRENT_VERSION: u8 = 2;
 const SELLER_CONNECTION_MINIMUM_PAYMENT_SKEW_MILLIS: u64 = 2_000;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +49,7 @@ pub struct PaidRouteStore {
     pub sessions: BTreeMap<String, PaidRouteSessionRecord>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub buyer_session_admissions: BTreeMap<String, u64>,
+    pub seller_session_tunnel_ips: BTreeMap<String, String>,
 }
 
 impl Default for PaidRouteStore {
@@ -62,6 +63,7 @@ impl Default for PaidRouteStore {
             channels: BTreeMap::new(),
             sessions: BTreeMap::new(),
             buyer_session_admissions: BTreeMap::new(),
+            seller_session_tunnel_ips: BTreeMap::new(),
         }
     }
 }
@@ -495,6 +497,7 @@ pub struct PaidRouteBuyerPaymentUpdateDue {
 pub struct PaidRouteSellerAdmission {
     pub buyer_pubkey: String,
     pub buyer_npub: String,
+    pub buyer_tunnel_ip: String,
     pub session_id: String,
     pub lease_id: String,
     pub channel_id: String,

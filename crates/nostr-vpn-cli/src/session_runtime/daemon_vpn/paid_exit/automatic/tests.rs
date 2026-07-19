@@ -10,6 +10,7 @@ fn automatic_selection_activates_a_routable_unfunded_probe_session() {
     let now = unix_timestamp();
     let directory =
         std::env::temp_dir().join(format!("nvpn-auto-buyer-{}-{now}", std::process::id()));
+    std::fs::create_dir_all(&directory).expect("create automatic buyer test directory");
     let config_path = directory.join("config.toml");
     let store_path = paid_route_store_file_path(&config_path);
     let mint = "https://mint.example";

@@ -211,6 +211,24 @@ struct RootView: View {
                     }
             }
         }
+        .alert("Action failed", isPresented: actionErrorPresented) {
+            Button("OK") {
+                manager.actionError = ""
+            }
+        } message: {
+            Text(manager.actionError)
+        }
+    }
+
+    var actionErrorPresented: Binding<Bool> {
+        Binding(
+            get: { !manager.actionError.isEmpty },
+            set: { presented in
+                if !presented {
+                    manager.actionError = ""
+                }
+            }
+        )
     }
 
     var pendingJoinRequestPresented: Binding<Bool> {

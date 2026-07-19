@@ -29,6 +29,7 @@ pub struct PaidRouteSessionOpen {
     pub lease_id: String,
     pub channel_id: String,
     pub seller_npub: String,
+    pub buyer_tunnel_ip: String,
     pub expires_at_unix: u64,
 }
 

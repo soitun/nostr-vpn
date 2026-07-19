@@ -1,13 +1,10 @@
 #[cfg(feature = "paid-exit")]
 pub(crate) fn fips_paid_route_admission_from_seller_admission(
-    network_id: &str,
+    _network_id: &str,
     admission: PaidRouteSellerAdmission,
     destination_allowed_ips: &[String],
 ) -> FipsPaidRouteAdmission {
     let mut admission = FipsPaidRouteAdmission::from(admission);
-    admission.allowed_ips = derive_mesh_tunnel_ip(network_id, &admission.participant_pubkey)
-        .map(|tunnel_ip| vec![format!("{}/32", strip_cidr(&tunnel_ip))])
-        .unwrap_or_default();
     admission.destination_allowed_ips = destination_allowed_ips.to_vec();
     admission
 }

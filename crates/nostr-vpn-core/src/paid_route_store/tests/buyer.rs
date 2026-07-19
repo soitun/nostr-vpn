@@ -535,6 +535,9 @@ fn seller_admissions_reflect_streaming_payment_decision() {
         PaidRouteLifecycleStatus::Active,
         100,
     ));
+    store
+        .seller_session_tunnel_ips
+        .insert("session-1".to_string(), "10.44.201.17/32".to_string());
     assert!(store.upsert_channel(PaidRouteChannelRecord {
         channel_id: "channel-1".to_string(),
         offer_id: "internet-exit".to_string(),
@@ -585,6 +588,7 @@ fn seller_admissions_reflect_streaming_payment_decision() {
     assert_eq!(admissions.len(), 1);
     assert_eq!(admissions[0].buyer_pubkey, buyer.public_key().to_hex());
     assert_eq!(admissions[0].buyer_npub, buyer_npub);
+    assert_eq!(admissions[0].buyer_tunnel_ip, "10.44.201.17/32");
     assert_eq!(admissions[0].state, PaidRouteAccessState::Paid);
     assert!(admissions[0].allow_routing);
     assert_eq!(admissions[0].amount_due_msat, 1_000);

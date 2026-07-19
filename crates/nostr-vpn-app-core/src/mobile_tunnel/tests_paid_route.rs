@@ -71,6 +71,10 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
     std::fs::create_dir_all(&dir).expect("create test dir");
     let seller_config_path = dir.join("seller/config.toml");
     let buyer_config_path = dir.join("buyer/config.toml");
+    std::fs::create_dir_all(seller_config_path.parent().expect("seller config parent"))
+        .expect("create seller config directory");
+    std::fs::create_dir_all(buyer_config_path.parent().expect("buyer config parent"))
+        .expect("create buyer config directory");
 
     let seller_keys = Keys::generate();
     let buyer_keys = Keys::generate();

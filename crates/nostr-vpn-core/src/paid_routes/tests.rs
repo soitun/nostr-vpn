@@ -423,7 +423,7 @@ fn signed_offer_event_roundtrips_without_raw_exit_endpoint() {
     assert!(tags.contains(&vec!["v".to_string(), PAID_ROUTE_OFFER_VERSION.to_string()].as_slice()));
     assert!(tags.contains(&vec!["service".to_string(), "internet_exit".to_string()].as_slice()));
     assert!(tags.contains(&vec!["payment".to_string(), "cashu_spilman".to_string()].as_slice()));
-    assert_eq!(PAID_ROUTE_OFFER_VERSION, "2");
+    assert_eq!(PAID_ROUTE_OFFER_VERSION, "3");
     assert!(
         !tags
             .iter()

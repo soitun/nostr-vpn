@@ -1,9 +1,10 @@
 use super::{persistence::*, *};
 use crate::paid_routes::{
-    PaidExitConfig, PaidRouteAccessPolicy, PaidRouteChannelTerms, PaidRouteIpSupport,
-    PaidRouteLocationHint, PaidRoutePaymentMode, PaidRoutePaymentState, PaidRoutePricing,
-    PaidRoutePrivateVpnAccess, PaidRouteQualityMetrics, PaidRouteUsage,
-    signed_paid_exit_offer_from_config, signed_paid_exit_offer_from_config_with_receiver,
+    PAID_ROUTE_OFFER_VERSION, PaidExitConfig, PaidRouteAccessPolicy, PaidRouteChannelTerms,
+    PaidRouteIpSupport, PaidRouteLocationHint, PaidRoutePaymentMode, PaidRoutePaymentState,
+    PaidRoutePricing, PaidRoutePrivateVpnAccess, PaidRouteQualityMetrics, PaidRouteSessionOpen,
+    PaidRouteUsage, signed_paid_exit_offer_from_config,
+    signed_paid_exit_offer_from_config_with_receiver,
 };
 use cashu_service::{
     CashuSpilmanPayment, CashuSpilmanPaymentReceiver, CashuSpilmanPaymentReceiverValidation,
@@ -103,6 +104,23 @@ fn seller_store_with_open_channel(
             now_unix: 100,
         })
         .expect("apply open");
+    store
+        .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open: crate::paid_routes::PaidRouteSessionOpen {
+                version: crate::paid_routes::PAID_ROUTE_OFFER_VERSION.to_string(),
+                service_id: "internet-exit".to_string(),
+                lease_id: "lease-1".to_string(),
+                channel_id: "channel-1".to_string(),
+                seller_npub: seller.public_key().to_bech32().expect("seller npub"),
+                buyer_tunnel_ip: "10.44.201.17/32".to_string(),
+                expires_at_unix: 500,
+            },
+            authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+            seller_npub: seller.public_key().to_bech32().expect("seller npub"),
+            config: config.clone(),
+            now_unix: 100,
+        })
+        .expect("bind buyer tunnel IP");
     store
 }
 

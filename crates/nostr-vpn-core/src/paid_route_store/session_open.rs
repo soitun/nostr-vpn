@@ -75,9 +75,11 @@ impl PaidRouteStore {
         &self,
         session_id: &str,
         buyer_npub: &str,
+        buyer_tunnel_ip: &str,
         now_unix: u64,
     ) -> Result<PaidRouteSessionOpen> {
         let buyer_npub = normalize_paid_route_npub(buyer_npub, "buyer")?;
+        let buyer_tunnel_ip = validated_paid_route_buyer_tunnel_ip(buyer_tunnel_ip)?;
         let session_id = trimmed_required(session_id, "paid route session id")?;
         let session = self
             .sessions
@@ -100,9 +102,6 @@ impl PaidRouteStore {
             return Err(anyhow!("paid route session is not a buyer session"));
         }
         let offer = self.buyer_offer_for_session(lease, channel)?;
-        if offer.channel.free_probe_units == 0 {
-            return Err(anyhow!("paid route offer does not include a free probe"));
-        }
         let expires_at_unix = lease.lease.expires_at_unix.min(channel.expires_at_unix);
         if expires_at_unix <= now_unix {
             return Err(anyhow!("paid route session has expired"));
@@ -113,6 +112,7 @@ impl PaidRouteStore {
             lease_id: lease.lease.lease_id.clone(),
             channel_id: channel.channel_id.clone(),
             seller_npub: offer.seller_npub,
+            buyer_tunnel_ip,
             expires_at_unix,
         })
     }
@@ -121,6 +121,7 @@ impl PaidRouteStore {
         &self,
         seller_pubkey: &str,
         buyer_npub: &str,
+        buyer_tunnel_ip: &str,
         now_unix: u64,
     ) -> Result<Option<PaidRouteSessionOpen>> {
         let seller_pubkey = normalize_nostr_pubkey(seller_pubkey)?;
@@ -145,7 +146,12 @@ impl PaidRouteStore {
             .map(|(_, session)| session);
         candidate
             .map(|session| {
-                self.build_buyer_session_open(&session.session.session_id, buyer_npub, now_unix)
+                self.build_buyer_session_open(
+                    &session.session.session_id,
+                    buyer_npub,
+                    buyer_tunnel_ip,
+                    now_unix,
+                )
             })
             .transpose()
     }
@@ -168,8 +174,8 @@ impl PaidRouteStore {
     ) -> Result<ApplyPaidRouteSellerSessionOpenResult> {
         let mut config = request.config;
         config.normalize();
-        if !config.enabled || config.channel.free_probe_units == 0 {
-            return Err(anyhow!("paid exit does not offer free probes"));
+        if !config.enabled {
+            return Err(anyhow!("paid exit selling is disabled"));
         }
         let open = request.open;
         if open.version != PAID_ROUTE_OFFER_VERSION {
@@ -187,6 +193,7 @@ impl PaidRouteStore {
             .map_err(|error| anyhow!("invalid authenticated paid route buyer: {error}"))?
             .to_bech32()
             .context("failed to encode authenticated buyer npub")?;
+        let buyer_tunnel_ip = validated_paid_route_buyer_tunnel_ip(&open.buyer_tunnel_ip)?;
         let service_id = validated_session_component(&open.service_id, "service id")?;
         let lease_id = validated_session_component(&open.lease_id, "lease id")?;
         let channel_id = validated_session_component(&open.channel_id, "channel id")?;
@@ -235,6 +242,17 @@ impl PaidRouteStore {
                     "existing paid route session does not match authenticated probe request"
                 ));
             }
+            if self
+                .seller_session_tunnel_ips
+                .get(&session_id)
+                .is_some_and(|existing| existing != &buyer_tunnel_ip)
+            {
+                return Err(anyhow!(
+                    "existing paid route session uses a different buyer tunnel IP"
+                ));
+            }
+            self.seller_session_tunnel_ips
+                .insert(session_id.clone(), buyer_tunnel_ip);
             let admission = self
                 .seller_admission_for_buyer(&config, request.now_unix, &buyer_pubkey)
                 .ok_or_else(|| anyhow!("existing paid route probe has no seller admission"))?;
@@ -249,6 +267,11 @@ impl PaidRouteStore {
                 state: admission.state,
                 changed: false,
             });
+        }
+        if config.channel.free_probe_units == 0 {
+            return Err(anyhow!(
+                "paid route session is waiting for its funded seller channel"
+            ));
         }
         self.ensure_seller_lease_slot_available(&service_id, &lease_id, &channel_id, &buyer_npub)?;
         let quote_id = seller_quote_id_for_lease(&lease_id);
@@ -311,6 +334,8 @@ impl PaidRouteStore {
             },
             request.now_unix,
         );
+        self.seller_session_tunnel_ips
+            .insert(session_id.clone(), buyer_tunnel_ip);
 
         let admission = self
             .seller_admission_for_buyer(&config, request.now_unix, &buyer_pubkey)
@@ -361,6 +386,26 @@ impl PaidRouteStore {
         }
         Ok(())
     }
+}
+
+fn validated_paid_route_buyer_tunnel_ip(value: &str) -> Result<String> {
+    let (address, prefix) = value
+        .trim()
+        .split_once('/')
+        .ok_or_else(|| anyhow!("paid route buyer tunnel IP must be an IPv4 /32"))?;
+    if prefix != "32" {
+        return Err(anyhow!("paid route buyer tunnel IP must be an IPv4 /32"));
+    }
+    let address = address
+        .parse::<std::net::Ipv4Addr>()
+        .context("invalid paid route buyer tunnel IPv4 address")?;
+    let octets = address.octets();
+    if octets[0] != 10 || octets[1] != 44 {
+        return Err(anyhow!(
+            "paid route buyer tunnel IP must be inside 10.44.0.0/16"
+        ));
+    }
+    Ok(format!("{address}/32"))
 }
 
 fn validated_session_component(value: &str, label: &str) -> Result<String> {

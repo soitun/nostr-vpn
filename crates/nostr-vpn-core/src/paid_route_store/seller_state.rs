@@ -145,6 +145,10 @@ impl PaidRouteStore {
 
         let buyer_npub = normalize_paid_route_npub(&lease_record.lease.buyer_npub, "buyer").ok()?;
         let buyer_pubkey = normalize_nostr_pubkey(&buyer_npub).ok()?;
+        let buyer_tunnel_ip = self
+            .seller_session_tunnel_ips
+            .get(&session.session_id)?
+            .clone();
         let decision = session.routing_decision(config);
         let expires_at_unix = lease_record
             .lease
@@ -163,6 +167,7 @@ impl PaidRouteStore {
         Some(PaidRouteSellerAdmission {
             buyer_pubkey,
             buyer_npub,
+            buyer_tunnel_ip,
             session_id: session.session_id.clone(),
             lease_id: session.lease_id.clone(),
             channel_id: session.payment.channel_id.clone(),

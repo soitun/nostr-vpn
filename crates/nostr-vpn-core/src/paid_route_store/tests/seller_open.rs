@@ -11,7 +11,7 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
         buyer_store_with_session(&seller, &buyer, &config);
 
     let open = buyer_store
-        .build_buyer_session_open(&session_id, &buyer_npub, 100)
+        .build_buyer_session_open(&session_id, &buyer_npub, "10.44.201.17/32", 100)
         .expect("build free probe open");
     assert!(
         !buyer_store
@@ -20,6 +20,7 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
     );
     assert_eq!(open.seller_npub, seller_npub);
     assert_eq!(open.channel_id, placeholder_channel_id);
+    assert_eq!(open.buyer_tunnel_ip, "10.44.201.17/32");
 
     let mut seller_store = PaidRouteStore::default();
     let applied = seller_store
@@ -34,7 +35,9 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
     assert!(applied.changed);
     assert!(applied.allow_routing);
     assert_eq!(applied.state, PaidRouteAccessState::FreeProbe);
-    assert_eq!(seller_store.seller_admissions(&config, 100).len(), 1);
+    let admissions = seller_store.seller_admissions(&config, 100);
+    assert_eq!(admissions.len(), 1);
+    assert_eq!(admissions[0].buyer_tunnel_ip, "10.44.201.17/32");
 
     let repeated = seller_store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
@@ -97,6 +100,44 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
         })
         .expect("replay free probe open after funding");
     assert!(!replay_after_payment.changed);
+}
+
+#[test]
+fn session_open_requires_v3_buyer_tunnel_ip_and_rejects_public_sources() {
+    let legacy = serde_json::json!({
+        "version": "2",
+        "service_id": "internet-exit",
+        "lease_id": "lease-1",
+        "channel_id": "channel-1",
+        "seller_npub": Keys::generate().public_key().to_bech32().expect("seller npub"),
+        "expires_at_unix": 200,
+    });
+    assert!(serde_json::from_value::<PaidRouteSessionOpen>(legacy).is_err());
+
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let seller_npub = seller.public_key().to_bech32().expect("seller npub");
+    let buyer_npub = buyer.public_key().to_bech32().expect("buyer npub");
+    let config = sample_config();
+    let (buyer_store, session_id, _) = buyer_store_with_session(&seller, &buyer, &config);
+    let mut open = buyer_store
+        .build_buyer_session_open(&session_id, &buyer_npub, "10.44.7.9/32", 100)
+        .expect("build v3 session open");
+    open.buyer_tunnel_ip = "203.0.113.9/32".to_string();
+
+    let mut seller_store = PaidRouteStore::default();
+    let before = seller_store.clone();
+    let error = seller_store
+        .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open,
+            authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+            seller_npub,
+            config,
+            now_unix: 100,
+        })
+        .expect_err("public tunnel source must be rejected");
+    assert!(error.to_string().contains("inside 10.44.0.0/16"));
+    assert_eq!(seller_store, before);
 }
 
 #[test]
@@ -255,6 +296,24 @@ fn seller_payment_channel_open_creates_seller_session_and_admission() {
         10
     );
 
+    assert!(store.seller_admissions(&config, 101).is_empty());
+    store
+        .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open: PaidRouteSessionOpen {
+                version: PAID_ROUTE_OFFER_VERSION.to_string(),
+                service_id: "internet-exit".to_string(),
+                lease_id: "lease-1".to_string(),
+                channel_id: "channel-1".to_string(),
+                seller_npub: seller_npub.clone(),
+                buyer_tunnel_ip: "10.44.201.17/32".to_string(),
+                expires_at_unix: 500,
+            },
+            authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+            seller_npub,
+            config: config.clone(),
+            now_unix: 101,
+        })
+        .expect("bind funded buyer tunnel IP");
     let admissions = store.seller_admissions(&config, 101);
     assert_eq!(admissions.len(), 1);
     assert_eq!(admissions[0].buyer_pubkey, buyer.public_key().to_hex());
@@ -482,6 +541,23 @@ fn seller_payment_with_spilman_receiver_accepts_lagging_due_as_partial_credit() 
             now_unix: 100,
         })
         .expect("seed seller channel");
+    store
+        .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open: PaidRouteSessionOpen {
+                version: PAID_ROUTE_OFFER_VERSION.to_string(),
+                service_id: "internet-exit".to_string(),
+                lease_id: "lease-1".to_string(),
+                channel_id: "channel-1".to_string(),
+                seller_npub: seller_npub.clone(),
+                buyer_tunnel_ip: "10.44.201.17/32".to_string(),
+                expires_at_unix: 500,
+            },
+            authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+            seller_npub: seller_npub.clone(),
+            config: config.clone(),
+            now_unix: 100,
+        })
+        .expect("bind funded buyer tunnel IP");
     store
         .record_seller_usage(RecordPaidRouteSellerUsageRequest {
             buyer_pubkey: buyer.public_key().to_hex(),
