@@ -24,6 +24,25 @@ fn linux_endpoint_bypass_hosts_unchanged(
     current_targets == desired_targets
 }
 
+#[cfg(target_os = "linux")]
+fn linux_control_only_network_intent(config: &FipsPrivateTunnelConfig) -> bool {
+    config.route_targets.is_empty()
+        && config.local_exit_forwarding_routes.is_empty()
+        && !config.wireguard_exit.enabled
+        && !config.exit_node_leak_protection
+}
+
+#[cfg(target_os = "linux")]
+fn linux_exit_node_runtime_is_inactive(runtime: &crate::LinuxExitNodeRuntime) -> bool {
+    runtime.ipv4_outbound_iface.is_none()
+        && runtime.ipv6_outbound_iface.is_none()
+        && runtime.ipv4_tunnel_source_cidr.is_none()
+        && runtime.ipv4_mss_clamp.is_none()
+        && runtime.ipv4_forward_was_enabled.is_none()
+        && runtime.ipv6_forward_was_enabled.is_none()
+        && runtime.wireguard_exit.is_none()
+}
+
 impl FipsPrivateTunnelRuntime {
     #[cfg(target_os = "linux")]
     async fn apply_linux_network_state(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
@@ -87,9 +106,34 @@ impl FipsPrivateTunnelRuntime {
         let mut interface_route_targets = route_targets.clone();
         interface_route_targets.sort();
         interface_route_targets.dedup();
+        let interface_addresses = config.interface_addresses();
+        // A control-only node has no managed routes or forwarding state to
+        // reconcile. Audit the actual TUN state before mutating it so our own
+        // idempotent-looking `ip` commands cannot create a netlink refresh loop.
+        // A missing address, changed MTU/queue, or down link still falls through
+        // to the normal restoration path.
+        let unchanged_control_only_state = self.linux_network_state_initialized
+            && linux_control_only_network_intent(&self.config)
+            && linux_control_only_network_intent(config)
+            && self.config.interface_addresses() == interface_addresses
+            && self.config.mesh_mtu.tunnel == config.mesh_mtu.tunnel
+            && endpoint_bypass_specs.is_empty()
+            && self.endpoint_bypass_routes.is_empty()
+            && self.original_default_route.is_none()
+            && self.original_default_ipv6_route.is_none()
+            && linux_exit_node_runtime_is_inactive(&self.exit_node_runtime)
+            && linux_interface_state_matches(
+                &self.iface,
+                &interface_addresses,
+                config.mesh_mtu.tunnel,
+                linux_tun_tx_queue_len(),
+            );
+        if unchanged_control_only_state {
+            return Ok(());
+        }
         crate::apply_local_interface_network_with_mtu_and_addresses(
             &self.iface,
-            &config.interface_addresses(),
+            &interface_addresses,
             &interface_route_targets,
             config.mesh_mtu.tunnel,
         )
@@ -113,6 +157,7 @@ impl FipsPrivateTunnelRuntime {
             config.exit_node_leak_protection,
             config.mesh_mtu.tunnel,
         );
+        self.linux_network_state_initialized = true;
         Ok(())
     }
 
@@ -610,6 +655,7 @@ impl FipsPrivateTunnelRuntime {
 
     #[cfg(target_os = "linux")]
     fn cleanup_linux_network_state(&mut self) {
+        self.linux_network_state_initialized = false;
         self.reconcile_linux_endpoint_bypass_routes(&[]);
         self.reconcile_linux_exit_node_forwarding_cleanup();
         self.restore_linux_original_default_route();

@@ -36,7 +36,9 @@
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{BorrowedTunFd, TunPipelinePacket, raw_write_packet_to_tun};
-    use super::linux_endpoint_bypass_hosts_unchanged;
+    use super::{
+        linux_endpoint_bypass_hosts_unchanged, linux_interface_state_matches_json,
+    };
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
     use fips_endpoint::{
@@ -80,6 +82,84 @@
         assert!(!linux_endpoint_bypass_hosts_unchanged(
             &current,
             &changed_hosts,
+        ));
+    }
+
+    #[test]
+    fn unchanged_linux_control_interface_state_skips_network_mutation() {
+        let state = r#"[
+            {
+                "ifname": "nvpn-fips",
+                "flags": ["POINTOPOINT", "NOARP", "UP", "LOWER_UP"],
+                "mtu": 1150,
+                "txqlen": 4096,
+                "addr_info": [
+                    {"family": "inet", "local": "10.44.1.7", "prefixlen": 32},
+                    {"family": "inet6", "local": "fd00::7", "prefixlen": 128},
+                    {"family": "inet6", "local": "fe80::7", "prefixlen": 64}
+                ]
+            }
+        ]"#;
+        let addresses = vec!["10.44.1.7/32".to_string(), "fd00::7/128".to_string()];
+
+        assert!(linux_interface_state_matches_json(
+            state,
+            &addresses,
+            1150,
+            Some(4096),
+        ));
+    }
+
+    #[test]
+    fn changed_linux_control_interface_state_requires_restoration() {
+        let base = r#"[
+            {
+                "ifname": "nvpn-fips",
+                "flags": ["POINTOPOINT", "NOARP", "UP"],
+                "mtu": 1150,
+                "txqlen": 4096,
+                "addr_info": [
+                    {"family": "inet", "local": "10.44.1.7", "prefixlen": 32}
+                ]
+            }
+        ]"#;
+        let addresses = vec!["10.44.1.7/32".to_string()];
+
+        assert!(!linux_interface_state_matches_json(
+            base,
+            &["10.44.1.8/32".to_string()],
+            1150,
+            Some(4096),
+        ));
+        assert!(!linux_interface_state_matches_json(
+            base,
+            &addresses,
+            1280,
+            Some(4096),
+        ));
+        assert!(!linux_interface_state_matches_json(
+            base,
+            &addresses,
+            1150,
+            Some(1024),
+        ));
+        assert!(!linux_interface_state_matches_json(
+            &base.replace("\"UP\"", "\"DOWN\""),
+            &addresses,
+            1150,
+            Some(4096),
+        ));
+        assert!(!linux_interface_state_matches_json(
+            "not-json",
+            &addresses,
+            1150,
+            Some(4096),
+        ));
+        assert!(!linux_interface_state_matches_json(
+            base,
+            &["10.44.1.7/99".to_string()],
+            1150,
+            Some(4096),
         ));
     }
 
