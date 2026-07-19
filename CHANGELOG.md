@@ -21,6 +21,9 @@ All notable changes to this project are documented in this file.
 - Route explicitly resolved `.fips` identities through an already-admitted
   physical FIPS adjacency under both configured-only and Open discovery,
   without granting ambient learned identities the same fallback transit.
+- Keep standard FIPS pubsub subscriptions stable when an authenticated peer
+  moves to a replacement link, avoiding full retained-event replay to every
+  peer while preserving catch-up for newly connected identities.
 - Delay the first macOS automatic update check for ten seconds after startup
   so networking can settle, then retry failures after one minute instead of
   silently waiting for the normal six-hour polling interval.

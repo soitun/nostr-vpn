@@ -315,7 +315,7 @@ async fn run(
     let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
     outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut subscription = None;
-    let mut subscribed_peer_links = Vec::new();
+    let mut subscribed_peer_ids = Vec::new();
     sync_fips_subscription(
         &endpoint,
         &fips_pubsub,
@@ -323,7 +323,7 @@ async fn run(
         &events,
         &update_events,
         &mut subscription,
-        &mut subscribed_peer_links,
+        &mut subscribed_peer_ids,
     )
     .await;
 
@@ -443,7 +443,7 @@ async fn run(
                     &events,
                     &update_events,
                     &mut subscription,
-                    &mut subscribed_peer_links,
+                    &mut subscribed_peer_ids,
                 )
                 .await;
                 publish_policy_maintenance(
@@ -642,14 +642,14 @@ async fn sync_fips_subscription(
     events: &Arc<Mutex<ControlEventStore>>,
     update_events: &UpdateEventCache,
     subscription: &mut Option<FipsPubsubSubscription>,
-    subscribed_peer_links: &mut Vec<(String, u64)>,
+    subscribed_peer_ids: &mut Vec<String>,
 ) {
     let peers = connected_peers(endpoint, peer_policy).await;
-    if subscription.is_some() && *subscribed_peer_links == peers {
+    if subscription.is_some() && *subscribed_peer_ids == peers {
         return;
     }
     subscription.take();
-    subscribed_peer_links.clear();
+    subscribed_peer_ids.clear();
     if peers.is_empty() {
         return;
     }
@@ -661,7 +661,7 @@ async fn sync_fips_subscription(
             return;
         }
     };
-    *subscribed_peer_links = peers;
+    *subscribed_peer_ids = peers;
     *subscription = Some(next);
 
     for event in bounded_fips_replay(events.lock().await.snapshot()) {
@@ -696,11 +696,8 @@ fn bounded_fips_replay(mut events: Vec<Event>) -> Vec<Event> {
     events
 }
 
-async fn connected_peers(
-    endpoint: &FipsEndpoint,
-    peer_policy: &dyn MeshPeerPolicy,
-) -> Vec<(String, u64)> {
-    let mut peers = endpoint
+async fn connected_peers(endpoint: &FipsEndpoint, peer_policy: &dyn MeshPeerPolicy) -> Vec<String> {
+    let peers = endpoint
         .peers()
         .await
         .unwrap_or_default()
@@ -714,9 +711,20 @@ async fn connected_peers(
                 .map(|selected| (selected.id, peer.link_id))
         })
         .collect::<Vec<_>>();
-    peers.sort();
-    peers.dedup();
-    peers
+    subscription_peer_ids(peers)
+}
+
+// The FIPS pubsub client replays each active REQ onto a replacement link for
+// the same authenticated identity. Recreating the whole subscription here on
+// link-id churn would instead replay every retained event to every peer.
+fn subscription_peer_ids(peers: Vec<(String, u64)>) -> Vec<String> {
+    let mut peer_ids = peers
+        .into_iter()
+        .map(|(peer_id, _link_id)| peer_id)
+        .collect::<Vec<_>>();
+    peer_ids.sort();
+    peer_ids.dedup();
+    peer_ids
 }
 
 async fn fips_notification(
