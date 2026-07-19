@@ -1,6 +1,13 @@
     static LOCAL_UDP_ENDPOINT_TEST_LOCK: tokio::sync::Mutex<()> =
         tokio::sync::Mutex::const_new(());
 
+    #[test]
+    fn disabled_fips_host_artifacts_are_cleaned_once_per_disabled_epoch() {
+        assert!(super::fips_host_disabled_cleanup_due(false, false));
+        assert!(!super::fips_host_disabled_cleanup_due(false, true));
+        assert!(!super::fips_host_disabled_cleanup_due(true, false));
+    }
+
     fn available_udp_port() -> u16 {
         UdpSocket::bind("127.0.0.1:0")
             .expect("bind test port")

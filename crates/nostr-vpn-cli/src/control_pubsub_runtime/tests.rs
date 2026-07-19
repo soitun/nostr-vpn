@@ -191,6 +191,73 @@ async fn wait_pubsub_transport_connected(runtime: &ControlPubsubFipsRuntime) {
 }
 
 #[test]
+fn relay_subscriptions_bound_retained_replay() {
+    let publisher = Keys::generate();
+    let update_events = update_events(&publisher, "releases/bounded-relay-replay");
+
+    let filters = relay_subscription_filters(&update_events);
+
+    assert_eq!(filters.len(), 2);
+    assert!(
+        filters
+            .iter()
+            .all(|filter| filter.limit == Some(RELAY_REPLAY_LIMIT)),
+        "every public-relay subscription must bound retained replay"
+    );
+}
+
+#[test]
+fn standard_fips_pubsub_bounds_retained_replay() {
+    let publisher = Keys::generate();
+    let update_events = update_events(&publisher, "releases/bounded-fips-replay");
+    let options = fips_pubsub_options(CONTROL_PUBSUB_MAX_EVENT_BYTES, 4);
+    let filters = fips_subscription_filters(&update_events);
+
+    assert_eq!(options.max_replay_events, FIPS_REPLAY_LIMIT);
+    assert!(
+        filters
+            .iter()
+            .all(|filter| filter.limit == Some(FIPS_REPLAY_LIMIT)),
+        "every FIPS pubsub subscription must bound retained replay"
+    );
+
+    let stored = (0..80)
+        .map(|index| {
+            EventBuilder::new(
+                Kind::Custom(FIPS_PEER_ADVERT_KIND),
+                format!("advert-{index}"),
+            )
+            .custom_created_at(Timestamp::from(index + 1))
+            .sign_with_keys(&publisher)
+            .expect("signed peer advert")
+        })
+        .collect::<Vec<_>>();
+    let expected_ids = stored[stored.len() - FIPS_REPLAY_LIMIT..]
+        .iter()
+        .map(|event| event.id)
+        .collect::<Vec<_>>();
+    let replay_ids = bounded_fips_replay(stored)
+        .into_iter()
+        .map(|event| event.id)
+        .collect::<Vec<_>>();
+
+    assert_eq!(replay_ids, expected_ids);
+}
+
+#[test]
+fn plain_control_events_are_verified_before_entering_the_verified_path() {
+    let publisher = Keys::generate();
+    let update_events = update_events(&publisher, "releases/verified-boundary");
+    let mut event = signed_update_root(&publisher, "releases/verified-boundary", 1, "aa");
+    event.content.push_str("tampered-after-signing");
+
+    let error = verify_control_event(event, &update_events)
+        .expect_err("a plain event with an invalid signature must be rejected");
+
+    assert!(error.to_string().contains("invalid Nostr event"));
+}
+
+#[test]
 fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency() {
     std::thread::Builder::new()
         .name("websocket-fips-pubsub".to_string())

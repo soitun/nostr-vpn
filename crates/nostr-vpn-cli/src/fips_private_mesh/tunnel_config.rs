@@ -471,6 +471,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     config: FipsPrivateTunnelConfig,
     _tun: Arc<SystemTun>,
     fips_host: Option<crate::fips_host_tunnel::FipsHostTunnelRuntime>,
+    fips_host_disabled_artifacts_cleaned: bool,
     tun_send_worker: FipsTunSendWorker,
     mesh_recv_worker: FipsMeshRecvWorker,
     event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,
@@ -481,6 +482,8 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     original_default_route: Option<String>,
     #[cfg(target_os = "linux")]
     original_default_ipv6_route: Option<String>,
+    #[cfg(target_os = "linux")]
+    linux_network_state_initialized: bool,
     #[cfg(target_os = "linux")]
     exit_node_runtime: crate::LinuxExitNodeRuntime,
     #[cfg(target_os = "macos")]

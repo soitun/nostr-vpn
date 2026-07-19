@@ -83,7 +83,11 @@ pub struct AppConfig {
     pub networks: Vec<NetworkConfig>,
     #[serde(default = "default_node_name")]
     pub node_name: String,
-    #[serde(default = "default_lan_discovery_enabled", skip_serializing)]
+    /// Discover and advertise directly reachable peers with LAN mDNS.
+    /// Disable this on nodes that have no local broadcast-domain peers, such
+    /// as public WebSocket seeds, while leaving every other FIPS transport and
+    /// the standard Nostr pubsub bridge active.
+    #[serde(default = "default_lan_discovery_enabled")]
     pub lan_discovery_enabled: bool,
     #[serde(default = "default_launch_on_startup")]
     pub launch_on_startup: bool,

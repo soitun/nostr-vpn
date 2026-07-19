@@ -34,6 +34,8 @@ const MAX_PUBSUB_PEERS: usize = 64;
 const MAINTENANCE_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const OUTBOX_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const OUTBOX_BATCH: usize = 8;
+const RELAY_REPLAY_LIMIT: usize = 32;
+const FIPS_REPLAY_LIMIT: usize = 32;
 
 struct PublishRequest {
     event: Box<Event>,
@@ -120,16 +122,7 @@ impl ControlPubsubFipsRuntime {
         let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
         let fips_pubsub = FipsPubsubClient::start(
             Arc::clone(&endpoint),
-            FipsPubsubClientOptions {
-                max_frame_bytes: max_event_bytes
-                    .saturating_add(4 * 1_024)
-                    .min(CONTROL_PUBSUB_MAX_WIRE_BYTES),
-                max_connected_peers: MAX_PUBSUB_PEERS,
-                max_replay_events: STORE_MAX_EVENTS,
-                receive_batch_size: 64,
-                max_hops: config.max_hops,
-                ..FipsPubsubClientOptions::default()
-            },
+            fips_pubsub_options(max_event_bytes, config.max_hops),
         )
         .await
         .context("failed to bind standard FIPS Nostr pubsub service")?;
@@ -215,6 +208,19 @@ impl ControlPubsubFipsRuntime {
     }
 }
 
+fn fips_pubsub_options(max_event_bytes: usize, max_hops: u8) -> FipsPubsubClientOptions {
+    FipsPubsubClientOptions {
+        max_frame_bytes: max_event_bytes
+            .saturating_add(4 * 1_024)
+            .min(CONTROL_PUBSUB_MAX_WIRE_BYTES),
+        max_connected_peers: MAX_PUBSUB_PEERS,
+        max_replay_events: FIPS_REPLAY_LIMIT,
+        receive_batch_size: 64,
+        max_hops,
+        ..FipsPubsubClientOptions::default()
+    }
+}
+
 impl Drop for ControlPubsubFipsRuntime {
     fn drop(&mut self) {
         if let Some(shutdown) = self.shutdown.take() {
@@ -247,12 +253,13 @@ impl RelayBridge {
                 .with_context(|| format!("failed to add control pubsub relay {relay}"))?;
         }
         client.connect().await;
+        let [control_filter, update_filter] = relay_subscription_filters(update_events);
         client
-            .subscribe(Filter::new().kinds(control_kinds()), None)
+            .subscribe(control_filter, None)
             .await
             .context("failed to subscribe to control pubsub relays")?;
         client
-            .subscribe(update_events.filter().clone(), None)
+            .subscribe(update_filter, None)
             .await
             .context("failed to subscribe to Hashtree update roots")?;
         Ok(Some(Self {
@@ -385,8 +392,8 @@ async fn run(
             }
             notification = relay_notification(&mut bridge) => {
                 let Some((relay_url, event)) = notification else { continue; };
-                if !is_control_event(&event, &update_events)
-                    || !event_is_admitted(
+                if !is_control_event(event.as_event(), &update_events)
+                    || !verified_event_is_admitted(
                         &pubsub_policy,
                         &event,
                         &EventSource::relay(relay_url),
@@ -395,7 +402,7 @@ async fn run(
                 {
                     continue;
                 }
-                if let Err(error) = publish_local(
+                if let Err(error) = publish_verified(
                     PublishContext {
                         endpoint: &endpoint,
                         fips_pubsub: &fips_pubsub,
@@ -412,6 +419,23 @@ async fn run(
                 }
             }
             _ = maintenance_tick.tick() => {
+                let delivery = fips_pubsub.delivery_snapshot();
+                tracing::debug!(
+                    req_frames_received = delivery.req_frames_received,
+                    close_frames_received = delivery.close_frames_received,
+                    event_frames_received = delivery.event_frames_received,
+                    inv_frames_received = delivery.inv_frames_received,
+                    want_frames_received = delivery.want_frames_received,
+                    want_frames_sent = delivery.want_frames_sent,
+                    subscription_events_received = delivery.subscription_events_received,
+                    expired_wants = delivery.expired_wants,
+                    provider_cooldowns = delivery.provider_cooldowns,
+                    tcp_receive_batches = delivery.tcp_receive_batches,
+                    tcp_datagrams_received = delivery.tcp_datagrams_received,
+                    tcp_datagrams_rejected = delivery.tcp_datagrams_rejected,
+                    tcp_poll_turns = delivery.tcp_poll_turns,
+                    "standard FIPS pubsub delivery snapshot"
+                );
                 sync_fips_subscription(
                     &endpoint,
                     &fips_pubsub,
@@ -439,7 +463,17 @@ async fn run(
 }
 
 async fn publish_local(context: PublishContext<'_>, event: Event) -> Result<bool> {
-    if !is_control_event(&event, context.update_events) {
+    let verified = verify_control_event(event, context.update_events)?;
+    publish_verified(context, verified).await
+}
+
+fn verify_control_event(event: Event, update_events: &UpdateEventCache) -> Result<VerifiedEvent> {
+    validate_control_event_shape(&event, update_events)?;
+    VerifiedEvent::try_from(event).map_err(anyhow::Error::from)
+}
+
+fn validate_control_event_shape(event: &Event, update_events: &UpdateEventCache) -> Result<()> {
+    if !is_control_event(event, update_events) {
         anyhow::bail!("event is outside control pubsub subscriptions");
     }
     let event_bytes = serde_json::to_vec(&event)?;
@@ -450,7 +484,12 @@ async fn publish_local(context: PublishContext<'_>, event: Event) -> Result<bool
             CONTROL_PUBSUB_MAX_EVENT_BYTES
         );
     }
-    let verified = VerifiedEvent::try_from(event.clone())?;
+    Ok(())
+}
+
+async fn publish_verified(context: PublishContext<'_>, verified: VerifiedEvent) -> Result<bool> {
+    validate_control_event_shape(verified.as_event(), context.update_events)?;
+    let event = verified.as_event().clone();
     let fips_published = match context
         .fips_pubsub
         .publish(
@@ -560,12 +599,13 @@ async fn process_fips_delivery(
     update_events: &UpdateEventCache,
     delivery: QueryEvent,
 ) {
-    let event = delivery.event.into_event();
-    if !is_control_event(&event, update_events)
-        || !event_is_admitted(pubsub_policy, &event, &delivery.source).await
+    let verified = delivery.event;
+    if !is_control_event(verified.as_event(), update_events)
+        || !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await
     {
         return;
     }
+    let event = verified.into_event();
     observe_policy_event(pubsub_policy, &event).await;
     ingest_into_fips_discovery(endpoint, &event).await;
     let inserted = match events.lock().await.insert(event.clone()) {
@@ -613,10 +653,7 @@ async fn sync_fips_subscription(
     if peers.is_empty() {
         return;
     }
-    let mut filters = vec![Filter::new().kinds(control_kinds())];
-    if update_events.filter().kinds.is_some() {
-        filters.push(update_events.filter().clone());
-    }
+    let filters = fips_subscription_filters(update_events);
     let next = match fips_pubsub.subscribe(filters).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -627,7 +664,7 @@ async fn sync_fips_subscription(
     *subscribed_peer_links = peers;
     *subscription = Some(next);
 
-    for event in events.lock().await.snapshot() {
+    for event in bounded_fips_replay(events.lock().await.snapshot()) {
         let event_id = event.id;
         let Ok(event) = VerifiedEvent::try_from(event) else {
             continue;
@@ -639,6 +676,24 @@ async fn sync_fips_subscription(
             tracing::debug!(%error, %event_id, "stored FIPS pubsub replay deferred");
         }
     }
+}
+
+fn fips_subscription_filters(update_events: &UpdateEventCache) -> Vec<Filter> {
+    let mut filters = vec![
+        Filter::new()
+            .kinds(control_kinds())
+            .limit(FIPS_REPLAY_LIMIT),
+    ];
+    if update_events.filter().kinds.is_some() {
+        filters.push(update_events.filter().clone().limit(FIPS_REPLAY_LIMIT));
+    }
+    filters
+}
+
+fn bounded_fips_replay(mut events: Vec<Event>) -> Vec<Event> {
+    let drop_count = events.len().saturating_sub(FIPS_REPLAY_LIMIT);
+    events.drain(..drop_count);
+    events
 }
 
 async fn connected_peers(
@@ -673,16 +728,21 @@ async fn fips_notification(
     subscription.recv().await
 }
 
-async fn event_is_admitted(
+async fn verified_event_is_admitted(
     policy: &Arc<Mutex<FipsPubsubPolicy>>,
-    event: &Event,
+    event: &VerifiedEvent,
     source: &EventSource,
 ) -> bool {
-    match policy.lock().await.check_event(event, source).await {
+    match policy
+        .lock()
+        .await
+        .check_verified_event(event, source)
+        .await
+    {
         Ok(PolicyDecision::Drop { reason }) => {
             tracing::debug!(
-                event_id = %event.id,
-                author = %event.pubkey,
+                event_id = %event.as_event().id,
+                author = %event.as_event().pubkey,
                 source = %source.id.as_str(),
                 %reason,
                 "dropped control pubsub event by author reputation"
@@ -693,7 +753,7 @@ async fn event_is_admitted(
         Err(error) => {
             tracing::debug!(
                 %error,
-                event_id = %event.id,
+                event_id = %event.as_event().id,
                 source = %source.id.as_str(),
                 "ignored control pubsub event rejected by shared policy"
             );
@@ -702,7 +762,7 @@ async fn event_is_admitted(
     }
 }
 
-async fn relay_notification(bridge: &mut Option<RelayBridge>) -> Option<(String, Event)> {
+async fn relay_notification(bridge: &mut Option<RelayBridge>) -> Option<(String, VerifiedEvent)> {
     let Some(bridge) = bridge.as_mut() else {
         return std::future::pending().await;
     };
@@ -710,7 +770,11 @@ async fn relay_notification(bridge: &mut Option<RelayBridge>) -> Option<(String,
         match bridge.notifications.recv().await {
             Ok(RelayPoolNotification::Event {
                 relay_url, event, ..
-            }) => return Some((relay_url.to_string(), (*event).clone())),
+            }) => {
+                if let Ok(event) = VerifiedEvent::try_from((*event).clone()) {
+                    return Some((relay_url.to_string(), event));
+                }
+            }
             Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                 return std::future::pending().await;
@@ -724,6 +788,15 @@ fn control_kinds() -> [Kind; 3] {
         Kind::Custom(FIPS_PEER_ADVERT_KIND),
         Kind::Custom(PAID_EXIT_OFFER_KIND),
         Kind::Custom(RATING_FACT_KIND),
+    ]
+}
+
+fn relay_subscription_filters(update_events: &UpdateEventCache) -> [Filter; 2] {
+    [
+        Filter::new()
+            .kinds(control_kinds())
+            .limit(RELAY_REPLAY_LIMIT),
+        update_events.filter().clone().limit(RELAY_REPLAY_LIMIT),
     ]
 }
 

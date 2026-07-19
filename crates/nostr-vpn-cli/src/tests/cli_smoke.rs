@@ -119,6 +119,21 @@ fn daemon_rejects_invalid_or_remote_plaintext_fips_websocket_seeds() {
 }
 
 #[test]
+fn set_parses_explicit_lan_discovery_disable() {
+    let cli = Cli::parse_from([
+        "nvpn",
+        "set",
+        "--lan-discovery-enabled=false",
+        "--config",
+        "/var/lib/nvpn/config.toml",
+    ]);
+    let Command::Set(args) = cli.command else {
+        panic!("expected set command");
+    };
+    assert_eq!(args.lan_discovery_enabled, Some(false));
+}
+
+#[test]
 fn build_reports_fips_core_component_version() {
     let version = crate::fips_core_build_version();
     assert!(!version.trim().is_empty());

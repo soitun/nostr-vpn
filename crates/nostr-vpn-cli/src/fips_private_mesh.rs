@@ -5,8 +5,9 @@ use cashu_service::StreamingRoutePaymentEnvelope;
 use fips_core::discovery::nostr::OverlayEndpointAdvert;
 use fips_endpoint::{
     Config, ConnectPolicy, EthernetConfig, FipsEndpoint, FipsEndpointData, FipsEndpointMessage,
-    FipsEndpointPeer, NostrDiscoveryPolicy, PeerAddress, PeerConfig as FipsPeerConfig,
-    PeerIdentity, RoutingMode, TransportInstances, UdpConfig, WebSocketConfig,
+    FipsEndpointPeer, NostrDiscoveryPolicy, NostrPeerfindingSource, PeerAddress,
+    PeerConfig as FipsPeerConfig, PeerIdentity, RoutingMode, TransportInstances, UdpConfig,
+    WebSocketConfig,
 };
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 use fips_endpoint::{
@@ -240,6 +241,7 @@ include!("fips_private_mesh/control_frame.rs");
 include!("fips_private_mesh/endpoint_config.rs");
 include!("fips_private_mesh/tunnel_config.rs");
 include!("fips_private_mesh/tunnel_runtime_unix_core.rs");
+include!("fips_private_mesh/linux_interface_state.rs");
 include!("fips_private_mesh/tunnel_runtime_linux.rs");
 #[cfg(target_os = "linux")]
 include!("fips_private_mesh/linux_vnet_tun.rs");

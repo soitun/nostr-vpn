@@ -9,14 +9,21 @@ struct ControlEventStore {
     path: Option<PathBuf>,
     events: HashMap<String, Event>,
     order: VecDeque<String>,
+    rating_events: HashMap<RatingEventStoreKey, RatingEventStoreEntry>,
     update_events: UpdateEventCache,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct RatingEventStoreKey {
     author: String,
     subject: String,
     scope: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RatingEventStoreEntry {
+    event_id: String,
+    created_at: u64,
 }
 
 fn configured_update_events() -> Result<UpdateEventCache> {
@@ -31,6 +38,7 @@ impl ControlEventStore {
                 path: None,
                 events: HashMap::new(),
                 order: VecDeque::new(),
+                rating_events: HashMap::new(),
                 update_events,
             });
         };
@@ -38,6 +46,7 @@ impl ControlEventStore {
             path: Some(path.clone()),
             events: HashMap::new(),
             order: VecDeque::new(),
+            rating_events: HashMap::new(),
             update_events,
         };
         let bytes = match fs::read(&path) {
@@ -87,32 +96,25 @@ impl ControlEventStore {
         if self.events.contains_key(&event_id) {
             return false;
         }
-        if u16::from(event.kind) == RATING_FACT_KIND {
+        let rating = if u16::from(event.kind) == RATING_FACT_KIND {
             let Some((rating_key, created_at)) = retained_rating_event(&event, now_ms() / 1_000)
             else {
                 return false;
             };
-            if self.events.values().any(|stored| {
-                rating_event_store_key(stored).is_some_and(|(stored_key, stored_created_at)| {
-                    stored_key == rating_key
-                        && (stored_created_at, stored.id) >= (created_at, event.id)
-                })
-            }) {
-                return false;
+            if let Some(stored) = self.rating_events.get(&rating_key).cloned() {
+                let stored_event = self
+                    .events
+                    .get(&stored.event_id)
+                    .expect("rating index refers to a stored event");
+                if (stored.created_at, stored_event.id) >= (created_at, event.id) {
+                    return false;
+                }
+                self.remove_memory(&stored.event_id);
             }
-            let replaced = self
-                .events
-                .iter()
-                .filter(|(_, stored)| {
-                    rating_event_store_key(stored)
-                        .is_some_and(|(stored_key, _)| stored_key == rating_key)
-                })
-                .map(|(stored_id, _)| stored_id.clone())
-                .collect::<std::collections::HashSet<_>>();
-            self.events
-                .retain(|stored_id, _| !replaced.contains(stored_id));
-            self.order.retain(|stored_id| !replaced.contains(stored_id));
-        }
+            Some((rating_key, created_at))
+        } else {
+            None
+        };
         let is_update_event = self
             .update_events
             .filter()
@@ -130,10 +132,10 @@ impl ControlEventStore {
                         .match_event(stored, MatchEventOptions::new())
                 })
                 .map(|(event_id, _)| event_id.clone())
-                .collect::<std::collections::HashSet<_>>();
-            self.events
-                .retain(|stored_id, _| !replaced.contains(stored_id));
-            self.order.retain(|stored_id| !replaced.contains(stored_id));
+                .collect::<Vec<_>>();
+            for stored_id in replaced {
+                self.remove_memory(&stored_id);
+            }
         }
         while self.events.len() >= STORE_MAX_EVENTS {
             let remove_index = self
@@ -153,10 +155,29 @@ impl ControlEventStore {
             let Some(oldest) = self.order.remove(remove_index) else {
                 break;
             };
-            self.events.remove(&oldest);
+            self.remove_memory(&oldest);
         }
         self.order.push_back(event_id.clone());
-        self.events.insert(event_id, event);
+        self.events.insert(event_id.clone(), event);
+        if let Some((rating_key, created_at)) = rating {
+            self.rating_events.insert(
+                rating_key,
+                RatingEventStoreEntry {
+                    event_id,
+                    created_at,
+                },
+            );
+        }
+        true
+    }
+
+    fn remove_memory(&mut self, event_id: &str) -> bool {
+        if self.events.remove(event_id).is_none() {
+            return false;
+        }
+        self.order.retain(|stored_id| stored_id != event_id);
+        self.rating_events
+            .retain(|_, stored| stored.event_id != event_id);
         true
     }
 
@@ -169,20 +190,19 @@ impl ControlEventStore {
 
     fn prune_expired_ratings(&mut self, now_secs: u64) -> Result<usize> {
         let remove = self
-            .events
+            .rating_events
             .iter()
-            .filter(|(_, event)| {
-                u16::from(event.kind) == RATING_FACT_KIND
-                    && retained_rating_event(event, now_secs).is_none()
+            .filter(|(_, stored)| {
+                now_secs.saturating_sub(stored.created_at) > PEER_RATING_MAX_AGE.as_secs()
             })
-            .map(|(event_id, _)| event_id.clone())
-            .collect::<std::collections::HashSet<_>>();
+            .map(|(_, stored)| stored.event_id.clone())
+            .collect::<Vec<_>>();
         if remove.is_empty() {
             return Ok(0);
         }
-        self.events
-            .retain(|event_id, _| !remove.contains(event_id));
-        self.order.retain(|event_id| !remove.contains(event_id));
+        for event_id in &remove {
+            self.remove_memory(event_id);
+        }
         self.persist()?;
         Ok(remove.len())
     }
@@ -273,6 +293,7 @@ mod tests {
         assert!(store.insert(older).expect("insert older rating"));
         assert!(store.insert(newer.clone()).expect("insert newer rating"));
         assert_eq!(store.snapshot(), vec![newer]);
+        assert_eq!(store.rating_events.len(), 1);
     }
 
     #[test]

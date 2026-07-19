@@ -96,10 +96,18 @@ fn flush_pending_fips_roster_recipients(
 }
 pub(crate) type EndpointPeerSignature =
     Vec<(String, bool, bool, Vec<(String, Option<u64>, u8)>)>;
+type RecentPeerRefreshSignature = (
+    Vec<(String, Vec<String>)>,
+    Vec<(String, Vec<String>)>,
+);
+const RECENT_PEER_CACHE_TIMESTAMP_FLUSH_SECS: u64 = 5 * 60;
 struct RecentPeerRefresh<'a> {
     recent_peers: &'a mut nostr_vpn_core::recent_peers::RecentPeerEndpoints,
     recent_peers_path: &'a std::path::Path,
     last_endpoint_peer_signature: &'a mut EndpointPeerSignature,
+    last_refresh_signature: &'a mut Option<RecentPeerRefreshSignature>,
+    last_cache_persisted_at: &'a mut u64,
+    force_rebuild: bool,
 }
 struct FipsRestartContext<'a> {
     app: &'a nostr_vpn_core::config::AppConfig,
@@ -329,6 +337,7 @@ async fn update_recent_peers_from_runtime(
             Vec::new()
         }
     };
+    let recent_topology_before = refresh.recent_peers.as_static_peer_endpoints();
     let mut changed = false;
     for (participant, addr) in snapshot {
         if refresh.recent_peers.note_success(&participant, &addr, now) {
@@ -341,7 +350,12 @@ async fn update_recent_peers_from_runtime(
     {
         changed = true;
     }
-    if changed
+    let recent_topology_after = refresh.recent_peers.as_static_peer_endpoints();
+    let topology_changed = recent_topology_before != recent_topology_after;
+    let cache_timestamp_flush_due = changed
+        && now.saturating_sub(*refresh.last_cache_persisted_at)
+            >= RECENT_PEER_CACHE_TIMESTAMP_FLUSH_SECS;
+    if (topology_changed || cache_timestamp_flush_due)
         && let Err(error) = crate::recent_peers_store::write_recent_peers(
             refresh.recent_peers_path,
             refresh.recent_peers,
@@ -351,8 +365,16 @@ async fn update_recent_peers_from_runtime(
             "daemon: failed to write recent peers cache {}: {error}",
             refresh.recent_peers_path.display()
         );
+    } else if topology_changed || cache_timestamp_flush_due {
+        *refresh.last_cache_persisted_at = now;
     }
     let live_peer_endpoints = runtime.peer_endpoint_hints();
+    let input_signature = recent_peer_refresh_signature(refresh.recent_peers, &live_peer_endpoints);
+    if !refresh.force_rebuild
+        && refresh.last_refresh_signature.as_ref() == Some(&input_signature)
+    {
+        return;
+    }
     let refreshed = {
         let app = app.clone();
         let network_id = network_id.to_string();
@@ -375,12 +397,14 @@ async fn update_recent_peers_from_runtime(
         Ok(Ok(refreshed)) => {
             let signature = endpoint_peer_signature(&refreshed.endpoint_peers);
             if signature == *refresh.last_endpoint_peer_signature {
+                *refresh.last_refresh_signature = Some(input_signature);
                 return;
             }
             if let Err(error) = runtime.update_peers(&refreshed.endpoint_peers).await {
                 eprintln!("fips: update_peers (cache refresh) failed: {error}");
             } else {
                 *refresh.last_endpoint_peer_signature = signature;
+                *refresh.last_refresh_signature = Some(input_signature);
             }
         }
         Ok(Err(error)) => {
@@ -390,6 +414,27 @@ async fn update_recent_peers_from_runtime(
             eprintln!("fips: peer hint rebuild task failed: {error}");
         }
     }
+}
+
+fn recent_peer_refresh_signature(
+    recent_peers: &nostr_vpn_core::recent_peers::RecentPeerEndpoints,
+    live_peer_endpoints: &[(String, Vec<(String, u64)>)],
+) -> RecentPeerRefreshSignature {
+    let mut live = live_peer_endpoints
+        .iter()
+        .filter_map(|(participant, endpoints)| {
+            let mut addresses = endpoints
+                .iter()
+                .map(|(address, _)| address.clone())
+                .collect::<Vec<_>>();
+            addresses.sort();
+            addresses.dedup();
+            (!addresses.is_empty()).then(|| (participant.clone(), addresses))
+        })
+        .collect::<Vec<_>>();
+    live.sort();
+    live.dedup();
+    (recent_peers.as_static_peer_endpoints(), live)
 }
 async fn refresh_fips_tunnel_runtime_after_link_event(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,

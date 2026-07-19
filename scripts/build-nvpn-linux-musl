@@ -7,6 +7,7 @@ BUILD_ROOT=${NVPN_LINUX_MUSL_BUILD_ROOT:-${TMPDIR:-/tmp}}
 TARGET_DIR=${NVPN_LINUX_MUSL_TARGET_DIR:-$WORKSPACE/target}
 WORK_DIR=$(mktemp -d "$BUILD_ROOT/nvpn-linux-musl.XXXXXX")
 FIPS_REPO_PATH=${NVPN_FIPS_REPO_PATH:-}
+NOSTR_PUBSUB_REPO_PATH=${NVPN_NOSTR_PUBSUB_REPO_PATH:-}
 CASHU_SERVICE_REPO_PATH=${NVPN_CASHU_SERVICE_REPO_PATH:-}
 CDK_SPILMAN_REPO_PATH=${NVPN_CDK_SPILMAN_REPO_PATH:-${NVPN_CASHU_SPILMAN_REPO_PATH:-}}
 DOCKER_ENV=()
@@ -14,6 +15,7 @@ DOCKER_ENV=()
 if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
   DOCKER_ENV+=(-e NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES=1)
 fi
+
 if [[ ${NVPN_LINUX_MUSL_STRIP:-0} == 1 ]]; then
   DOCKER_ENV+=(-e NVPN_LINUX_MUSL_STRIP=1)
 fi
@@ -98,6 +100,23 @@ if [[ -n "$FIPS_REPO_PATH" ]]; then
     ' "$WORK_DIR/Cargo.toml"
 fi
 
+if [[ -n "$NOSTR_PUBSUB_REPO_PATH" ]]; then
+  NOSTR_PUBSUB_PATCH_DIR="$WORK_DIR/.nostr-pubsub-patch"
+  nostr_pubsub_head="$(git -C "$NOSTR_PUBSUB_REPO_PATH" rev-parse HEAD)"
+  git clone --no-hardlinks --quiet "$NOSTR_PUBSUB_REPO_PATH" "$NOSTR_PUBSUB_PATCH_DIR"
+  git -C "$NOSTR_PUBSUB_PATCH_DIR" checkout --detach --quiet "$nostr_pubsub_head"
+  git -C "$NOSTR_PUBSUB_PATCH_DIR" clean -ffd >/dev/null
+  if [[ ! -f "$NOSTR_PUBSUB_PATCH_DIR/crates/nostr-pubsub-fips/Cargo.toml" ]]; then
+    echo "NVPN_NOSTR_PUBSUB_REPO_PATH does not contain nostr-pubsub-fips sources" >&2
+    exit 1
+  fi
+  DOCKER_ENV+=(
+    -e NVPN_NOSTR_PUBSUB_PATCH_PATH=/home/rust/src/.nostr-pubsub-patch/crates/nostr-pubsub
+    -e NVPN_NOSTR_PUBSUB_FIPS_PATCH_PATH=/home/rust/src/.nostr-pubsub-patch/crates/nostr-pubsub-fips
+    -e NVPN_NOSTR_PUBSUB_SOCIAL_GRAPH_PATCH_PATH=/home/rust/src/.nostr-pubsub-patch/crates/nostr-pubsub-social-graph
+  )
+fi
+
 if [[ -n "$CASHU_SERVICE_REPO_PATH" ]]; then
   CASHU_PATCH_DIR="$WORK_DIR/.cashu-service-patch"
   mkdir -p "$CASHU_PATCH_DIR"
@@ -122,7 +141,7 @@ if [[ -n "$CDK_SPILMAN_REPO_PATH" ]]; then
   fi
 fi
 
-perl -0pi -e 's#exclude = \["linux"\]#exclude = ["linux", ".fips-patch", ".cashu-service-patch", "cashu_spilman_channels"]#' \
+perl -0pi -e 's#exclude = \["linux"\]#exclude = ["linux", ".fips-patch", ".nostr-pubsub-patch", ".cashu-service-patch", "cashu_spilman_channels"]#' \
   "$WORK_DIR/Cargo.toml"
 
 docker run --rm -i \
@@ -146,6 +165,10 @@ cd /home/rust/src
 
 cargo_config_args=()
 cargo_lock_args=(--locked)
+if [[ -n ${NVPN_NOSTR_PUBSUB_PATCH_PATH:-} ]]; then
+  cargo_config_args+=(--config "patch.crates-io.nostr-pubsub.path=\"${NVPN_NOSTR_PUBSUB_PATCH_PATH}\"")
+  cargo_lock_args=()
+fi
 if [[ -n ${NVPN_FIPS_ENDPOINT_PATCH_PATH:-} ]]; then
   cargo_config_args+=(--config "patch.crates-io.fips-endpoint.path=\"${NVPN_FIPS_ENDPOINT_PATCH_PATH}\"")
   cargo_lock_args=()
@@ -158,7 +181,18 @@ if [[ -n ${NVPN_FIPS_IDENTITY_PATCH_PATH:-} ]]; then
   cargo_config_args+=(--config "patch.crates-io.fips-identity.path=\"${NVPN_FIPS_IDENTITY_PATCH_PATH}\"")
   cargo_lock_args=()
 fi
+if [[ -n ${NVPN_NOSTR_PUBSUB_FIPS_PATCH_PATH:-} ]]; then
+  cargo_config_args+=(--config "patch.crates-io.nostr-pubsub-fips.path=\"${NVPN_NOSTR_PUBSUB_FIPS_PATCH_PATH}\"")
+  cargo_lock_args=()
+fi
+if [[ -n ${NVPN_NOSTR_PUBSUB_SOCIAL_GRAPH_PATCH_PATH:-} ]]; then
+  cargo_config_args+=(--config "patch.crates-io.nostr-pubsub-social-graph.path=\"${NVPN_NOSTR_PUBSUB_SOCIAL_GRAPH_PATCH_PATH}\"")
+  cargo_lock_args=()
+fi
 
+if [[ -n ${NVPN_NOSTR_PUBSUB_PATCH_PATH:-} ]]; then
+  cargo "${cargo_config_args[@]}" update -p nostr-pubsub
+fi
 if [[ -n ${NVPN_FIPS_ENDPOINT_PATCH_PATH:-} ]]; then
   cargo "${cargo_config_args[@]}" update -p fips-endpoint
 fi
@@ -167,6 +201,12 @@ if [[ -n ${NVPN_FIPS_CORE_PATCH_PATH:-} ]]; then
 fi
 if [[ -n ${NVPN_FIPS_IDENTITY_PATCH_PATH:-} ]]; then
   cargo "${cargo_config_args[@]}" update -p fips-identity
+fi
+if [[ -n ${NVPN_NOSTR_PUBSUB_FIPS_PATCH_PATH:-} ]]; then
+  cargo "${cargo_config_args[@]}" update -p nostr-pubsub-fips
+fi
+if [[ -n ${NVPN_NOSTR_PUBSUB_SOCIAL_GRAPH_PATCH_PATH:-} ]]; then
+  cargo "${cargo_config_args[@]}" update -p nostr-pubsub-social-graph
 fi
 
 cargo "${cargo_config_args[@]}" fetch "${cargo_lock_args[@]}" --target "$TARGET"

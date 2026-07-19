@@ -185,19 +185,19 @@ fn fips_endpoint_config_with_open_discovery_limit(
     config.node.session.pending_packets_per_dest = FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST;
     config.node.rekey.after_secs = FIPS_ENDPOINT_REKEY_AFTER_SECS;
     config.dns.enabled = false;
-    // nvpn keeps public/open discovery available as a fallback, but it should
-    // be polite to public transit nodes when stale roster peers or cached
-    // adverts cannot be reached.
+    // Public/open discovery can route through authenticated transit nodes. Be
+    // polite to those nodes when stale roster peers or cached adverts cannot
+    // be reached.
     config.node.discovery.backoff_base_secs = FIPS_DISCOVERY_BACKOFF_BASE_SECS;
     config.node.discovery.backoff_max_secs = FIPS_DISCOVERY_BACKOFF_MAX_SECS;
     config.node.discovery.forward_min_interval_secs = FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS;
     let advertise_public_endpoint = transport
         .map(|transport| transport.advertise_public_endpoint)
         .unwrap_or(false);
-    // The "find peers over Nostr relays" toggle. When off we neither advertise
-    // nor stream adverts/DMs, and we keep the endpoint surface deterministic:
-    // static/bootstrap peers below are dialed directly without ambient LAN or
-    // same-host discovery side paths.
+    // The signed Nostr peer-advert toggle. Standard nostr-pubsub is the single
+    // relay provider; FIPS signs and ingests ordinary adverts but does not run
+    // a second embedded relay client. When off we neither advertise nor ingest
+    // peer adverts, while configured physical peers remain directly dialable.
     let nostr_discovery_enabled = transport
         .map(|transport| transport.nostr_discovery_enabled)
         .unwrap_or(true);
@@ -205,6 +205,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
     let nostr_enabled = nostr_discovery_enabled && (transport.is_some() || !peers.is_empty());
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.advertise = advertise_on_nostr;
+    config.node.discovery.nostr.peerfinding_source = NostrPeerfindingSource::External;
     // Open discovery by default (unless the user opts into configured-only
     // discovery) so we can FIPS-handshake with any nvpn node we see on relays,
     // not just configured roster peers. This is what lets us route app-mesh
@@ -317,13 +318,15 @@ fn fips_endpoint_config_for_ethernet(
     transport: Option<&FipsEndpointTransportConfig>,
     ethernet: &FipsEthernetUnderlayConfig,
     mesh_mtu: MeshMtu,
+    nostr_discovery_policy: NostrDiscoveryPolicy,
+    open_discovery_max_pending: usize,
 ) -> Config {
     let mut config = fips_endpoint_config_with_open_discovery_limit(
         peers,
         transport,
         mesh_mtu,
-        NostrDiscoveryPolicy::ConfiguredOnly,
-        0,
+        nostr_discovery_policy,
+        open_discovery_max_pending,
     );
     config.transports.ethernet = TransportInstances::Single(EthernetConfig {
         interface: ethernet.interface.clone(),
@@ -529,7 +532,11 @@ fn configure_fips_webrtc_transport(
     };
     webrtc.advertise_on_nostr = Some(ambient_discovery_enabled);
     webrtc.auto_connect = Some(ambient_discovery_enabled);
-    webrtc.accept_connections = Some(ambient_discovery_enabled);
+    // Offers arrive through an existing authenticated FIPS session. Keep
+    // inbound WebRTC available even when ambient relay discovery is disabled;
+    // the node's configured/open discovery policy still decides which
+    // authenticated identities may submit link negotiation.
+    webrtc.accept_connections = Some(true);
     webrtc.mtu = Some(mtu);
     if !stun_servers.is_empty() {
         webrtc.stun_servers = Some(stun_servers.to_vec());
@@ -650,6 +657,28 @@ mod endpoint_config_tests {
     }
 
     #[test]
+    fn endpoint_config_uses_external_nostr_peerfinding_provider() {
+        let endpoint_peers =
+            fips_endpoint_peers_from_mesh(&[test_peer()], Vec::new(), Vec::new());
+        let transport = test_transport(true, false);
+        let config = fips_endpoint_config_with_open_discovery_limit(
+            &endpoint_peers,
+            Some(&transport),
+            resolve_private_mesh_mtu(None, None, None),
+            NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        );
+
+        assert!(config.node.discovery.nostr.enabled);
+        assert!(config.node.discovery.nostr.advertise);
+        assert_eq!(
+            config.node.discovery.nostr.peerfinding_source,
+            NostrPeerfindingSource::External,
+            "standard nostr-pubsub must be the sole peer-advert relay provider"
+        );
+    }
+
+    #[test]
     fn endpoint_config_keeps_in_fips_webrtc_when_nostr_discovery_off() {
         let peer = test_peer();
         let endpoint_peers = fips_endpoint_peers_from_mesh(&[peer], Vec::new(), Vec::new());
@@ -663,7 +692,16 @@ mod endpoint_config_tests {
         );
 
         assert!(!config.node.discovery.nostr.enabled);
-        assert!(!config.transports.webrtc.is_empty());
+        let TransportInstances::Single(webrtc) = &config.transports.webrtc else {
+            panic!("expected one WebRTC transport");
+        };
+        assert_eq!(webrtc.advertise_on_nostr, Some(false));
+        assert_eq!(webrtc.auto_connect, Some(false));
+        assert_eq!(
+            webrtc.accept_connections,
+            Some(true),
+            "authenticated in-FIPS offers must not depend on relay discovery"
+        );
         assert!(!config.transports.websocket.is_empty());
     }
 
@@ -794,6 +832,8 @@ mod endpoint_config_tests {
             Some(&transport),
             &ethernet,
             mesh_mtu,
+            NostrDiscoveryPolicy::ConfiguredOnly,
+            0,
         );
 
         config.validate().expect("Ethernet endpoint config");
@@ -843,6 +883,29 @@ mod endpoint_config_tests {
             tunnel.websocket.seed_urls,
             ["wss://seed.example.org/fips"]
         );
+        assert_eq!(
+            tunnel.nostr_discovery_policy,
+            NostrDiscoveryPolicy::Open,
+            "pending ordinary approval must admit authenticated physical adjacency"
+        );
+        assert!(tunnel.open_discovery_max_pending > 0);
+
+        let ethernet =
+            FipsEthernetUnderlayConfig::parse("eth0", "local-pairing").expect("underlay");
+        let endpoint = fips_endpoint_config_for_ethernet(
+            &tunnel.endpoint_peers,
+            Some(&test_transport(false, true)),
+            &ethernet,
+            tunnel.mesh_mtu,
+            tunnel.nostr_discovery_policy,
+            tunnel.open_discovery_max_pending,
+        );
+        assert_eq!(
+            endpoint.node.discovery.nostr.policy,
+            NostrDiscoveryPolicy::Open,
+            "physical underlay must preserve the pending-approval admission policy"
+        );
+        assert!(endpoint.node.discovery.nostr.open_discovery_max_pending > 0);
 
         app.clear_pending_nostr_join_request();
         let closed = FipsPrivateTunnelConfig::from_app(
@@ -855,6 +918,12 @@ mod endpoint_config_tests {
         )
         .expect("closed join tunnel config");
         assert_eq!(closed.websocket, tunnel.websocket);
+        assert_eq!(
+            closed.nostr_discovery_policy,
+            NostrDiscoveryPolicy::ConfiguredOnly,
+            "ordinary admission must close when no approval is pending"
+        );
+        assert_eq!(closed.open_discovery_max_pending, 0);
     }
 
 }

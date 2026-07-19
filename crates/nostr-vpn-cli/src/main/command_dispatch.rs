@@ -512,6 +512,9 @@ async fn run_command(command: Command) -> Result<()> {
             if let Some(value) = args.fips_nostr_discovery_enabled {
                 app.fips_nostr_discovery_enabled = value;
             }
+            if let Some(value) = args.lan_discovery_enabled {
+                app.lan_discovery_enabled = value;
+            }
             if let Some(value) = args.fips_webrtc_enabled {
                 app.fips_webrtc_enabled = value;
             }
