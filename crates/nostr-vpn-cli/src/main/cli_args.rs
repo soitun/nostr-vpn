@@ -577,6 +577,9 @@ struct SetArgs {
     connect_to_non_roster_fips_peers: Option<bool>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     fips_nostr_discovery_enabled: Option<bool>,
+    /// Discover and advertise directly reachable peers with LAN mDNS.
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
+    lan_discovery_enabled: Option<bool>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     fips_webrtc_enabled: Option<bool>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]

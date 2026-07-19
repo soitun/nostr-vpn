@@ -283,15 +283,18 @@ listen_port = 51820
 }
 
 #[test]
-fn save_omits_legacy_lan_discovery_flag() {
-    let path = unique_temp_config_path("omit-legacy-lan-discovery");
-    let config = AppConfig::generated();
+fn save_persists_lan_discovery_flag() {
+    let path = unique_temp_config_path("persist-lan-discovery");
+    let mut config = AppConfig::generated();
+    config.lan_discovery_enabled = false;
 
     config.save(&path).expect("save config");
     let raw = fs::read_to_string(&path).expect("read saved config");
+    let saved = AppConfig::load(&path).expect("reload saved config");
     let _ = fs::remove_file(&path);
 
-    assert!(!raw.contains("lan_discovery_enabled"));
+    assert!(raw.contains("lan_discovery_enabled = false"));
+    assert!(!saved.lan_discovery_enabled);
     assert!(!raw.contains("auto_disconnect_relays_when_mesh_ready"));
 }
 
