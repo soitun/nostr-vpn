@@ -7,6 +7,8 @@ COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.exit-nod
 
 CONFIG_PATH="/root/.config/nvpn/config.toml"
 NETWORK_ID="${NVPN_EXIT_NODE_E2E_NETWORK_ID:-docker-exit}"
+PAID_EXIT_SELLER_NETWORK_ID="${NVPN_EXIT_NODE_E2E_SELLER_NETWORK_ID:-${NETWORK_ID}-seller}"
+PAID_EXIT_BUYER_NETWORK_ID="${NVPN_EXIT_NODE_E2E_BUYER_NETWORK_ID:-${NETWORK_ID}-buyer}"
 IDLE_CPU_MAX_PERCENT="${NVPN_E2E_IDLE_CPU_MAX_PERCENT:-80}"
 MESH_REFRESH_SECS="${NVPN_EXIT_NODE_E2E_MESH_REFRESH_SECS:-5}"
 NODE_A_PUBLIC_IP="${NVPN_E2E_NODE_A_PUBLIC_IP:-198.18.242.10}"
@@ -22,6 +24,7 @@ PAID_EXIT_PRICE_MSAT="${NVPN_EXIT_NODE_E2E_PRICE_MSAT:-1}"
 PAID_EXIT_PER_UNITS="${NVPN_EXIT_NODE_E2E_PER_UNITS:-1000}"
 PAID_EXIT_TOKEN_AMOUNT_SAT="${NVPN_EXIT_NODE_E2E_TOKEN_AMOUNT_SAT:-10}"
 PAID_EXIT_TOKEN_PAID_MSAT="${NVPN_EXIT_NODE_E2E_TOKEN_PAID_MSAT:-10000}"
+PAID_EXIT_TOKEN_FREE_PROBE_UNITS="${NVPN_EXIT_NODE_E2E_TOKEN_FREE_PROBE_UNITS:-65536}"
 PAID_EXIT_LEASE_ID="${NVPN_EXIT_NODE_E2E_LEASE_ID:-lease-docker-paid-exit}"
 PAID_EXIT_CHANNEL_ID="${NVPN_EXIT_NODE_E2E_CHANNEL_ID:-token-docker-paid-exit}"
 PAID_EXIT_SPILMAN_CHANNEL_CAPACITY_SAT="${NVPN_EXIT_NODE_E2E_SPILMAN_CHANNEL_CAPACITY_SAT:-10}"
@@ -374,6 +377,10 @@ assert_no_private_b_fips_shortcut() {
 }
 
 PAID_EXIT_PAYMENT_MODE="$(normalize_paid_exit_payment_mode "$PAID_EXIT_PAYMENT_MODE")"
+PAID_EXIT_INDEPENDENT_NETWORKS=0
+if truthy "$PAID_EXIT_MODE"; then
+  PAID_EXIT_INDEPENDENT_NETWORKS=1
+fi
 if [[ -z "$PAID_EXIT_MINT" ]]; then
   if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
     PAID_EXIT_MINT="$CASHU_MINT_URL"
@@ -438,33 +445,59 @@ if [[ -z "$ALICE_NPUB" || -z "$BOB_NPUB" ]]; then
   exit 1
 fi
 
-"${COMPOSE[@]}" exec -T node-a nvpn set \
-  --participant "$BOB_NPUB" >/dev/null
-"${COMPOSE[@]}" exec -T node-b nvpn set \
-  --participant "$ALICE_NPUB" >/dev/null
+if truthy "$PAID_EXIT_INDEPENDENT_NETWORKS"; then
+  # A public paid seller and buyer are not members of one private roster and
+  # must not derive addresses from one shared network id. The buyer knows the
+  # advertised public endpoint; the seller must admit first contact long
+  # enough to authenticate the paid session-open frame.
+  "${COMPOSE[@]}" exec -T node-a nvpn set \
+    --network-id "$PAID_EXIT_SELLER_NETWORK_ID" \
+    --endpoint "$NODE_A_PUBLIC_IP:51820" \
+    --listen-port 51820 \
+    --fips-advertise-endpoint true \
+    --connect-to-non-roster-fips-peers true \
+    --fips-nostr-discovery-enabled false \
+    --fips-bootstrap-enabled false \
+    --advertise-exit-node false >/dev/null
+  "${COMPOSE[@]}" exec -T node-b nvpn set \
+    --network-id "$PAID_EXIT_BUYER_NETWORK_ID" \
+    --endpoint "$NAT_B_PUBLIC_IP:51820" \
+    --listen-port 51820 \
+    --fips-advertise-endpoint true \
+    --connect-to-non-roster-fips-peers true \
+    --fips-nostr-discovery-enabled false \
+    --fips-bootstrap-enabled false \
+    --fips-peer-endpoint "$ALICE_NPUB=$NODE_A_PUBLIC_IP:51820" \
+    --exit-node none >/dev/null
+else
+  "${COMPOSE[@]}" exec -T node-a nvpn set \
+    --participant "$BOB_NPUB" >/dev/null
+  "${COMPOSE[@]}" exec -T node-b nvpn set \
+    --participant "$ALICE_NPUB" >/dev/null
 
-"${COMPOSE[@]}" exec -T node-a nvpn set \
-  --network-id "$NETWORK_ID" \
-  --endpoint "$NODE_A_PUBLIC_IP:51820" \
-  --listen-port 51820 \
-  --fips-advertise-endpoint true \
-  --fips-nostr-discovery-enabled false \
-  --fips-bootstrap-enabled false \
-  --fips-peer-endpoint "$BOB_NPUB=$NAT_B_PUBLIC_IP:51820" \
-  --advertise-exit-node >/dev/null
-"${COMPOSE[@]}" exec -T node-b nvpn set \
-  --network-id "$NETWORK_ID" \
-  --endpoint "$NAT_B_PUBLIC_IP:51820" \
-  --listen-port 51820 \
-  --fips-advertise-endpoint true \
-  --fips-nostr-discovery-enabled false \
-  --fips-bootstrap-enabled false \
-  --fips-peer-endpoint "$ALICE_NPUB=$NODE_A_PUBLIC_IP:51820" \
-  --exit-node "$ALICE_NPUB" >/dev/null
+  "${COMPOSE[@]}" exec -T node-a nvpn set \
+    --network-id "$NETWORK_ID" \
+    --endpoint "$NODE_A_PUBLIC_IP:51820" \
+    --listen-port 51820 \
+    --fips-advertise-endpoint true \
+    --fips-nostr-discovery-enabled false \
+    --fips-bootstrap-enabled false \
+    --fips-peer-endpoint "$BOB_NPUB=$NAT_B_PUBLIC_IP:51820" \
+    --advertise-exit-node >/dev/null
+  "${COMPOSE[@]}" exec -T node-b nvpn set \
+    --network-id "$NETWORK_ID" \
+    --endpoint "$NAT_B_PUBLIC_IP:51820" \
+    --listen-port 51820 \
+    --fips-advertise-endpoint true \
+    --fips-nostr-discovery-enabled false \
+    --fips-bootstrap-enabled false \
+    --fips-peer-endpoint "$ALICE_NPUB=$NODE_A_PUBLIC_IP:51820" \
+    --exit-node "$ALICE_NPUB" >/dev/null
+fi
 
 if truthy "$PAID_EXIT_MODE"; then
   PAID_MAX_CHANNEL_CAPACITY_SAT="$PAID_EXIT_TOKEN_AMOUNT_SAT"
-  PAID_FREE_PROBE_UNITS=0
+  PAID_FREE_PROBE_UNITS="$PAID_EXIT_TOKEN_FREE_PROBE_UNITS"
   PAID_GRACE_UNITS=0
   if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
     PAID_MAX_CHANNEL_CAPACITY_SAT="$PAID_EXIT_SPILMAN_CHANNEL_CAPACITY_SAT"
@@ -488,6 +521,64 @@ if truthy "$PAID_EXIT_MODE"; then
     --no-reload-daemon \
     --json >/dev/null
 
+  "${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit wallet \
+    --config "$CONFIG_PATH" \
+    --json \
+    add-mint "$PAID_EXIT_MINT" \
+    --make-default >/dev/null
+  if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
+    "${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit wallet \
+      --config "$CONFIG_PATH" \
+      --json \
+      topup "$PAID_EXIT_SPILMAN_WALLET_TOPUP_SAT" \
+      --mint "$PAID_EXIT_MINT" >/dev/null
+    wait_for_paid_exit_wallet_balance node-b "$PAID_EXIT_MINT" "$PAID_EXIT_SPILMAN_WALLET_TOPUP_SAT" >/dev/null
+  fi
+
+  OFFER_JSON="$("${COMPOSE[@]}" exec -T node-a env RUST_LOG=warn nvpn paid-exit offer \
+    --config "$CONFIG_PATH" \
+    --offer-id internet-exit \
+    --json | tr -d '\r')"
+  if ! OFFER_EVENT="$(jq -c '.event' <<<"$OFFER_JSON" 2>/dev/null)"; then
+    echo "exit-node docker e2e failed: seller offer output was not valid JSON" >&2
+    printf '%s\n' "$OFFER_JSON" >&2
+    exit 1
+  fi
+  if [[ -z "$OFFER_EVENT" || "$OFFER_EVENT" == "null" ]]; then
+    echo "exit-node docker e2e failed: seller offer did not include a signed event" >&2
+    printf '%s\n' "$OFFER_JSON" >&2
+    exit 1
+  fi
+  printf '%s' "$OFFER_EVENT" | "${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit import-offer \
+    --config "$CONFIG_PATH" \
+    --event-stdin \
+    --json >/dev/null
+
+  PAID_BUY_CAPACITY_SAT="$PAID_EXIT_TOKEN_AMOUNT_SAT"
+  if [[ "$PAID_EXIT_PAYMENT_MODE" == "spilman" ]]; then
+    PAID_BUY_CAPACITY_SAT="$PAID_EXIT_SPILMAN_CHANNEL_CAPACITY_SAT"
+  fi
+  BUY_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit buy \
+    --config "$CONFIG_PATH" \
+    --mint "$PAID_EXIT_MINT" \
+    --channel-capacity-sat "$PAID_BUY_CAPACITY_SAT" \
+    --initial-paid-msat "$PAID_EXIT_SPILMAN_OPEN_PAID_MSAT" \
+    --no-reload-daemon \
+    --json \
+    internet-exit | tr -d '\r')"
+  if ! PAID_EXIT_SESSION_ID="$(jq -r '.session.session_id // empty' <<<"$BUY_JSON" 2>/dev/null)"; then
+    echo "exit-node docker e2e failed: buyer session output was not valid JSON" >&2
+    printf '%s\n' "$BUY_JSON" >&2
+    exit 1
+  fi
+  PAID_EXIT_CHANNEL_ID="$(jq -r '.session.channel_id // empty' <<<"$BUY_JSON")"
+  PAID_EXIT_LEASE_ID="$(jq -r '.session.lease_id // empty' <<<"$BUY_JSON")"
+  if [[ -z "$PAID_EXIT_SESSION_ID" || -z "$PAID_EXIT_CHANNEL_ID" || -z "$PAID_EXIT_LEASE_ID" ]]; then
+    echo "exit-node docker e2e failed: buyer session identifiers were not created" >&2
+    printf '%s\n' "$BUY_JSON" >&2
+    exit 1
+  fi
+
   if [[ "$PAID_EXIT_PAYMENT_MODE" == "token" ]]; then
     PAID_SENT_AT="$("${COMPOSE[@]}" exec -T node-a date +%s | tr -d '\r')"
     PAID_EXPIRES_AT="$((PAID_SENT_AT + 3600))"
@@ -505,58 +596,7 @@ EOF
     PAID_COMPACT="$(printf '%s' "$PAID_STATUS" | compact_json)"
     grep -q '"mode":"cashu_token_lease"' <<<"$PAID_COMPACT"
     grep -q '"has_token":true' <<<"$PAID_COMPACT"
-    grep -q '"seller_admissions":\[[^]]*"allow_routing":true' <<<"$PAID_COMPACT"
   else
-    "${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit wallet \
-      --config "$CONFIG_PATH" \
-      --json \
-      add-mint "$PAID_EXIT_MINT" \
-      --make-default >/dev/null
-    "${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit wallet \
-      --config "$CONFIG_PATH" \
-      --json \
-      topup "$PAID_EXIT_SPILMAN_WALLET_TOPUP_SAT" \
-      --mint "$PAID_EXIT_MINT" >/dev/null
-    wait_for_paid_exit_wallet_balance node-b "$PAID_EXIT_MINT" "$PAID_EXIT_SPILMAN_WALLET_TOPUP_SAT" >/dev/null
-
-    OFFER_JSON="$("${COMPOSE[@]}" exec -T node-a env RUST_LOG=warn nvpn paid-exit offer \
-      --config "$CONFIG_PATH" \
-      --offer-id internet-exit \
-      --json | tr -d '\r')"
-    if ! OFFER_EVENT="$(jq -c '.event' <<<"$OFFER_JSON" 2>/dev/null)"; then
-      echo "exit-node docker e2e failed: seller offer output was not valid JSON" >&2
-      printf '%s\n' "$OFFER_JSON" >&2
-      exit 1
-    fi
-    if [[ -z "$OFFER_EVENT" || "$OFFER_EVENT" == "null" ]]; then
-      echo "exit-node docker e2e failed: seller offer did not include a signed event" >&2
-      printf '%s\n' "$OFFER_JSON" >&2
-      exit 1
-    fi
-    printf '%s' "$OFFER_EVENT" | "${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit import-offer \
-      --config "$CONFIG_PATH" \
-      --event-stdin \
-      --json >/dev/null
-
-    BUY_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit buy \
-      --config "$CONFIG_PATH" \
-      --mint "$PAID_EXIT_MINT" \
-      --channel-capacity-sat "$PAID_EXIT_SPILMAN_CHANNEL_CAPACITY_SAT" \
-      --initial-paid-msat "$PAID_EXIT_SPILMAN_OPEN_PAID_MSAT" \
-      --no-reload-daemon \
-      --json \
-      internet-exit | tr -d '\r')"
-    if ! PAID_EXIT_SESSION_ID="$(jq -r '.session.session_id // empty' <<<"$BUY_JSON" 2>/dev/null)"; then
-      echo "exit-node docker e2e failed: buyer session output was not valid JSON" >&2
-      printf '%s\n' "$BUY_JSON" >&2
-      exit 1
-    fi
-    if [[ -z "$PAID_EXIT_SESSION_ID" ]]; then
-      echo "exit-node docker e2e failed: buyer session was not created" >&2
-      printf '%s\n' "$BUY_JSON" >&2
-      exit 1
-    fi
-
     OPEN_JSON="$("${COMPOSE[@]}" exec -T node-b env RUST_LOG=warn nvpn paid-exit create-payment \
       --config "$CONFIG_PATH" \
       "$PAID_EXIT_SESSION_ID" \
@@ -584,7 +624,11 @@ EOF
     PAID_STATUS="$("${COMPOSE[@]}" exec -T node-a nvpn paid-exit status --json | tr -d '\r')"
     PAID_COMPACT="$(printf '%s' "$PAID_STATUS" | compact_json)"
     grep -q '"mode":"cashu_spilman"' <<<"$PAID_COMPACT"
-    grep -q '"seller_admissions":\[[^]]*"allow_routing":true' <<<"$PAID_COMPACT"
+  fi
+  if jq -e 'any(.seller_admissions[]?; .allow_routing == true)' <<<"$PAID_STATUS" >/dev/null; then
+    echo "exit-node docker e2e failed: seller admitted a paid route before binding the buyer tunnel address" >&2
+    printf '%s\n' "$PAID_STATUS" >&2
+    exit 1
   fi
 fi
 
@@ -595,6 +639,22 @@ done
 
 "${COMPOSE[@]}" exec -T node-a nvpn start --daemon --connect --mesh-refresh-interval-secs "$MESH_REFRESH_SECS" >/dev/null
 "${COMPOSE[@]}" exec -T node-b nvpn start --daemon --connect --mesh-refresh-interval-secs "$MESH_REFRESH_SECS" >/dev/null
+
+if truthy "$PAID_EXIT_MODE"; then
+  PAID_STATUS=""
+  for _ in $(seq 1 80); do
+    PAID_STATUS="$("${COMPOSE[@]}" exec -T node-a nvpn paid-exit status --json | tr -d '\r')"
+    if jq -e 'any(.seller_admissions[]?; .allow_routing == true)' <<<"$PAID_STATUS" >/dev/null; then
+      break
+    fi
+    sleep 1
+  done
+  if ! jq -e 'any(.seller_admissions[]?; .allow_routing == true)' <<<"$PAID_STATUS" >/dev/null; then
+    echo "exit-node docker e2e failed: authenticated paid session-open never admitted the buyer tunnel address" >&2
+    printf '%s\n' "$PAID_STATUS" >&2
+    exit 1
+  fi
+fi
 
 ALICE_STATUS=""
 BOB_STATUS=""
@@ -607,6 +667,11 @@ for _ in $(seq 1 80); do
   ALICE_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-a nvpn ip | tr -d '\r')"
   BOB_TUNNEL_IP="$("${COMPOSE[@]}" exec -T node-b nvpn ip | tr -d '\r')"
   DEFAULT_ROUTE="$("${COMPOSE[@]}" exec -T node-b sh -lc "ip route show default | head -n1 | tr -d '\r'")"
+  ADVERTISED_EXIT_READY=0
+  if truthy "$PAID_EXIT_MODE" \
+    || grep -q '"effective_advertised_routes":\[[^]]*"0.0.0.0/0"' <<<"$ALICE_COMPACT"; then
+    ADVERTISED_EXIT_READY=1
+  fi
 
   if grep -q '"status_source":"daemon"' <<<"$ALICE_COMPACT" \
     && grep -q '"status_source":"daemon"' <<<"$BOB_COMPACT" \
@@ -618,7 +683,7 @@ for _ in $(seq 1 80); do
     && grep -q '"connected_peer_count":1' <<<"$BOB_COMPACT" \
     && grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT" \
     && grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT" \
-    && grep -q '"effective_advertised_routes":\[[^]]*"0.0.0.0/0"' <<<"$ALICE_COMPACT" \
+    && [[ "$ADVERTISED_EXIT_READY" == 1 ]] \
     && grep -q 'dev utun100' <<<"$DEFAULT_ROUTE" \
     && [[ -n "$ALICE_TUNNEL_IP" ]] \
     && [[ -n "$BOB_TUNNEL_IP" ]]; then
@@ -648,7 +713,9 @@ grep -q '"endpoint":"fips"' <<<"$ALICE_COMPACT"
 grep -q '"endpoint":"fips"' <<<"$BOB_COMPACT"
 assert_no_private_b_fips_shortcut "$ALICE_STATUS" "node-a"
 assert_no_private_b_fips_shortcut "$BOB_STATUS" "node-b"
-grep -q '"effective_advertised_routes":\[[^]]*"0.0.0.0/0"' <<<"$ALICE_COMPACT"
+if ! truthy "$PAID_EXIT_MODE"; then
+  grep -q '"effective_advertised_routes":\[[^]]*"0.0.0.0/0"' <<<"$ALICE_COMPACT"
+fi
 
 if [[ -z "$ALICE_TUNNEL_IP" || -z "$BOB_TUNNEL_IP" ]]; then
   echo "exit-node docker e2e failed: unable to resolve node tunnel IPs from status output" >&2
