@@ -606,15 +606,13 @@ impl MobileTunnel {
             })?;
         let destination = PeerIdentity::from_npub(&endpoint_npub)
             .with_context(|| format!("invalid FIPS endpoint identity {endpoint_npub}"))?;
-        let frame = FipsControlFrame::JoinRoster {
-            control: Box::new(join_roster.clone()),
-        };
-        self.runtime.block_on(async {
-            tokio::time::timeout(timeout, self.state_control.send(destination, &frame))
-                .await
-                .with_context(|| format!("join roster delivery to {recipient} timed out"))??;
-            Ok(())
-        })
+        self.runtime.block_on(send_join_roster_with_receipt(
+            &self.state_control,
+            destination,
+            join_roster,
+            timeout,
+        ))?;
+        Ok(())
     }
 }
 

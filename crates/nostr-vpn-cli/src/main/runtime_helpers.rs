@@ -410,15 +410,43 @@ fn drain_fips_mesh_events(
             crate::fips_private_mesh::FipsPrivateMeshEvent::JoinRoster {
                 sender_pubkey,
                 control,
-            } => match persist_join_roster(app, config_path, &control, vpn_status) {
-                Ok(Some(_)) => drained.roster_changed = true,
-                Ok(None) => {}
-                Err(error) => {
+            } => {
+                let roster_event_id = control.signed_roster.artifact_hash();
+                let durably_applied = match persist_join_roster(
+                    app,
+                    config_path,
+                    &control,
+                    vpn_status,
+                ) {
+                    Ok(Some(_)) => {
+                        drained.roster_changed = true;
+                        true
+                    }
+                    Ok(None) => match join_roster_is_durably_persisted(config_path, &control) {
+                        Ok(persisted) => persisted,
+                        Err(error) => {
+                            eprintln!(
+                                "daemon: failed to verify persisted FIPS join roster from {sender_pubkey}: {error}"
+                            );
+                            false
+                        }
+                    },
+                    Err(error) => {
+                        eprintln!(
+                            "daemon: ignoring invalid FIPS join roster from {sender_pubkey}: {error}"
+                        );
+                        false
+                    }
+                };
+                if durably_applied
+                    && let Err(error) = runtime
+                        .enqueue_join_roster_ack(&sender_pubkey, roster_event_id)
+                {
                     eprintln!(
-                        "daemon: ignoring invalid FIPS join roster from {sender_pubkey}: {error}"
+                        "daemon: failed to queue FIPS join roster receipt for {sender_pubkey}: {error}"
                     );
                 }
-            },
+            }
             crate::fips_private_mesh::FipsPrivateMeshEvent::Roster {
                 sender_pubkey,
                 signed_roster,

@@ -67,6 +67,24 @@ fn persist_join_roster(
     Ok(Some(network_name))
 }
 
+fn join_roster_is_durably_persisted(
+    config_path: &Path,
+    control: &JoinRosterControl,
+) -> Result<bool> {
+    let network_id = control.signed_roster.network_id()?;
+    let roster_event_id = control.signed_roster.artifact_hash();
+    let persisted = AppConfig::load(config_path)?;
+    if persisted.pending_nostr_join_request.is_some()
+        || !signed_roster_is_current_for_app(&persisted, &network_id, &control.signed_roster)
+    {
+        return Ok(false);
+    }
+    let store = load_signed_rosters(&signed_rosters_file_path(config_path))?;
+    Ok(store
+        .latest_for(&network_id)
+        .is_some_and(|signed| signed.artifact_hash() == roster_event_id))
+}
+
 fn split_ready_fips_roster_recipients(recipients: Vec<String>) -> (Vec<String>, HashSet<String>) {
     // Do not gate roster sends on nvpn presence. A stale-roster peer may drop
     // Ping/Pong from newly added peers as unknown until this signed roster

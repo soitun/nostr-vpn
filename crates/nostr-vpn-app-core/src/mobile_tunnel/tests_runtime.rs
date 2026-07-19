@@ -735,12 +735,14 @@
 
         let guest_identity = PeerIdentity::from_npub(guest.endpoint.npub())
             .expect("guest endpoint identity");
-        let frame = FipsControlFrame::JoinRoster {
-            control: Box::new(prepared.join_roster),
-        };
         let delivery = tokio::time::timeout(
-            Duration::from_secs(20),
-            admin.state_control.send(guest_identity, &frame),
+            Duration::from_secs(25),
+            send_join_roster_with_receipt(
+                &admin.state_control,
+                guest_identity,
+                &prepared.join_roster,
+                Duration::from_secs(20),
+            ),
         )
         .await
         .expect("join roster delivery timeout");

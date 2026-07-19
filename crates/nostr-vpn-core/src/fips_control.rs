@@ -333,6 +333,9 @@ pub enum FipsControlFrame {
     JoinRoster {
         control: Box<JoinRosterControl>,
     },
+    JoinRosterAck {
+        roster_event_id: String,
+    },
     Roster {
         network_id: String,
         roster: NetworkRoster,
@@ -509,6 +512,12 @@ pub fn signed_roster_control_frame(signed_roster: SignedRoster) -> FipsControlFr
 pub fn join_roster_control_frame(control: JoinRosterControl) -> FipsControlFrame {
     FipsControlFrame::JoinRoster {
         control: Box::new(control),
+    }
+}
+
+pub fn join_roster_ack_control_frame(roster_event_id: impl Into<String>) -> FipsControlFrame {
+    FipsControlFrame::JoinRosterAck {
+        roster_event_id: roster_event_id.into(),
     }
 }
 

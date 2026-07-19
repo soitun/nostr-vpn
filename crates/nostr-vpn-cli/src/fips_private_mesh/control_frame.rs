@@ -7,7 +7,9 @@ fn control_frame_source_pubkey(
         .or_else(|| {
             let allow_unknown = matches!(
                 frame,
-                FipsControlFrame::JoinRequest { .. } | FipsControlFrame::JoinRoster { .. }
+                FipsControlFrame::JoinRequest { .. }
+                    | FipsControlFrame::JoinRoster { .. }
+                    | FipsControlFrame::JoinRosterAck { .. }
             );
             #[cfg(feature = "paid-exit")]
             let allow_unknown =

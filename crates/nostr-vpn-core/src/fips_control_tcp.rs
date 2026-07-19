@@ -10,10 +10,12 @@ use fips_core::{FipsEndpoint, PeerIdentity};
 use fips_tcp::{Config, ConnectionId, MarkerStatus, SendMarker, State};
 use fips_tcp_endpoint::FipsTcpEndpoint;
 use sha2::{Digest, Sha256};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 
-use crate::fips_control::{FipsControlFrame, decode_fips_control_frame, encode_fips_control_frame};
+use crate::fips_control::{
+    FipsControlFrame, JoinRosterControl, decode_fips_control_frame, encode_fips_control_frame,
+};
 
 /// Reliable nVPN state-control records. Ping/pong remains datagram-based because
 /// delayed delivery would make liveness misleading.
@@ -28,6 +30,7 @@ const IO_CHUNK_BYTES: usize = 16 * 1024;
 const DRIVE_INTERVAL: Duration = Duration::from_millis(20);
 const CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 const STREAM_TIMEOUT: Duration = Duration::from_secs(15);
+const JOIN_ROSTER_ACK_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 static CONTROL_ISN_NONCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
@@ -72,6 +75,7 @@ pub struct FipsControlTcpRuntime {
 #[derive(Clone)]
 pub struct FipsControlTcpSender {
     command_tx: mpsc::Sender<SendRequest>,
+    received_tx: broadcast::Sender<ReceivedFipsControlFrame>,
 }
 
 impl FipsControlTcpSender {
@@ -106,6 +110,101 @@ impl FipsControlTcpSender {
             })
             .map_err(|error| anyhow!("FIPS-TCP state-control queue unavailable: {error}"))?;
         Ok(len)
+    }
+
+    pub fn subscribe(&self) -> broadcast::Receiver<ReceivedFipsControlFrame> {
+        self.received_tx.subscribe()
+    }
+}
+
+/// Retransmit an idempotent signed join roster until the authenticated guest
+/// confirms that this exact roster event was durably applied.
+pub async fn send_join_roster_with_receipt(
+    sender: &FipsControlTcpSender,
+    destination: PeerIdentity,
+    control: &JoinRosterControl,
+    timeout: Duration,
+) -> Result<usize> {
+    let frame = FipsControlFrame::JoinRoster {
+        control: Box::new(control.clone()),
+    };
+    let sent_len = encode_stateful_record(&frame)?.len();
+    let roster_event_id = control.signed_roster.artifact_hash();
+    let mut receipts = sender.subscribe();
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut last_transport_error = None;
+
+    loop {
+        let send = sender.send(destination, &frame);
+        tokio::pin!(send);
+        loop {
+            tokio::select! {
+                receipt = receipts.recv() => {
+                    if receipt.is_ok_and(|receipt| {
+                        join_roster_ack_matches(&receipt, destination, &roster_event_id)
+                    }) {
+                        return Ok(sent_len);
+                    }
+                }
+                result = &mut send => {
+                    if let Err(error) = result {
+                        last_transport_error = Some(error.to_string());
+                    }
+                    break;
+                }
+                () = tokio::time::sleep_until(deadline) => {
+                    return Err(join_roster_ack_timeout_error(
+                        destination,
+                        last_transport_error.as_deref(),
+                    ));
+                }
+            }
+        }
+
+        let retry_at = (tokio::time::Instant::now() + JOIN_ROSTER_ACK_RETRY_INTERVAL).min(deadline);
+        loop {
+            tokio::select! {
+                receipt = receipts.recv() => {
+                    if receipt.is_ok_and(|receipt| {
+                        join_roster_ack_matches(&receipt, destination, &roster_event_id)
+                    }) {
+                        return Ok(sent_len);
+                    }
+                }
+                () = tokio::time::sleep_until(retry_at) => break,
+            }
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(join_roster_ack_timeout_error(
+                destination,
+                last_transport_error.as_deref(),
+            ));
+        }
+    }
+}
+
+fn join_roster_ack_matches(
+    received: &ReceivedFipsControlFrame,
+    destination: PeerIdentity,
+    roster_event_id: &str,
+) -> bool {
+    received.source_peer == destination
+        && matches!(
+            &received.frame,
+            FipsControlFrame::JoinRosterAck { roster_event_id: received_id }
+                if received_id.eq_ignore_ascii_case(roster_event_id)
+        )
+}
+
+fn join_roster_ack_timeout_error(
+    destination: PeerIdentity,
+    transport_error: Option<&str>,
+) -> anyhow::Error {
+    match transport_error {
+        Some(error) => anyhow!(
+            "join roster application receipt from {destination} timed out; last transport error: {error}"
+        ),
+        None => anyhow!("join roster application receipt from {destination} timed out"),
     }
 }
 
@@ -149,10 +248,20 @@ impl FipsControlTcpRuntime {
         .context("failed to bind FIPS-TCP state-control service")?;
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (received_tx, received_rx) = mpsc::channel(delivery_capacity);
+        let (observed_tx, _) = broadcast::channel(delivery_capacity.max(1));
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
-        let task = tokio::spawn(run(tcp, command_rx, received_tx, shutdown_rx));
+        let task = tokio::spawn(run(
+            tcp,
+            command_rx,
+            received_tx,
+            observed_tx.clone(),
+            shutdown_rx,
+        ));
         Ok(Self {
-            sender: FipsControlTcpSender { command_tx },
+            sender: FipsControlTcpSender {
+                command_tx,
+                received_tx: observed_tx,
+            },
             received_rx,
             shutdown: Some(shutdown_tx),
             task,
@@ -200,6 +309,7 @@ async fn run(
     mut tcp: FipsTcpEndpoint,
     mut commands: mpsc::Receiver<SendRequest>,
     received: mpsc::Sender<ReceivedFipsControlFrame>,
+    observed: broadcast::Sender<ReceivedFipsControlFrame>,
     mut shutdown: oneshot::Receiver<()>,
 ) {
     let mut outbound = HashMap::<ConnectionId, OutboundRecord>::new();
@@ -238,7 +348,15 @@ async fn run(
                 if tcp.poll(now).await.is_err() { break; }
             }
         }
-        drive_ready(&mut tcp, &received, &mut outbound, &mut inbound, now).await;
+        drive_ready(
+            &mut tcp,
+            &received,
+            &observed,
+            &mut outbound,
+            &mut inbound,
+            now,
+        )
+        .await;
     }
 
     for (_, mut record) in outbound {
@@ -251,6 +369,7 @@ async fn run(
 async fn drive_ready(
     tcp: &mut FipsTcpEndpoint,
     received: &mpsc::Sender<ReceivedFipsControlFrame>,
+    observed: &broadcast::Sender<ReceivedFipsControlFrame>,
     outbound: &mut HashMap<ConnectionId, OutboundRecord>,
     inbound: &mut HashMap<ConnectionId, InboundRecord>,
     now_ms: u64,
@@ -303,14 +422,14 @@ async fn drive_ready(
             continue;
         };
         if let Some(frame) = record.ready.take() {
-            if !try_deliver(received, &mut record, frame) {
+            if !try_deliver(received, observed, &mut record, frame) {
                 inbound.insert(id, record);
             }
             continue;
         }
         match drive_inbound(tcp, id, &mut record, now_ms).await {
             Ok(Some(frame)) => {
-                if !try_deliver(received, &mut record, frame) {
+                if !try_deliver(received, observed, &mut record, frame) {
                     inbound.insert(id, record);
                 }
             }
@@ -326,14 +445,19 @@ async fn drive_ready(
 
 fn try_deliver(
     received: &mpsc::Sender<ReceivedFipsControlFrame>,
+    observed: &broadcast::Sender<ReceivedFipsControlFrame>,
     record: &mut InboundRecord,
     frame: FipsControlFrame,
 ) -> bool {
-    match received.try_send(ReceivedFipsControlFrame {
+    let delivered = ReceivedFipsControlFrame {
         source_peer: record.peer,
         frame,
-    }) {
-        Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => true,
+    };
+    match received.try_send(delivered.clone()) {
+        Ok(()) | Err(mpsc::error::TrySendError::Closed(_)) => {
+            let _ = observed.send(delivered);
+            true
+        }
         Err(mpsc::error::TrySendError::Full(message)) => {
             record.ready = Some(message.frame);
             false
@@ -473,10 +597,12 @@ fn control_isn_seed(npub: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
     use std::sync::Arc;
     use std::time::Duration;
 
     use fips_core::{FipsEndpoint, PeerIdentity};
+    use nostr_sdk::prelude::Keys;
 
     use super::*;
 
@@ -513,6 +639,85 @@ mod tests {
         assert_eq!(received.source_peer, local);
         assert_eq!(received.frame, frame);
 
+        control.stop().await;
+        endpoint.shutdown().await.expect("shutdown endpoint");
+    }
+
+    #[tokio::test]
+    async fn join_roster_waits_for_matching_application_receipt_and_retries() {
+        let endpoint = Arc::new(
+            FipsEndpoint::builder()
+                .without_system_tun()
+                .bind()
+                .await
+                .expect("bind embedded FIPS endpoint"),
+        );
+        let local = PeerIdentity::from_npub(endpoint.npub()).expect("local peer identity");
+        let mut control = FipsControlTcpRuntime::start(Arc::clone(&endpoint))
+            .await
+            .expect("start state-control runtime");
+        let admin = Keys::generate();
+        let signed_roster = crate::fips_control::SignedRoster::sign(
+            "network",
+            crate::fips_control::NetworkRoster {
+                network_name: "Home".to_string(),
+                devices: vec![admin.public_key().to_hex()],
+                admins: vec![admin.public_key().to_hex()],
+                aliases: HashMap::new(),
+                signed_at: 42,
+            },
+            &admin,
+        )
+        .expect("sign roster");
+        let expected_id = signed_roster.artifact_hash();
+        let join_roster =
+            JoinRosterControl::new(signed_roster, "request-secret").expect("join roster control");
+        let sender = control.sender();
+        let delivery = tokio::spawn(async move {
+            send_join_roster_with_receipt(&sender, local, &join_roster, Duration::from_secs(5))
+                .await
+        });
+
+        let first = tokio::time::timeout(Duration::from_secs(3), control.recv())
+            .await
+            .expect("first roster receive timed out")
+            .expect("first roster frame");
+        assert!(matches!(first.frame, FipsControlFrame::JoinRoster { .. }));
+        control
+            .send(
+                local,
+                &FipsControlFrame::JoinRosterAck {
+                    roster_event_id: "00".repeat(32),
+                },
+            )
+            .await
+            .expect("send mismatched receipt");
+
+        let second = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                let received = control.recv().await.expect("state-control frame");
+                if matches!(received.frame, FipsControlFrame::JoinRoster { .. }) {
+                    break received;
+                }
+            }
+        })
+        .await
+        .expect("join roster was not retried");
+        assert_eq!(second.source_peer, local);
+        control
+            .send(
+                local,
+                &FipsControlFrame::JoinRosterAck {
+                    roster_event_id: expected_id,
+                },
+            )
+            .await
+            .expect("send matching receipt");
+
+        delivery
+            .await
+            .expect("join delivery task")
+            .expect("matching receipt should complete delivery");
         control.stop().await;
         endpoint.shutdown().await.expect("shutdown endpoint");
     }

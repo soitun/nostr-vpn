@@ -787,6 +787,18 @@ impl FipsPrivateTunnelRuntime {
             .await
     }
 
+    pub(crate) fn enqueue_join_roster_ack(
+        &self,
+        participant: &str,
+        roster_event_id: String,
+    ) -> Result<()> {
+        self.mesh.enqueue_join_roster_ack(
+            &self.state_control.sender(),
+            participant,
+            roster_event_id,
+        )
+    }
+
     pub(crate) fn enqueue_capabilities(
         &self,
         participant: &str,

@@ -24,6 +24,9 @@ All notable changes to this project are documented in this file.
 - Keep standard FIPS pubsub subscriptions stable when an authenticated peer
   moves to a replacement link, avoiding full retained-event replay to every
   peer while preserving catch-up for newly connected identities.
+- Retain queued device approvals until the authenticated guest confirms that
+  the exact signed roster was applied, with idempotent retries after lost
+  transport records or application receipts.
 - Delay the first macOS automatic update check for ten seconds after startup
   so networking can settle, then retry failures after one minute instead of
   silently waiting for the normal six-hour polling interval.
