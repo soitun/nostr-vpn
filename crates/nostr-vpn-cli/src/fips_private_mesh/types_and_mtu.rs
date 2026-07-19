@@ -517,7 +517,15 @@ fn endpoint_identity_for_send(
     participant_pubkey: Option<&ParticipantPubkeyBytes>,
     endpoint_node_addr: &[u8; 16],
 ) -> Option<PeerIdentity> {
-    peer_identities.identity_for_send(participant_pubkey, endpoint_node_addr)
+    peer_identities
+        .identity_for_send(participant_pubkey, endpoint_node_addr)
+        .or_else(|| {
+            participant_pubkey
+                .and_then(|participant| {
+                    control_frame_participant_identity(&hex::encode(participant))
+                })
+                .filter(|identity| identity.node_addr().as_bytes() == endpoint_node_addr)
+        })
 }
 
 fn saturating_atomic_add(counter: &AtomicU64, value: u64) {

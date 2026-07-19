@@ -39,11 +39,6 @@ fn control_frame_destination_peer(
         ) {
             return Ok(identity);
         }
-        if let Some(identity) = control_frame_participant_identity(participant)
-            && identity.node_addr().as_bytes() == &endpoint_node_addr
-        {
-            return Ok(identity);
-        }
         return Err(anyhow!(
             "missing FIPS control frame recipient identity for {participant}"
         ));
