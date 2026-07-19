@@ -26,6 +26,7 @@ const MAX_CONNECTIONS: usize = 256;
 const MAX_CONNECTIONS_PER_PEER: usize = 8;
 const IO_CHUNK_BYTES: usize = 16 * 1024;
 const DRIVE_INTERVAL: Duration = Duration::from_millis(20);
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 const STREAM_TIMEOUT: Duration = Duration::from_secs(15);
 static CONTROL_ISN_NONCE: AtomicU64 = AtomicU64::new(0);
 
@@ -46,6 +47,7 @@ struct OutboundRecord {
     offset: usize,
     final_marker: Option<SendMarker>,
     started: Instant,
+    connected_at: Option<Instant>,
     response: Option<oneshot::Sender<std::result::Result<usize, String>>>,
 }
 
@@ -218,6 +220,7 @@ async fn run(
                             offset: 0,
                             final_marker: None,
                             started: Instant::now(),
+                            connected_at: None,
                             response: command.response,
                         });
                     }
@@ -344,12 +347,12 @@ async fn drive_outbound(
     record: &mut OutboundRecord,
     now_ms: u64,
 ) -> std::result::Result<Option<usize>, String> {
-    if record.started.elapsed() >= STREAM_TIMEOUT {
-        return Err("FIPS-TCP state-control send timed out".to_string());
-    }
     let Some(state) = tcp.state(id) else {
         return Err("FIPS-TCP state-control connection closed before delivery".to_string());
     };
+    if let Some(reason) = outbound_timeout_reason(record, state, Instant::now()) {
+        return Err(reason.to_string());
+    }
     if matches!(state, State::Established | State::CloseWait) && record.offset < record.bytes.len()
     {
         let end = record
@@ -380,6 +383,20 @@ async fn drive_outbound(
             Ok(Some(record.bytes.len()))
         }
     }
+}
+
+fn outbound_timeout_reason(
+    record: &mut OutboundRecord,
+    state: State,
+    now: Instant,
+) -> Option<&'static str> {
+    if matches!(state, State::Established | State::CloseWait) {
+        let connected_at = *record.connected_at.get_or_insert(now);
+        return (now.duration_since(connected_at) >= STREAM_TIMEOUT)
+            .then_some("FIPS-TCP state-control send timed out");
+    }
+    (now.duration_since(record.started) >= CONNECTION_TIMEOUT)
+        .then_some("FIPS-TCP state-control connection timed out")
 }
 
 async fn drive_inbound(
@@ -625,5 +642,39 @@ mod tests {
         let first = control_isn_seed("npub-test");
         let second = control_isn_seed("npub-test");
         assert_ne!(first, second);
+    }
+
+    #[test]
+    fn route_discovery_time_does_not_consume_the_stream_delivery_window() {
+        let now = Instant::now();
+        let mut record = OutboundRecord {
+            bytes: vec![1],
+            offset: 0,
+            final_marker: None,
+            started: now - STREAM_TIMEOUT - Duration::from_secs(1),
+            connected_at: None,
+            response: None,
+        };
+
+        assert_eq!(
+            outbound_timeout_reason(&mut record, State::SynSent, now),
+            None
+        );
+        assert_eq!(
+            outbound_timeout_reason(&mut record, State::Established, now),
+            None
+        );
+        assert_eq!(record.connected_at, Some(now));
+        assert_eq!(
+            outbound_timeout_reason(&mut record, State::Established, now + STREAM_TIMEOUT),
+            Some("FIPS-TCP state-control send timed out")
+        );
+
+        record.connected_at = None;
+        record.started = now - CONNECTION_TIMEOUT;
+        assert_eq!(
+            outbound_timeout_reason(&mut record, State::SynSent, now),
+            Some("FIPS-TCP state-control connection timed out")
+        );
     }
 }
