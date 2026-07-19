@@ -6,7 +6,7 @@ PROJECT_NAME="nostr-vpn-e2e-basic"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml")
 
 NETWORK_ID="docker-vpn"
-FIPS_HOST_IFACE="nvpnfips0"
+FIPS_HOST_IFACE="utun100"
 FIPS_HOST_MTU="1280"
 FIPS_HOST_TCP_PORT="18080"
 FIPS_HOST_BLOCKED_TCP_PORT="18081"
@@ -57,7 +57,7 @@ nostr_pubkey_from_config() {
 fips_dns_aaaa() {
   local service="$1"
   local npub="$2"
-  "${COMPOSE[@]}" exec -T "$service" sh -lc "dig +time=1 +tries=1 @::1 -p 5354 +short AAAA '${npub}.fips' 2>/dev/null | awk '/^[0-9A-Fa-f:]+$/ { print; exit }'" | tr -d '\r'
+  "${COMPOSE[@]}" exec -T "$service" sh -lc "dig +time=1 +tries=1 @127.0.0.1 -p 53 +short AAAA '${npub}.fips' 2>/dev/null | awk '/^[0-9A-Fa-f:]+$/ { print; exit }'" | tr -d '\r'
 }
 
 wait_for_fips_dns_aaaa() {
@@ -92,19 +92,13 @@ start_nvpn_connect() {
 assert_fips_host_tunnel() {
   local service="$1"
   local peer_npub="$2"
-  local private_link fips_link fips_route resolved
+  local fips_link fips_route resolved
 
-  private_link="$("${COMPOSE[@]}" exec -T "$service" ip link show dev utun100)"
   fips_link="$("${COMPOSE[@]}" exec -T "$service" ip link show dev "$FIPS_HOST_IFACE")"
   fips_route="$("${COMPOSE[@]}" exec -T "$service" ip -6 route show fd00::/8 || true)"
 
-  if ! grep -q "mtu 1150" <<<"$private_link"; then
-    echo "docker e2e failed: $service private mesh TUN did not keep safe MTU 1150" >&2
-    echo "$private_link" >&2
-    exit 1
-  fi
   if ! grep -q "mtu $FIPS_HOST_MTU" <<<"$fips_link"; then
-    echo "docker e2e failed: $service .fips TUN did not use IPv6 MTU $FIPS_HOST_MTU" >&2
+    echo "docker e2e failed: $service integrated tunnel did not keep MTU $FIPS_HOST_MTU" >&2
     echo "$fips_link" >&2
     exit 1
   fi
@@ -113,12 +107,6 @@ assert_fips_host_tunnel() {
     echo "$fips_route" >&2
     exit 1
   fi
-  if grep -q "dev utun100" <<<"$fips_route"; then
-    echo "docker e2e failed: $service fd00::/8 route leaked onto private mesh TUN" >&2
-    echo "$fips_route" >&2
-    exit 1
-  fi
-
   resolved="$(wait_for_fips_dns_aaaa "$service" "$peer_npub" || true)"
   if [[ -z "$resolved" ]]; then
     echo "docker e2e failed: $service could not resolve ${peer_npub}.fips" >&2
@@ -246,7 +234,7 @@ assert_fips_host_disabled() {
     route="$("${COMPOSE[@]}" exec -T "$service" sh -lc 'ip -6 route show fd00::/8 2>/dev/null || true')"
     table="$("${COMPOSE[@]}" exec -T "$service" sh -lc 'nft list table inet nvpn_fips_host >/dev/null 2>&1 && echo present || true')"
     dns="$(fips_dns_aaaa "$service" "$peer_npub" 2>/dev/null || true)"
-    if [[ -z "$link" && -z "$route" && -z "$table" && -z "$dns" ]]; then
+    if [[ -n "$link" && -z "$route" && -z "$table" && -z "$dns" ]]; then
       return 0
     fi
     sleep 1
@@ -282,26 +270,31 @@ if [[ -z "$ALICE_NPUB" || -z "$BOB_NPUB" ]]; then
   exit 1
 fi
 
+for service in node-a node-b; do
+  "${COMPOSE[@]}" exec -T "$service" sh -lc \
+    "sed -i '0,/enabled = false/s//enabled = true/; 0,/network_id = \"[^\"]*\"/s//network_id = \"$NETWORK_ID\"/' /root/.config/nvpn/config.toml"
+done
+
 "${COMPOSE[@]}" exec -T node-a nvpn set \
-  --network-id "$NETWORK_ID" \
-  --participant "$ALICE_NPUB" \
-  --participant "$BOB_NPUB" \
+  --device "$ALICE_NPUB" \
+  --device "$BOB_NPUB" \
   --endpoint "10.203.0.10:51820" \
   --listen-port 51820 \
-  --fips-advertise-endpoint true \
+  --fips-advertise-public-endpoint false \
   --fips-nostr-discovery-enabled false \
   --fips-bootstrap-enabled false \
+  --fips-host-tunnel-enabled true \
   --fips-peer-endpoint "$BOB_NPUB=10.203.0.11:51820" >/dev/null
 
 "${COMPOSE[@]}" exec -T node-b nvpn set \
-  --network-id "$NETWORK_ID" \
-  --participant "$ALICE_NPUB" \
-  --participant "$BOB_NPUB" \
+  --device "$ALICE_NPUB" \
+  --device "$BOB_NPUB" \
   --endpoint "10.203.0.11:51820" \
   --listen-port 51820 \
-  --fips-advertise-endpoint true \
+  --fips-advertise-public-endpoint false \
   --fips-nostr-discovery-enabled false \
   --fips-bootstrap-enabled false \
+  --fips-host-tunnel-enabled true \
   --fips-peer-endpoint "$ALICE_NPUB=10.203.0.10:51820" \
   --fips-host-inbound-tcp-ports "$FIPS_HOST_TCP_PORT" >/dev/null
 

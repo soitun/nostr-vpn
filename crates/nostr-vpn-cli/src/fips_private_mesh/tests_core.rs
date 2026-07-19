@@ -35,7 +35,10 @@
         tag_authenticated_transport_addr, unix_timestamp,
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
-    use super::{BorrowedTunFd, TunPipelinePacket, raw_write_packet_to_tun};
+    use super::{
+        BorrowedTunFd, TunPipelinePacket, raw_write_packet_to_tun,
+        tun_pipeline_packet_targets_fips_host,
+    };
     use super::{
         linux_endpoint_bypass_hosts_unchanged, linux_interface_state_matches_json,
         linux_strict_exit_requested,
@@ -62,6 +65,26 @@
     use std::time::Duration;
 
     const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
+
+    #[test]
+    fn only_fips_ipv6_destinations_use_the_integrated_host_pipeline() {
+        let fips = TunPipelinePacket::from_destination(
+            vec![0x60; 40],
+            Some("fd12:3456::1".parse().unwrap()),
+        );
+        let other_ula = TunPipelinePacket::from_destination(
+            vec![0x60; 40],
+            Some("fc12:3456::1".parse().unwrap()),
+        );
+        let mesh = TunPipelinePacket::from_destination(
+            vec![0x45; 20],
+            Some("10.44.0.2".parse().unwrap()),
+        );
+
+        assert!(tun_pipeline_packet_targets_fips_host(&fips));
+        assert!(!tun_pipeline_packet_targets_fips_host(&other_ula));
+        assert!(!tun_pipeline_packet_targets_fips_host(&mesh));
+    }
 
     #[test]
     fn unchanged_linux_endpoint_bypass_hosts_skip_route_reconciliation() {

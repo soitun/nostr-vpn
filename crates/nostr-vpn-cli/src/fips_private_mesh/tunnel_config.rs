@@ -323,9 +323,31 @@ impl FipsPrivateTunnelConfig {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn interface_addresses(&self) -> Vec<String> {
         let mut addresses = vec![self.local_address.clone()];
+        if let Some(fips_host) = self.fips_host.as_ref() {
+            addresses.push(format!("{}/128", fips_host.fips_address));
+        }
         addresses.sort();
         addresses.dedup();
         addresses
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn interface_route_targets(&self, mut routes: Vec<String>) -> Vec<String> {
+        if self.fips_host.is_some() {
+            routes.push("fd00::/8".to_string());
+        }
+        routes.sort();
+        routes.dedup();
+        routes
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    fn interface_mtu(&self) -> u16 {
+        if self.fips_host.is_some() {
+            self.mesh_mtu.tunnel.max(1280)
+        } else {
+            self.mesh_mtu.tunnel
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -341,11 +363,23 @@ impl FipsPrivateTunnelConfig {
     }
 
     fn secure_dns_required(&self) -> bool {
-        (self.wireguard_exit.enabled && self.wireguard_exit.configured())
+        self.fips_host_enabled()
+            || (self.wireguard_exit.enabled && self.wireguard_exit.configured())
             || self
                 .route_targets
                 .iter()
                 .any(|route| matches!(route.trim(), "0.0.0.0/0" | "::/0"))
+    }
+
+    fn fips_host_enabled(&self) -> bool {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            self.fips_host.is_some()
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            false
+        }
     }
 
     fn wireguard_dns_servers(&self) -> Vec<IpAddr> {
@@ -445,6 +479,22 @@ fn fips_tunnel_requires_endpoint_restart(
         || current.nostr_discovery_policy != next.nostr_discovery_policy
         || current.open_discovery_max_pending != next.open_discovery_max_pending
         || current.mesh_mtu.underlay_udp != next.mesh_mtu.underlay_udp
+        || fips_host_config_changed(current, next)
+}
+
+fn fips_host_config_changed(
+    current: &FipsPrivateTunnelConfig,
+    next: &FipsPrivateTunnelConfig,
+) -> bool {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        current.fips_host != next.fips_host
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (current, next);
+        false
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", test))]
@@ -474,6 +524,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     fips_host_disabled_artifacts_cleaned: bool,
     tun_send_worker: FipsTunSendWorker,
     mesh_recv_worker: FipsMeshRecvWorker,
+    fips_host_recv_worker: Option<FipsHostRecvWorker>,
     event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,
     endpoint_bypass_routes: Vec<String>,
     #[cfg(target_os = "macos")]

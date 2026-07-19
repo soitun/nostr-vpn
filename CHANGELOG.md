@@ -4,7 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.99 - 2026-07-19
+
 ### Fixed
+
+- Attach `.fips` DNS and host IPv6 networking to the ordinary authenticated
+  FIPS endpoint and VPN interface instead of starting a second disconnected
+  node. DNS-resolved peer identities now enter the bounded identity cache
+  before packets use the standard discovery, routing, and session pipeline.
+- Keep the ordinary VPN tunnel alive when `.fips` host access is disabled,
+  while removing only its host IPv6 address, route, DNS, and firewall state.
 
 - Delay the first macOS automatic update check for ten seconds after startup
   so networking can settle, then retry failures after one minute instead of

@@ -229,6 +229,11 @@ struct FipsTunSendWorker {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+struct FipsHostRecvWorker {
+    task: tokio::task::JoinHandle<()>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 impl TunPipelinePacket {
     fn new(bytes: Vec<u8>) -> Self {
         let destination = packet_endpoints(&bytes).map(|(_, destination)| destination);
@@ -242,6 +247,11 @@ impl TunPipelinePacket {
             destination,
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn tun_pipeline_packet_targets_fips_host(packet: &TunPipelinePacket) -> bool {
+    matches!(packet.destination, Some(IpAddr::V6(address)) if address.octets()[0] == 0xfd)
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

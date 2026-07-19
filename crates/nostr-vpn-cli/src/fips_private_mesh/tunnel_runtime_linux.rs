@@ -35,6 +35,7 @@ fn linux_endpoint_bypass_hosts_unchanged(
 #[cfg(target_os = "linux")]
 fn linux_control_only_network_intent(config: &FipsPrivateTunnelConfig) -> bool {
     config.route_targets.is_empty()
+        && config.fips_host.is_none()
         && config.local_exit_forwarding_routes.is_empty()
         && !config.wireguard_exit.enabled
         && !linux_strict_exit_requested(&config.route_targets, config.exit_node_leak_protection)
@@ -111,9 +112,7 @@ impl FipsPrivateTunnelRuntime {
         };
         self.reconcile_linux_endpoint_bypass_routes(&endpoint_bypass_specs);
 
-        let mut interface_route_targets = route_targets.clone();
-        interface_route_targets.sort();
-        interface_route_targets.dedup();
+        let interface_route_targets = config.interface_route_targets(route_targets.clone());
         let interface_addresses = config.interface_addresses();
         // A control-only node has no managed routes or forwarding state to
         // reconcile. Audit the actual TUN state before mutating it so our own
@@ -124,7 +123,7 @@ impl FipsPrivateTunnelRuntime {
             && linux_control_only_network_intent(&self.config)
             && linux_control_only_network_intent(config)
             && self.config.interface_addresses() == interface_addresses
-            && self.config.mesh_mtu.tunnel == config.mesh_mtu.tunnel
+            && self.config.interface_mtu() == config.interface_mtu()
             && endpoint_bypass_specs.is_empty()
             && self.endpoint_bypass_routes.is_empty()
             && self.original_default_route.is_none()
@@ -133,7 +132,7 @@ impl FipsPrivateTunnelRuntime {
             && linux_interface_state_matches(
                 &self.iface,
                 &interface_addresses,
-                config.mesh_mtu.tunnel,
+                config.interface_mtu(),
                 linux_tun_tx_queue_len(),
             );
         if unchanged_control_only_state {
@@ -143,7 +142,7 @@ impl FipsPrivateTunnelRuntime {
             &self.iface,
             &interface_addresses,
             &interface_route_targets,
-            config.mesh_mtu.tunnel,
+            config.interface_mtu(),
         )
         .with_context(|| format!("failed to configure FIPS tunnel interface {}", self.iface))?;
         apply_linux_tun_tx_queue_len(&self.iface)?;

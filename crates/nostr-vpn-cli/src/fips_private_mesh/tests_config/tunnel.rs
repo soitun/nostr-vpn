@@ -186,6 +186,43 @@
     }
 
     #[test]
+    fn fips_host_uses_the_ordinary_tunnel_interface_and_secure_dns() {
+        let keys = Keys::generate();
+        let own_pubkey = keys.public_key().to_hex();
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = keys.secret_key().to_bech32().expect("nsec");
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = "integrated-fips-host".to_string();
+        app.fips_host_tunnel_enabled = true;
+
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "integrated-fips-host",
+            "nvpn0",
+            Some(&own_pubkey),
+            None,
+            &[],
+        )
+        .expect("integrated FIPS host config");
+
+        if let Some(fips_host) = config.fips_host.as_ref() {
+            assert!(config.secure_dns_required());
+            assert!(
+                config
+                    .interface_addresses()
+                    .contains(&format!("{}/128", fips_host.fips_address))
+            );
+            assert!(
+                config
+                    .interface_route_targets(config.route_targets.clone())
+                    .contains(&"fd00::/8".to_string())
+            );
+            assert!(!config.route_targets.contains(&"fd00::/8".to_string()));
+            assert_eq!(config.interface_mtu(), 1280);
+        }
+    }
+
+    #[test]
     fn endpoint_bypass_hosts_skip_overlay_tunnel_route_targets() {
         assert!(super::route_targets_include_ipv4_host(
             &["10.44.1.2/32".to_string()],

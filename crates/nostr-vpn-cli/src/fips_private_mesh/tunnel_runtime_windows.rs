@@ -85,6 +85,7 @@ impl FipsPrivateTunnelRuntime {
                     Some(interface_index),
                     config.magic_dns_records.clone(),
                     Vec::new(),
+                    None,
                 )
                 .await?,
             )
@@ -182,6 +183,7 @@ impl FipsPrivateTunnelRuntime {
                     Some(self.interface_index),
                     config.magic_dns_records.clone(),
                     Vec::new(),
+                    None,
                 )
                 .await?,
             );

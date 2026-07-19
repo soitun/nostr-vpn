@@ -84,8 +84,16 @@ impl FipsPrivateTunnelRuntime {
         let tun_fd = BorrowedTunFd::new(tun.as_raw_fd());
 
         let (event_tx, event_rx) = mpsc::channel::<FipsPrivateMeshEvent>(1024);
-        let tun_send_worker = spawn_tun_send_worker(Arc::clone(&tun), Arc::clone(&mesh));
+        let tun_send_worker = spawn_tun_send_worker(
+            Arc::clone(&tun),
+            Arc::clone(&mesh),
+            config.fips_host.is_some(),
+        );
         let mesh_recv_worker = spawn_mesh_recv_worker(Arc::clone(&mesh), tun_fd, event_tx);
+        let fips_host_recv_worker = config
+            .fips_host
+            .as_ref()
+            .map(|_| spawn_fips_host_recv_worker(Arc::clone(mesh.endpoint()), tun_fd));
 
         let mut runtime = Self {
             iface,
@@ -100,6 +108,7 @@ impl FipsPrivateTunnelRuntime {
             fips_host_disabled_artifacts_cleaned: false,
             tun_send_worker,
             mesh_recv_worker,
+            fips_host_recv_worker,
             event_rx,
             endpoint_bypass_routes: Vec::new(),
             #[cfg(target_os = "macos")]
@@ -225,6 +234,9 @@ impl FipsPrivateTunnelRuntime {
         runtime.state_control.stop().await;
         runtime.event_rx.close();
         stop_tun_send_worker(runtime.tun_send_worker).await;
+        if let Some(worker) = runtime.fips_host_recv_worker.take() {
+            stop_fips_host_recv_worker(worker).await;
+        }
         stop_mesh_recv_worker(runtime.mesh_recv_worker, &runtime.mesh).await;
         runtime
             .mesh
@@ -243,6 +255,10 @@ impl FipsPrivateTunnelRuntime {
                     None,
                     config.magic_dns_records.clone(),
                     Vec::new(),
+                    config
+                        .fips_host
+                        .as_ref()
+                        .map(|_| Arc::clone(self.mesh.endpoint())),
                 )
                 .await?,
             );
@@ -352,8 +368,7 @@ impl FipsPrivateTunnelRuntime {
             );
         }
 
-        route_targets.sort();
-        route_targets.dedup();
+        route_targets = config.interface_route_targets(route_targets);
         // FIPS mesh peer routes go in first. They're /32s for each peer's
         // tunnel IP, so even when we install split defaults below, mesh traffic
         // still wins on longest-prefix-match and stays inside the FIPS tunnel.
@@ -361,7 +376,7 @@ impl FipsPrivateTunnelRuntime {
             &self.iface,
             &config.interface_addresses(),
             &route_targets,
-            config.mesh_mtu.tunnel,
+            config.interface_mtu(),
         )
         .with_context(|| format!("failed to configure FIPS tunnel interface {}", self.iface))?;
         Ok(())
@@ -457,7 +472,7 @@ impl FipsPrivateTunnelRuntime {
     ) -> Result<()> {
         let was_running = self.fips_host.is_some();
         let needs_restart = match (&self.fips_host, &config) {
-            (Some(runtime), Some(config)) => runtime.requires_restart(config),
+            (Some(runtime), Some(config)) => runtime.requires_restart(&self.iface, config),
             (Some(_), None) => true,
             (None, Some(_)) => true,
             (None, None) => false,
@@ -469,8 +484,11 @@ impl FipsPrivateTunnelRuntime {
         match config {
             Some(config) if self.fips_host.is_none() => {
                 self.fips_host_disabled_artifacts_cleaned = false;
-                let runtime = crate::fips_host_tunnel::FipsHostTunnelRuntime::start(config).await?;
-                eprintln!("fips-host: .fips IPv6 resolver active");
+                let runtime = crate::fips_host_tunnel::FipsHostTunnelRuntime::start(
+                    &self.iface,
+                    config,
+                )?;
+                eprintln!("fips-host: integrated .fips IPv6 resolver active on {}", self.iface);
                 self.fips_host = Some(runtime);
             }
             None
@@ -489,10 +507,8 @@ impl FipsPrivateTunnelRuntime {
     }
 
     async fn stop_fips_host_runtime(&mut self) {
-        if let Some(runtime) = self.fips_host.take()
-            && let Err(error) = runtime.stop().await
-        {
-            eprintln!("fips-host: failed to stop .fips runtime: {error}");
+        if let Some(runtime) = self.fips_host.take() {
+            runtime.stop();
         }
     }
 
@@ -667,6 +683,7 @@ impl FipsPrivateTunnelRuntime {
     }
 }
 
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 fn fips_host_disabled_cleanup_due(runtime_running: bool, cleanup_complete: bool) -> bool {
     !runtime_running && !cleanup_complete
 }

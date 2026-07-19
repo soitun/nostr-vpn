@@ -1,6 +1,7 @@
 fn spawn_tun_send_worker(
     tun: Arc<SystemTun>,
     mesh: Arc<FipsPrivateMeshRuntime>,
+    fips_host_enabled: bool,
 ) -> FipsTunSendWorker {
     let stop = Arc::new(AtomicBool::new(false));
     let thread_stop = Arc::clone(&stop);
@@ -70,6 +71,7 @@ fn spawn_tun_send_worker(
                         &mut batch,
                         &mut send_runs,
                         &thread_stop,
+                        fips_host_enabled,
                     );
                 }
 
@@ -123,6 +125,7 @@ fn send_mesh_packet_batch_blocking_or_log(
     packets: &mut TunPipelineBatch,
     send_runs: &mut Vec<FipsEndpointIdentitySendRun>,
     stop: &AtomicBool,
+    fips_host_enabled: bool,
 ) {
     let packet_count = packets.len();
     crate::pipeline_profile::record_mesh_send_bulk_turn(0, packet_count);
@@ -140,6 +143,21 @@ fn send_mesh_packet_batch_blocking_or_log(
     if packets.is_empty() {
         return;
     }
+    if fips_host_enabled {
+        packets.retain_mut(|packet| {
+            if !tun_pipeline_packet_targets_fips_host(packet) {
+                return true;
+            }
+            let bytes = std::mem::take(&mut packet.bytes);
+            if let Err(error) = mesh.endpoint().blocking_send_ip_packet(bytes) {
+                eprintln!("fips-host: failed to enqueue outbound IPv6 packet: {error}");
+            }
+            false
+        });
+    }
+    if packets.is_empty() {
+        return;
+    }
     let mesh_packet_count = packets.len();
     if let Err(error) = mesh.blocking_send_tun_pipeline_packet_turn(
         packets.drain(..),
@@ -148,6 +166,49 @@ fn send_mesh_packet_batch_blocking_or_log(
     ) {
         eprintln!("fips: failed to send tunnel packet: {error}");
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn spawn_fips_host_recv_worker(
+    endpoint: Arc<FipsEndpoint>,
+    tun_fd: BorrowedTunFd,
+) -> FipsHostRecvWorker {
+    let task = tokio::spawn(async move {
+        while let Some(delivered) = endpoint.recv_ip_packet().await {
+            let address_family = match delivered.packet.first().map(|byte| byte >> 4) {
+                Some(4) => libc::AF_INET as u8,
+                Some(6) => libc::AF_INET6 as u8,
+                _ => continue,
+            };
+            loop {
+                match raw_write_packet_to_tun(&tun_fd, &delivered.packet, address_family) {
+                    Ok(()) => {
+                        crate::pipeline_profile::record_tun_write_packets(
+                            1,
+                            delivered.packet.len(),
+                        );
+                        break;
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+                    Err(error) => {
+                        eprintln!("fips-host: tunnel write failed: {error}");
+                        break;
+                    }
+                }
+            }
+        }
+    });
+    FipsHostRecvWorker { task }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn stop_fips_host_recv_worker(worker: FipsHostRecvWorker) {
+    let mut task = worker.task;
+    task.abort();
+    let _ = (&mut task).await;
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]

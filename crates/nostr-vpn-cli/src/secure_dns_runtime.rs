@@ -8,6 +8,7 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
+use fips_endpoint::{FipsEndpoint, PeerIdentity};
 use nostr_vpn_core::secure_dns::{
     SECURE_DNS_MAX_MESSAGE_BYTES, SecureDnsLookup, SecureDnsResolver, WireGuardDnsResolver,
     build_servfail_response,
@@ -26,6 +27,8 @@ const SECURE_DNS_MAX_IN_FLIGHT: usize = 64;
 const SECURE_DNS_CLIENT_IDLE: Duration = Duration::from_secs(10);
 type SharedResolver = Arc<dyn SecureDnsLookup>;
 type ResolverState = Arc<RwLock<SharedResolver>>;
+type FipsDnsEndpoint = Option<Arc<FipsEndpoint>>;
+const FIPS_DNS_TTL_SECS: u32 = 30;
 
 pub(crate) struct SecureDnsRuntime {
     udp_task: JoinHandle<()>,
@@ -42,6 +45,7 @@ impl SecureDnsRuntime {
         interface_index: Option<u32>,
         records: HashMap<String, Ipv4Addr>,
         wireguard_dns_servers: Vec<IpAddr>,
+        fips_endpoint: FipsDnsEndpoint,
     ) -> Result<Self> {
         let udp = Arc::new(
             tokio::net::UdpSocket::bind(SECURE_DNS_BIND)
@@ -53,8 +57,18 @@ impl SecureDnsRuntime {
             .with_context(|| format!("failed to bind secure DNS TCP on {SECURE_DNS_BIND}"))?;
         let resolver = Arc::new(RwLock::new(dns_resolver(&wireguard_dns_servers)?));
         let records = Arc::new(RwLock::new(records));
-        let udp_task = tokio::spawn(run_udp(udp, Arc::clone(&resolver), Arc::clone(&records)));
-        let tcp_task = tokio::spawn(run_tcp(tcp, Arc::clone(&resolver), Arc::clone(&records)));
+        let udp_task = tokio::spawn(run_udp(
+            udp,
+            Arc::clone(&resolver),
+            Arc::clone(&records),
+            fips_endpoint.clone(),
+        ));
+        let tcp_task = tokio::spawn(run_tcp(
+            tcp,
+            Arc::clone(&resolver),
+            Arc::clone(&records),
+            fips_endpoint,
+        ));
         let system_dns = match SystemDnsGuard::install(interface, interface_index) {
             Ok(guard) => guard,
             Err(error) => {
@@ -134,6 +148,7 @@ async fn run_udp(
     socket: Arc<tokio::net::UdpSocket>,
     resolver: ResolverState,
     records: Arc<RwLock<HashMap<String, Ipv4Addr>>>,
+    fips_endpoint: FipsDnsEndpoint,
 ) {
     let permits = Arc::new(Semaphore::new(SECURE_DNS_MAX_IN_FLIGHT));
     let mut requests = JoinSet::new();
@@ -157,11 +172,17 @@ async fn run_udp(
                 let socket = Arc::clone(&socket);
                 let resolver = current_resolver(&resolver);
                 let records = Arc::clone(&records);
+                let fips_endpoint = fips_endpoint.clone();
                 requests.spawn(async move {
                     let _permit = permit;
                     if let Some(response) = match resolver {
                         Some(resolver) =>
-                            resolve_or_servfail(resolver.as_ref(), &records, &query).await,
+                            resolve_or_servfail(
+                                resolver.as_ref(),
+                                &records,
+                                fips_endpoint.as_deref(),
+                                &query,
+                            ).await,
                         None => build_servfail_response(&query),
                     }
                     {
@@ -178,6 +199,7 @@ async fn run_tcp(
     listener: tokio::net::TcpListener,
     resolver: ResolverState,
     records: Arc<RwLock<HashMap<String, Ipv4Addr>>>,
+    fips_endpoint: FipsDnsEndpoint,
 ) {
     let permits = Arc::new(Semaphore::new(SECURE_DNS_MAX_IN_FLIGHT));
     let mut requests = JoinSet::new();
@@ -196,9 +218,10 @@ async fn run_tcp(
                 };
                 let resolver = Arc::clone(&resolver);
                 let records = Arc::clone(&records);
+                let fips_endpoint = fips_endpoint.clone();
                 requests.spawn(async move {
                     let _permit = permit;
-                    handle_tcp(stream, resolver, records).await;
+                    handle_tcp(stream, resolver, records, fips_endpoint).await;
                 });
             }
         }
@@ -210,6 +233,7 @@ async fn handle_tcp(
     mut stream: tokio::net::TcpStream,
     resolver: ResolverState,
     records: Arc<RwLock<HashMap<String, Ipv4Addr>>>,
+    fips_endpoint: FipsDnsEndpoint,
 ) {
     loop {
         let Ok(Ok(length)) = tokio::time::timeout(SECURE_DNS_CLIENT_IDLE, stream.read_u16()).await
@@ -227,7 +251,15 @@ async fn handle_tcp(
             return;
         };
         let response = match current_resolver(&resolver) {
-            Some(resolver) => resolve_or_servfail(resolver.as_ref(), &records, &query).await,
+            Some(resolver) => {
+                resolve_or_servfail(
+                    resolver.as_ref(),
+                    &records,
+                    fips_endpoint.as_deref(),
+                    &query,
+                )
+                .await
+            }
             None => build_servfail_response(&query),
         };
         let Some(response) = response else {
@@ -247,12 +279,26 @@ async fn handle_tcp(
 async fn resolve_or_servfail(
     resolver: &dyn SecureDnsLookup,
     records: &Arc<RwLock<HashMap<String, Ipv4Addr>>>,
+    fips_endpoint: Option<&FipsEndpoint>,
     query: &[u8],
 ) -> Option<Vec<u8>> {
     if let Ok(records) = records.read()
         && let Some(response) =
             nostr_vpn_core::magic_dns::build_magic_dns_response_if_handled(query, &records)
     {
+        return Some(response);
+    }
+    if let Some(endpoint) = fips_endpoint
+        && let Some((response, identity)) = resolve_fips_dns_if_handled(query)
+    {
+        if let Some(identity) = identity {
+            let peer = PeerIdentity::from_pubkey_full(identity.pubkey);
+            if peer.node_addr() != &identity.node_addr
+                || !endpoint.register_peer_identity(peer).await.unwrap_or(false)
+            {
+                return build_servfail_response(query);
+            }
+        }
         return Some(response);
     }
     match resolver.resolve(query).await {
@@ -262,6 +308,22 @@ async fn resolve_or_servfail(
             build_servfail_response(query)
         }
     }
+}
+
+fn resolve_fips_dns_if_handled(
+    query: &[u8],
+) -> Option<(Vec<u8>, Option<fips_core::upper::dns::DnsResolvedIdentity>)> {
+    let request = hickory_proto::op::Message::from_vec(query).ok()?;
+    let name = request.queries.first()?.name.to_utf8();
+    let name = name.trim_end_matches('.');
+    if !name.to_ascii_lowercase().ends_with(".fips") {
+        return None;
+    }
+    fips_core::upper::dns::handle_dns_packet(
+        query,
+        FIPS_DNS_TTL_SECS,
+        &fips_core::upper::hosts::HostMap::new(),
+    )
 }
 
 struct SystemDnsGuard {
@@ -469,17 +531,21 @@ mod tests {
         }
     }
 
-    fn query_packet(name: &str, id: u16) -> Vec<u8> {
+    fn query_packet_with_type(name: &str, id: u16, record_type: RecordType) -> Vec<u8> {
         let mut query = Message::new(id, MessageType::Query, OpCode::Query);
         query.add_query(Query::query(
             Name::from_ascii(name).expect("query name"),
-            RecordType::A,
+            record_type,
         ));
         let mut packet = Vec::new();
         query
             .emit(&mut BinEncoder::new(&mut packet))
             .expect("query packet");
         packet
+    }
+
+    fn query_packet(name: &str, id: u16) -> Vec<u8> {
+        query_packet_with_type(name, id, RecordType::A)
     }
 
     #[cfg(target_os = "macos")]
@@ -517,7 +583,7 @@ mod tests {
         )])));
         let resolver = SecureDnsResolver::new().expect("secure resolver");
 
-        let response = resolve_or_servfail(&resolver, &records, &packet)
+        let response = resolve_or_servfail(&resolver, &records, None, &packet)
             .await
             .expect("local response");
         let response = Message::from_vec(&response).expect("DNS response");
@@ -531,6 +597,25 @@ mod tests {
         }));
     }
 
+    #[test]
+    fn direct_npub_fips_query_returns_ipv6_and_identity_without_doh() {
+        let identity = fips_core::Identity::generate();
+        let packet =
+            query_packet_with_type(&format!("{}.fips.", identity.npub()), 77, RecordType::AAAA);
+
+        let (response, resolved) =
+            resolve_fips_dns_if_handled(&packet).expect("direct .fips response");
+        let response = Message::from_vec(&response).expect("DNS response");
+        assert_eq!(response.id, 77);
+        assert!(response.answers.iter().any(|answer| {
+            matches!(&answer.data, RData::AAAA(address) if address.0 == identity.address().to_ipv6())
+        }));
+        let resolved = resolved.expect("resolved identity");
+        assert_eq!(resolved.node_addr, *identity.node_addr());
+        let canonical_peer = PeerIdentity::from_npub(&identity.npub()).expect("canonical npub");
+        assert_eq!(resolved.pubkey, canonical_peer.pubkey_full());
+    }
+
     #[tokio::test]
     async fn local_stub_serves_udp_and_fails_closed() {
         let server = Arc::new(
@@ -542,7 +627,7 @@ mod tests {
         let resolver: ResolverState =
             Arc::new(RwLock::new(Arc::new(FixtureResolver { fail: true })));
         let records = Arc::new(RwLock::new(HashMap::new()));
-        let task = tokio::spawn(run_udp(server, resolver, records));
+        let task = tokio::spawn(run_udp(server, resolver, records, None));
         let client = tokio::net::UdpSocket::bind("127.0.0.1:0")
             .await
             .expect("UDP client");
@@ -572,7 +657,7 @@ mod tests {
         let resolver: ResolverState =
             Arc::new(RwLock::new(Arc::new(FixtureResolver { fail: false })));
         let records = Arc::new(RwLock::new(HashMap::new()));
-        let task = tokio::spawn(run_tcp(listener, resolver, records));
+        let task = tokio::spawn(run_tcp(listener, resolver, records, None));
         let mut client = tokio::net::TcpStream::connect(address)
             .await
             .expect("TCP client");
