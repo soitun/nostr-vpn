@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Delay the first macOS automatic update check for ten seconds after startup
+  so networking can settle, then retry failures after one minute instead of
+  silently waiting for the normal six-hour polling interval.
+
 ## 4.0.98 - 2026-07-19
 
 ### Added

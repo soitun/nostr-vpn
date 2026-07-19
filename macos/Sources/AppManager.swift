@@ -7,6 +7,8 @@ let githubUpdateManifestUrl = URL(string: "https://api.github.com/repos/mmalmi/n
 let defaultUpdateManifestUrl = URL(string: "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Fnostr-vpn/latest/release.json")!
 let updateRequestTimeout: TimeInterval = 8
 let updateUserAgent = "nvpn-updater"
+let defaultUpdateStartupDelayNanoseconds: UInt64 = 10 * 1_000_000_000
+let defaultUpdateRetryDelayNanoseconds: UInt64 = 60 * 1_000_000_000
 let defaultUpdatePollIntervalNanoseconds: UInt64 = 6 * 60 * 60 * 1_000_000_000
 
 @MainActor
@@ -46,6 +48,7 @@ final class AppManager: ObservableObject {
     var actionStatusClearTask: Task<Void, Never>?
     var serviceSettlementTask: Task<Void, Never>?
     var updateTask: Task<Void, Never>?
+    var updateRetryTask: Task<Void, Never>?
     var updatePollTask: Task<Void, Never>?
     var refreshInFlight = false
     var refreshPending = false
@@ -175,6 +178,7 @@ final class AppManager: ObservableObject {
         actionStatusClearTask?.cancel()
         serviceSettlementTask?.cancel()
         updateTask?.cancel()
+        updateRetryTask?.cancel()
         updatePollTask?.cancel()
     }
 

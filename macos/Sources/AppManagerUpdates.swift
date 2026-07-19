@@ -12,6 +12,10 @@ extension AppManager {
         guard !updateChecking else {
             return
         }
+        if manual {
+            updateRetryTask?.cancel()
+            updateRetryTask = nil
+        }
         updateTask?.cancel()
         updateChecking = true
         if manual {
@@ -24,6 +28,8 @@ extension AppManager {
             do {
                 let check = try await self.fetchUpdateCheck()
                 await MainActor.run {
+                    self.updateRetryTask?.cancel()
+                    self.updateRetryTask = nil
                     self.applyUpdateCheck(check, manual: manual)
                 }
             } catch {
@@ -33,6 +39,11 @@ extension AppManager {
                     self.updateAssetUrl = nil
                     if manual {
                         self.updateStatus = error.localizedDescription
+                    }
+                    if self.autoCheckUpdates {
+                        self.scheduleAutomaticUpdateCheck(
+                            after: defaultUpdateRetryDelayNanoseconds
+                        )
                     }
                 }
             }
@@ -49,7 +60,7 @@ extension AppManager {
         }
         if !startupUpdateCheckDone {
             startupUpdateCheckDone = true
-            checkForUpdates(manual: false)
+            scheduleAutomaticUpdateCheck(after: defaultUpdateStartupDelayNanoseconds)
         }
         guard updatePollTask == nil else {
             return
@@ -70,8 +81,30 @@ extension AppManager {
     }
 
     func stopAutomaticUpdateChecks() {
+        startupUpdateCheckDone = false
+        updateRetryTask?.cancel()
+        updateRetryTask = nil
         updatePollTask?.cancel()
         updatePollTask = nil
+    }
+
+    func scheduleAutomaticUpdateCheck(after delayNanoseconds: UInt64) {
+        guard autoCheckUpdates else {
+            return
+        }
+        updateRetryTask?.cancel()
+        updateRetryTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: delayNanoseconds)
+            } catch {
+                return
+            }
+            guard let self, self.autoCheckUpdates, !Task.isCancelled else {
+                return
+            }
+            self.updateRetryTask = nil
+            self.checkForUpdates(manual: false)
+        }
     }
 
     func installUpdate() {
@@ -291,4 +324,3 @@ extension AppManager {
         }
     }
 }
-
