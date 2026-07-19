@@ -152,6 +152,71 @@
     }
 
     #[test]
+    fn pending_paid_manual_exit_without_leak_protection_still_owns_dns() {
+        let keys = Keys::generate();
+        let own_pubkey = keys.public_key().to_hex();
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = keys.secret_key().to_bech32().expect("nsec");
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = "pending-paid-manual".to_string();
+        app.exit_node_leak_protection = false;
+        app.set_internet_source(InternetSource::PaidManual);
+
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "pending-paid-manual",
+            "utun-test",
+            Some(&own_pubkey),
+            None,
+            &[],
+        )
+        .expect("pending paid-manual tunnel config");
+
+        assert!(
+            !config
+                .route_targets
+                .iter()
+                .any(|route| route == "0.0.0.0/0")
+        );
+        assert!(config.secure_dns_required());
+    }
+
+    #[test]
+    fn every_selected_exit_source_owns_dns() {
+        let keys = Keys::generate();
+        let own_pubkey = keys.public_key().to_hex();
+
+        for source in [
+            InternetSource::PrivateVpn,
+            InternetSource::PaidAutomatic,
+            InternetSource::PaidManual,
+            InternetSource::WireGuard,
+        ] {
+            let mut app = AppConfig::default();
+            app.nostr.secret_key = keys.secret_key().to_bech32().expect("nsec");
+            app.networks[0].enabled = true;
+            app.networks[0].network_id = "all-exit-dns".to_string();
+            app.exit_node_leak_protection = false;
+            app.set_internet_source(source);
+
+            let config = FipsPrivateTunnelConfig::from_app(
+                &app,
+                "all-exit-dns",
+                "utun-test",
+                Some(&own_pubkey),
+                None,
+                &[],
+            )
+            .expect("exit tunnel config");
+
+            assert!(
+                config.secure_dns_required(),
+                "{source:?} must keep roster DNS active"
+            );
+        }
+    }
+
+    #[test]
     fn wireguard_profile_dns_is_active_only_for_the_selected_configured_exit() {
         let keys = Keys::generate();
         let own_pubkey = keys.public_key().to_hex();

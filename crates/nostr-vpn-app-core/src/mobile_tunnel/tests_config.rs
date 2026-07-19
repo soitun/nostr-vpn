@@ -764,6 +764,17 @@
     }
 
     #[test]
+    fn mobile_lan_discovery_uses_the_shared_private_scope() {
+        let scope = mobile_lan_discovery_scope(" private-network-id ");
+
+        assert_eq!(
+            scope,
+            nostr_vpn_core::fips_discovery::fips_lan_discovery_scope("private-network-id")
+        );
+        assert!(!scope.contains("private-network-id"));
+    }
+
+    #[test]
     fn mobile_fips_config_marks_default_route_peers_non_transit() {
         let peer = FipsMeshPeerConfig::from_participant_pubkey(
             "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc",
