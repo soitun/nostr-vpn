@@ -606,6 +606,36 @@
     }
 
     #[test]
+    fn control_frame_destinations_can_ack_independent_paid_route_buyers() {
+        let buyer = Keys::generate();
+        let buyer_pubkey = buyer.public_key().to_hex();
+        let buyer_npub = buyer.public_key().to_bech32().expect("npub");
+        let mesh = FipsMeshRuntime::with_local_routes_and_paid_route_admissions(
+            Vec::new(),
+            Vec::new(),
+            vec![nostr_vpn_core::fips_mesh::FipsPaidRouteAdmission {
+                participant_pubkey: buyer_pubkey.clone(),
+                session_id: "paid-session".to_string(),
+                allowed_ips: vec!["10.44.1.2/32".to_string()],
+                destination_allowed_ips: Vec::new(),
+                allow_routing: true,
+                state: nostr_vpn_core::paid_routes::PaidRouteAccessState::FreeProbe,
+                amount_due_msat: 0,
+                paid_msat: 0,
+                unpaid_msat: 0,
+                expires_at_unix: u64::MAX,
+                updated_at_unix: 42,
+            }],
+        );
+
+        let destination =
+            control_frame_destination_peer(&mesh, &FipsPeerIdentityMap::default(), &buyer_pubkey)
+                .expect("paid route buyer endpoint identity");
+
+        assert_eq!(destination.npub(), buyer_npub);
+    }
+
+    #[test]
     fn join_roster_recipient_is_prioritized_ahead_of_ambient_peers() {
         let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
         let recipient_npub = Keys::generate().public_key().to_bech32().expect("npub");

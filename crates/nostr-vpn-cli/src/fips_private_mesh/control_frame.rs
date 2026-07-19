@@ -39,23 +39,31 @@ fn control_frame_destination_peer(
         ) {
             return Ok(identity);
         }
+        if let Some(identity) = control_frame_participant_identity(participant)
+            && identity.node_addr().as_bytes() == &endpoint_node_addr
+        {
+            return Ok(identity);
+        }
         return Err(anyhow!(
             "missing FIPS control frame recipient identity for {participant}"
         ));
     }
 
-    let participant_pubkey = normalize_nostr_pubkey(participant)
-        .with_context(|| format!("invalid FIPS control frame recipient {participant}"))?;
     if let Some(identity) = participant_key
         .as_ref()
         .and_then(|participant| peer_identities.identity_for_participant_bytes(participant))
-        .or_else(|| peer_identities.identity_for_participant(&participant_pubkey))
+        .or_else(|| peer_identities.identity_for_participant(participant))
     {
         return Ok(identity);
     }
-    PublicKey::parse(&participant_pubkey)
+    control_frame_participant_identity(participant)
+        .ok_or_else(|| anyhow!("invalid FIPS control frame recipient {participant}"))
+}
+
+fn control_frame_participant_identity(participant: &str) -> Option<PeerIdentity> {
+    normalize_nostr_pubkey(participant)
         .ok()
+        .and_then(|participant| PublicKey::parse(&participant).ok())
         .and_then(|pubkey| pubkey.to_bech32().ok())
         .and_then(|npub| PeerIdentity::from_npub(&npub).ok())
-        .ok_or_else(|| anyhow!("invalid FIPS control frame recipient {participant}"))
 }
