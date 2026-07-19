@@ -58,6 +58,7 @@ ndk-context = "0.1"
 [dev-dependencies]
 async-trait.workspace = true
 hickory-proto.workspace = true
+tracing-subscriber.workspace = true
 
 [lints.clippy]
 all = { level = "warn", priority = -1 }

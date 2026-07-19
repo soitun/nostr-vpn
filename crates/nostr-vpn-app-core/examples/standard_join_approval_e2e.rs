@@ -175,7 +175,22 @@ fn emit(value: &serde_json::Value) {
     let _ = stdout.flush();
 }
 
+fn init_tracing() {
+    let Ok(filter) = env::var("NVPN_STANDARD_JOIN_RUST_LOG") else {
+        return;
+    };
+    if filter.trim().is_empty() || filter.trim().eq_ignore_ascii_case("off") {
+        return;
+    }
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_ansi(false)
+        .with_writer(io::stderr)
+        .try_init();
+}
+
 fn main() -> ExitCode {
+    init_tracing();
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
