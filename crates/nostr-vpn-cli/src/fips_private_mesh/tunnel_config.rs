@@ -26,6 +26,7 @@ fn fips_exit_route_ready(
         &config.peers,
         config.exit_node_leak_protection,
         config.wireguard_exit.enabled,
+        config.public_paid_exit_waiting_for_admission,
         &connected,
     )
 }
@@ -35,6 +36,7 @@ fn fips_exit_route_ready_for_connected(
     peers: &[FipsMeshPeerConfig],
     leak_protection: bool,
     wireguard_exit_enabled: bool,
+    public_paid_exit_waiting_for_admission: bool,
     connected: &HashSet<&str>,
 ) -> bool {
     let exit_requested = route_targets
@@ -42,6 +44,9 @@ fn fips_exit_route_ready_for_connected(
         .any(|route| crate::is_exit_node_route(route));
     if !exit_requested || leak_protection || wireguard_exit_enabled {
         return true;
+    }
+    if public_paid_exit_waiting_for_admission {
+        return false;
     }
 
     peers.iter().any(|peer| {
@@ -61,6 +66,11 @@ pub(crate) fn effective_fips_route_targets(
 }
 
 impl FipsPrivateTunnelConfig {
+    #[cfg(feature = "paid-exit")]
+    pub(crate) fn require_public_paid_exit_admission(&mut self, admitted: bool) {
+        self.public_paid_exit_waiting_for_admission = !admitted;
+    }
+
     pub(crate) fn from_app(
         app: &AppConfig,
         network_id: &str,
@@ -314,6 +324,7 @@ impl FipsPrivateTunnelConfig {
             endpoint_peers,
             route_targets,
             secure_dns_requested: !app.internet_source.is_direct(),
+            public_paid_exit_waiting_for_admission: false,
             magic_dns_records: build_magic_dns_records(app),
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             fips_host,

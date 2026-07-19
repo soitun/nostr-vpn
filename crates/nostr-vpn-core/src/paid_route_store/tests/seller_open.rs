@@ -13,6 +13,11 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
     let open = buyer_store
         .build_buyer_session_open(&session_id, &buyer_npub, 100)
         .expect("build free probe open");
+    assert!(
+        !buyer_store
+            .buyer_session_is_seller_admitted(&session_id)
+            .expect("unacknowledged buyer session")
+    );
     assert_eq!(open.seller_npub, seller_npub);
     assert_eq!(open.channel_id, placeholder_channel_id);
 
@@ -69,6 +74,18 @@ fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_paymen
     assert_eq!(paid.channel_id, payment_channel_id);
     assert!(!seller_store.channels.contains_key(&placeholder_channel_id));
     assert_eq!(seller_store.seller_admissions(&config, 102).len(), 1);
+
+    let mut acknowledged_buyer_store = buyer_store;
+    assert!(
+        acknowledged_buyer_store
+            .acknowledge_buyer_session_open(&seller.public_key().to_hex(), &applied.lease_id, 103,)
+            .expect("acknowledge buyer session")
+    );
+    assert!(
+        acknowledged_buyer_store
+            .buyer_session_is_seller_admitted(&session_id)
+            .expect("acknowledged buyer session")
+    );
 
     let replay_after_payment = seller_store
         .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {

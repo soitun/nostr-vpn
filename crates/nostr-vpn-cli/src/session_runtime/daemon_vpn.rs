@@ -522,9 +522,54 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                                 "paid-exit free-probe admission refresh failed ({error})"
                                             );
                                         }
+                                        for (buyer_pubkey, lease_id) in result.acknowledgments {
+                                            if let Err(error) = runtime
+                                                .send_paid_route_session_open_ack(
+                                                    &buyer_pubkey,
+                                                    lease_id.clone(),
+                                                )
+                                                .await
+                                            {
+                                                eprintln!(
+                                                    "paid-exit: failed to acknowledge session open {lease_id}: {error}"
+                                                );
+                                            }
+                                        }
                                     }
                                     Err(error) => eprintln!(
                                         "paid-exit: failed to apply authenticated session open: {error}"
+                                    ),
+                                }
+                            }
+                            #[cfg(feature = "paid-exit")]
+                            for (seller_pubkey, lease_id) in drained.paid_route_session_open_acks {
+                                match acknowledge_paid_exit_session_open(
+                                    &config_path,
+                                    &seller_pubkey,
+                                    &lease_id,
+                                ) {
+                                    Ok(true) => {
+                                        eprintln!(
+                                            "paid-exit: seller admitted session {lease_id}"
+                                        );
+                                        if let Err(error) = refresh_fips_tunnel_config(
+                                            runtime,
+                                            &app,
+                                            &config_path,
+                                            &network_id,
+                                            network_snapshot.default_interface_mtu,
+                                            own_pubkey.as_deref(),
+                                        )
+                                        .await
+                                        {
+                                            vpn_status = format!(
+                                                "paid-exit admission acknowledgment refresh failed ({error})"
+                                            );
+                                        }
+                                    }
+                                    Ok(false) => {}
+                                    Err(error) => eprintln!(
+                                        "paid-exit: rejected session acknowledgment from {seller_pubkey}: {error}"
                                     ),
                                 }
                             }
@@ -535,9 +580,25 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                     &seller_pubkey,
                                     &id,
                                 ) {
-                                    Ok(true) => eprintln!(
-                                        "paid-exit: seller acknowledged direct FIPS payment {id}"
-                                    ),
+                                    Ok(true) => {
+                                        eprintln!(
+                                            "paid-exit: seller acknowledged direct FIPS payment {id}"
+                                        );
+                                        if let Err(error) = refresh_fips_tunnel_config(
+                                            runtime,
+                                            &app,
+                                            &config_path,
+                                            &network_id,
+                                            network_snapshot.default_interface_mtu,
+                                            own_pubkey.as_deref(),
+                                        )
+                                        .await
+                                        {
+                                            vpn_status = format!(
+                                                "paid-exit payment acknowledgment refresh failed ({error})"
+                                            );
+                                        }
+                                    }
                                     Ok(false) => {}
                                     Err(error) => eprintln!(
                                         "paid-exit: rejected direct FIPS payment acknowledgment: {error}"

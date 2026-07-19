@@ -128,6 +128,15 @@ impl FipsPrivateTunnelRuntime {
     }
 
     #[cfg(feature = "paid-exit")]
+    pub(crate) async fn send_paid_route_session_open_ack(
+        &self,
+        _buyer: &str,
+        _lease_id: String,
+    ) -> Result<()> {
+        Err(anyhow!("paid route sessions are unsupported on this platform"))
+    }
+
+    #[cfg(feature = "paid-exit")]
     pub(crate) async fn send_paid_route_payment(
         &self,
         _seller: &str,

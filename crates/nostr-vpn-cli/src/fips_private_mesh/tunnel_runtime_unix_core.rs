@@ -833,6 +833,17 @@ impl FipsPrivateTunnelRuntime {
     }
 
     #[cfg(feature = "paid-exit")]
+    pub(crate) async fn send_paid_route_session_open_ack(
+        &self,
+        buyer: &str,
+        lease_id: String,
+    ) -> Result<()> {
+        self.mesh
+            .send_paid_route_session_open_ack(&self.state_control, buyer, lease_id)
+            .await
+    }
+
+    #[cfg(feature = "paid-exit")]
     pub(crate) async fn send_paid_route_payment(
         &self,
         seller: &str,

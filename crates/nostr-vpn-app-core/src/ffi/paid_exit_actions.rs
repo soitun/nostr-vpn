@@ -377,11 +377,26 @@ impl NativeAppRuntime {
             write_paid_route_store(&path, &store)?;
         }
 
-        if paid_route_wallet_can_fund_channel(
+        let wallet_can_fund = paid_route_wallet_can_fund_channel(
             &store.wallet,
             &result.mint_url,
             result.channel_capacity_sat,
-        ) {
+        );
+        let free_probe_ready = store
+            .buyer_session_allows_routing(&result.session_id, unix_timestamp())?;
+        if !wallet_can_fund && !free_probe_ready {
+            return Err(anyhow!(
+                "Paid route created but is not ready: the selected mint needs at least {} sat to fund it",
+                result.channel_capacity_sat
+            ));
+        }
+
+        // Payment delivery is authenticated against the selected public exit.
+        // Persist the seller before queuing the first payment, but let the daemon
+        // install public routes only after the seller acknowledges admission.
+        self.select_paid_route_session(&result.session_id, false)?;
+
+        if wallet_can_fund {
             self.open_paid_route_channel_from_wallet(
                 &result.session_id,
                 Some(&result.mint_url),

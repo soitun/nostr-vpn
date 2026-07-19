@@ -787,7 +787,22 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
             })
             .is_empty()
     );
-    assert_eq!(load_paid_exit_payment_outbox(&config_path).len(), 1);
+    write_paid_route_store(&paid_route_store_file_path(&config_path), &store)
+        .expect("persist buyer store");
+    let queued = load_paid_exit_payment_outbox(&config_path);
+    assert_eq!(queued.len(), 1);
+    assert!(
+        acknowledge_paid_exit_payment(&config_path, &seller.public_key().to_hex(), &queued[0].id)
+            .expect("acknowledge seller payment")
+    );
+    let acknowledged = load_paid_route_store(&paid_route_store_file_path(&config_path))
+        .expect("load acknowledged buyer store");
+    assert!(
+        acknowledged
+            .buyer_has_seller_admission(&seller.public_key().to_hex(), 129)
+            .expect("seller admission")
+    );
+    assert!(load_paid_exit_payment_outbox(&config_path).is_empty());
     let _ = std::fs::remove_dir_all(&dir);
 
     struct RuntimeFakePaymentSigner;

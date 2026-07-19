@@ -15,6 +15,7 @@ pub(super) struct PaidExitApplySessionOpensResult {
     pub(super) applied_count: usize,
     pub(super) error_count: usize,
     pub(super) changed: bool,
+    pub(super) acknowledgments: Vec<(String, String)>,
 }
 
 pub(super) async fn send_selected_paid_exit_session_open(
@@ -75,6 +76,9 @@ pub(super) fn apply_paid_exit_session_opens(
             Ok(applied) => {
                 result.applied_count += 1;
                 result.changed |= applied.changed;
+                result
+                    .acknowledgments
+                    .push((buyer_pubkey, applied.lease_id));
             }
             Err(error) => {
                 result.error_count += 1;
@@ -88,6 +92,21 @@ pub(super) fn apply_paid_exit_session_opens(
         write_paid_route_store(&store_path, &store)?;
     }
     Ok(result)
+}
+
+pub(super) fn acknowledge_paid_exit_session_open(
+    config_path: &Path,
+    seller_pubkey: &str,
+    lease_id: &str,
+) -> Result<bool> {
+    let store_path = paid_route_store_file_path(config_path);
+    let mut store = load_paid_route_store(&store_path)?;
+    let changed =
+        store.acknowledge_buyer_session_open(seller_pubkey, lease_id, unix_timestamp())?;
+    if changed {
+        write_paid_route_store(&store_path, &store)?;
+    }
+    Ok(changed)
 }
 
 pub(super) fn flush_fips_paid_route_usage(

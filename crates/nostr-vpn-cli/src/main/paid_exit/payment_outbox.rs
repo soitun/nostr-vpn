@@ -172,6 +172,16 @@ fn acknowledge_paid_exit_payment(
             "paid route payment acknowledgment source does not match seller"
         ));
     }
+    let store_path = paid_route_store_file_path(config_path);
+    let mut store = load_paid_route_store(&store_path)?;
+    let admission_changed = store.acknowledge_buyer_session_open(
+        seller_pubkey,
+        &envelope.lease_id,
+        unix_timestamp(),
+    )?;
+    if admission_changed {
+        write_paid_route_store(&store_path, &store)?;
+    }
     fs::remove_file(&path).with_context(|| format!("failed to remove {}", path.display()))?;
     Ok(true)
 }

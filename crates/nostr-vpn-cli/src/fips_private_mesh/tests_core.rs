@@ -125,6 +125,7 @@
             &peers,
             false,
             false,
+            false,
             &HashSet::new(),
         ));
         assert!(!fips_exit_route_ready_for_connected(
@@ -132,11 +133,21 @@
             &peers,
             false,
             false,
+            false,
             &HashSet::from([unrelated.as_str()]),
+        ));
+        assert!(!fips_exit_route_ready_for_connected(
+            &routes,
+            &peers,
+            false,
+            false,
+            true,
+            &HashSet::from([selected.as_str()]),
         ));
         assert!(fips_exit_route_ready_for_connected(
             &routes,
             &peers,
+            false,
             false,
             false,
             &HashSet::from([selected.as_str()]),
@@ -146,6 +157,7 @@
             &peers,
             true,
             false,
+            true,
             &HashSet::new(),
         ));
     }

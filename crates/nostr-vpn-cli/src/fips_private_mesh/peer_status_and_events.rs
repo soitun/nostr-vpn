@@ -725,6 +725,11 @@ pub(crate) enum FipsPrivateMeshEvent {
         open: PaidRouteSessionOpen,
     },
     #[cfg(feature = "paid-exit")]
+    PaidRouteSessionOpenAck {
+        sender_pubkey: String,
+        lease_id: String,
+    },
+    #[cfg(feature = "paid-exit")]
     PaidRoutePayment {
         sender_pubkey: String,
         id: String,

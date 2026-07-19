@@ -367,6 +367,8 @@ struct DrainedFipsMeshEvents {
     #[cfg(feature = "paid-exit")]
     paid_route_session_opens: Vec<(String, PaidRouteSessionOpen)>,
     #[cfg(feature = "paid-exit")]
+    paid_route_session_open_acks: Vec<(String, String)>,
+    #[cfg(feature = "paid-exit")]
     paid_route_payments: Vec<(String, String, StreamingRoutePaymentEnvelope)>,
     #[cfg(feature = "paid-exit")]
     paid_route_payment_acks: Vec<(String, String)>,
@@ -461,6 +463,13 @@ fn drain_fips_mesh_events(
                 sender_pubkey,
                 open,
             } => drained.paid_route_session_opens.push((sender_pubkey, open)),
+            #[cfg(feature = "paid-exit")]
+            crate::fips_private_mesh::FipsPrivateMeshEvent::PaidRouteSessionOpenAck {
+                sender_pubkey,
+                lease_id,
+            } => drained
+                .paid_route_session_open_acks
+                .push((sender_pubkey, lease_id)),
             #[cfg(feature = "paid-exit")]
             crate::fips_private_mesh::FipsPrivateMeshEvent::PaidRoutePayment {
                 sender_pubkey,
@@ -564,6 +573,12 @@ fn fips_tunnel_config_from_app(
             config.local_exit_forwarding_routes = runtime_local_exit_forwarding_routes(app);
         }
         config.paid_route_store_path = paid_route_store_file_path(config_path);
+        if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() {
+            let store = load_paid_route_store(&config.paid_route_store_path)?;
+            config.require_public_paid_exit_admission(
+                store.buyer_has_seller_admission(&seller_pubkey, unix_timestamp())?,
+            );
+        }
         config.paid_route_wallet_data_dir = paid_exit_wallet_data_dir(config_path);
         config.paid_route_payment_relays = paid_exit_relay_urls(app, &[]);
         config.paid_route_admissions = fips_paid_route_admissions_from_store(app, config_path)?;

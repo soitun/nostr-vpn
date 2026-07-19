@@ -205,6 +205,8 @@ async fn handle_mobile_control_frame(
             // public paid-exit service sessions.
         }
         #[cfg(feature = "paid-exit")]
+        FipsControlFrame::PaidRouteSessionOpenAck { .. } => {}
+        #[cfg(feature = "paid-exit")]
         payment @ FipsControlFrame::PaidRoutePayment { .. } => {
             handle_mobile_paid_route_payment(control, source_peer, &source_pubkey, payment)
                 .await?;
@@ -408,6 +410,7 @@ fn control_frame_network_matches(expected_network_id: &str, frame: &FipsControlF
         FipsControlFrame::JoinRequest { request, .. } => &request.network_id,
         #[cfg(feature = "paid-exit")]
         FipsControlFrame::PaidRouteSessionOpen { .. }
+        | FipsControlFrame::PaidRouteSessionOpenAck { .. }
         | FipsControlFrame::PaidRoutePayment { .. }
         | FipsControlFrame::PaidRoutePaymentAck { .. } => return true,
     };

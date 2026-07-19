@@ -350,6 +350,10 @@ pub enum FipsControlFrame {
         open: PaidRouteSessionOpen,
     },
     #[cfg(feature = "paid-exit")]
+    PaidRouteSessionOpenAck {
+        lease_id: String,
+    },
+    #[cfg(feature = "paid-exit")]
     PaidRoutePayment {
         id: String,
         envelope: StreamingRoutePaymentEnvelope,

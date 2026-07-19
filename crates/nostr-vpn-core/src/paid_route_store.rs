@@ -47,6 +47,8 @@ pub struct PaidRouteStore {
     pub channels: BTreeMap<String, PaidRouteChannelRecord>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub sessions: BTreeMap<String, PaidRouteSessionRecord>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub buyer_session_admissions: BTreeMap<String, u64>,
 }
 
 impl Default for PaidRouteStore {
@@ -59,6 +61,7 @@ impl Default for PaidRouteStore {
             leases: BTreeMap::new(),
             channels: BTreeMap::new(),
             sessions: BTreeMap::new(),
+            buyer_session_admissions: BTreeMap::new(),
         }
     }
 }

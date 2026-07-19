@@ -4,6 +4,73 @@ use crate::paid_routes::PAID_ROUTE_OFFER_VERSION;
 const PAID_ROUTE_SESSION_ID_MAX_LEN: usize = 256;
 
 impl PaidRouteStore {
+    pub fn buyer_session_is_seller_admitted(&self, session_id: &str) -> Result<bool> {
+        let session_id = trimmed_required(session_id, "paid route session id")?;
+        let session = self
+            .sessions
+            .get(&session_id)
+            .ok_or_else(|| anyhow!("paid route buyer session {session_id} does not exist"))?;
+        Ok(self
+            .buyer_session_admissions
+            .contains_key(&session.session.lease_id))
+    }
+
+    pub fn acknowledge_buyer_session_open(
+        &mut self,
+        authenticated_seller_pubkey: &str,
+        lease_id: &str,
+        acknowledged_at_unix: u64,
+    ) -> Result<bool> {
+        let seller_pubkey = normalize_nostr_pubkey(authenticated_seller_pubkey)?;
+        let lease_id = trimmed_required(lease_id, "paid route lease id")?;
+        let session_id = self
+            .sessions
+            .values()
+            .find(|session| session.session.lease_id == lease_id)
+            .map(|session| session.session.session_id.clone())
+            .ok_or_else(|| anyhow!("paid route buyer lease {lease_id} does not exist"))?;
+        let session = self
+            .sessions
+            .get(&session_id)
+            .expect("located buyer session");
+        let channel = self
+            .channels
+            .get(&session.session.payment.channel_id)
+            .ok_or_else(|| anyhow!("paid route buyer session has no channel"))?;
+        if channel.role != PaidRouteChannelRole::Buyer
+            || normalize_nostr_pubkey(&channel.counterparty_npub)? != seller_pubkey
+        {
+            return Err(anyhow!(
+                "paid route session acknowledgment does not match selected seller"
+            ));
+        }
+        let previous = self
+            .buyer_session_admissions
+            .insert(lease_id, acknowledged_at_unix.max(1));
+        Ok(previous.is_none())
+    }
+
+    pub fn buyer_has_seller_admission(&self, seller_pubkey: &str, now_unix: u64) -> Result<bool> {
+        let seller_pubkey = normalize_nostr_pubkey(seller_pubkey)?;
+        Ok(self.sessions.values().any(|session| {
+            let Some(lease) = self.leases.get(&session.session.lease_id) else {
+                return false;
+            };
+            let Some(channel) = self.channels.get(&session.session.payment.channel_id) else {
+                return false;
+            };
+            channel.role == PaidRouteChannelRole::Buyer
+                && lease.lease.expires_at_unix.min(channel.expires_at_unix) > now_unix
+                && normalize_nostr_pubkey(&channel.counterparty_npub)
+                    .ok()
+                    .as_deref()
+                    == Some(seller_pubkey.as_str())
+                && self
+                    .buyer_session_admissions
+                    .contains_key(&session.session.lease_id)
+        }))
+    }
+
     pub fn build_buyer_session_open(
         &self,
         session_id: &str,

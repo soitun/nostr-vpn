@@ -101,6 +101,21 @@ impl FipsPrivateMeshRuntime {
     }
 
     #[cfg(feature = "paid-exit")]
+    pub(crate) async fn send_paid_route_session_open_ack(
+        &self,
+        control: &FipsControlTcpRuntime,
+        buyer: &str,
+        lease_id: String,
+    ) -> Result<()> {
+        self.send_stateful_control_frame(
+            control,
+            buyer,
+            &FipsControlFrame::PaidRouteSessionOpenAck { lease_id },
+        )
+        .await
+    }
+
+    #[cfg(feature = "paid-exit")]
     pub(crate) async fn send_paid_route_payment(
         &self,
         control: &FipsControlTcpRuntime,
