@@ -146,6 +146,16 @@ fn paid_route_store_persists_wallet_offer_session_and_channel_state() {
     ));
 
     write_paid_route_store(&store_path, &store).expect("write store");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let parent_metadata = fs::metadata(scratch.path()).expect("parent metadata");
+        let store_metadata = fs::metadata(&store_path).expect("store metadata");
+        assert_eq!(store_metadata.permissions().mode() & 0o777, 0o600);
+        assert_eq!(store_metadata.uid(), parent_metadata.uid());
+        assert_eq!(store_metadata.gid(), parent_metadata.gid());
+    }
     let loaded = load_paid_route_store(&store_path).expect("load store");
 
     assert_eq!(

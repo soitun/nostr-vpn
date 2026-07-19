@@ -145,7 +145,7 @@ impl AppConfig {
         }
 
         let raw = self.toml_with_secret_persistence(path, persistence)?;
-        write_config_file(path, raw.as_bytes())
+        write_private_file_preserving_user_owner(path, raw.as_bytes())
             .with_context(|| format!("failed to write {}", path.display()))?;
         Ok(())
     }

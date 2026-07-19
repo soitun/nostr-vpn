@@ -47,35 +47,10 @@ pub fn load_paid_route_store(path: &Path) -> Result<PaidRouteStore> {
 }
 
 pub fn write_paid_route_store(path: &Path, store: &PaidRouteStore) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create {}", parent.display()))?;
-    }
     let raw = serde_json::to_string_pretty(store)
         .with_context(|| format!("failed to serialize paid route store {}", path.display()))?;
-    let mut tmp = path.to_path_buf();
-    let mut name = tmp
-        .file_name()
-        .map(|name| name.to_os_string())
-        .unwrap_or_else(|| std::ffi::OsString::from("paid-routes.json"));
-    name.push(".tmp");
-    tmp.set_file_name(name);
-
-    fs::write(&tmp, raw)
-        .with_context(|| format!("failed to write paid route temp {}", tmp.display()))?;
-    if let Err(error) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(io::Error::new(
-            error.kind(),
-            format!(
-                "failed to rename paid route store {} -> {}: {error}",
-                tmp.display(),
-                path.display()
-            ),
-        )
-        .into());
-    }
-    Ok(())
+    crate::config::write_private_file_preserving_user_owner(path, raw.as_bytes())
+        .with_context(|| format!("failed to write paid route store {}", path.display()))
 }
 
 pub fn apply_paid_route_seller_payment_file(

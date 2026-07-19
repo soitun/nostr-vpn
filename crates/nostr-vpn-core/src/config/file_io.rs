@@ -5,7 +5,10 @@ fn next_shared_roster_updated_at(previous: u64) -> u64 {
 }
 
 #[cfg(unix)]
-fn write_config_file(path: &Path, raw: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private_file_preserving_user_owner(
+    path: &Path,
+    raw: &[u8],
+) -> std::io::Result<()> {
     use std::os::unix::fs::MetadataExt;
 
     let parent = path
@@ -97,6 +100,9 @@ fn preferred_config_owner(
 }
 
 #[cfg(not(unix))]
-fn write_config_file(path: &Path, raw: &[u8]) -> std::io::Result<()> {
+pub(crate) fn write_private_file_preserving_user_owner(
+    path: &Path,
+    raw: &[u8],
+) -> std::io::Result<()> {
     fs::write(path, raw)
 }
