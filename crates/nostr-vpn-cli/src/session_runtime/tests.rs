@@ -120,6 +120,41 @@ mod tests {
         );
     }
     #[test]
+    fn recent_peer_refresh_signature_ignores_freshness_but_tracks_topology() {
+        let participant = "a".repeat(64);
+        let mut recent = nostr_vpn_core::recent_peers::RecentPeerEndpoints::default();
+        assert!(recent.note_success(&participant, "203.0.113.20:51820", 100));
+        let first = recent_peer_refresh_signature(
+            &recent,
+            &[(
+                participant.clone(),
+                vec![("udp:203.0.113.20:51820".to_string(), 100_000)],
+            )],
+        );
+
+        assert!(recent.note_success(&participant, "203.0.113.20:51820", 200));
+        let refreshed = recent_peer_refresh_signature(
+            &recent,
+            &[(
+                participant.clone(),
+                vec![("udp:203.0.113.20:51820".to_string(), 200_000)],
+            )],
+        );
+        assert_eq!(first, refreshed);
+
+        let changed = recent_peer_refresh_signature(
+            &recent,
+            &[(
+                participant,
+                vec![
+                    ("udp:203.0.113.20:51820".to_string(), 200_000),
+                    ("tcp:203.0.113.21:443".to_string(), 200_000),
+                ],
+            )],
+        );
+        assert_ne!(first, changed);
+    }
+    #[test]
     fn link_event_refresh_classifies_restarts_and_path_refreshes() {
         let idle = fips_link_event_refresh(false, false, false, false);
         assert_eq!(idle, FipsLinkEventRefresh::None);

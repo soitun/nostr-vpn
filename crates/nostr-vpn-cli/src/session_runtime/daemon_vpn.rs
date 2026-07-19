@@ -69,6 +69,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         try_load_paid_exit_spilman_receiver(&config_path, &app.paid_exit).await;
     #[cfg(feature = "paid-exit")]
     let mut automatic_paid_exit = PaidExitAutomaticBuyer::default();
+    let mut last_recent_peer_refresh_signature = None;
+    let mut last_recent_peer_cache_persisted_at = 0;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -103,6 +105,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             recent_peers: &mut recent_peers,
                             recent_peers_path: &recent_peers_path,
                             last_endpoint_peer_signature: &mut last_fips_endpoint_peer_signature,
+                            last_refresh_signature: &mut last_recent_peer_refresh_signature,
+                            last_cache_persisted_at: &mut last_recent_peer_cache_persisted_at,
+                            force_rebuild: false,
                         },
                         unix_timestamp(),
                     )
@@ -340,6 +345,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                     recent_peers_path: &recent_peers_path,
                                     last_endpoint_peer_signature:
                                         &mut last_fips_endpoint_peer_signature,
+                                    last_refresh_signature:
+                                        &mut last_recent_peer_refresh_signature,
+                                    last_cache_persisted_at:
+                                        &mut last_recent_peer_cache_persisted_at,
+                                    force_rebuild: true,
                                 },
                                 now,
                             )
