@@ -177,6 +177,19 @@ async fn wait_pubsub_connected(runtime: &ControlPubsubFipsRuntime) {
     .expect("reliable TCP/FIPS pubsub stream connected");
 }
 
+async fn wait_pubsub_transport_connected(runtime: &ControlPubsubFipsRuntime) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if runtime.connected_peer_count().await.unwrap_or_default() > 0 {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("reliable TCP/FIPS pubsub transport connected");
+}
+
 #[test]
 fn relay_subscriptions_bound_retained_replay() {
     let publisher = Keys::generate();
@@ -229,6 +242,19 @@ fn standard_fips_pubsub_bounds_retained_replay() {
         .collect::<Vec<_>>();
 
     assert_eq!(replay_ids, expected_ids);
+}
+
+#[test]
+fn plain_control_events_are_verified_before_entering_the_verified_path() {
+    let publisher = Keys::generate();
+    let update_events = update_events(&publisher, "releases/verified-boundary");
+    let mut event = signed_update_root(&publisher, "releases/verified-boundary", 1, "aa");
+    event.content.push_str("tampered-after-signing");
+
+    let error = verify_control_event(event, &update_events)
+        .expect_err("a plain event with an invalid signature must be rejected");
+
+    assert!(error.to_string().contains("invalid Nostr event"));
 }
 
 #[test]
@@ -629,7 +655,7 @@ async fn peer_policy_rejects_events_from_authenticated_udp_fips_peer_run() {
     .await
     .expect("start policy-bound FIPS pubsub")
     .expect("FIPS pubsub enabled");
-    wait_pubsub_connected(&alice_pubsub).await;
+    wait_pubsub_transport_connected(&alice_pubsub).await;
     let root = signed_update_root(&publisher, tree_name, 1, "66");
     assert!(
         alice_pubsub

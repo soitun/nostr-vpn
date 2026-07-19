@@ -392,8 +392,8 @@ async fn run(
             }
             notification = relay_notification(&mut bridge) => {
                 let Some((relay_url, event)) = notification else { continue; };
-                if !is_control_event(&event, &update_events)
-                    || !event_is_admitted(
+                if !is_control_event(event.as_event(), &update_events)
+                    || !verified_event_is_admitted(
                         &pubsub_policy,
                         &event,
                         &EventSource::relay(relay_url),
@@ -402,7 +402,7 @@ async fn run(
                 {
                     continue;
                 }
-                if let Err(error) = publish_local(
+                if let Err(error) = publish_verified(
                     PublishContext {
                         endpoint: &endpoint,
                         fips_pubsub: &fips_pubsub,
@@ -463,7 +463,17 @@ async fn run(
 }
 
 async fn publish_local(context: PublishContext<'_>, event: Event) -> Result<bool> {
-    if !is_control_event(&event, context.update_events) {
+    let verified = verify_control_event(event, context.update_events)?;
+    publish_verified(context, verified).await
+}
+
+fn verify_control_event(event: Event, update_events: &UpdateEventCache) -> Result<VerifiedEvent> {
+    validate_control_event_shape(&event, update_events)?;
+    VerifiedEvent::try_from(event).map_err(anyhow::Error::from)
+}
+
+fn validate_control_event_shape(event: &Event, update_events: &UpdateEventCache) -> Result<()> {
+    if !is_control_event(event, update_events) {
         anyhow::bail!("event is outside control pubsub subscriptions");
     }
     let event_bytes = serde_json::to_vec(&event)?;
@@ -474,7 +484,12 @@ async fn publish_local(context: PublishContext<'_>, event: Event) -> Result<bool
             CONTROL_PUBSUB_MAX_EVENT_BYTES
         );
     }
-    let verified = VerifiedEvent::try_from(event.clone())?;
+    Ok(())
+}
+
+async fn publish_verified(context: PublishContext<'_>, verified: VerifiedEvent) -> Result<bool> {
+    validate_control_event_shape(verified.as_event(), context.update_events)?;
+    let event = verified.as_event().clone();
     let fips_published = match context
         .fips_pubsub
         .publish(
@@ -584,12 +599,13 @@ async fn process_fips_delivery(
     update_events: &UpdateEventCache,
     delivery: QueryEvent,
 ) {
-    let event = delivery.event.into_event();
-    if !is_control_event(&event, update_events)
-        || !event_is_admitted(pubsub_policy, &event, &delivery.source).await
+    let verified = delivery.event;
+    if !is_control_event(verified.as_event(), update_events)
+        || !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await
     {
         return;
     }
+    let event = verified.into_event();
     observe_policy_event(pubsub_policy, &event).await;
     ingest_into_fips_discovery(endpoint, &event).await;
     let inserted = match events.lock().await.insert(event.clone()) {
@@ -712,16 +728,21 @@ async fn fips_notification(
     subscription.recv().await
 }
 
-async fn event_is_admitted(
+async fn verified_event_is_admitted(
     policy: &Arc<Mutex<FipsPubsubPolicy>>,
-    event: &Event,
+    event: &VerifiedEvent,
     source: &EventSource,
 ) -> bool {
-    match policy.lock().await.check_event(event, source).await {
+    match policy
+        .lock()
+        .await
+        .check_verified_event(event, source)
+        .await
+    {
         Ok(PolicyDecision::Drop { reason }) => {
             tracing::debug!(
-                event_id = %event.id,
-                author = %event.pubkey,
+                event_id = %event.as_event().id,
+                author = %event.as_event().pubkey,
                 source = %source.id.as_str(),
                 %reason,
                 "dropped control pubsub event by author reputation"
@@ -732,7 +753,7 @@ async fn event_is_admitted(
         Err(error) => {
             tracing::debug!(
                 %error,
-                event_id = %event.id,
+                event_id = %event.as_event().id,
                 source = %source.id.as_str(),
                 "ignored control pubsub event rejected by shared policy"
             );
@@ -741,7 +762,7 @@ async fn event_is_admitted(
     }
 }
 
-async fn relay_notification(bridge: &mut Option<RelayBridge>) -> Option<(String, Event)> {
+async fn relay_notification(bridge: &mut Option<RelayBridge>) -> Option<(String, VerifiedEvent)> {
     let Some(bridge) = bridge.as_mut() else {
         return std::future::pending().await;
     };
@@ -749,7 +770,11 @@ async fn relay_notification(bridge: &mut Option<RelayBridge>) -> Option<(String,
         match bridge.notifications.recv().await {
             Ok(RelayPoolNotification::Event {
                 relay_url, event, ..
-            }) => return Some((relay_url.to_string(), (*event).clone())),
+            }) => {
+                if let Ok(event) = VerifiedEvent::try_from((*event).clone()) {
+                    return Some((relay_url.to_string(), event));
+                }
+            }
             Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
             Err(tokio::sync::broadcast::error::RecvError::Closed) => {
                 return std::future::pending().await;
