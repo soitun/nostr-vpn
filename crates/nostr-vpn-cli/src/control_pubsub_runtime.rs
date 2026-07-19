@@ -428,6 +428,8 @@ async fn run(
                     want_frames_received = delivery.want_frames_received,
                     want_frames_sent = delivery.want_frames_sent,
                     subscription_events_received = delivery.subscription_events_received,
+                    expired_wants = delivery.expired_wants,
+                    provider_cooldowns = delivery.provider_cooldowns,
                     tcp_receive_batches = delivery.tcp_receive_batches,
                     tcp_datagrams_received = delivery.tcp_datagrams_received,
                     tcp_datagrams_rejected = delivery.tcp_datagrams_rejected,
