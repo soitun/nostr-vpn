@@ -1901,9 +1901,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.11"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7256624419545fcdc2c0512810ee468b5a3097f1b05f06b576709f377f30947c"
+checksum = "e5a62804664e9d162db2ce87689b4d63b209d96a2dc759a745f69cb74b346d52"
 dependencies = [
  "base64 0.22.1",
  "bluer",
@@ -1945,9 +1945,9 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.4.11"
+version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0963c8e8ffa75b078bdd78c04ccf975f482a8d11bd6046382fc9cdc13716d773"
+checksum = "65ae356a3b866f9329c2d1794c8f1fcc3246d18bd36a4a71cb1702344d7cdd82"
 dependencies = [
  "fips-core",
 ]
@@ -3620,9 +3620,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.4.2"
+version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ceba67127fffcd91b50f2bef41095551d719f8f9486cb4d9e7048f6764d8ddab"
+checksum = "1bb92eb30b1994c5e2c2cacd310197d6c6553a85fbce76072b22114eab5af2c6"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -3713,7 +3713,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-app-core"
-version = "4.0.97"
+version = "4.0.98"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3746,7 +3746,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-core"
-version = "4.0.97"
+version = "4.0.98"
 dependencies = [
  "android-native-keyring-store",
  "anyhow",
@@ -3788,7 +3788,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-sim"
-version = "4.0.97"
+version = "4.0.98"
 dependencies = [
  "anyhow",
  "fips-core",
@@ -3814,7 +3814,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-web"
-version = "4.0.97"
+version = "4.0.98"
 dependencies = [
  "anyhow",
  "axum",
@@ -3835,7 +3835,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-vpn-wintun"
-version = "4.0.97"
+version = "4.0.98"
 dependencies = [
  "anyhow",
  "wintun",
@@ -3930,7 +3930,7 @@ dependencies = [
 
 [[package]]
 name = "nvpn"
-version = "4.0.97"
+version = "4.0.98"
 dependencies = [
  "anyhow",
  "arc-swap",

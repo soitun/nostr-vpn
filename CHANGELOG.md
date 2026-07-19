@@ -4,11 +4,41 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.0.98 - 2026-07-19
+
+### Added
+
+- Added a production topology regression that delivers an ordinary signed
+  join roster through explicit WSS seeds, a generic FIPS router, and a
+  zero-preconfigured physical guest.
+- Made LAN discovery an explicit persisted network setting while retaining
+  repeatable daemon flags for Ethernet interface and discovery scope.
+
 ### Changed
 
 - Integrated the existing StartOS package into the release gate and both
   release pipelines. Tagged releases now publish signed, manifest-validated
   x86_64 and aarch64 `.s9pk` artifacts alongside the native apps.
+- Use standard port-7368 Nostr pubsub as the sole FIPS peer/service
+  announcement path; public Nostr relays carry bounded signed events, never
+  FIPS packet records or WebRTC signaling envelopes.
+- Updated FIPS Core and Endpoint to 0.4.14 and `nostr-pubsub-fips` to 0.4.3
+  for routed WSS first contact, verified-event reuse, bounded observed-ID
+  caches, provider abuse cooldowns, reverse-session transit, and idle-work
+  fixes.
+
+### Fixed
+
+- Admit authenticated physical adjacencies while an ordinary device approval
+  is pending and accept authenticated in-FIPS WebRTC offers without a public
+  relay fallback.
+- Bound public-relay and FIPS retained replay, preserve already verified
+  control events across policy checks, and expose pubsub wire, TCP, and
+  provider-cooldown counters.
+- Stop repeated idle control-plane scans, disabled-host cleanup, duplicate
+  Linux address handling, and route-refresh feedback loops.
+- Fully stop LAN mDNS between aligned discovery windows, preserving periodic
+  local peer discovery while removing the persistent Android VPN wakeup loop.
 
 ## 4.0.97 - 2026-07-18
 
