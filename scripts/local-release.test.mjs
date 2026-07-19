@@ -508,6 +508,8 @@ test('renderReleaseNotes groups common app downloads before advanced files', () 
       'nostr-vpn-v0.3.23-linux-x64.deb',
       'nostr-vpn-v0.3.23-macos-arm64.app.tar.gz',
       'nostr-vpn-v0.3.23-macos-arm64.dmg',
+      'nostr-vpn-v0.3.23-startos-aarch64.s9pk',
+      'nostr-vpn-v0.3.23-startos-x86_64.s9pk',
       'nostr-vpn-v0.3.23-windows-x64-setup.exe',
       'nvpn-aarch64-apple-darwin.tar.gz',
       'nvpn-v0.3.23-aarch64-apple-darwin.tar.gz',
@@ -520,6 +522,13 @@ test('renderReleaseNotes groups common app downloads before advanced files', () 
   assert.match(notes, /### Most People Will Want[\s\S]*Nostr VPN for macOS \(Apple Silicon\)/)
   assert.match(notes, /### Most People Will Want[\s\S]*Nostr VPN for Linux \(AppImage\)/)
   assert.match(notes, /### Most People Will Want[\s\S]*Nostr VPN for Windows/)
+  assert.doesNotMatch(
+    notes.match(/### Most People Will Want[\s\S]*?(?=\n### )/)?.[0] ?? '',
+    /StartOS/,
+  )
+  assert.match(notes, /### StartOS Servers[\s\S]*Nostr VPN for StartOS \(x86_64\)/)
+  assert.match(notes, /### StartOS Servers[\s\S]*Nostr VPN for StartOS \(aarch64\)/)
+  assert.match(notes, /Server One and Server Pure use x86_64/)
   assert.match(notes, /### Command Line[\s\S]*macOS Apple Silicon CLI: \[nvpn-aarch64-apple-darwin\.tar\.gz\]\(assets\/nvpn-aarch64-apple-darwin\.tar\.gz\)/)
   assert.match(notes, /### Command Line[\s\S]*Linux x64 CLI: \[nvpn-x86_64-unknown-linux-musl\.tar\.gz\]\(assets\/nvpn-x86_64-unknown-linux-musl\.tar\.gz\)/)
   assert.match(notes, /### Other Files[\s\S]*Android arm64 AAB/)

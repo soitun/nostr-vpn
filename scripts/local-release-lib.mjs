@@ -408,12 +408,25 @@ function pushDownloadSections(lines, assetNames, assetBaseUrl = '') {
   pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for Android', [
     /^nostr-vpn-.*-android-arm64\.apk$/,
   ], assetBaseUrl)
-  pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for StartOS (x86_64)', [
+
+  const startosLines = []
+  pushAssetLine(startosLines, usedAssets, sortedNames, 'Nostr VPN for StartOS (x86_64)', [
     /^nostr-vpn-.*-startos-x86_64\.s9pk$/,
   ], assetBaseUrl)
-  pushAssetLine(lines, usedAssets, sortedNames, 'Nostr VPN for StartOS (aarch64)', [
+  pushAssetLine(startosLines, usedAssets, sortedNames, 'Nostr VPN for StartOS (aarch64)', [
     /^nostr-vpn-.*-startos-aarch64\.s9pk$/,
   ], assetBaseUrl)
+
+  if (startosLines.length > 0) {
+    lines.push(
+      '',
+      '### StartOS Servers',
+      '',
+      'Server One and Server Pure use x86_64; use aarch64 only for an ARM64 StartOS host.',
+      '',
+      ...startosLines,
+    )
+  }
 
   const cliLines = []
   const addCliAsset = (label, preferredPatterns, duplicatePatterns = preferredPatterns) => {
