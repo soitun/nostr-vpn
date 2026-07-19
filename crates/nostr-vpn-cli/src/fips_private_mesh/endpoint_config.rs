@@ -185,19 +185,19 @@ fn fips_endpoint_config_with_open_discovery_limit(
     config.node.session.pending_packets_per_dest = FIPS_ENDPOINT_PENDING_PACKETS_PER_DEST;
     config.node.rekey.after_secs = FIPS_ENDPOINT_REKEY_AFTER_SECS;
     config.dns.enabled = false;
-    // nvpn keeps public/open discovery available as a fallback, but it should
-    // be polite to public transit nodes when stale roster peers or cached
-    // adverts cannot be reached.
+    // Public/open discovery can route through authenticated transit nodes. Be
+    // polite to those nodes when stale roster peers or cached adverts cannot
+    // be reached.
     config.node.discovery.backoff_base_secs = FIPS_DISCOVERY_BACKOFF_BASE_SECS;
     config.node.discovery.backoff_max_secs = FIPS_DISCOVERY_BACKOFF_MAX_SECS;
     config.node.discovery.forward_min_interval_secs = FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS;
     let advertise_public_endpoint = transport
         .map(|transport| transport.advertise_public_endpoint)
         .unwrap_or(false);
-    // The "find peers over Nostr relays" toggle. When off we neither advertise
-    // nor stream adverts/DMs, and we keep the endpoint surface deterministic:
-    // static/bootstrap peers below are dialed directly without ambient LAN or
-    // same-host discovery side paths.
+    // The signed Nostr peer-advert toggle. Standard nostr-pubsub is the single
+    // relay provider; FIPS signs and ingests ordinary adverts but does not run
+    // a second embedded relay client. When off we neither advertise nor ingest
+    // peer adverts, while configured physical peers remain directly dialable.
     let nostr_discovery_enabled = transport
         .map(|transport| transport.nostr_discovery_enabled)
         .unwrap_or(true);
@@ -205,6 +205,7 @@ fn fips_endpoint_config_with_open_discovery_limit(
     let nostr_enabled = nostr_discovery_enabled && (transport.is_some() || !peers.is_empty());
     config.node.discovery.nostr.enabled = nostr_enabled;
     config.node.discovery.nostr.advertise = advertise_on_nostr;
+    config.node.discovery.nostr.peerfinding_source = NostrPeerfindingSource::External;
     // Open discovery by default (unless the user opts into configured-only
     // discovery) so we can FIPS-handshake with any nvpn node we see on relays,
     // not just configured roster peers. This is what lets us route app-mesh
@@ -653,6 +654,28 @@ mod endpoint_config_tests {
             panic!("expected one WebSocket transport");
         };
         assert_eq!(websocket.seed_urls, transport.websocket.seed_urls);
+    }
+
+    #[test]
+    fn endpoint_config_uses_external_nostr_peerfinding_provider() {
+        let endpoint_peers =
+            fips_endpoint_peers_from_mesh(&[test_peer()], Vec::new(), Vec::new());
+        let transport = test_transport(true, false);
+        let config = fips_endpoint_config_with_open_discovery_limit(
+            &endpoint_peers,
+            Some(&transport),
+            resolve_private_mesh_mtu(None, None, None),
+            NostrDiscoveryPolicy::Open,
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        );
+
+        assert!(config.node.discovery.nostr.enabled);
+        assert!(config.node.discovery.nostr.advertise);
+        assert_eq!(
+            config.node.discovery.nostr.peerfinding_source,
+            NostrPeerfindingSource::External,
+            "standard nostr-pubsub must be the sole peer-advert relay provider"
+        );
     }
 
     #[test]

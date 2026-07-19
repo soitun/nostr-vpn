@@ -6,6 +6,14 @@ fn linux_route_targets_require_ip_endpoint_bypass(
 }
 
 #[cfg(any(target_os = "linux", test))]
+fn linux_strict_exit_requested(route_targets: &[String], exit_node_leak_protection: bool) -> bool {
+    exit_node_leak_protection
+        && route_targets
+            .iter()
+            .any(|route| route == "0.0.0.0/0" || route == "::/0")
+}
+
+#[cfg(any(target_os = "linux", test))]
 fn linux_endpoint_bypass_hosts_unchanged(
     current_targets: &[String],
     desired_hosts: &[Ipv4Addr],
@@ -29,7 +37,7 @@ fn linux_control_only_network_intent(config: &FipsPrivateTunnelConfig) -> bool {
     config.route_targets.is_empty()
         && config.local_exit_forwarding_routes.is_empty()
         && !config.wireguard_exit.enabled
-        && !config.exit_node_leak_protection
+        && !linux_strict_exit_requested(&config.route_targets, config.exit_node_leak_protection)
 }
 
 #[cfg(target_os = "linux")]
@@ -49,8 +57,8 @@ impl FipsPrivateTunnelRuntime {
         let mut route_targets = config.route_targets.clone();
         let requested_ipv4_exit = route_targets.iter().any(|route| route == "0.0.0.0/0");
         let requested_ipv6_exit = route_targets.iter().any(|route| route == "::/0");
-        let requested_exit = requested_ipv4_exit || requested_ipv6_exit;
-        let strict_exit = config.exit_node_leak_protection && requested_exit;
+        let strict_exit =
+            linux_strict_exit_requested(&route_targets, config.exit_node_leak_protection);
         let original_route_targets_require_bypass =
             linux_route_targets_require_ip_endpoint_bypass(&route_targets);
         let mut peer_endpoint_hosts = Vec::new();

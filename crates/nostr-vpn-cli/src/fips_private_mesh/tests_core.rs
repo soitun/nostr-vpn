@@ -38,6 +38,7 @@
     use super::{BorrowedTunFd, TunPipelinePacket, raw_write_packet_to_tun};
     use super::{
         linux_endpoint_bypass_hosts_unchanged, linux_interface_state_matches_json,
+        linux_strict_exit_requested,
     };
     #[cfg(target_os = "linux")]
     use super::LINUX_VIRTIO_NET_HDR_LEN;
@@ -107,6 +108,27 @@
             &addresses,
             1150,
             Some(4096),
+        ));
+    }
+
+    #[test]
+    fn linux_leak_protection_is_strict_only_when_an_exit_is_requested() {
+        assert!(!linux_strict_exit_requested(&[], true));
+        assert!(!linux_strict_exit_requested(
+            &["10.0.0.0/8".to_string()],
+            true,
+        ));
+        assert!(linux_strict_exit_requested(
+            &["0.0.0.0/0".to_string()],
+            true,
+        ));
+        assert!(linux_strict_exit_requested(
+            &["::/0".to_string()],
+            true,
+        ));
+        assert!(!linux_strict_exit_requested(
+            &["0.0.0.0/0".to_string()],
+            false,
         ));
     }
 
