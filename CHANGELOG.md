@@ -16,6 +16,8 @@ All notable changes to this project are documented in this file.
   while removing only its host IPv6 address, route, DNS, and firewall state.
 - Install and restore the local authenticated DNS resolver on OpenRC Linux
   hosts as well as systemd-resolved and container environments.
+- Allow authenticated `.fips` ICMPv6 echo diagnostics while retaining the
+  host firewall's default-deny policy for other non-TCP overlay traffic.
 
 - Delay the first macOS automatic update check for ten seconds after startup
   so networking can settle, then retry failures after one minute instead of
