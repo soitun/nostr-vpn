@@ -307,7 +307,9 @@ impl NativeAppRuntime {
     }
 
     fn connect_vpn(&mut self) -> Result<()> {
-        if network_setup_required_for_config(&self.config) {
+        if network_setup_required_for_config(&self.config)
+            && self.config.pending_nostr_join_request.is_none()
+        {
             self.vpn_enabled = false;
             self.vpn_active = false;
             self.vpn_status = "Create or join a network first".to_string();
@@ -573,6 +575,8 @@ impl NativeAppRuntime {
     fn save_config(&mut self) -> Result<()> {
         self.config.ensure_defaults();
         maybe_autoconfigure_node(&mut self.config);
+        self.config
+            .ensure_pending_nostr_join_request(unix_timestamp())?;
         self.config.save(&self.config_path)
     }
 
@@ -580,6 +584,8 @@ impl NativeAppRuntime {
     fn save_config(&mut self) -> Result<()> {
         self.config.ensure_defaults();
         maybe_autoconfigure_node(&mut self.config);
+        self.config
+            .ensure_pending_nostr_join_request(unix_timestamp())?;
 
         if self.service_installed || self.service_running || self.daemon_running {
             return self.save_config_via_macos_service();
@@ -707,11 +713,8 @@ impl NativeAppRuntime {
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
-        let pending_join_request_changed = if config.networks.iter().any(|network| network.enabled) {
-            config.clear_pending_nostr_join_request()
-        } else {
-            config.ensure_pending_nostr_join_request(unix_timestamp())?
-        };
+        let pending_join_request_changed =
+            config.ensure_pending_nostr_join_request(unix_timestamp())?;
         if !config_exists || pending_join_request_changed {
             config.save(&self.config_path)?;
         }

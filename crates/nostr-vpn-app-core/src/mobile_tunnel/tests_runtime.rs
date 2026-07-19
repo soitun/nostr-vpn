@@ -757,7 +757,7 @@
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
                 let applied = guest.app_config.read().is_ok_and(|app| {
-                    app.pending_nostr_join_request.is_none()
+                    app.pending_nostr_join_request.is_some()
                         && app
                             .active_network_opt()
                             .is_some_and(|network| network.network_id == "wss-join-roster")

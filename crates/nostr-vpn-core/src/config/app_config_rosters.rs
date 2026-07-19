@@ -120,7 +120,8 @@ impl AppConfig {
             return Ok(true);
         }
 
-        let own_join_completed = own_pubkey.is_some() && own_in_shared_roster;
+        let own_join_completed =
+            own_pubkey.is_some() && !own_in_previous_roster && own_in_shared_roster;
         if own_join_completed {
             self.pending_nostr_join_request = None;
         }
@@ -212,6 +213,9 @@ impl AppConfig {
         }
         self.normalize_selected_exit_node();
         self.normalize_peer_aliases();
+        if own_join_completed {
+            self.ensure_pending_nostr_join_request(now)?;
+        }
         Ok(true)
     }
 

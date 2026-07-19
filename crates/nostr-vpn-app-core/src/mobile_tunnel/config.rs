@@ -173,6 +173,8 @@ pub(crate) struct MobileTunnelConfig {
     #[serde(default)]
     pub(crate) join_requests_enabled: bool,
     #[serde(default)]
+    pub(crate) device_approval_pending: bool,
+    #[serde(default)]
     pub(crate) pending_join_request_recipient: String,
     #[serde(default)]
     pub(crate) pending_join_invite_secret: String,
@@ -405,6 +407,7 @@ impl MobileTunnelConfig {
             magic_dns_server,
             wireguard_exit,
             join_requests_enabled: app.join_requests_enabled(),
+            device_approval_pending: app.pending_nostr_join_request.is_some(),
             pending_join_request_recipient,
             pending_join_invite_secret,
             pending_join_requested_at,

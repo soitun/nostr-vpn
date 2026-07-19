@@ -28,11 +28,8 @@ impl NativeAppRuntime {
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
-        let pending_join_request_changed = if config.networks.iter().any(|network| network.enabled) {
-            config.clear_pending_nostr_join_request()
-        } else {
-            config.ensure_pending_nostr_join_request(unix_timestamp())?
-        };
+        let pending_join_request_changed =
+            config.ensure_pending_nostr_join_request(unix_timestamp())?;
         if !config_exists
             || migrated_config_secrets
             || persist_identity_defaults
@@ -229,8 +226,6 @@ impl NativeAppRuntime {
             };
         let config_for_paid = (!config_unavailable).then_some(&self.config);
         let raw_port_mapping = daemon_state.map(|state| &state.port_mapping);
-        let has_enabled_network = !config_unavailable
-            && self.config.networks.iter().any(|network| network.enabled);
         let mut paid_route_market = self.paid_route_market_state(config_for_paid);
         if !config_unavailable && self.config.wallet_fiat_enabled {
             let _ = self.exchange_rate_service.refresh_if_due();
@@ -353,7 +348,7 @@ impl NativeAppRuntime {
                 )
                 .unwrap_or_default()
             },
-            join_request_qr_code_or_link: if config_unavailable || has_enabled_network {
+            join_request_qr_code_or_link: if config_unavailable {
                 String::new()
             } else {
                 own_join_request_qr_code_or_link(&self.config).unwrap_or_default()

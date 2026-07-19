@@ -18,6 +18,10 @@ pub struct QueuedJoinRoster {
     pub version: u8,
     pub recipient_npub: String,
     pub join_roster: JoinRosterControl,
+    #[serde(default)]
+    pub attempts: u32,
+    #[serde(default)]
+    pub last_attempt_at: u64,
 }
 
 pub fn join_roster_outbox_directory(config_path: &Path) -> PathBuf {
@@ -47,6 +51,8 @@ pub fn queue_join_roster(
         version: JOIN_ROSTER_OUTBOX_VERSION,
         recipient_npub: recipient_npub.clone(),
         join_roster: join_roster.clone(),
+        attempts: 0,
+        last_attempt_at: 0,
     };
     let directory = join_roster_outbox_directory(config_path);
     fs::create_dir_all(&directory)
@@ -67,6 +73,32 @@ pub fn queue_join_roster(
         return Err(error).with_context(|| format!("failed to queue {}", destination.display()));
     }
     Ok(destination)
+}
+
+pub fn record_join_roster_attempt(
+    path: &Path,
+    queued: &mut QueuedJoinRoster,
+    attempted_at: u64,
+) -> Result<()> {
+    queued.attempts = queued.attempts.saturating_add(1);
+    queued.last_attempt_at = attempted_at;
+    let bytes = serde_json::to_vec(queued).context("failed to encode queued join roster")?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("join-roster.json");
+    let temporary = parent.join(format!(
+        ".{file_name}-{}-{}.tmp",
+        std::process::id(),
+        queued.attempts
+    ));
+    write_private_file(&temporary, &bytes)?;
+    if let Err(error) = fs::rename(&temporary, path) {
+        let _ = fs::remove_file(&temporary);
+        return Err(error).with_context(|| format!("failed to update {}", path.display()));
+    }
+    Ok(())
 }
 
 pub fn load_join_rosters(config_path: &Path) -> Vec<(PathBuf, QueuedJoinRoster)> {
@@ -186,6 +218,13 @@ mod tests {
         assert_eq!(queued[0].1.join_roster.signed_roster, roster);
         assert_eq!(queued[0].1.join_roster.request_secret, "request-secret");
         assert_eq!(queued[0].1.recipient_npub, recipient);
+        assert_eq!(queued[0].1.attempts, 0);
+
+        let mut delivery = queued[0].1.clone();
+        record_join_roster_attempt(&path, &mut delivery, 123).expect("record send attempt");
+        let reloaded = load_join_rosters(&config_path);
+        assert_eq!(reloaded[0].1.attempts, 1);
+        assert_eq!(reloaded[0].1.last_attempt_at, 123);
 
         fs::remove_file(path).expect("remove queued roster");
         fs::remove_dir(join_roster_outbox_directory(&config_path)).expect("remove outbox");

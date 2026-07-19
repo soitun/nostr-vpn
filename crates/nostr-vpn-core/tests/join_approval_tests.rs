@@ -82,14 +82,19 @@ fn one_signed_roster_completes_the_pending_join() {
     assert_eq!(applied.request_pubkey, request_pubkey);
     assert_eq!(applied.signed_by_pubkey, signer.public_key().to_hex());
     assert_eq!(joiner.exit_node, signer.public_key().to_hex());
-    assert!(joiner.pending_nostr_join_request.is_none());
-    assert!(joiner.active_network_has_confirmed_local_identity());
-    assert!(
+    assert_ne!(
         joiner
-            .apply_nostr_join_roster(&roster, SIGNED_AT + 2)
-            .expect("duplicate is harmless")
-            .is_none()
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("next device approval request")
+            .request
+            .request_pubkey,
+        request_pubkey
     );
+    assert!(joiner.active_network_has_confirmed_local_identity());
+    joiner
+        .apply_nostr_join_roster(&roster, SIGNED_AT + 2)
+        .expect_err("consumed approval cannot be replayed");
 }
 
 #[test]
@@ -280,6 +285,7 @@ fn expired_pending_request_rejects_the_roster() {
     )
     .expect("create expiring request");
     joiner.pending_nostr_join_request = Some(PendingNostrJoinRequest {
+        version: 1,
         request: pending.request,
         request_private_key: pending.request_keys.secret_key().to_secret_hex(),
     });
@@ -311,7 +317,18 @@ fn durable_delivery_contains_only_the_recipient_and_join_roster_control() {
         .keys()
         .cloned()
         .collect::<Vec<_>>();
-    assert_eq!(keys, ["join_roster", "recipient_npub", "version"]);
+    assert_eq!(
+        keys,
+        [
+            "attempts",
+            "join_roster",
+            "last_attempt_at",
+            "recipient_npub",
+            "version"
+        ]
+    );
+    assert_eq!(value["attempts"], 0);
+    assert_eq!(value["last_attempt_at"], 0);
     assert_eq!(
         value["join_roster"]["request_secret"],
         roster.request_secret

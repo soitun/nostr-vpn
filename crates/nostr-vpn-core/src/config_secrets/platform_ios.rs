@@ -83,6 +83,27 @@ mod platform {
         Ok(())
     }
 
+    pub(super) fn recover_nostr_secret_for_public_key(
+        expected_public_key: &str,
+    ) -> Result<Option<String>> {
+        let candidates = legacy_secret_candidates(ConfigSecret::Nostr)?
+            .into_iter()
+            .map(|(_, value)| value)
+            .collect::<Vec<_>>();
+        let Some(matching) = super::select_nostr_secret_for_public_key(
+            expected_public_key,
+            candidates,
+        )? else {
+            return Ok(None);
+        };
+        migrate_legacy_secret(
+            &stable_account_name(ConfigSecret::Nostr),
+            ConfigSecret::Nostr,
+            &matching,
+        );
+        Ok(Some(matching))
+    }
+
     fn read_account(account: &str, kind: ConfigSecret) -> Result<Option<String>> {
         match get_generic_password(SERVICE, account) {
             Ok(bytes) => String::from_utf8(bytes)

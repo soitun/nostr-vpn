@@ -596,11 +596,6 @@ impl NativeAppRuntime {
     fn start_invite_broadcast(&mut self) -> Result<()> {
         self.refresh_lan_pairing();
         let announcement = self.build_lan_pairing_announcement()?;
-        if announcement.invite.trim().is_empty() {
-            return Err(anyhow!(
-                "nearby join request advertising is only available before this device has joined a network"
-            ));
-        }
         let expires_at = lan_pairing_deadline();
         self.ensure_lan_pairing_worker(announcement.clone())?;
         if let Some(worker) = self.lan_pairing_worker.as_ref() {
@@ -661,11 +656,7 @@ impl NativeAppRuntime {
 
     fn build_lan_pairing_announcement(&self) -> Result<LanPairingAnnouncement> {
         let own_npub = to_npub(&self.config.own_nostr_pubkey_hex()?);
-        let invite = if self.config.networks.iter().any(|network| network.enabled) {
-            String::new()
-        } else {
-            own_join_request_qr_code_or_link(&self.config).unwrap_or_default()
-        };
+        let invite = own_join_request_qr_code_or_link(&self.config)?;
         let endpoint = self
             .daemon_state
             .as_ref()

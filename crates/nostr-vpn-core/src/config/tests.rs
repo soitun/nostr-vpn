@@ -60,11 +60,18 @@ mod tests {
     }
 
     #[test]
-    fn successful_roster_join_clears_every_local_join_request() {
+    fn successful_roster_join_rotates_the_device_approval_request() {
         let mut config = AppConfig::generated_without_networks();
         config
             .ensure_pending_nostr_join_request(1_778_998_000)
             .expect("pending link request");
+        let prior_request_pubkey = config
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("pending link request")
+            .request
+            .request_pubkey
+            .clone();
         let own_pubkey = config.own_nostr_pubkey_hex().expect("own pubkey");
         let (_, admin_npub) = generate_nostr_identity();
         let admin_pubkey = normalize_nostr_pubkey(&admin_npub).expect("admin pubkey");
@@ -94,8 +101,94 @@ mod tests {
                 .expect("apply accepted roster")
         );
 
-        assert!(config.pending_nostr_join_request.is_none());
+        assert_ne!(
+            config
+                .pending_nostr_join_request
+                .as_ref()
+                .expect("rotated device approval request")
+                .request
+                .request_pubkey,
+            prior_request_pubkey
+        );
         assert!(config.active_network().outbound_join_request.is_none());
+    }
+
+    #[test]
+    fn invalid_legacy_device_approval_request_is_rotated() {
+        let mut config = AppConfig::generated_without_networks();
+        config
+            .ensure_pending_nostr_join_request(1_778_998_000)
+            .expect("pending link request");
+        let prior_request_pubkey = config
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("pending link request")
+            .request
+            .request_pubkey
+            .clone();
+        config
+            .pending_nostr_join_request
+            .as_mut()
+            .expect("pending link request")
+            .version = 0;
+
+        assert!(
+            config
+                .ensure_pending_nostr_join_request(1_778_998_100)
+                .expect("rotate invalid request")
+        );
+        let pending = config
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("replacement approval request");
+        assert_ne!(pending.request.request_pubkey, prior_request_pubkey);
+        pending
+            .validate_for_device(&config.own_nostr_pubkey_hex().expect("own pubkey"))
+            .expect("replacement request is valid");
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[test]
+    fn loading_a_legacy_device_approval_allows_startup_to_rotate_it() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-load-legacy-device-approval-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create config directory");
+        let path = dir.join("config.toml");
+        let mut config = AppConfig::generated_without_networks();
+        config
+            .ensure_pending_nostr_join_request(1_778_998_000)
+            .expect("pending link request");
+        config
+            .pending_nostr_join_request
+            .as_mut()
+            .expect("pending link request")
+            .version = 0;
+        std::fs::write(
+            &path,
+            config.plaintext_toml().expect("encode legacy config"),
+        )
+        .expect("write legacy config");
+
+        let mut loaded = AppConfig::load(&path).expect("load recoverable legacy config");
+        assert!(loaded.pending_nostr_join_request.is_none());
+        assert!(
+            loaded
+                .ensure_pending_nostr_join_request(1_778_998_100)
+                .expect("rotate legacy approval during startup")
+        );
+        loaded
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("replacement approval request")
+            .validate_for_device(&loaded.own_nostr_pubkey_hex().expect("own pubkey"))
+            .expect("replacement request is valid");
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

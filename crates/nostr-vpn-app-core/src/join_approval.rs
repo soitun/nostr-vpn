@@ -1,12 +1,11 @@
-use std::fs;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::config::{AppConfig, SharedNetworkRoster, normalize_nostr_pubkey};
 use nostr_vpn_core::fips_control::{JoinRosterControl, NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap;
-use nostr_vpn_core::join_delivery::load_join_rosters;
+use nostr_vpn_core::join_delivery::{load_join_rosters, record_join_roster_attempt};
 use nostr_vpn_core::join_requests::AppliedNostrJoinRoster;
 
 use crate::mobile_tunnel::{MobileTunnel, MobileTunnelConfig};
@@ -108,12 +107,12 @@ pub fn deliver_queued_join_rosters(config_path: &Path, timeout: Duration) -> Res
 
     let mut runtime_config = MobileTunnelConfig::from_app_with_config_path(&app, config_path)?;
     runtime_config.config_path.clear();
+    runtime_config.network_id.clear();
     runtime_config.advertised_endpoint.clear();
     runtime_config.listen_port = 0;
     runtime_config.route_targets.clear();
-    runtime_config.share_local_candidates = false;
-    runtime_config.stun_servers.clear();
-    runtime_config.webrtc_enabled = false;
+    runtime_config.connect_to_non_roster_fips_peers = true;
+    runtime_config.device_approval_pending = true;
     runtime_config.excluded_routes.clear();
     runtime_config.dns_servers.clear();
     runtime_config.magic_dns_server.clear();
@@ -123,11 +122,18 @@ pub fn deliver_queued_join_rosters(config_path: &Path, timeout: Duration) -> Res
     let runtime = MobileTunnel::start(&runtime_json)?;
 
     let mut delivered = 0;
-    for (path, delivery) in queued {
-        runtime.send_join_roster(&delivery.recipient_npub, &delivery.join_roster, timeout)?;
-        fs::remove_file(&path)
-            .with_context(|| format!("remove delivered join roster {}", path.display()))?;
-        delivered += 1;
+    for (path, mut delivery) in queued {
+        let result =
+            runtime.send_join_roster(&delivery.recipient_npub, &delivery.join_roster, timeout);
+        let attempted_at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        record_join_roster_attempt(&path, &mut delivery, attempted_at)?;
+        if result.is_ok() {
+            delivered += 1;
+        }
+        result?;
     }
     Ok(delivered)
 }
@@ -228,9 +234,52 @@ mod tests {
             applied.signed_by_pubkey,
             admin.own_nostr_pubkey_hex().expect("admin pubkey")
         );
-        assert!(joiner.pending_nostr_join_request.is_none());
+        let next_request = joiner
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("next join request remains available");
+        assert_ne!(next_request.request.request_pubkey, request_pubkey);
         assert_eq!(joiner.networks.len(), 1);
         assert_eq!(joiner.exit_node, applied.signed_by_pubkey);
+    }
+
+    #[test]
+    fn joined_device_can_accept_another_network() {
+        let mut joiner = pending_joiner();
+        let first_bootstrap = pending_bootstrap(&joiner);
+        let (first_admin, first_network_id) = approval_admin();
+        let first = prepare_join_approval(
+            &first_admin,
+            &first_network_id,
+            &first_bootstrap,
+            REQUESTED_AT + 10,
+        )
+        .expect("prepare first network");
+        apply_join_roster(&mut joiner, &first.join_roster, REQUESTED_AT + 11)
+            .expect("apply first network")
+            .expect("first network applied");
+
+        joiner
+            .ensure_pending_nostr_join_request(REQUESTED_AT + 12)
+            .expect("request another network");
+        let second_bootstrap = pending_bootstrap(&joiner);
+        let (mut second_admin, second_network_id) = approval_admin();
+        second_admin.networks[0].network_id = "second-network".to_string();
+        let second = prepare_join_approval(
+            &second_admin,
+            &second_network_id,
+            &second_bootstrap,
+            REQUESTED_AT + 20,
+        )
+        .expect("prepare second network");
+
+        apply_join_roster(&mut joiner, &second.join_roster, REQUESTED_AT + 21)
+            .expect("apply second network")
+            .expect("second network applied");
+
+        assert_eq!(joiner.networks.len(), 2);
+        assert_eq!(joiner.active_network().network_id, "second-network");
+        assert!(joiner.pending_nostr_join_request.is_some());
     }
 
     #[test]

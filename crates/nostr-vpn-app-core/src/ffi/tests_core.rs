@@ -328,6 +328,11 @@
             name: "Home".to_string(),
         });
         let network_id = runtime.config.networks[0].id.clone();
+        runtime.config.clear_pending_nostr_join_request();
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("persist completed prior join");
 
         runtime.dispatch(NativeAppAction::RemoveNetwork { network_id });
 
@@ -336,10 +341,16 @@
         assert!(state.networks.is_empty());
         assert!(state.network_id.is_empty());
         assert!(state.active_network_invite.is_empty());
+        assert!(state.join_request_qr_code_or_link.starts_with("nvpn://join-request/"));
         assert_eq!(state.expected_peer_count, 0);
+
+        runtime.dispatch(NativeAppAction::StartInviteBroadcast);
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(runtime.state().invite_broadcast_active);
 
         let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
         assert!(saved.networks.is_empty());
+        assert!(saved.pending_nostr_join_request.is_some());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -513,11 +524,27 @@
     }
 
     #[test]
-    fn connect_vpn_requires_created_or_joined_network() {
+    fn connect_vpn_allows_a_pending_device_approval_without_a_network() {
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
+
+        runtime.dispatch(NativeAppAction::ConnectVpn);
+        let state = runtime.state();
+
+        assert!(state.error.is_empty(), "{}", state.error);
+        assert!(state.vpn_enabled);
+        assert!(state.vpn_active);
+    }
+
+    #[test]
+    fn connect_vpn_requires_a_network_or_pending_device_approval() {
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config.clear_pending_nostr_join_request();
 
         runtime.dispatch(NativeAppAction::ConnectVpn);
         let state = runtime.state();

@@ -49,8 +49,11 @@ extension AppModel {
         }
         tunnelStateRefreshInFlight = true
         Task { [weak self] in
-            let runtimeJson = await self?.vpnController.runtimeStateJson()
+            // Approval completion is transactional state. Read it before the
+            // observational runtime snapshot so a slow snapshot cannot leave
+            // the UI displaying a stale QR after the tunnel already joined.
             let appConfigToml = await self?.vpnController.takeAppConfigToml()
+            let runtimeJson = await self?.vpnController.runtimeStateJson()
             await MainActor.run {
                 guard let self else {
                     return

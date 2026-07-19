@@ -315,8 +315,13 @@
             .find(|network| network.id == admin_network_id)
             .expect("admin network");
         assert!(imported.inbound_join_requests.is_empty());
-        assert!(imported.join_request_qr_code_or_link.is_empty());
-        assert!(admin.state().join_request_qr_code_or_link.is_empty());
+        assert!(imported
+            .join_request_qr_code_or_link
+            .starts_with("nvpn://join-request/"));
+        assert!(admin
+            .state()
+            .join_request_qr_code_or_link
+            .starts_with("nvpn://join-request/"));
 
         assert!(
             joiner
@@ -327,11 +332,11 @@
             "joiner should apply the accepted network"
         );
         joiner.save_config().expect("persist joined config");
-        assert!(joiner.config.pending_nostr_join_request.is_none());
+        assert!(joiner.config.pending_nostr_join_request.is_some());
         assert_eq!(joiner.config.active_network().network_id, "8d4f34f5425bc50e");
         assert!(joiner.config.active_network_has_confirmed_local_identity());
         let persisted_joiner = AppConfig::load(&joiner.config_path).expect("reload joined iPhone");
-        assert!(persisted_joiner.pending_nostr_join_request.is_none());
+        assert!(persisted_joiner.pending_nostr_join_request.is_some());
         assert_eq!(
             persisted_joiner.active_network().network_id,
             "8d4f34f5425bc50e"
@@ -679,7 +684,7 @@ exit 0
     }
 
     #[test]
-    fn joined_device_does_not_advertise_nearby_join_request() {
+    fn joined_device_keeps_qr_and_advertises_nearby_join_request() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -694,16 +699,16 @@ exit 0
         runtime.config_path = dir.join("config.toml");
         let network_id = create_test_network(&mut runtime, "Home");
 
+        let state = runtime.state();
+        assert!(state.join_request_qr_code_or_link.starts_with("nvpn://join-request/"));
+        assert!(state.networks[0]
+            .join_request_qr_code_or_link
+            .starts_with("nvpn://join-request/"));
+
         runtime.dispatch(NativeAppAction::StartInviteBroadcast);
 
-        assert!(
-            runtime
-                .last_error
-                .contains("nearby join request advertising is only available"),
-            "{}",
-            runtime.last_error
-        );
-        assert!(!runtime.state().invite_broadcast_active);
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert!(runtime.state().invite_broadcast_active);
         assert_eq!(runtime.config.networks[0].id, network_id);
 
         let _ = fs::remove_dir_all(&dir);

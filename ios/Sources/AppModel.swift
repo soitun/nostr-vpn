@@ -77,6 +77,11 @@ final class AppModel: ObservableObject {
         }
         let launchAutomationHandled = runLaunchAutomationIfRequested()
         if !launchAutomationHandled {
+            // A running unjoined tunnel may already hold a completed approval
+            // that the app has not copied back yet. Do not restart it from the
+            // stale QR-side config on every UI-process launch; the sidecar poll
+            // below consumes the completed config first. A disconnected tunnel
+            // is still started normally.
             ensureAutoconnectPacketTunnel(reason: "startup")
         }
     }
@@ -112,7 +117,10 @@ final class AppModel: ObservableObject {
             "dispatch action=\(actionType) error=\(!state.error.isEmpty) vpn=\(state.vpnEnabled)/\(state.vpnActive) network=\(activeNetwork?.id ?? "nil")"
         )
         if state.error.isEmpty && actionRequiresPacketTunnelConfigSync(actionType) {
-            schedulePacketTunnelConfigSync(reason: actionType)
+            let force = actionType == "remove_network"
+                && activeNetwork == nil
+                && !state.joinRequestQrCodeOrLink.isEmpty
+            schedulePacketTunnelConfigSync(reason: actionType, force: force)
         }
     }
 
@@ -134,7 +142,8 @@ final class AppModel: ObservableObject {
     }
 
     private func ensureAutoconnectPacketTunnel(reason: String) {
-        guard state.autoconnect, activeNetwork != nil else {
+        let canReceiveDeviceApproval = !state.joinRequestQrCodeOrLink.isEmpty
+        guard state.autoconnect, activeNetwork != nil || canReceiveDeviceApproval else {
             return
         }
         guard UserDefaults.standard.bool(forKey: Self.vpnDisclosureAcceptedKey) else {
@@ -225,27 +234,31 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func schedulePacketTunnelConfigSync(reason: String) {
+    private func schedulePacketTunnelConfigSync(reason: String, force: Bool = false) {
         guard !fixtureMode else {
             return
         }
-        guard state.vpnEnabled || state.vpnActive else {
+        guard !force || UserDefaults.standard.bool(forKey: Self.vpnDisclosureAcceptedKey) else {
+            debugLog("PacketTunnel config sync skipped reason=\(reason) disclosure pending")
+            return
+        }
+        guard force || state.vpnEnabled || state.vpnActive else {
             debugLog("PacketTunnel config sync skipped reason=\(reason) vpn off")
             return
         }
         tunnelConfigSyncTask?.cancel()
         tunnelConfigSyncTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: 250_000_000)
-            await self?.syncPacketTunnelConfig(reason: reason)
+            await self?.syncPacketTunnelConfig(reason: reason, force: force)
         }
     }
 
-    private func syncPacketTunnelConfig(reason: String) async {
+    private func syncPacketTunnelConfig(reason: String, force: Bool) async {
         guard let core else {
             statusMessage = "Native core unavailable"
             return
         }
-        guard state.vpnEnabled || state.vpnActive else {
+        guard force || state.vpnEnabled || state.vpnActive else {
             debugLog("PacketTunnel config sync aborted reason=\(reason) vpn off")
             return
         }
@@ -283,7 +296,9 @@ final class AppModel: ObservableObject {
         switch type {
         case "import_network_invite",
              "import_join_request",
+             "add_network",
              "manual_add_network",
+             "remove_network",
              "set_network_enabled",
              "set_network_mesh_id",
              "add_participant",

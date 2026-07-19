@@ -197,7 +197,7 @@
         assert!(updated.is_some());
         assert!(dirty.load(Ordering::Relaxed));
         let app = app.read().expect("app config");
-        assert!(app.pending_nostr_join_request.is_none());
+        assert!(app.pending_nostr_join_request.is_some());
         assert_eq!(app.active_network().network_id, "mobile-mesh");
     }
 

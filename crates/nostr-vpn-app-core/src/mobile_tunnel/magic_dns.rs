@@ -308,6 +308,7 @@ fn empty_config() -> MobileTunnelConfig {
         magic_dns_server: String::new(),
         wireguard_exit: None,
         join_requests_enabled: false,
+        device_approval_pending: false,
         pending_join_request_recipient: String::new(),
         pending_join_invite_secret: String::new(),
         pending_join_requested_at: 0,

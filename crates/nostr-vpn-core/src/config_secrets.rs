@@ -7,7 +7,7 @@ use nostr_sdk::prelude::Keys;
 use sha2::{Digest as _, Sha256};
 
 use crate::config::{AppConfig, normalize_nostr_pubkey};
-use crate::join_requests::PendingNostrJoinRequest;
+use crate::join_requests::{PENDING_NOSTR_JOIN_REQUEST_VERSION, PendingNostrJoinRequest};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SecretPersistence {
@@ -215,8 +215,15 @@ fn hydrate_config_secret_fields(path: &Path, config: &mut AppConfig) -> Result<(
     }
 
     validate_nostr_secret_matches_public_key(path, config)?;
-    if let Some(pending) = &config.pending_nostr_join_request {
-        pending.validate_for_device(&config.own_nostr_pubkey_hex()?)?;
+    let invalid_pending = if let Some(pending) = &config.pending_nostr_join_request {
+        pending
+            .validate_for_device(&config.own_nostr_pubkey_hex()?)
+            .is_err()
+    } else {
+        false
+    };
+    if invalid_pending {
+        config.pending_nostr_join_request = None;
     }
     Ok(())
 }
@@ -225,6 +232,10 @@ fn hydrate_pending_join_request(path: &Path, config: &mut AppConfig) -> Result<(
     let Some(redacted) = config.pending_nostr_join_request.as_ref() else {
         return Ok(());
     };
+    if redacted.version != PENDING_NOSTR_JOIN_REQUEST_VERSION {
+        config.pending_nostr_join_request = None;
+        return Ok(());
+    }
     let secret_redacted = is_redacted_secret(&redacted.request.request_secret);
     let key_redacted = is_redacted_secret(&redacted.request_private_key);
     match (secret_redacted, key_redacted) {
@@ -285,7 +296,7 @@ fn persist_pending_join_request(path: &Path, config: &mut AppConfig) -> Result<(
     Ok(())
 }
 
-fn validate_nostr_secret_matches_public_key(path: &Path, config: &AppConfig) -> Result<()> {
+fn validate_nostr_secret_matches_public_key(path: &Path, config: &mut AppConfig) -> Result<()> {
     let public_key = match normalize_nostr_pubkey(&config.nostr.public_key) {
         Ok(public_key) => public_key,
         Err(_) => return Ok(()),
@@ -302,12 +313,58 @@ fn validate_nostr_secret_matches_public_key(path: &Path, config: &AppConfig) -> 
     })?;
     let derived_public_key = keys.public_key().to_hex();
     if derived_public_key != public_key {
+        #[cfg(target_os = "ios")]
+        if let Some(recovered) = platform::recover_nostr_secret_for_public_key(&public_key)? {
+            config.nostr.secret_key = recovered;
+            return Ok(());
+        }
+        #[cfg(target_os = "ios")]
+        if adopt_stored_nostr_identity_for_unjoined_config(config, &derived_public_key) {
+            return Ok(());
+        }
         return Err(anyhow!(
             "config {} has mismatched Nostr identity: secret key derives to a different public key than nostr.public_key; refusing to run with split identity",
             path.display()
         ));
     }
     Ok(())
+}
+
+#[cfg(any(target_os = "ios", test))]
+fn adopt_stored_nostr_identity_for_unjoined_config(
+    config: &mut AppConfig,
+    stored_public_key: &str,
+) -> bool {
+    if !config.networks.is_empty() {
+        return false;
+    }
+    config.nostr.public_key = stored_public_key.to_string();
+    config.pending_nostr_join_request = None;
+    true
+}
+
+#[cfg(any(target_os = "ios", test))]
+fn select_nostr_secret_for_public_key(
+    expected_public_key: &str,
+    candidates: impl IntoIterator<Item = String>,
+) -> Result<Option<String>> {
+    let expected_public_key = normalize_nostr_pubkey(expected_public_key)?;
+    let mut matches = candidates
+        .into_iter()
+        .filter(|candidate| {
+            Keys::parse(candidate)
+                .is_ok_and(|keys| keys.public_key().to_hex() == expected_public_key)
+        })
+        .collect::<Vec<_>>();
+    matches.sort();
+    matches.dedup();
+    match matches.as_slice() {
+        [] => Ok(None),
+        [matching] => Ok(Some(matching.clone())),
+        _ => Err(anyhow!(
+            "multiple stored Nostr secrets match the configured public key"
+        )),
+    }
 }
 
 fn persist_field(path: &Path, kind: ConfigSecret, value: &mut String) -> Result<()> {

@@ -74,6 +74,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         Instant::now() - Duration::from_secs(PAID_EXIT_SESSION_OPEN_RETRY_SECS);
     let mut last_recent_peer_refresh_signature = None;
     let mut last_recent_peer_cache_persisted_at = 0;
+    let mut join_approval_runtime = None;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -153,10 +154,13 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         join_request_sends: &mut fips_join_request_sends,
                     })
                     .await;
-                    if let Some(runtime) = fips_tunnel_runtime.as_mut() {
-                        send_queued_join_rosters_once(runtime, &app, &config_path).await;
-                    }
                 }
+                send_queued_join_rosters_once(
+                    &mut join_approval_runtime,
+                    &app,
+                    &config_path,
+                )
+                .await;
                 if !vpn_active {
                     continue;
                 }

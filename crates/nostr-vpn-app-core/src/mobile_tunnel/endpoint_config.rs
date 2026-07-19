@@ -224,6 +224,7 @@ pub(crate) fn fips_endpoint_config(scope: &str, mobile: &MobileTunnelConfig) -> 
     let join_request_pending = mobile_join_request_pending(mobile);
     let include_non_roster_transit = mobile.connect_to_non_roster_fips_peers
         || mobile.join_requests_enabled
+        || mobile.device_approval_pending
         || join_request_pending;
     let nostr_enabled = mobile_nostr_enabled(mobile);
     config.node.discovery.nostr.enabled = nostr_enabled;
@@ -319,6 +320,7 @@ fn mobile_join_request_pending(mobile: &MobileTunnelConfig) -> bool {
 fn mobile_nostr_enabled(mobile: &MobileTunnelConfig) -> bool {
     mobile.nostr_discovery_enabled
         && (mobile.join_requests_enabled
+            || mobile.device_approval_pending
             || mobile_join_request_pending(mobile)
             || !mobile.peers.is_empty()
             || !mobile.peer_hints.is_empty())
@@ -637,6 +639,24 @@ mod endpoint_config_tests {
         assert!(!config.node.discovery.nostr.enabled);
         assert!(config.transports.webrtc.is_empty());
         assert!(config.transports.websocket.is_empty());
+    }
+
+    #[test]
+    fn pending_device_approval_opens_mobile_discovery_without_a_network() {
+        let mut app = AppConfig::generated_without_networks();
+        app.ensure_pending_nostr_join_request(1_778_998_000)
+            .expect("pending device approval");
+        let mobile = MobileTunnelConfig::from_app(&app).expect("mobile config");
+
+        let config = fips_endpoint_config("nostr-vpn:pending", &mobile);
+
+        assert!(config.node.discovery.nostr.enabled);
+        assert!(config.node.discovery.nostr.advertise);
+        assert_eq!(
+            config.node.discovery.nostr.policy,
+            NostrDiscoveryPolicy::Open
+        );
+        assert!(config.node.discovery.nostr.open_discovery_max_pending > 0);
     }
 
     #[test]

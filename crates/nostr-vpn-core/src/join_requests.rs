@@ -19,6 +19,7 @@ pub const FIPS_JOIN_REQUEST_RETRY_SECS: u64 = 10;
 pub const NOSTR_VPN_JOIN_REQUEST_TYPE: &str = "nostr-vpn.join-request";
 pub const MAX_NOSTR_JOIN_ROSTER_AGE_SECS: u64 = 7 * 24 * 60 * 60;
 pub const MAX_NOSTR_JOIN_ROSTER_FUTURE_SECS: u64 = 10 * 60;
+pub(crate) const PENDING_NOSTR_JOIN_REQUEST_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppliedNostrJoinRoster {
@@ -34,6 +35,8 @@ pub struct AppliedNostrJoinRoster {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PendingNostrJoinRequest {
+    #[serde(default)]
+    pub version: u8,
     pub request: NostrIdentityDeviceApprovalRequest,
     pub request_private_key: String,
 }
@@ -51,6 +54,11 @@ impl PendingNostrJoinRequest {
     }
 
     pub fn validate_for_device(&self, device_app_key_pubkey: &str) -> Result<()> {
+        if self.version != PENDING_NOSTR_JOIN_REQUEST_VERSION {
+            return Err(anyhow!(
+                "pending join request has an unsupported local version"
+            ));
+        }
         let expected_device = normalize_nostr_pubkey(device_app_key_pubkey)?;
         let bootstrap = nostr_identity_device_approval_bootstrap(&self.request)
             .map_err(|error| anyhow!("pending join request is invalid: {error}"))?;
@@ -93,11 +101,7 @@ impl AppConfig {
         let device_keys = self.nostr_keys()?;
         let device_pubkey = device_keys.public_key().to_hex();
         if let Some(pending) = &self.pending_nostr_join_request {
-            let relays = nostr_identity_device_approval_request_relays(&pending.request).map_err(
-                |error| anyhow!("pending join request approval relay is invalid: {error}"),
-            )?;
-            if relays.is_empty() {
-                pending.validate_for_device(&device_pubkey)?;
+            if pending.validate_for_device(&device_pubkey).is_ok() {
                 return Ok(false);
             }
             self.pending_nostr_join_request = None;
@@ -121,6 +125,7 @@ impl AppConfig {
         )
         .map_err(|error| anyhow!("failed to create pending join request: {error}"))?;
         let pending = PendingNostrJoinRequest {
+            version: PENDING_NOSTR_JOIN_REQUEST_VERSION,
             request: local.request,
             request_private_key: local.request_keys.secret_key().to_secret_hex(),
         };
@@ -176,7 +181,8 @@ impl AppConfig {
             return Err(anyhow!("signed join roster signer is not a roster admin"));
         }
 
-        let (updated, applied) = self.stage_signed_join_roster(signed_roster, &signer, now)?;
+        let (mut updated, applied) = self.stage_signed_join_roster(signed_roster, &signer, now)?;
+        updated.ensure_pending_nostr_join_request(now)?;
         *self = updated;
         Ok(Some(applied))
     }
@@ -213,11 +219,6 @@ impl AppConfig {
             }
             network_id
         } else {
-            if updated.networks.iter().any(|network| network.enabled) {
-                return Err(anyhow!(
-                    "signed join roster targets a different active network"
-                ));
-            }
             let entry_id = updated.add_network(if roster.network_name.trim().is_empty() {
                 "Network"
             } else {
