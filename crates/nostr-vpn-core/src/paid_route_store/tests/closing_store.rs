@@ -776,3 +776,26 @@ fn unreadable_paid_route_store_is_discarded() {
 
     assert_eq!(store, PaidRouteStore::default());
 }
+
+#[test]
+fn paid_route_store_without_seller_tunnel_map_keeps_existing_state() {
+    let scratch = ScratchDir::new("missing-seller-tunnel-map");
+    let store_path = scratch.path().join("paid-routes.json");
+    let mut stored = PaidRouteStore::default();
+    assert!(stored.set_default_mint("https://mint.example"));
+    let mut encoded = serde_json::to_value(stored).expect("encode store");
+    encoded
+        .as_object_mut()
+        .expect("store object")
+        .remove("seller_session_tunnel_ips");
+    fs::write(
+        &store_path,
+        serde_json::to_vec_pretty(&encoded).expect("encode fixture"),
+    )
+    .expect("write fixture");
+
+    let loaded = load_paid_route_store(&store_path).expect("load existing store");
+
+    assert_eq!(loaded.wallet.default_mint, "https://mint.example");
+    assert!(loaded.seller_session_tunnel_ips.is_empty());
+}

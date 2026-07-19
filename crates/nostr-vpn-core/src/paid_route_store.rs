@@ -49,6 +49,7 @@ pub struct PaidRouteStore {
     pub sessions: BTreeMap<String, PaidRouteSessionRecord>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub buyer_session_admissions: BTreeMap<String, u64>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub seller_session_tunnel_ips: BTreeMap<String, String>,
 }
 
