@@ -199,6 +199,29 @@ pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_take_app_config_toml(
     }
 }
 
+/// Acknowledges that the containing app durably persisted the exact config
+/// returned by `nostr_vpn_mobile_tunnel_take_app_config_toml`.
+///
+/// # Safety
+///
+/// `handle` must be a live mobile tunnel handle and `expected_toml` must be a
+/// valid NUL-terminated C string.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn nostr_vpn_mobile_tunnel_ack_app_config_toml(
+    handle: *const NvpnMobileTunnelHandle,
+    expected_toml: *const c_char,
+) -> bool {
+    if handle.is_null() {
+        return false;
+    }
+    let tunnel = unsafe { &*handle };
+    let expected_toml = c_string_lossy(expected_toml);
+    tunnel
+        .tunnel
+        .acknowledge_app_config_toml(&expected_toml)
+        .unwrap_or(false)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn nostr_vpn_mobile_tunnel_new(
     config_json: *const c_char,

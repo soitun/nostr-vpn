@@ -563,27 +563,16 @@ impl MobileTunnel {
     }
 
     pub(crate) fn take_app_config_toml(&self) -> Result<String> {
-        if !self.app_config_dirty.swap(false, Ordering::Relaxed) {
-            return Ok(String::new());
-        }
-        let app = self
-            .app_config
-            .read()
-            .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
-        let config_path = self
-            .config
-            .read()
-            .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
-            .config_path
-            .clone();
-        let config_path = non_empty_path(&config_path).unwrap_or_else(|| PathBuf::from(""));
-        match persisted_app_config_toml(&app, &config_path) {
-            Ok(toml) => Ok(toml),
-            Err(error) => {
-                self.app_config_dirty.store(true, Ordering::Relaxed);
-                Err(error)
-            }
-        }
+        pending_app_config_toml(&self.app_config, &self.config, &self.app_config_dirty)
+    }
+
+    pub(crate) fn acknowledge_app_config_toml(&self, expected_toml: &str) -> Result<bool> {
+        acknowledge_pending_app_config_toml(
+            &self.app_config,
+            &self.config,
+            &self.app_config_dirty,
+            expected_toml,
+        )
     }
 
     pub(crate) fn send_join_roster(
@@ -664,6 +653,74 @@ struct MobileTunnelStarted {
     wg_upstream: Option<WgUpstreamRuntime>,
     #[cfg(target_os = "android")]
     wg_upstream_socket_fd: c_int,
+}
+
+#[cfg(test)]
+impl MobileTunnelStarted {
+    fn take_app_config_toml(&self) -> Result<String> {
+        pending_app_config_toml(&self.app_config, &self.config, &self.app_config_dirty)
+    }
+
+    fn acknowledge_app_config_toml(&self, expected_toml: &str) -> Result<bool> {
+        acknowledge_pending_app_config_toml(
+            &self.app_config,
+            &self.config,
+            &self.app_config_dirty,
+            expected_toml,
+        )
+    }
+}
+
+fn pending_app_config_toml(
+    app_config: &Arc<RwLock<AppConfig>>,
+    config: &Arc<RwLock<MobileTunnelConfig>>,
+    app_config_dirty: &AtomicBool,
+) -> Result<String> {
+    if !app_config_dirty.load(Ordering::Acquire) {
+        return Ok(String::new());
+    }
+    let app = app_config
+        .read()
+        .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+    let config_path = config
+        .read()
+        .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
+        .config_path
+        .clone();
+    let config_path = non_empty_path(&config_path).unwrap_or_else(|| PathBuf::from(""));
+    persisted_app_config_toml(&app, &config_path)
+}
+
+fn acknowledge_pending_app_config_toml(
+    app_config: &Arc<RwLock<AppConfig>>,
+    config: &Arc<RwLock<MobileTunnelConfig>>,
+    app_config_dirty: &AtomicBool,
+    expected_toml: &str,
+) -> Result<bool> {
+    if !app_config_dirty.load(Ordering::Acquire) {
+        return Ok(false);
+    }
+    // Hold the read locks through the acknowledgement so a newer roster
+    // cannot be applied between comparing the snapshot and clearing dirty.
+    let app = app_config
+        .read()
+        .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+    let config_path = config
+        .read()
+        .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
+        .config_path
+        .clone();
+    let config_path = non_empty_path(&config_path).unwrap_or_else(|| PathBuf::from(""));
+    let current_toml = persisted_app_config_toml(&app, &config_path)?;
+    let expected: toml::Value =
+        toml::from_str(expected_toml).context("failed to decode acknowledged mobile app config")?;
+    let current: toml::Value =
+        toml::from_str(&current_toml).context("failed to decode current mobile app config")?;
+    if current != expected {
+        return Ok(false);
+    }
+    app_config_dirty.store(false, Ordering::Release);
+    Ok(true)
 }
 
 impl Drop for MobileTunnel {

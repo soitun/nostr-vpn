@@ -15,6 +15,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
     private let tunnelCondition = NSCondition()
     private let appMessageSnapshotLock = NSLock()
     private var runtimeStateSnapshot = Data()
+    private var appConfigSnapshot = Data()
 
     override func startTunnel(
         options: [String: NSObject]?,
@@ -201,6 +202,44 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             completionHandler?(chunk)
         case "runtimeState":
             completionHandler?(runtimeStateData())
+        case "appConfigBegin":
+            completionHandler?(String(appConfigSnapshotData().count).data(using: .utf8))
+        case let chunkRequest where chunkRequest.hasPrefix("appConfigChunk:"):
+            let offsetText = chunkRequest.dropFirst("appConfigChunk:".count)
+            guard let offset = Int(offsetText), offset >= 0 else {
+                completionHandler?(nil)
+                return
+            }
+            appMessageSnapshotLock.lock()
+            let end = min(appConfigSnapshot.count, offset + Self.appMessageChunkSize)
+            let chunk = offset <= end && offset < appConfigSnapshot.count
+                ? appConfigSnapshot.subdata(in: offset..<end)
+                : Data()
+            appMessageSnapshotLock.unlock()
+            completionHandler?(chunk)
+        case "appConfigCommit":
+            appMessageSnapshotLock.lock()
+            let snapshot = appConfigSnapshot
+            appMessageSnapshotLock.unlock()
+            guard let toml = String(data: snapshot, encoding: .utf8) else {
+                completionHandler?(nil)
+                return
+            }
+            let acknowledged = withTunnelHandle { handle in
+                toml.withCString { expectedToml in
+                    nostr_vpn_mobile_tunnel_ack_app_config_toml(handle, expectedToml)
+                }
+            }
+            guard let acknowledged else {
+                completionHandler?(nil)
+                return
+            }
+            appMessageSnapshotLock.lock()
+            if appConfigSnapshot == snapshot {
+                appConfigSnapshot.removeAll(keepingCapacity: false)
+            }
+            appMessageSnapshotLock.unlock()
+            completionHandler?((acknowledged ? "ok" : "stale").data(using: .utf8))
         case "takeAppConfig":
             let toml = withTunnelHandle { handle in
                 consumeCString(nostr_vpn_mobile_tunnel_take_app_config_toml(handle))
@@ -216,6 +255,29 @@ final class PacketTunnelProvider: NEPacketTunnelProvider {
             consumeCString(nostr_vpn_mobile_tunnel_runtime_state_json(handle))
         } ?? #"{"error":"mobile tunnel stopped"}"#
         return json.data(using: .utf8) ?? Data()
+    }
+
+    private func appConfigSnapshotData() -> Data {
+        appMessageSnapshotLock.lock()
+        if !appConfigSnapshot.isEmpty {
+            let snapshot = appConfigSnapshot
+            appMessageSnapshotLock.unlock()
+            return snapshot
+        }
+        appMessageSnapshotLock.unlock()
+
+        let toml = withTunnelHandle { handle in
+            consumeCString(nostr_vpn_mobile_tunnel_take_app_config_toml(handle))
+        } ?? ""
+        let loaded = toml.data(using: .utf8) ?? Data()
+
+        appMessageSnapshotLock.lock()
+        if appConfigSnapshot.isEmpty {
+            appConfigSnapshot = loaded
+        }
+        let snapshot = appConfigSnapshot
+        appMessageSnapshotLock.unlock()
+        return snapshot
     }
 
     private func iosDnsConfig(

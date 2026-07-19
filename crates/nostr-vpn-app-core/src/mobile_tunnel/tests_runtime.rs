@@ -628,6 +628,17 @@
         admin_app.networks[0].network_id = "wss-join-roster".to_string();
         admin_app.networks[0].devices = vec![admin_keys.public_key().to_hex()];
         admin_app.networks[0].admins = vec![admin_keys.public_key().to_hex()];
+        // A real household/team roster pushes the completed config past the
+        // safe NetworkExtension response size, so the UI handoff must use the
+        // chunked protocol instead of relying on a tiny two-device fixture.
+        for index in 0..16 {
+            let participant = Keys::generate().public_key().to_hex();
+            admin_app.networks[0].devices.push(participant.clone());
+            admin_app.peer_aliases.insert(
+                participant,
+                format!("offline-regression-participant-{index:02}"),
+            );
+        }
         admin_app.ensure_defaults();
         let network_entry_id = admin_app.networks[0].id.clone();
         let prepared = crate::join_approval::prepare_join_approval(
@@ -770,6 +781,45 @@
         })
         .await
         .expect("guest should apply the signed roster");
+
+        let joined_config = guest
+            .take_app_config_toml()
+            .expect("take joined app config for UI handoff");
+        assert!(
+            joined_config.len() > 3_072,
+            "fixture must require a chunked iOS provider response"
+        );
+        let joined_app: AppConfig =
+            toml::from_str(&joined_config).expect("decode joined app config handoff");
+        assert_eq!(
+            joined_app
+                .active_network_opt()
+                .expect("UI handoff must leave QR onboarding")
+                .network_id,
+            "wss-join-roster"
+        );
+        let retried_config = guest
+            .take_app_config_toml()
+            .expect("retry interrupted UI handoff");
+        assert!(!retried_config.is_empty());
+        assert_eq!(
+            toml::from_str::<toml::Value>(&retried_config)
+                .expect("decode retried UI handoff"),
+            toml::from_str::<toml::Value>(&joined_config)
+                .expect("decode initial UI handoff"),
+            "an interrupted provider-to-app handoff must remain retryable"
+        );
+        assert!(
+            guest
+                .acknowledge_app_config_toml(&joined_config)
+                .expect("acknowledge persisted UI handoff")
+        );
+        assert_eq!(
+            guest
+                .take_app_config_toml()
+                .expect("read acknowledged UI handoff"),
+            ""
+        );
 
         shutdown_started_mobile_tunnel(admin).await;
         shutdown_started_mobile_tunnel(guest).await;

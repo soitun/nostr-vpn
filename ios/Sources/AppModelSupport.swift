@@ -54,14 +54,16 @@ extension AppModel {
             // the UI displaying a stale QR after the tunnel already joined.
             let appConfigToml = await self?.vpnController.takeAppConfigToml()
             let runtimeJson = await self?.vpnController.runtimeStateJson()
-            await MainActor.run {
+            let appConfigAccepted = await MainActor.run {
                 guard let self else {
-                    return
+                    return false
                 }
-                self.tunnelStateRefreshInFlight = false
                 var wrote = false
-                if let appConfigToml, self.writeTunnelAppConfigIfNeeded(appConfigToml) {
-                    wrote = true
+                var appConfigAccepted = false
+                if let appConfigToml {
+                    let result = self.acceptTunnelAppConfig(appConfigToml)
+                    appConfigAccepted = result.accepted
+                    wrote = result.wrote
                 }
                 if let runtimeJson, self.writeTunnelRuntimeStateIfNeeded(runtimeJson) {
                     wrote = true
@@ -69,6 +71,13 @@ extension AppModel {
                 if wrote {
                     self.state = self.core?.refresh() ?? self.state
                 }
+                return appConfigAccepted
+            }
+            if appConfigAccepted {
+                _ = await self?.vpnController.acknowledgeAppConfigToml()
+            }
+            await MainActor.run {
+                self?.tunnelStateRefreshInFlight = false
             }
         }
     }
@@ -84,15 +93,27 @@ extension AppModel {
         return writeSupportFileIfChanged(data, name: Self.mobileRuntimeStateFileName)
     }
 
-    private func writeTunnelAppConfigIfNeeded(_ toml: String) -> Bool {
+    private func acceptTunnelAppConfig(_ toml: String) -> (accepted: Bool, wrote: Bool) {
         let trimmed = toml.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !trimmed.hasPrefix("# failed") else {
-            return false
+            return (false, false)
         }
-        guard let data = toml.data(using: .utf8) else {
-            return false
+        guard let supportDir, let data = toml.data(using: .utf8) else {
+            return (false, false)
         }
-        return writeSupportFileIfChanged(data, name: Self.configFileName)
+        try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
+        let url = supportDir.appendingPathComponent(Self.configFileName)
+        if let existing = try? Data(contentsOf: url), existing == data {
+            return (true, false)
+        }
+        do {
+            try data.write(to: url, options: .atomic)
+            debugLog("wrote tunnel sidecar file \(Self.configFileName)")
+            return (true, true)
+        } catch {
+            debugLog("failed to write tunnel sidecar file \(Self.configFileName): \(String(describing: error))")
+            return (false, false)
+        }
     }
 
     private func writeSupportFileIfChanged(_ data: Data, name: String) -> Bool {

@@ -41,6 +41,7 @@ enum PacketTunnelControllerError: LocalizedError {
 final class PacketTunnelController {
     private static let preferencesOperationTimeoutSeconds: TimeInterval = 10
     private let runtimeStateGate = ProviderSnapshotGate()
+    private let appConfigGate = ProviderSnapshotGate()
     private let providerBundleIdentifier = Bundle.main.object(
         forInfoDictionaryKey: "NVPNPacketTunnelBundleIdentifier"
     ) as? String ?? "fi.siriusbusiness.nvpn.PacketTunnel"
@@ -158,7 +159,44 @@ final class PacketTunnelController {
     }
 
     func takeAppConfigToml() async -> String? {
-        await providerMessage("takeAppConfig")
+        await appConfigGate.acquire()
+        let result = await readAppConfigToml()
+        await appConfigGate.release()
+        return result
+    }
+
+    private func readAppConfigToml() async -> String? {
+        guard let sizeData = await providerMessageData("appConfigBegin"),
+              let sizeText = String(data: sizeData, encoding: .utf8),
+              let expectedSize = Int(sizeText),
+              expectedSize >= 0,
+              expectedSize <= 4_194_304
+        else {
+            // A tunnel extension left running across an in-place app update
+            // may still implement the old single-message protocol.
+            return await providerMessage("takeAppConfig")
+        }
+        var response = Data()
+        response.reserveCapacity(expectedSize)
+        while response.count < expectedSize {
+            guard let chunk = await providerMessageData("appConfigChunk:\(response.count)"),
+                  !chunk.isEmpty
+            else {
+                return nil
+            }
+            response.append(chunk)
+        }
+        guard response.count == expectedSize else {
+            return nil
+        }
+        return String(data: response, encoding: .utf8)
+    }
+
+    func acknowledgeAppConfigToml() async -> Bool {
+        guard let response = await providerMessage("appConfigCommit") else {
+            return false
+        }
+        return response == "ok" || response == "stale"
     }
 
     private func providerMessage(_ message: String) async -> String? {
