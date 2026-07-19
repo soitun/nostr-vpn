@@ -419,6 +419,17 @@ async fn run(
                 }
             }
             _ = maintenance_tick.tick() => {
+                let delivery = fips_pubsub.delivery_snapshot();
+                tracing::debug!(
+                    req_frames_received = delivery.req_frames_received,
+                    close_frames_received = delivery.close_frames_received,
+                    event_frames_received = delivery.event_frames_received,
+                    inv_frames_received = delivery.inv_frames_received,
+                    want_frames_received = delivery.want_frames_received,
+                    want_frames_sent = delivery.want_frames_sent,
+                    subscription_events_received = delivery.subscription_events_received,
+                    "standard FIPS pubsub delivery snapshot"
+                );
                 sync_fips_subscription(
                     &endpoint,
                     &fips_pubsub,
