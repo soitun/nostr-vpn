@@ -471,6 +471,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     config: FipsPrivateTunnelConfig,
     _tun: Arc<SystemTun>,
     fips_host: Option<crate::fips_host_tunnel::FipsHostTunnelRuntime>,
+    fips_host_disabled_artifacts_cleaned: bool,
     tun_send_worker: FipsTunSendWorker,
     mesh_recv_worker: FipsMeshRecvWorker,
     event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,

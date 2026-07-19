@@ -97,6 +97,7 @@ impl FipsPrivateTunnelRuntime {
             config: config.clone(),
             _tun: tun,
             fips_host: None,
+            fips_host_disabled_artifacts_cleaned: false,
             tun_send_worker,
             mesh_recv_worker,
             event_rx,
@@ -454,6 +455,7 @@ impl FipsPrivateTunnelRuntime {
         &mut self,
         config: Option<FipsHostTunnelConfig>,
     ) -> Result<()> {
+        let was_running = self.fips_host.is_some();
         let needs_restart = match (&self.fips_host, &config) {
             (Some(runtime), Some(config)) => runtime.requires_restart(config),
             (Some(_), None) => true,
@@ -466,13 +468,21 @@ impl FipsPrivateTunnelRuntime {
 
         match config {
             Some(config) if self.fips_host.is_none() => {
+                self.fips_host_disabled_artifacts_cleaned = false;
                 let runtime = crate::fips_host_tunnel::FipsHostTunnelRuntime::start(config).await?;
                 eprintln!("fips-host: .fips IPv6 resolver active");
                 self.fips_host = Some(runtime);
             }
-            None => {
+            None
+                if fips_host_disabled_cleanup_due(
+                    was_running,
+                    self.fips_host_disabled_artifacts_cleaned,
+                ) =>
+            {
                 crate::fips_host_tunnel::FipsHostTunnelRuntime::cleanup_disabled_artifacts();
+                self.fips_host_disabled_artifacts_cleaned = true;
             }
+            None => self.fips_host_disabled_artifacts_cleaned = true,
             Some(_) => {}
         }
         Ok(())
@@ -655,6 +665,10 @@ impl FipsPrivateTunnelRuntime {
 
         self.exit_node_runtime = crate::MacosExitNodeRuntime::default();
     }
+}
+
+fn fips_host_disabled_cleanup_due(runtime_running: bool, cleanup_complete: bool) -> bool {
+    !runtime_running && !cleanup_complete
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
