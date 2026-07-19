@@ -200,6 +200,11 @@ async fn handle_mobile_control_frame(
             note_mobile_peer_pong(control.presence, &source_pubkey, sent_at);
         }
         #[cfg(feature = "paid-exit")]
+        FipsControlFrame::PaidRouteSessionOpen { .. } => {
+            // Mobile clients can buy paid exits, but do not advertise or host
+            // public paid-exit service sessions.
+        }
+        #[cfg(feature = "paid-exit")]
         payment @ FipsControlFrame::PaidRoutePayment { .. } => {
             handle_mobile_paid_route_payment(control, source_peer, &source_pubkey, payment)
                 .await?;
@@ -402,7 +407,8 @@ fn control_frame_network_matches(expected_network_id: &str, frame: &FipsControlF
         FipsControlFrame::JoinRoster { .. } => return true,
         FipsControlFrame::JoinRequest { request, .. } => &request.network_id,
         #[cfg(feature = "paid-exit")]
-        FipsControlFrame::PaidRoutePayment { .. }
+        FipsControlFrame::PaidRouteSessionOpen { .. }
+        | FipsControlFrame::PaidRoutePayment { .. }
         | FipsControlFrame::PaidRoutePaymentAck { .. } => return true,
     };
     normalize_runtime_network_id(expected_network_id)
@@ -422,7 +428,12 @@ fn control_frame_source_pubkey(
             );
             #[cfg(feature = "paid-exit")]
             let allow_unknown =
-                allow_unknown || matches!(frame, FipsControlFrame::PaidRoutePayment { .. });
+                allow_unknown
+                    || matches!(
+                        frame,
+                        FipsControlFrame::PaidRouteSessionOpen { .. }
+                            | FipsControlFrame::PaidRoutePayment { .. }
+                    );
             allow_unknown.then(|| source_peer.pubkey().to_string())
         })
 }

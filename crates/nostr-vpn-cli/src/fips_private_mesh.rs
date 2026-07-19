@@ -44,9 +44,9 @@ use nostr_vpn_core::paid_route_accounting::PaidRouteTrafficAccountant;
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_route_store::PaidRouteSellerAdmission;
 #[cfg(feature = "paid-exit")]
-use nostr_vpn_core::paid_routes::PaidExitConfig;
-#[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_routes::PaidRouteUsage;
+#[cfg(feature = "paid-exit")]
+use nostr_vpn_core::paid_routes::{PaidExitConfig, PaidRouteSessionOpen};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 #[cfg(any(target_os = "linux", target_os = "macos"))]

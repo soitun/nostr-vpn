@@ -1,4 +1,6 @@
 use crate::join_requests::MeshJoinRequest;
+#[cfg(feature = "paid-exit")]
+use crate::paid_routes::PaidRouteSessionOpen;
 use anyhow::{Context, Result, anyhow};
 #[cfg(feature = "paid-exit")]
 use cashu_service::StreamingRoutePaymentEnvelope;
@@ -342,6 +344,10 @@ pub enum FipsControlFrame {
     Capabilities {
         network_id: String,
         capabilities: PeerCapabilities,
+    },
+    #[cfg(feature = "paid-exit")]
+    PaidRouteSessionOpen {
+        open: PaidRouteSessionOpen,
     },
     #[cfg(feature = "paid-exit")]
     PaidRoutePayment {

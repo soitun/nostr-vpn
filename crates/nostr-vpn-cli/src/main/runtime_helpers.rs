@@ -365,6 +365,8 @@ struct DrainedFipsMeshEvents {
     roster_changed: bool,
     endpoint_hint_participants: Vec<String>,
     #[cfg(feature = "paid-exit")]
+    paid_route_session_opens: Vec<(String, PaidRouteSessionOpen)>,
+    #[cfg(feature = "paid-exit")]
     paid_route_payments: Vec<(String, String, StreamingRoutePaymentEnvelope)>,
     #[cfg(feature = "paid-exit")]
     paid_route_payment_acks: Vec<(String, String)>,
@@ -454,6 +456,11 @@ fn drain_fips_mesh_events(
                     drained.endpoint_hint_participants.push(participant);
                 }
             }
+            #[cfg(feature = "paid-exit")]
+            crate::fips_private_mesh::FipsPrivateMeshEvent::PaidRouteSessionOpen {
+                sender_pubkey,
+                open,
+            } => drained.paid_route_session_opens.push((sender_pubkey, open)),
             #[cfg(feature = "paid-exit")]
             crate::fips_private_mesh::FipsPrivateMeshEvent::PaidRoutePayment {
                 sender_pubkey,

@@ -720,6 +720,11 @@ pub(crate) enum FipsPrivateMeshEvent {
         capabilities: PeerCapabilities,
     },
     #[cfg(feature = "paid-exit")]
+    PaidRouteSessionOpen {
+        sender_pubkey: String,
+        open: PaidRouteSessionOpen,
+    },
+    #[cfg(feature = "paid-exit")]
     PaidRoutePayment {
         sender_pubkey: String,
         id: String,

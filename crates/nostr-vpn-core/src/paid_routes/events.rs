@@ -22,6 +22,16 @@ pub struct PaidRouteOffer {
     pub quality: Option<PaidRouteQualityMetrics>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaidRouteSessionOpen {
+    pub version: String,
+    pub service_id: String,
+    pub lease_id: String,
+    pub channel_id: String,
+    pub seller_npub: String,
+    pub expires_at_unix: u64,
+}
+
 impl PaidRouteOffer {
     pub fn from_paid_exit_config(
         offer_id: impl Into<String>,

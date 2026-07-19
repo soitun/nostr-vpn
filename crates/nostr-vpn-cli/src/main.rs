@@ -118,21 +118,22 @@ use nostr_vpn_core::paid_route_probe::{
 };
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_route_store::{
-    ApplyPaidRouteSellerPaymentRequest, AttachPaidRouteBuyerSpilmanChannelRequest,
-    BuildPaidRouteBuyerPaymentEnvelopeKind, BuildPaidRouteBuyerPaymentEnvelopeRequest,
-    BuildPaidRouteBuyerPaymentEnvelopeResult, BuildPaidRouteBuyerSignedPaymentEnvelopeRequest,
-    BuildPaidRouteBuyerTokenLeaseEnvelopeRequest, OpenPaidRouteBuyerSessionRequest,
-    OpenPaidRouteBuyerSessionResult, PaidRouteBuyerPaymentUpdateDue,
-    PaidRouteBuyerPaymentUpdatesDueRequest, PaidRouteChannelRecord, PaidRouteChannelRole,
-    PaidRouteLifecycleStatus, PaidRouteSellerCollectionState, PaidRouteSessionRecord,
-    PaidRouteStore, RecordPaidRouteBuyerUsageRequest, RecordPaidRouteSellerUsageRequest,
-    UpdatePaidRouteSessionProbeRequest, UpdatePaidRouteSessionProbeResult, load_paid_route_store,
-    paid_route_store_file_path, upsert_paid_route_offer, write_paid_route_store,
+    ApplyPaidRouteSellerPaymentRequest, ApplyPaidRouteSellerSessionOpenRequest,
+    AttachPaidRouteBuyerSpilmanChannelRequest, BuildPaidRouteBuyerPaymentEnvelopeKind,
+    BuildPaidRouteBuyerPaymentEnvelopeRequest, BuildPaidRouteBuyerPaymentEnvelopeResult,
+    BuildPaidRouteBuyerSignedPaymentEnvelopeRequest, BuildPaidRouteBuyerTokenLeaseEnvelopeRequest,
+    OpenPaidRouteBuyerSessionRequest, OpenPaidRouteBuyerSessionResult,
+    PaidRouteBuyerPaymentUpdateDue, PaidRouteBuyerPaymentUpdatesDueRequest, PaidRouteChannelRecord,
+    PaidRouteChannelRole, PaidRouteLifecycleStatus, PaidRouteSellerCollectionState,
+    PaidRouteSessionRecord, PaidRouteStore, RecordPaidRouteBuyerUsageRequest,
+    RecordPaidRouteSellerUsageRequest, UpdatePaidRouteSessionProbeRequest,
+    UpdatePaidRouteSessionProbeResult, load_paid_route_store, paid_route_store_file_path,
+    upsert_paid_route_offer, write_paid_route_store,
 };
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_routes::{
     ExitNetworkClass, PaidExitConfig, PaidExitUpstream, PaidRouteOffer, PaidRouteQualityMetrics,
-    PaidRouteRoutingDecision, SignedPaidRouteOffer, paid_route_country_claim,
+    PaidRouteRoutingDecision, PaidRouteSessionOpen, SignedPaidRouteOffer, paid_route_country_claim,
     paid_route_offer_filter, signed_paid_exit_offer_from_config_with_receiver,
 };
 #[cfg(target_os = "windows")]

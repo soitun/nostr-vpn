@@ -281,6 +281,12 @@ impl PaidRouteStore {
         open: &cashu_service::StreamingRouteChannelOpen,
         capacity_sat: u64,
     ) -> Result<()> {
+        self.replace_seller_probe_channel_for_payment(
+            context.service_id,
+            context.lease_id,
+            context.channel_id,
+            context.buyer_npub,
+        )?;
         self.ensure_seller_lease_slot_available(
             context.service_id,
             context.lease_id,

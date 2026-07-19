@@ -45,6 +45,13 @@ impl FipsPrivateMeshRuntime {
                 }))
             }
             #[cfg(feature = "paid-exit")]
+            FipsControlFrame::PaidRouteSessionOpen { open } => {
+                Ok(Some(FipsPrivateMeshEvent::PaidRouteSessionOpen {
+                    sender_pubkey: source_pubkey,
+                    open,
+                }))
+            }
+            #[cfg(feature = "paid-exit")]
             FipsControlFrame::PaidRoutePayment { id, envelope } => {
                 let encoded = serde_json::to_vec(&envelope)
                     .context("failed to encode received paid route payment")?;

@@ -7,6 +7,88 @@ pub(crate) use automatic::*;
 
 pub(super) const PAID_EXIT_DAEMON_STREAM_PAYMENT_MIN_INCREMENT_MSAT: u64 = 1;
 pub(super) const PAID_EXIT_DAEMON_STREAM_PAYMENT_LIMIT: usize = 4;
+pub(super) const PAID_EXIT_SESSION_OPEN_RETRY_SECS: u64 = 5;
+
+#[derive(Debug, Default)]
+pub(super) struct PaidExitApplySessionOpensResult {
+    pub(super) received_count: usize,
+    pub(super) applied_count: usize,
+    pub(super) error_count: usize,
+    pub(super) changed: bool,
+}
+
+pub(super) async fn send_selected_paid_exit_session_open(
+    runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
+    app: &AppConfig,
+    config_path: &Path,
+    now_unix: u64,
+) -> Result<bool> {
+    let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() else {
+        return Ok(false);
+    };
+    let buyer_npub = app
+        .nostr_keys()?
+        .public_key()
+        .to_bech32()
+        .context("failed to encode paid route buyer npub")?;
+    let store = load_paid_route_store(&paid_route_store_file_path(config_path))?;
+    let Some(open) = store.buyer_session_open_for_seller(&seller_pubkey, &buyer_npub, now_unix)?
+    else {
+        return Ok(false);
+    };
+    runtime
+        .send_paid_route_session_open(&seller_pubkey, open)
+        .await?;
+    Ok(true)
+}
+
+pub(super) fn apply_paid_exit_session_opens(
+    app: &AppConfig,
+    config_path: &Path,
+    opens: Vec<(String, PaidRouteSessionOpen)>,
+) -> Result<PaidExitApplySessionOpensResult> {
+    if opens.is_empty() {
+        return Ok(PaidExitApplySessionOpensResult::default());
+    }
+    if !app.paid_exit.enabled {
+        return Err(anyhow!("paid exit selling is disabled"));
+    }
+    let seller_npub = app
+        .nostr_keys()?
+        .public_key()
+        .to_bech32()
+        .context("failed to encode paid route seller npub")?;
+    let store_path = paid_route_store_file_path(config_path);
+    let mut store = load_paid_route_store(&store_path)?;
+    let mut result = PaidExitApplySessionOpensResult {
+        received_count: opens.len(),
+        ..PaidExitApplySessionOpensResult::default()
+    };
+    for (buyer_pubkey, open) in opens {
+        match store.apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open,
+            authenticated_buyer_pubkey: buyer_pubkey.clone(),
+            seller_npub: seller_npub.clone(),
+            config: app.paid_exit.clone(),
+            now_unix: unix_timestamp(),
+        }) {
+            Ok(applied) => {
+                result.applied_count += 1;
+                result.changed |= applied.changed;
+            }
+            Err(error) => {
+                result.error_count += 1;
+                eprintln!(
+                    "paid-exit: rejected authenticated free-probe open from {buyer_pubkey}: {error}"
+                );
+            }
+        }
+    }
+    if result.changed {
+        write_paid_route_store(&store_path, &store)?;
+    }
+    Ok(result)
+}
 
 pub(super) fn flush_fips_paid_route_usage(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,

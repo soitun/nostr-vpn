@@ -11,7 +11,12 @@ fn control_frame_source_pubkey(
             );
             #[cfg(feature = "paid-exit")]
             let allow_unknown =
-                allow_unknown || matches!(frame, FipsControlFrame::PaidRoutePayment { .. });
+                allow_unknown
+                    || matches!(
+                        frame,
+                        FipsControlFrame::PaidRouteSessionOpen { .. }
+                            | FipsControlFrame::PaidRoutePayment { .. }
+                    );
             allow_unknown.then(|| hex::encode(source_peer.pubkey().serialize()))
         })
 }

@@ -1,6 +1,88 @@
 use super::*;
 
 #[test]
+fn authenticated_free_probe_open_creates_seller_admission_and_upgrades_to_payment() {
+    let seller = Keys::generate();
+    let buyer = Keys::generate();
+    let seller_npub = seller.public_key().to_bech32().expect("seller npub");
+    let buyer_npub = buyer.public_key().to_bech32().expect("buyer npub");
+    let config = sample_config();
+    let (buyer_store, session_id, placeholder_channel_id) =
+        buyer_store_with_session(&seller, &buyer, &config);
+
+    let open = buyer_store
+        .build_buyer_session_open(&session_id, &buyer_npub, 100)
+        .expect("build free probe open");
+    assert_eq!(open.seller_npub, seller_npub);
+    assert_eq!(open.channel_id, placeholder_channel_id);
+
+    let mut seller_store = PaidRouteStore::default();
+    let applied = seller_store
+        .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open: open.clone(),
+            authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+            seller_npub: seller_npub.clone(),
+            config: config.clone(),
+            now_unix: 100,
+        })
+        .expect("apply free probe open");
+    assert!(applied.changed);
+    assert!(applied.allow_routing);
+    assert_eq!(applied.state, PaidRouteAccessState::FreeProbe);
+    assert_eq!(seller_store.seller_admissions(&config, 100).len(), 1);
+
+    let repeated = seller_store
+        .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open: open.clone(),
+            authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+            seller_npub: seller_npub.clone(),
+            config: config.clone(),
+            now_unix: 101,
+        })
+        .expect("repeat free probe open");
+    assert!(!repeated.changed);
+
+    let payment_channel_id = "funded-channel-1";
+    let paid = seller_store
+        .apply_seller_payment(ApplyPaidRouteSellerPaymentRequest {
+            envelope: seller_payment_envelope(
+                "internet-exit",
+                &applied.lease_id,
+                &buyer_npub,
+                &seller_npub,
+                102,
+                StreamingRoutePaymentPayload::ChannelOpen(StreamingRouteChannelOpen {
+                    mint_url: "https://mint.minibits.cash/Bitcoin".to_string(),
+                    unit: "sat".to_string(),
+                    capacity: 10,
+                    expires_unix: 500,
+                    receiver_pubkey_hex: seller.public_key().to_hex(),
+                    paid_msat: 0,
+                    payment: sample_spilman_payment(payment_channel_id, 0),
+                }),
+            ),
+            seller_npub,
+            config: config.clone(),
+            now_unix: 102,
+        })
+        .expect("upgrade probe to payment channel");
+    assert_eq!(paid.channel_id, payment_channel_id);
+    assert!(!seller_store.channels.contains_key(&placeholder_channel_id));
+    assert_eq!(seller_store.seller_admissions(&config, 102).len(), 1);
+
+    let replay_after_payment = seller_store
+        .apply_seller_session_open(ApplyPaidRouteSellerSessionOpenRequest {
+            open,
+            authenticated_buyer_pubkey: buyer.public_key().to_hex(),
+            seller_npub: seller.public_key().to_bech32().expect("seller npub"),
+            config,
+            now_unix: 103,
+        })
+        .expect("replay free probe open after funding");
+    assert!(!replay_after_payment.changed);
+}
+
+#[test]
 fn record_seller_usage_updates_session_and_admission_decision() {
     let seller = Keys::generate();
     let buyer = Keys::generate();

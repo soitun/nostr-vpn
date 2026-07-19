@@ -25,7 +25,7 @@ use crate::config::normalize_nostr_pubkey;
 use crate::paid_routes::{
     PaidExitConfig, PaidRouteAccessState, PaidRouteLease, PaidRouteOffer, PaidRoutePaymentMode,
     PaidRoutePaymentState, PaidRouteQualityMetrics, PaidRouteQuote, PaidRouteSession,
-    PaidRouteUsage, SignedPaidRouteOffer,
+    PaidRouteSessionOpen, PaidRouteUsage, SignedPaidRouteOffer,
 };
 
 const CURRENT_VERSION: u8 = 1;
@@ -369,6 +369,28 @@ pub struct ApplyPaidRouteSellerPaymentResult {
     pub changed: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyPaidRouteSellerSessionOpenRequest {
+    pub open: PaidRouteSessionOpen,
+    pub authenticated_buyer_pubkey: String,
+    pub seller_npub: String,
+    pub config: PaidExitConfig,
+    pub now_unix: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplyPaidRouteSellerSessionOpenResult {
+    pub service_id: String,
+    pub lease_id: String,
+    pub channel_id: String,
+    pub session_id: String,
+    pub buyer_npub: String,
+    pub seller_npub: String,
+    pub allow_routing: bool,
+    pub state: PaidRouteAccessState,
+    pub changed: bool,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SellerPaymentApplyContext<'a> {
     config: &'a PaidExitConfig,
@@ -504,6 +526,7 @@ mod buyer_session;
 mod persistence;
 mod seller_payment;
 mod seller_state;
+mod session_open;
 mod wallet_offers;
 
 pub use wallet_offers::normalize_paid_route_mint_url;

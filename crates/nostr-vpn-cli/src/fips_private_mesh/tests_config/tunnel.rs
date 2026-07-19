@@ -129,7 +129,7 @@
         .expect("pending paid exit tunnel config");
 
         assert!(!config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
-        assert!(!config.secure_dns_required());
+        assert!(config.secure_dns_required());
 
         app.exit_node_leak_protection = true;
         let config = FipsPrivateTunnelConfig::from_app(

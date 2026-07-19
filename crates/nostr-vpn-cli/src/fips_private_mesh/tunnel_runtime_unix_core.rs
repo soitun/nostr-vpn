@@ -406,9 +406,12 @@ impl FipsPrivateTunnelRuntime {
     ) -> Result<(bool, Option<crate::MacosRouteSpec>)> {
         let hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
         let routes = crate::macos_network::macos_endpoint_bypass_targets_for_hosts(&hosts);
-        if routes == self.endpoint_bypass_routes {
-            return Ok((!hosts.is_empty(), self.endpoint_bypass_underlay.clone()));
-        }
+        // `apply_macos_network_state` clears the cached underlay before calling
+        // us so a platform-route event reinstalls bypasses the OS may have
+        // discarded. Do not short-circuit merely because the host set is
+        // unchanged: doing so returns `None` for the underlay exactly when a
+        // connected exit peer makes the default route eligible, and the exit
+        // route is then withheld forever.
         let underlay = match crate::macos_underlay_default_route_from_system() {
             Ok(underlay) => underlay,
             Err(error) => {
@@ -816,6 +819,17 @@ impl FipsPrivateTunnelRuntime {
             network_id,
             capabilities,
         )
+    }
+
+    #[cfg(feature = "paid-exit")]
+    pub(crate) async fn send_paid_route_session_open(
+        &self,
+        seller: &str,
+        open: PaidRouteSessionOpen,
+    ) -> Result<()> {
+        self.mesh
+            .send_paid_route_session_open(&self.state_control, seller, open)
+            .await
     }
 
     #[cfg(feature = "paid-exit")]

@@ -69,6 +69,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         try_load_paid_exit_spilman_receiver(&config_path, &app.paid_exit).await;
     #[cfg(feature = "paid-exit")]
     let mut automatic_paid_exit = PaidExitAutomaticBuyer::default();
+    #[cfg(feature = "paid-exit")]
+    let mut last_paid_exit_session_open_at =
+        Instant::now() - Duration::from_secs(PAID_EXIT_SESSION_OPEN_RETRY_SECS);
     let mut last_recent_peer_refresh_signature = None;
     let mut last_recent_peer_cache_persisted_at = 0;
     loop {
@@ -414,6 +417,22 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 #[cfg(feature = "paid-exit")]
                 let mut automatic_paid_exit_route_changed = false;
                 if let Some(runtime) = fips_tunnel_runtime.as_mut() {
+                    #[cfg(feature = "paid-exit")]
+                    if last_paid_exit_session_open_at.elapsed()
+                        >= Duration::from_secs(PAID_EXIT_SESSION_OPEN_RETRY_SECS)
+                    {
+                        last_paid_exit_session_open_at = Instant::now();
+                        if let Err(error) = send_selected_paid_exit_session_open(
+                            runtime,
+                            &app,
+                            &config_path,
+                            unix_timestamp(),
+                        )
+                        .await
+                        {
+                            eprintln!("paid-exit: free-probe session open send failed: {error}");
+                        }
+                    }
                     match drain_fips_mesh_events(
                         runtime,
                         &mut app,
@@ -472,6 +491,42 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             {
                                 vpn_status =
                                     format!("FIPS endpoint hint refresh failed ({error})");
+                            }
+                            #[cfg(feature = "paid-exit")]
+                            if !drained.paid_route_session_opens.is_empty() {
+                                match apply_paid_exit_session_opens(
+                                    &app,
+                                    &config_path,
+                                    drained.paid_route_session_opens,
+                                ) {
+                                    Ok(result) => {
+                                        eprintln!(
+                                            "paid-exit: authenticated session opens received={} applied={} errors={} changed={}",
+                                            result.received_count,
+                                            result.applied_count,
+                                            result.error_count,
+                                            result.changed
+                                        );
+                                        if result.changed
+                                            && let Err(error) = refresh_fips_tunnel_config(
+                                                runtime,
+                                                &app,
+                                                &config_path,
+                                                &network_id,
+                                                network_snapshot.default_interface_mtu,
+                                                own_pubkey.as_deref(),
+                                            )
+                                            .await
+                                        {
+                                            vpn_status = format!(
+                                                "paid-exit free-probe admission refresh failed ({error})"
+                                            );
+                                        }
+                                    }
+                                    Err(error) => eprintln!(
+                                        "paid-exit: failed to apply authenticated session open: {error}"
+                                    ),
+                                }
                             }
                             #[cfg(feature = "paid-exit")]
                             for (seller_pubkey, id) in drained.paid_route_payment_acks {
