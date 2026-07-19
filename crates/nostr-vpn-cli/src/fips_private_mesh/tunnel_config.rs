@@ -205,7 +205,13 @@ impl FipsPrivateTunnelConfig {
         } else {
             0
         };
-        let open_discovery_max_pending = if app.node.advertise_exit_node {
+        #[cfg(feature = "paid-exit")]
+        let paid_exit_seller = app.paid_exit.enabled;
+        #[cfg(not(feature = "paid-exit"))]
+        let paid_exit_seller = false;
+        let open_discovery_max_pending = if paid_exit_seller {
+            FIPS_NOSTR_PAID_EXIT_OPEN_DISCOVERY_MAX_PENDING
+        } else if app.node.advertise_exit_node {
             FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING
         } else if allow_non_roster_transit {
             open_discovery_limit_after_transit_seeds(static_non_roster_transit_seeds)

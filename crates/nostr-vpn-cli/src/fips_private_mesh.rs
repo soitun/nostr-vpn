@@ -78,6 +78,11 @@ const FIPS_DISCOVERY_BACKOFF_MAX_SECS: u64 = 300;
 const FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS: u64 = 30;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
 const FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
+// A public paid seller must accept the buyer's first authenticated FIPS
+// connection before it can receive and verify the paid session-open frame.
+// Keep this bounded, but leave enough room that a handful of ambient public
+// scanners cannot permanently occupy every admission slot.
+const FIPS_NOSTR_PAID_EXIT_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 const FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 2;
 const FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 4;
 const FIPS_NOSTR_FAILURE_STREAK_THRESHOLD: u32 = 6;
