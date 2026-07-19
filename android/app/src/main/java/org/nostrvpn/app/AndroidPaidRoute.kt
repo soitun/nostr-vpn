@@ -200,7 +200,7 @@ internal fun PaidRouteMarketCard(
                         )
                     }
                     visibleOffers.take(6).forEach { offer ->
-                        PaidRouteOfferRow(offer, dispatch)
+                        PaidRouteOfferRow(state, offer, dispatch)
                     }
                 }
 
@@ -625,11 +625,17 @@ private fun PaidRoutePaymentActionResult(
 
 @Composable
 private fun PaidRouteOfferRow(
+    state: AppState,
     offer: PaidRouteOfferState,
     dispatch: (JSONObject) -> Unit,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
+    val active = state.internetSource == "paid_manual" && state.exitNode == offer.sellerNpub
+    val compatibleMint = offer.acceptedMints.any { accepted ->
+        state.paidRouteMarket.wallet.mints.any { it.url == accepted }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
             Text(paidRouteOfferTitle(offer), fontWeight = FontWeight.SemiBold)
             Text(
                 offer.statusText.ifBlank { offer.sellerNpub },
@@ -654,11 +660,19 @@ private fun PaidRouteOfferRow(
                 )
             }
         }
-        Button(
-            enabled = offer.key.isNotBlank(),
-            onClick = { dispatch(NativeActions.buyPaidRouteOffer(offer.key)) },
-        ) {
-            Text("Connect")
+            Button(
+                enabled = offer.key.isNotBlank() && compatibleMint && !active,
+                onClick = { dispatch(NativeActions.buyPaidRouteOffer(offer.key)) },
+            ) {
+                Text(if (active) "Active" else "Connect")
+            }
+        }
+        if (!compatibleMint) {
+            Text(
+                "Add one of this seller's accepted mints to buy",
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
     }
 }
@@ -787,7 +801,7 @@ private fun paidRouteOfferTitle(offer: PaidRouteOfferState): String {
     val location = offer.countryCode.ifBlank { "Unknown country" }.uppercase()
     val network = paidRouteNetworkClassTitle(offer.networkClass)
     val price = offer.priceText.ifBlank {
-        paidRoutePriceText(offer.priceMsat, offer.perUnits, offer.meter, offer.perUnitsText)
+        paidRoutePriceText(offer.priceMsat, offer.perUnits)
     }
     return "$location · $network · $price"
 }
@@ -955,22 +969,15 @@ internal fun formatBytes(bytes: Long): String {
 internal fun paidRoutePriceText(
     priceMsat: Long,
     perUnits: Long,
-    meter: String,
-    perUnitsText: String = "",
-): String =
-    "${formatPaidRouteMsat(priceMsat)} / ${perUnitsText.ifBlank { paidRouteMeterUnitText(perUnits, meter) }}"
+): String {
+    if (priceMsat == 0L) return "free"
+    if (perUnits <= 0L) return "Price unavailable"
+    val priceMsatPerGb = kotlin.math.ceil(priceMsat.toDouble() * 1_000_000_000.0 / perUnits).toLong()
+    val bytesPerSat = (perUnits.toDouble() * 1_000.0 / priceMsat).toLong()
+    return "${formatPaidRouteMsat(priceMsatPerGb)} / GB · 1 sat ≈ ${formatDecimalBytes(bytesPerSat)}"
+}
 
-private fun paidRouteMeterUnitText(perUnits: Long, meter: String): String =
-    when (meter) {
-        "bytes" -> formatDecimalBytes(perUnits)
-        "milliseconds", "millisecond", "ms" -> "${perUnits} ms"
-        "packets", "packet" -> if (perUnits == 1L) "1 packet" else "${perUnits} packets"
-        "" -> "${perUnits} units"
-        else -> "${perUnits} $meter"
-    }
-
-internal fun paidRouteTrafficUnitText(units: Long, meter: String): String =
-    if (meter == "bytes") formatBytes(units) else paidRouteMeterUnitText(units, meter)
+internal fun paidRouteTrafficUnitText(units: Long): String = formatBytes(units)
 
 private fun formatDecimalBytes(bytes: Long): String {
     val units = listOf("B", "KB", "MB", "GB", "TB")

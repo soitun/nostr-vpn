@@ -132,7 +132,6 @@ fn paid_exit_run_settings_prepare_public_fips_discovery() {
             publish: false,
             no_reload_daemon: true,
             upstream: None,
-            meter: None,
             price_msat: None,
             per_units: None,
             connection_minimum_msat_per_day: None,

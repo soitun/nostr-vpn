@@ -4,7 +4,7 @@ use nostr_vpn_core::config::InternetSource;
 use nostr_vpn_core::paid_routes::{PaidRouteChannelTerms, PaidRouteIpSupport, PaidRoutePricing};
 
 #[test]
-fn automatic_selection_opens_only_an_unfunded_probe_session() {
+fn automatic_selection_activates_a_routable_unfunded_probe_session() {
     let seller = Keys::generate();
     let seller_pubkey = seller.public_key().to_hex();
     let now = unix_timestamp();
@@ -16,7 +16,6 @@ fn automatic_selection_opens_only_an_unfunded_probe_session() {
     let offer_config = PaidExitConfig {
         enabled: true,
         pricing: PaidRoutePricing {
-            meter: PaidRouteMeter::Bytes,
             price_msat: 90,
             per_units: 1_000_000,
             connection_minimum_msat_per_day: 0,
@@ -67,6 +66,54 @@ fn automatic_selection_opens_only_an_unfunded_probe_session() {
     let session = stored.sessions.values().next().expect("probe session");
     assert_eq!(session.session.payment.paid_msat, 0);
     assert!(session.session.payment.cashu_spilman_payment.is_none());
+    assert!(
+        stored
+            .buyer_session_allows_routing(&session.session.session_id, now)
+            .expect("automatic probe route decision")
+    );
+    let saved = AppConfig::load(&config_path).expect("saved automatic route config");
+    assert_eq!(saved.internet_source, InternetSource::PaidAutomatic);
+    assert_eq!(
+        saved.public_paid_exit_node_pubkey_hex().as_deref(),
+        Some(seller_pubkey.as_str())
+    );
+    let network_id = saved.effective_network_id();
+    let own_pubkey = saved.own_nostr_pubkey_hex().expect("buyer pubkey");
+    let tunnel = crate::fips_private_mesh::FipsPrivateTunnelConfig::from_app(
+        &saved,
+        &network_id,
+        "utun-test",
+        Some(&own_pubkey),
+        None,
+        &[],
+    )
+    .expect("automatic paid exit tunnel config");
+    let seller_peer = tunnel
+        .peers
+        .iter()
+        .find(|peer| peer.participant_pubkey == seller_pubkey)
+        .expect("selected seller tunnel peer");
+    assert!(
+        seller_peer
+            .allowed_ips
+            .iter()
+            .any(|route| route == "0.0.0.0/0")
+    );
+    assert!(
+        !crate::fips_private_mesh::effective_fips_route_targets(&tunnel, &[])
+            .iter()
+            .any(|route| route == "0.0.0.0/0"),
+        "non-strict mode must retain the home route until the selected seller connects"
+    );
+    assert!(
+        crate::fips_private_mesh::effective_fips_route_targets(
+            &tunnel,
+            &[test_peer_status(&seller_pubkey, now)],
+        )
+        .iter()
+        .any(|route| route == "0.0.0.0/0"),
+        "the automatic seller connection must activate the exit route"
+    );
     assert!(!automatic.payments_allowed(&app, now));
     let _ = fs::remove_dir_all(directory);
 }

@@ -55,9 +55,12 @@ fn linux_exit_node_runtime_is_inactive(runtime: &crate::LinuxExitNodeRuntime) ->
 impl FipsPrivateTunnelRuntime {
     #[cfg(target_os = "linux")]
     async fn apply_linux_network_state(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
-        let mut route_targets = config.route_targets.clone();
-        let requested_ipv4_exit = route_targets.iter().any(|route| route == "0.0.0.0/0");
-        let requested_ipv6_exit = route_targets.iter().any(|route| route == "::/0");
+        let requested_ipv4_exit = config
+            .route_targets
+            .iter()
+            .any(|route| route == "0.0.0.0/0");
+        let requested_ipv6_exit = config.route_targets.iter().any(|route| route == "::/0");
+        let mut route_targets = effective_fips_route_targets(config, &self.mesh.peer_statuses());
         let strict_exit =
             linux_strict_exit_requested(&route_targets, config.exit_node_leak_protection);
         let original_route_targets_require_bypass =

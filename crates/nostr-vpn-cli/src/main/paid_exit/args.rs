@@ -88,10 +88,8 @@ struct PaidExitRunArgs {
     #[arg(long)]
     upstream: Option<String>,
     #[arg(long)]
-    meter: Option<String>,
-    #[arg(long)]
     price_msat: Option<u64>,
-    /// Price unit. Byte meters accept values like "1 MB" or "1 GB".
+    /// Price unit. Accepts byte quantities such as "1 MB" or "1 GB".
     #[arg(long, value_name = "UNITS")]
     per_units: Option<String>,
     /// Minimum charge while a buyer is connected, prorated by active time.
@@ -119,7 +117,7 @@ struct PaidExitRunArgs {
     max_channel_capacity_sat: Option<u64>,
     #[arg(long)]
     channel_expiry_secs: Option<u64>,
-    /// Free traffic before payment. Byte meters accept values like "1 MB".
+    /// Free traffic before payment. Accepts byte quantities such as "1 MB".
     #[arg(long, value_name = "UNITS")]
     free_probe_units: Option<String>,
     /// Extra unpaid traffic allowed after payment runs behind.

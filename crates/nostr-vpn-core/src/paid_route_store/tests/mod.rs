@@ -1,8 +1,8 @@
 use super::{persistence::*, *};
 use crate::paid_routes::{
     PaidExitConfig, PaidRouteAccessPolicy, PaidRouteChannelTerms, PaidRouteIpSupport,
-    PaidRouteLocationHint, PaidRouteMeter, PaidRoutePaymentMode, PaidRoutePaymentState,
-    PaidRoutePricing, PaidRoutePrivateVpnAccess, PaidRouteQualityMetrics, PaidRouteUsage,
+    PaidRouteLocationHint, PaidRoutePaymentMode, PaidRoutePaymentState, PaidRoutePricing,
+    PaidRoutePrivateVpnAccess, PaidRouteQualityMetrics, PaidRouteUsage,
     signed_paid_exit_offer_from_config, signed_paid_exit_offer_from_config_with_receiver,
 };
 use cashu_service::{
@@ -55,7 +55,6 @@ fn sample_config() -> PaidExitConfig {
             private_vpn_access: PaidRoutePrivateVpnAccess::Denied,
         },
         pricing: PaidRoutePricing {
-            meter: PaidRouteMeter::Bytes,
             price_msat: 2500,
             per_units: 1_000_000,
             connection_minimum_msat_per_day: 0,

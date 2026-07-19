@@ -94,17 +94,11 @@ fn apply_paid_exit_run_settings(app: &mut AppConfig, args: &PaidExitRunArgs) -> 
             .parse::<PaidExitUpstream>()
             .map_err(|error| anyhow!(error))?;
     }
-    if let Some(value) = args.meter.as_deref() {
-        app.paid_exit.pricing.meter = value
-            .parse::<PaidRouteMeter>()
-            .map_err(|error| anyhow!(error))?;
-    }
     if let Some(value) = args.price_msat {
         app.paid_exit.pricing.price_msat = value;
     }
     if let Some(value) = args.per_units.as_deref() {
-        app.paid_exit.pricing.per_units =
-            paid_exit_parse_pricing_units_arg(value, app.paid_exit.pricing.meter, "--per-units")?;
+        app.paid_exit.pricing.per_units = paid_exit_parse_pricing_units_arg(value, "--per-units")?;
     }
     if let Some(value) = args.connection_minimum_msat_per_day {
         app.paid_exit.pricing.connection_minimum_msat_per_day = value;
@@ -141,13 +135,12 @@ fn apply_paid_exit_run_settings(app: &mut AppConfig, args: &PaidExitRunArgs) -> 
     if let Some(value) = args.free_probe_units.as_deref() {
         app.paid_exit.channel.free_probe_units = paid_exit_parse_traffic_units_arg(
             value,
-            app.paid_exit.pricing.meter,
             "--free-probe-units",
         )?;
     }
     if let Some(value) = args.grace_units.as_deref() {
         app.paid_exit.channel.grace_units =
-            paid_exit_parse_traffic_units_arg(value, app.paid_exit.pricing.meter, "--grace-units")?;
+            paid_exit_parse_traffic_units_arg(value, "--grace-units")?;
     }
     app.paid_exit.normalize();
     Ok(())
@@ -301,7 +294,6 @@ fn print_paid_exit_run_result(result: &PaidExitRunResult) {
         paid_exit_price_text(
             result.offer.pricing.price_msat,
             result.offer.pricing.per_units,
-            result.offer.pricing.meter,
         )
     );
     println!(
@@ -313,11 +305,8 @@ fn print_paid_exit_run_result(result: &PaidExitRunResult) {
         "channel: max={} expiry={}s free_probe={} grace={} accepted_mints={}",
         paid_exit_sat_text(result.offer.channel.max_channel_capacity_sat),
         result.offer.channel.channel_expiry_secs,
-        paid_exit_traffic_unit_text(
-            result.offer.channel.free_probe_units,
-            result.offer.pricing.meter
-        ),
-        paid_exit_traffic_unit_text(result.offer.channel.grace_units, result.offer.pricing.meter),
+        paid_exit_binary_bytes_text(result.offer.channel.free_probe_units),
+        paid_exit_binary_bytes_text(result.offer.channel.grace_units),
         if result.offer.channel.accepted_mints.is_empty() {
             "none".to_string()
         } else {

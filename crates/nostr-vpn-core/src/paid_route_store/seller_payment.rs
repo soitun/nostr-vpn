@@ -420,10 +420,7 @@ impl PaidRouteStore {
             false,
         )
         .map_err(|error| anyhow!("{error}"))?;
-        let current_units = self.sessions[&session_id]
-            .session
-            .usage
-            .billable_units_for_meter(context.config.pricing.meter);
+        let current_units = self.sessions[&session_id].session.usage.billable_bytes;
         // Buyer and seller usage flushes are independent; keep seller-observed
         // usage authoritative. The buyer's delivered_units/amount_due_msat can
         // explain the signed balance update, but they must not inflate or gate
@@ -461,11 +458,7 @@ impl PaidRouteStore {
                 .sessions
                 .get_mut(&session_id)
                 .expect("validated session");
-            apply_delivered_units_for_meter(
-                &mut record.session.usage,
-                context.config.pricing.meter,
-                effective_delivered_units,
-            );
+            apply_delivered_bytes(&mut record.session.usage, effective_delivered_units);
             record.session.payment.mode = PaidRoutePaymentMode::CashuSpilman;
             record.session.payment.paid_msat = update.paid_msat;
             record.session.payment.updated_at_unix = context.now_unix;

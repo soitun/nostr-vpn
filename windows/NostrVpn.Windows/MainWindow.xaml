@@ -583,7 +583,7 @@
                   <DockPanel LastChildFill="False">
                     <TextBlock DockPanel.Dock="Right" Text="Experimental · choose a working, reasonably priced provider" Foreground="{StaticResource TextSecondary}" Margin="12,0,0,0" />
                     <TextBlock Text="{Binding PaidAutomaticExitMarker}" Margin="0,0,8,0" />
-                    <TextBlock Text="Paid · Automatic" FontWeight="SemiBold" />
+                    <TextBlock Text="Paid · Automatic · Experimental" FontWeight="SemiBold" />
                   </DockPanel>
                 </Button>
                 <Button Click="PaidManualExit_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" Margin="0,0,0,8" Visibility="{Binding PaidRouteMarketVisible, Converter={StaticResource BoolToVisibility}}">

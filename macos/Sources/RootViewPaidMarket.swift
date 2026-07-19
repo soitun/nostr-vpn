@@ -58,6 +58,11 @@ extension RootView {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if !state.error.isEmpty {
+                Label(state.error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
 
             if market.supported && !market.offers.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
@@ -115,6 +120,9 @@ extension RootView {
     }
 
     func paidRouteOfferRow(_ offer: NativePaidRouteOfferState) -> some View {
+        let compatibleMint = offer.acceptedMints.contains { accepted in
+            state.paidRouteMarket.wallet.mints.contains { $0.url == accepted }
+        }
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Image(systemName: "network")
@@ -127,10 +135,14 @@ extension RootView {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if paidRouteOfferHasBuyerChannel(offer) {
-                    Label("Ready", systemImage: "checkmark.circle.fill")
+                if state.internetSource == "paid_manual" && state.exitNode == offer.sellerNpub {
+                    Label("Active", systemImage: "checkmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(.green)
+                } else if paidRouteOfferHasBuyerChannel(offer) {
+                    Label("Ready", systemImage: "checkmark.circle")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else {
                     Button {
                         manager.buyPaidRouteOffer(offer)
@@ -138,7 +150,7 @@ extension RootView {
                         Label("Buy", systemImage: "cart.fill")
                     }
                     .controlSize(.small)
-                    .disabled(manager.actionInFlight)
+                    .disabled(manager.actionInFlight || !compatibleMint)
                 }
             }
             HStack(spacing: 10) {
@@ -162,6 +174,11 @@ extension RootView {
             .font(.caption)
             .foregroundStyle(.secondary)
             .lineLimit(1)
+            if !compatibleMint {
+                Text("Add one of this seller’s accepted mints to buy")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+            }
         }
     }
 
@@ -594,23 +611,4 @@ extension RootView {
         value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : value
     }
 
-    func paidRoutePriceText(priceMsat: UInt64, perUnits: UInt64, meter: String, perUnitsText: String = "") -> String {
-        "\(formatPaidRouteMsat(priceMsat)) / \(fallbackText(perUnitsText, paidRouteMeterUnitText(perUnits, meter: meter)))"
-    }
-
-    func paidRouteMeterUnitText(_ units: UInt64, meter: String) -> String {
-        switch meter {
-        case "bytes":
-            return formatDecimalBytes(units)
-        case "milliseconds", "millisecond", "ms":
-            return "\(units) ms"
-        case "packets", "packet":
-            return units == 1 ? "1 packet" : "\(units) packets"
-        case "":
-            return "\(units) units"
-        default:
-            return "\(units) \(meter)"
-        }
-    }
 }
-

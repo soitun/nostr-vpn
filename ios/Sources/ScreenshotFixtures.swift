@@ -289,7 +289,6 @@ enum ScreenshotFixtures {
         seller.upstream = "unsupported"
         seller.privateVpnAccess = "denied"
         seller.internetText = "My internet"
-        seller.meter = "bytes"
         seller.priceText = paidRoutePriceText(priceMsat: 2_500)
         seller.priceMsat = 2_500
         seller.perUnits = 1_000_000
@@ -314,7 +313,6 @@ enum ScreenshotFixtures {
         seller.currentConnectionCount = 1
         seller.pastConnectionCount = 3
         seller.totalBillableBytes = 48_000_000
-        seller.totalBillablePackets = 18_400
         seller.totalTrafficText = "45.8 MB used"
         seller.totalPaidMsat = 92_000
         seller.totalPaidText = "92 sat paid"
@@ -461,7 +459,6 @@ enum ScreenshotFixtures {
         offer.sellerNpub = sellerNpub
         offer.statusText = statusText
         offer.priceText = paidRoutePriceText(priceMsat: priceMsat)
-        offer.meter = "bytes"
         offer.priceMsat = priceMsat
         offer.perUnits = 1_000_000
         offer.perUnitsText = "1 MB"
@@ -499,7 +496,19 @@ enum ScreenshotFixtures {
     }
 
     private static func paidRoutePriceText(priceMsat: UInt64) -> String {
-        "\(paidRouteMsatText(priceMsat)) / 1 MB"
+        guard priceMsat > 0 else { return "free" }
+        let perGBMsat = priceMsat * 1_000
+        let bytesPerSat = 1_000_000_000 / priceMsat
+        let purchasingPower: String
+        if bytesPerSat >= 1_000_000 {
+            var megabytes = String(format: "%.2f", Double(bytesPerSat) / 1_000_000)
+            while megabytes.last == "0" { megabytes.removeLast() }
+            if megabytes.last == "." { megabytes.removeLast() }
+            purchasingPower = "\(megabytes) MB"
+        } else {
+            purchasingPower = "\(bytesPerSat / 1_000) KB"
+        }
+        return "\(paidRouteMsatText(perGBMsat)) / GB · 1 sat ≈ \(purchasingPower)"
     }
 
     private static func paidRouteMsatText(_ msat: UInt64) -> String {

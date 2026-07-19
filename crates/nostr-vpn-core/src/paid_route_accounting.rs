@@ -36,7 +36,6 @@ impl PaidRouteTrafficAccountant {
             tx_bytes: len,
             tx_packets: 1,
             billable_bytes: len,
-            billable_packets: 1,
             ..PaidRouteUsage::default()
         };
 
@@ -57,8 +56,6 @@ impl PaidRouteTrafficAccountant {
                     if let Some(flow) = self.tcp_flows.get_mut(&key) {
                         let acked = flow.apply_buyer_ack(tcp.ack_number);
                         delta.billable_bytes = delta.billable_bytes.saturating_add(acked.bytes);
-                        delta.billable_packets =
-                            delta.billable_packets.saturating_add(acked.packets);
                     }
                 }
             }
@@ -86,7 +83,6 @@ impl PaidRouteTrafficAccountant {
                         .inbound_udp_matches_recent_flow(&UdpFlowKey::from_inbound_udp(&udp), now)
                 {
                     delta.billable_bytes = udp.packet_len as u64;
-                    delta.billable_packets = 1;
                 }
             }
             IPPROTO_TCP => {
@@ -484,7 +480,6 @@ mod tests {
         assert_eq!(delta.tx_bytes, 60);
         assert_eq!(delta.tx_packets, 1);
         assert_eq!(delta.billable_bytes, 60);
-        assert_eq!(delta.billable_packets, 1);
     }
 
     #[test]
@@ -497,7 +492,6 @@ mod tests {
         assert_eq!(delta.rx_bytes, 60);
         assert_eq!(delta.rx_packets, 1);
         assert_eq!(delta.billable_bytes, 0);
-        assert_eq!(delta.billable_packets, 0);
     }
 
     #[test]
@@ -512,7 +506,6 @@ mod tests {
         assert_eq!(delta.rx_bytes, 84);
         assert_eq!(delta.rx_packets, 1);
         assert_eq!(delta.billable_bytes, 84);
-        assert_eq!(delta.billable_packets, 1);
     }
 
     #[test]
@@ -528,7 +521,6 @@ mod tests {
         assert_eq!(delta.rx_bytes, 116);
         assert_eq!(delta.rx_packets, 1);
         assert_eq!(delta.billable_bytes, 84);
-        assert_eq!(delta.billable_packets, 1);
     }
 
     #[test]
@@ -544,7 +536,6 @@ mod tests {
         assert_eq!(delta.rx_bytes, 60);
         assert_eq!(delta.rx_packets, 1);
         assert_eq!(delta.billable_bytes, 0);
-        assert_eq!(delta.billable_packets, 0);
     }
 
     #[test]
@@ -580,7 +571,6 @@ mod tests {
             outbound_delta.billable_bytes,
             outbound_ack.len() as u64 + 1200
         );
-        assert_eq!(outbound_delta.billable_packets, 2);
     }
 
     #[test]
@@ -613,9 +603,7 @@ mod tests {
         let duplicate_ack = accountant.record_outbound_packet(&outbound_ack);
 
         assert_eq!(first_ack.billable_bytes, outbound_ack.len() as u64 + 1000);
-        assert_eq!(first_ack.billable_packets, 2);
         assert_eq!(duplicate_ack.billable_bytes, outbound_ack.len() as u64);
-        assert_eq!(duplicate_ack.billable_packets, 1);
     }
 
     #[test]
@@ -646,7 +634,6 @@ mod tests {
         let delta = accountant.record_outbound_packet(&outbound_ack);
 
         assert_eq!(delta.billable_bytes, outbound_ack.len() as u64 + 512);
-        assert_eq!(delta.billable_packets, 2);
     }
 
     #[test]

@@ -547,9 +547,6 @@ fn automatic_offer_selection_requires_safe_fresh_terms_and_a_wallet_mint() {
     config.ip_support.ipv4 = false;
     assert_rejected(config, now_unix - 1);
     let mut config = automatic_offer_config();
-    config.pricing.meter = PaidRouteMeter::Packets;
-    assert_rejected(config, now_unix - 1);
-    let mut config = automatic_offer_config();
     config.channel.free_probe_units = PAID_ROUTE_AUTO_MIN_FREE_PROBE_BYTES - 1;
     assert_rejected(config, now_unix - 1);
     let mut config = automatic_offer_config();

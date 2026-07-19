@@ -132,7 +132,7 @@ async fn paid_exit_settle_command(args: PaidExitSettleArgs) -> Result<()> {
             paid_exit_msat_text(result.payment.paid_msat),
             paid_exit_msat_text(result.payment.amount_due_msat),
             paid_exit_msat_text(result.payment.unpaid_msat),
-            paid_exit_usage_text(0, 0, result.payment.delivered_units)
+            paid_exit_usage_text(result.payment.delivered_units)
         );
         println!(
             "wallet_sign: {}",
@@ -221,7 +221,7 @@ async fn paid_exit_apply_payment_command(args: PaidExitApplyPaymentArgs) -> Resu
             paid_exit_msat_text(result.paid_msat),
             paid_exit_msat_text(result.amount_due_msat),
             paid_exit_msat_text(result.unpaid_msat),
-            paid_exit_usage_text(0, 0, result.delivered_units)
+            paid_exit_usage_text(result.delivered_units)
         );
         println!("store: {} changed={}", store_path.display(), result.changed);
         println!(

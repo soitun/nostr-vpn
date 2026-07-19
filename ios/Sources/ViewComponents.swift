@@ -394,7 +394,7 @@ func paidRouteOfferTitle(_ offer: PaidRouteOfferState) -> String {
     let location = offer.countryCode.isEmpty ? "Unknown country" : offer.countryCode.uppercased()
     let network = paidRouteNetworkClassTitle(offer.networkClass)
     let price = offer.priceText.isEmpty
-        ? paidRoutePriceText(priceMsat: offer.priceMsat, perUnits: offer.perUnits, meter: offer.meter, perUnitsText: offer.perUnitsText)
+        ? paidRoutePriceText(priceMsat: offer.priceMsat, perUnits: offer.perUnits)
         : offer.priceText
     return "\(location) · \(network) · \(price)"
 }
@@ -618,27 +618,28 @@ func formatBytes(_ bytes: UInt64) -> String {
     return String(format: "%.1f %@", value, units[index])
 }
 
-func paidRoutePriceText(priceMsat: UInt64, perUnits: UInt64, meter: String, perUnitsText: String = "") -> String {
-    "\(formatPaidRouteMsat(priceMsat)) / \(fallbackText(perUnitsText, paidRouteMeterUnitText(perUnits, meter: meter)))"
+func paidRoutePriceText(priceMsat: UInt64, perUnits: UInt64) -> String {
+    guard priceMsat > 0, perUnits > 0 else { return priceMsat == 0 ? "free" : "Price unavailable" }
+    let priceMsatPerGB = saturatingMulDiv(priceMsat, 1_000_000_000, by: perUnits, roundUp: true)
+    let bytesPerSat = saturatingMulDiv(perUnits, 1_000, by: priceMsat, roundUp: false)
+    return "\(formatPaidRouteMsat(priceMsatPerGB)) / GB · 1 sat ≈ \(formatDecimalBytes(bytesPerSat))"
 }
 
-func paidRouteMeterUnitText(_ units: UInt64, meter: String) -> String {
-    switch meter {
-    case "bytes":
-        return formatDecimalBytes(units)
-    case "milliseconds", "millisecond", "ms":
-        return "\(units) ms"
-    case "packets", "packet":
-        return units == 1 ? "1 packet" : "\(units) packets"
-    case "":
-        return "\(units) units"
-    default:
-        return "\(units) \(meter)"
-    }
+private func saturatingMulDiv(
+    _ value: UInt64,
+    _ multiplier: UInt64,
+    by divisor: UInt64,
+    roundUp: Bool
+) -> UInt64 {
+    let product = value.multipliedFullWidth(by: multiplier)
+    guard product.high < divisor else { return UInt64.max }
+    let division = divisor.dividingFullWidth(product)
+    guard roundUp, division.remainder > 0 else { return division.quotient }
+    return division.quotient == UInt64.max ? UInt64.max : division.quotient + 1
 }
 
-func paidRouteTrafficUnitText(_ units: UInt64, meter: String) -> String {
-    meter == "bytes" ? formatBytes(units) : paidRouteMeterUnitText(units, meter: meter)
+func paidRouteTrafficUnitText(_ units: UInt64) -> String {
+    formatBytes(units)
 }
 
 func formatDecimalBytes(_ bytes: UInt64) -> String {

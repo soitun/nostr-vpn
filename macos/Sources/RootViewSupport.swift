@@ -145,14 +145,13 @@ extension RootView {
         }
         if lastSyncedPaidExitSeller != state.paidExitSeller {
             let seller = state.paidExitSeller
-            paidExitMeter = seller.meter
             paidExitPriceMsat = String(seller.priceMsat)
-            paidExitPerUnits = fallbackText(seller.perUnitsText, paidExitPricingUnitDraft(seller.perUnits, meter: seller.meter))
+            paidExitPerUnits = fallbackText(seller.perUnitsText, paidExitPricingUnitDraft(seller.perUnits))
             paidExitAcceptedMints = seller.acceptedMints.joined(separator: ", ")
             paidExitMaxChannelCapacitySat = String(seller.maxChannelCapacitySat)
             paidExitChannelExpirySecs = paidExitDurationDraft(seller.channelExpirySecs)
-            paidExitFreeProbeUnits = fallbackText(seller.freeProbeText, paidExitTrafficUnitDraft(seller.freeProbeUnits, meter: seller.meter))
-            paidExitGraceUnits = fallbackText(seller.graceText, paidExitTrafficUnitDraft(seller.graceUnits, meter: seller.meter))
+            paidExitFreeProbeUnits = fallbackText(seller.freeProbeText, paidExitTrafficUnitDraft(seller.freeProbeUnits))
+            paidExitGraceUnits = fallbackText(seller.graceText, paidExitTrafficUnitDraft(seller.graceUnits))
             paidExitCountryCode = seller.countryCode
             paidExitRegion = seller.region
             paidExitAsn = seller.asn == 0 ? "" : String(seller.asn)
@@ -733,4 +732,3 @@ func cleanIp(_ value: String) -> String {
 func firstNonEmpty(_ values: String..., fallback: String) -> String {
     values.first { !$0.isEmpty } ?? fallback
 }
-

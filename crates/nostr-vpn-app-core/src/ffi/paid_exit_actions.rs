@@ -365,8 +365,6 @@ impl NativeAppRuntime {
             .context("failed to encode buyer npub")?;
         let path = self.paid_route_store_path();
         let mut store = load_paid_route_store(&path)?;
-        let open_channel_from_wallet =
-            paid_route_wallet_configured_for_channel_open(&store.wallet, mint_url);
         let result = store.open_buyer_session(OpenPaidRouteBuyerSessionRequest {
             offer_selector: offer_key.to_string(),
             buyer_npub,
@@ -379,7 +377,11 @@ impl NativeAppRuntime {
             write_paid_route_store(&path, &store)?;
         }
 
-        if open_channel_from_wallet {
+        if paid_route_wallet_can_fund_channel(
+            &store.wallet,
+            &result.mint_url,
+            result.channel_capacity_sat,
+        ) {
             self.open_paid_route_channel_from_wallet(
                 &result.session_id,
                 Some(&result.mint_url),
@@ -391,6 +393,16 @@ impl NativeAppRuntime {
             if !envelope_json.trim().is_empty() {
                 self.send_paid_route_payment_envelope(&envelope_json)?;
             }
+        }
+
+        let store = load_paid_route_store(&path)?;
+        if store.buyer_session_allows_routing(&result.session_id, unix_timestamp())? {
+            self.select_paid_route_session(&result.session_id, true)?;
+        } else {
+            return Err(anyhow!(
+                "Paid route created but is not ready: the selected mint needs at least {} sat to fund it",
+                result.channel_capacity_sat
+            ));
         }
 
         Ok(())

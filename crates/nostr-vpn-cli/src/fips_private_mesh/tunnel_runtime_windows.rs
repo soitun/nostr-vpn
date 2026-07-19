@@ -55,17 +55,27 @@ impl FipsPrivateTunnelRuntime {
         );
         #[cfg(feature = "paid-exit")]
         mesh.set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
-        let control_pubsub = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start(
+        let control_pubsub = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start_for_peers(
             Arc::clone(mesh.endpoint()),
             config.nostr_pubsub.clone(),
             config.nostr_relays.clone(),
             Some(config.control_pubsub_store_path.clone()),
+            &config
+                .peers
+                .iter()
+                .map(|peer| peer.participant_pubkey.clone())
+                .collect::<Vec<_>>(),
         )
         .await?;
         let state_control = FipsControlTcpRuntime::start(Arc::clone(mesh.endpoint())).await?;
         let (session, iface, interface_index) = start_windows_fips_wintun(&config)?;
-        let endpoint_bypass_routes =
-            windows_fips_endpoint_bypass_targets(&config.endpoint_peers, &config.route_targets);
+        let peer_statuses = mesh.peer_statuses();
+        let exit_route_ready = fips_exit_route_ready(&config, &peer_statuses);
+        let effective_route_targets = effective_fips_route_targets(&config, &peer_statuses);
+        let endpoint_bypass_routes = windows_fips_endpoint_bypass_targets(
+            &config.endpoint_peers,
+            &effective_route_targets,
+        );
         let endpoint_bypass_underlay = if endpoint_bypass_routes.is_empty() {
             None
         } else {
@@ -94,7 +104,7 @@ impl FipsPrivateTunnelRuntime {
         };
         let route_targets = match crate::windows_tunnel::apply_windows_routes(
             interface_index,
-            &config.route_targets,
+            &effective_route_targets,
         ) {
             Ok(route_targets) => route_targets,
             Err(error) => {
@@ -131,6 +141,7 @@ impl FipsPrivateTunnelRuntime {
             tun_read_thread,
             mesh_recv_task,
             event_rx,
+            exit_route_ready,
             interface_index,
             route_targets,
             endpoint_bypass_underlay,
@@ -215,12 +226,22 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) async fn refresh_peer_dependent_routes(&mut self) -> Result<()> {
+        let exit_route_ready = fips_exit_route_ready(&self.config, &self.mesh.peer_statuses());
+        if self.exit_route_ready != exit_route_ready {
+            let config = self.config.clone();
+            self.apply_windows_route_config(&config)?;
+        }
         Ok(())
     }
 
     fn apply_windows_route_config(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
-        let desired_endpoint_routes =
-            windows_fips_endpoint_bypass_targets(&config.endpoint_peers, &config.route_targets);
+        let peer_statuses = self.mesh.peer_statuses();
+        let exit_route_ready = fips_exit_route_ready(config, &peer_statuses);
+        let effective_route_targets = effective_fips_route_targets(config, &peer_statuses);
+        let desired_endpoint_routes = windows_fips_endpoint_bypass_targets(
+            &config.endpoint_peers,
+            &effective_route_targets,
+        );
         let added_endpoint_routes = desired_endpoint_routes
             .iter()
             .filter(|route| !self.endpoint_bypass_routes.contains(*route))
@@ -241,7 +262,9 @@ impl FipsPrivateTunnelRuntime {
             self.endpoint_bypass_underlay = Some(underlay);
         }
 
-        if self.config.route_targets != config.route_targets {
+        if self.config.route_targets != config.route_targets
+            || self.exit_route_ready != exit_route_ready
+        {
             if let Err(error) = crate::windows_tunnel::remove_windows_routes(
                 self.interface_index,
                 &self.route_targets,
@@ -256,7 +279,7 @@ impl FipsPrivateTunnelRuntime {
             }
             match crate::windows_tunnel::apply_windows_routes(
                 self.interface_index,
-                &config.route_targets,
+                &effective_route_targets,
             ) {
                 Ok(route_targets) => self.route_targets = route_targets,
                 Err(error) => {
@@ -290,6 +313,7 @@ impl FipsPrivateTunnelRuntime {
             active_endpoint_routes.dedup();
         }
         self.endpoint_bypass_routes = active_endpoint_routes;
+        self.exit_route_ready = exit_route_ready;
         Ok(())
     }
 

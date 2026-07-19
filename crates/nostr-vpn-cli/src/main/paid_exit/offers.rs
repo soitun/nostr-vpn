@@ -48,7 +48,6 @@ async fn paid_exit_offer_command(args: PaidExitOfferArgs) -> Result<()> {
             paid_exit_price_text(
                 offer.pricing.price_msat,
                 offer.pricing.per_units,
-                offer.pricing.meter,
             )
         );
         println!(

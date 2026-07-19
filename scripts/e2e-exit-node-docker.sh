@@ -476,7 +476,6 @@ if truthy "$PAID_EXIT_MODE"; then
     --config "$CONFIG_PATH" \
     --offer-id internet-exit \
     --upstream host-default \
-    --meter bytes \
     --price-msat "$PAID_EXIT_PRICE_MSAT" \
     --per-units "$PAID_EXIT_PER_UNITS" \
     --accepted-mint "$PAID_EXIT_MINT" \

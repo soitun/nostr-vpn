@@ -83,7 +83,6 @@ public sealed class SettingsPatch
     public string? WalletFiatCurrency { get; set; }
     public bool? PaidExitEnabled { get; set; }
     public string? PaidExitUpstream { get; set; }
-    public string? PaidExitMeter { get; set; }
     public ulong? PaidExitPriceMsat { get; set; }
     public ulong? PaidExitPerUnits { get; set; }
     public string? PaidExitAcceptedMints { get; set; }

@@ -66,11 +66,16 @@ impl FipsPrivateTunnelRuntime {
         ensure_linux_tun_permissions(&config.iface)?;
         #[cfg(feature = "paid-exit")]
         mesh.set_paid_route_accounting_peers(config.paid_route_accounting_peers.clone())?;
-        let control_pubsub = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start(
+        let control_pubsub = crate::control_pubsub_runtime::ControlPubsubFipsRuntime::start_for_peers(
             Arc::clone(mesh.endpoint()),
             config.nostr_pubsub.clone(),
             config.nostr_relays.clone(),
             Some(config.control_pubsub_store_path.clone()),
+            &config
+                .peers
+                .iter()
+                .map(|peer| peer.participant_pubkey.clone())
+                .collect::<Vec<_>>(),
         )
         .await?;
         let state_control = FipsControlTcpRuntime::start(Arc::clone(mesh.endpoint())).await?;
@@ -94,6 +99,7 @@ impl FipsPrivateTunnelRuntime {
             .fips_host
             .as_ref()
             .map(|_| spawn_fips_host_recv_worker(Arc::clone(mesh.endpoint()), tun_fd));
+        let exit_route_ready = fips_exit_route_ready(&config, &mesh.peer_statuses());
 
         let mut runtime = Self {
             iface,
@@ -110,6 +116,7 @@ impl FipsPrivateTunnelRuntime {
             mesh_recv_worker,
             fips_host_recv_worker,
             event_rx,
+            exit_route_ready,
             endpoint_bypass_routes: Vec::new(),
             #[cfg(target_os = "macos")]
             endpoint_bypass_underlay: None,
@@ -182,6 +189,12 @@ impl FipsPrivateTunnelRuntime {
     }
 
     pub(crate) async fn refresh_peer_dependent_routes(&mut self) -> Result<()> {
+        let exit_route_ready = fips_exit_route_ready(&self.config, &self.mesh.peer_statuses());
+        if self.exit_route_ready != exit_route_ready {
+            let config = self.config.clone();
+            return self.apply_interface_config(&config).await;
+        }
+
         #[cfg(target_os = "linux")]
         {
             if !linux_route_targets_require_ip_endpoint_bypass(&self.config.route_targets) {
@@ -320,13 +333,17 @@ impl FipsPrivateTunnelRuntime {
                 &config.local_exit_forwarding_routes,
             );
         }
+        self.exit_route_ready = fips_exit_route_ready(config, &self.mesh.peer_statuses());
         Ok(())
     }
 
     #[cfg(target_os = "macos")]
     async fn apply_macos_network_state(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
-        let mut route_targets = config.route_targets.clone();
-        let requested_ipv4_exit = route_targets.iter().any(|route| route == "0.0.0.0/0");
+        let requested_ipv4_exit = config
+            .route_targets
+            .iter()
+            .any(|route| route == "0.0.0.0/0");
+        let mut route_targets = effective_fips_route_targets(config, &self.mesh.peer_statuses());
         let pending_exit_without_peer = requested_ipv4_exit
             && !config.wireguard_exit.enabled
             && !config.peers.iter().any(|peer| {

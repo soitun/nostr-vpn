@@ -122,7 +122,6 @@ public sealed class NativePaidExitSellerState
     public string PrivateVpnAccess { get; set; } = "";
     public string InternetText { get; set; } = "";
     public string PublicIpText { get; set; } = "";
-    public string Meter { get; set; } = "";
     public string PriceText { get; set; } = "";
     public ulong PriceMsat { get; set; }
     public ulong PerUnits { get; set; }
@@ -149,7 +148,6 @@ public sealed class NativePaidExitSellerState
     public ulong CurrentConnectionCount { get; set; }
     public ulong PastConnectionCount { get; set; }
     public ulong TotalBillableBytes { get; set; }
-    public ulong TotalBillablePackets { get; set; }
     public string TotalTrafficText { get; set; } = "";
     public ulong TotalPaidMsat { get; set; }
     public string TotalPaidText { get; set; } = "";
@@ -245,7 +243,6 @@ public sealed class NativePaidRouteOfferState
     public string SellerNpub { get; set; } = "";
     public string StatusText { get; set; } = "";
     public string PriceText { get; set; } = "";
-    public string Meter { get; set; } = "";
     public ulong PriceMsat { get; set; }
     public ulong PerUnits { get; set; }
     public string PerUnitsText { get; set; } = "";
@@ -277,7 +274,7 @@ public sealed class NativePaidRouteOfferState
     public string DisplayCountry => string.IsNullOrWhiteSpace(CountryCode) ? "Unknown country" : CountryCode.ToUpperInvariant();
     public string DisplayNetworkClass => NativeDisplayText.NetworkClassTitle(NetworkClass);
     public string DisplayPrice => string.IsNullOrWhiteSpace(PriceText)
-        ? NativeDisplayText.PriceText(PriceMsat, PerUnits, Meter, PerUnitsText)
+        ? NativeDisplayText.PriceText(PriceMsat, PerUnits)
         : PriceText;
     public string DisplayMetricText => NativeDisplayText.MetricText(QualityText, BandwidthText);
 }
@@ -642,20 +639,18 @@ internal static class NativeDisplayText
             : $"{value:0.0} {units[index]}";
     }
 
-    public static string PriceText(ulong priceMsat, ulong perUnits, string meter, string perUnitsText = "") =>
-        $"{FormatMsat(priceMsat)} / {FirstNonEmpty(perUnitsText, MeterUnitText(perUnits, meter))}";
-
-    public static string MeterUnitText(ulong perUnits, string meter) => meter switch
+    public static string PriceText(ulong priceMsat, ulong perUnits)
     {
-        "bytes" => FormatDecimalBytes(perUnits),
-        "milliseconds" or "millisecond" or "ms" => $"{perUnits} ms",
-        "packets" or "packet" => perUnits == 1 ? "1 packet" : $"{perUnits} packets",
-        "" => $"{perUnits} units",
-        _ => $"{perUnits} {meter}",
-    };
+        if (priceMsat == 0 || perUnits == 0)
+        {
+            return "Free";
+        }
+        var satPerGigabyte = (decimal)priceMsat * 1_000_000m / perUnits;
+        var megabytesPerSat = (decimal)perUnits / (priceMsat * 1_000m);
+        return $"{satPerGigabyte:0.###} sat / GB · 1 sat ≈ {megabytesPerSat:0.###} MB";
+    }
 
-    public static string TrafficUnitText(ulong units, string meter) =>
-        meter == "bytes" ? FormatBytes(units) : MeterUnitText(units, meter);
+    public static string TrafficUnitText(ulong units) => FormatBytes(units);
 
     public static string MetricText(string qualityText, string bandwidthText)
     {
@@ -670,37 +665,6 @@ internal static class NativeDisplayText
             }
         }
         return string.Join(" · ", parts);
-    }
-
-    private static string FirstNonEmpty(params string[] values)
-    {
-        foreach (var value in values)
-        {
-            if (!string.IsNullOrWhiteSpace(value))
-            {
-                return value;
-            }
-        }
-        return "";
-    }
-
-    private static string FormatDecimalBytes(ulong bytes)
-    {
-        string[] units = ["B", "KB", "MB", "GB", "TB"];
-        var value = (double)bytes;
-        var index = 0;
-        while (value >= 1000 && index < units.Length - 1)
-        {
-            value /= 1000;
-            index++;
-        }
-        if (index == 0)
-        {
-            return $"{bytes} B";
-        }
-        return Math.Abs(value - Math.Round(value)) < 0.05
-            ? $"{value:0} {units[index]}"
-            : $"{value:0.0} {units[index]}";
     }
 
     public static string NetworkClassTitle(string value) => value switch

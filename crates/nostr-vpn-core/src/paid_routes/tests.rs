@@ -10,7 +10,6 @@ fn paid_exit_config_normalizes_operator_hints() {
             private_vpn_access: PaidRoutePrivateVpnAccess::Denied,
         },
         pricing: PaidRoutePricing {
-            meter: PaidRouteMeter::Bytes,
             price_msat: 25,
             per_units: 0,
             connection_minimum_msat_per_day: 0,
@@ -310,13 +309,12 @@ fn route_decision_reports_free_paid_grace_and_suspended_states() {
 }
 
 #[test]
-fn session_routing_decision_uses_configured_meter() {
+fn session_routing_decision_bills_bytes() {
     let config = PaidExitConfig {
         enabled: true,
         pricing: PaidRoutePricing {
-            meter: PaidRouteMeter::Packets,
             price_msat: 100,
-            per_units: 1,
+            per_units: 1_000_000,
             connection_minimum_msat_per_day: 0,
         },
         channel: PaidRouteChannelTerms {
@@ -335,11 +333,11 @@ fn session_routing_decision_uses_configured_meter() {
             tx_bytes: 1_000_000,
             rx_packets: 2,
             tx_packets: 3,
-            billable_packets: 5,
+            billable_bytes: 3_000_000,
             ..PaidRouteUsage::default()
         },
         payment: PaidRoutePaymentState {
-            paid_msat: 500,
+            paid_msat: 300,
             ..PaidRoutePaymentState::default()
         },
         realized_exit_ip: None,
@@ -351,8 +349,8 @@ fn session_routing_decision_uses_configured_meter() {
     let decision = session.routing_decision(&config);
 
     assert_eq!(decision.state, PaidRouteAccessState::Paid);
-    assert_eq!(decision.delivered_units, 5);
-    assert_eq!(decision.amount_due_msat, 500);
+    assert_eq!(decision.delivered_units, 3_000_000);
+    assert_eq!(decision.amount_due_msat, 300);
     assert!(session.can_continue_routing(&config));
 }
 
@@ -396,10 +394,6 @@ fn enum_parsers_accept_user_friendly_spellings() {
         Ok(ExitNetworkClass::CommunityMesh)
     );
     assert_eq!(
-        "ms".parse::<PaidRouteMeter>(),
-        Ok(PaidRouteMeter::Milliseconds)
-    );
-    assert_eq!(
         "wg".parse::<PaidExitUpstream>(),
         Ok(PaidExitUpstream::WireGuardExit)
     );
@@ -429,7 +423,12 @@ fn signed_offer_event_roundtrips_without_raw_exit_endpoint() {
     assert!(tags.contains(&vec!["v".to_string(), PAID_ROUTE_OFFER_VERSION.to_string()].as_slice()));
     assert!(tags.contains(&vec!["service".to_string(), "internet_exit".to_string()].as_slice()));
     assert!(tags.contains(&vec!["payment".to_string(), "cashu_spilman".to_string()].as_slice()));
-    assert!(tags.contains(&vec!["meter".to_string(), "bytes".to_string()].as_slice()));
+    assert_eq!(PAID_ROUTE_OFFER_VERSION, "2");
+    assert!(
+        !tags
+            .iter()
+            .any(|tag| tag.first().is_some_and(|name| name == "meter"))
+    );
     assert!(tags.contains(&vec!["price_msat".to_string(), "2500".to_string()].as_slice()));
     assert!(tags.contains(&vec!["per_units".to_string(), "1000000".to_string()].as_slice()));
     assert!(
@@ -607,7 +606,6 @@ fn sample_paid_exit_config() -> PaidExitConfig {
             private_vpn_access: PaidRoutePrivateVpnAccess::Denied,
         },
         pricing: PaidRoutePricing {
-            meter: PaidRouteMeter::Bytes,
             price_msat: 2500,
             per_units: 1_000_000,
             connection_minimum_msat_per_day: 86_400,

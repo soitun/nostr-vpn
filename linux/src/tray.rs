@@ -501,7 +501,7 @@ fn build_menu(state: &NativeAppState) -> MenuNode {
         if state.paid_route_market.supported {
             exit_children.push(radio_item(
                 34,
-                "Paid · Automatic",
+                "Paid · Automatic · Experimental",
                 state.internet_source == "paid_automatic",
                 TrayCommand::SetInternetSource("paid_automatic".to_string()),
             ));

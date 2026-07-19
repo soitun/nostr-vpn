@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 /// kind so market/payment terms do not overload endpoint discovery or require
 /// publishing raw transport endpoints.
 pub const PAID_ROUTE_OFFER_KIND: u16 = 37_196;
-pub const PAID_ROUTE_OFFER_VERSION: &str = "1";
+pub const PAID_ROUTE_OFFER_VERSION: &str = "2";
 pub const PAID_ROUTE_OFFER_APP: &str = "fips/paid-route-offer";
 pub const DEFAULT_FIPS_PEER_RATING_SCOPE: &str = "fips.peer";
 
@@ -103,49 +103,6 @@ pub struct PaidRouteAccessPolicy {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum PaidRouteMeter {
-    Milliseconds,
-    #[default]
-    Bytes,
-    Packets,
-}
-
-impl PaidRouteMeter {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Milliseconds => "milliseconds",
-            Self::Bytes => "bytes",
-            Self::Packets => "packets",
-        }
-    }
-}
-
-#[cfg(feature = "paid-exit")]
-impl From<PaidRouteMeter> for StreamingRouteMeter {
-    fn from(value: PaidRouteMeter) -> Self {
-        match value {
-            PaidRouteMeter::Milliseconds => Self::Milliseconds,
-            PaidRouteMeter::Bytes => Self::Bytes,
-            PaidRouteMeter::Packets => Self::Packets,
-        }
-    }
-}
-
-impl FromStr for PaidRouteMeter {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match normalize_enum_value(value).as_str() {
-            "milliseconds" | "millis" | "ms" | "time" => Ok(Self::Milliseconds),
-            "bytes" | "byte" | "bandwidth" => Ok(Self::Bytes),
-            "packets" | "packet" => Ok(Self::Packets),
-            _ => Err(format!("unsupported paid route meter '{value}'")),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
 pub enum ExitNetworkClass {
     #[default]
     Unknown,
@@ -222,8 +179,6 @@ impl ExitNetworkClass {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaidRoutePricing {
-    #[serde(default)]
-    pub meter: PaidRouteMeter,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub price_msat: u64,
     #[serde(default = "default_price_denominator_units")]
@@ -235,7 +190,6 @@ pub struct PaidRoutePricing {
 impl Default for PaidRoutePricing {
     fn default() -> Self {
         Self {
-            meter: PaidRouteMeter::Bytes,
             price_msat: 0,
             per_units: DEFAULT_PRICE_DENOMINATOR_UNITS,
             connection_minimum_msat_per_day: 0,
@@ -355,7 +309,7 @@ impl PaidExitConfig {
     #[cfg(feature = "paid-exit")]
     pub fn streaming_policy(&self) -> StreamingRoutePolicy {
         StreamingRoutePolicy {
-            meter: self.pricing.meter.into(),
+            meter: StreamingRouteMeter::Bytes,
             price_msat: self.pricing.price_msat,
             per_units: self.pricing.per_units.max(1),
             max_channel_capacity_sat: self.channel.max_channel_capacity_sat.max(1),
@@ -368,7 +322,6 @@ impl PaidExitConfig {
     pub fn amount_due_msat(&self, usage: &PaidRouteUsage) -> u64 {
         paid_route_amount_due_msat_for_usage(
             usage,
-            self.pricing.meter,
             self.channel.free_probe_units,
             self.pricing.price_msat,
             self.pricing.per_units,
@@ -383,7 +336,6 @@ impl PaidExitConfig {
     ) -> u64 {
         paid_route_amount_due_msat_for_usage_with_connection_minimum_skew(
             usage,
-            self.pricing.meter,
             self.channel.free_probe_units,
             self.pricing.price_msat,
             self.pricing.per_units,
@@ -397,14 +349,10 @@ impl PaidExitConfig {
         usage: &PaidRouteUsage,
         paid_msat: u64,
     ) -> PaidRouteRoutingDecision {
-        let delivered_units = usage.billable_units_for_meter(self.pricing.meter);
+        let delivered_units = usage.billable_bytes;
         let amount_due_msat = self.amount_due_msat(usage);
         let mut enforced_usage = usage.clone();
-        set_billable_units_for_meter(
-            &mut enforced_usage,
-            self.pricing.meter,
-            delivered_units.saturating_sub(self.channel.grace_units),
-        );
+        enforced_usage.billable_bytes = delivered_units.saturating_sub(self.channel.grace_units);
         let enforced_amount_due_msat = self.amount_due_msat(&enforced_usage);
         let unpaid_msat = amount_due_msat.saturating_sub(paid_msat);
         let enforced_unpaid_msat = enforced_amount_due_msat.saturating_sub(paid_msat);
@@ -478,14 +426,13 @@ fn paid_route_amount_due_msat(
 
 fn paid_route_amount_due_msat_for_usage(
     usage: &PaidRouteUsage,
-    meter: PaidRouteMeter,
     free_probe_units: u64,
     price_msat: u64,
     per_units: u64,
     connection_minimum_msat_per_day: u64,
 ) -> u64 {
     let traffic_due = paid_route_amount_due_msat(
-        usage.billable_units_for_meter(meter),
+        usage.billable_bytes,
         free_probe_units,
         price_msat,
         per_units,
@@ -499,7 +446,6 @@ fn paid_route_amount_due_msat_for_usage(
 
 fn paid_route_amount_due_msat_for_usage_with_connection_minimum_skew(
     usage: &PaidRouteUsage,
-    meter: PaidRouteMeter,
     free_probe_units: u64,
     price_msat: u64,
     per_units: u64,
@@ -507,7 +453,7 @@ fn paid_route_amount_due_msat_for_usage_with_connection_minimum_skew(
     active_millis_skew: u64,
 ) -> u64 {
     let traffic_due = paid_route_amount_due_msat(
-        usage.billable_units_for_meter(meter),
+        usage.billable_bytes,
         free_probe_units,
         price_msat,
         per_units,
@@ -569,18 +515,6 @@ fn paid_route_grace_remaining_units(
         .min(grace_units)
 }
 
-fn set_billable_units_for_meter(
-    usage: &mut PaidRouteUsage,
-    meter: PaidRouteMeter,
-    delivered_units: u64,
-) {
-    match meter {
-        PaidRouteMeter::Milliseconds => usage.active_millis = delivered_units,
-        PaidRouteMeter::Bytes => usage.billable_bytes = delivered_units,
-        PaidRouteMeter::Packets => usage.billable_packets = delivered_units,
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct PaidRouteUsage {
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -595,25 +529,15 @@ pub struct PaidRouteUsage {
     pub rx_packets: u64,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub billable_bytes: u64,
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub billable_packets: u64,
 }
 
 impl PaidRouteUsage {
-    pub fn units_for_meter(&self, meter: PaidRouteMeter) -> u64 {
-        match meter {
-            PaidRouteMeter::Milliseconds => self.active_millis,
-            PaidRouteMeter::Bytes => self.tx_bytes.saturating_add(self.rx_bytes),
-            PaidRouteMeter::Packets => self.tx_packets.saturating_add(self.rx_packets),
-        }
+    pub fn total_bytes(&self) -> u64 {
+        self.tx_bytes.saturating_add(self.rx_bytes)
     }
 
-    pub fn billable_units_for_meter(&self, meter: PaidRouteMeter) -> u64 {
-        match meter {
-            PaidRouteMeter::Milliseconds => self.active_millis,
-            PaidRouteMeter::Bytes => self.billable_bytes,
-            PaidRouteMeter::Packets => self.billable_packets,
-        }
+    pub fn total_packets(&self) -> u64 {
+        self.tx_packets.saturating_add(self.rx_packets)
     }
 
     pub fn add_assign(&mut self, delta: &Self) {
@@ -623,7 +547,6 @@ impl PaidRouteUsage {
         self.tx_packets = self.tx_packets.saturating_add(delta.tx_packets);
         self.rx_packets = self.rx_packets.saturating_add(delta.rx_packets);
         self.billable_bytes = self.billable_bytes.saturating_add(delta.billable_bytes);
-        self.billable_packets = self.billable_packets.saturating_add(delta.billable_packets);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -633,7 +556,6 @@ impl PaidRouteUsage {
             && self.tx_packets == 0
             && self.rx_packets == 0
             && self.billable_bytes == 0
-            && self.billable_packets == 0
     }
 }
 

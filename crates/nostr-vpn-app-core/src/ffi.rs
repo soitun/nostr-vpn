@@ -17,7 +17,7 @@ use nostr_vpn_core::config::{
     parse_wireguard_exit_config, wireguard_exit_config_text,
 };
 use nostr_vpn_core::diagnostics::ProbeStatus;
-use nostr_vpn_core::paid_routes::{ExitNetworkClass, PaidExitUpstream, PaidRouteMeter};
+use nostr_vpn_core::paid_routes::{ExitNetworkClass, PaidExitUpstream};
 use nostr_vpn_core::process_ext::CommandWindowExt;
 use serde::Deserialize;
 

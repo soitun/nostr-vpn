@@ -165,16 +165,6 @@ extension RootView {
         surface {
             sectionHeader("Price", systemImage: "creditcard.fill")
             VStack(alignment: .leading, spacing: 10) {
-                paidExitFormRow("Meter") {
-                    Picker("", selection: $paidExitMeter) {
-                        ForEach(["bytes", "milliseconds", "packets"], id: \.self) { meter in
-                            Text(paidExitMeterTitle(meter)).tag(meter)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 320)
-                }
                 paidExitFormRow("Charge") {
                     HStack(spacing: 8) {
                         TextField("msat", text: $paidExitPriceMsat)
@@ -193,18 +183,13 @@ extension RootView {
 
     @ViewBuilder
     var paidExitPriceUnitControl: some View {
-        if paidExitMeter == "bytes" {
-            Picker("", selection: $paidExitPerUnits) {
-                ForEach(paidExitBytePriceUnitOptions, id: \.value) { option in
-                    Text(option.label).tag(option.value)
-                }
+        Picker("", selection: $paidExitPerUnits) {
+            ForEach(paidExitBytePriceUnitOptions, id: \.value) { option in
+                Text(option.label).tag(option.value)
             }
-            .labelsHidden()
-            .frame(width: 150)
-        } else {
-            TextField("units", text: $paidExitPerUnits)
-                .frame(width: 130)
         }
+        .labelsHidden()
+        .frame(width: 150)
     }
 
     var paidExitBytePriceUnitOptions: [(label: String, value: String)] {
@@ -218,7 +203,7 @@ extension RootView {
         let current = paidExitPerUnits.trimmingCharacters(in: .whitespacesAndNewlines)
         if !current.isEmpty && !options.contains(where: { $0.value == current }) {
             let label = UInt64(current)
-                .map { paidRouteMeterUnitText($0, meter: paidExitMeter) } ?? current
+                .map(formatBytes) ?? current
             options.insert((label, current), at: 0)
         }
         return options
@@ -241,8 +226,8 @@ extension RootView {
                     }
                     paidExitFormRow("Free test") {
                         HStack(spacing: 8) {
-                            paidExitTermInput("Before payment", paidExitMeter == "bytes" ? "1 MB" : "units", text: $paidExitFreeProbeUnits)
-                            paidExitTermInput("After payment runs out", paidExitMeter == "bytes" ? "256 KB" : "units", text: $paidExitGraceUnits)
+                            paidExitTermInput("Before payment", "1 MB", text: $paidExitFreeProbeUnits)
+                            paidExitTermInput("After payment runs out", "256 KB", text: $paidExitGraceUnits)
                         }
                     }
                     if !state.paidExitSeller.settlementText.isEmpty {
@@ -346,7 +331,6 @@ extension RootView {
         Button {
             manager.savePaidExitSellerSettings(
                 upstream: paidExitCurrentUpstream,
-                meter: paidExitMeter,
                 priceMsat: paidExitPriceMsat,
                 perUnits: paidExitPerUnits,
                 acceptedMints: paidExitAcceptedMints,
@@ -510,14 +494,6 @@ extension RootView {
         return session.statusText.isEmpty ? "Buyer session" : session.statusText
     }
 
-    func paidExitMeterTitle(_ value: String) -> String {
-        switch value {
-        case "milliseconds": return "Time"
-        case "packets": return "Packets"
-        default: return "Bytes"
-        }
-    }
-
     func paidExitNetworkClassTitle(_ value: String) -> String {
         switch value {
         case "datacenter": return "Datacenter"
@@ -533,22 +509,12 @@ extension RootView {
         value == "denied" ? "Denied" : value
     }
 
-    func paidExitTrafficUnitDraft(_ units: UInt64, meter: String) -> String {
-        switch meter {
-        case "bytes":
-            return formatBinaryBytesCompact(units)
-        default:
-            return String(units)
-        }
+    func paidExitTrafficUnitDraft(_ units: UInt64) -> String {
+        formatBinaryBytesCompact(units)
     }
 
-    func paidExitPricingUnitDraft(_ units: UInt64, meter: String) -> String {
-        switch meter {
-        case "bytes":
-            return formatDecimalBytes(units)
-        default:
-            return String(units)
-        }
+    func paidExitPricingUnitDraft(_ units: UInt64) -> String {
+        formatDecimalBytes(units)
     }
 
     func paidExitDurationDraft(_ seconds: UInt64) -> String {
@@ -645,4 +611,3 @@ extension RootView {
         return parsed
     }
 }
-

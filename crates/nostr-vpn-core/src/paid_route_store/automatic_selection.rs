@@ -65,7 +65,6 @@ impl PaidRouteStore {
             || signed_at_unix > now_unix.saturating_add(FUTURE_CLOCK_SKEW_SECS)
             || now_unix.saturating_sub(signed_at_unix) > PAID_ROUTE_AUTO_OFFER_MAX_AGE_SECS
             || !offer.ip_support.ipv4
-            || offer.pricing.meter != PaidRouteMeter::Bytes
             || offer.channel.free_probe_units < PAID_ROUTE_AUTO_MIN_FREE_PROBE_BYTES
             || offer.pricing.per_units == 0
             || offer.pricing.connection_minimum_msat_per_day != 0

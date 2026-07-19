@@ -655,22 +655,8 @@ pub(super) fn ensure_seller_channel_matches(
     Ok(())
 }
 
-pub(super) fn apply_delivered_units_for_meter(
-    usage: &mut PaidRouteUsage,
-    meter: PaidRouteMeter,
-    delivered_units: u64,
-) {
-    match meter {
-        PaidRouteMeter::Milliseconds => {
-            usage.active_millis = usage.active_millis.max(delivered_units);
-        }
-        PaidRouteMeter::Bytes => {
-            usage.billable_bytes = usage.billable_bytes.max(delivered_units);
-        }
-        PaidRouteMeter::Packets => {
-            usage.billable_packets = usage.billable_packets.max(delivered_units);
-        }
-    }
+pub(super) fn apply_delivered_bytes(usage: &mut PaidRouteUsage, delivered_bytes: u64) {
+    usage.billable_bytes = usage.billable_bytes.max(delivered_bytes);
 }
 
 pub(super) fn paid_route_amount_due_for_delivered_units(
@@ -679,7 +665,7 @@ pub(super) fn paid_route_amount_due_for_delivered_units(
     delivered_units: u64,
 ) -> u64 {
     let mut usage = usage.clone();
-    apply_delivered_units_for_meter(&mut usage, config.pricing.meter, delivered_units);
+    apply_delivered_bytes(&mut usage, delivered_units);
     config.amount_due_msat(&usage)
 }
 

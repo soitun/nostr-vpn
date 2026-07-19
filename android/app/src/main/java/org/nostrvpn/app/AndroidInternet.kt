@@ -42,7 +42,7 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
             val sourceOptions = listOf(
                 "direct" to "This device",
                 "private_vpn" to "Private VPN device",
-                "paid_automatic" to "Paid · Automatic",
+                "paid_automatic" to "Paid · Automatic · Experimental",
                 "paid_manual" to "Paid · Choose manually",
                 "wireguard" to "WireGuard VPN",
             )
@@ -200,12 +200,12 @@ private fun PaidExitSellerStatusCard(state: AppState) {
                 )
             }
             Text(
-                "${seller.countryCode.ifBlank { "Country unset" }} · ${paidRouteNetworkClassTitle(seller.networkClass)} · ${seller.priceText.ifBlank { paidRoutePriceText(seller.priceMsat, seller.perUnits, seller.meter, seller.perUnitsText) }}",
+                "${seller.countryCode.ifBlank { "Country unset" }} · ${paidRouteNetworkClassTitle(seller.networkClass)} · ${seller.priceText.ifBlank { paidRoutePriceText(seller.priceMsat, seller.perUnits) }}",
                 color = Muted,
                 style = MaterialTheme.typography.bodySmall,
             )
             Text(
-                "Free test ${seller.freeProbeText.ifBlank { paidRouteTrafficUnitText(seller.freeProbeUnits, seller.meter) }} · Grace ${seller.graceText.ifBlank { paidRouteTrafficUnitText(seller.graceUnits, seller.meter) }}",
+                "Free test ${seller.freeProbeText.ifBlank { paidRouteTrafficUnitText(seller.freeProbeUnits) }} · Grace ${seller.graceText.ifBlank { paidRouteTrafficUnitText(seller.graceUnits) }}",
                 color = Muted,
                 style = MaterialTheme.typography.bodySmall,
             )

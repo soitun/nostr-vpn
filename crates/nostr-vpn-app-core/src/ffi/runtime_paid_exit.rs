@@ -15,7 +15,7 @@ mod paid_exit {
     };
     use nostr_vpn_core::paid_routes::{
         ExitNetworkClass, PaidExitConfig, PaidExitUpstream, PaidRouteAccessState,
-        PaidRouteCountryClaim, PaidRouteMeter, PaidRouteOffer, PaidRouteQualityMetrics,
+        PaidRouteCountryClaim, PaidRouteOffer, PaidRouteQualityMetrics,
         PaidRouteRoutingDecision, paid_route_country_claim,
     };
     use serde_json::json;
@@ -47,6 +47,15 @@ mod paid_exit {
     #[cfg(test)]
     mod paid_route_offer_order_tests {
         use super::*;
+
+        #[test]
+        fn price_text_normalizes_to_gigabytes_and_purchasing_power() {
+            assert_eq!(
+                paid_route_price_text(25, 1_000_000),
+                "25 sat / GB · 1 sat ≈ 40 MB"
+            );
+            assert_eq!(paid_route_price_text(0, 1_000_000), "free");
+        }
 
         #[test]
         fn default_order_ranks_good_unknown_bad_ratings() {

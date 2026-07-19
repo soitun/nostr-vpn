@@ -41,7 +41,6 @@ fn record_seller_usage_updates_session_and_admission_decision() {
                 rx_bytes: 60,
                 rx_packets: 1,
                 billable_bytes: 60,
-                billable_packets: 1,
                 ..PaidRouteUsage::default()
             },
             now_unix: 130,
@@ -69,7 +68,6 @@ fn record_seller_usage_updates_session_and_admission_decision() {
                 tx_bytes: 50,
                 tx_packets: 1,
                 billable_bytes: 50,
-                billable_packets: 1,
                 ..PaidRouteUsage::default()
             },
             now_unix: 131,

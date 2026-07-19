@@ -488,9 +488,6 @@ struct SetArgs {
     paid_exit_enabled: Option<bool>,
     #[cfg(feature = "paid-exit")]
     #[arg(long)]
-    paid_exit_meter: Option<String>,
-    #[cfg(feature = "paid-exit")]
-    #[arg(long)]
     paid_exit_upstream: Option<String>,
     #[cfg(feature = "paid-exit")]
     #[arg(long)]

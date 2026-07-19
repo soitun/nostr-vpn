@@ -109,7 +109,7 @@
     }
 
     #[test]
-    fn pending_remote_exit_keeps_fail_closed_default_route() {
+    fn pending_remote_exit_only_keeps_fail_closed_route_when_leak_protection_is_enabled() {
         let keys = Keys::generate();
         let own_pubkey = keys.public_key().to_hex();
         let mut app = AppConfig::default();
@@ -128,6 +128,19 @@
         )
         .expect("pending paid exit tunnel config");
 
+        assert!(!config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
+        assert!(!config.secure_dns_required());
+
+        app.exit_node_leak_protection = true;
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "pending-paid-exit",
+            "utun-test",
+            Some(&own_pubkey),
+            None,
+            &[],
+        )
+        .expect("protected pending paid exit tunnel config");
         assert!(config.route_targets.iter().any(|route| route == "0.0.0.0/0"));
         assert!(config.secure_dns_required());
         assert!(

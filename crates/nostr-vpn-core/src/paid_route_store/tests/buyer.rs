@@ -120,7 +120,6 @@ fn paid_route_store_persists_wallet_offer_session_and_channel_state() {
                 tx_packets: 1,
                 rx_packets: 2,
                 billable_bytes: 30,
-                billable_packets: 3,
             },
             payment: PaidRoutePaymentState {
                 mode: PaidRoutePaymentMode::CashuSpilman,

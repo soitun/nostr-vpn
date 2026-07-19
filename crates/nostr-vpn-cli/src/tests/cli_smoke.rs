@@ -353,7 +353,6 @@ fn clap_set_supports_paid_exit_seller_flags() {
         .expect("set subcommand exists");
     for flag in [
         "paid-exit-enabled",
-        "paid-exit-meter",
         "paid-exit-upstream",
         "paid-exit-price-msat",
         "paid-exit-per-units",
@@ -375,6 +374,11 @@ fn clap_set_supports_paid_exit_seller_flags() {
             "missing --{flag} on set command"
         );
     }
+    assert!(
+        !set.get_arguments()
+            .any(|argument| argument.get_long() == Some("paid-exit-meter")),
+        "byte billing must not expose a legacy meter selector"
+    );
 }
 
 #[test]

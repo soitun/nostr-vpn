@@ -366,10 +366,6 @@ async fn run_command(command: Command) -> Result<()> {
                 if let Some(value) = args.paid_exit_enabled {
                     app.paid_exit.enabled = value;
                 }
-                if let Some(value) = args.paid_exit_meter {
-                    app.paid_exit.pricing.meter =
-                        value.parse::<PaidRouteMeter>().map_err(|error| anyhow!(error))?;
-                }
                 if let Some(value) = args.paid_exit_upstream {
                     app.paid_exit.access.upstream = value
                         .parse::<PaidExitUpstream>()
@@ -381,7 +377,6 @@ async fn run_command(command: Command) -> Result<()> {
                 if let Some(value) = args.paid_exit_per_units.as_deref() {
                     app.paid_exit.pricing.per_units = paid_exit_parse_pricing_units_arg(
                         value,
-                        app.paid_exit.pricing.meter,
                         "--paid-exit-per-units",
                     )?;
                 }
@@ -420,14 +415,12 @@ async fn run_command(command: Command) -> Result<()> {
                 if let Some(value) = args.paid_exit_free_probe_units.as_deref() {
                     app.paid_exit.channel.free_probe_units = paid_exit_parse_traffic_units_arg(
                         value,
-                        app.paid_exit.pricing.meter,
                         "--paid-exit-free-probe-units",
                     )?;
                 }
                 if let Some(value) = args.paid_exit_grace_units.as_deref() {
                     app.paid_exit.channel.grace_units = paid_exit_parse_traffic_units_arg(
                         value,
-                        app.paid_exit.pricing.meter,
                         "--paid-exit-grace-units",
                     )?;
                 }

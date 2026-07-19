@@ -11,6 +11,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     tun_read_thread: ThreadJoinHandle<()>,
     mesh_recv_task: JoinHandle<()>,
     event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,
+    exit_route_ready: bool,
     interface_index: u32,
     route_targets: Vec<String>,
     endpoint_bypass_underlay: Option<crate::wg_upstream_runtime::WindowsDefaultRoute>,

@@ -20,7 +20,7 @@ fn generated_config_auto_populates_keys() {
     assert!(config.nat.enabled);
     assert!(!config.nat.stun_servers.is_empty());
     assert!(config.exit_node.is_empty());
-    assert!(config.exit_node_leak_protection);
+    assert!(!config.exit_node_leak_protection);
     assert!(!config.fips_host_tunnel_enabled);
     assert!(!config.fips_advertise_public_endpoint);
     assert!(!config.connect_to_non_roster_fips_peers);
@@ -278,24 +278,24 @@ fn fips_host_inbound_ports_are_normalized() {
 }
 
 #[test]
-fn exit_node_leak_protection_defaults_on_when_missing() {
+fn exit_node_leak_protection_defaults_off_when_missing() {
     let config: AppConfig = toml::from_str("").expect("parse empty config");
 
-    assert!(config.exit_node_leak_protection);
+    assert!(!config.exit_node_leak_protection);
 }
 
 #[test]
-fn exit_node_leak_protection_off_is_preserved() {
+fn exit_node_leak_protection_on_is_preserved() {
     let config = AppConfig {
-        exit_node_leak_protection: false,
+        exit_node_leak_protection: true,
         ..AppConfig::default()
     };
 
     let encoded = toml::to_string(&config).expect("serialize config");
-    assert!(encoded.contains("exit_node_leak_protection = false"));
+    assert!(encoded.contains("exit_node_leak_protection = true"));
 
     let decoded: AppConfig = toml::from_str(&encoded).expect("parse config");
-    assert!(!decoded.exit_node_leak_protection);
+    assert!(decoded.exit_node_leak_protection);
 }
 
 #[test]

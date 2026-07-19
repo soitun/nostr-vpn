@@ -247,7 +247,6 @@ pub(super) fn paid_route_offer_tags(offer: &PaidRouteOffer) -> Result<Vec<Tag>> 
         paid_route_tag(&["v", PAID_ROUTE_OFFER_VERSION])?,
         paid_route_tag(&["service", offer.service.as_str()])?,
         paid_route_tag(&["payment", PaidRoutePaymentMode::CashuSpilman.as_str()])?,
-        paid_route_tag(&["meter", offer.pricing.meter.as_str()])?,
         paid_route_owned_tag(vec![
             "price_msat".to_string(),
             offer.pricing.price_msat.to_string(),
@@ -391,7 +390,6 @@ fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Resul
     let mut id_ok = false;
     let mut service_ok = false;
     let mut payment_ok = false;
-    let mut meter_ok = false;
     let mut upstream_ok = false;
     let mut access_ok = false;
     let mut receiver_ok = offer.receiver_pubkey_hex.trim().is_empty();
@@ -439,17 +437,6 @@ fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Resul
                     ));
                 }
                 payment_ok = true;
-            }
-            "meter" => {
-                let Some(value) = parts.get(1) else {
-                    return Err(anyhow!("paid route offer event has empty meter tag"));
-                };
-                if value != offer.pricing.meter.as_str() {
-                    return Err(anyhow!(
-                        "paid route offer event meter tag does not match content"
-                    ));
-                }
-                meter_ok = true;
             }
             "upstream" => {
                 let Some(value) = parts.get(1) else {
@@ -507,9 +494,6 @@ fn validate_paid_route_offer_tags(tags: &[Tag], offer: &PaidRouteOffer) -> Resul
     }
     if !payment_ok {
         return Err(anyhow!("paid route offer event is missing payment tag"));
-    }
-    if !meter_ok {
-        return Err(anyhow!("paid route offer event is missing meter tag"));
     }
     if !upstream_ok {
         return Err(anyhow!("paid route offer event is missing upstream tag"));

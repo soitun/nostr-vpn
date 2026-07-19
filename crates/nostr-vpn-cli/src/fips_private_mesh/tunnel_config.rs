@@ -12,6 +12,54 @@ pub(crate) fn fips_paid_route_admission_from_seller_admission(
     admission
 }
 
+fn fips_exit_route_ready(
+    config: &FipsPrivateTunnelConfig,
+    peer_statuses: &[MeshPeerStatus],
+) -> bool {
+    let connected = peer_statuses
+        .iter()
+        .filter(|status| status.connected)
+        .map(|status| status.pubkey.as_str())
+        .collect::<HashSet<_>>();
+    fips_exit_route_ready_for_connected(
+        &config.route_targets,
+        &config.peers,
+        config.exit_node_leak_protection,
+        config.wireguard_exit.enabled,
+        &connected,
+    )
+}
+
+fn fips_exit_route_ready_for_connected(
+    route_targets: &[String],
+    peers: &[FipsMeshPeerConfig],
+    leak_protection: bool,
+    wireguard_exit_enabled: bool,
+    connected: &HashSet<&str>,
+) -> bool {
+    let exit_requested = route_targets
+        .iter()
+        .any(|route| crate::is_exit_node_route(route));
+    if !exit_requested || leak_protection || wireguard_exit_enabled {
+        return true;
+    }
+
+    peers.iter().any(|peer| {
+        peer.advertises_default_route() && connected.contains(peer.participant_pubkey.as_str())
+    })
+}
+
+pub(crate) fn effective_fips_route_targets(
+    config: &FipsPrivateTunnelConfig,
+    peer_statuses: &[MeshPeerStatus],
+) -> Vec<String> {
+    let mut targets = config.route_targets.clone();
+    if !fips_exit_route_ready(config, peer_statuses) {
+        targets.retain(|route| !crate::is_exit_node_route(route));
+    }
+    targets
+}
+
 impl FipsPrivateTunnelConfig {
     pub(crate) fn from_app(
         app: &AppConfig,
@@ -292,7 +340,6 @@ impl FipsPrivateTunnelConfig {
             #[cfg(feature = "paid-exit")]
             paid_route_payment_relays: Vec::new(),
             wireguard_exit: app.wireguard_exit.clone(),
-            #[cfg(target_os = "linux")]
             exit_node_leak_protection: app.exit_node_leak_protection,
             nostr_discovery_enabled: app.fips_nostr_discovery_enabled,
             webrtc_enabled: app.fips_webrtc_enabled,
@@ -526,6 +573,7 @@ pub(crate) struct FipsPrivateTunnelRuntime {
     mesh_recv_worker: FipsMeshRecvWorker,
     fips_host_recv_worker: Option<FipsHostRecvWorker>,
     event_rx: mpsc::Receiver<FipsPrivateMeshEvent>,
+    exit_route_ready: bool,
     endpoint_bypass_routes: Vec<String>,
     #[cfg(target_os = "macos")]
     endpoint_bypass_underlay: Option<crate::MacosRouteSpec>,

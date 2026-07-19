@@ -38,7 +38,10 @@ fn paid_exit_run_and_status_cover_headless_seller_cli() {
     assert_success(&run);
     let stdout = output_stdout(&run);
     assert!(stdout.contains("paid_exit_seller: enabled"), "{stdout}");
-    assert!(stdout.contains("price: 2.500 sat / 1 MB"), "{stdout}");
+    assert!(
+        stdout.contains("price: 2500 sat / GB · 1 sat ≈ 400 KB"),
+        "{stdout}"
+    );
     assert!(stdout.contains("free_probe=1 MB"), "{stdout}");
     assert!(stdout.contains("grace=256 KB"), "{stdout}");
 
@@ -55,7 +58,7 @@ fn paid_exit_run_and_status_cover_headless_seller_cli() {
     assert_eq!(status_json["config"]["price_msat"].as_u64(), Some(2_500));
     assert_eq!(
         status_json["config"]["price_text"].as_str(),
-        Some("2.500 sat / 1 MB")
+        Some("2500 sat / GB · 1 sat ≈ 400 KB")
     );
     assert_eq!(status_json["config"]["per_units"].as_u64(), Some(1_000_000));
     assert_eq!(
@@ -149,8 +152,6 @@ fn set_paid_exit_units_accept_human_byte_text() {
         config,
         "--paid-exit-enabled",
         "true",
-        "--paid-exit-meter",
-        "bytes",
         "--paid-exit-price-msat",
         "1000",
         "--paid-exit-per-units",
@@ -167,7 +168,7 @@ fn set_paid_exit_units_accept_human_byte_text() {
     let status_json = output_json(&status);
     assert_eq!(
         status_json["config"]["price_text"].as_str(),
-        Some("1 sat / 1 GB")
+        Some("1 sat / GB · 1 sat ≈ 1 GB")
     );
     assert_eq!(
         status_json["config"]["per_units"].as_u64(),

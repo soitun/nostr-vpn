@@ -141,10 +141,7 @@ impl PaidRouteStore {
 
         let offer = self.buyer_offer_for_session(lease_record, channel)?;
         let config = PaidExitConfig::from_paid_route_offer(&offer);
-        let current_units = session_record
-            .session
-            .usage
-            .billable_units_for_meter(config.pricing.meter);
+        let current_units = session_record.session.usage.billable_bytes;
         let delivered_units = request.delivered_units.unwrap_or(current_units);
         if delivered_units < current_units {
             return Err(anyhow!(
@@ -229,10 +226,7 @@ impl PaidRouteStore {
         let offer = self.buyer_offer_for_session(&lease_record, &channel)?;
         let config = PaidExitConfig::from_paid_route_offer(&offer);
         let unit = paid_route_payment_cashu_unit(&session_record.session.payment);
-        let current_units = session_record
-            .session
-            .usage
-            .billable_units_for_meter(config.pricing.meter);
+        let current_units = session_record.session.usage.billable_bytes;
         let delivered_units = request.delivered_units.unwrap_or(current_units);
         if delivered_units < current_units {
             return Err(anyhow!(
@@ -309,7 +303,6 @@ impl PaidRouteStore {
                 session_id: &session_id,
                 channel_id: &channel_id,
                 lease_id: &lease_record.lease.lease_id,
-                meter: config.pricing.meter,
                 kind: request.kind,
                 delivered_units,
                 paid_msat,
@@ -522,11 +515,7 @@ impl PaidRouteStore {
             .sessions
             .get_mut(context.session_id)
             .ok_or_else(|| anyhow!("paid route session {} does not exist", context.session_id))?;
-        apply_delivered_units_for_meter(
-            &mut record.session.usage,
-            context.meter,
-            context.delivered_units,
-        );
+        apply_delivered_bytes(&mut record.session.usage, context.delivered_units);
         record.session.payment.cashu_unit = context.unit.to_string();
         record.session.payment.paid_msat = context.paid_msat;
         record.session.payment.updated_at_unix = context.now_unix;

@@ -5,15 +5,13 @@ fn paid_exit_status_json(app: &AppConfig) -> serde_json::Value {
         "enabled": config.enabled,
         "upstream": config.access.upstream.as_str(),
         "private_vpn_access": config.access.private_vpn_access.as_str(),
-        "meter": config.pricing.meter.as_str(),
         "price_msat": config.pricing.price_msat,
         "price_text": paid_exit_price_text(
             config.pricing.price_msat,
             config.pricing.per_units,
-            config.pricing.meter,
         ),
         "per_units": config.pricing.per_units,
-        "per_units_text": paid_exit_meter_unit_text(config.pricing.per_units, config.pricing.meter),
+        "per_units_text": paid_exit_decimal_bytes_text(config.pricing.per_units),
         "connection_minimum_msat_per_day": config.pricing.connection_minimum_msat_per_day,
         "connection_minimum_text": paid_exit_connection_minimum_text(
             config.pricing.connection_minimum_msat_per_day,
@@ -24,12 +22,9 @@ fn paid_exit_status_json(app: &AppConfig) -> serde_json::Value {
         "channel_expiry_text": paid_exit_duration_text(config.channel.channel_expiry_secs),
         "settlement_text": paid_exit_settlement_text(config.channel.channel_expiry_secs),
         "free_probe_units": config.channel.free_probe_units,
-        "free_probe_text": paid_exit_traffic_unit_text(
-            config.channel.free_probe_units,
-            config.pricing.meter
-        ),
+        "free_probe_text": paid_exit_binary_bytes_text(config.channel.free_probe_units),
         "grace_units": config.channel.grace_units,
-        "grace_text": paid_exit_traffic_unit_text(config.channel.grace_units, config.pricing.meter),
+        "grace_text": paid_exit_binary_bytes_text(config.channel.grace_units),
         "country_code": &config.location.country_code,
         "region": &config.location.region,
         "asn": config.location.asn,
@@ -63,7 +58,6 @@ fn print_paid_exit_status(app: &AppConfig) {
         paid_exit_price_text(
             config.pricing.price_msat,
             config.pricing.per_units,
-            config.pricing.meter,
         )
     );
     println!(
@@ -79,8 +73,8 @@ fn print_paid_exit_status(app: &AppConfig) {
         "paid_exit_channel: max={} expiry={}s free_probe={} grace={}",
         paid_exit_sat_text(config.channel.max_channel_capacity_sat),
         config.channel.channel_expiry_secs,
-        paid_exit_traffic_unit_text(config.channel.free_probe_units, config.pricing.meter),
-        paid_exit_traffic_unit_text(config.channel.grace_units, config.pricing.meter)
+        paid_exit_binary_bytes_text(config.channel.free_probe_units),
+        paid_exit_binary_bytes_text(config.channel.grace_units)
     );
     println!(
         "paid_exit_settlement: {}",
@@ -109,12 +103,28 @@ fn print_paid_exit_status(app: &AppConfig) {
     );
 }
 
-fn paid_exit_price_text(price_msat: u64, per_units: u64, meter: PaidRouteMeter) -> String {
-    format!(
-        "{} / {}",
-        paid_exit_msat_text(price_msat),
-        paid_exit_meter_unit_text(per_units, meter)
-    )
+fn paid_exit_price_text(price_msat: u64, per_units: u64) -> String {
+    if price_msat == 0 {
+        return "free".to_string();
+    }
+    let denominator = u128::from(per_units.max(1));
+    let per_gb_msat = u128::from(price_msat)
+        .saturating_mul(1_000_000_000)
+        .div_ceil(denominator)
+        .min(u128::from(u64::MAX)) as u64;
+    let bytes_per_sat = denominator
+        .saturating_mul(1_000)
+        .saturating_div(u128::from(price_msat))
+        .min(u128::from(u64::MAX)) as u64;
+    let price = format!("{} / GB", paid_exit_msat_text(per_gb_msat));
+    if bytes_per_sat == 0 {
+        price
+    } else {
+        format!(
+            "{price} · 1 sat ≈ {}",
+            paid_exit_decimal_bytes_text(bytes_per_sat)
+        )
+    }
 }
 
 fn paid_exit_connection_minimum_text(msat_per_day: u64) -> String {
@@ -122,27 +132,6 @@ fn paid_exit_connection_minimum_text(msat_per_day: u64) -> String {
         "none".to_string()
     } else {
         format!("{} / day", paid_exit_msat_text(msat_per_day))
-    }
-}
-
-fn paid_exit_meter_unit_text(per_units: u64, meter: PaidRouteMeter) -> String {
-    match meter {
-        PaidRouteMeter::Bytes => paid_exit_decimal_bytes_text(per_units),
-        PaidRouteMeter::Milliseconds => format!("{per_units} ms"),
-        PaidRouteMeter::Packets => {
-            if per_units == 1 {
-                "1 packet".to_string()
-            } else {
-                format!("{per_units} packets")
-            }
-        }
-    }
-}
-
-fn paid_exit_traffic_unit_text(units: u64, meter: PaidRouteMeter) -> String {
-    match meter {
-        PaidRouteMeter::Bytes => paid_exit_binary_bytes_text(units),
-        _ => paid_exit_meter_unit_text(units, meter),
     }
 }
 
@@ -194,40 +183,21 @@ fn paid_exit_plural_text(value: u64, unit: &str) -> String {
     }
 }
 
-fn paid_exit_parse_pricing_units_arg(
-    value: &str,
-    meter: PaidRouteMeter,
-    flag: &str,
-) -> Result<u64> {
-    paid_exit_parse_units_arg(value, meter, 1_000.0, flag)
+fn paid_exit_parse_pricing_units_arg(value: &str, flag: &str) -> Result<u64> {
+    paid_exit_parse_units_arg(value, 1_000.0, flag)
 }
 
-fn paid_exit_parse_traffic_units_arg(
-    value: &str,
-    meter: PaidRouteMeter,
-    flag: &str,
-) -> Result<u64> {
-    paid_exit_parse_units_arg(value, meter, 1_024.0, flag)
+fn paid_exit_parse_traffic_units_arg(value: &str, flag: &str) -> Result<u64> {
+    paid_exit_parse_units_arg(value, 1_024.0, flag)
 }
 
-fn paid_exit_parse_units_arg(
-    value: &str,
-    meter: PaidRouteMeter,
-    byte_scale: f64,
-    flag: &str,
-) -> Result<u64> {
+fn paid_exit_parse_units_arg(value: &str, byte_scale: f64, flag: &str) -> Result<u64> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return Err(anyhow!("{flag} cannot be empty"));
     }
     if let Ok(units) = trimmed.parse::<u64>() {
         return Ok(units);
-    }
-    if meter != PaidRouteMeter::Bytes {
-        return Err(anyhow!(
-            "{flag} must be a whole number when --meter is {}",
-            meter.as_str()
-        ));
     }
     paid_exit_parse_byte_units_text(trimmed, byte_scale, flag)
 }
@@ -296,20 +266,8 @@ fn paid_exit_sat_text(sat: u64) -> String {
     format!("{sat} sat")
 }
 
-fn paid_exit_usage_text(bytes: u64, packets: u64, delivered_units: u64) -> String {
-    if bytes > 0 {
-        format!("{} used", paid_exit_binary_bytes_text(bytes))
-    } else if packets > 0 {
-        match packets {
-            1 => "1 packet".to_string(),
-            count => format!("{count} packets"),
-        }
-    } else {
-        match delivered_units {
-            1 => "1 unit".to_string(),
-            count => format!("{count} units"),
-        }
-    }
+fn paid_exit_usage_text(bytes: u64) -> String {
+    format!("{} used", paid_exit_binary_bytes_text(bytes))
 }
 
 fn paid_exit_binary_bytes_text(bytes: u64) -> String {

@@ -113,7 +113,7 @@ fn build_paid_route_market_card(app: &AppRef, page: &gtk::Box, state: &NativeApp
             ));
         }
         for offer in offers.iter().take(8) {
-            paid_route_offer_row(app, &buyer, offer);
+            paid_route_offer_row(app, &buyer, state, offer);
         }
     }
 
@@ -200,7 +200,12 @@ fn build_paid_route_filter(app: &AppRef, parent: &gtk::Box) {
     parent.append(&filter);
 }
 
-fn paid_route_offer_row(app: &AppRef, parent: &gtk::Box, offer: &NativePaidRouteOfferState) {
+fn paid_route_offer_row(
+    app: &AppRef,
+    parent: &gtk::Box,
+    state: &NativeAppState,
+    offer: &NativePaidRouteOfferState,
+) {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     row.set_valign(gtk::Align::Center);
     let text = gtk::Box::new(gtk::Orientation::Vertical, 2);
@@ -232,8 +237,16 @@ fn paid_route_offer_row(app: &AppRef, parent: &gtk::Box, offer: &NativePaidRoute
     }
     row.append(&text);
 
-    let connect = icon_text_button("Connect", "go-next-symbolic");
-    connect.set_sensitive(!offer.key.is_empty());
+    let active = state.internet_source == "paid_manual" && state.exit_node == offer.seller_npub;
+    let compatible_mint = offer
+        .accepted_mints
+        .iter()
+        .any(|accepted| state.paid_route_market.wallet.mints.iter().any(|mint| mint.url == *accepted));
+    let connect = icon_text_button(
+        if active { "Active" } else { "Connect" },
+        if active { "emblem-ok-symbolic" } else { "go-next-symbolic" },
+    );
+    connect.set_sensitive(!active && compatible_mint && !offer.key.is_empty());
     {
         let app = app.clone();
         let offer_key = offer.key.clone();
@@ -250,6 +263,13 @@ fn paid_route_offer_row(app: &AppRef, parent: &gtk::Box, offer: &NativePaidRoute
     }
     row.append(&connect);
     parent.append(&row);
+    if !compatible_mint {
+        let help = gtk::Label::new(Some("Add one of this seller's accepted mints to buy"));
+        help.add_css_class("caption");
+        help.add_css_class("warning");
+        help.set_xalign(0.0);
+        parent.append(&help);
+    }
 }
 
 fn paid_route_session_row(
@@ -464,8 +484,6 @@ fn build_paid_exit_seller_card(app: &AppRef, page: &gtk::Box, state: &NativeAppS
                 &paid_route_price_text(
                     seller.price_msat,
                     seller.per_units,
-                    &seller.meter,
-                    &seller.per_units_text,
                 ),
             )
         ),
@@ -477,11 +495,11 @@ fn build_paid_exit_seller_card(app: &AppRef, page: &gtk::Box, state: &NativeAppS
             "Free {} · grace {}",
             non_empty_or(
                 &seller.free_probe_text,
-                &paid_route_traffic_unit_text(seller.free_probe_units, &seller.meter),
+                &paid_route_traffic_unit_text(seller.free_probe_units),
             ),
             non_empty_or(
                 &seller.grace_text,
-                &paid_route_traffic_unit_text(seller.grace_units, &seller.meter),
+                &paid_route_traffic_unit_text(seller.grace_units),
             )
         ),
     );
@@ -696,8 +714,6 @@ fn paid_route_offer_title(offer: &NativePaidRouteOfferState) -> String {
             &paid_route_price_text(
                 offer.price_msat,
                 offer.per_units,
-                &offer.meter,
-                &offer.per_units_text,
             ),
         )
     )
@@ -877,39 +893,25 @@ fn paid_route_country_claim_text(session: &NativePaidRouteSessionState) -> Strin
     }
 }
 
-fn paid_route_price_text(
-    price_msat: u64,
-    per_units: u64,
-    meter: &str,
-    per_units_text: &str,
-) -> String {
+fn paid_route_price_text(price_msat: u64, per_units: u64) -> String {
+    if price_msat == 0 {
+        return "free".to_string();
+    }
+    if per_units == 0 {
+        return "Price unavailable".to_string();
+    }
+    let price_msat_per_gb = (u128::from(price_msat) * 1_000_000_000_u128)
+        .div_ceil(u128::from(per_units));
+    let bytes_per_sat = (u128::from(per_units) * 1_000_u128) / u128::from(price_msat);
     format!(
-        "{} / {}",
-        format_paid_route_msat(price_msat),
-        non_empty_or(
-            per_units_text,
-            &paid_route_meter_unit_text(per_units, meter)
-        ),
+        "{} / GB · 1 sat ≈ {}",
+        format_paid_route_msat(u64::try_from(price_msat_per_gb).unwrap_or(u64::MAX)),
+        format_bytes(u64::try_from(bytes_per_sat).unwrap_or(u64::MAX)),
     )
 }
 
-fn paid_route_traffic_unit_text(units: u64, meter: &str) -> String {
-    if meter == "bytes" {
-        format_bytes(units)
-    } else {
-        paid_route_meter_unit_text(units, meter)
-    }
-}
-
-fn paid_route_meter_unit_text(units: u64, meter: &str) -> String {
-    let label = match meter {
-        "packets" => "packet",
-        "acked_tcp_bytes" => "acked TCP byte",
-        "outbound_bytes" => "outbound byte",
-        "bytes" => "byte",
-        _ => "unit",
-    };
-    format!("{units} {label}{}", if units == 1 { "" } else { "s" })
+fn paid_route_traffic_unit_text(units: u64) -> String {
+    format_bytes(units)
 }
 
 fn format_paid_route_msat(msat: u64) -> String {

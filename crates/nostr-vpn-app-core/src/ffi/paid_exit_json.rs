@@ -9,15 +9,18 @@ fn decode_paid_route_command_json_output(
     serde_json::from_str(document).context("failed to decode paid route command JSON")
 }
 
-fn paid_route_wallet_configured_for_channel_open(
+fn paid_route_wallet_can_fund_channel(
     wallet: &PaidRouteWalletState,
-    requested_mint: Option<&str>,
+    mint_url: &str,
+    capacity_sat: u64,
 ) -> bool {
-    requested_mint
-        .map(str::trim)
-        .is_some_and(|mint_url| !mint_url.is_empty())
-        || !wallet.default_mint.trim().is_empty()
-        || wallet.mints.iter().any(|mint| !mint.url.trim().is_empty())
+    let required_msat = capacity_sat.saturating_mul(1_000);
+    wallet.mints.iter().any(|mint| {
+        mint.url.trim() == mint_url.trim()
+            && mint
+                .balance_msat
+                .is_some_and(|balance_msat| balance_msat >= required_msat)
+    })
 }
 
 fn json_string(value: &serde_json::Value, key: &str) -> String {
@@ -107,7 +110,7 @@ fn paid_route_payment_action_state(
         paid_msat,
         paid_text: paid_route_paid_text(paid_msat),
         delivered_units,
-        delivered_usage_text: paid_route_usage_text(0, 0, delivered_units),
+        delivered_usage_text: paid_route_usage_text(delivered_units),
         amount_due_msat,
         amount_due_text: paid_route_due_text(amount_due_msat),
         unpaid_msat,

@@ -41,33 +41,19 @@ fn paid_exit_seller_state(
         private_vpn_access: config.access.private_vpn_access.as_str().to_string(),
         internet_text: paid_route_upstream_text(config.access.upstream.as_str()),
         public_ip_text: paid_exit_public_ip_text(port_mapping),
-        meter: config.pricing.meter.as_str().to_string(),
-        price_text: paid_route_price_text(
-            config.pricing.price_msat,
-            config.pricing.per_units,
-            config.pricing.meter.as_str(),
-        ),
+        price_text: paid_route_price_text(config.pricing.price_msat, config.pricing.per_units),
         price_msat: config.pricing.price_msat,
         per_units: config.pricing.per_units,
-        per_units_text: paid_route_meter_unit_text(
-            config.pricing.per_units,
-            config.pricing.meter.as_str(),
-        ),
+        per_units_text: paid_route_decimal_bytes_text(config.pricing.per_units),
         accepted_mints: config.channel.accepted_mints.clone(),
         max_channel_capacity_sat: config.channel.max_channel_capacity_sat,
         channel_expiry_secs: config.channel.channel_expiry_secs,
         channel_expiry_text: paid_route_duration_text(config.channel.channel_expiry_secs),
         settlement_text: paid_exit_seller_settlement_text(config.channel.channel_expiry_secs),
         free_probe_units: config.channel.free_probe_units,
-        free_probe_text: paid_route_traffic_unit_text(
-            config.channel.free_probe_units,
-            config.pricing.meter.as_str(),
-        ),
+        free_probe_text: paid_route_binary_bytes_text(config.channel.free_probe_units),
         grace_units: config.channel.grace_units,
-        grace_text: paid_route_traffic_unit_text(
-            config.channel.grace_units,
-            config.pricing.meter.as_str(),
-        ),
+        grace_text: paid_route_binary_bytes_text(config.channel.grace_units),
         country_code: config.location.country_code.clone(),
         region: config.location.region.clone(),
         asn: config.location.asn.unwrap_or_default(),
@@ -82,12 +68,7 @@ fn paid_exit_seller_state(
         current_connection_count: traffic_summary.current_connection_count,
         past_connection_count: traffic_summary.past_connection_count,
         total_billable_bytes: traffic_summary.total_billable_bytes,
-        total_billable_packets: traffic_summary.total_billable_packets,
-        total_traffic_text: paid_route_usage_text(
-            traffic_summary.total_billable_bytes,
-            traffic_summary.total_billable_packets,
-            traffic_summary.total_billable_bytes,
-        ),
+        total_traffic_text: paid_route_usage_text(traffic_summary.total_billable_bytes),
         total_paid_msat: traffic_summary.total_paid_msat,
         total_paid_text: paid_route_paid_text(traffic_summary.total_paid_msat),
         total_due_msat: traffic_summary.total_due_msat,
@@ -213,7 +194,6 @@ struct PaidExitSellerTrafficSummary {
     current_connection_count: u64,
     past_connection_count: u64,
     total_billable_bytes: u64,
-    total_billable_packets: u64,
     total_paid_msat: u64,
     total_due_msat: u64,
     total_unpaid_msat: u64,
@@ -241,10 +221,7 @@ fn paid_exit_seller_traffic_summary(
         }
         summary.total_billable_bytes = summary
             .total_billable_bytes
-            .saturating_add(record.session.usage.units_for_meter(PaidRouteMeter::Bytes));
-        summary.total_billable_packets = summary
-            .total_billable_packets
-            .saturating_add(record.session.usage.units_for_meter(PaidRouteMeter::Packets));
+            .saturating_add(record.session.usage.total_bytes());
         summary.total_paid_msat = summary
             .total_paid_msat
             .saturating_add(record.session.payment.paid_msat);
@@ -650,31 +627,17 @@ fn paid_route_offer_state(
         offer_id: offer.offer_id.clone(),
         seller_npub: offer.seller_npub.clone(),
         status_text: paid_route_offer_status_text(offer, record.last_seen_unix),
-        price_text: paid_route_price_text(
-            offer.pricing.price_msat,
-            offer.pricing.per_units,
-            offer.pricing.meter.as_str(),
-        ),
-        meter: offer.pricing.meter.as_str().to_string(),
+        price_text: paid_route_price_text(offer.pricing.price_msat, offer.pricing.per_units),
         price_msat: offer.pricing.price_msat,
         per_units: offer.pricing.per_units,
-        per_units_text: paid_route_meter_unit_text(
-            offer.pricing.per_units,
-            offer.pricing.meter.as_str(),
-        ),
+        per_units_text: paid_route_decimal_bytes_text(offer.pricing.per_units),
         accepted_mints: offer.channel.accepted_mints.clone(),
         max_channel_capacity_sat: offer.channel.max_channel_capacity_sat,
         channel_expiry_secs: offer.channel.channel_expiry_secs,
         free_probe_units: offer.channel.free_probe_units,
-        free_probe_text: paid_route_traffic_unit_text(
-            offer.channel.free_probe_units,
-            offer.pricing.meter.as_str(),
-        ),
+        free_probe_text: paid_route_binary_bytes_text(offer.channel.free_probe_units),
         grace_units: offer.channel.grace_units,
-        grace_text: paid_route_traffic_unit_text(
-            offer.channel.grace_units,
-            offer.pricing.meter.as_str(),
-        ),
+        grace_text: paid_route_binary_bytes_text(offer.channel.grace_units),
         country_code: offer.location.country_code.clone(),
         region: offer.location.region.clone(),
         asn: offer.location.asn.unwrap_or_default(),
@@ -866,9 +829,9 @@ fn paid_route_session_state_with_decision(
     let delivered_units = decision.map_or(0, |decision| decision.delivered_units);
     let amount_due_msat = decision.map_or(0, |decision| decision.amount_due_msat);
     let unpaid_msat = decision.map_or(0, |decision| decision.unpaid_msat);
-    let bytes = session.usage.units_for_meter(PaidRouteMeter::Bytes);
-    let packets = session.usage.units_for_meter(PaidRouteMeter::Packets);
-    let usage_text = paid_route_usage_text(bytes, packets, delivered_units);
+    let bytes = session.usage.total_bytes();
+    let packets = session.usage.total_packets();
+    let usage_text = paid_route_usage_text(bytes.max(delivered_units));
     let detail_text = paid_route_session_detail_text(
         lifecycle_status,
         access_state,

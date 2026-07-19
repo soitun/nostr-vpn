@@ -11,14 +11,13 @@ fn paid_exit_status_snapshot_reports_store_sessions_and_routing() {
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::paid_route_store::{OpenPaidRouteBuyerSessionRequest, PaidRouteStore};
     use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, PaidRouteMeter, PaidRouteQualityMetrics, signed_paid_exit_offer_from_config,
+        PaidExitConfig, PaidRouteQualityMetrics, signed_paid_exit_offer_from_config,
     };
 
     let seller = Keys::generate();
     let buyer = Keys::generate();
     let mut offer_config = PaidExitConfig::default();
     offer_config.enabled = true;
-    offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 100;
     offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
@@ -95,7 +94,7 @@ fn paid_exit_record_probe_once_persists_session_measurements() {
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::paid_route_store::{OpenPaidRouteBuyerSessionRequest, PaidRouteStore};
     use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, PaidRouteMeter, signed_paid_exit_offer_from_config,
+        PaidExitConfig, signed_paid_exit_offer_from_config,
     };
 
     let nonce = std::time::SystemTime::now()
@@ -112,7 +111,6 @@ fn paid_exit_record_probe_once_persists_session_measurements() {
     let buyer = Keys::generate();
     let mut offer_config = PaidExitConfig::default();
     offer_config.enabled = true;
-    offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 100;
     offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
@@ -193,7 +191,7 @@ fn paid_exit_probe_once_measures_and_persists_session() {
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::paid_route_store::{OpenPaidRouteBuyerSessionRequest, PaidRouteStore};
     use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, PaidRouteMeter, signed_paid_exit_offer_from_config,
+        PaidExitConfig, signed_paid_exit_offer_from_config,
     };
 
     let nonce = std::time::SystemTime::now()
@@ -210,7 +208,6 @@ fn paid_exit_probe_once_measures_and_persists_session() {
     let buyer = Keys::generate();
     let mut offer_config = PaidExitConfig::default();
     offer_config.enabled = true;
-    offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 100;
     offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
@@ -318,7 +315,7 @@ fn paid_exit_probe_once_uses_stun_for_realized_exit_ip() {
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::paid_route_store::{OpenPaidRouteBuyerSessionRequest, PaidRouteStore};
     use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, PaidRouteMeter, signed_paid_exit_offer_from_config,
+        PaidExitConfig, signed_paid_exit_offer_from_config,
     };
 
     let nonce = std::time::SystemTime::now()
@@ -335,7 +332,6 @@ fn paid_exit_probe_once_uses_stun_for_realized_exit_ip() {
     let buyer = Keys::generate();
     let mut offer_config = PaidExitConfig::default();
     offer_config.enabled = true;
-    offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 100;
     offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
@@ -503,7 +499,6 @@ fn paid_exit_run_once_enables_seller_and_stores_offer() {
         publish: false,
         no_reload_daemon: true,
         upstream: Some("host-default".to_string()),
-        meter: Some("bytes".to_string()),
         price_msat: Some(250),
         per_units: Some("1 MB".to_string()),
         connection_minimum_msat_per_day: Some(86_400),
@@ -592,7 +587,6 @@ fn paid_exit_run_once_rejects_incomplete_wireguard_upstream() {
         publish: false,
         no_reload_daemon: true,
         upstream: Some("wireguard_exit".to_string()),
-        meter: Some("bytes".to_string()),
         price_msat: Some(500),
         per_units: Some("1 MB".to_string()),
         connection_minimum_msat_per_day: None,
@@ -652,7 +646,6 @@ fn paid_exit_run_once_enables_configured_wireguard_upstream() {
             publish: false,
             no_reload_daemon: true,
             upstream: Some("wg".to_string()),
-            meter: Some("bytes".to_string()),
             price_msat: Some(500),
             per_units: Some("1 MB".to_string()),
             connection_minimum_msat_per_day: None,

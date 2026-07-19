@@ -14,7 +14,6 @@ extension AppManager {
 
     func savePaidExitSellerSettings(
         upstream: String,
-        meter: String,
         priceMsat: String,
         perUnits: String,
         acceptedMints: String,
@@ -31,14 +30,13 @@ extension AppManager {
     ) {
         dispatch(.updateSettings(patch: settingsPatch(
             paidExitUpstream: upstream,
-            paidExitMeter: meter,
             paidExitPriceMsat: UInt64(priceMsat.trimmingCharacters(in: .whitespacesAndNewlines)),
-            paidExitPerUnits: Self.parsePaidExitPricingUnits(perUnits, meter: meter),
+            paidExitPerUnits: Self.parsePaidExitPricingUnits(perUnits),
             paidExitAcceptedMints: acceptedMints,
             paidExitMaxChannelCapacitySat: UInt64(maxChannelCapacitySat.trimmingCharacters(in: .whitespacesAndNewlines)),
             paidExitChannelExpirySecs: Self.parsePaidExitDurationSeconds(channelExpirySecs),
-            paidExitFreeProbeUnits: Self.parsePaidExitTrafficUnits(freeProbeUnits, meter: meter),
-            paidExitGraceUnits: Self.parsePaidExitTrafficUnits(graceUnits, meter: meter),
+            paidExitFreeProbeUnits: Self.parsePaidExitTrafficUnits(freeProbeUnits),
+            paidExitGraceUnits: Self.parsePaidExitTrafficUnits(graceUnits),
             paidExitCountryCode: countryCode,
             paidExitRegion: region,
             paidExitAsn: asn,
@@ -48,12 +46,12 @@ extension AppManager {
         )), status: "Saving seller settings")
     }
 
-    static func parsePaidExitPricingUnits(_ value: String, meter: String) -> UInt64? {
-        parsePaidExitUnits(value, meter: meter, byteScale: 1_000)
+    static func parsePaidExitPricingUnits(_ value: String) -> UInt64? {
+        parsePaidExitUnits(value, byteScale: 1_000)
     }
 
-    static func parsePaidExitTrafficUnits(_ value: String, meter: String) -> UInt64? {
-        parsePaidExitUnits(value, meter: meter, byteScale: 1_024)
+    static func parsePaidExitTrafficUnits(_ value: String) -> UInt64? {
+        parsePaidExitUnits(value, byteScale: 1_024)
     }
 
     static func parsePaidExitDurationSeconds(_ value: String) -> UInt64? {
@@ -97,27 +95,13 @@ extension AppManager {
         return UInt64(seconds)
     }
 
-    static func parsePaidExitUnits(_ value: String, meter: String, byteScale: Double) -> UInt64? {
+    static func parsePaidExitUnits(_ value: String, byteScale: Double) -> UInt64? {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         if let rawUnits = UInt64(trimmed) {
             return rawUnits
         }
-        guard meter == "bytes" else {
-            return parsePlainUnitCount(trimmed)
-        }
         return parseByteUnitCount(trimmed, scale: byteScale)
-    }
-
-    static func parsePlainUnitCount(_ value: String) -> UInt64? {
-        let lowercased = value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let numberText = lowercased
-            .split(whereSeparator: { !$0.isNumber })
-            .first
-            .map(String.init) ?? ""
-        return UInt64(numberText)
     }
 
     static func parseByteUnitCount(_ value: String, scale: Double) -> UInt64? {

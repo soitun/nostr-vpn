@@ -92,7 +92,7 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
         route_choice(
             app,
             &exit,
-            "Paid · Automatic",
+            "Paid · Automatic · Experimental",
             "Experimental · choose a working, reasonably priced provider",
             state.internet_source == "paid_automatic",
             true,

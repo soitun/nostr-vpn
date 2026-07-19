@@ -59,7 +59,6 @@ fn record_buyer_usage_updates_session_for_exit_seller() {
                 rx_bytes: 60,
                 rx_packets: 1,
                 billable_bytes: 60,
-                billable_packets: 1,
                 ..PaidRouteUsage::default()
             },
             now_unix: 131,
@@ -82,7 +81,6 @@ fn record_buyer_usage_updates_session_for_exit_seller() {
                 tx_bytes: 50,
                 tx_packets: 1,
                 billable_bytes: 50,
-                billable_packets: 1,
                 ..PaidRouteUsage::default()
             },
             now_unix: 132,

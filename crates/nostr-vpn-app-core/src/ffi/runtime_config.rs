@@ -162,10 +162,6 @@ impl NativeAppRuntime {
                 .parse::<PaidExitUpstream>()
                 .map_err(|error| anyhow!(error))?;
         }
-        if let Some(value) = patch.paid_exit_meter {
-            self.config.paid_exit.pricing.meter =
-                value.parse::<PaidRouteMeter>().map_err(|error| anyhow!(error))?;
-        }
         if let Some(value) = patch.paid_exit_price_msat {
             self.config.paid_exit.pricing.price_msat = value;
         }

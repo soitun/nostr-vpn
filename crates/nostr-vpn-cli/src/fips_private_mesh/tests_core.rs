@@ -22,7 +22,7 @@
         filter_stamped_tunnel_endpoints, filter_static_tunnel_endpoints_with_policy,
         filter_static_tunnel_endpoints_with_policy_and_route_check,
         fips_endpoint_config_with_open_discovery_limit, fips_endpoint_peers_from_mesh,
-        fips_lan_discovery_scope, fips_peer_address_from_hint,
+        fips_exit_route_ready_for_connected, fips_lan_discovery_scope, fips_peer_address_from_hint,
         fips_tunnel_requires_endpoint_restart, linux_cap_eff_has_net_admin,
         linux_private_ipv4_route_subnets_from_ip_route,
         linux_route_get_has_direct_private_endpoint_route, linux_tun_setup_error,
@@ -106,6 +106,47 @@
         assert!(!linux_endpoint_bypass_hosts_unchanged(
             &current,
             &changed_hosts,
+        ));
+    }
+
+    #[test]
+    fn non_strict_exit_route_only_activates_for_the_connected_selected_peer() {
+        let selected = Keys::generate().public_key().to_hex();
+        let unrelated = Keys::generate().public_key().to_hex();
+        let peers = vec![FipsMeshPeerConfig::from_participant_pubkey(
+            &selected,
+            vec!["0.0.0.0/0".to_string()],
+        )
+        .expect("selected exit peer")];
+        let routes = vec!["0.0.0.0/0".to_string()];
+
+        assert!(!fips_exit_route_ready_for_connected(
+            &routes,
+            &peers,
+            false,
+            false,
+            &HashSet::new(),
+        ));
+        assert!(!fips_exit_route_ready_for_connected(
+            &routes,
+            &peers,
+            false,
+            false,
+            &HashSet::from([unrelated.as_str()]),
+        ));
+        assert!(fips_exit_route_ready_for_connected(
+            &routes,
+            &peers,
+            false,
+            false,
+            &HashSet::from([selected.as_str()]),
+        ));
+        assert!(fips_exit_route_ready_for_connected(
+            &routes,
+            &peers,
+            true,
+            false,
+            &HashSet::new(),
         ));
     }
 
@@ -807,7 +848,6 @@
         assert_eq!(usage.tx_bytes, 64);
         assert_eq!(usage.tx_packets, 1);
         assert_eq!(usage.billable_bytes, 64);
-        assert_eq!(usage.billable_packets, 1);
         assert!(
             FipsPaidRouteAccountingPeer::parse(
                 "not-a-pubkey",

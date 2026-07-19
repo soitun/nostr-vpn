@@ -190,10 +190,10 @@ public sealed partial class AppViewModel
     }
 
     public string PaidExitSellerSummary =>
-        $"{TextOr(State.PaidExitSeller.CountryCode, "Country unset")} · {NativeDisplayText.NetworkClassTitle(State.PaidExitSeller.NetworkClass)} · {TextOr(State.PaidExitSeller.PriceText, NativeDisplayText.PriceText(State.PaidExitSeller.PriceMsat, State.PaidExitSeller.PerUnits, State.PaidExitSeller.Meter, State.PaidExitSeller.PerUnitsText))}";
+        $"{TextOr(State.PaidExitSeller.CountryCode, "Country unset")} · {NativeDisplayText.NetworkClassTitle(State.PaidExitSeller.NetworkClass)} · {TextOr(State.PaidExitSeller.PriceText, NativeDisplayText.PriceText(State.PaidExitSeller.PriceMsat, State.PaidExitSeller.PerUnits))}";
 
     public string PaidExitSellerTrialText =>
-        $"Free test: {TextOr(State.PaidExitSeller.FreeProbeText, NativeDisplayText.TrafficUnitText(State.PaidExitSeller.FreeProbeUnits, State.PaidExitSeller.Meter))} · Grace: {TextOr(State.PaidExitSeller.GraceText, NativeDisplayText.TrafficUnitText(State.PaidExitSeller.GraceUnits, State.PaidExitSeller.Meter))}";
+        $"Free test: {TextOr(State.PaidExitSeller.FreeProbeText, NativeDisplayText.TrafficUnitText(State.PaidExitSeller.FreeProbeUnits))} · Grace: {TextOr(State.PaidExitSeller.GraceText, NativeDisplayText.TrafficUnitText(State.PaidExitSeller.GraceUnits))}";
 
     public string PaidExitSellerChannelExpiryText =>
         $"Channel expires: {TextOr(State.PaidExitSeller.ChannelExpiryText, FormatRemaining(State.PaidExitSeller.ChannelExpirySecs))}";

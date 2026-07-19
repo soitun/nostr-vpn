@@ -39,7 +39,7 @@ struct InternetPage: View {
                     )) {
                         Text("This device").tag("direct")
                         Text("Private VPN device").tag("private_vpn")
-                        Text("Paid · Automatic").tag("paid_automatic")
+                        Text("Paid · Automatic · Experimental").tag("paid_automatic")
                         Text("Paid · Choose manually").tag("paid_manual")
                         Text("WireGuard VPN").tag("wireguard")
                     }
@@ -666,6 +666,16 @@ struct PaidRouteOfferRow: View {
     @ObservedObject var model: AppModel
     let offer: PaidRouteOfferState
 
+    private var compatibleMint: Bool {
+        offer.acceptedMints.contains { accepted in
+            model.state.paidRouteMarket.wallet.mints.contains { $0.url == accepted }
+        }
+    }
+
+    private var active: Bool {
+        model.state.internetSource == "paid_manual" && model.state.exitNode == offer.sellerNpub
+    }
+
     var body: some View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 3) {
@@ -690,13 +700,24 @@ struct PaidRouteOfferRow: View {
                 }
             }
             Spacer()
-            Button("Connect") {
-                model.dispatch(
-                    NativeActions.buyPaidRouteOffer(offerKey: offer.key),
-                    status: "Connecting"
-                )
+            if active {
+                Label("Active", systemImage: "checkmark.circle.fill")
+                    .font(.footnote)
+                    .foregroundStyle(.green)
+            } else {
+                Button("Connect") {
+                    model.dispatch(
+                        NativeActions.buyPaidRouteOffer(offerKey: offer.key),
+                        status: "Connecting"
+                    )
+                }
+                .disabled(model.actionInFlight || offer.key.isEmpty || !compatibleMint)
             }
-            .disabled(model.actionInFlight || offer.key.isEmpty)
+        }
+        if !compatibleMint {
+            Text("Add one of this seller’s accepted mints to buy")
+                .font(.caption)
+                .foregroundStyle(.orange)
         }
     }
 }
@@ -848,10 +869,10 @@ struct PaidExitSellerStatusCard: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
-                Text("\(seller.countryCode.isEmpty ? "Country unset" : seller.countryCode) · \(paidRouteNetworkClassTitle(seller.networkClass)) · \(fallbackText(seller.priceText, paidRoutePriceText(priceMsat: seller.priceMsat, perUnits: seller.perUnits, meter: seller.meter, perUnitsText: seller.perUnitsText)))")
+                Text("\(seller.countryCode.isEmpty ? "Country unset" : seller.countryCode) · \(paidRouteNetworkClassTitle(seller.networkClass)) · \(fallbackText(seller.priceText, paidRoutePriceText(priceMsat: seller.priceMsat, perUnits: seller.perUnits)))")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                Text("Free test \(fallbackText(seller.freeProbeText, paidRouteTrafficUnitText(seller.freeProbeUnits, meter: seller.meter))) · Grace \(fallbackText(seller.graceText, paidRouteTrafficUnitText(seller.graceUnits, meter: seller.meter)))")
+                Text("Free test \(fallbackText(seller.freeProbeText, paidRouteTrafficUnitText(seller.freeProbeUnits))) · Grace \(fallbackText(seller.graceText, paidRouteTrafficUnitText(seller.graceUnits)))")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 if !seller.settlementText.isEmpty {

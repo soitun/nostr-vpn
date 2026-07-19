@@ -33,6 +33,7 @@ const COMMAND_CAPACITY: usize = 64;
 const MAX_PUBSUB_PEERS: usize = 64;
 const MAINTENANCE_TICK_INTERVAL: Duration = Duration::from_secs(1);
 const OUTBOX_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const FIPS_ENDPOINT_ADVERT_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 const OUTBOX_BATCH: usize = 8;
 const RELAY_REPLAY_LIMIT: usize = 32;
 const FIPS_REPLAY_LIMIT: usize = 32;
@@ -65,10 +66,29 @@ impl ControlPubsubFipsRuntime {
         relays: Vec<String>,
         store_path: Option<PathBuf>,
     ) -> Result<Option<Self>> {
+        Self::start_for_peers(endpoint, config, relays, store_path, &[]).await
+    }
+
+    pub async fn start_for_peers(
+        endpoint: Arc<FipsEndpoint>,
+        config: NostrPubsubConfig,
+        relays: Vec<String>,
+        store_path: Option<PathBuf>,
+        target_peer_npubs: &[String],
+    ) -> Result<Option<Self>> {
         if config.mode == NostrPubsubMode::Off {
             return Ok(None);
         }
-        Self::start_inner(endpoint, config, relays, store_path, None, None).await
+        Self::start_inner(
+            endpoint,
+            config,
+            relays,
+            store_path,
+            None,
+            None,
+            target_peer_npubs,
+        )
+        .await
     }
 
     pub async fn start_with_peer_policy(
@@ -85,6 +105,7 @@ impl ControlPubsubFipsRuntime {
             store_path,
             Some(peer_policy),
             None,
+            &[],
         )
         .await
     }
@@ -96,6 +117,7 @@ impl ControlPubsubFipsRuntime {
         store_path: Option<PathBuf>,
         peer_policy: Option<Arc<dyn MeshPeerPolicy>>,
         update_events_override: Option<UpdateEventCache>,
+        target_peer_npubs: &[String],
     ) -> Result<Option<Self>> {
         if config.mode == NostrPubsubMode::Off {
             return Ok(None);
@@ -104,7 +126,12 @@ impl ControlPubsubFipsRuntime {
             Some(update_events) => update_events,
             None => configured_update_events()?,
         };
-        let bridge = RelayBridge::start(config.mode, relays, &update_events).await?;
+        let target_advert_authors = target_peer_npubs
+            .iter()
+            .filter_map(|peer| PublicKey::parse(peer).ok())
+            .collect::<Vec<_>>();
+        let bridge =
+            RelayBridge::start(config.mode, relays, &update_events, &target_advert_authors).await?;
         let relay_client = bridge.as_ref().map(|bridge| bridge.client.clone());
         let outbox_path = store_path
             .as_deref()
@@ -240,6 +267,7 @@ impl RelayBridge {
         mode: NostrPubsubMode,
         relays: Vec<String>,
         update_events: &UpdateEventCache,
+        target_advert_authors: &[PublicKey],
     ) -> Result<Option<Self>> {
         if mode != NostrPubsubMode::Relay || relays.is_empty() {
             return Ok(None);
@@ -253,15 +281,12 @@ impl RelayBridge {
                 .with_context(|| format!("failed to add control pubsub relay {relay}"))?;
         }
         client.connect().await;
-        let [control_filter, update_filter] = relay_subscription_filters(update_events);
-        client
-            .subscribe(control_filter, None)
-            .await
-            .context("failed to subscribe to control pubsub relays")?;
-        client
-            .subscribe(update_filter, None)
-            .await
-            .context("failed to subscribe to Hashtree update roots")?;
+        for filter in relay_subscription_filters(update_events, target_advert_authors) {
+            client
+                .subscribe(filter, None)
+                .await
+                .context("failed to subscribe to control pubsub relays")?;
+        }
         Ok(Some(Self {
             client,
             notifications,
@@ -314,6 +339,8 @@ async fn run(
     maintenance_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
     outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut endpoint_advert_tick = tokio::time::interval(FIPS_ENDPOINT_ADVERT_REFRESH_INTERVAL);
+    endpoint_advert_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut subscription = None;
     let mut subscribed_peer_links = Vec::new();
     sync_fips_subscription(
@@ -376,6 +403,17 @@ async fn run(
                     },
                     outbox_path.as_deref().expect("outbox path is present"),
                 )
+                .await;
+            }
+            _ = endpoint_advert_tick.tick() => {
+                publish_local_fips_endpoint_advert(PublishContext {
+                    endpoint: &endpoint,
+                    fips_pubsub: &fips_pubsub,
+                    bridge: bridge.as_ref(),
+                    events: &events,
+                    pubsub_policy: &pubsub_policy,
+                    update_events: &update_events,
+                })
                 .await;
             }
             delivery = fips_notification(&mut subscription) => {
@@ -462,6 +500,20 @@ async fn run(
     }
 }
 
+async fn publish_local_fips_endpoint_advert(context: PublishContext<'_>) {
+    let event = match context.endpoint.local_nostr_discovery_advert_event().await {
+        Ok(Some(event)) => event,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::warn!(%error, "failed to create local FIPS endpoint advert");
+            return;
+        }
+    };
+    if let Err(error) = publish_local(context, event).await {
+        tracing::warn!(%error, "failed to publish local FIPS endpoint advert");
+    }
+}
+
 async fn publish_local(context: PublishContext<'_>, event: Event) -> Result<bool> {
     let verified = verify_control_event(event, context.update_events)?;
     publish_verified(context, verified).await
@@ -490,6 +542,7 @@ fn validate_control_event_shape(event: &Event, update_events: &UpdateEventCache)
 async fn publish_verified(context: PublishContext<'_>, verified: VerifiedEvent) -> Result<bool> {
     validate_control_event_shape(verified.as_event(), context.update_events)?;
     let event = verified.as_event().clone();
+    validate_fips_discovery_event(context.endpoint, &event).await?;
     let fips_published = match context
         .fips_pubsub
         .publish(
@@ -507,7 +560,9 @@ async fn publish_verified(context: PublishContext<'_>, verified: VerifiedEvent) 
     tracing::debug!(event_id = %event.id, fips_published, "publishing local control event");
     observe_policy_event(context.pubsub_policy, &event).await;
     context.events.lock().await.insert(event.clone())?;
-    ingest_into_fips_discovery(context.endpoint, &event).await;
+    if u16::from(event.kind) != FIPS_PEER_ADVERT_KIND {
+        ingest_into_fips_discovery(context.endpoint, &event).await;
+    }
     if let Some(bridge) = context.bridge {
         bridge.publish(&event).await;
     }
@@ -553,6 +608,17 @@ async fn publish_policy_maintenance(context: PublishContext<'_>) {
         {
             tracing::warn!(%error, "failed to complete pubsub policy maintenance");
         }
+    }
+}
+
+async fn validate_fips_discovery_event(endpoint: &FipsEndpoint, event: &Event) -> Result<()> {
+    if u16::from(event.kind) != FIPS_PEER_ADVERT_KIND {
+        return Ok(());
+    }
+    match endpoint.ingest_nostr_discovery_event(event.clone()).await {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(anyhow!("FIPS rejected endpoint advert {}", event.id)),
+        Err(error) => Err(error).context("failed to ingest FIPS endpoint advert"),
     }
 }
 
@@ -606,8 +672,14 @@ async fn process_fips_delivery(
         return;
     }
     let event = verified.into_event();
+    if let Err(error) = validate_fips_discovery_event(endpoint, &event).await {
+        tracing::debug!(%error, event_id = %event.id, "ignored invalid FIPS endpoint advert");
+        return;
+    }
     observe_policy_event(pubsub_policy, &event).await;
-    ingest_into_fips_discovery(endpoint, &event).await;
+    if u16::from(event.kind) != FIPS_PEER_ADVERT_KIND {
+        ingest_into_fips_discovery(endpoint, &event).await;
+    }
     let inserted = match events.lock().await.insert(event.clone()) {
         Ok(inserted) => inserted,
         Err(error) => {
@@ -630,8 +702,14 @@ async fn observe_policy_event(policy: &Arc<Mutex<FipsPubsubPolicy>>, event: &Eve
 }
 
 async fn ingest_into_fips_discovery(endpoint: &FipsEndpoint, event: &Event) {
-    if let Err(error) = endpoint.ingest_nostr_discovery_event(event.clone()).await {
-        tracing::debug!(%error, event_id = %event.id, "failed to ingest pubsub event into FIPS discovery");
+    match endpoint.ingest_nostr_discovery_event(event.clone()).await {
+        Ok(true) => {}
+        Ok(false) => {
+            tracing::debug!(event_id = %event.id, "FIPS ignored non-discovery control event");
+        }
+        Err(error) => {
+            tracing::debug!(%error, event_id = %event.id, "failed to ingest pubsub event into FIPS discovery");
+        }
     }
 }
 
@@ -791,13 +869,32 @@ fn control_kinds() -> [Kind; 3] {
     ]
 }
 
-fn relay_subscription_filters(update_events: &UpdateEventCache) -> [Filter; 2] {
-    [
+fn relay_subscription_filters(
+    update_events: &UpdateEventCache,
+    target_advert_authors: &[PublicKey],
+) -> Vec<Filter> {
+    let mut filters = Vec::with_capacity(5);
+    if !target_advert_authors.is_empty() {
+        filters.push(
+            Filter::new()
+                .kind(Kind::Custom(FIPS_PEER_ADVERT_KIND))
+                .authors(target_advert_authors.iter().copied())
+                .limit(target_advert_authors.len().min(MAX_PUBSUB_PEERS)),
+        );
+    }
+    filters.extend([
         Filter::new()
-            .kinds(control_kinds())
+            .kind(Kind::Custom(FIPS_PEER_ADVERT_KIND))
+            .limit(RELAY_REPLAY_LIMIT),
+        Filter::new()
+            .kind(Kind::Custom(PAID_EXIT_OFFER_KIND))
+            .limit(RELAY_REPLAY_LIMIT),
+        Filter::new()
+            .kind(Kind::Custom(RATING_FACT_KIND))
             .limit(RELAY_REPLAY_LIMIT),
         update_events.filter().clone().limit(RELAY_REPLAY_LIMIT),
-    ]
+    ]);
+    filters
 }
 
 fn is_control_event(event: &Event, update_events: &UpdateEventCache) -> bool {

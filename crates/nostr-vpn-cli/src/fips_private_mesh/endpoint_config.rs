@@ -580,7 +580,6 @@ pub(crate) struct FipsPrivateTunnelConfig {
     #[cfg(feature = "paid-exit")]
     pub(crate) paid_route_payment_relays: Vec<String>,
     pub(crate) wireguard_exit: WireGuardExitConfig,
-    #[cfg(target_os = "linux")]
     pub(crate) exit_node_leak_protection: bool,
     nostr_discovery_enabled: bool,
     webrtc_enabled: bool,

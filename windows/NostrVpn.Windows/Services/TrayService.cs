@@ -111,7 +111,7 @@ public sealed class TrayService : IDisposable
             exitNodes.DropDownItems.Add(noExit);
             if (viewModel.PaidRouteMarketVisible)
             {
-                var paidAutomatic = Item("Paid · Automatic", async (_, _) => await viewModel.SelectPaidAutomaticExitAsync());
+                var paidAutomatic = Item("Paid · Automatic · Experimental", async (_, _) => await viewModel.SelectPaidAutomaticExitAsync());
                 paidAutomatic.Checked = viewModel.State.InternetSource == "paid_automatic";
                 exitNodes.DropDownItems.Add(paidAutomatic);
                 var paidManual = Item("Paid · Choose manually", async (_, _) => await viewModel.SelectPaidManualExitAsync());

@@ -13,19 +13,34 @@ include!("runtime_misc_paid_exit_relay/relayless.rs");
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
 async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
-    use nostr_sdk::prelude::{EventBuilder, Kind};
+    use nostr_sdk::prelude::{EventBuilder, Kind, Tag, TagKind, Timestamp};
     use nostr_social_graph::Rating;
     use nostr_social_memory::RatingEventExt;
     use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 
     let endpoint_keys = Keys::generate();
     let blocked_author = Keys::generate();
-    let relay_event = EventBuilder::new(Kind::Custom(37_195), "relay advert")
-        .sign_with_keys(&Keys::generate())
-        .expect("signed relay event");
-    let blocked_relay_event = EventBuilder::new(Kind::Custom(37_195), "blocked relay advert")
-        .sign_with_keys(&blocked_author)
-        .expect("signed blocked relay event");
+    let endpoint_advert = |author: &Keys, address: &str| {
+        EventBuilder::new(
+            Kind::Custom(37_195),
+            serde_json::json!({
+                "identifier": "fips-overlay-v1",
+                "version": 1,
+                "endpoints": [{"transport": "udp", "addr": address}],
+            })
+            .to_string(),
+        )
+        .tags([
+            Tag::identifier("fips-overlay-v1"),
+            Tag::custom(TagKind::custom("protocol"), ["fips-overlay-v1".to_string()]),
+            Tag::custom(TagKind::custom("version"), ["1".to_string()]),
+            Tag::expiration(Timestamp::from(unix_timestamp().saturating_add(3_600))),
+        ])
+        .sign_with_keys(author)
+        .expect("signed FIPS endpoint advert")
+    };
+    let relay_event = endpoint_advert(&Keys::generate(), "8.8.8.8:51820");
+    let blocked_relay_event = endpoint_advert(&blocked_author, "8.8.4.4:51820");
     let relay = LocalNostrRelay::spawn_with_events(vec![
         serde_json::to_value(&relay_event).expect("relay event JSON"),
         serde_json::to_value(&blocked_relay_event).expect("blocked relay event JSON"),
@@ -62,8 +77,13 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
         .expect("encode seeded reputation store"),
     )
     .expect("seed control pubsub reputation store");
+    let mut endpoint_config = fips_endpoint::Config::new();
+    endpoint_config.node.discovery.nostr.enabled = true;
+    endpoint_config.node.discovery.nostr.peerfinding_source =
+        fips_endpoint::NostrPeerfindingSource::External;
     let endpoint = Arc::new(
         fips_core::FipsEndpoint::builder()
+            .config(endpoint_config)
             .identity_nsec(
                 endpoint_keys
                     .secret_key()
@@ -145,13 +165,10 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
 async fn paid_exit_offer_publish_and_discover_roundtrips_through_local_relay() {
-    use nostr_vpn_core::paid_routes::PaidRouteMeter;
-
     let relay = LocalNostrRelay::spawn().await;
     let mut app = AppConfig::generated();
     app.nostr.relays = vec![relay.url.clone()];
     app.paid_exit.enabled = true;
-    app.paid_exit.pricing.meter = PaidRouteMeter::Bytes;
     app.paid_exit.pricing.price_msat = 750;
     app.paid_exit.pricing.per_units = 1_000_000;
     app.paid_exit.channel.accepted_mints = vec!["https://mint.example".to_string()];
@@ -452,9 +469,7 @@ fn relay_message_text(message: &Message) -> Option<&str> {
 fn paid_exit_buy_and_use_select_public_exit_route() {
     use nostr_sdk::prelude::Keys;
     use nostr_vpn_core::paid_route_store::{PaidRouteStore, write_paid_route_store};
-    use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, PaidRouteMeter, signed_paid_exit_offer_from_config,
-    };
+    use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
 
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -474,7 +489,6 @@ fn paid_exit_buy_and_use_select_public_exit_route() {
         enabled: true,
         ..PaidExitConfig::default()
     };
-    offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 1_000_000;
     offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
@@ -547,9 +561,7 @@ async fn paid_exit_create_payment_command_updates_buyer_session() {
     use cashu_service::CashuSpilmanPayment;
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::paid_route_store::{OpenPaidRouteBuyerSessionRequest, PaidRouteStore};
-    use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, PaidRouteMeter, signed_paid_exit_offer_from_config,
-    };
+    use nostr_vpn_core::paid_routes::{PaidExitConfig, signed_paid_exit_offer_from_config};
     use serde_json::json;
 
     let nonce = std::time::SystemTime::now()
@@ -567,7 +579,6 @@ async fn paid_exit_create_payment_command_updates_buyer_session() {
         enabled: true,
         ..PaidExitConfig::default()
     };
-    offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 100;
     offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
@@ -661,7 +672,7 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
         RecordPaidRouteBuyerUsageRequest,
     };
     use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, PaidRouteMeter, PaidRouteUsage, signed_paid_exit_offer_from_config,
+        PaidExitConfig, PaidRouteUsage, signed_paid_exit_offer_from_config,
     };
     use serde_json::json;
 
@@ -682,7 +693,6 @@ async fn paid_exit_stream_payments_signs_due_buyer_usage_update() {
         enabled: true,
         ..PaidExitConfig::default()
     };
-    offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 100;
     offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];
@@ -810,7 +820,7 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
         PaidRouteLifecycleStatus, PaidRouteStore, RecordPaidRouteBuyerUsageRequest,
     };
     use nostr_vpn_core::paid_routes::{
-        PaidExitConfig, PaidRouteMeter, PaidRouteUsage, signed_paid_exit_offer_from_config,
+        PaidExitConfig, PaidRouteUsage, signed_paid_exit_offer_from_config,
     };
     use serde_json::json;
 
@@ -831,7 +841,6 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
         enabled: true,
         ..PaidExitConfig::default()
     };
-    offer_config.pricing.meter = PaidRouteMeter::Bytes;
     offer_config.pricing.price_msat = 1_000;
     offer_config.pricing.per_units = 100;
     offer_config.channel.accepted_mints = vec!["https://mint.example".to_string()];

@@ -12,10 +12,6 @@ CASHU_SERVICE_REPO_PATH=${NVPN_CASHU_SERVICE_REPO_PATH:-}
 CDK_SPILMAN_REPO_PATH=${NVPN_CDK_SPILMAN_REPO_PATH:-${NVPN_CASHU_SPILMAN_REPO_PATH:-}}
 DOCKER_ENV=()
 
-if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
-  DOCKER_ENV+=(-e NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES=1)
-fi
-
 if [[ ${NVPN_LINUX_MUSL_STRIP:-0} == 1 ]]; then
   DOCKER_ENV+=(-e NVPN_LINUX_MUSL_STRIP=1)
 fi
@@ -277,12 +273,7 @@ path.write_text(text.replace(old, new))
 PATCH
 fi
 
-cargo_feature_args=()
-if [[ ${NVPN_LINUX_MUSL_NO_DEFAULT_FEATURES:-0} == 1 ]]; then
-  cargo_feature_args+=(--no-default-features)
-fi
-
-cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}" "${cargo_feature_args[@]}" \
+cargo "${cargo_config_args[@]}" build "${cargo_lock_args[@]}" \
   -p nvpn --bin nvpn --release --target "$TARGET"
 if [[ ${NVPN_LINUX_MUSL_STRIP:-0} == 1 ]]; then
   "${TARGET}-strip" "target/$TARGET/release/nvpn"

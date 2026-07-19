@@ -198,7 +198,7 @@ async fn paid_exit_create_payment_command(args: PaidExitCreatePaymentArgs) -> Re
             paid_exit_msat_text(result.paid_msat),
             paid_exit_msat_text(result.amount_due_msat),
             paid_exit_msat_text(result.unpaid_msat),
-            paid_exit_usage_text(0, 0, result.delivered_units)
+            paid_exit_usage_text(result.delivered_units)
         );
         println!("store: {} changed={}", store_path.display(), result.changed);
         println!(
@@ -267,7 +267,7 @@ fn paid_exit_create_token_lease_command(args: PaidExitCreateTokenLeaseArgs) -> R
             paid_exit_msat_text(result.paid_msat),
             paid_exit_msat_text(result.amount_due_msat),
             paid_exit_msat_text(result.unpaid_msat),
-            paid_exit_usage_text(0, 0, result.delivered_units)
+            paid_exit_usage_text(result.delivered_units)
         );
         println!("store: {} changed={}", store_path.display(), result.changed);
         println!(

@@ -23,9 +23,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::normalize_nostr_pubkey;
 use crate::paid_routes::{
-    PaidExitConfig, PaidRouteAccessState, PaidRouteLease, PaidRouteMeter, PaidRouteOffer,
-    PaidRoutePaymentMode, PaidRoutePaymentState, PaidRouteQualityMetrics, PaidRouteQuote,
-    PaidRouteSession, PaidRouteUsage, SignedPaidRouteOffer,
+    PaidExitConfig, PaidRouteAccessState, PaidRouteLease, PaidRouteOffer, PaidRoutePaymentMode,
+    PaidRoutePaymentState, PaidRouteQualityMetrics, PaidRouteQuote, PaidRouteSession,
+    PaidRouteUsage, SignedPaidRouteOffer,
 };
 
 const CURRENT_VERSION: u8 = 1;
@@ -384,7 +384,6 @@ struct BuyerPaymentApplyContext<'a> {
     session_id: &'a str,
     channel_id: &'a str,
     lease_id: &'a str,
-    meter: PaidRouteMeter,
     kind: BuildPaidRouteBuyerPaymentEnvelopeKind,
     delivered_units: u64,
     paid_msat: u64,

@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use fips_core::PeerIdentity;
 use fips_endpoint::{
-    Config, PeerConfig, RoutingMode, TransportInstances, UdpConfig, WebSocketConfig,
+    Config, NostrPeerfindingSource, PeerConfig, RoutingMode, TransportInstances, UdpConfig,
+    WebSocketConfig,
 };
 use nostr_pubsub::MeshPeer;
 use nostr_sdk::prelude::{EventBuilder, EventId, Keys, Kind, Tag, TagKind, Timestamp, ToBech32};
@@ -39,6 +40,22 @@ fn endpoint_config(local_port: u16, peers: &[(&str, u16)]) -> Config {
             .iter()
             .map(|(npub, port)| PeerConfig::new(*npub, "udp", format!("127.0.0.1:{port}"))),
     );
+    config
+}
+
+fn publicly_advertised_endpoint_config(local_port: u16) -> Config {
+    let mut config = endpoint_config(local_port, &[]);
+    config.node.discovery.nostr.enabled = true;
+    config.node.discovery.nostr.advertise = true;
+    config.node.discovery.nostr.peerfinding_source = NostrPeerfindingSource::External;
+    config.transports.udp = TransportInstances::Single(UdpConfig {
+        bind_addr: Some(format!("127.0.0.1:{local_port}")),
+        external_addr: Some(format!("8.8.8.8:{local_port}")),
+        advertise_on_nostr: Some(true),
+        public: Some(true),
+        accept_connections: Some(true),
+        ..UdpConfig::default()
+    });
     config
 }
 
@@ -137,6 +154,7 @@ async fn start_pubsub(
         None,
         None,
         Some(update_events),
+        &[],
     )
     .await
     .expect("start FIPS pubsub")
@@ -193,17 +211,32 @@ async fn wait_pubsub_transport_connected(runtime: &ControlPubsubFipsRuntime) {
 #[test]
 fn relay_subscriptions_bound_retained_replay() {
     let publisher = Keys::generate();
+    let target = Keys::generate().public_key();
     let update_events = update_events(&publisher, "releases/bounded-relay-replay");
 
-    let filters = relay_subscription_filters(&update_events);
+    let filters = relay_subscription_filters(&update_events, &[target]);
 
-    assert_eq!(filters.len(), 2);
+    assert_eq!(filters.len(), 5);
     assert!(
-        filters
-            .iter()
-            .all(|filter| filter.limit == Some(RELAY_REPLAY_LIMIT)),
+        filters.iter().all(|filter| filter.limit.is_some()),
         "every public-relay subscription must bound retained replay"
     );
+    assert_eq!(
+        filters[0].authors.as_ref().map(|authors| authors.len()),
+        Some(1)
+    );
+    for kind in [
+        FIPS_PEER_ADVERT_KIND,
+        PAID_EXIT_OFFER_KIND,
+        RATING_FACT_KIND,
+    ] {
+        assert!(filters.iter().any(|filter| {
+            filter
+                .kinds
+                .as_ref()
+                .is_some_and(|kinds| kinds.len() == 1 && kinds.contains(&Kind::Custom(kind)))
+        }));
+    }
 }
 
 #[test]
@@ -272,6 +305,53 @@ fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency() {
         .expect("spawn WebSocket pubsub test thread")
         .join()
         .expect("WebSocket pubsub test thread");
+}
+
+#[test]
+fn control_pubsub_publishes_the_local_fips_endpoint_advert() {
+    std::thread::Builder::new()
+        .name("local-fips-endpoint-advert".to_string())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("local endpoint advert test runtime")
+                .block_on(control_pubsub_publishes_the_local_fips_endpoint_advert_run());
+        })
+        .expect("spawn local endpoint advert test")
+        .join()
+        .expect("local endpoint advert test thread");
+}
+
+async fn control_pubsub_publishes_the_local_fips_endpoint_advert_run() {
+    let identity = Keys::generate();
+    let publisher = Keys::generate();
+    let [port, _, _] = available_udp_ports();
+    let endpoint = endpoint(&identity, publicly_advertised_endpoint_config(port)).await;
+    let runtime = start_pubsub(
+        Arc::clone(&endpoint),
+        update_events(&publisher, "releases/local-endpoint-advert"),
+    )
+    .await;
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if runtime.events().await.iter().any(|event| {
+                event.kind == Kind::Custom(FIPS_PEER_ADVERT_KIND)
+                    && event.pubkey == identity.public_key()
+                    && event.content.contains(&format!("8.8.8.8:{port}"))
+            }) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("local signed FIPS endpoint advert entered the pubsub bus");
+
+    runtime.stop().await;
+    endpoint.shutdown().await.expect("shutdown endpoint");
 }
 
 async fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency_run() {
@@ -651,6 +731,7 @@ async fn peer_policy_rejects_events_from_authenticated_udp_fips_peer_run() {
         None,
         Some(Arc::new(RejectAllPeers)),
         Some(update_events),
+        &[],
     )
     .await
     .expect("start policy-bound FIPS pubsub")

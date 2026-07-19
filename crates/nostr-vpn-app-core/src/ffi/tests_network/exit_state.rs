@@ -85,7 +85,7 @@
     }
 
     #[test]
-    fn native_state_reports_pending_automatic_exit_as_blocked() {
+    fn native_state_only_blocks_pending_automatic_exit_when_leak_protection_is_enabled() {
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
@@ -97,6 +97,12 @@
 
         let state = runtime.state();
 
+        assert!(!state.exit_node_blocked);
+        assert!(!state.exit_node_active);
+        assert_eq!(state.exit_node_status_text, "Exit pending: paid provider");
+
+        runtime.config.exit_node_leak_protection = true;
+        let state = runtime.state();
         assert!(state.exit_node_blocked);
         assert!(!state.exit_node_active);
         assert_eq!(

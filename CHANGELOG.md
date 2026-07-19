@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Changed
+
+- Enable paid exits in standard release builds, mark automatic paid internet
+  as experimental, and leave exit fail-closed behavior off by default.
+- Replace the mutually exclusive byte/time/packet tariff with a version 2,
+  byte-only paid-exit offer. Prices are normalized per GB and also show how
+  much data one satoshi buys.
+
+### Fixed
+
+- Publish the local signed FIPS endpoint advert through the shared Nostr
+  pubsub provider so discovered internet sellers can actually be reached.
+- Make GUI purchases select and start the bought exit, show active and error
+  states, and keep the ordinary internet route available until a non-strict
+  selected exit is connected.
+
 ## 4.0.99 - 2026-07-19
 
 ### Fixed

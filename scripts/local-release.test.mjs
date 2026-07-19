@@ -52,6 +52,20 @@ test('splitCsv trims and drops empties', () => {
   ])
 })
 
+test('release builds always include paid exit support', () => {
+  for (const manifest of [
+    'crates/nostr-vpn-core/Cargo.toml',
+    'crates/nostr-vpn-cli/Cargo.toml',
+    'crates/nostr-vpn-app-core/Cargo.toml',
+  ]) {
+    const contents = readFileSync(manifest, 'utf8')
+    assert.match(contents, /default\s*=\s*\[[^\]]*"paid-exit"[^\]]*\]/)
+  }
+
+  const linuxBuilder = readFileSync('scripts/build-nvpn-linux-musl', 'utf8')
+  assert.doesNotMatch(linuxBuilder, /NO_DEFAULT_FEATURES|--no-default-features/)
+})
+
 test('deterministicBuildEnv fills stable defaults without clobbering explicit env', () => {
   assert.deepEqual(
     deterministicBuildEnv(

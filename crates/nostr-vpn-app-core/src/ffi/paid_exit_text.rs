@@ -16,15 +16,29 @@ fn paid_route_session_status_text(
     }
 }
 
-fn paid_route_price_text(price_msat: u64, per_units: u64, meter: &str) -> String {
+fn paid_route_price_text(price_msat: u64, per_units: u64) -> String {
     if price_msat == 0 {
         "free".to_string()
     } else {
-        format!(
-            "{} / {}",
-            paid_route_msat_text(price_msat),
-            paid_route_meter_unit_text(per_units, meter)
-        )
+        let denominator = u128::from(per_units.max(1));
+        let per_gb_msat = u128::from(price_msat)
+            .saturating_mul(1_000_000_000)
+            .saturating_add(denominator.saturating_sub(1))
+            .saturating_div(denominator)
+            .min(u128::from(u64::MAX)) as u64;
+        let bytes_per_sat = denominator
+            .saturating_mul(1_000)
+            .saturating_div(u128::from(price_msat))
+            .min(u128::from(u64::MAX)) as u64;
+        let price = format!("{} / GB", paid_route_msat_text(per_gb_msat));
+        if bytes_per_sat == 0 {
+            price
+        } else {
+            format!(
+                "{price} · 1 sat ≈ {}",
+                paid_route_decimal_bytes_text(bytes_per_sat)
+            )
+        }
     }
 }
 
@@ -261,20 +275,8 @@ fn paid_route_session_detail_text(
     )
 }
 
-fn paid_route_usage_text(bytes: u64, packets: u64, delivered_units: u64) -> String {
-    if bytes > 0 {
-        format!("{} used", paid_route_binary_bytes_text(bytes))
-    } else if packets > 0 {
-        match packets {
-            1 => "1 packet".to_string(),
-            count => format!("{count} packets"),
-        }
-    } else {
-        match delivered_units {
-            1 => "1 unit".to_string(),
-            count => format!("{count} units"),
-        }
-    }
+fn paid_route_usage_text(bytes: u64) -> String {
+    format!("{} used", paid_route_binary_bytes_text(bytes))
 }
 
 fn paid_route_access_title_text(value: &str, fallback: &str) -> String {
@@ -437,24 +439,6 @@ fn paid_route_upstream_text(value: &str) -> String {
             "My internet through WireGuard".to_string()
         }
         _ => "My internet".to_string(),
-    }
-}
-
-fn paid_route_meter_unit_text(per_units: u64, meter: &str) -> String {
-    match meter {
-        "bytes" => paid_route_decimal_bytes_text(per_units),
-        "milliseconds" | "millisecond" | "ms" => format!("{per_units} ms"),
-        "packets" if per_units == 1 => "1 packet".to_string(),
-        "packets" | "packet" => format!("{per_units} packets"),
-        "" => format!("{per_units} units"),
-        other => format!("{per_units} {other}"),
-    }
-}
-
-fn paid_route_traffic_unit_text(units: u64, meter: &str) -> String {
-    match meter {
-        "bytes" => paid_route_binary_bytes_text(units),
-        _ => paid_route_meter_unit_text(units, meter),
     }
 }
 

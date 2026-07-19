@@ -2,7 +2,6 @@
 #[tokio::test]
 async fn paid_exit_publish_queues_for_p2p_when_no_relays_are_configured() {
     use nostr_vpn_core::config::NostrPubsubMode;
-    use nostr_vpn_core::paid_routes::PaidRouteMeter;
 
     let nonce = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -14,7 +13,6 @@ async fn paid_exit_publish_queues_for_p2p_when_no_relays_are_configured() {
     app.nostr.relays.clear();
     app.nostr.pubsub.mode = NostrPubsubMode::Client;
     app.paid_exit.enabled = true;
-    app.paid_exit.pricing.meter = PaidRouteMeter::Bytes;
     app.paid_exit.pricing.price_msat = 100;
     app.paid_exit.pricing.per_units = 1_000_000;
     app.paid_exit.channel.accepted_mints = vec!["https://mint.example".to_string()];

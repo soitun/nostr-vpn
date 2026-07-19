@@ -60,12 +60,7 @@ fn paid_exit_status_snapshot_json(
             "current_connection_count": seller_summary.current_connection_count,
             "past_connection_count": seller_summary.past_connection_count,
             "total_billable_bytes": seller_summary.total_billable_bytes,
-            "total_billable_packets": seller_summary.total_billable_packets,
-            "total_traffic_text": paid_exit_usage_text(
-                seller_summary.total_billable_bytes,
-                seller_summary.total_billable_packets,
-                seller_summary.total_billable_bytes,
-            ),
+            "total_traffic_text": paid_exit_usage_text(seller_summary.total_billable_bytes),
             "total_paid_msat": seller_summary.total_paid_msat,
             "total_paid_text": paid_exit_msat_text(seller_summary.total_paid_msat),
             "total_due_msat": seller_summary.total_due_msat,
@@ -176,7 +171,7 @@ fn paid_exit_session_status_json(
         json!({
             "state": decision.state.as_str(),
             "allow_routing": decision.allow_routing,
-            "shared_internet": paid_exit_shared_internet_text(&decision, config.pricing.meter),
+            "shared_internet": paid_exit_shared_internet_text(&decision),
             "delivered_units": decision.delivered_units,
             "paid_msat": decision.paid_msat,
             "amount_due_msat": decision.amount_due_msat,
@@ -260,7 +255,6 @@ struct PaidExitSellerCliSummary {
     current_connection_count: u64,
     past_connection_count: u64,
     total_billable_bytes: u64,
-    total_billable_packets: u64,
     total_paid_msat: u64,
     total_due_msat: u64,
     total_unpaid_msat: u64,
@@ -293,10 +287,7 @@ fn paid_exit_seller_cli_summary(
         }
         summary.total_billable_bytes = summary
             .total_billable_bytes
-            .saturating_add(record.session.usage.units_for_meter(PaidRouteMeter::Bytes));
-        summary.total_billable_packets = summary
-            .total_billable_packets
-            .saturating_add(record.session.usage.units_for_meter(PaidRouteMeter::Packets));
+            .saturating_add(record.session.usage.total_bytes());
         summary.total_paid_msat = summary
             .total_paid_msat
             .saturating_add(record.session.payment.paid_msat);
@@ -359,11 +350,7 @@ fn print_paid_exit_status_snapshot(app: &AppConfig, store_path: &Path, store: &P
             "paid_exit_seller_summary: connected={} past={} traffic={} paid={} due={} unpaid={}",
             seller_summary.current_connection_count,
             seller_summary.past_connection_count,
-            paid_exit_usage_text(
-                seller_summary.total_billable_bytes,
-                seller_summary.total_billable_packets,
-                seller_summary.total_billable_bytes,
-            ),
+            paid_exit_usage_text(seller_summary.total_billable_bytes),
             paid_exit_msat_text(seller_summary.total_paid_msat),
             paid_exit_msat_text(seller_summary.total_due_msat),
             paid_exit_msat_text(seller_summary.total_unpaid_msat),
@@ -383,7 +370,6 @@ fn print_paid_exit_status_snapshot(app: &AppConfig, store_path: &Path, store: &P
                 paid_exit_price_text(
                     offer.pricing.price_msat,
                     offer.pricing.per_units,
-                    offer.pricing.meter,
                 ),
                 display_or_none(&offer.location.country_code),
                 offer.location.network_class.as_str(),
@@ -440,27 +426,20 @@ fn print_paid_exit_status_snapshot(app: &AppConfig, store_path: &Path, store: &P
                     "off: no matching offer".to_string(),
                     0,
                     0,
-                    session.usage.units_for_meter(PaidRouteMeter::Bytes),
+                    session.usage.total_bytes(),
                 ),
                 |decision| {
                     (
                         decision.state.as_str(),
                         decision.allow_routing,
-                        paid_exit_shared_internet_text(
-                            decision,
-                            session_config
-                                .as_ref()
-                                .map(|config| config.pricing.meter)
-                                .unwrap_or(PaidRouteMeter::Bytes),
-                        ),
+                        paid_exit_shared_internet_text(decision),
                         decision.amount_due_msat,
                         decision.unpaid_msat,
                         decision.delivered_units,
                     )
                 },
             );
-            let bytes = session.usage.units_for_meter(PaidRouteMeter::Bytes);
-            let packets = session.usage.units_for_meter(PaidRouteMeter::Packets);
+            let bytes = session.usage.total_bytes();
             println!(
                 "  {} shared_internet=\"{}\" state={} allow={} collection={} mode={} paid={} due={} unpaid={} usage={} exit_ip={} country={} claimed_country={} country_claim={} quality={}",
                 session.session_id,
@@ -472,7 +451,7 @@ fn print_paid_exit_status_snapshot(app: &AppConfig, store_path: &Path, store: &P
                 paid_exit_msat_text(session.payment.paid_msat),
                 paid_exit_msat_text(due),
                 paid_exit_msat_text(unpaid),
-                paid_exit_usage_text(bytes, packets, delivered),
+                paid_exit_usage_text(bytes.max(delivered)),
                 display_or_none(session.realized_exit_ip.as_deref().unwrap_or_default()),
                 display_or_none(session.observed_country_code.as_deref().unwrap_or_default()),
                 display_or_none(&country_claim.claimed_country_code),
@@ -646,17 +625,14 @@ fn paid_exit_quality_text(quality: Option<&PaidRouteQualityMetrics>) -> String {
     }
 }
 
-pub(crate) fn paid_exit_shared_internet_text(
-    decision: &PaidRouteRoutingDecision,
-    meter: PaidRouteMeter,
-) -> String {
+pub(crate) fn paid_exit_shared_internet_text(decision: &PaidRouteRoutingDecision) -> String {
     let prefix = if decision.allow_routing { "on" } else { "off" };
     match decision.state.as_str() {
         "free_probe" => {
             if decision.free_probe_remaining_units > 0 {
                 format!(
                     "{prefix}: free test, {} left",
-                    paid_exit_traffic_unit_text(decision.free_probe_remaining_units, meter)
+                    paid_exit_binary_bytes_text(decision.free_probe_remaining_units)
                 )
             } else {
                 format!("{prefix}: free test")
@@ -667,7 +643,7 @@ pub(crate) fn paid_exit_shared_internet_text(
             let mut text = if decision.grace_remaining_units > 0 {
                 format!(
                     "{prefix}: grace, {} left",
-                    paid_exit_traffic_unit_text(decision.grace_remaining_units, meter)
+                    paid_exit_binary_bytes_text(decision.grace_remaining_units)
                 )
             } else {
                 format!("{prefix}: grace")
@@ -749,15 +725,14 @@ pub(crate) fn paid_exit_offer_summary_line(
         paid_exit_price_text(
             offer.pricing.price_msat,
             offer.pricing.per_units,
-            offer.pricing.meter,
         ),
         display_or_none(&offer.location.country_code),
         offer.location.network_class.as_str(),
         offer.access.upstream.as_str(),
         paid_exit_sat_text(offer.channel.max_channel_capacity_sat),
         offer.channel.channel_expiry_secs,
-        paid_exit_traffic_unit_text(offer.channel.free_probe_units, offer.pricing.meter),
-        paid_exit_traffic_unit_text(offer.channel.grace_units, offer.pricing.meter),
+        paid_exit_binary_bytes_text(offer.channel.free_probe_units),
+        paid_exit_binary_bytes_text(offer.channel.grace_units),
         paid_exit_mints_text(&offer.channel.accepted_mints),
         paid_exit_quality_text(offer.quality.as_ref()),
         event_id,

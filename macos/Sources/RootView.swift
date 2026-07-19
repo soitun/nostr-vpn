@@ -22,7 +22,6 @@ struct RootView: View {
     @State var nostrPubsubMaxHops = ""
     @State var nostrPubsubMaxEventBytes = ""
     @State var wireguardExitConfig = ""
-    @State var paidExitMeter = "bytes"
     @State var paidExitPriceMsat = ""
     @State var paidExitPerUnits = ""
     @State var paidExitAcceptedMints = ""

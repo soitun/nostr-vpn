@@ -356,7 +356,6 @@ struct PaidExitSellerState: Decodable, Equatable {
     var privateVpnAccess = ""
     var internetText = ""
     var publicIpText = ""
-    var meter = ""
     var priceText = ""
     var priceMsat: UInt64 = 0
     var perUnits: UInt64 = 0
@@ -383,7 +382,6 @@ struct PaidExitSellerState: Decodable, Equatable {
     var currentConnectionCount: UInt64 = 0
     var pastConnectionCount: UInt64 = 0
     var totalBillableBytes: UInt64 = 0
-    var totalBillablePackets: UInt64 = 0
     var totalTrafficText = ""
     var totalPaidMsat: UInt64 = 0
     var totalPaidText = ""
@@ -480,7 +478,6 @@ struct PaidRouteOfferState: Decodable, Identifiable, Equatable {
     var sellerNpub = ""
     var statusText = ""
     var priceText = ""
-    var meter = ""
     var priceMsat: UInt64 = 0
     var perUnits: UInt64 = 0
     var perUnitsText = ""

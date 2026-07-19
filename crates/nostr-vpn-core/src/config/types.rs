@@ -167,7 +167,7 @@ pub struct AppConfig {
     pub exit_node_public_paid_exit: bool,
     #[serde(
         default = "default_exit_node_leak_protection",
-        skip_serializing_if = "is_true"
+        skip_serializing_if = "is_false"
     )]
     pub exit_node_leak_protection: bool,
     #[serde(default = "default_close_to_tray_on_close")]
@@ -690,7 +690,7 @@ fn wireguard_exit_persistent_keepalive_secs_is_default(value: &u16) -> bool {
 }
 
 fn default_exit_node_leak_protection() -> bool {
-    true
+    false
 }
 
 fn normalize_wireguard_exit_config(config: &mut WireGuardExitConfig) {
