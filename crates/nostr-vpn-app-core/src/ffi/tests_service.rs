@@ -772,6 +772,31 @@ exit 0
         let _ = fs::remove_dir_all(&dir);
     }
 
+    #[cfg(feature = "paid-exit")]
+    #[test]
+    fn gui_buy_paid_route_offer_failure_reaches_the_ui_error_state() {
+        let dir = unique_service_test_dir("nvpn-app-core-paid-route-buy-error");
+        let error = anyhow!("test runtime");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Paid route error test");
+        runtime.config.save(&runtime.config_path).expect("save config");
+
+        runtime.dispatch(NativeAppAction::BuyPaidRouteOffer {
+            offer_key: "missing-seller:internet-exit".to_string(),
+            mint_url: None,
+            channel_capacity_sat: None,
+        });
+
+        let state = runtime.state();
+        assert!(state.error.contains("was not found"), "{}", state.error);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn gui_paid_automatic_selection_persists_the_daemon_buying_mode() {
         let dir = unique_service_test_dir("nvpn-app-core-paid-automatic");
