@@ -182,21 +182,21 @@ fn daemon_start_vpn_enabled(app: &AppConfig, paused: bool) -> bool {
     app.autoconnect && !paused
 }
 
-fn fips_host_runtime_active(app: &AppConfig, vpn_enabled: bool) -> bool {
+fn fips_host_runtime_active(app: &AppConfig) -> bool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
-        vpn_enabled && app.fips_host_tunnel_enabled
+        app.fips_host_tunnel_enabled
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
-        let _ = (app, vpn_enabled);
+        let _ = app;
         false
     }
 }
 
 fn fips_private_runtime_active(app: &AppConfig, vpn_enabled: bool, expected_peers: usize) -> bool {
     daemon_vpn_active(vpn_enabled, expected_peers)
-        || fips_host_runtime_active(app, vpn_enabled)
+        || fips_host_runtime_active(app)
         || paid_exit_fips_runtime_active(app)
         || app.join_requests_enabled()
         || app

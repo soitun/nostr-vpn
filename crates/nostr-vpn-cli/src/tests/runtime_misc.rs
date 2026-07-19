@@ -60,6 +60,18 @@ fn fips_private_runtime_active_tolerates_no_active_network() {
 }
 
 #[test]
+fn enabled_fips_host_tunnel_activates_runtime_while_vpn_is_paused() {
+    let mut app = AppConfig::generated();
+    app.fips_host_tunnel_enabled = true;
+    for network in &mut app.networks {
+        network.listen_for_join_requests = false;
+    }
+
+    assert_eq!(expected_peer_count(&app), 0);
+    assert!(fips_private_runtime_active(&app, false, 0));
+}
+
+#[test]
 fn pending_nostr_join_request_activates_fips_without_network_peers() {
     let mut app = AppConfig::generated();
     app.fips_host_tunnel_enabled = false;
