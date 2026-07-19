@@ -134,7 +134,7 @@ final class TrayController: NSObject {
         noExitNodeItem.target = self
         noExitNodeItem.action = #selector(handleSelectNoExit)
 
-        paidAutomaticItem.title = "Paid Internet · Automatic"
+        paidAutomaticItem.title = "Paid Internet · Automatic · Experimental"
         paidAutomaticItem.target = self
         paidAutomaticItem.action = #selector(handleSelectPaidAutomatic)
 

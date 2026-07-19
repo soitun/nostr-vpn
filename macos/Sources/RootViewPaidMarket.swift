@@ -123,7 +123,7 @@ extension RootView {
         let compatibleMint = offer.acceptedMints.contains { accepted in
             state.paidRouteMarket.wallet.mints.contains { $0.url == accepted }
         }
-        VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Image(systemName: "network")
                     .foregroundStyle(.secondary)

@@ -35,8 +35,8 @@ extension RootView {
                     routeChoice(
                         title: "Paid Internet · Automatic",
                         subtitle: state.internetSource == "paid_automatic"
-                            ? state.exitNodeStatusText
-                            : "Choose a reasonably priced provider that passes verification",
+                            ? "Experimental · \(state.exitNodeStatusText)"
+                            : "Experimental · Choose a reasonably priced provider that passes verification",
                         selected: state.internetSource == "paid_automatic",
                         enabled: true
                     ) {
@@ -205,4 +205,3 @@ extension RootView {
         .opacity(enabled ? 1 : 0.55)
     }
 }
-
