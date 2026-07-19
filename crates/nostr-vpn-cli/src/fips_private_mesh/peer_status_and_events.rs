@@ -667,8 +667,11 @@ fn non_roster_endpoint_group_count<T>(
         .len()
 }
 
-fn open_discovery_limit_after_transit_seeds(static_non_roster_seeds: usize) -> usize {
-    FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING
+fn open_discovery_limit_after_transit_seeds(
+    limit: usize,
+    static_non_roster_seeds: usize,
+) -> usize {
+    limit
         .saturating_sub(static_non_roster_seeds)
         .saturating_sub(FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS)
 }

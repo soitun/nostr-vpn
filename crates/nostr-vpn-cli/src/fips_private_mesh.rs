@@ -76,6 +76,10 @@ const FIPS_DISCOVERY_BACKOFF_MAX_SECS: u64 = 300;
 const FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS: u64 = 30;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
 const FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
+// Public WebSocket listeners are explicit FIPS bootstrap routers. Keep their
+// unaffiliated authenticated-adjacency budget bounded, but large enough that
+// a handful of slow or abandoned handshakes cannot deny all fresh clients.
+const FIPS_WEBSOCKET_LISTENER_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 const FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 2;
 const FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 4;
 const FIPS_NOSTR_FAILURE_STREAK_THRESHOLD: u32 = 6;
