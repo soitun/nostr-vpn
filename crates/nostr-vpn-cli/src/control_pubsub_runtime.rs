@@ -428,6 +428,10 @@ async fn run(
                     want_frames_received = delivery.want_frames_received,
                     want_frames_sent = delivery.want_frames_sent,
                     subscription_events_received = delivery.subscription_events_received,
+                    tcp_receive_batches = delivery.tcp_receive_batches,
+                    tcp_datagrams_received = delivery.tcp_datagrams_received,
+                    tcp_datagrams_rejected = delivery.tcp_datagrams_rejected,
+                    tcp_poll_turns = delivery.tcp_poll_turns,
                     "standard FIPS pubsub delivery snapshot"
                 );
                 sync_fips_subscription(
