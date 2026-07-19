@@ -18,7 +18,9 @@ All notable changes to this project are documented in this file.
   hosts as well as systemd-resolved and container environments.
 - Allow authenticated `.fips` ICMPv6 echo diagnostics while retaining the
   host firewall's default-deny policy for other non-TCP overlay traffic.
-
+- Route explicitly resolved `.fips` identities through an already-admitted
+  physical FIPS adjacency without broadening configured-only discovery to
+  ambient learned identities.
 - Delay the first macOS automatic update check for ten seconds after startup
   so networking can settle, then retry failures after one minute instead of
   silently waiting for the normal six-hour polling interval.
