@@ -330,7 +330,7 @@ struct SystemDnsGuard {
     #[cfg(target_os = "linux")]
     linux: LinuxDnsRestore,
     #[cfg(target_os = "macos")]
-    resolver_path: PathBuf,
+    resolver_paths: Vec<PathBuf>,
     #[cfg(target_os = "windows")]
     interface_index: u32,
 }
@@ -380,14 +380,32 @@ impl SystemDnsGuard {
         #[cfg(target_os = "macos")]
         {
             let _ = (interface, interface_index);
-            let resolver_path = PathBuf::from("/etc/resolver/nvpn-secure-dns");
-            if let Some(parent) = resolver_path.parent() {
+            let resolver_configs = [
+                (
+                    PathBuf::from("/etc/resolver/nvpn-secure-dns"),
+                    macos_secure_dns_resolver_config(),
+                ),
+                (
+                    PathBuf::from("/etc/resolver/nvpn"),
+                    macos_magic_dns_resolver_config(),
+                ),
+            ];
+            if let Some(parent) = resolver_configs[0].0.parent() {
                 std::fs::create_dir_all(parent)
                     .with_context(|| format!("failed to create {}", parent.display()))?;
             }
-            std::fs::write(&resolver_path, macos_secure_dns_resolver_config())
-                .with_context(|| format!("failed to install {}", resolver_path.display()))?;
-            return Ok(Self { resolver_path });
+            let mut resolver_paths = Vec::with_capacity(resolver_configs.len());
+            for (resolver_path, config) in resolver_configs {
+                if let Err(error) = std::fs::write(&resolver_path, config) {
+                    for installed_path in &resolver_paths {
+                        let _ = std::fs::remove_file(installed_path);
+                    }
+                    return Err(error)
+                        .with_context(|| format!("failed to install {}", resolver_path.display()));
+                }
+                resolver_paths.push(resolver_path);
+            }
+            return Ok(Self { resolver_paths });
         }
 
         #[cfg(target_os = "windows")]
@@ -411,6 +429,13 @@ fn macos_secure_dns_resolver_config() -> String {
     )
 }
 
+#[cfg(target_os = "macos")]
+fn macos_magic_dns_resolver_config() -> String {
+    format!(
+        "# Managed by nvpn secure DNS\nnameserver 127.0.0.1\nport {SECURE_DNS_PORT}\noptions timeout:1 attempts:1\n"
+    )
+}
+
 impl Drop for SystemDnsGuard {
     fn drop(&mut self) {
         #[cfg(target_os = "linux")]
@@ -427,7 +452,9 @@ impl Drop for SystemDnsGuard {
         }
         #[cfg(target_os = "macos")]
         {
-            let _ = std::fs::remove_file(&self.resolver_path);
+            for resolver_path in &self.resolver_paths {
+                let _ = std::fs::remove_file(resolver_path);
+            }
         }
         #[cfg(target_os = "windows")]
         {
@@ -559,6 +586,11 @@ mod tests {
         assert!(resolver.contains("nameserver 127.0.0.1\n"));
         assert!(resolver.contains("port 1053\n"));
         assert!(resolver.contains("domain .\n"));
+
+        let magic_dns_resolver = macos_magic_dns_resolver_config();
+        assert!(magic_dns_resolver.contains("nameserver 127.0.0.1\n"));
+        assert!(magic_dns_resolver.contains("port 1053\n"));
+        assert!(!magic_dns_resolver.contains("domain .\n"));
     }
 
     #[test]

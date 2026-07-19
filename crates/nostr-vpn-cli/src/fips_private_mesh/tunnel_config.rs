@@ -265,6 +265,7 @@ impl FipsPrivateTunnelConfig {
             peers,
             endpoint_peers,
             route_targets,
+            secure_dns_requested: !app.internet_source.is_direct(),
             magic_dns_records: build_magic_dns_records(app),
             #[cfg(any(target_os = "linux", target_os = "macos"))]
             fips_host,
@@ -363,7 +364,8 @@ impl FipsPrivateTunnelConfig {
     }
 
     fn secure_dns_required(&self) -> bool {
-        self.fips_host_enabled()
+        self.secure_dns_requested
+            || self.fips_host_enabled()
             || (self.wireguard_exit.enabled && self.wireguard_exit.configured())
             || self
                 .route_targets

@@ -13,25 +13,28 @@ pub(super) async fn send_queued_join_rosters_once(
 ) {
     let participants = app.participant_pubkeys_hex();
     for (path, queued) in load_join_rosters(config_path) {
-        let delivery = if !participants.contains(&queued.recipient_npub) {
-            Err(anyhow::anyhow!(
-                "recipient {} is not in the roster",
+        if !participants.contains(&queued.recipient_npub) {
+            eprintln!(
+                "discarding queued join roster because recipient {} is no longer in the roster",
                 queued.recipient_npub
-            ))
-        } else {
-            runtime
-                .send_join_roster(&queued.recipient_npub, queued.join_roster)
-                .await
-        };
+            );
+            consume_join_roster(&path);
+            continue;
+        }
 
-        consume_join_roster(&path);
-        match delivery {
-            Ok(()) => eprintln!(
-                "sent one signed join roster over FIPS-TCP to {}",
-                queued.recipient_npub
-            ),
+        match runtime
+            .send_join_roster(&queued.recipient_npub, queued.join_roster)
+            .await
+        {
+            Ok(()) => {
+                consume_join_roster(&path);
+                eprintln!(
+                    "sent one signed join roster over FIPS-TCP to {}",
+                    queued.recipient_npub
+                );
+            }
             Err(error) => eprintln!(
-                "join roster was not delivered over FIPS-TCP ({error}); the joiner must request again"
+                "join roster delivery over FIPS-TCP is pending ({error}); retaining it for retry"
             ),
         }
     }

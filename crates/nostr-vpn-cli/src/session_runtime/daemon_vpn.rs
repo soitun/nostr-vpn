@@ -863,8 +863,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             false
                         }
                     };
-                    if fips_sync_succeeded
-                        && !secure_exit_dns_required(&app)
+                    if (!fips_sync_succeeded || !secure_exit_dns_required(&app))
                         && magic_dns_runtime.is_none()
                     {
                         magic_dns_runtime = ConnectMagicDnsRuntime::start(&app);

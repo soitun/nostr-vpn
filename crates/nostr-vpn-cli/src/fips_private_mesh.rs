@@ -27,6 +27,9 @@ use nostr_vpn_core::fips_control::{
 use nostr_vpn_core::fips_control_tcp::{
     FipsControlTcpRuntime, FipsControlTcpSender, ReceivedFipsControlFrame,
 };
+#[cfg(test)]
+use nostr_vpn_core::fips_discovery::FIPS_LAN_DISCOVERY_SCOPE_PREFIX;
+use nostr_vpn_core::fips_discovery::fips_lan_discovery_scope;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use nostr_vpn_core::fips_mesh::RoutedFipsPeer;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -67,7 +70,6 @@ use tokio::sync::mpsc;
 
 const FIPS_PEER_ONLINE_GRACE_SECS: u64 = 20;
 const FIPS_PEER_MAX_FUTURE_SKEW_SECS: u64 = 2;
-const FIPS_LAN_DISCOVERY_SCOPE_PREFIX: &str = "nostr-vpn";
 const FIPS_PEER_CAPS_GRACE_SECS: u64 = 600;
 const FIPS_RECONNECT_BACKOFF_BASE_SECS: u64 = 1;
 const FIPS_RECONNECT_BACKOFF_MAX_SECS: u64 = 60;
@@ -183,14 +185,6 @@ fn parse_linux_tun_tx_queue_len(raw: Option<&str>, default: usize) -> Option<usi
         .parse::<usize>()
         .ok()
         .map(|value| value.clamp(64, 65_536))
-}
-
-fn fips_lan_discovery_scope(network_id: &str) -> String {
-    let digest = Sha256::digest(network_id.trim().as_bytes());
-    format!(
-        "{FIPS_LAN_DISCOVERY_SCOPE_PREFIX}:{}",
-        hex::encode(&digest[..16])
-    )
 }
 
 #[cfg(target_os = "macos")]

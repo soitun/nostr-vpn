@@ -66,7 +66,7 @@ impl MobileTunnel {
         app_config: AppConfig,
     ) -> Result<MobileTunnelStarted> {
         mobile_debug_log("MobileTunnel::start_async begin");
-        let scope = format!("nostr-vpn:{}", config.network_id.trim());
+        let scope = mobile_lan_discovery_scope(&config.network_id);
         let initial_peers = config.peers.clone();
         let config_path = non_empty_path(&config.config_path);
         let local_capability_hints = mobile_endpoint_hints(&config);
@@ -616,6 +616,10 @@ impl MobileTunnel {
             Ok(())
         })
     }
+}
+
+fn mobile_lan_discovery_scope(network_id: &str) -> String {
+    nostr_vpn_core::fips_discovery::fips_lan_discovery_scope(network_id)
 }
 
 async fn push_mobile_wg_inbound_batch(

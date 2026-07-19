@@ -562,6 +562,9 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) peers: Vec<FipsMeshPeerConfig>,
     pub(crate) endpoint_peers: Vec<FipsEndpointPeerTransportConfig>,
     pub(crate) route_targets: Vec<String>,
+    /// The selected internet source owns system DNS even while its default
+    /// route is pending. This keeps roster MagicDNS alive during exit setup.
+    secure_dns_requested: bool,
     pub(crate) magic_dns_records: HashMap<String, Ipv4Addr>,
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     pub(crate) fips_host: Option<FipsHostTunnelConfig>,
