@@ -209,6 +209,9 @@ final class AppModel: ObservableObject {
                         tunnelConfigJson: tunnelConfigJson,
                         providerOptionsConfigJson: providerOptionsConfigJson
                     )
+                    if statusMessage == "Turning VPN on" {
+                        statusMessage = state.error
+                    }
                     debugLog("PacketTunnel start returned success")
                 } catch {
                     dispatch(NativeActions.disconnectVpn(), status: "Turning VPN off")
