@@ -395,6 +395,11 @@ impl FipsPrivateTunnelConfig {
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn interface_route_targets(&self, mut routes: Vec<String>) -> Vec<String> {
+        routes.extend(
+            self.paid_route_admissions
+                .iter()
+                .flat_map(|admission| admission.allowed_ips.iter().cloned()),
+        );
         if self.fips_host.is_some() {
             routes.push("fd00::/8".to_string());
         }

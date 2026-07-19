@@ -31,6 +31,47 @@
         assert!(!endpoint_peers[0].discovery_fallback_transit);
     }
 
+    #[cfg(feature = "paid-exit")]
+    #[test]
+    fn paid_route_admissions_install_buyer_return_routes() {
+        use nostr_vpn_core::fips_mesh::FipsPaidRouteAdmission;
+
+        let seller_keys = Keys::generate();
+        let seller_pubkey = seller_keys.public_key().to_hex();
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = seller_keys.secret_key().to_bech32().expect("seller nsec");
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = "paid-exit-seller".to_string();
+        let mut config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            "paid-exit-seller",
+            "nvpn-paid",
+            Some(&seller_pubkey),
+            None,
+            &[],
+        )
+        .expect("seller tunnel config");
+        config.paid_route_admissions = vec![FipsPaidRouteAdmission {
+            participant_pubkey: Keys::generate().public_key().to_hex(),
+            session_id: "seller-session-1".to_string(),
+            allowed_ips: vec!["10.44.133.173/32".to_string()],
+            destination_allowed_ips: vec!["0.0.0.0/0".to_string()],
+            allow_routing: true,
+            state: nostr_vpn_core::paid_routes::PaidRouteAccessState::FreeProbe,
+            amount_due_msat: 0,
+            paid_msat: 0,
+            unpaid_msat: 0,
+            expires_at_unix: 200,
+            updated_at_unix: 100,
+        }];
+
+        assert!(
+            config
+                .interface_route_targets(Vec::new())
+                .contains(&"10.44.133.173/32".to_string())
+        );
+    }
+
     /// Pin the open-discovery / closed-data-plane invariant.
     ///
     /// FIPS handshake is `Open` so any nvpn node we see on relays may
