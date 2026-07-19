@@ -425,7 +425,7 @@ impl SystemDnsGuard {
 #[cfg(target_os = "macos")]
 fn macos_secure_dns_resolver_config() -> String {
     format!(
-        "# Managed by nvpn\ndomain .\nnameserver 127.0.0.1\nport {SECURE_DNS_PORT}\noptions timeout:1 attempts:1\n"
+        "# Managed by nvpn\ndomain .\nsearch_order 1\nnameserver 127.0.0.1\nport {SECURE_DNS_PORT}\noptions timeout:1 attempts:1\n"
     )
 }
 
@@ -586,6 +586,7 @@ mod tests {
         assert!(resolver.contains("nameserver 127.0.0.1\n"));
         assert!(resolver.contains("port 1053\n"));
         assert!(resolver.contains("domain .\n"));
+        assert!(resolver.contains("search_order 1\n"));
 
         let magic_dns_resolver = macos_magic_dns_resolver_config();
         assert!(magic_dns_resolver.contains("nameserver 127.0.0.1\n"));
