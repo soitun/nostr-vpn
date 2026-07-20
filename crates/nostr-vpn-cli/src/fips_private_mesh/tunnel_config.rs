@@ -209,7 +209,7 @@ impl FipsPrivateTunnelConfig {
         let paid_exit_seller = app.paid_exit.enabled;
         #[cfg(not(feature = "paid-exit"))]
         let paid_exit_seller = false;
-        let open_discovery_max_pending = if paid_exit_seller {
+        let mut open_discovery_max_pending = if paid_exit_seller {
             FIPS_NOSTR_PAID_EXIT_OPEN_DISCOVERY_MAX_PENDING
         } else if app.node.advertise_exit_node {
             FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING
@@ -238,8 +238,22 @@ impl FipsPrivateTunnelConfig {
             &tunnel_endpoint_hosts,
             &local_private_subnets,
         );
-        // Membership is enforced when these hints are merged below: cached
-        // entries can only augment roster/operator/bootstrap peers.
+        // Roster endpoint hints are always retained. Recent authenticated
+        // non-roster peers are transport-only transit seeds; cap them so they
+        // cannot consume the whole open-discovery adjacency budget.
+        recent_peer_endpoints = cap_recent_non_roster_transit_endpoints(
+            recent_peer_endpoints,
+            &desired_endpoint_hint_npubs,
+            if allow_non_roster_transit {
+                FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS
+            } else {
+                0
+            },
+        );
+        let recent_non_roster_transit_seeds =
+            non_roster_endpoint_group_count(&recent_peer_endpoints, &desired_endpoint_hint_npubs);
+        open_discovery_max_pending =
+            open_discovery_max_pending.saturating_sub(recent_non_roster_transit_seeds);
         // Live capability hints are accepted only for network signal peers because
         // they are claims carried by that peer. The disk cache above is
         // different: it records peers this endpoint already authenticated.

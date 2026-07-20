@@ -468,7 +468,7 @@
     }
 
     #[test]
-    fn tunnel_config_does_not_grant_membership_from_recent_cache() {
+    fn tunnel_config_seeds_recent_transit_without_granting_routes() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
         let charlie_keys = Keys::generate();
@@ -506,13 +506,16 @@
                 .all(|peer| peer.participant_pubkey != charlie_pubkey),
             "non-roster transit peers must not get private-network routes",
         );
-        assert!(
-            config
-                .endpoint_peers
-                .iter()
-                .all(|peer| peer.npub != charlie_npub),
-            "routing memory must not create configured FIPS membership"
-        );
+        let charlie = config
+            .endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == charlie_npub)
+            .expect("authenticated non-roster peer should seed FIPS transit");
+        assert_eq!(charlie.addresses.len(), 1);
+        assert_eq!(charlie.addresses[0].addr, "203.0.113.55:51820");
+        assert_eq!(charlie.addresses[0].seen_at_ms, Some(123_000));
+        assert!(!charlie.auto_reconnect);
+        assert!(charlie.discovery_fallback_transit);
     }
 
     #[test]
@@ -620,7 +623,7 @@
     }
 
     #[test]
-    fn tunnel_config_ignores_all_recent_peers_without_configured_membership() {
+    fn tunnel_config_caps_recent_non_roster_transit_peers() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
         let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
@@ -668,15 +671,25 @@
         assert_eq!(bob.addresses.len(), 1);
         assert_eq!(bob.addresses[0].addr, "1.1.1.1:51820");
 
-        assert!(config.endpoint_peers.iter().all(|peer| {
-            !non_roster_npubs
+        let seeded_non_roster = config
+            .endpoint_peers
+            .iter()
+            .filter(|peer| non_roster_npubs.iter().any(|npub| npub == &peer.npub))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            seeded_non_roster.len(),
+            FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS
+        );
+        assert!(
+            seeded_non_roster
                 .iter()
-                .any(|npub| npub == &peer.npub)
-        }));
+                .all(|peer| !peer.auto_reconnect && peer.discovery_fallback_transit)
+        );
         assert_eq!(
             config.open_discovery_max_pending,
-            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-            "ignored cache entries must not consume open-discovery capacity"
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING
+                - FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
+            "cached transit seeds must leave capacity for fresh discovery"
         );
     }
 

@@ -41,7 +41,7 @@
     }
 
     #[test]
-    fn recent_cache_does_not_create_configured_peer_membership() {
+    fn recent_cache_creates_transit_only_endpoint_peer() {
         let endpoint_peers = fips_endpoint_peers_from_mesh(
             &[],
             Vec::new(),
@@ -51,7 +51,15 @@
             )],
         );
 
-        assert!(endpoint_peers.is_empty());
+        let transit = endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == "peer")
+            .expect("recent authenticated peer should seed FIPS transit");
+        assert_eq!(transit.addresses.len(), 1);
+        assert_eq!(transit.addresses[0].addr, "192.168.178.91:51830");
+        assert_eq!(transit.addresses[0].seen_at_ms, Some(123_000));
+        assert!(!transit.auto_reconnect);
+        assert!(transit.discovery_fallback_transit);
     }
 
     #[test]

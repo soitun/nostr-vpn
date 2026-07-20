@@ -391,14 +391,20 @@ fn fips_endpoint_peers_from_mesh(
     }
 
     // Recent-peers cache entries arrive with millisecond freshness so fips can
-    // prefer fresher hints within the same priority tier. A cache entry may
-    // only augment a peer already created above by roster, operator, or
-    // bootstrap configuration; routing memory never grants membership.
+    // prefer fresher hints within the same priority tier. Authenticated
+    // non-roster entries are transport-only seeds: FIPS may use them for
+    // decentralized transit, while nvpn's separate route/admission tables
+    // continue to restrict private-network packets to roster participants.
     for (npub, addresses) in recent_peer_endpoints {
         let npub = normalize_fips_endpoint_npub(&npub);
-        let Some(peer) = peers.get_mut(&npub) else {
-            continue;
-        };
+        let peer = peers
+            .entry(npub.clone())
+            .or_insert_with(|| FipsEndpointPeerTransportConfig {
+                npub,
+                addresses: Vec::new(),
+                auto_reconnect: false,
+                discovery_fallback_transit: true,
+            });
         for (addr, seen_at_ms) in addresses {
             let trimmed = addr.trim();
             if trimmed.is_empty() {
