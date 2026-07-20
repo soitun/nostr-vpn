@@ -27,6 +27,9 @@ All notable changes to this project are documented in this file.
 - Retain queued device approvals until the authenticated guest confirms that
   the exact signed roster was applied, with idempotent retries after lost
   transport records or application receipts.
+- Keep routed FSP establishment on its authenticated reply-learned seed path
+  through the final Noise handshake message, and ignore stale session errors
+  from unrelated seed branches while that path remains healthy.
 - Delay the first macOS automatic update check for ten seconds after startup
   so networking can settle, then retry failures after one minute instead of
   silently waiting for the normal six-hour polling interval.
