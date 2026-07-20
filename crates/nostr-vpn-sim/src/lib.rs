@@ -14,7 +14,7 @@ use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, Timestamp};
 use nostr_social_graph::RatingGraphConfig;
 use nostr_social_memory::rating_from_event;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
-use nostr_vpn_core::control_pubsub::{FIPS_PEER_ADVERT_KIND, RATING_FACT_KIND};
+use nostr_vpn_core::control_pubsub::{PAID_EXIT_OFFER_KIND, RATING_FACT_KIND};
 use nvpn::control_pubsub_runtime::ControlPubsubFipsRuntime;
 use serde::{Deserialize, Serialize};
 
@@ -168,8 +168,8 @@ impl SimulationRuntime {
         let honest_node_count = self.config.node_count - self.config.attacker_count;
         let baseline = signed_event(
             &self.keys[0],
-            FIPS_PEER_ADVERT_KIND,
-            "honest baseline advert",
+            PAID_EXIT_OFFER_KIND,
+            "honest baseline control event",
             1,
         );
         if !self.pubsub[0].publish(baseline.clone()).await? {
@@ -190,8 +190,8 @@ impl SimulationRuntime {
             self.apply_received_ratings(honest_node_count).await?;
         let post_attack = signed_event(
             &self.keys[1],
-            FIPS_PEER_ADVERT_KIND,
-            "honest advert under attack",
+            PAID_EXIT_OFFER_KIND,
+            "honest control event under attack",
             2,
         );
         if !self.pubsub[1].publish(post_attack.clone()).await? {
