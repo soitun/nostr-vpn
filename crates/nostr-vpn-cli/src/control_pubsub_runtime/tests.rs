@@ -201,11 +201,12 @@ async fn wait_pubsub_transport_connected(runtime: &ControlPubsubFipsRuntime) {
 fn relay_subscriptions_bound_retained_replay() {
     let publisher = Keys::generate();
     let target = Keys::generate().public_key();
+    let local = Keys::generate().public_key();
     let update_events = update_events(&publisher, "releases/bounded-relay-replay");
 
-    let filters = relay_subscription_filters(&update_events, &[target]);
+    let filters = relay_subscription_filters(&update_events, &[target], local);
 
-    assert_eq!(filters.len(), 5);
+    assert_eq!(filters.len(), 6);
     assert!(
         filters.iter().all(|filter| filter.limit.is_some()),
         "every public-relay subscription must bound retained replay"
@@ -216,6 +217,7 @@ fn relay_subscriptions_bound_retained_replay() {
     );
     for kind in [
         FIPS_PEER_ADVERT_KIND,
+        FIPS_TRAVERSAL_SIGNAL_KIND,
         PAID_EXIT_OFFER_KIND,
         RATING_FACT_KIND,
     ] {
@@ -243,19 +245,20 @@ fn fips_advert_refreshes_at_half_its_signed_lifetime() {
 #[test]
 fn standard_fips_pubsub_bounds_retained_replay() {
     let publisher = Keys::generate();
+    let local = Keys::generate().public_key();
     let update_events = update_events(&publisher, "releases/bounded-fips-replay");
     let options = fips_pubsub_options(CONTROL_PUBSUB_MAX_EVENT_BYTES, 4);
-    let filters = fips_subscription_filters(&update_events);
+    let filters = fips_subscription_filters(&update_events, local);
 
     assert_eq!(options.max_replay_events, FIPS_REPLAY_LIMIT);
-    assert_eq!(filters.len(), 2);
+    assert_eq!(filters.len(), 3);
     assert_eq!(
         filters[0].kinds.as_ref(),
         Some(&control_kinds().into_iter().collect())
     );
     let update = signed_update_root(&publisher, "releases/bounded-fips-replay", 1, "ab");
     assert!(
-        filters[1].match_event(&update, MatchEventOptions::new()),
+        filters[2].match_event(&update, MatchEventOptions::new()),
         "configured hashtree updates must remain in the long-lived FIPS subscription"
     );
     assert!(

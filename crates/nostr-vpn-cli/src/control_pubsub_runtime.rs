@@ -24,7 +24,7 @@ use nostr_social_memory::rating_from_event;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::control_pubsub::{
     CONTROL_PUBSUB_MAX_EVENT_BYTES, CONTROL_PUBSUB_MAX_WIRE_BYTES, FIPS_PEER_ADVERT_KIND,
-    PAID_EXIT_OFFER_KIND, RATING_FACT_KIND,
+    FIPS_TRAVERSAL_SIGNAL_KIND, PAID_EXIT_OFFER_KIND, RATING_FACT_KIND,
 };
 use nostr_vpn_core::updater::{UpdateEventCache, configured_update_ref};
 use serde::{Deserialize, Serialize};
@@ -40,6 +40,7 @@ const OUTBOX_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const OUTBOX_BATCH: usize = 8;
 const RELAY_REPLAY_LIMIT: usize = 32;
 const FIPS_REPLAY_LIMIT: usize = 32;
+const FIPS_SIGNAL_OUTBOX_MAX: usize = 64;
 const RELAY_QUERY_TIMEOUT: Duration = Duration::from_secs(3);
 const FIPS_ADVERT_REFRESH_INTERVAL: Duration = Duration::from_mins(30);
 
@@ -135,6 +136,8 @@ impl ControlPubsubFipsRuntime {
             .iter()
             .filter_map(|peer| PublicKey::parse(peer).ok())
             .collect::<Vec<_>>();
+        let local_pubkey = PublicKey::parse(endpoint.npub())
+            .context("FIPS endpoint returned an invalid Nostr identity")?;
         let outbox_path = store_path
             .as_deref()
             .map(control_pubsub_outbox_directory_from_store_path);
@@ -159,9 +162,14 @@ impl ControlPubsubFipsRuntime {
             .await
             .context("failed to bind standard FIPS Nostr pubsub service")?,
         );
-        let relay =
-            RelayProvider::start(config.mode, relays, &update_events, &target_advert_authors)
-                .await?;
+        let relay = RelayProvider::start(
+            config.mode,
+            relays,
+            &update_events,
+            &target_advert_authors,
+            local_pubkey,
+        )
+        .await?;
         let relay_client = relay.as_ref().map(|provider| provider.bus.client().clone());
         let mut pubsub =
             NostrPubsubRouter::new(event_policy).with_publish_source(RouterPublishSource::new(
@@ -291,6 +299,7 @@ impl RelayProvider {
         relays: Vec<String>,
         update_events: &UpdateEventCache,
         target_advert_authors: &[PublicKey],
+        local_pubkey: PublicKey,
     ) -> Result<Option<Self>> {
         if mode != NostrPubsubMode::Relay || relays.is_empty() {
             return Ok(None);
@@ -303,7 +312,7 @@ impl RelayProvider {
         let (notification_tx, notifications) = mpsc::channel(RELAY_REPLAY_LIMIT * 5);
         let subscription = NostrEventSubscriber::subscribe(
             bus.as_ref(),
-            relay_subscription_filters(update_events, target_advert_authors),
+            relay_subscription_filters(update_events, target_advert_authors, local_pubkey),
             Arc::new(move |event| {
                 if notification_tx.try_send(event).is_err() {
                     tracing::warn!("dropping control pubsub relay event because the bounded ingress queue is full");
@@ -370,6 +379,7 @@ async fn run(
     let advert_refresh = tokio::time::sleep(Duration::ZERO);
     tokio::pin!(advert_refresh);
     let mut fips_subscription = FipsSubscriptionState::default();
+    let mut fips_signal_outbox = VecDeque::new();
     sync_fips_subscription(
         &endpoint,
         &fips_pubsub,
@@ -458,6 +468,12 @@ async fn run(
                 advert_refresh.as_mut().reset(tokio::time::Instant::now() + refresh_after);
             }
             _ = maintenance_tick.tick() => {
+                publish_fips_traversal_signals(
+                    &endpoint,
+                    &pubsub,
+                    &mut fips_signal_outbox,
+                )
+                .await;
                 let delivery = fips_pubsub.delivery_snapshot();
                 tracing::debug!(
                     req_frames_received = delivery.req_frames_received,
@@ -597,6 +613,75 @@ async fn publish_local_fips_advert(
     }
 }
 
+async fn publish_fips_traversal_signals(
+    endpoint: &FipsEndpoint,
+    pubsub: &NostrPubsubRouter,
+    outbox: &mut VecDeque<Event>,
+) {
+    let events = match endpoint.drain_nostr_traversal_signal_events().await {
+        Ok(events) => events,
+        Err(error) => {
+            tracing::debug!(%error, "failed to drain outbound FIPS traversal signals");
+            return;
+        }
+    };
+    for event in events {
+        if outbox.len() == FIPS_SIGNAL_OUTBOX_MAX {
+            let _ = outbox.pop_front();
+            tracing::warn!(
+                capacity = FIPS_SIGNAL_OUTBOX_MAX,
+                "evicting oldest encrypted FIPS traversal signal from the bounded outbox"
+            );
+        }
+        outbox.push_back(event);
+    }
+
+    let attempts = outbox.len();
+    for _ in 0..attempts {
+        let Some(event) = outbox.pop_front() else {
+            break;
+        };
+        if event.is_expired() {
+            continue;
+        }
+        let event_id = event.id;
+        if event.kind != Kind::Custom(FIPS_TRAVERSAL_SIGNAL_KIND) {
+            tracing::warn!(%event_id, "FIPS produced a non-signal event on its traversal queue");
+            continue;
+        }
+        let event = match VerifiedEvent::try_from(event) {
+            Ok(event) => event,
+            Err(error) => {
+                tracing::warn!(%error, %event_id, "FIPS produced an invalid traversal signal event");
+                continue;
+            }
+        };
+        let published = match pubsub
+            .publish(
+                event.clone(),
+                EventSource::fips_endpoint(endpoint.npub().to_string()),
+            )
+            .await
+        {
+            Ok(report) if report.accepted => {
+                tracing::debug!(%event_id, reason = report.reason.as_deref().unwrap_or_default(), "published encrypted FIPS traversal signal through Nostr pubsub providers");
+                true
+            }
+            Ok(report) => {
+                tracing::warn!(%event_id, reason = report.reason.as_deref().unwrap_or("no provider accepted the signal"), "FIPS traversal signal publication failed");
+                false
+            }
+            Err(error) => {
+                tracing::warn!(%error, %event_id, "FIPS traversal signal publication failed");
+                false
+            }
+        };
+        if !published {
+            outbox.push_back(event.as_event().clone());
+        }
+    }
+}
+
 fn fips_advert_refresh_delay(event: &Event) -> Duration {
     event
         .tags
@@ -702,12 +787,26 @@ async fn process_fips_delivery(
     if !is_control_event(verified.as_event(), update_events) {
         return;
     }
-    if !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await {
+    let is_signal = is_fips_traversal_signal(verified.as_event());
+    if is_signal && !fips_traversal_signal_targets(verified.as_event(), endpoint) {
+        return;
+    }
+    if !is_signal && !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await {
         return;
     }
     let event = verified.as_event().clone();
-    observe_policy_event(pubsub_policy, &event).await;
-    ingest_into_fips_discovery(endpoint, &event).await;
+    if !is_signal {
+        observe_policy_event(pubsub_policy, &event).await;
+    }
+    let _ = ingest_into_fips_discovery(endpoint, &event).await;
+    if is_signal {
+        if let Some(relay) = relay
+            && let Err(error) = relay.publish(verified, delivery.source).await
+        {
+            tracing::debug!(%error, event_id = %event.id, "configured Nostr pubsub relay signal publication deferred");
+        }
+        return;
+    }
     let inserted = match events.lock().await.insert(event.clone()) {
         Ok(inserted) => inserted,
         Err(error) => {
@@ -734,14 +833,27 @@ async fn process_relay_delivery(
     delivery: QueryEvent,
 ) {
     let verified = delivery.event;
-    if !is_control_event(verified.as_event(), update_events)
-        || !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await
-    {
+    if !is_control_event(verified.as_event(), update_events) {
+        return;
+    }
+    let is_signal = is_fips_traversal_signal(verified.as_event());
+    if is_signal && !fips_traversal_signal_targets(verified.as_event(), endpoint) {
+        return;
+    }
+    if !is_signal && !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await {
         return;
     }
     let event = verified.as_event().clone();
-    observe_policy_event(pubsub_policy, &event).await;
-    ingest_into_fips_discovery(endpoint, &event).await;
+    if !is_signal {
+        observe_policy_event(pubsub_policy, &event).await;
+    }
+    let _ = ingest_into_fips_discovery(endpoint, &event).await;
+    if is_signal {
+        if let Err(error) = fips_pubsub.publish(verified, delivery.source).await {
+            tracing::debug!(%error, event_id = %event.id, "decentralized Nostr pubsub signal publication deferred");
+        }
+        return;
+    }
     let inserted = match events.lock().await.insert(event.clone()) {
         Ok(inserted) => inserted,
         Err(error) => {
@@ -763,14 +875,16 @@ async fn observe_policy_event(policy: &Arc<Mutex<FipsPubsubPolicy>>, event: &Eve
     }
 }
 
-async fn ingest_into_fips_discovery(endpoint: &FipsEndpoint, event: &Event) {
+async fn ingest_into_fips_discovery(endpoint: &FipsEndpoint, event: &Event) -> bool {
     match endpoint.ingest_nostr_discovery_event(event.clone()).await {
-        Ok(true) => {}
+        Ok(true) => true,
         Ok(false) => {
             tracing::debug!(event_id = %event.id, "FIPS ignored non-discovery control event");
+            false
         }
         Err(error) => {
             tracing::debug!(%error, event_id = %event.id, "failed to ingest pubsub event into FIPS discovery");
+            false
         }
     }
 }
@@ -800,7 +914,10 @@ async fn sync_fips_subscription(
     if peers.is_empty() {
         return;
     }
-    let filters = fips_subscription_filters(update_events);
+    let filters = fips_subscription_filters(
+        update_events,
+        PublicKey::parse(endpoint.npub()).expect("validated endpoint npub"),
+    );
     let next = match fips_pubsub.subscribe(filters).await {
         Ok(subscription) => subscription,
         Err(error) => {
@@ -825,10 +942,17 @@ async fn sync_fips_subscription(
     }
 }
 
-fn fips_subscription_filters(update_events: &UpdateEventCache) -> Vec<Filter> {
+fn fips_subscription_filters(
+    update_events: &UpdateEventCache,
+    local_pubkey: PublicKey,
+) -> Vec<Filter> {
     let mut filters = vec![
         Filter::new()
             .kinds(control_kinds())
+            .limit(FIPS_REPLAY_LIMIT),
+        Filter::new()
+            .kind(Kind::Custom(FIPS_TRAVERSAL_SIGNAL_KIND))
+            .pubkey(local_pubkey)
             .limit(FIPS_REPLAY_LIMIT),
     ];
     if update_events.filter().kinds.is_some() {
@@ -934,8 +1058,9 @@ fn control_kinds() -> [Kind; 2] {
 fn relay_subscription_filters(
     update_events: &UpdateEventCache,
     target_advert_authors: &[PublicKey],
+    local_pubkey: PublicKey,
 ) -> Vec<Filter> {
-    let mut filters = Vec::with_capacity(5);
+    let mut filters = Vec::with_capacity(6);
     if !target_advert_authors.is_empty() {
         filters.push(
             Filter::new()
@@ -954,6 +1079,10 @@ fn relay_subscription_filters(
         Filter::new()
             .kind(Kind::Custom(RATING_FACT_KIND))
             .limit(RELAY_REPLAY_LIMIT),
+        Filter::new()
+            .kind(Kind::Custom(FIPS_TRAVERSAL_SIGNAL_KIND))
+            .pubkey(local_pubkey)
+            .limit(RELAY_REPLAY_LIMIT),
         update_events.filter().clone().limit(RELAY_REPLAY_LIMIT),
     ]);
     filters
@@ -962,10 +1091,27 @@ fn relay_subscription_filters(
 fn is_control_event(event: &Event, update_events: &UpdateEventCache) -> bool {
     matches!(
         u16::from(event.kind),
-        FIPS_PEER_ADVERT_KIND | PAID_EXIT_OFFER_KIND | RATING_FACT_KIND
+        FIPS_PEER_ADVERT_KIND
+            | PAID_EXIT_OFFER_KIND
+            | RATING_FACT_KIND
+            | FIPS_TRAVERSAL_SIGNAL_KIND
     ) || update_events
         .filter()
         .match_event(event, MatchEventOptions::new())
+}
+
+fn is_fips_traversal_signal(event: &Event) -> bool {
+    event.kind == Kind::Custom(FIPS_TRAVERSAL_SIGNAL_KIND)
+}
+
+fn fips_traversal_signal_targets(event: &Event, endpoint: &FipsEndpoint) -> bool {
+    let Ok(local_pubkey) = PublicKey::parse(endpoint.npub()) else {
+        return false;
+    };
+    event
+        .tags
+        .public_keys()
+        .any(|pubkey| *pubkey == local_pubkey)
 }
 
 include!("control_pubsub_runtime/outbox.rs");
