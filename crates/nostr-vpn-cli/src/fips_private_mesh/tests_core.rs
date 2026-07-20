@@ -8,6 +8,7 @@
         FIPS_MESH_EVENT_DRAIN_LIMIT,
         FIPS_NOSTR_EXTENDED_COOLDOWN_SECS, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
         FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+        FIPS_PAID_EXIT_OPEN_DISCOVERY_MAX_PENDING,
         FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS, FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
         FIPS_RECONNECT_BACKOFF_BASE_SECS, FIPS_RECONNECT_BACKOFF_MAX_SECS,
         FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS,
@@ -622,6 +623,11 @@
         .expect("paid exit seller tunnel config");
 
         assert_eq!(config.nostr_discovery_policy, NostrDiscoveryPolicy::Open);
+        assert_eq!(
+            config.open_discovery_max_pending,
+            FIPS_PAID_EXIT_OPEN_DISCOVERY_MAX_PENDING,
+            "a public paid-exit ingress must reserve enough bounded admission capacity for fresh clients",
+        );
     }
 
     #[test]

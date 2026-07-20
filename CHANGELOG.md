@@ -9,6 +9,9 @@ All notable changes to this project are documented in this file.
 - Update the integrated FIPS core to 0.4.27 so delayed path promotion preserves
   an already-recovered session and production first-ping name resolution does
   not lose the newly established route.
+- Reserve the bounded public-ingress discovery budget for paid-exit sellers so
+  ambient peers cannot exhaust the small endpoint budget and deny fresh WebVM
+  clients before their first `.fips` lookup.
 
 ## 4.0.99 - 2026-07-19
 

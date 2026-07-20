@@ -151,7 +151,9 @@ impl FipsPrivateTunnelConfig {
         } else {
             0
         };
-        let open_discovery_max_pending = if app.node.advertise_exit_node {
+        let open_discovery_max_pending = if app.paid_exit.enabled {
+            FIPS_PAID_EXIT_OPEN_DISCOVERY_MAX_PENDING
+        } else if app.node.advertise_exit_node {
             FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING
         } else if allow_non_roster_transit {
             if websocket_listener {
