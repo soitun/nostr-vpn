@@ -37,6 +37,8 @@ All notable changes to this project are documented in this file.
 - Cool unaffiliated peers learned from public relay announcements for thirty
   minutes after three failed connection attempts, while preserving unlimited
   reconnect for configured and roster peers.
+- Apply that same bounded cooldown when an ambient transport accepts the probe
+  but the remote endpoint never completes its authenticated FIPS handshake.
 - Delay the first macOS automatic update check for ten seconds after startup
   so networking can settle, then retry failures after one minute instead of
   silently waiting for the normal six-hour polling interval.
