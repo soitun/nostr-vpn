@@ -171,8 +171,10 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     continue;
                 }
                 drain_platform_network_changes(&mut platform_network_change_rx);
-                let now = Instant::now();
-                if platform_network_event_suppressed_until.is_some_and(|until| now < until) {
+                if reschedule_suppressed_platform_network_event(
+                    &mut network_interval,
+                    platform_network_event_suppressed_until,
+                ) {
                     continue;
                 }
                 platform_network_event_pending = true;
@@ -259,7 +261,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     endpoint_changed,
                     resumed_after_sleep,
                 );
-
                 if platform_network_event
                     || network_changed
                     || resumed_after_sleep

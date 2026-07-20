@@ -7,6 +7,31 @@ pub(crate) const DAEMON_NETWORK_REFRESH_INTERVAL_SECS: u64 = 300;
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 pub(crate) const DAEMON_NETWORK_REFRESH_INTERVAL_SECS: u64 = 1;
 pub(crate) const DAEMON_NETWORK_EVENT_DEBOUNCE_MILLIS: u64 = 250;
+
+pub(crate) fn suppressed_platform_network_event_recheck_delay(
+    suppressed_until: Option<Instant>,
+    now: Instant,
+) -> Option<Duration> {
+    suppressed_until
+        .and_then(|until| until.checked_duration_since(now))
+        .filter(|delay| !delay.is_zero())
+}
+
+pub(crate) fn reschedule_suppressed_platform_network_event(
+    network_interval: &mut tokio::time::Interval,
+    suppressed_until: Option<Instant>,
+) -> bool {
+    let Some(delay) =
+        suppressed_platform_network_event_recheck_delay(suppressed_until, Instant::now())
+    else {
+        return false;
+    };
+    // Applying utun routes generates notifications of its own. A delayed snapshot is a
+    // no-op for those events but still observes Wi-Fi finishing a roam in this window.
+    network_interval.reset_after(delay);
+    true
+}
+
 macro_rules! current_fips_peer_statuses {
     ($runtime:expr) => {
         $runtime

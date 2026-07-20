@@ -533,6 +533,25 @@ fn daemon_network_refresh_uses_platform_events_with_sparse_fallback() {
 }
 
 #[test]
+fn suppressed_platform_network_event_schedules_snapshot_recheck() {
+    let now = std::time::Instant::now();
+    let suppressed_until = now + std::time::Duration::from_secs(5);
+
+    assert_eq!(
+        suppressed_platform_network_event_recheck_delay(Some(suppressed_until), now),
+        Some(std::time::Duration::from_secs(5))
+    );
+    assert_eq!(
+        suppressed_platform_network_event_recheck_delay(Some(now), now),
+        None
+    );
+    assert_eq!(
+        suppressed_platform_network_event_recheck_delay(None, now),
+        None
+    );
+}
+
+#[test]
 fn fips_link_events_restart_endpoint_for_major_link_changes() {
     assert_eq!(
         fips_link_event_refresh(false, true, false, false),
@@ -585,12 +604,15 @@ fn fips_stale_participant_recovery_is_cooldown_gated() {
 }
 
 #[test]
-fn fips_endpoint_control_timeout_requires_runtime_replacement() {
+fn fips_endpoint_failures_requiring_runtime_replacement_are_classified() {
     for endpoint_error in [
         fips_endpoint::FipsEndpointError::Timeout {
             operation: "peer path refresh",
         },
         fips_endpoint::FipsEndpointError::Closed,
+        fips_endpoint::FipsEndpointError::Node(fips_core::NodeError::LocalRouteUnavailable(
+            "bound UDP address disappeared after network change".to_string(),
+        )),
     ] {
         let error = anyhow::Error::new(endpoint_error)
             .context("fips: refresh_peer_paths rejected by endpoint");

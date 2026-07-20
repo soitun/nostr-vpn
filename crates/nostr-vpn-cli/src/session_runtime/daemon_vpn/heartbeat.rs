@@ -103,7 +103,7 @@ pub(super) async fn maintain_fips_heartbeat(context: FipsHeartbeatContext<'_>) {
     {
         Ok(true) => *roster_sync_state = FipsRosterSyncState::default(),
         Ok(false) => {}
-        Err(error) => eprintln!("fips: stale participant recovery failed: {error}"),
+        Err(error) => eprintln!("fips: stale participant recovery failed: {error:#}"),
     }
 
     match restart_fips_tunnel_runtime_after_pending_roster_links(

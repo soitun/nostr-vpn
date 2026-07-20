@@ -169,6 +169,9 @@ pub(crate) fn fips_endpoint_control_requires_runtime_replacement(error: &anyhow:
                     error,
                     fips_endpoint::FipsEndpointError::Closed
                         | fips_endpoint::FipsEndpointError::Timeout { .. }
+                        | fips_endpoint::FipsEndpointError::Node(
+                            fips_core::NodeError::LocalRouteUnavailable(_)
+                        )
                 )
             })
     })
@@ -554,7 +557,38 @@ async fn restart_fips_tunnel_runtime_after_stale_participants(
         "daemon: refreshing FIPS peer paths after {} participant(s) stopped responding while endpoint paths need refresh",
         stale_participants.len()
     );
-    refresh_fips_tunnel_runtime_peer_paths(runtime, context, &stale_participants).await
+    let refresh_result = refresh_fips_tunnel_runtime_peer_paths(
+        runtime,
+        FipsRestartContext {
+            app: context.app,
+            config_path: context.config_path,
+            network_id: context.network_id,
+            fallback_iface: context.fallback_iface,
+            underlay_interface_mtu: context.underlay_interface_mtu,
+            own_pubkey: context.own_pubkey,
+            recent_peers: context.recent_peers,
+            ethernet_underlay: context.ethernet_underlay,
+            last_endpoint_peer_signature: &mut *context.last_endpoint_peer_signature,
+        },
+        &stale_participants,
+    )
+    .await;
+    match refresh_result {
+        Ok(restarted) => Ok(restarted),
+        Err(error) if fips_endpoint_control_requires_runtime_replacement(&error) => {
+            eprintln!(
+                "daemon: replacing FIPS endpoint after stale path refresh failed: {error:#}"
+            );
+            rebuild_fips_tunnel_runtime_after_control_failure(
+                runtime,
+                context,
+                "stale path refresh failure",
+            )
+            .await?;
+            Ok(true)
+        }
+        Err(error) => Err(error),
+    }
 }
 async fn refresh_fips_tunnel_runtime_peer_paths(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
