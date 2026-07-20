@@ -76,10 +76,10 @@ pub(crate) fn prioritize_fips_control_recipient(
     let recipient_pubkey = normalize_nostr_pubkey(recipient_pubkey)
         .with_context(|| format!("invalid FIPS control recipient {recipient_pubkey}"))?;
     let recipient_npub = PublicKey::from_hex(&recipient_pubkey)?.to_bech32()?;
-    Ok(prioritize_join_roster_peer(peers, &recipient_npub))
+    Ok(prioritize_fips_control_peer(peers, &recipient_npub))
 }
 
-fn prioritize_join_roster_peer(
+fn prioritize_fips_control_peer(
     mut peers: Vec<FipsEndpointPeerTransportConfig>,
     route_npub: &str,
 ) -> Vec<FipsEndpointPeerTransportConfig> {
@@ -368,7 +368,7 @@ fn fips_endpoint_peers_from_mesh(
             .or_insert_with(|| FipsEndpointPeerTransportConfig {
                 npub,
                 addresses: Vec::new(),
-                auto_reconnect: false,
+                auto_reconnect: true,
                 discovery_fallback_transit: true,
             });
         for raw in addresses {
@@ -765,6 +765,26 @@ mod endpoint_config_tests {
             }));
         }
         assert!(peers.iter().any(|peer| peer.npub == ambient_npub));
+    }
+
+    #[test]
+    fn operator_static_control_peer_reconnects_without_becoming_a_mesh_route() {
+        let peer_npub = Keys::generate().public_key().to_bech32().expect("npub");
+        let peers = fips_endpoint_peers_from_mesh(
+            &[],
+            vec![(
+                peer_npub.clone(),
+                vec!["203.0.113.20:51820".to_string()],
+            )],
+            Vec::new(),
+        );
+
+        let peer = peers
+            .iter()
+            .find(|peer| peer.npub == peer_npub)
+            .expect("static control peer");
+        assert!(peer.auto_reconnect);
+        assert!(peer.discovery_fallback_transit);
     }
 
     #[test]

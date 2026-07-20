@@ -893,8 +893,8 @@
         assert_eq!(charlie.addresses[0].transport, "udp");
         assert_eq!(charlie.addresses[0].addr, "10.203.0.12:51820");
         assert!(
-            !charlie.auto_reconnect,
-            "static transit-only peers should not retry forever"
+            charlie.auto_reconnect,
+            "operator-configured control peers should reconnect for relayless gossip"
         );
         assert!(
             charlie.discovery_fallback_transit,

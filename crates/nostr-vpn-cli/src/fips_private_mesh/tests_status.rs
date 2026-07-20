@@ -636,7 +636,7 @@
     }
 
     #[test]
-    fn join_roster_recipient_is_prioritized_ahead_of_ambient_peers() {
+    fn fips_control_recipient_is_prioritized_ahead_of_ambient_peers() {
         let ambient_npub = Keys::generate().public_key().to_bech32().expect("npub");
         let recipient_npub = Keys::generate().public_key().to_bech32().expect("npub");
         let peers = vec![
@@ -654,7 +654,7 @@
             },
         ];
 
-        let prioritized = prioritize_join_roster_peer(peers, &recipient_npub);
+        let prioritized = prioritize_fips_control_peer(peers, &recipient_npub);
 
         assert_eq!(prioritized[0].npub, recipient_npub);
         assert!(prioritized[0].auto_reconnect);

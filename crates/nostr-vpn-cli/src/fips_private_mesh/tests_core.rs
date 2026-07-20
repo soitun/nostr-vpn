@@ -31,7 +31,7 @@
         macos_route_get_has_direct_private_endpoint_route, mesh_status_from_endpoint_peer,
         other_endpoint_peer_statuses, parse_fips_nostr_discovery_policy,
         parse_linux_tun_tx_queue_len, participant_pubkey_bytes, peer_activity_map, peer_identity_map,
-        prioritize_join_roster_peer,
+        prioritize_fips_control_peer,
         static_endpoint_allowed_on_current_underlay_with_route_check, strip_cidr,
         tag_authenticated_transport_addr, unix_timestamp,
     };
