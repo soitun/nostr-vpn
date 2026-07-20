@@ -315,7 +315,6 @@ async fn run(
     let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
     outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut subscription = None;
-    let mut subscribed_peer_ids = Vec::new();
     sync_fips_subscription(
         &endpoint,
         &fips_pubsub,
@@ -323,7 +322,6 @@ async fn run(
         &events,
         &update_events,
         &mut subscription,
-        &mut subscribed_peer_ids,
     )
     .await;
 
@@ -443,7 +441,6 @@ async fn run(
                     &events,
                     &update_events,
                     &mut subscription,
-                    &mut subscribed_peer_ids,
                 )
                 .await;
                 publish_policy_maintenance(
@@ -642,15 +639,16 @@ async fn sync_fips_subscription(
     events: &Arc<Mutex<ControlEventStore>>,
     update_events: &UpdateEventCache,
     subscription: &mut Option<FipsPubsubSubscription>,
-    subscribed_peer_ids: &mut Vec<String>,
 ) {
-    let peers = connected_peers(endpoint, peer_policy).await;
-    if subscription.is_some() && *subscribed_peer_ids == peers {
+    // The FIPS pubsub client replays each active REQ onto newly connected and
+    // replacement links. Recreating the application subscription here would
+    // replay the retained event window to every already-connected peer too.
+    let subscription_exists = subscription.is_some();
+    if subscription_exists {
         return;
     }
-    subscription.take();
-    subscribed_peer_ids.clear();
-    if peers.is_empty() {
+    let peers = connected_peers(endpoint, peer_policy).await;
+    if !should_create_fips_subscription(subscription_exists, peers.len()) {
         return;
     }
     let filters = fips_subscription_filters(update_events);
@@ -661,7 +659,6 @@ async fn sync_fips_subscription(
             return;
         }
     };
-    *subscribed_peer_ids = peers;
     *subscription = Some(next);
 
     for event in bounded_fips_replay(events.lock().await.snapshot()) {
@@ -676,6 +673,13 @@ async fn sync_fips_subscription(
             tracing::debug!(%error, %event_id, "stored FIPS pubsub replay deferred");
         }
     }
+}
+
+fn should_create_fips_subscription(
+    subscription_exists: bool,
+    connected_peer_count: usize,
+) -> bool {
+    !subscription_exists && connected_peer_count > 0
 }
 
 fn fips_subscription_filters(update_events: &UpdateEventCache) -> Vec<Filter> {
@@ -714,9 +718,6 @@ async fn connected_peers(endpoint: &FipsEndpoint, peer_policy: &dyn MeshPeerPoli
     subscription_peer_ids(peers)
 }
 
-// The FIPS pubsub client replays each active REQ onto a replacement link for
-// the same authenticated identity. Recreating the whole subscription here on
-// link-id churn would instead replay every retained event to every peer.
 fn subscription_peer_ids(peers: Vec<(String, u64)>) -> Vec<String> {
     let mut peer_ids = peers
         .into_iter()

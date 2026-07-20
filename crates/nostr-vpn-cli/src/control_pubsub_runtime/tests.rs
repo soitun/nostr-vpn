@@ -245,19 +245,12 @@ fn standard_fips_pubsub_bounds_retained_replay() {
 }
 
 #[test]
-fn subscription_identity_set_ignores_link_churn_but_detects_peer_arrival() {
-    let stable =
-        subscription_peer_ids(vec![("npub-a".to_string(), 11), ("npub-b".to_string(), 12)]);
-    let same_identities_after_link_churn =
-        subscription_peer_ids(vec![("npub-b".to_string(), 92), ("npub-a".to_string(), 91)]);
-    let with_late_peer = subscription_peer_ids(vec![
-        ("npub-a".to_string(), 91),
-        ("npub-b".to_string(), 92),
-        ("npub-c".to_string(), 93),
-    ]);
-
-    assert_eq!(stable, same_identities_after_link_churn);
-    assert_ne!(stable, with_late_peer);
+fn existing_subscription_ignores_peer_arrival_and_link_churn() {
+    assert!(!should_create_fips_subscription(false, 0));
+    assert!(should_create_fips_subscription(false, 1));
+    assert!(should_create_fips_subscription(false, 11));
+    assert!(!should_create_fips_subscription(true, 1));
+    assert!(!should_create_fips_subscription(true, 11));
 }
 
 #[test]
