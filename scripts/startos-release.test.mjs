@@ -38,10 +38,11 @@ test('readStartosSourceVersion reads the SDK version graph source', () => {
   )
 })
 
-test('validateStartosManifest requires the release version and target image', () => {
+test('validateStartosManifest requires the v0.4 runtime, release version, and target image', () => {
   const manifest = {
     id: 'nostr-vpn',
     version: '4.0.97:0',
+    nestedRuntime: true,
     images: [{ id: 'app', arch: ['x86_64'] }],
   }
 
@@ -55,5 +56,13 @@ test('validateStartosManifest requires the release version and target image', ()
   assert.throws(
     () => validateStartosManifest(manifest, { arch: 'x86_64', tag: 'v4.0.98' }),
     /version 4\.0\.97:0 does not match release v4\.0\.98/,
+  )
+  assert.throws(
+    () =>
+      validateStartosManifest(
+        { ...manifest, nestedRuntime: false },
+        { arch: 'x86_64', tag: 'v4.0.97' },
+      ),
+    /nestedRuntime is false, expected true/,
   )
 })

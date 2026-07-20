@@ -130,6 +130,11 @@ export function validateStartosManifest(manifest, { arch, tag }) {
   if (manifest?.id !== 'nostr-vpn') {
     throw new Error(`StartOS package id is ${manifest?.id ?? '<missing>'}, expected nostr-vpn`)
   }
+  if (manifest.nestedRuntime !== true) {
+    throw new Error(
+      `StartOS package nestedRuntime is ${manifest.nestedRuntime ?? '<missing>'}, expected true for StartOS v0.4`,
+    )
+  }
 
   const expectedVersion = expectedStartosVersion(tag)
   if (manifest.version !== expectedVersion) {
