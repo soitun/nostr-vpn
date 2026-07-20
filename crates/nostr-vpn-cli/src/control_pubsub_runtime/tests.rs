@@ -48,22 +48,6 @@ fn endpoint_config(local_port: u16, peers: &[(&str, u16)]) -> Config {
     config
 }
 
-fn publicly_advertised_endpoint_config(local_port: u16) -> Config {
-    let mut config = endpoint_config(local_port, &[]);
-    config.node.discovery.nostr.enabled = true;
-    config.node.discovery.nostr.advertise = true;
-    config.node.discovery.nostr.peerfinding_source = NostrPeerfindingSource::External;
-    config.transports.udp = TransportInstances::Single(UdpConfig {
-        bind_addr: Some(format!("127.0.0.1:{local_port}")),
-        external_addr: Some(format!("8.8.8.8:{local_port}")),
-        advertise_on_nostr: Some(true),
-        public: Some(true),
-        accept_connections: Some(true),
-        ..UdpConfig::default()
-    });
-    config
-}
-
 fn available_tcp_port() -> u16 {
     std::net::TcpListener::bind("127.0.0.1:0")
         .expect("bind ephemeral TCP port")
@@ -271,13 +255,10 @@ fn standard_fips_pubsub_bounds_retained_replay() {
 
     let stored = (0..80)
         .map(|index| {
-            EventBuilder::new(
-                Kind::Custom(FIPS_PEER_ADVERT_KIND),
-                format!("advert-{index}"),
-            )
-            .custom_created_at(Timestamp::from(index + 1))
-            .sign_with_keys(&publisher)
-            .expect("signed peer advert")
+            EventBuilder::new(Kind::Custom(PAID_EXIT_OFFER_KIND), format!("offer-{index}"))
+                .custom_created_at(Timestamp::from(index + 1))
+                .sign_with_keys(&publisher)
+                .expect("signed peer advert")
         })
         .collect::<Vec<_>>();
     let expected_ids = stored[stored.len() - FIPS_REPLAY_LIMIT..]
@@ -293,7 +274,7 @@ fn standard_fips_pubsub_bounds_retained_replay() {
 }
 
 #[test]
-fn adverts_offers_ratings_and_updates_are_carried_p2p_without_relays() {
+fn offers_ratings_and_updates_are_carried_p2p_without_relays() {
     std::thread::Builder::new()
         .name("relayless-control-events".to_string())
         .stack_size(8 * 1024 * 1024)
@@ -302,20 +283,20 @@ fn adverts_offers_ratings_and_updates_are_carried_p2p_without_relays() {
                 .enable_all()
                 .build()
                 .expect("local relayless control-event runtime")
-                .block_on(adverts_offers_ratings_and_updates_are_carried_p2p_without_relays_run());
+                .block_on(offers_ratings_and_updates_are_carried_p2p_without_relays_run());
         })
         .expect("spawn relayless control-event test")
         .join()
         .expect("relayless control-event test thread");
 }
 
-async fn adverts_offers_ratings_and_updates_are_carried_p2p_without_relays_run() {
+async fn offers_ratings_and_updates_are_carried_p2p_without_relays_run() {
     let seller = Keys::generate();
     let buyer = Keys::generate();
     let updater = Keys::generate();
     let seller_npub = seller.public_key().to_bech32().expect("seller npub");
     let buyer_npub = buyer.public_key().to_bech32().expect("buyer npub");
-    let [seller_port, buyer_port, advert_port] = available_udp_ports();
+    let [seller_port, buyer_port, _] = available_udp_ports();
     let seller_config = endpoint_config(seller_port, &[(&buyer_npub, buyer_port)]);
     let seller_endpoint = endpoint(&seller, seller_config).await;
     let mut buyer_config = endpoint_config(buyer_port, &[(&seller_npub, seller_port)]);
@@ -330,30 +311,6 @@ async fn adverts_offers_ratings_and_updates_are_carried_p2p_without_relays_run()
     let seller_pubsub = start_pubsub(Arc::clone(&seller_endpoint), updates).await;
     wait_pubsub_connected(&buyer_pubsub).await;
     wait_pubsub_connected(&seller_pubsub).await;
-    let advertiser = Keys::generate();
-    let advertiser_endpoint = endpoint(
-        &advertiser,
-        publicly_advertised_endpoint_config(advert_port),
-    )
-    .await;
-    let advert = advertiser_endpoint
-        .local_nostr_discovery_advert_event()
-        .await
-        .expect("build endpoint advert")
-        .expect("public endpoint has an advert");
-    advertiser_endpoint
-        .shutdown()
-        .await
-        .expect("shutdown standalone advertiser");
-    assert!(
-        seller_pubsub
-            .publish(advert.clone())
-            .await
-            .expect("publish endpoint advert")
-    );
-    wait_for_event(&buyer_pubsub, advert.id).await;
-    assert!(advert.content.contains(&format!("8.8.8.8:{advert_port}")));
-
     let mut paid_exit = PaidExitConfig::default();
     paid_exit.enabled = true;
     paid_exit.pricing.price_msat = 25;
@@ -443,53 +400,6 @@ fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency() {
         .expect("spawn WebSocket pubsub test thread")
         .join()
         .expect("WebSocket pubsub test thread");
-}
-
-#[test]
-fn control_pubsub_publishes_the_local_fips_endpoint_advert() {
-    std::thread::Builder::new()
-        .name("local-fips-endpoint-advert".to_string())
-        .stack_size(8 * 1024 * 1024)
-        .spawn(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .expect("local endpoint advert test runtime")
-                .block_on(control_pubsub_publishes_the_local_fips_endpoint_advert_run());
-        })
-        .expect("spawn local endpoint advert test")
-        .join()
-        .expect("local endpoint advert test thread");
-}
-
-async fn control_pubsub_publishes_the_local_fips_endpoint_advert_run() {
-    let identity = Keys::generate();
-    let publisher = Keys::generate();
-    let [port, _, _] = available_udp_ports();
-    let endpoint = endpoint(&identity, publicly_advertised_endpoint_config(port)).await;
-    let runtime = start_pubsub(
-        Arc::clone(&endpoint),
-        update_events(&publisher, "releases/local-endpoint-advert"),
-    )
-    .await;
-
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            if runtime.events().await.iter().any(|event| {
-                event.kind == Kind::Custom(FIPS_PEER_ADVERT_KIND)
-                    && event.pubkey == identity.public_key()
-                    && event.content.contains(&format!("8.8.8.8:{port}"))
-            }) {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .expect("local signed FIPS endpoint advert entered the pubsub bus");
-
-    runtime.stop().await;
-    endpoint.shutdown().await.expect("shutdown endpoint");
 }
 
 async fn standard_pubsub_delivers_over_url_only_websocket_first_adjacency_run() {
@@ -654,7 +564,7 @@ async fn standalone_publish_replays_after_udp_roster_peer_appears_run() {
     let root = signed_update_root(&publisher, tree_name, 1, "33");
 
     assert!(
-        !alice_pubsub
+        alice_pubsub
             .publish(root.clone())
             .await
             .expect("cache standalone update root")

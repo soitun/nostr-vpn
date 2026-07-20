@@ -3620,9 +3620,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.4.3"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bb92eb30b1994c5e2c2cacd310197d6c6553a85fbce76072b22114eab5af2c6"
+checksum = "d270ae2a060056b14f86326ea2d3f95063f8905731a33000c86918c92bb30d42"
 dependencies = [
  "async-trait",
  "fips-core",

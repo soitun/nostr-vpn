@@ -56,7 +56,7 @@ uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip44"] }
 nostr-pubsub = "0.1.13"
-nostr-pubsub-fips = "0.4.3"
+nostr-pubsub-fips = "0.4.4"
 nostr-pubsub-social-graph = "0.2.2"
 nostr-social-graph = "0.1.4"
 nostr-social-memory = "0.1.1"
