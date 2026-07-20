@@ -76,6 +76,7 @@
         app.networks[0].enabled = true;
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].devices = vec![alice_pubkey.clone()];
+        app.fips_bootstrap_enabled = false;
         app.select_public_paid_exit_node(&seller_npub)
             .expect("select paid exit");
 

@@ -887,6 +887,7 @@ mod endpoint_config_tests {
         app.networks[0].devices.clear();
         app.networks[0].admins.clear();
         app.networks[0].listen_for_join_requests = false;
+        app.fips_bootstrap_enabled = false;
         app.fips_websocket_seed_urls = vec!["wss://seed.example.org/fips".to_string()];
         app.ensure_pending_nostr_join_request(1_778_998_000)
             .expect("pending device approval");

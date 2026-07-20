@@ -120,14 +120,14 @@ mesh_tunnel_mtu = 1290
 }
 
 #[test]
-fn fips_discovery_defaults_on_without_privileged_bootstrap_peers() {
+fn fips_discovery_defaults_on_with_public_native_bootstrap_peers() {
     let config = AppConfig::generated();
 
     assert!(config.fips_nostr_discovery_enabled);
     assert!(!config.fips_webrtc_enabled);
-    assert!(!config.fips_bootstrap_enabled);
-    assert!(config.fips_bootstrap_peers.is_empty());
-    assert!(config.fips_bootstrap_peer_endpoints().is_empty());
+    assert!(config.fips_bootstrap_enabled);
+    assert_eq!(config.fips_bootstrap_peers.len(), 2);
+    assert_eq!(config.fips_bootstrap_peer_endpoints().len(), 2);
 }
 
 #[test]
@@ -150,11 +150,10 @@ fn fips_webrtc_is_explicitly_opt_in_and_round_trips() {
 }
 
 #[test]
-fn fips_bootstrap_peers_are_empty_editable_and_resettable() {
+fn fips_bootstrap_peers_are_public_editable_and_resettable() {
     let mut config = AppConfig::generated();
-    assert!(DEFAULT_FIPS_BOOTSTRAP_PEERS.is_empty());
-    assert!(config.fips_bootstrap_peers.is_empty());
-    config.fips_bootstrap_enabled = true;
+    assert_eq!(DEFAULT_FIPS_BOOTSTRAP_PEERS.len(), 2);
+    assert_eq!(config.fips_bootstrap_peers.len(), 2);
 
     // Editable: replacing the list normalizes keys to npub, keeps non-empty
     // addresses, and drops entries with an invalid pubkey key.
@@ -178,9 +177,9 @@ fn fips_bootstrap_peers_are_empty_editable_and_resettable() {
     let decoded: AppConfig = toml::from_str(&encoded).expect("parse");
     assert_eq!(decoded.fips_bootstrap_peers.len(), 1);
 
-    // Resettable to the identity-neutral empty default.
+    // Resettable to the public native seed default.
     config.reset_fips_bootstrap_peers();
-    assert!(config.fips_bootstrap_peers.is_empty());
+    assert_eq!(config.fips_bootstrap_peers, default_fips_bootstrap_peers());
 }
 
 #[test]
@@ -194,7 +193,7 @@ fn fips_bootstrap_disabled_yields_no_peers() {
 }
 
 #[test]
-fn fips_discovery_off_and_bootstrap_opt_in_round_trip() {
+fn fips_discovery_off_and_default_bootstrap_round_trip() {
     let config = AppConfig {
         fips_nostr_discovery_enabled: false,
         fips_bootstrap_enabled: true,
@@ -203,7 +202,7 @@ fn fips_discovery_off_and_bootstrap_opt_in_round_trip() {
 
     let encoded = toml::to_string(&config).expect("serialize config");
     assert!(encoded.contains("fips_nostr_discovery_enabled = false"));
-    assert!(encoded.contains("fips_bootstrap_enabled = true"));
+    assert!(!encoded.contains("fips_bootstrap_enabled"));
 
     let decoded: AppConfig = toml::from_str(&encoded).expect("parse config");
     assert!(!decoded.fips_nostr_discovery_enabled);
@@ -218,7 +217,7 @@ fn fips_bootstrap_opt_out_round_trip() {
     };
 
     let encoded = toml::to_string(&config).expect("serialize config");
-    assert!(!encoded.contains("fips_bootstrap_enabled"));
+    assert!(encoded.contains("fips_bootstrap_enabled = false"));
 
     let decoded: AppConfig = toml::from_str(&encoded).expect("parse config");
     assert!(!decoded.fips_bootstrap_enabled);
@@ -226,11 +225,11 @@ fn fips_bootstrap_opt_out_round_trip() {
 }
 
 #[test]
-fn fips_discovery_defaults_on_and_bootstrap_off_when_missing() {
+fn fips_discovery_and_bootstrap_default_on_when_missing() {
     let config: AppConfig = toml::from_str("").expect("parse empty config");
 
     assert!(config.fips_nostr_discovery_enabled);
-    assert!(!config.fips_bootstrap_enabled);
+    assert!(config.fips_bootstrap_enabled);
     assert!(!config.connect_to_non_roster_fips_peers);
 }
 
