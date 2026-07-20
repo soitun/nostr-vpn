@@ -275,6 +275,12 @@ test('GitHub release requires and publishes both StartOS package architectures',
 
   assert.ok(startosJobStart >= 0 && releaseJobStart > startosJobStart)
   assert.match(startosJob, /STARTOS_DEV_KEY/)
+  assert.match(startosJob, /STARTOS_CLI_VERSION: '0\.4\.0-beta\.9'/)
+  assert.match(startosJob, /startos_cli_sha256: 212686c28056b48810b383d7aa2cfc733db7332d406f4376a0bfd6ca94c6d88f/)
+  assert.match(startosJob, /startos_cli_sha256: eb09a55aeb8241a6ed0a7659ed8bd5f86f950fb3b5315bc2798a05d8edd07d29/)
+  assert.match(startosJob, /releases\/download\/v\$\{STARTOS_CLI_VERSION\}/)
+  assert.match(startosJob, /sha256sum --check/)
+  assert.match(startosJob, /start-cli \$\{STARTOS_CLI_VERSION\}/)
   assert.match(startosJob, /target: x86/)
   assert.match(startosJob, /target: arm/)
   assert.match(startosJob, /scripts\/startos-release\.mjs/)
