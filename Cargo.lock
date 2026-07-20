@@ -3635,6 +3635,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "nostr-pubsub-relay"
+version = "0.1.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8641200920d163b2d82c34e6f15605cff93a0546e3e0087fce8f3bddaa2329ca"
+dependencies = [
+ "async-trait",
+ "nostr-pubsub",
+ "nostr-sdk",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
 name = "nostr-pubsub-social-graph"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3954,6 +3967,7 @@ dependencies = [
  "netdev",
  "nostr-pubsub",
  "nostr-pubsub-fips",
+ "nostr-pubsub-relay",
  "nostr-pubsub-social-graph",
  "nostr-sdk",
  "nostr-social-graph",

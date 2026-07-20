@@ -1,6 +1,7 @@
 use crate::*;
 use nostr_sdk::async_utility::futures_util::{SinkExt, StreamExt};
 use nostr_sdk::prelude::{Keys, ToBech32};
+use nostr_vpn_core::control_pubsub::FIPS_PEER_ADVERT_KIND;
 use nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -80,8 +81,16 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
     .expect("seed control pubsub reputation store");
     let mut endpoint_config = fips_endpoint::Config::new();
     endpoint_config.node.discovery.nostr.enabled = true;
+    endpoint_config.node.discovery.nostr.advertise = true;
     endpoint_config.node.discovery.nostr.peerfinding_source =
         fips_endpoint::NostrPeerfindingSource::External;
+    endpoint_config.transports.udp =
+        fips_endpoint::TransportInstances::Single(fips_endpoint::UdpConfig {
+            bind_addr: Some("127.0.0.1:0".to_string()),
+            advertise_on_nostr: Some(true),
+            public: Some(false),
+            ..fips_endpoint::UdpConfig::default()
+        });
     let endpoint = Arc::new(
         fips_core::FipsEndpoint::builder()
             .config(endpoint_config)
@@ -108,6 +117,21 @@ async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
     .await
     .expect("start control relay bridge")
     .expect("relay mode is enabled");
+
+    let local_advert_author = endpoint_keys.public_key().to_hex();
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+        loop {
+            if relay.events().iter().any(|event| {
+                event["kind"].as_u64() == Some(FIPS_PEER_ADVERT_KIND.into())
+                    && event["pubkey"].as_str() == Some(local_advert_author.as_str())
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("local signed FIPS advert reaches the configured pubsub relay");
 
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {

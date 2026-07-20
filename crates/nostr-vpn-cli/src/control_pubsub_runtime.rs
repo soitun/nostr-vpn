@@ -7,15 +7,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result, anyhow};
 use fips_core::FipsEndpoint;
 use nostr_pubsub::{
-    EventBus, EventSource, MatchEventOptions, MeshPeerPolicy, PolicyDecision, QueryEvent,
-    VerifiedEvent,
+    EventBus, EventSource, MatchEventOptions, MeshPeerPolicy, NostrEventSubscriber,
+    NostrEventSubscription, NostrPubsubRouter, PolicyDecision, QueryEvent, RouterPublishSource,
+    SourceRoute, VerifiedEvent,
 };
 use nostr_pubsub_fips::{
     FipsPubsubClient, FipsPubsubClientOptions, FipsPubsubPolicy, FipsPubsubPolicyOptions,
     FipsPubsubSubscription,
 };
+use nostr_pubsub_relay::RelayEventBus;
 use nostr_pubsub_social_graph::{PEER_RATING_MAX_AGE, PEER_RATING_MAX_FUTURE_SKEW};
-use nostr_sdk::prelude::{Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification};
+#[cfg(test)]
+use nostr_sdk::prelude::Keys;
+use nostr_sdk::prelude::{Client, Event, Filter, Kind, PublicKey};
 use nostr_social_memory::rating_from_event;
 use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 use nostr_vpn_core::control_pubsub::{
@@ -36,6 +40,8 @@ const OUTBOX_POLL_INTERVAL: Duration = Duration::from_secs(1);
 const OUTBOX_BATCH: usize = 8;
 const RELAY_REPLAY_LIMIT: usize = 32;
 const FIPS_REPLAY_LIMIT: usize = 32;
+const RELAY_QUERY_TIMEOUT: Duration = Duration::from_secs(3);
+const FIPS_ADVERT_REFRESH_INTERVAL: Duration = Duration::from_mins(30);
 
 struct PublishRequest {
     event: Box<Event>,
@@ -129,9 +135,6 @@ impl ControlPubsubFipsRuntime {
             .iter()
             .filter_map(|peer| PublicKey::parse(peer).ok())
             .collect::<Vec<_>>();
-        let bridge =
-            RelayBridge::start(config.mode, relays, &update_events, &target_advert_authors).await?;
-        let relay_client = bridge.as_ref().map(|bridge| bridge.client.clone());
         let outbox_path = store_path
             .as_deref()
             .map(control_pubsub_outbox_directory_from_store_path);
@@ -147,13 +150,30 @@ impl ControlPubsubFipsRuntime {
         let pubsub_policy = Arc::new(Mutex::new(pubsub_policy));
 
         let max_event_bytes = config.max_event_bytes.min(CONTROL_PUBSUB_MAX_EVENT_BYTES);
-        let fips_pubsub = FipsPubsubClient::start_with_policy(
-            Arc::clone(&endpoint),
-            fips_pubsub_options(max_event_bytes, config.max_hops),
-            event_policy,
-        )
-        .await
-        .context("failed to bind standard FIPS Nostr pubsub service")?;
+        let fips_pubsub = Arc::new(
+            FipsPubsubClient::start_with_policy(
+                Arc::clone(&endpoint),
+                fips_pubsub_options(max_event_bytes, config.max_hops),
+                Arc::clone(&event_policy),
+            )
+            .await
+            .context("failed to bind standard FIPS Nostr pubsub service")?,
+        );
+        let relay =
+            RelayProvider::start(config.mode, relays, &update_events, &target_advert_authors)
+                .await?;
+        let relay_client = relay.as_ref().map(|provider| provider.bus.client().clone());
+        let mut pubsub =
+            NostrPubsubRouter::new(event_policy).with_publish_source(RouterPublishSource::new(
+                SourceRoute::fips_peer_default(endpoint.npub().to_string()),
+                Arc::clone(&fips_pubsub),
+            ));
+        if let Some(provider) = relay.as_ref() {
+            pubsub = pubsub.with_publish_source(RouterPublishSource::new(
+                SourceRoute::relay(provider.bus.relays().join(",")),
+                Arc::clone(&provider.bus),
+            ));
+        }
 
         let events = Arc::new(Mutex::new(event_store));
         let (command_tx, command_rx) = mpsc::channel(COMMAND_CAPACITY);
@@ -164,7 +184,8 @@ impl ControlPubsubFipsRuntime {
                 PubsubRunState {
                     endpoint,
                     fips_pubsub,
-                    bridge,
+                    pubsub,
+                    relay,
                     events: task_events,
                     peer_policy,
                     pubsub_policy,
@@ -258,12 +279,13 @@ impl Drop for ControlPubsubFipsRuntime {
     }
 }
 
-struct RelayBridge {
-    client: Client,
-    notifications: tokio::sync::broadcast::Receiver<RelayPoolNotification>,
+struct RelayProvider {
+    bus: Arc<RelayEventBus>,
+    notifications: mpsc::Receiver<QueryEvent>,
+    _subscription: Box<dyn NostrEventSubscription>,
 }
 
-impl RelayBridge {
+impl RelayProvider {
     async fn start(
         mode: NostrPubsubMode,
         relays: Vec<String>,
@@ -273,38 +295,36 @@ impl RelayBridge {
         if mode != NostrPubsubMode::Relay || relays.is_empty() {
             return Ok(None);
         }
-        let client = Client::new(Keys::generate());
-        let notifications = client.notifications();
-        for relay in &relays {
-            client
-                .add_relay(relay)
+        let bus = Arc::new(
+            RelayEventBus::new(relays, RELAY_QUERY_TIMEOUT)
                 .await
-                .with_context(|| format!("failed to add control pubsub relay {relay}"))?;
-        }
-        client.connect().await;
-        for filter in relay_subscription_filters(update_events, target_advert_authors) {
-            client
-                .subscribe(filter, None)
-                .await
-                .context("failed to subscribe to control pubsub relays")?;
-        }
+                .context("failed to start configured Nostr pubsub relay provider")?,
+        );
+        let (notification_tx, notifications) = mpsc::channel(RELAY_REPLAY_LIMIT * 5);
+        let subscription = NostrEventSubscriber::subscribe(
+            bus.as_ref(),
+            relay_subscription_filters(update_events, target_advert_authors),
+            Arc::new(move |event| {
+                if notification_tx.try_send(event).is_err() {
+                    tracing::warn!("dropping control pubsub relay event because the bounded ingress queue is full");
+                }
+            }),
+        )
+        .await
+        .context("failed to subscribe through configured Nostr pubsub relay provider")?;
         Ok(Some(Self {
-            client,
+            bus,
             notifications,
+            _subscription: subscription,
         }))
-    }
-
-    async fn publish(&self, event: &Event) {
-        if let Err(error) = self.client.send_event(event).await {
-            tracing::warn!(%error, event_id = %event.id, "failed to bridge control event to Nostr relays");
-        }
     }
 }
 
 struct PubsubRunState {
     endpoint: Arc<FipsEndpoint>,
-    fips_pubsub: FipsPubsubClient,
-    bridge: Option<RelayBridge>,
+    fips_pubsub: Arc<FipsPubsubClient>,
+    pubsub: NostrPubsubRouter,
+    relay: Option<RelayProvider>,
     events: Arc<Mutex<ControlEventStore>>,
     peer_policy: Arc<dyn MeshPeerPolicy>,
     pubsub_policy: Arc<Mutex<FipsPubsubPolicy>>,
@@ -321,8 +341,7 @@ struct FipsSubscriptionState {
 #[derive(Clone, Copy)]
 struct PublishContext<'a> {
     endpoint: &'a FipsEndpoint,
-    fips_pubsub: &'a FipsPubsubClient,
-    bridge: Option<&'a RelayBridge>,
+    pubsub: &'a NostrPubsubRouter,
     events: &'a Arc<Mutex<ControlEventStore>>,
     pubsub_policy: &'a Arc<Mutex<FipsPubsubPolicy>>,
     update_events: &'a UpdateEventCache,
@@ -337,7 +356,8 @@ async fn run(
     let PubsubRunState {
         endpoint,
         fips_pubsub,
-        mut bridge,
+        pubsub,
+        mut relay,
         events,
         peer_policy,
         pubsub_policy,
@@ -347,6 +367,8 @@ async fn run(
     maintenance_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
     outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let advert_refresh = tokio::time::sleep(Duration::ZERO);
+    tokio::pin!(advert_refresh);
     let mut fips_subscription = FipsSubscriptionState::default();
     sync_fips_subscription(
         &endpoint,
@@ -368,8 +390,7 @@ async fn run(
                         let result = publish_local(
                             PublishContext {
                                 endpoint: &endpoint,
-                                fips_pubsub: &fips_pubsub,
-                                bridge: bridge.as_ref(),
+                                pubsub: &pubsub,
                                 events: &events,
                                 pubsub_policy: &pubsub_policy,
                                 update_events: &update_events,
@@ -399,8 +420,7 @@ async fn run(
                 publish_outbox_batch(
                     PublishContext {
                         endpoint: &endpoint,
-                        fips_pubsub: &fips_pubsub,
-                        bridge: bridge.as_ref(),
+                        pubsub: &pubsub,
                         events: &events,
                         pubsub_policy: &pubsub_policy,
                         update_events: &update_events,
@@ -413,7 +433,7 @@ async fn run(
                 let Some(delivery) = delivery else { continue; };
                 process_fips_delivery(
                     &endpoint,
-                    bridge.as_ref(),
+                    relay.as_ref().map(|provider| Arc::clone(&provider.bus)),
                     &events,
                     &pubsub_policy,
                     &update_events,
@@ -421,33 +441,21 @@ async fn run(
                 )
                 .await;
             }
-            notification = relay_notification(&mut bridge) => {
-                let Some((relay_url, event)) = notification else { continue; };
-                if !is_control_event(event.as_event(), &update_events)
-                    || !verified_event_is_admitted(
-                        &pubsub_policy,
-                        &event,
-                        &EventSource::relay(relay_url),
-                    )
-                    .await
-                {
-                    continue;
-                }
-                if let Err(error) = publish_verified(
-                    PublishContext {
-                        endpoint: &endpoint,
-                        fips_pubsub: &fips_pubsub,
-                        bridge: None,
-                        events: &events,
-                        pubsub_policy: &pubsub_policy,
-                        update_events: &update_events,
-                    },
-                    event,
+            notification = relay_notification(&mut relay) => {
+                let Some(delivery) = notification else { continue; };
+                process_relay_delivery(
+                    &endpoint,
+                    &fips_pubsub,
+                    &events,
+                    &pubsub_policy,
+                    &update_events,
+                    delivery,
                 )
-                .await
-                {
-                    tracing::debug!(%error, "ignored invalid control event from relay");
-                }
+                .await;
+            }
+            _ = &mut advert_refresh => {
+                let refresh_after = publish_local_fips_advert(&endpoint, &pubsub).await;
+                advert_refresh.as_mut().reset(tokio::time::Instant::now() + refresh_after);
             }
             _ = maintenance_tick.tick() => {
                 let delivery = fips_pubsub.delivery_snapshot();
@@ -479,8 +487,7 @@ async fn run(
                 publish_policy_maintenance(
                     PublishContext {
                         endpoint: &endpoint,
-                        fips_pubsub: &fips_pubsub,
-                        bridge: bridge.as_ref(),
+                        pubsub: &pubsub,
                         events: &events,
                         pubsub_policy: &pubsub_policy,
                         update_events: &update_events,
@@ -520,28 +527,90 @@ fn validate_control_event_shape(event: &Event, update_events: &UpdateEventCache)
 async fn publish_verified(context: PublishContext<'_>, verified: VerifiedEvent) -> Result<bool> {
     validate_control_event_shape(verified.as_event(), context.update_events)?;
     let event = verified.as_event().clone();
-    let fips_published = match context
-        .fips_pubsub
+    let published = match context
+        .pubsub
         .publish(
             verified,
             EventSource::local_index(context.endpoint.npub().to_string()),
         )
         .await
     {
-        Ok(report) => report.accepted,
+        Ok(report) => {
+            if let Some(reason) = report.reason.as_deref() {
+                tracing::debug!(event_id = %event.id, %reason, "some Nostr pubsub publication routes were unavailable");
+            }
+            report.accepted
+        }
         Err(error) => {
-            tracing::debug!(%error, event_id = %event.id, "standard FIPS pubsub publication deferred");
+            tracing::debug!(%error, event_id = %event.id, "Nostr pubsub publication deferred");
             false
         }
     };
-    tracing::debug!(event_id = %event.id, fips_published, "publishing local control event");
+    tracing::debug!(event_id = %event.id, published, "publishing local control event");
     observe_policy_event(context.pubsub_policy, &event).await;
     context.events.lock().await.insert(event.clone())?;
     ingest_into_fips_discovery(context.endpoint, &event).await;
-    if let Some(bridge) = context.bridge {
-        bridge.publish(&event).await;
+    Ok(published)
+}
+
+async fn publish_local_fips_advert(
+    endpoint: &FipsEndpoint,
+    pubsub: &NostrPubsubRouter,
+) -> Duration {
+    let event = match endpoint.local_nostr_discovery_advert_event().await {
+        Ok(Some(event)) => event,
+        Ok(None) => return MAINTENANCE_TICK_INTERVAL,
+        Err(error) => {
+            tracing::debug!(%error, "local FIPS advert is not ready for Nostr pubsub publication");
+            return MAINTENANCE_TICK_INTERVAL;
+        }
+    };
+    let refresh_after = fips_advert_refresh_delay(&event);
+    let event_id = event.id;
+    let Ok(event) = VerifiedEvent::try_from(event) else {
+        tracing::warn!(%event_id, "FIPS produced an invalid signed local advert");
+        return MAINTENANCE_TICK_INTERVAL;
+    };
+    match pubsub
+        .publish(
+            event,
+            EventSource::fips_endpoint(endpoint.npub().to_string()),
+        )
+        .await
+    {
+        Ok(report) if report.accepted && report.reason.is_none() => {
+            tracing::debug!(%event_id, "published local FIPS advert through Nostr pubsub providers");
+            refresh_after
+        }
+        Ok(report) if report.accepted => {
+            tracing::debug!(%event_id, reason = report.reason.as_deref().unwrap_or_default(), "local FIPS advert reached only part of the Nostr pubsub provider set");
+            MAINTENANCE_TICK_INTERVAL
+        }
+        Ok(report) => {
+            tracing::debug!(%event_id, reason = report.reason.as_deref().unwrap_or("no provider accepted the advert"), "local FIPS advert publication deferred");
+            MAINTENANCE_TICK_INTERVAL
+        }
+        Err(error) => {
+            tracing::debug!(%error, %event_id, "local FIPS advert publication deferred");
+            MAINTENANCE_TICK_INTERVAL
+        }
     }
-    Ok(fips_published || context.bridge.is_some())
+}
+
+fn fips_advert_refresh_delay(event: &Event) -> Duration {
+    event
+        .tags
+        .expiration()
+        .map(|expiration| {
+            expiration
+                .as_secs()
+                .saturating_sub(event.created_at.as_secs())
+        })
+        .filter(|ttl_secs| *ttl_secs > 0)
+        .map_or(FIPS_ADVERT_REFRESH_INTERVAL, |ttl_secs| {
+            Duration::from_secs((ttl_secs / 2).max(1))
+        })
+        .min(FIPS_ADVERT_REFRESH_INTERVAL)
 }
 
 async fn publish_policy_maintenance(context: PublishContext<'_>) {
@@ -623,7 +692,7 @@ async fn publish_outbox_batch(context: PublishContext<'_>, outbox_path: &Path) {
 
 async fn process_fips_delivery(
     endpoint: &FipsEndpoint,
-    bridge: Option<&RelayBridge>,
+    relay: Option<Arc<RelayEventBus>>,
     events: &Arc<Mutex<ControlEventStore>>,
     pubsub_policy: &Arc<Mutex<FipsPubsubPolicy>>,
     update_events: &UpdateEventCache,
@@ -636,7 +705,7 @@ async fn process_fips_delivery(
     if !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await {
         return;
     }
-    let event = verified.into_event();
+    let event = verified.as_event().clone();
     observe_policy_event(pubsub_policy, &event).await;
     ingest_into_fips_discovery(endpoint, &event).await;
     let inserted = match events.lock().await.insert(event.clone()) {
@@ -648,9 +717,43 @@ async fn process_fips_delivery(
     };
     if inserted {
         tracing::debug!(event_id = %event.id, "delivered new standard FIPS pubsub event");
-        if let Some(bridge) = bridge {
-            bridge.publish(&event).await;
+        if let Some(relay) = relay
+            && let Err(error) = relay.publish(verified, delivery.source).await
+        {
+            tracing::debug!(%error, event_id = %event.id, "configured Nostr pubsub relay publication deferred");
         }
+    }
+}
+
+async fn process_relay_delivery(
+    endpoint: &FipsEndpoint,
+    fips_pubsub: &FipsPubsubClient,
+    events: &Arc<Mutex<ControlEventStore>>,
+    pubsub_policy: &Arc<Mutex<FipsPubsubPolicy>>,
+    update_events: &UpdateEventCache,
+    delivery: QueryEvent,
+) {
+    let verified = delivery.event;
+    if !is_control_event(verified.as_event(), update_events)
+        || !verified_event_is_admitted(pubsub_policy, &verified, &delivery.source).await
+    {
+        return;
+    }
+    let event = verified.as_event().clone();
+    observe_policy_event(pubsub_policy, &event).await;
+    ingest_into_fips_discovery(endpoint, &event).await;
+    let inserted = match events.lock().await.insert(event.clone()) {
+        Ok(inserted) => inserted,
+        Err(error) => {
+            tracing::warn!(%error, event_id = %event.id, "failed to store control pubsub event");
+            false
+        }
+    };
+    if !inserted {
+        return;
+    }
+    if let Err(error) = fips_pubsub.publish(verified, delivery.source).await {
+        tracing::debug!(%error, event_id = %event.id, "decentralized Nostr pubsub publication deferred");
     }
 }
 
@@ -814,25 +917,11 @@ async fn verified_event_is_admitted(
     }
 }
 
-async fn relay_notification(bridge: &mut Option<RelayBridge>) -> Option<(String, VerifiedEvent)> {
-    let Some(bridge) = bridge.as_mut() else {
+async fn relay_notification(relay: &mut Option<RelayProvider>) -> Option<QueryEvent> {
+    let Some(relay) = relay.as_mut() else {
         return std::future::pending().await;
     };
-    loop {
-        match bridge.notifications.recv().await {
-            Ok(RelayPoolNotification::Event {
-                relay_url, event, ..
-            }) => {
-                if let Ok(event) = VerifiedEvent::try_from((*event).clone()) {
-                    return Some((relay_url.to_string(), event));
-                }
-            }
-            Ok(_) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                return std::future::pending().await;
-            }
-        }
-    }
+    relay.notifications.recv().await
 }
 
 fn control_kinds() -> [Kind; 2] {

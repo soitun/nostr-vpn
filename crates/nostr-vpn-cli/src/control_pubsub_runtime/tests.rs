@@ -229,6 +229,18 @@ fn relay_subscriptions_bound_retained_replay() {
 }
 
 #[test]
+fn fips_advert_refreshes_at_half_its_signed_lifetime() {
+    let publisher = Keys::generate();
+    let event = EventBuilder::new(Kind::Custom(FIPS_PEER_ADVERT_KIND), "")
+        .tag(Tag::expiration(Timestamp::from(1_120)))
+        .custom_created_at(Timestamp::from(1_000))
+        .sign_with_keys(&publisher)
+        .expect("signed advert");
+
+    assert_eq!(fips_advert_refresh_delay(&event), Duration::from_secs(60));
+}
+
+#[test]
 fn standard_fips_pubsub_bounds_retained_replay() {
     let publisher = Keys::generate();
     let update_events = update_events(&publisher, "releases/bounded-fips-replay");
