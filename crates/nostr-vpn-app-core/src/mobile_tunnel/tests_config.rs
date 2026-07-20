@@ -674,7 +674,8 @@
         );
         assert_eq!(
             config.node.discovery.forward_min_interval_secs,
-            FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS
+            2,
+            "a missed first lookup after a route change must retry promptly"
         );
         assert_eq!(
             config.node.rate_limit.handshake_resend_interval_ms,
@@ -775,7 +776,7 @@
     }
 
     #[test]
-    fn mobile_fips_config_marks_default_route_peers_non_transit() {
+    fn mobile_fips_config_keeps_default_route_roster_peers_as_transit() {
         let peer = FipsMeshPeerConfig::from_participant_pubkey(
             "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc",
             vec!["10.44.22.44/32".to_string(), "0.0.0.0/0".to_string()],
@@ -793,8 +794,8 @@
             .expect("exit peer");
 
         assert!(
-            !peer_config.discovery_fallback_transit,
-            "exit/default-route peers should not receive ambient lookup transit"
+            peer_config.discovery_fallback_transit,
+            "an exit-capable roster peer may also be the only path to its LAN peers"
         );
     }
 

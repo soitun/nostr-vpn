@@ -548,7 +548,8 @@
         );
         assert_eq!(
             config.node.discovery.forward_min_interval_secs,
-            FIPS_DISCOVERY_FORWARD_MIN_INTERVAL_SECS
+            2,
+            "a missed first lookup after a route change must retry promptly"
         );
         assert_eq!(
             config.node.retry.base_interval_secs,
@@ -903,7 +904,7 @@
     }
 
     #[test]
-    fn endpoint_config_marks_default_route_peers_non_transit() {
+    fn endpoint_config_keeps_default_route_roster_peers_as_transit() {
         let exit_keys = Keys::generate();
         let exit_pubkey = exit_keys.public_key().to_hex();
         let mesh_peer = FipsMeshPeerConfig::from_participant_pubkey(
@@ -924,8 +925,8 @@
             "roster peers should keep nvpn's fast auto-reconnect"
         );
         assert!(
-            !peer.discovery_fallback_transit,
-            "exit/default-route peers should not receive ambient lookup transit"
+            peer.discovery_fallback_transit,
+            "an exit-capable roster peer may also be the only path to its LAN peers"
         );
     }
 

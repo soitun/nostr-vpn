@@ -51,7 +51,7 @@ fn fips_peer_configs_from_mesh(
         configs.push(fips_peer_config_from_hint(
             &peer.endpoint_npub,
             peer_hints.get(&peer.participant_pubkey),
-            !peer.advertises_default_route(),
+            true,
             FIPS_MOBILE_AUTO_RECONNECT,
         ));
     }

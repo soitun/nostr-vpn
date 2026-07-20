@@ -355,7 +355,7 @@ fn fips_endpoint_peers_from_mesh(
                 npub,
                 addresses: Vec::new(),
                 auto_reconnect: true,
-                discovery_fallback_transit: !peer.advertises_default_route(),
+                discovery_fallback_transit: true,
             });
     }
 
