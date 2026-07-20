@@ -58,8 +58,6 @@ struct RootView: View {
     @State var pendingNetworkRemoval: NativeNetworkState?
     @State var pendingParticipantRemoval: PendingParticipantRemoval?
     @State var pendingJoinRequest: PendingJoinRequest?
-    @State var addByDeviceIdInput = ""
-    @State var addByDeviceIdAlias = ""
     @State var diagnosticsExpanded = false
     @State var showingQrScanner = false
     @State var scanningJoinRequest = false
@@ -69,11 +67,7 @@ struct RootView: View {
     @State var addNetworkPresented = false
     @State var addDevicePresented = false
     @State var addNetworkMode: AddNetworkMode?
-    @State var legacyInviteExpanded = false
     @State var joinRequestInput = ""
-    @State var manualJoinExpanded = false
-    @State var manualJoinAdminId = ""
-    @State var manualJoinMeshId = ""
     @State var lastSyncedNodeName = ""
     @State var lastSyncedEndpoint = ""
     @State var lastSyncedTunnelIp = ""
@@ -253,7 +247,7 @@ struct RootView: View {
             return
         }
         DispatchQueue.main.async {
-            importJoinRequestOrAddDevice(code, network: network)
+            stageJoinRequest(code, network: network)
         }
     }
 
@@ -292,25 +286,11 @@ struct RootView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     joinRequestInputSection(network)
                     nearbyJoinRequestsSection
-                    manualPairingInfoSection(network)
-                    addByDeviceIdSection(network)
                 }
                 .padding(18)
             }
         }
         .frame(width: 560, height: 620)
-    }
-
-    /// Manual pairing path for directly sharing the signed-roster values.
-    func manualPairingInfoSection(_ network: NativeNetworkState) -> some View {
-        surface {
-            sectionHeader("Manual Pairing", systemImage: "keyboard")
-            Text("Share these values with the other device, then add its Device ID below to keep the signed roster in sync.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            detailValueRow("Your Device ID", state.ownNpub)
-            detailValueRow("Network ID", network.networkId, displayValue: displayNetworkId(network.networkId))
-        }
     }
 
     func sheetTitleBar(_ title: String, systemImage: String, close: @escaping () -> Void) -> some View {

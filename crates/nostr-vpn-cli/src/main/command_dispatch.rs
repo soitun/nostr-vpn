@@ -534,49 +534,6 @@ async fn run_command(command: Command) -> Result<()> {
                 println!("node_id={}", app.node.id);
             }
         }
-        Command::CreateInvite(args) => {
-            let config_path = args.config.unwrap_or_else(default_config_path);
-            let app = load_or_default_config(&config_path)?;
-            let invite = active_network_invite_code(&app)?;
-
-            if args.json {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "network_id": app.effective_network_id(),
-                        "invite": invite,
-                    }))?
-                );
-            } else {
-                println!("{invite}");
-            }
-        }
-        Command::ImportInvite(args) => {
-            let config_path = args.config.unwrap_or_else(default_config_path);
-            let mut app = load_or_default_config(&config_path)?;
-            let invite = parse_network_invite(&args.invite)?;
-            apply_network_invite_to_active_network(&mut app, &invite)?;
-            let join_request_queued = queue_active_network_join_request(&mut app)?;
-            app.ensure_defaults();
-            maybe_autoconfigure_node(&mut app);
-            app.save(&config_path)?;
-            maybe_reload_running_daemon(&config_path);
-
-            if args.json {
-                println!("{}", serde_json::to_string_pretty(&app)?);
-            } else {
-                println!("saved {}", config_path.display());
-                println!("network_id={}", app.effective_network_id());
-                println!("invite_imported={}", app.active_network().name);
-                println!("join_request_queued={join_request_queued}");
-            }
-        }
-        Command::InviteBroadcast(args) => {
-            run_invite_broadcast(args)?;
-        }
-        Command::Discover(args) => {
-            run_discover(args)?;
-        }
         Command::AddDevice(args) => {
             update_active_network_roster(args, RosterEditAction::AddDevice).await?;
         }

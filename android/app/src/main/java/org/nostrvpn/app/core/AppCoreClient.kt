@@ -13,7 +13,7 @@ class AppCoreClient(private val dataDir: String, appVersion: String) : AutoClose
     fun dispatch(action: JSONObject): AppState =
         parseAppState(NativeCore.dispatchJson(requireHandle(), action.toString()))
 
-    fun qrMatrix(invite: String): JSONObject = JSONObject(NativeCore.qrMatrixJson(invite))
+    fun qrMatrix(text: String): JSONObject = JSONObject(NativeCore.qrMatrixJson(text))
 
     fun decodeQrImage(path: String): JSONObject = JSONObject(NativeCore.decodeQrImageJson(path))
 
@@ -36,16 +36,12 @@ class AppCoreClient(private val dataDir: String, appVersion: String) : AutoClose
 object NativeActions {
     fun connectVpn() = action("connect_vpn")
     fun disconnectVpn() = action("disconnect_vpn")
-    fun importInvite(invite: String) = action("import_network_invite", "invite" to invite)
     fun importJoinRequest(request: String) = action("import_join_request", "request" to request)
-    fun startJoinRequestBroadcast() = action("start_invite_broadcast")
-    fun stopJoinRequestBroadcast() = action("stop_invite_broadcast")
+    fun startJoinRequestBroadcast() = action("start_join_request_broadcast")
+    fun stopJoinRequestBroadcast() = action("stop_join_request_broadcast")
     fun startNearbyDiscovery() = action("start_nearby_discovery")
     fun stopNearbyDiscovery() = action("stop_nearby_discovery")
     fun addNetwork(name: String) = action("add_network", "name" to name)
-    fun manualAddNetwork(adminNpub: String, meshNetworkId: String) =
-        action("manual_add_network", "adminNpub" to adminNpub, "meshNetworkId" to meshNetworkId)
-
     fun setNetworkEnabled(networkId: String, enabled: Boolean) =
         action("set_network_enabled", "networkId" to networkId, "enabled" to enabled)
 

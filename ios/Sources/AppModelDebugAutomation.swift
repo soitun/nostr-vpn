@@ -11,7 +11,6 @@ extension AppModel {
         let rawArguments = ProcessInfo.processInfo.arguments
         let arguments = Set(rawArguments)
         debugLog("launch automation args=\(Self.redactedDebugArguments(rawArguments))")
-        let importedInvite = importDebugInviteIfPresent(arguments: rawArguments)
         let addedNetwork = addDebugNetworkIfPresent(arguments: rawArguments)
         if arguments.contains("--nvpn-debug-idle-cpu-probe") {
             Task {
@@ -33,22 +32,7 @@ extension AppModel {
             setVpnEnabled(false, force: true)
             return true
         }
-        return importedInvite || addedNetwork
-    }
-
-    private func importDebugInviteIfPresent(arguments: [String]) -> Bool {
-        #if DEBUG
-        guard let invite = Self.argumentValue(after: "--nvpn-debug-import-invite", in: arguments),
-              !invite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else {
-            return false
-        }
-        importInvite(invite)
-        refresh()
-        return true
-        #else
-        return false
-        #endif
+        return addedNetwork
     }
 
     private func addDebugNetworkIfPresent(arguments: [String]) -> Bool {
@@ -712,7 +696,6 @@ extension AppModel {
 
     nonisolated static func redactedDebugArguments(_ arguments: [String]) -> [String] {
         let sensitiveFlags = [
-            "--nvpn-debug-import-invite",
             "--nvpn-debug-exit-node",
             "--nvpn-debug-fetch-url",
             "--nvpn-debug-result",

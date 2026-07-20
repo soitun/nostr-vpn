@@ -62,11 +62,11 @@ fn prepare(data_dir: &Path, result_path: &Path) -> Result<()> {
         .network_by_id(&network_id)
         .context("fixture network missing")?;
     let mesh_network_id = network.network_id.clone();
-    let invite_secret = network.invite_secret.clone();
+    let join_secret = network.join_secret.clone();
     let requested_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let recorded = admin.record_inbound_join_request(
         &mesh_network_id,
-        &invite_secret,
+        &join_secret,
         &requester_npub,
         REQUESTER_NAME,
         requested_at,

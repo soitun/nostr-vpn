@@ -335,7 +335,7 @@ extension RootView {
                 if !action.paymentRequest.isEmpty {
                     if showInvoiceQRCode && action.kind == "topup" {
                         VStack(spacing: 10) {
-                            InviteQRCodeView(invite: action.paymentRequest)
+                            QrCodeView(text: action.paymentRequest)
                                 .frame(width: 220, height: 220)
                             if action.expiresAtUnix > 0 {
                                 Text(paidRouteExpiryText(action.expiresAtUnix))

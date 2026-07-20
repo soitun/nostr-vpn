@@ -108,7 +108,7 @@ pub(crate) struct MobileTunnelConfig {
     pub(crate) node_name: String,
     pub(crate) network_id: String,
     #[serde(default)]
-    pub(crate) invite_secret: String,
+    pub(crate) join_secret: String,
     pub(crate) local_address: String,
     #[serde(default)]
     pub(crate) advertised_endpoint: String,
@@ -177,7 +177,7 @@ pub(crate) struct MobileTunnelConfig {
     #[serde(default)]
     pub(crate) pending_join_request_recipient: String,
     #[serde(default)]
-    pub(crate) pending_join_invite_secret: String,
+    pub(crate) pending_join_secret: String,
     #[serde(default)]
     pub(crate) pending_join_requested_at: u64,
     #[serde(default)]
@@ -365,13 +365,13 @@ impl MobileTunnelConfig {
         } else {
             (Vec::new(), String::new())
         };
-        let (pending_join_request_recipient, pending_join_invite_secret, pending_join_requested_at) =
+        let (pending_join_request_recipient, pending_join_secret, pending_join_requested_at) =
             app.active_network_opt()
                 .and_then(|network| {
                     network.outbound_join_request.as_ref().map(|request| {
                         (
                             request.recipient.clone(),
-                            network.invite_secret.clone(),
+                            network.join_secret.clone(),
                             request.requested_at,
                         )
                     })
@@ -384,9 +384,9 @@ impl MobileTunnelConfig {
             identity_nsec: app.nostr.secret_key.clone(),
             node_name: app.node_name.trim().to_string(),
             network_id,
-            invite_secret: app
+            join_secret: app
                 .active_network_opt()
-                .map_or_else(String::new, |network| network.invite_secret.clone()),
+                .map_or_else(String::new, |network| network.join_secret.clone()),
             local_address,
             advertised_endpoint: app.node.endpoint.trim().to_string(),
             listen_port: app.node.listen_port,
@@ -409,7 +409,7 @@ impl MobileTunnelConfig {
             join_requests_enabled: app.join_requests_enabled(),
             device_approval_pending: app.pending_nostr_join_request.is_some(),
             pending_join_request_recipient,
-            pending_join_invite_secret,
+            pending_join_secret,
             pending_join_requested_at,
             error: String::new(),
         })
@@ -418,8 +418,8 @@ impl MobileTunnelConfig {
     fn redact_for_launch_configuration(&mut self) {
         self.app_config_toml.clear();
         self.identity_nsec.clear();
-        self.invite_secret.clear();
-        self.pending_join_invite_secret.clear();
+        self.join_secret.clear();
+        self.pending_join_secret.clear();
         if let Some(wireguard_exit) = self.wireguard_exit.as_mut() {
             wireguard_exit.private_key.clear();
             wireguard_exit.peer_preshared_key.clear();

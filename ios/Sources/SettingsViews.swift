@@ -320,53 +320,6 @@ struct DeviceDetailSheet: View {
     }
 }
 
-struct AddDeviceCard: View {
-    let network: NetworkState
-    let add: (String, String) -> Void
-    @State private var deviceId = ""
-    @State private var alias = ""
-
-    private var trimmedDeviceId: String {
-        deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var deviceIdInvalid: Bool {
-        !trimmedDeviceId.isEmpty && !isValidDeviceId(trimmedDeviceId)
-    }
-
-    var body: some View {
-        AppCard {
-            Text("Add by Device ID")
-                .font(.headline)
-            Text("Add the other device directly to this signed roster.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            TextField("Device ID", text: $deviceId)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .textFieldStyle(.roundedBorder)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.red, lineWidth: deviceIdInvalid ? 1 : 0)
-                )
-            if deviceIdInvalid {
-                Text("Not a valid device ID")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-            TextField("Name", text: $alias)
-                .textFieldStyle(.roundedBorder)
-            Button("Add") {
-                add(trimmedDeviceId, alias)
-                deviceId = ""
-                alias = ""
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(trimmedDeviceId.isEmpty || deviceIdInvalid)
-        }
-    }
-}
-
 struct NearbyCard: View {
     @ObservedObject var model: AppModel
 
@@ -407,7 +360,7 @@ struct NearbyCard: View {
                         }
                         Spacer()
                         Button("Add") {
-                            model.dispatch(NativeActions.importJoinRequest(peer.invite), status: "Adding device")
+                            model.dispatch(NativeActions.importJoinRequest(peer.joinRequest), status: "Adding device")
                         }
                     }
                 }
@@ -435,20 +388,20 @@ struct AdvertiseJoinRequestCard: View {
                 Spacer()
                 Button {
                     model.dispatch(
-                        model.state.inviteBroadcastActive ? NativeActions.stopJoinRequestBroadcast() : NativeActions.startJoinRequestBroadcast(),
-                        status: model.state.inviteBroadcastActive ? "Stopping nearby" : "Advertising nearby"
+                        model.state.joinRequestBroadcastActive ? NativeActions.stopJoinRequestBroadcast() : NativeActions.startJoinRequestBroadcast(),
+                        status: model.state.joinRequestBroadcastActive ? "Stopping nearby" : "Advertising nearby"
                     )
                 } label: {
                     Label(
-                        model.state.inviteBroadcastActive
-                            ? "Advertising · \(formatRemaining(model.state.inviteBroadcastRemainingSecs))"
+                        model.state.joinRequestBroadcastActive
+                            ? "Advertising · \(formatRemaining(model.state.joinRequestBroadcastRemainingSecs))"
                             : "Advertise nearby",
-                        systemImage: model.state.inviteBroadcastActive ? "stop.circle" : "dot.radiowaves.left.and.right"
+                        systemImage: model.state.joinRequestBroadcastActive ? "stop.circle" : "dot.radiowaves.left.and.right"
                     )
                 }
                 .buttonStyle(.bordered)
             }
-            Text(model.state.inviteBroadcastActive ? "Admins nearby can add this device from its join request." : "Advertise this device's join request to nearby admins.")
+            Text(model.state.joinRequestBroadcastActive ? "Admins nearby can add this device from its join request." : "Advertise this device's join request to nearby admins.")
                 .foregroundStyle(.secondary)
                 .font(.footnote)
         }

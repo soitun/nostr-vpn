@@ -289,7 +289,7 @@ fn persist_inbound_join_request(
 ) {
     match app.record_inbound_join_request(
         &inbound.request.network_id,
-        &inbound.request.invite_secret,
+        &inbound.request.join_secret,
         inbound.sender_pubkey,
         &inbound.request.requester_node_name,
         inbound.requested_at,
@@ -804,7 +804,7 @@ async fn send_pending_fips_join_requests(
     }
     let request = MeshJoinRequest {
         network_id: normalize_runtime_network_id(&network.network_id),
-        invite_secret: network.invite_secret.clone(),
+        join_secret: network.join_secret.clone(),
         requester_node_name: app.node_name.trim().to_string(),
     };
 

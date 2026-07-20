@@ -50,7 +50,6 @@ public sealed class NativeAppState
     public uint ListenPort { get; set; }
     public List<NativeRelayState> Relays { get; set; } = [];
     public string NetworkId { get; set; } = "";
-    public string ActiveNetworkInvite { get; set; } = "";
     public string JoinRequestQrCodeOrLink { get; set; } = "";
     public string InternetSource { get; set; } = "direct";
     public string ExitNode { get; set; } = "";
@@ -86,8 +85,8 @@ public sealed class NativeAppState
     public string MagicDnsSuffix { get; set; } = "";
     public string MagicDnsStatus { get; set; } = "";
     public bool Autoconnect { get; set; }
-    public bool InviteBroadcastActive { get; set; }
-    public ulong InviteBroadcastRemainingSecs { get; set; }
+    public bool JoinRequestBroadcastActive { get; set; }
+    public ulong JoinRequestBroadcastRemainingSecs { get; set; }
     public bool NearbyDiscoveryActive { get; set; }
     public ulong NearbyDiscoveryRemainingSecs { get; set; }
     public bool LaunchOnStartup { get; set; }
@@ -435,7 +434,7 @@ public sealed class NativeNetworkState
     public string NetworkId { get; set; } = "";
     public bool LocalIsAdmin { get; set; }
     public bool JoinRequestsEnabled { get; set; }
-    public string InviteInviterNpub { get; set; } = "";
+    public string JoinRequestAdminNpub { get; set; } = "";
     public List<string> AdminNpubs { get; set; } = [];
     public NativeOutboundJoinRequestState? OutboundJoinRequest { get; set; }
     public List<NativeInboundJoinRequestState> InboundJoinRequests { get; set; } = [];
@@ -796,7 +795,7 @@ public sealed class NativeLanPeerState
     public string Endpoint { get; set; } = "";
     public string NetworkName { get; set; } = "";
     public string NetworkId { get; set; } = "";
-    public string Invite { get; set; } = "";
+    public string JoinRequest { get; set; } = "";
     public string LastSeenText { get; set; } = "";
 }
 

@@ -119,7 +119,7 @@ struct CoreUpdateResult: Decodable {
 enum CopyValue {
     case pubkey
     case meshId
-    case invite
+    case joinRequest
     case peerNpub
     case paymentRequest
     case cashuToken

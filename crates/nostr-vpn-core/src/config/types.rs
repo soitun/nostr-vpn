@@ -747,7 +747,7 @@ pub struct NetworkConfig {
     #[serde(default)]
     pub network_id: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub invite_secret: String,
+    pub join_secret: String,
     #[serde(default, alias = "participants")]
     pub devices: Vec<String>,
     /// Locally removed members. This is deliberately not part of the shared
@@ -763,7 +763,7 @@ pub struct NetworkConfig {
     )]
     pub listen_for_join_requests: bool,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub invite_inviter: String,
+    pub join_request_admin: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outbound_join_request: Option<PendingOutboundJoinRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -831,12 +831,12 @@ impl Default for AppConfig {
                 name: default_network_name(1),
                 enabled: default_network_enabled(),
                 network_id: default_network_id(),
-                invite_secret: default_invite_secret(),
+                join_secret: default_join_secret(),
                 devices: Vec::new(),
                 removed_devices: Vec::new(),
                 admins: Vec::new(),
                 listen_for_join_requests: default_listen_for_join_requests(),
-                invite_inviter: String::new(),
+                join_request_admin: String::new(),
                 outbound_join_request: None,
                 inbound_join_requests: Vec::new(),
                 shared_roster_updated_at: 0,

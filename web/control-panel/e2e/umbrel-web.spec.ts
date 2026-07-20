@@ -27,7 +27,6 @@ type UiState = {
   serviceSupported: boolean;
   serviceStatusDetail: string;
   vpnStatus: string;
-  activeNetworkInvite: string;
   exitNodeLeakProtection: boolean;
   wireguardExitEnabled: boolean;
   wireguardExitConfigured: boolean;
@@ -35,7 +34,7 @@ type UiState = {
   nodeName: string;
   selfMagicDnsName: string;
   autoconnect: boolean;
-  inviteBroadcastActive: boolean;
+  joinRequestBroadcastActive: boolean;
   nearbyDiscoveryActive: boolean;
   networks: NetworkView[];
 };
@@ -333,7 +332,6 @@ test('API supports the Umbrel web config action surface', async ({ request }) =>
   expect(originalNetwork.networkId).not.toBe('nostr-vpn');
   expect(originalNetwork.networkId).toMatch(/^[0-9a-f]{8,16}$/);
 
-  expect(state.activeNetworkInvite).toBe('');
   const qr = await postJson<QrMatrix>(request, '/api/qr_matrix', { text: 'public test value' });
   expect(qr.width).toBeGreaterThan(0);
   expect(qr.cells.length).toBe(qr.width * qr.width);
@@ -414,11 +412,11 @@ test('API supports the Umbrel web config action surface', async ({ request }) =>
   workNetwork = byName(state, 'E2E Renamed');
   expect(workNetwork.participants.some((participant) => participant.npub === peerNpub)).toBeFalsy();
 
-  state = await postJson<UiState>(request, '/api/start_invite_broadcast');
-  expect(state.inviteBroadcastActive).toBeTruthy();
+  state = await postJson<UiState>(request, '/api/start_join_request_broadcast');
+  expect(state.joinRequestBroadcastActive).toBeTruthy();
 
-  state = await postJson<UiState>(request, '/api/stop_invite_broadcast');
-  expect(state.inviteBroadcastActive).toBeFalsy();
+  state = await postJson<UiState>(request, '/api/stop_join_request_broadcast');
+  expect(state.joinRequestBroadcastActive).toBeFalsy();
 
   state = await postJson<UiState>(request, '/api/start_nearby_discovery');
   expect(state.nearbyDiscoveryActive).toBeTruthy();

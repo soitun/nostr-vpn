@@ -13,7 +13,6 @@ PACKAGE_NAME="${NVPN_ANDROID_PACKAGE:-${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.n
 ACTION_PACKAGE_NAME="${NVPN_ANDROID_ACTION_PACKAGE:-${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}}"
 MAIN_ACTIVITY="${NVPN_ANDROID_ACTIVITY:-$PACKAGE_NAME/org.nostrvpn.app.MainActivity}"
 DEBUG_ACTION_EXTRA="${NVPN_ANDROID_DEBUG_ACTION_EXTRA:-$ACTION_PACKAGE_NAME.DEBUG_ACTION}"
-DEBUG_INVITE_EXTRA="${NVPN_ANDROID_DEBUG_INVITE_EXTRA:-$ACTION_PACKAGE_NAME.DEBUG_INVITE}"
 DEBUG_EXIT_NODE_EXTRA="${NVPN_ANDROID_DEBUG_EXIT_NODE_EXTRA:-$ACTION_PACKAGE_NAME.DEBUG_EXIT_NODE}"
 DEBUG_NETWORK_NAME_EXTRA="${NVPN_ANDROID_DEBUG_NETWORK_NAME_EXTRA:-$ACTION_PACKAGE_NAME.DEBUG_NETWORK_NAME}"
 DEBUG_WIREGUARD_CONFIG_BASE64_EXTRA="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_BASE64_EXTRA:-$ACTION_PACKAGE_NAME.DEBUG_WIREGUARD_CONFIG_BASE64}"
@@ -38,7 +37,6 @@ TUN_PACKET_PROBE_WAIT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_WAIT_SECS:-15}"
 TUN_PACKET_PROBE_TIMEOUT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_TIMEOUT_SECS:-1}"
 TUN_PACKET_PROBE_REQUIRE_REPLY="${NVPN_ANDROID_TUN_PACKET_PROBE_REQUIRE_REPLY:-0}"
 DEBUG_SEED_WAIT_SECS="${NVPN_ANDROID_DEBUG_SEED_WAIT_SECS:-10}"
-DEBUG_INVITE="${NVPN_ANDROID_DEBUG_INVITE:-}"
 DEBUG_EXIT_NODE="${NVPN_ANDROID_DEBUG_EXIT_NODE:-}"
 DEBUG_WIREGUARD_CONFIG="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG:-}"
 DEBUG_WIREGUARD_CONFIG_FILE="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE:-}"
@@ -69,10 +67,9 @@ The installed debug app must report build metadata matching this repo checkout.
 First-run Android VPN permission prompts may need manual approval before
 --vpn-cycle can run unattended.
 
-For fresh installs, --vpn-cycle needs an active nvpn network. Seed one privately
-with NVPN_ANDROID_DEBUG_INVITE. A WireGuard exit config can be layered on with
-NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG / NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE,
-but it does not create an nvpn network by itself.
+For fresh installs, --vpn-cycle needs an active nvpn network. Use
+--create-network for local OS VPN/TUN coverage, or approve the device's signed
+join request from an admin device before running peer dataplane coverage.
 
 Use --create-network for a local OS VPN/TUN smoke when peer dataplane coverage is
 not required. It creates a debug-only local network named by
@@ -1255,11 +1252,6 @@ seed_debug_config() {
     sleep "$DEBUG_SEED_WAIT_SECS"
   fi
 
-  if [[ -n "$DEBUG_INVITE" ]]; then
-    start_main_activity --es "$DEBUG_INVITE_EXTRA" "$DEBUG_INVITE"
-    sleep "$DEBUG_SEED_WAIT_SECS"
-  fi
-
   if [[ -n "$DEBUG_EXIT_NODE" ]]; then
     start_main_activity \
       --es "$DEBUG_ACTION_EXTRA" set_fips_exit \
@@ -1280,7 +1272,7 @@ seed_debug_config() {
 dump_vpn_diagnostics() {
   echo "Android VPN cycle did not reach the expected service/network state." >&2
   echo "If this is a first run, approve the Android VPN permission prompt and retry." >&2
-  echo "If this device has no active nvpn network, set NVPN_ANDROID_DEBUG_INVITE and approve any app/VPN prompts." >&2
+  echo "If this device has no active nvpn network, use --create-network or approve its signed join request first." >&2
   echo "NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE only configures a WG exit; it does not create the required nvpn network." >&2
   echo >&2
   echo "---- dumpsys activity services $PACKAGE_NAME ----" >&2

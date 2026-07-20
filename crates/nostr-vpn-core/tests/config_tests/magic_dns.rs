@@ -351,7 +351,7 @@ enabled = true
 network_id = "mesh-home"
 devices = ["{peer_hex}"]
 admins = ["{admin_hex}"]
-invite_inviter = "{admin_hex}"
+join_request_admin = "{admin_hex}"
 shared_roster_signed_by = "{admin_hex}"
 
 [nostr]

@@ -279,7 +279,7 @@ e2e-fips-routed-udp:
     ./scripts/e2e-fips-routed-udp-docker.sh
 
 e2e-join-request:
-    ./scripts/e2e-join-request-docker.sh
+    cargo test -p nostr-vpn-app-core websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin
 
 e2e-lan-pairing:
     ./scripts/e2e-lan-pairing-docker.sh

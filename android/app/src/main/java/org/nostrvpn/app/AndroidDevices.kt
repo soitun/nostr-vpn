@@ -198,25 +198,7 @@ private fun NetworkSetupCard(
 ) {
     var setupMode by remember { mutableStateOf<NetworkSetupMode?>(null) }
     var networkName by remember { mutableStateOf("My Network") }
-    var inviteInput by remember { mutableStateOf("") }
-    var inviteExpanded by remember { mutableStateOf(false) }
-    var manualExpanded by remember { mutableStateOf(false) }
-    var manualAdminId by remember { mutableStateOf("") }
-    var manualNetworkId by remember { mutableStateOf("") }
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val clipboard = remember(context) {
-        context.getSystemService(android.content.ClipboardManager::class.java)
-    }
     val joinRequestQrCodeOrLink = state.joinRequestQrCodeOrLink
-    fun importInviteIfPresent(value: String): Boolean {
-        val trimmed = value.trim()
-        if (!trimmed.startsWith("nvpn://invite/", ignoreCase = true)) {
-            return false
-        }
-        dispatch(NativeActions.importInvite(trimmed))
-        inviteInput = ""
-        return true
-    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         if (showWelcomeHeader && setupMode == null) {
@@ -302,7 +284,7 @@ private fun NetworkSetupCard(
                                 ) {
                                     val qrSide = maxWidth.coerceAtMost(220.dp)
                                     QrCode(
-                                        invite = joinRequestQrCodeOrLink,
+                                        text = joinRequestQrCodeOrLink,
                                         qrJson = qrJson,
                                         side = qrSide,
                                     )
@@ -310,86 +292,6 @@ private fun NetworkSetupCard(
                                 CopyButton(joinRequestQrCodeOrLink, "Copy request")
                             }
 
-                            TextButton(onClick = { inviteExpanded = !inviteExpanded }) {
-                                Text(if (inviteExpanded) "Invite link ▴" else "Invite link ▾")
-                            }
-                            if (inviteExpanded) {
-                                OutlinedTextField(
-                                    value = inviteInput,
-                                    onValueChange = { newValue ->
-                                        inviteInput = newValue
-                                        importInviteIfPresent(newValue)
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    label = { Text("nvpn://invite/…") },
-                                )
-                                OutlinedButton(
-                                    onClick = {
-                                        val item = clipboard?.primaryClip?.getItemAt(0)?.coerceToText(context)
-                                        item?.toString()?.trim()?.let { pasted ->
-                                            if (!importInviteIfPresent(pasted)) {
-                                                inviteInput = pasted
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text("Paste")
-                                }
-                            }
-
-                            // Manual join: hand off admin device id + mesh network id directly
-                            // to the core's `manual_add_network` action. Both sides add each
-                            // other's Device ID out-of-band; no join request is queued here.
-                            TextButton(onClick = { manualExpanded = !manualExpanded }) {
-                                Text(if (manualExpanded) "Add manually ▴" else "Add manually ▾")
-                            }
-                            if (manualExpanded) {
-                                val adminTrim = manualAdminId.trim()
-                                val meshTrim = normalizeNetworkIdInput(manualNetworkId)
-                                val adminInvalid = adminTrim.isNotEmpty() && !isValidDeviceId(adminTrim)
-                                val canSubmit = adminTrim.isNotEmpty() && meshTrim.isNotEmpty() && !adminInvalid
-                                Text(
-                                    "Give the admin your Device ID, then enter their Device ID and network ID.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Muted,
-                                )
-                                Text("Your Device ID", style = MaterialTheme.typography.bodySmall, color = Muted)
-                                CopyButton(state.ownNpub, "Copy Device ID")
-                                OutlinedTextField(
-                                    value = manualAdminId,
-                                    onValueChange = { manualAdminId = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    label = { Text("Admin Device ID") },
-                                    isError = adminInvalid,
-                                    supportingText = if (adminInvalid) {
-                                        { Text("Not a valid device ID") }
-                                    } else {
-                                        null
-                                    },
-                                )
-                                OutlinedTextField(
-                                    value = manualNetworkId,
-                                    onValueChange = { manualNetworkId = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    singleLine = true,
-                                    label = { Text("Network ID") },
-                                )
-                                Button(
-                                    enabled = canSubmit,
-                                    onClick = {
-                                        dispatch(NativeActions.manualAddNetwork(adminTrim, meshTrim))
-                                        manualAdminId = ""
-                                        manualNetworkId = ""
-                                        manualExpanded = false
-                                    },
-                                    modifier = Modifier.fillMaxWidth(),
-                                ) {
-                                    Text("Add")
-                                }
-                            }
                         }
                         AdvertiseJoinRequestCard(state, dispatch)
                     }
@@ -482,9 +384,7 @@ internal fun AddNetworkDialog(
     )
 }
 
-/// Admin-only sheet for adding a device to YOUR network. The admin scans or
-/// pastes the joiner's request/Device ID; joining someone else's network and
-/// finding nearby networks belong to Add Network, not here.
+/// Admin-only sheet for approving a joining device's signed join request.
 @Composable
 internal fun AddDevicesDialog(
     state: AppState,
@@ -532,26 +432,6 @@ internal fun AddDevicesDialog(
                     Text("Scan QR")
                 }
                 NearbyCard(state, dispatch)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("For manual join", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "If join-request linking isn't available, share these two values. They'll enter them under Join Network -> Add manually. You still need to add their Device ID below.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Muted,
-                )
-                Text("Your Device ID", style = MaterialTheme.typography.bodySmall, color = Muted)
-                CopyLine(state.ownNpub)
-                Text("Network ID", style = MaterialTheme.typography.bodySmall, color = Muted)
-                CopyLine(network.networkId, displayNetworkId(network.networkId))
-
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("Add by Device ID", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "Manual pairing: enter the joiner's Device ID.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Muted,
-                )
-                AddParticipantForm(network, dispatch)
             }
         },
         confirmButton = {

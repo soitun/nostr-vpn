@@ -510,7 +510,7 @@ fn normalize_mobile_endpoint_npub(value: &str) -> String {
     let trimmed = value.trim();
     normalize_nostr_pubkey(trimmed).ok().map_or_else(
         || trimmed.to_string(),
-        |pubkey| nostr_vpn_core::invite::to_npub(&pubkey),
+        |pubkey| nostr_vpn_core::config::npub_for_pubkey_hex(&pubkey),
     )
 }
 

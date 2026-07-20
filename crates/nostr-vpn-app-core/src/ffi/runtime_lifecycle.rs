@@ -68,7 +68,7 @@ impl NativeAppRuntime {
             daemon_status_grace_until: Some(Instant::now() + DAEMON_STARTUP_STATUS_GRACE),
             last_service_status_refresh_at: None,
             lan_pairing_worker: None,
-            invite_broadcast_expires_at: None,
+            join_request_broadcast_expires_at: None,
             nearby_discovery_expires_at: None,
             lan_peers: HashMap::new(),
             paid_route_market_filter: NativePaidRouteMarketFilterState::default(),
@@ -131,7 +131,7 @@ impl NativeAppRuntime {
             daemon_status_grace_until: Some(Instant::now() + DAEMON_STARTUP_STATUS_GRACE),
             last_service_status_refresh_at: None,
             lan_pairing_worker: None,
-            invite_broadcast_expires_at: None,
+            join_request_broadcast_expires_at: None,
             nearby_discovery_expires_at: None,
             lan_peers: HashMap::new(),
             paid_route_market_filter: NativePaidRouteMarketFilterState::default(),
@@ -272,7 +272,7 @@ impl NativeAppRuntime {
             own_npub: if config_unavailable {
                 String::new()
             } else {
-                to_npub(&own_pubkey_hex)
+                npub_for_pubkey_hex(&own_pubkey_hex)
             },
             own_pubkey_hex: if config_unavailable {
                 String::new()
@@ -339,15 +339,6 @@ impl NativeAppRuntime {
             } else {
                 self.config.effective_network_id()
             },
-            active_network_invite: if config_unavailable || network_setup_required {
-                String::new()
-            } else {
-                active_network_invite_code_with_endpoints(
-                    &self.config,
-                    &self.live_inviter_endpoints(),
-                )
-                .unwrap_or_default()
-            },
             join_request_qr_code_or_link: if config_unavailable {
                 String::new()
             } else {
@@ -361,7 +352,7 @@ impl NativeAppRuntime {
             exit_node: if self.config.exit_node.trim().is_empty() {
                 String::new()
             } else {
-                to_npub(&self.config.exit_node)
+                npub_for_pubkey_hex(&self.config.exit_node)
             },
             exit_node_leak_protection: self.config.exit_node_leak_protection,
             exit_node_active: exit_node_status.active,
@@ -483,8 +474,8 @@ impl NativeAppRuntime {
                 self.magic_dns_status()
             },
             autoconnect: !config_unavailable && self.config.autoconnect,
-            invite_broadcast_active: self.invite_broadcast_active(),
-            invite_broadcast_remaining_secs: self.invite_broadcast_remaining_secs(),
+            join_request_broadcast_active: self.join_request_broadcast_active(),
+            join_request_broadcast_remaining_secs: self.join_request_broadcast_remaining_secs(),
             nearby_discovery_active: self.nearby_discovery_active(),
             nearby_discovery_remaining_secs: self.nearby_discovery_remaining_secs(),
             launch_on_startup: !config_unavailable && self.config.launch_on_startup,

@@ -320,7 +320,7 @@ set_membership() {
   local participants_toml="$2"
   local admins_toml="$3"
   local signer="$4"
-  local inviter="$5"
+  local join_admin="$5"
   local shared_at_arg="${6:-}"
   local shared_at
   if [[ -n "$shared_at_arg" ]]; then
@@ -334,7 +334,7 @@ set_membership() {
     -e ADMINS_TOML="$admins_toml" \
     -e SHARED_BY="$signer" \
     -e SHARED_AT="$shared_at" \
-    -e INVITER="$inviter" \
+    -e JOIN_ADMIN="$join_admin" \
     "$service" sh -lc '
 cfg=/root/.config/nvpn/config.toml
 tmp=$(mktemp)
@@ -345,15 +345,15 @@ perl -0pe '"'"'
   } else {
     s/^participants\s*=\s*\[[^\]]*\]/participants = $ENV{PARTICIPANTS_TOML}\nadmins = $ENV{ADMINS_TOML}/ms;
   }
-  if (/^invite_inviter\s*=/m) {
-    s/^invite_inviter\s*=.*$/invite_inviter = "$ENV{INVITER}"/m;
+  if (/^join_request_admin\s*=/m) {
+    s/^join_request_admin\s*=.*$/join_request_admin = "$ENV{JOIN_ADMIN}"/m;
   } else {
-    s/^admins\s*=.*$/admins = $ENV{ADMINS_TOML}\ninvite_inviter = "$ENV{INVITER}"/m;
+    s/^admins\s*=.*$/admins = $ENV{ADMINS_TOML}\njoin_request_admin = "$ENV{JOIN_ADMIN}"/m;
   }
   if (/^shared_roster_updated_at\s*=/m) {
     s/^shared_roster_updated_at\s*=.*$/shared_roster_updated_at = $ENV{SHARED_AT}/m;
   } else {
-    s/^invite_inviter\s*=.*$/invite_inviter = "$ENV{INVITER}"\nshared_roster_updated_at = $ENV{SHARED_AT}/m;
+    s/^join_request_admin\s*=.*$/join_request_admin = "$ENV{JOIN_ADMIN}"\nshared_roster_updated_at = $ENV{SHARED_AT}/m;
   }
   if (/^shared_roster_signed_by\s*=/m) {
     s/^shared_roster_signed_by\s*=.*$/shared_roster_signed_by = "$ENV{SHARED_BY}"/m;

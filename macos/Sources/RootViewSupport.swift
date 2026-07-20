@@ -577,15 +577,15 @@ struct WrappingIdentifierText: NSViewRepresentable {
     }
 }
 
-struct InviteQRCodeView: View {
-    let invite: String
+struct QrCodeView: View {
+    let text: String
 
     var body: some View {
-        if invite.isEmpty {
+        if text.isEmpty {
             RoundedRectangle(cornerRadius: 8)
                 .fill(Color(nsColor: .textBackgroundColor))
                 .overlay(Image(systemName: "qrcode").foregroundStyle(.secondary))
-        } else if let image = qrImage(invite) {
+        } else if let image = qrImage(text) {
             Image(nsImage: image)
                 .interpolation(.none)
                 .resizable()

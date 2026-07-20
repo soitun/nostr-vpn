@@ -145,12 +145,9 @@ impl NativeAppRuntime {
                     .set_network_join_requests_enabled(&network_id, enabled)?;
                 self.save_reload_refresh_and_maybe_connect_for_join_requests(enabled)
             }
-            NativeAppAction::RequestNetworkJoin { network_id } => {
-                self.request_network_join(&network_id)
-            }
-            NativeAppAction::StartInviteBroadcast => self.start_invite_broadcast(),
-            NativeAppAction::StopInviteBroadcast => {
-                self.stop_invite_broadcast();
+            NativeAppAction::StartJoinRequestBroadcast => self.start_join_request_broadcast(),
+            NativeAppAction::StopJoinRequestBroadcast => {
+                self.stop_join_request_broadcast();
                 Ok(())
             }
             NativeAppAction::StartNearbyDiscovery => self.start_nearby_discovery(),
@@ -177,25 +174,7 @@ impl NativeAppRuntime {
                 self.config.add_admin_to_network(&network_id, &npub)?;
                 self.save_reload_and_refresh()
             }
-            NativeAppAction::ResetNetworkInvite { network_id } => {
-                self.config.reset_network_invite(&network_id)?;
-                self.save_reload_and_refresh()
-            }
-            NativeAppAction::ImportNetworkInvite { invite } => {
-                self.import_network_invite(&invite)?;
-                Ok(())
-            }
             NativeAppAction::ImportJoinRequest { request } => self.import_join_request(&request),
-            NativeAppAction::ManualAddNetwork {
-                admin_npub,
-                mesh_network_id,
-            } => {
-                self.manual_add_network(&admin_npub, &mesh_network_id)?;
-                if !self.vpn_enabled {
-                    self.connect_vpn()?;
-                }
-                Ok(())
-            }
             NativeAppAction::RemoveParticipant { network_id, npub } => {
                 self.config
                     .remove_participant_from_network(&network_id, &npub)?;
@@ -394,13 +373,6 @@ impl NativeAppRuntime {
         }
     }
 
-    fn import_network_invite(&mut self, invite: &str) -> Result<()> {
-        let parsed = parse_network_invite(invite)?;
-        apply_network_invite_to_active_network(&mut self.config, &parsed)?;
-        self.config.clear_pending_nostr_join_request();
-        self.save_reload_and_refresh()
-    }
-
     fn import_join_request(&mut self, request: &str) -> Result<()> {
         let parsed = parse_join_request_qr_code_or_link(request)?;
         self.import_parsed_join_request(&parsed.bootstrap)
@@ -490,93 +462,6 @@ impl NativeAppRuntime {
         Ok(())
     }
 
-    fn manual_add_network(&mut self, admin_npub: &str, mesh_network_id: &str) -> Result<()> {
-        let admin = admin_npub.trim();
-        let mesh_id = mesh_network_id.trim();
-        if admin.is_empty() {
-            return Err(anyhow!("admin device id is empty"));
-        }
-        if mesh_id.is_empty() {
-            return Err(anyhow!("network id is empty"));
-        }
-        let synthetic = NetworkInvite {
-            v: NETWORK_INVITE_VERSION,
-            network_name: String::new(),
-            network_id: mesh_id.to_string(),
-            invite_secret: String::new(),
-            inviter_npub: admin.to_string(),
-            inviter_node_name: String::new(),
-            inviter_endpoints: Vec::new(),
-            admins: vec![admin.to_string()],
-            participants: Vec::new(),
-            relays: Vec::new(),
-        };
-        let encoded = serde_json::to_string(&synthetic)
-            .map_err(|err| anyhow!("failed to encode manual invite: {err}"))?;
-        let parsed = parse_network_invite(&encoded)?;
-        apply_network_invite_to_active_network(&mut self.config, &parsed)?;
-        let network_id = self
-            .config
-            .active_network_opt()
-            .ok_or_else(|| anyhow!("network not found"))?
-            .id
-            .clone();
-        self.config.add_participant_to_network(&network_id, admin)?;
-        self.config.clear_pending_nostr_join_request();
-        self.save_reload_and_refresh()
-    }
-
-    fn request_network_join(&mut self, network_id: &str) -> Result<()> {
-        self.queue_network_join_request(network_id)?;
-        self.save_reload_and_refresh()?;
-        if !self.vpn_enabled {
-            self.connect_vpn()?;
-        }
-        Ok(())
-    }
-
-    fn queue_network_join_request(&mut self, network_id: &str) -> Result<bool> {
-        let network = self
-            .config
-            .network_by_id(network_id)
-            .ok_or_else(|| anyhow!("network not found"))?
-            .clone();
-        if self.network_contains_own_identity(&network) {
-            return Ok(false);
-        }
-        let recipient = preferred_join_request_recipient(&network)
-            .ok_or_else(|| anyhow!("this network was not imported from an invite"))?;
-        if network
-            .outbound_join_request
-            .as_ref()
-            .is_some_and(|existing| existing.recipient == recipient)
-        {
-            return Ok(false);
-        }
-
-        let _ = self.config.ensure_temporary_self_magic_dns_alias();
-        let network = self
-            .config
-            .network_by_id_mut(network_id)
-            .ok_or_else(|| anyhow!("network not found"))?;
-        network.outbound_join_request = Some(PendingOutboundJoinRequest {
-            recipient,
-            requested_at: unix_timestamp(),
-        });
-        Ok(true)
-    }
-
-    fn network_contains_own_identity(&self, network: &NetworkConfig) -> bool {
-        let Some(own_pubkey) = self.config.own_nostr_pubkey_hex().ok() else {
-            return false;
-        };
-        network
-            .devices
-            .iter()
-            .chain(network.admins.iter())
-            .any(|member| member == &own_pubkey)
-    }
-
     fn accept_join_request(&mut self, network_id: &str, requester_npub: &str) -> Result<()> {
         let requester = normalize_nostr_pubkey(requester_npub)?;
         let network = self
@@ -593,7 +478,7 @@ impl NativeAppRuntime {
         self.add_join_requester_to_network(network_id, &requester, &requester_node_name)
     }
 
-    fn start_invite_broadcast(&mut self) -> Result<()> {
+    fn start_join_request_broadcast(&mut self) -> Result<()> {
         self.refresh_lan_pairing();
         let announcement = self.build_lan_pairing_announcement()?;
         let expires_at = lan_pairing_deadline();
@@ -602,15 +487,15 @@ impl NativeAppRuntime {
             worker.update_announcement(announcement);
             worker.set_broadcast_until(expires_at);
         }
-        self.invite_broadcast_expires_at = Some(expires_at);
+        self.join_request_broadcast_expires_at = Some(expires_at);
         Ok(())
     }
 
-    fn stop_invite_broadcast(&mut self) {
+    fn stop_join_request_broadcast(&mut self) {
         if let Some(worker) = self.lan_pairing_worker.as_ref() {
             worker.clear_broadcast();
         }
-        self.invite_broadcast_expires_at = None;
+        self.join_request_broadcast_expires_at = None;
         self.gc_lan_pairing_worker();
     }
 
@@ -646,7 +531,7 @@ impl NativeAppRuntime {
     }
 
     fn gc_lan_pairing_worker(&mut self) {
-        if self.invite_broadcast_expires_at.is_none()
+        if self.join_request_broadcast_expires_at.is_none()
             && self.nearby_discovery_expires_at.is_none()
             && let Some(mut worker) = self.lan_pairing_worker.take()
         {
@@ -655,8 +540,8 @@ impl NativeAppRuntime {
     }
 
     fn build_lan_pairing_announcement(&self) -> Result<LanPairingAnnouncement> {
-        let own_npub = to_npub(&self.config.own_nostr_pubkey_hex()?);
-        let invite = own_join_request_qr_code_or_link(&self.config)?;
+        let own_npub = npub_for_pubkey_hex(&self.config.own_nostr_pubkey_hex()?);
+        let request = own_join_request_qr_code_or_link(&self.config)?;
         let endpoint = self
             .daemon_state
             .as_ref()
@@ -666,21 +551,8 @@ impl NativeAppRuntime {
             npub: own_npub,
             node_name: self.config.node_name.clone(),
             endpoint,
-            invite,
+            join_request: request,
         })
-    }
-
-    fn live_inviter_endpoints(&self) -> Vec<String> {
-        let Some(state) = self.daemon_state.as_ref() else {
-            return Vec::new();
-        };
-        let mut endpoints = Vec::new();
-        endpoints.push(state.local_endpoint.clone());
-        endpoints.push(state.advertised_endpoint.clone());
-        if let Some(external_endpoint) = state.port_mapping.external_endpoint.as_ref() {
-            endpoints.push(external_endpoint.clone());
-        }
-        endpoints
     }
 
     fn refresh_lan_pairing(&mut self) {
@@ -695,10 +567,10 @@ impl NativeAppRuntime {
             self.lan_peers.remove(&key);
         }
         if self
-            .invite_broadcast_expires_at
+            .join_request_broadcast_expires_at
             .is_some_and(|expires_at| expires_at <= now)
         {
-            self.invite_broadcast_expires_at = None;
+            self.join_request_broadcast_expires_at = None;
             if let Some(worker) = self.lan_pairing_worker.as_ref() {
                 worker.clear_broadcast();
             }
@@ -739,12 +611,12 @@ impl NativeAppRuntime {
         }
     }
 
-    fn invite_broadcast_active(&self) -> bool {
-        self.lan_pairing_worker.is_some() && self.invite_broadcast_remaining_secs() > 0
+    fn join_request_broadcast_active(&self) -> bool {
+        self.lan_pairing_worker.is_some() && self.join_request_broadcast_remaining_secs() > 0
     }
 
-    fn invite_broadcast_remaining_secs(&self) -> u64 {
-        Self::remaining_secs(self.invite_broadcast_expires_at)
+    fn join_request_broadcast_remaining_secs(&self) -> u64 {
+        Self::remaining_secs(self.join_request_broadcast_expires_at)
     }
 
     fn nearby_discovery_active(&self) -> bool {
@@ -777,7 +649,7 @@ impl NativeAppRuntime {
                 endpoint: record.signal.endpoint.clone(),
                 network_name: record.signal.network_name.clone(),
                 network_id: record.signal.network_id.clone(),
-                invite: record.signal.invite.clone(),
+                join_request: record.signal.join_request.clone(),
                 last_seen_text: record.last_seen.elapsed().map_or_else(
                     |_| "just now".to_string(),
                     |age| compact_age_text(age.as_secs()),
@@ -813,8 +685,8 @@ impl NativeAppRuntime {
 }
 
 fn lan_signal_is_join_request(signal: &LanPairingSignal) -> bool {
-    let invite = signal.invite.trim();
-    invite
+    let request = signal.join_request.trim();
+    request
         .get(.."nvpn://join-request".len())
         .is_some_and(|prefix| prefix.eq_ignore_ascii_case("nvpn://join-request"))
 }

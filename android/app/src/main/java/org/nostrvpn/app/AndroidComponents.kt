@@ -242,47 +242,6 @@ private fun DeviceDetailDialog(
     }
 }
 
-@Composable
-internal fun AddParticipantForm(network: NetworkState, dispatch: (JSONObject) -> Unit) {
-    var deviceId by remember { mutableStateOf("") }
-    var alias by remember { mutableStateOf("") }
-    val trimmedDeviceId = deviceId.trim()
-    val showError = trimmedDeviceId.isNotEmpty() && !isValidDeviceId(trimmedDeviceId)
-    val canSubmit = trimmedDeviceId.isNotEmpty() && !showError
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedTextField(
-            value = deviceId,
-            onValueChange = { deviceId = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("Device ID") },
-            isError = showError,
-            supportingText = if (showError) {
-                { Text("Not a valid device ID") }
-            } else {
-                null
-            },
-        )
-        OutlinedTextField(
-            value = alias,
-            onValueChange = { alias = it },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-            label = { Text("Name") },
-        )
-        Button(
-            enabled = canSubmit,
-            onClick = {
-                dispatch(NativeActions.addParticipant(network.id, trimmedDeviceId, alias.trim().ifBlank { null }))
-                deviceId = ""
-                alias = ""
-            },
-        ) {
-            Text("Add")
-        }
-    }
-}
-
 private val BECH32_BODY_CHARSET: Set<Char> = "qpzry9x8gf2tvdw0s3jn54khce6mua7l".toSet()
 
 internal data class ScannedDeviceLink(
@@ -422,7 +381,7 @@ internal fun AdvertiseJoinRequestCard(state: AppState, dispatch: (JSONObject) ->
             Text("Nearby join request", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
             Button(onClick = {
                 dispatch(
-                    if (state.inviteBroadcastActive) {
+                    if (state.joinRequestBroadcastActive) {
                         NativeActions.stopJoinRequestBroadcast()
                     } else {
                         NativeActions.startJoinRequestBroadcast()
@@ -430,8 +389,8 @@ internal fun AdvertiseJoinRequestCard(state: AppState, dispatch: (JSONObject) ->
                 )
             }) {
                 Text(
-                    if (state.inviteBroadcastActive) {
-                        "Advertising · ${formatRemaining(state.inviteBroadcastRemainingSecs)}"
+                    if (state.joinRequestBroadcastActive) {
+                        "Advertising · ${formatRemaining(state.joinRequestBroadcastRemainingSecs)}"
                     } else {
                         "Advertise nearby"
                     },
@@ -439,7 +398,7 @@ internal fun AdvertiseJoinRequestCard(state: AppState, dispatch: (JSONObject) ->
             }
         }
         Text(
-            if (state.inviteBroadcastActive) {
+            if (state.joinRequestBroadcastActive) {
                 "Admins nearby can add this device from its join request."
             } else {
                 "Advertise this device's join request to nearby admins."
@@ -474,7 +433,7 @@ internal fun LanPeerRow(peer: LanPeerState, dispatch: (JSONObject) -> Unit) {
             Text(peer.nodeName.ifBlank { peer.networkName }, fontWeight = FontWeight.SemiBold)
             Text(peer.lastSeenText, color = Muted, style = MaterialTheme.typography.bodySmall)
         }
-        Button(onClick = { dispatch(NativeActions.importJoinRequest(peer.invite)) }) {
+        Button(onClick = { dispatch(NativeActions.importJoinRequest(peer.joinRequest)) }) {
             Text("Add")
         }
     }
@@ -788,12 +747,12 @@ internal fun DiagnosticsCard(state: AppState) {
 
 @Composable
 internal fun QrCode(
-    invite: String,
+    text: String,
     qrJson: (String) -> JSONObject,
     modifier: Modifier = Modifier,
     side: Dp = 132.dp,
 ) {
-    val qr = remember(invite) { qrJson(invite) }
+    val qr = remember(text) { qrJson(text) }
     val width = qr.optInt("width")
     val cells = qr.optJSONArray("cells")
     Canvas(

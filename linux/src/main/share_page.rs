@@ -90,7 +90,6 @@ fn append_join_network_card(
         state.networks.iter().find(|network| {
             network.outbound_join_request.is_some()
                 || !network.join_request_qr_code_or_link.is_empty()
-                || !network.invite_inviter_npub.is_empty()
         })
     });
     let join_request = if state.join_request_qr_code_or_link.is_empty() {
@@ -113,61 +112,6 @@ fn append_join_network_card(
         join_card.append(&copy);
     }
 
-    let legacy = gtk::Expander::new(Some("Legacy invite link"));
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    body.set_margin_top(8);
-    let import_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let invite_entry = entry("Paste invite", &app.borrow().drafts.invite);
-    {
-        let app = app.clone();
-        invite_entry.connect_changed(move |entry| {
-            let value = entry.text().to_string();
-            app.borrow_mut().drafts.invite.clone_from(&value);
-            let trimmed = value.trim();
-            if trimmed.starts_with("nvpn://invite/") {
-                import_invite(&app, trimmed.to_string());
-            }
-        });
-    }
-    let import = icon_text_button("Import", "go-down-symbolic");
-    {
-        let app = app.clone();
-        import.connect_clicked(move |_| {
-            let invite = app.borrow().drafts.invite.trim().to_string();
-            import_invite(&app, invite);
-        });
-    }
-    import_row.append(&invite_entry);
-    import_row.append(&import);
-    body.append(&import_row);
-    if let Some(network) = request_network {
-        let add_network_join_status = app.borrow().add_network_join_status.clone();
-        if !add_network_join_status.trim().is_empty() || network.outbound_join_request.is_some() {
-            body.append(&badge("Join request sent", "warn"));
-        } else if !network.invite_inviter_npub.is_empty() {
-            let request = icon_text_button("Request Access", "contact-new-symbolic");
-            {
-                let app = app.clone();
-                let network_id = network.id.clone();
-                request.connect_clicked(move |_| {
-                    let state = dispatch(
-                        &app,
-                        NativeAppAction::RequestNetworkJoin {
-                            network_id: network_id.clone(),
-                        },
-                    );
-                    if state.error.trim().is_empty() {
-                        app.borrow_mut().add_network_join_status = "Join request sent".to_string();
-                        render(&app);
-                    }
-                });
-            }
-            body.append(&request);
-        }
-    }
-    legacy.set_child(Some(&body));
-    join_card.append(&legacy);
-    append_manual_join(app, &join_card, state);
     append_notice(app, &join_card, "Join");
     page.append(&join_card);
 }
@@ -176,7 +120,7 @@ fn append_nearby_card(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     let nearby = card();
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.set_valign(gtk::Align::Center);
-    section_header(&header, "Nearby invites", "");
+    section_header(&header, "Nearby join requests", "");
     let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     spacer.set_hexpand(true);
     header.append(&spacer);
@@ -213,7 +157,7 @@ fn append_nearby_card(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
     header.append(&lan);
     nearby.append(&header);
     if state.lan_peers.is_empty() {
-        empty_row(&nearby, "No nearby invites");
+        empty_row(&nearby, "No nearby join requests");
     } else {
         for peer in &state.lan_peers {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
@@ -233,11 +177,18 @@ fn append_nearby_card(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
             text.append(&sub);
             text.set_hexpand(true);
             row.append(&text);
-            let join = icon_text_button("Join", "go-next-symbolic");
+            let join = icon_text_button("Add", "go-next-symbolic");
             {
                 let app = app.clone();
-                let invite = peer.invite.clone();
-                join.connect_clicked(move |_| import_invite(&app, invite.clone()));
+                let request = peer.join_request.clone();
+                join.connect_clicked(move |_| {
+                    dispatch(
+                        &app,
+                        NativeAppAction::ImportJoinRequest {
+                            request: request.clone(),
+                        },
+                    );
+                });
             }
             row.append(&join);
             nearby.append(&row);
@@ -351,100 +302,6 @@ fn append_notice(app: &AppRef, parent: &gtk::Box, title: &str) {
     if !notice.trim().is_empty() {
         row_label(parent, title, &notice, "dialog-warning-symbolic");
     }
-}
-
-fn append_manual_join(app: &AppRef, parent: &gtk::Box, state: &NativeAppState) {
-    let manual = gtk::Expander::new(Some("Add manually"));
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 8);
-    body.set_margin_top(8);
-
-    if !state.own_npub.trim().is_empty() {
-        let own = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        own.set_valign(gtk::Align::Center);
-        let label = gtk::Label::new(Some("Your Device ID"));
-        label.add_css_class("dim-label");
-        label.set_xalign(0.0);
-        label.set_width_chars(13);
-        own.append(&label);
-
-        let value = gtk::Label::new(Some(&state.own_npub));
-        value.set_xalign(0.0);
-        value.set_selectable(true);
-        value.set_hexpand(true);
-        value.set_wrap(true);
-        value.set_wrap_mode(gtk::pango::WrapMode::Char);
-        own.append(&value);
-
-        let copy = icon_text_button("Copy", "edit-copy-symbolic");
-        {
-            let own_npub = state.own_npub.clone();
-            copy.connect_clicked(move |_| copy_text(&own_npub));
-        }
-        own.append(&copy);
-        body.append(&own);
-    }
-
-    let admin = entry("Admin Device ID", &app.borrow().drafts.manual_join_admin_id);
-    {
-        let app = app.clone();
-        admin.connect_changed(move |entry| {
-            app.borrow_mut().drafts.manual_join_admin_id = entry.text().to_string();
-        });
-    }
-    body.append(&admin);
-
-    let network = entry(
-        "Network ID",
-        &display_network_id(&app.borrow().drafts.manual_join_network_id),
-    );
-    {
-        let app = app.clone();
-        network.connect_changed(move |entry| {
-            app.borrow_mut().drafts.manual_join_network_id = entry.text().to_string();
-        });
-    }
-    body.append(&network);
-
-    let add = icon_text_button("Add", "list-add-symbolic");
-    add.set_halign(gtk::Align::Start);
-    {
-        let app = app.clone();
-        add.connect_clicked(move |_| manual_add_network(&app));
-    }
-    body.append(&add);
-
-    manual.set_child(Some(&body));
-    parent.append(&manual);
-}
-
-fn manual_add_network(app: &AppRef) {
-    let (admin_npub, mesh_network_id) = {
-        let model = app.borrow();
-        (
-            model.drafts.manual_join_admin_id.trim().to_string(),
-            normalize_network_id_input(&model.drafts.manual_join_network_id),
-        )
-    };
-    if admin_npub.is_empty() || mesh_network_id.is_empty() {
-        return;
-    }
-    if !is_valid_device_id(&admin_npub) {
-        set_notice(app, "Not a valid device ID");
-        return;
-    }
-    {
-        let mut model = app.borrow_mut();
-        model.drafts.manual_join_admin_id.clear();
-        model.drafts.manual_join_network_id.clear();
-        model.notice.clear();
-    }
-    dispatch(
-        app,
-        NativeAppAction::ManualAddNetwork {
-            admin_npub,
-            mesh_network_id,
-        },
-    );
 }
 
 fn import_join_request_or_add_device(app: &AppRef, network_id: String) {

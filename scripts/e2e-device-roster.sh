@@ -6,8 +6,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-cargo test -p nostr-vpn-app-core compact_join_bootstrap_is_added_by_admin_without_request_event
-cargo test -p nostr-vpn-app-core mobile_join_request_sends_and_records_over_real_fips_endpoint
+cargo test -p nostr-vpn-app-core websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin
 
 case "$(uname -s)" in
   Darwin)
@@ -27,11 +26,5 @@ case "$(uname -s)" in
     exit 2
     ;;
 esac
-
-if docker info >/dev/null 2>&1; then
-  "$ROOT/scripts/e2e-bootstrap-discovery-docker.sh"
-else
-  echo "Skipping reciprocal tunnel test because Docker is unavailable."
-fi
 
 echo "DEVICE_ROSTER_E2E_OK"

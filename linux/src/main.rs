@@ -90,14 +90,11 @@ impl PageScrollOffsets {
 
 #[derive(Clone, Default)]
 struct Drafts {
-    invite: String,
     join_request: String,
     participant_npub: String,
     participant_alias: String,
     network_name: String,
     mesh_id: String,
-    manual_join_admin_id: String,
-    manual_join_network_id: String,
     new_network_name: String,
     node_name: String,
     endpoint: String,

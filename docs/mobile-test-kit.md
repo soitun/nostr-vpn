@@ -63,7 +63,7 @@ probe counters. Keep `NVPN_ANDROID_SERIAL`, `NVPN_IOS_DEVICE`,
 `.env.mobile.local`.
 
 For peer latency, jitter, loss, and throughput evidence, run the underlying
-smoke scripts with real ignored-local invite or WireGuard fixture values. Use a
+smoke scripts with real ignored-local join-request or WireGuard fixture values. Use a
 reachable peer/exit probe target and set
 `NVPN_ANDROID_TUN_PACKET_PROBE_REQUIRE_REPLY=1` or
 `NVPN_IOS_TUN_PACKET_PROBE_REQUIRE_REPLY=1` when the run should fail unless

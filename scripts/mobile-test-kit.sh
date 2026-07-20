@@ -19,7 +19,7 @@ Device identifiers are intentionally not stored in the repo. Use environment
 variables such as NVPN_ANDROID_SERIAL and NVPN_IOS_DEVICE when needed, or copy
 .env.mobile.example to .env.mobile.local for local ignored values. Device mode
 builds/installs the exact current iOS development-signed app and uses local iOS
-Packet Tunnel coverage without a private invite fixture by default.
+Packet Tunnel coverage without a private enrollment fixture by default.
 Android --vpn-cycle validates the app-private Rust runtime-state file after the
 OS VPN network becomes active; tune with NVPN_ANDROID_RUNTIME_STATE_WAIT_SECS
 or NVPN_ANDROID_RUNTIME_STATE_MAX_AGE_SECS if a slow device needs it. It also

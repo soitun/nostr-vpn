@@ -746,7 +746,7 @@ fn qr_matrix(text: &str) -> Result<QrMatrixResult> {
         });
     }
 
-    let code = QrCode::new(trimmed.as_bytes()).context("failed to encode QR invite")?;
+    let code = QrCode::new(trimmed.as_bytes()).context("failed to encode QR text")?;
     let width = code.width();
     let cells = code
         .to_colors()
@@ -823,8 +823,8 @@ mod tests {
     }
 
     #[test]
-    fn qr_matrix_reports_cells_for_invite_text() {
-        let text = CString::new("nvpn://invite/example").expect("text");
+    fn qr_matrix_reports_cells_for_join_request_text() {
+        let text = CString::new("nvpn://join-request/example").expect("text");
         let json = take_string(nostr_vpn_qr_matrix_json(text.as_ptr()));
         let value: serde_json::Value = serde_json::from_str(&json).expect("matrix JSON");
         let width = value["width"].as_u64().expect("width");
@@ -837,9 +837,9 @@ mod tests {
     }
 
     #[test]
-    fn decode_qr_image_reads_generated_invite() {
-        let invite = "nvpn://invite/example";
-        let code = QrCode::new(invite.as_bytes()).expect("QR code");
+    fn decode_qr_image_reads_generated_join_request() {
+        let request = "nvpn://join-request/example";
+        let code = QrCode::new(request.as_bytes()).expect("QR code");
         let module_count = u32::try_from(code.width()).expect("QR width fits u32");
         let scale = 8;
         let quiet_zone = 4;
@@ -865,11 +865,11 @@ mod tests {
 
         let dir = temp_data_dir();
         fs::create_dir_all(&dir).expect("temp dir");
-        let path = dir.join("invite.png");
+        let path = dir.join("join-request.png");
         image.save(&path).expect("save QR image");
 
         let decoded = decode_qr_image(path.to_str().expect("UTF-8 path")).expect("decode QR");
-        assert_eq!(decoded, invite);
+        assert_eq!(decoded, request);
     }
 
     fn temp_data_dir() -> std::path::PathBuf {

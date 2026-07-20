@@ -106,7 +106,7 @@ EDITABLE_STATES = {
 
 DEFAULT_DESCRIPTION = """Nostr VPN creates private mesh VPN networks between your own devices and trusted peers.
 
-Create a network, invite devices, start the VPN, and reach your private services through encrypted tunnels. Devices can use readable MagicDNS names, direct LAN paths when available, relay-assisted paths when needed, and optional exit-node routing through a peer or WireGuard upstream you control.
+Create a network, approve devices' signed join requests, start the VPN, and reach your private services through encrypted tunnels. Devices can use readable MagicDNS names, direct LAN paths when available, relay-assisted paths when needed, and optional exit-node routing through a peer or WireGuard upstream you control.
 
 You choose the networks, peers, relays, routes, and exit nodes. Nostr VPN does not sell or operate public VPN exits and is not a public internet proxy, anonymity, or stealth browsing service."""
 
@@ -128,7 +128,7 @@ DEFAULT_REVIEW_CONTACT_PHONE = "+35868028660"
 DEFAULT_REVIEW_CONTACT_EMAIL = "nostrvpn@siriusbusiness.fi"
 DEFAULT_REVIEW_NOTES = """Nostr VPN is a private mesh VPN for networks, peers, relays, routes, and exit nodes that the user configures.
 
-No demo account is required. To review the app, create a network in the app, add/import a peer invite if you have another device, and start the VPN from the Devices tab. The app shows the required VPN data-use disclosure before enabling the tunnel, then iOS shows the system VPN permission prompt.
+No demo account is required. To review the app, create a network in the app, approve a signed join request if you have another device, and start the VPN from the Devices tab. The app shows the required VPN data-use disclosure before enabling the tunnel, then iOS shows the system VPN permission prompt.
 
 Nostr VPN is not a public VPN, public proxy, anonymity, stealth, or censorship-circumvention service. Sirius Business does not sell VPN data, use it for ads or tracking, or disclose it to third parties."""
 

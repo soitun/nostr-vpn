@@ -2,7 +2,6 @@ pub mod actions;
 pub mod c_abi;
 mod exchange_rate;
 mod ffi;
-mod invite;
 pub mod join_approval;
 pub mod join_request_link;
 pub mod lan_pairing;

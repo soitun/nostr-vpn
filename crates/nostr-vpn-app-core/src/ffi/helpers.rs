@@ -1,6 +1,6 @@
 impl Drop for NativeAppRuntime {
     fn drop(&mut self) {
-        self.stop_invite_broadcast();
+        self.stop_join_request_broadcast();
         self.stop_nearby_discovery();
     }
 }
@@ -9,7 +9,7 @@ fn native_outbound_join_request(
     request: &PendingOutboundJoinRequest,
 ) -> NativeOutboundJoinRequestState {
     NativeOutboundJoinRequestState {
-        recipient_npub: to_npub(&request.recipient),
+        recipient_npub: npub_for_pubkey_hex(&request.recipient),
         recipient_pubkey_hex: request.recipient.clone(),
         requested_at_text: join_request_age_text(request.requested_at),
     }
@@ -19,7 +19,7 @@ fn native_inbound_join_request(
     request: &PendingInboundJoinRequest,
 ) -> NativeInboundJoinRequestState {
     NativeInboundJoinRequestState {
-        requester_npub: to_npub(&request.requester),
+        requester_npub: npub_for_pubkey_hex(&request.requester),
         requester_pubkey_hex: request.requester.clone(),
         requester_node_name: request.requester_node_name.clone(),
         requested_at_text: join_request_age_text(request.requested_at),

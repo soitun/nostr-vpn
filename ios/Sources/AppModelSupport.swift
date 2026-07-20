@@ -2,11 +2,11 @@ import Foundation
 import UIKit
 
 extension AppModel {
-    func qrMatrix(for invite: String) -> QrMatrix {
+    func qrMatrix(for text: String) -> QrMatrix {
         if fixtureMode {
             return ScreenshotFixtures.qrMatrix()
         }
-        return core?.qrMatrix(invite: invite) ?? QrMatrix()
+        return core?.qrMatrix(text: text) ?? QrMatrix()
     }
 
     func copy(_ value: String) {

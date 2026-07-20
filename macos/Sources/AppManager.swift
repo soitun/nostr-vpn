@@ -40,8 +40,6 @@ final class AppManager: ObservableObject {
             UserDefaults.standard.set(autoInstallUpdates, forKey: "updates.autoInstall")
         }
     }
-    @Published var inviteInput = ""
-
     let app: FfiApp?
     let fixtureMode: Bool
     var refreshTask: Task<Void, Never>?

@@ -1,6 +1,5 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeepLink {
-    Invite(String),
     JoinRequest(String),
     #[cfg(debug_assertions)]
     Debug(DebugAction),
@@ -10,9 +9,6 @@ pub enum DeepLink {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DebugAction {
     Tick,
-    RequestJoin {
-        network_id: Option<String>,
-    },
     AcceptJoin {
         network_id: Option<String>,
         requester_npub: Option<String>,
@@ -23,9 +19,6 @@ pub fn parse(raw: &str) -> Option<DeepLink> {
     let raw = raw.trim();
     if !raw.starts_with("nvpn://") {
         return None;
-    }
-    if raw.starts_with("nvpn://invite/") {
-        return Some(DeepLink::Invite(raw.to_string()));
     }
     if raw
         .get(.."nvpn://join-request".len())
@@ -61,9 +54,6 @@ fn parse_debug(raw: &str) -> Option<DeepLink> {
     let action = parts.next().unwrap_or_default().trim_matches('/');
     match action {
         "tick" => Some(DeepLink::Debug(DebugAction::Tick)),
-        "request-join" => Some(DeepLink::Debug(DebugAction::RequestJoin {
-            network_id: query_value(raw, &["networkId", "network"]),
-        })),
         "accept-join" => Some(DeepLink::Debug(DebugAction::AcceptJoin {
             network_id: query_value(raw, &["networkId", "network"]),
             requester_npub: query_value(raw, &["requester", "requesterNpub"]),
@@ -125,30 +115,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_invite_links_verbatim() {
-        assert_eq!(
-            parse(" nvpn://invite/example "),
-            Some(DeepLink::Invite("nvpn://invite/example".to_string()))
-        );
-    }
-
-    #[test]
     fn parses_join_request_links_verbatim() {
         assert_eq!(
             parse(" nvpn://join-request/payload "),
             Some(DeepLink::JoinRequest(
                 "nvpn://join-request/payload".to_string()
             ))
-        );
-    }
-
-    #[test]
-    fn parses_debug_request_join_network_id() {
-        assert_eq!(
-            parse("nvpn://debug/request-join?networkId=net%201"),
-            Some(DeepLink::Debug(DebugAction::RequestJoin {
-                network_id: Some("net 1".to_string())
-            }))
         );
     }
 

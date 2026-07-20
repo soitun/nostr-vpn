@@ -145,7 +145,7 @@ DEFAULT_PUBLIC_GROUP_NAME = "Public Beta"
 DEFAULT_PUBLIC_LINK_LIMIT = 9999
 DEFAULT_WHATS_NEW = (
     "Please test creating or importing a Nostr VPN network, starting and stopping the iOS "
-    "packet tunnel, LAN pairing, invite import, peer connectivity, routing settings, "
+    "packet tunnel, nearby join requests, peer connectivity, routing settings, "
     "WireGuard exit-node routing, and TestFlight feedback or crash reporting."
 )
 DEFAULT_BETA_DESCRIPTION = (
@@ -155,8 +155,8 @@ DEFAULT_BETA_DESCRIPTION = (
     "consumer internet proxy, anonymity, or stealth browsing service."
 )
 DEFAULT_REVIEW_NOTES = (
-    "No demo account is required. To review, create a network in the app or import an "
-    "nvpn://invite link from another Nostr VPN device, then use the main VPN switch to "
+    "No demo account is required. To review, create a network in the app or approve a "
+    "signed join request from another Nostr VPN device, then use the main VPN switch to "
     "start and stop the iOS packet tunnel. The app uses Apple's NetworkExtension packet "
     "tunnel APIs for VPN control. Nostr VPN is a private VPN and generic WireGuard "
     "exit-node utility: users choose their own networks, peers, routes, services, and "

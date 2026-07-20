@@ -203,22 +203,6 @@ struct CreateNetworkCard: View {
 
 struct JoinNetworkCard: View {
     @ObservedObject var model: AppModel
-    @State private var inviteInput = ""
-    @State private var inviteExpanded = false
-    @State private var manualExpanded = false
-    @State private var manualAdminId = ""
-    @State private var manualNetworkId = ""
-
-    private var manualAdminInvalid: Bool {
-        let trimmed = manualAdminId.trimmingCharacters(in: .whitespacesAndNewlines)
-        return !trimmed.isEmpty && !isValidDeviceId(trimmed)
-    }
-
-    private var canSubmitManual: Bool {
-        let admin = manualAdminId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mesh = normalizeNetworkIdInput(manualNetworkId)
-        return !admin.isEmpty && !mesh.isEmpty && isValidDeviceId(admin)
-    }
 
     private var requestNetwork: NetworkState? {
         model.activeNetwork ?? model.state.networks.first { network in
@@ -260,85 +244,11 @@ struct JoinNetworkCard: View {
                 }
             }
 
-            DisclosureGroup("Invite link", isExpanded: $inviteExpanded) {
-                VStack(alignment: .leading, spacing: 8) {
-                    TextField("nvpn://invite/…", text: $inviteInput)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .textFieldStyle(.roundedBorder)
-                        .onChange(of: inviteInput) { _, newValue in
-                            let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if trimmed.lowercased().hasPrefix("nvpn://invite/") {
-                                model.linkNetwork(trimmed)
-                                inviteInput = ""
-                            }
-                        }
-                    Button {
-                        if let text = UIPasteboard.general.string {
-                            inviteInput = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                        }
-                    } label: {
-                        Label("Paste", systemImage: "doc.on.clipboard")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                }
-                .padding(.top, 6)
-            }
-            .font(.subheadline)
-
-            DisclosureGroup("Manual join", isExpanded: $manualExpanded) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Give the admin your Device ID, then enter their Device ID and network ID.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Your Device ID")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                        CopyLine(value: model.state.ownNpub, model: model)
-                    }
-                    TextField("Admin Device ID", text: $manualAdminId)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .textFieldStyle(.roundedBorder)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.red, lineWidth: manualAdminInvalid ? 1 : 0)
-                        )
-                    if manualAdminInvalid {
-                        Text("Not a valid device ID")
-                            .font(.caption)
-                            .foregroundStyle(.red)
-                    }
-                    TextField("Network ID", text: $manualNetworkId)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .textFieldStyle(.roundedBorder)
-                    Button("Add") {
-                        let admin = manualAdminId.trimmingCharacters(in: .whitespacesAndNewlines)
-                        let mesh = normalizeNetworkIdInput(manualNetworkId)
-                        model.dispatch(
-                            NativeActions.manualAddNetwork(adminNpub: admin, meshNetworkId: mesh),
-                            status: "Adding network"
-                        )
-                        manualAdminId = ""
-                        manualNetworkId = ""
-                        manualExpanded = false
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canSubmitManual)
-                }
-                .padding(.top, 6)
-            }
-            .font(.subheadline)
         }
     }
 }
 
-/// Admin-only sheet for linking a device to YOUR network. The preferred path
-/// is scanning or pasting the joining device's join request; direct Device ID
-/// entry remains for compatible signed-roster clients.
+/// Admin-only sheet for approving a joining device's signed join request.
 struct AddDeviceSheet: View {
     @ObservedObject var model: AppModel
     let network: NetworkState
@@ -366,13 +276,6 @@ struct AddDeviceSheet: View {
                     }
                 )
                 NearbyCard(model: model)
-                ManualPairingInfoCard(model: model, network: network)
-                AddDeviceCard(network: network) { npub, alias in
-                    model.dispatch(
-                        NativeActions.addParticipant(networkId: network.id, npub: npub, alias: alias),
-                        status: "Adding device"
-                    )
-                }
             }
             .padding()
         }
@@ -420,16 +323,6 @@ struct AddDeviceSheet: View {
         }
     }
 
-    private func importJoinRequest(_ value: String) {
-        let request = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !request.isEmpty else { return }
-        scanError = ""
-        model.dispatch(
-            NativeActions.importJoinRequest(request),
-            status: "Adding device"
-        )
-    }
-
     private func importJoinerValue(_ value: String) {
         let request = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !request.isEmpty else { return }
@@ -437,11 +330,7 @@ struct AddDeviceSheet: View {
             stageJoinRequest(request)
             return
         }
-        if let scanned = parseScannedDeviceLinkQr(request) {
-            addScannedJoiner(scanned)
-            return
-        }
-        importJoinRequest(request)
+        scanError = "Not a Nostr VPN join request."
     }
 
     private func handleScannedJoinerCode(_ value: String) {
@@ -449,23 +338,7 @@ struct AddDeviceSheet: View {
             stageJoinRequest(value)
             return
         }
-        guard let scanned = parseScannedDeviceLinkQr(value) else {
-            scanError = "Not a Nostr VPN joiner QR."
-            return
-        }
-        addScannedJoiner(scanned)
-    }
-
-    private func addScannedJoiner(_ scanned: ScannedDeviceLink) {
-        scanError = ""
-        model.dispatch(
-            NativeActions.addParticipant(
-                networkId: network.id,
-                npub: scanned.deviceId,
-                alias: scanned.alias ?? ""
-            ),
-            status: "Adding device"
-        )
+        scanError = "Not a Nostr VPN join request."
     }
 
     private func stageJoinRequest(_ value: String) {
@@ -514,34 +387,6 @@ struct ScanJoinerDeviceCard: View {
                 Text(scanError)
                     .font(.caption)
                     .foregroundStyle(.red)
-            }
-        }
-    }
-}
-
-/// Manual pairing path for directly sharing signed-roster values.
-struct ManualPairingInfoCard: View {
-    @ObservedObject var model: AppModel
-    let network: NetworkState
-
-    var body: some View {
-        AppCard {
-            Text("Manual pairing")
-                .font(.headline)
-            Text("Share these values with the other device, then add its Device ID below to keep the signed roster in sync.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Your Device ID")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                CopyLine(value: model.state.ownNpub, model: model)
-            }
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Network ID")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                CopyLine(value: network.networkId, displayValue: displayNetworkId(network.networkId), model: model)
             }
         }
     }

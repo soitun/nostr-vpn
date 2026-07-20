@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Replace network invitations and manual device entry with one signed
+  join-request flow across desktop, mobile, web, CLI, and nearby pairing.
 - Enable paid exits in standard release builds, mark automatic paid internet
   as experimental, and leave exit fail-closed behavior off by default.
 - Replace the mutually exclusive byte/time/packet tariff with a version 2,

@@ -113,7 +113,7 @@ fn record_mobile_join_request(
     app.ensure_defaults();
     let changed = match app.record_inbound_join_request(
         &request.network_id,
-        &request.invite_secret,
+        &request.join_secret,
         sender_pubkey,
         &request.requester_node_name,
         requested_at,
@@ -804,7 +804,7 @@ fn pending_mobile_join_request_frame(
         requested_at: config.pending_join_requested_at,
         request: MeshJoinRequest {
             network_id: normalize_runtime_network_id(&config.network_id),
-            invite_secret: config.pending_join_invite_secret.trim().to_string(),
+            join_secret: config.pending_join_secret.trim().to_string(),
             requester_node_name: config.node_name.trim().to_string(),
         },
     };

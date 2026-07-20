@@ -13,11 +13,6 @@ public sealed partial class AppViewModel
 #if DEBUG
         DebugRosterE2eTrace($"received {url}");
 #endif
-        if (url.StartsWith("nvpn://invite/", StringComparison.OrdinalIgnoreCase))
-        {
-            _ = ImportInviteAsync(url);
-            return;
-        }
         if (url.StartsWith("nvpn://join-request", StringComparison.OrdinalIgnoreCase))
         {
             _ = ConfirmAndImportJoinRequestAsync(url);
@@ -40,11 +35,6 @@ public sealed partial class AppViewModel
         if (network is null)
         {
             DebugRosterE2eTrace($"network not found: {requestedNetwork}");
-            return;
-        }
-        if (uri.AbsolutePath.Equals("/request-join", StringComparison.OrdinalIgnoreCase))
-        {
-            _ = DispatchAsync(NativeActions.RequestNetworkJoin(network.Id), "Requesting access");
             return;
         }
         if (uri.AbsolutePath.Equals("/accept-join", StringComparison.OrdinalIgnoreCase))

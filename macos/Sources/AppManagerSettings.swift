@@ -178,13 +178,6 @@ extension AppManager {
         dispatch(.addNetwork(name: name.trimmingCharacters(in: .whitespacesAndNewlines)), status: "Adding network")
     }
 
-    func manualAddNetwork(adminNpub: String, meshNetworkId: String) {
-        let admin = adminNpub.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mesh = appManagerNormalizeNetworkIdInput(meshNetworkId)
-        guard !admin.isEmpty, !mesh.isEmpty else { return }
-        dispatch(.manualAddNetwork(adminNpub: admin, meshNetworkId: mesh), status: "Adding network")
-    }
-
     func removeNetwork(_ networkId: String) {
         dispatch(.removeNetwork(networkId: networkId), status: "Deleting network")
     }
@@ -224,10 +217,10 @@ extension AppManager {
     }
 
     func startJoinRequestBroadcast() {
-        dispatch(.startInviteBroadcast, status: "Advertising nearby")
+        dispatch(.startJoinRequestBroadcast, status: "Advertising nearby")
     }
 
     func stopJoinRequestBroadcast() {
-        dispatch(.stopInviteBroadcast, status: "Stopping nearby")
+        dispatch(.stopJoinRequestBroadcast, status: "Stopping nearby")
     }
 }

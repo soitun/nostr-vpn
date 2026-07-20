@@ -424,12 +424,8 @@ case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
     echo "Skipping Docker e2e because NVPN_RELEASE_GATE_DOCKER_E2E=${NVPN_RELEASE_GATE_DOCKER_E2E}"
     ;;
   *)
-    # The join-request flow is gated by e2e-bootstrap-discovery-docker.sh, which
-    # exercises the same FIPS join-request control frame deterministically over a
-    # direct static endpoint. e2e-join-request-docker.sh covers the public
-    # open-discovery/relay path but depends on public Nostr relays, so it flakes
-    # in CI; run it manually (or in a nightly) rather than in the blocking gate.
-    ./scripts/e2e-bootstrap-discovery-docker.sh
+    cargo test -p nostr-vpn-app-core \
+      websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin
     NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_ROUTED_UDP_DISCOVERY_POLICY:-open}" \
       ./scripts/e2e-fips-routed-udp-docker.sh
     NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}" \

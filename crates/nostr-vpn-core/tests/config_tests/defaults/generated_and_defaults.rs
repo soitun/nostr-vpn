@@ -40,7 +40,7 @@ fn generated_config_auto_populates_keys() {
             .chars()
             .all(|ch| ch.is_ascii_hexdigit())
     );
-    assert!(!config.networks[0].invite_secret.is_empty());
+    assert!(!config.networks[0].join_secret.is_empty());
 }
 
 #[test]
