@@ -608,6 +608,8 @@
             config.node.discovery.nostr.extended_cooldown_secs,
             FIPS_NOSTR_EXTENDED_COOLDOWN_SECS
         );
+        assert_eq!(config.node.discovery.nostr.failure_streak_threshold, 3);
+        assert_eq!(config.node.discovery.nostr.extended_cooldown_secs, 1_800);
         assert_eq!(
             config.node.discovery.nostr.startup_sweep_max_age_secs,
             FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS

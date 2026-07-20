@@ -83,8 +83,11 @@ const FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
 const FIPS_WEBSOCKET_LISTENER_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 const FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 2;
 const FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 4;
-const FIPS_NOSTR_FAILURE_STREAK_THRESHOLD: u32 = 6;
-const FIPS_NOSTR_EXTENDED_COOLDOWN_SECS: u64 = 60;
+// Relay announcements are discovery hints, not a reason to keep probing an
+// unaffiliated peer forever. Configured peers retain their ordinary unlimited
+// auto-reconnect path; these bounds apply to ambient open-discovery candidates.
+const FIPS_NOSTR_FAILURE_STREAK_THRESHOLD: u32 = 3;
+const FIPS_NOSTR_EXTENDED_COOLDOWN_SECS: u64 = 30 * 60;
 const FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS: u64 = 300;
 // Keep traversal/NAT paths warm enough for interactive traffic. FIPS core uses
 // this cadence plus fast_link_dead_timeout_secs for recent-path recovery, while

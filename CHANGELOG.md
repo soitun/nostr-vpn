@@ -34,6 +34,9 @@ All notable changes to this project are documented in this file.
   work for already-authenticated WebSocket adjacencies, and reserve transit
   loop-check bypass for the bounded route proven by a verified lookup response
   rather than every learned path.
+- Cool unaffiliated peers learned from public relay announcements for thirty
+  minutes after three failed connection attempts, while preserving unlimited
+  reconnect for configured and roster peers.
 - Delay the first macOS automatic update check for ten seconds after startup
   so networking can settle, then retry failures after one minute instead of
   silently waiting for the normal six-hour polling interval.
