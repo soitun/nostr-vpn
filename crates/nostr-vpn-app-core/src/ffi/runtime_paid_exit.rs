@@ -31,7 +31,7 @@ mod paid_exit {
         NativePaidRoutePaymentActionState, NativePaidRouteWalletActionState,
         NativePaidRouteWalletState, Output, Path, PathBuf, PortMappingStatus, Result, age_secs_since,
         anyhow, compact_age_text, effective_config_relays, ensure_success, extract_json_document,
-        unix_timestamp,
+        normalize_nostr_pubkey, unix_timestamp,
     };
 
     const PAID_ROUTE_WALLET_TOP_UP_POLL_CADENCE: std::time::Duration =
@@ -213,6 +213,10 @@ impl NativeAppRuntime {
             filter: self.paid_route_market_filter.clone(),
             ..NativePaidRouteMarketState::default()
         }
+    }
+
+    fn active_paid_route_exit_ip(&self, _selected_exit_node: &str) -> Option<String> {
+        None
     }
 
     fn add_paid_route_wallet_mint(&mut self, _url: &str, _label: Option<&str>) -> Result<()> {

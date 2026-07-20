@@ -768,6 +768,14 @@ exit 0
                 .expect("session seller"),
             seller_npub
         );
+        let state = runtime.state();
+        assert!(state.exit_node_active);
+        assert!(!state.exit_node_blocked);
+        assert!(
+            state.exit_node_status_text.starts_with("Exit: "),
+            "{}",
+            state.exit_node_status_text
+        );
 
         let _ = fs::remove_dir_all(&dir);
     }

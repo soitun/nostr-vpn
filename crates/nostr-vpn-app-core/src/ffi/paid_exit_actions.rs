@@ -41,6 +41,32 @@ impl NativeAppRuntime {
         paid_route_store_file_path(&self.config_path)
     }
 
+    pub(super) fn active_paid_route_exit_ip(&self, selected_exit_node: &str) -> Option<String> {
+        let selected_exit_node = normalize_nostr_pubkey(selected_exit_node).ok()?;
+        let store = load_paid_route_store(&self.paid_route_store_path()).ok()?;
+        let now_unix = unix_timestamp();
+        store
+            .sessions
+            .values()
+            .filter_map(|record| {
+                let channel = store.channels.get(&record.session.payment.channel_id)?;
+                let counterparty = normalize_nostr_pubkey(&channel.counterparty_npub).ok()?;
+                (channel.role == PaidRouteChannelRole::Buyer
+                    && counterparty == selected_exit_node
+                    && store
+                        .buyer_session_allows_routing(&record.session.session_id, now_unix)
+                        .unwrap_or(false))
+                .then(|| {
+                    (
+                        record.updated_at_unix,
+                        record.session.realized_exit_ip.clone().unwrap_or_default(),
+                    )
+                })
+            })
+            .max_by_key(|(updated_at, _)| *updated_at)
+            .map(|(_, realized_exit_ip)| realized_exit_ip)
+    }
+
     fn mutate_paid_route_store(
         &mut self,
         mutate: impl FnOnce(&mut PaidRouteStore) -> bool,

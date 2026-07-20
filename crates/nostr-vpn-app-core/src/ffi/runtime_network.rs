@@ -23,16 +23,27 @@ impl NativeAppRuntime {
                     .iter()
                     .find(|peer| peer.participant_pubkey == selected_exit_node)
             });
+            let active_paid_exit_ip = matches!(
+                self.config.internet_source,
+                InternetSource::PaidAutomatic | InternetSource::PaidManual
+            )
+            .then(|| self.active_paid_route_exit_ip(selected_exit_node))
+            .flatten();
             let selected_exit_active = vpn_active
-                && selected_peer.is_some_and(|peer| {
+                && (selected_peer.is_some_and(|peer| {
                     peer.reachable && peer_offers_exit_node(&peer.advertised_routes)
-                });
+                }) || active_paid_exit_ip.is_some());
             let blocked =
                 self.config.exit_node_leak_protection && vpn_enabled && !selected_exit_active;
             let text = if blocked {
                 format!("Internet blocked: waiting for {name}")
             } else if selected_exit_active {
-                format!("Exit: {name}")
+                let realized_exit_ip = active_paid_exit_ip.unwrap_or_default();
+                if realized_exit_ip.is_empty() {
+                    format!("Exit: {name}")
+                } else {
+                    format!("Exit: {name} · {realized_exit_ip}")
+                }
             } else {
                 format!("Exit pending: {name}")
             };
