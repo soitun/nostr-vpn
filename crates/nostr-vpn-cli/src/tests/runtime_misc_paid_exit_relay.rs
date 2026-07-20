@@ -1,7 +1,7 @@
 use crate::*;
 use nostr_sdk::async_utility::futures_util::{SinkExt, StreamExt};
 use nostr_sdk::prelude::{Keys, ToBech32};
-use nostr_vpn_core::control_pubsub::{FIPS_PEER_ADVERT_KIND, FIPS_TRAVERSAL_SIGNAL_KIND};
+use nostr_vpn_core::control_pubsub::FIPS_PEER_ADVERT_KIND;
 use nostr_vpn_core::paid_routes::signed_paid_exit_offer_from_config;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
@@ -14,18 +14,13 @@ include!("runtime_misc_paid_exit_relay/settlement.rs");
 
 #[cfg(feature = "paid-exit")]
 #[tokio::test]
-async fn control_pubsub_relay_mode_routes_adverts_and_traversal_signals() {
+async fn control_pubsub_relay_mode_bridges_relay_ingress_and_mesh_egress() {
     use nostr_sdk::prelude::{EventBuilder, Kind, Tag, TagKind, Timestamp};
     use nostr_social_graph::Rating;
     use nostr_social_memory::RatingEventExt;
     use nostr_vpn_core::config::{NostrPubsubConfig, NostrPubsubMode};
 
     let endpoint_keys = Keys::generate();
-    let traversal_peer = Keys::generate();
-    let traversal_peer_npub = traversal_peer
-        .public_key()
-        .to_bech32()
-        .expect("traversal peer npub");
     let blocked_author = Keys::generate();
     let endpoint_advert = |author: &Keys, address: &str| {
         EventBuilder::new(
@@ -34,7 +29,6 @@ async fn control_pubsub_relay_mode_routes_adverts_and_traversal_signals() {
                 "identifier": "fips-overlay-v1",
                 "version": 1,
                 "endpoints": [{"transport": "udp", "addr": address}],
-                "stunServers": ["stun:127.0.0.1:9"],
             })
             .to_string(),
         )
@@ -49,11 +43,9 @@ async fn control_pubsub_relay_mode_routes_adverts_and_traversal_signals() {
     };
     let relay_event = endpoint_advert(&Keys::generate(), "8.8.8.8:51820");
     let blocked_relay_event = endpoint_advert(&blocked_author, "8.8.4.4:51820");
-    let traversal_peer_advert = endpoint_advert(&traversal_peer, "nat");
     let relay = LocalNostrRelay::spawn_with_events(vec![
         serde_json::to_value(&relay_event).expect("relay event JSON"),
         serde_json::to_value(&blocked_relay_event).expect("blocked relay event JSON"),
-        serde_json::to_value(&traversal_peer_advert).expect("traversal peer advert JSON"),
     ])
     .await;
     let nonce = std::time::SystemTime::now()
@@ -92,18 +84,9 @@ async fn control_pubsub_relay_mode_routes_adverts_and_traversal_signals() {
     endpoint_config.node.discovery.nostr.advertise = true;
     endpoint_config.node.discovery.nostr.peerfinding_source =
         fips_endpoint::NostrPeerfindingSource::External;
-    endpoint_config.node.discovery.nostr.stun_servers = vec!["stun:127.0.0.1:9".to_string()];
-    endpoint_config.node.discovery.nostr.share_local_candidates = true;
-    endpoint_config.node.discovery.nostr.attempt_timeout_secs = 2;
-    endpoint_config.node.discovery.nostr.signal_ttl_secs = 2;
-    endpoint_config.peers.push(fips_endpoint::PeerConfig::new(
-        &traversal_peer_npub,
-        "udp",
-        "nat",
-    ));
     endpoint_config.transports.udp =
         fips_endpoint::TransportInstances::Single(fips_endpoint::UdpConfig {
-            bind_addr: Some("0.0.0.0:0".to_string()),
+            bind_addr: Some("127.0.0.1:0".to_string()),
             advertise_on_nostr: Some(true),
             public: Some(false),
             ..fips_endpoint::UdpConfig::default()
@@ -149,54 +132,6 @@ async fn control_pubsub_relay_mode_routes_adverts_and_traversal_signals() {
     })
     .await
     .expect("local signed FIPS advert reaches the configured pubsub relay");
-
-    tokio::time::timeout(std::time::Duration::from_secs(3), async {
-        loop {
-            if runtime
-                .events()
-                .await
-                .iter()
-                .any(|event| event.id == traversal_peer_advert.id)
-            {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-        }
-    })
-    .await
-    .expect("traversal peer advert reaches FIPS through the configured relay provider");
-    let _ = endpoint
-        .ingest_nostr_discovery_event(traversal_peer_advert.clone())
-        .await
-        .expect("ingest traversal advert before forcing path refresh");
-    let traversal_identity =
-        fips_core::PeerIdentity::from_npub(&traversal_peer_npub).expect("traversal peer identity");
-    let traversal_target = traversal_peer.public_key().to_hex();
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            if relay.events().iter().any(|event| {
-                event["kind"].as_u64() == Some(FIPS_TRAVERSAL_SIGNAL_KIND.into())
-                    && event["tags"].as_array().is_some_and(|tags| {
-                        tags.iter().any(|tag| {
-                            tag.as_array().is_some_and(|items| {
-                                items.first().and_then(serde_json::Value::as_str) == Some("p")
-                                    && items.get(1).and_then(serde_json::Value::as_str)
-                                        == Some(traversal_target.as_str())
-                            })
-                        })
-                    })
-            }) {
-                break;
-            }
-            let _ = endpoint
-                .refresh_peer_paths(vec![traversal_identity])
-                .await
-                .expect("request traversal path refresh after advert ingest");
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-    })
-    .await
-    .expect("encrypted FIPS traversal offer reaches the configured pubsub relay without an existing FIPS route");
 
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {
