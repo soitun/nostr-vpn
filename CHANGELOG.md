@@ -12,6 +12,8 @@ All notable changes to this project are documented in this file.
 - Reserve the bounded public-ingress discovery budget for paid-exit sellers so
   ambient peers cannot exhaust the small endpoint budget and deny fresh WebVM
   clients before their first `.fips` lookup.
+- Create the OpenRC secure-DNS resolver file when a minimal guest image has no
+  prior `/etc/resolv.conf`, preserving direct `.fips` resolution on first boot.
 
 ## 4.0.99 - 2026-07-19
 
