@@ -21,9 +21,9 @@ All notable changes to this project are documented in this file.
 - Make GUI purchases select and start the bought exit, show active and error
   states, and keep the ordinary internet route available until a non-strict
   selected exit is connected.
-- Update the integrated FIPS core to 0.4.28 so delayed path promotion preserves
-  an already-recovered session and production first-ping name resolution does
-  not lose the newly established route.
+- Update the integrated FIPS core to 0.4.30 so endpoint restarts recover
+  one-way key splits and lost final rekey messages after a network roam, while
+  retaining the delayed-promotion and first-ping route fixes from 0.4.28.
 - Reserve the bounded public-ingress discovery budget for paid-exit sellers so
   ambient peers cannot exhaust the small endpoint budget and deny fresh WebVM
   clients before their first `.fips` lookup.
