@@ -50,6 +50,9 @@ fn apply_mobile_join_roster(
     config_path: Option<&Path>,
     join_roster: &JoinRosterControl,
 ) -> Result<Option<MobileTunnelConfig>> {
+    if mobile_join_roster_is_durably_persisted(app_config, config_path, join_roster)? {
+        return Ok(None);
+    }
     let mut app = app_config
         .write()
         .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
@@ -81,7 +84,11 @@ fn mobile_join_roster_is_durably_persisted(
     let roster_event_id = join_roster.signed_roster.artifact_hash();
     if let Some(config_path) = config_path {
         let persisted = AppConfig::load(config_path)?;
-        if persisted.pending_nostr_join_request.is_some()
+        let original_request_is_pending = persisted
+            .pending_nostr_join_request
+            .as_ref()
+            .is_some_and(|pending| pending.request.request_secret == join_roster.request_secret);
+        if original_request_is_pending
             || !mobile_signed_roster_is_current_for_app(
                 &persisted,
                 &network_id,
@@ -101,7 +108,11 @@ fn mobile_join_roster_is_durably_persisted(
     let app = app_config
         .read()
         .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
-    Ok(app.pending_nostr_join_request.is_none()
+    let original_request_is_pending = app
+        .pending_nostr_join_request
+        .as_ref()
+        .is_some_and(|pending| pending.request.request_secret == join_roster.request_secret);
+    Ok(!original_request_is_pending
         && mobile_signed_roster_is_current_for_app(
             &app,
             &network_id,

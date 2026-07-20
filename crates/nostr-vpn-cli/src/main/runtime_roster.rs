@@ -44,6 +44,9 @@ fn persist_join_roster(
     control: &JoinRosterControl,
     vpn_status: &mut String,
 ) -> Result<Option<String>> {
+    if join_roster_is_durably_persisted(config_path, control)? {
+        return Ok(None);
+    }
     let Some(applied) = app.apply_nostr_join_roster(control, unix_timestamp())? else {
         return Ok(None);
     };
@@ -74,7 +77,11 @@ fn join_roster_is_durably_persisted(
     let network_id = control.signed_roster.network_id()?;
     let roster_event_id = control.signed_roster.artifact_hash();
     let persisted = AppConfig::load(config_path)?;
-    if persisted.pending_nostr_join_request.is_some()
+    let original_request_is_pending = persisted
+        .pending_nostr_join_request
+        .as_ref()
+        .is_some_and(|pending| pending.request.request_secret == control.request_secret);
+    if original_request_is_pending
         || !signed_roster_is_current_for_app(&persisted, &network_id, &control.signed_roster)
     {
         return Ok(false);
