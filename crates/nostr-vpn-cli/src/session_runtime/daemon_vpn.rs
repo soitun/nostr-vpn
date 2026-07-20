@@ -340,7 +340,16 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             platform_network_event_pending = false;
                             drain_platform_network_changes(&mut platform_network_change_rx);
                             platform_network_event_suppressed_until =
-                                Some(Instant::now() + Duration::from_secs(5));
+                                Some(
+                                    Instant::now()
+                                        + Duration::from_secs(
+                                            DAEMON_NETWORK_SETTLE_RECHECK_SECS,
+                                        ),
+                                );
+                            schedule_platform_network_settle_recheck(
+                                &mut network_interval,
+                                platform_network_event,
+                            );
                         }
                         if let Some(runtime) = fips_tunnel_runtime.as_ref() {
                             if let Err(error) = runtime.ping_peers(&network_id, now).await {

@@ -607,6 +607,30 @@ async fn network_roam_during_route_suppression_rechecks_and_restarts_fips() {
     );
 }
 
+#[tokio::test]
+async fn platform_route_event_always_schedules_settle_snapshot_recheck() {
+    let mut sparse_snapshot_timer = tokio::time::interval(std::time::Duration::from_secs(
+        DAEMON_NETWORK_REFRESH_INTERVAL_SECS,
+    ));
+    sparse_snapshot_timer.tick().await;
+
+    assert!(schedule_platform_network_settle_recheck(
+        &mut sparse_snapshot_timer,
+        true,
+    ));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(DAEMON_NETWORK_SETTLE_RECHECK_SECS + 1),
+        sparse_snapshot_timer.tick(),
+    )
+    .await
+    .expect("a handled route event must recheck after the interface settles");
+
+    assert!(!schedule_platform_network_settle_recheck(
+        &mut sparse_snapshot_timer,
+        false,
+    ));
+}
+
 #[test]
 fn fips_link_events_restart_endpoint_for_major_link_changes() {
     assert_eq!(

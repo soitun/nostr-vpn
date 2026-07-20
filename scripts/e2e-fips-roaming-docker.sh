@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_NAME="nostr-vpn-e2e-fips-roaming"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.e2e.yml")
+PRIMARY_NETWORK_NAME="${PROJECT_NAME}_e2e"
+ROAM_NETWORK_NAME="${PROJECT_NAME}_roam"
 
 NETWORK_ID="docker-fips-roaming"
 CONFIG_PATH="/root/.config/nvpn/config.toml"
@@ -15,6 +17,11 @@ export NVPN_E2E_UNDERLAY_SUBNET="${NVPN_E2E_UNDERLAY_SUBNET:-$UNDERLAY_PREFIX.0/
 export NVPN_E2E_NODE_A_UNDERLAY_IP="${NVPN_E2E_NODE_A_UNDERLAY_IP:-$UNDERLAY_PREFIX.10}"
 export NVPN_E2E_NODE_B_UNDERLAY_IP="${NVPN_E2E_NODE_B_UNDERLAY_IP:-$UNDERLAY_PREFIX.11}"
 export NVPN_E2E_NODE_C_UNDERLAY_IP="${NVPN_E2E_NODE_C_UNDERLAY_IP:-$UNDERLAY_PREFIX.12}"
+ROAM_UNDERLAY_PREFIX="${NVPN_E2E_ROAM_UNDERLAY_PREFIX:-10.204.0}"
+ROAM_UNDERLAY_SUBNET="${NVPN_E2E_ROAM_UNDERLAY_SUBNET:-$ROAM_UNDERLAY_PREFIX.0/24}"
+ROAM_NODE_A_IP="${NVPN_E2E_ROAM_NODE_A_IP:-$ROAM_UNDERLAY_PREFIX.10}"
+ROAM_NODE_B_IP="${NVPN_E2E_ROAM_NODE_B_IP:-$ROAM_UNDERLAY_PREFIX.11}"
+ROAM_NODE_C_IP="${NVPN_E2E_ROAM_NODE_C_IP:-$ROAM_UNDERLAY_PREFIX.12}"
 # Normal link-dead detection is 30s. Leave enough room for Docker scheduling,
 # status polling, and route-cache handoff before declaring fallback broken.
 FALLBACK_DEADLINE_SECS="${NVPN_E2E_ROAMING_FALLBACK_SECS:-60}"
@@ -22,8 +29,10 @@ DIRECT_RECOVERY_DEADLINE_SECS="${NVPN_E2E_DIRECT_RECOVERY_SECS:-25}"
 FALLBACK_HOLD_SECS="${NVPN_E2E_ROAMING_FALLBACK_HOLD_SECS:-12}"
 PAYLOAD_PROBE_INTERVAL_SECS="${NVPN_E2E_ROAMING_PAYLOAD_PROBE_INTERVAL_SECS:-1}"
 PAYLOAD_RECOVERY_DEADLINE_SECS="${NVPN_E2E_ROAMING_PAYLOAD_RECOVERY_SECS:-10}"
+NETWORK_CHANGE_RECOVERY_DEADLINE_SECS="${NVPN_E2E_NETWORK_CHANGE_RECOVERY_SECS:-30}"
 LOCAL_ROUTE_HANDSHAKE_FAILURE_MAX="${NVPN_E2E_LOCAL_ROUTE_HANDSHAKE_FAILURE_MAX:-24}"
 FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}"
+FIPS_RUST_LOG="${NVPN_E2E_FIPS_RUST_LOG:-info}"
 LOADED_LATENCY_ENABLED="${NVPN_E2E_ROAMING_LOADED_LATENCY:-1}"
 LOADED_LATENCY_DURATION_SECS="${NVPN_E2E_ROAMING_LOADED_LATENCY_DURATION_SECS:-15}"
 LOADED_LATENCY_PING_INTERVAL_SECS="${NVPN_E2E_ROAMING_LOADED_LATENCY_PING_INTERVAL_SECS:-0.1}"
@@ -31,12 +40,22 @@ LOADED_LATENCY_MAX_P99_MS="${NVPN_E2E_ROAMING_LOADED_LATENCY_MAX_P99_MS:-500}"
 LOADED_LATENCY_MAX_GT1000="${NVPN_E2E_ROAMING_LOADED_LATENCY_MAX_GT1000:-0}"
 LOADED_LATENCY_MIN_MBPS="${NVPN_E2E_ROAMING_LOADED_LATENCY_MIN_MBPS:-5}"
 LOADED_LATENCY_MIN_PING_REPLY_PERCENT="${NVPN_E2E_ROAMING_LOADED_LATENCY_MIN_PING_REPLY_PERCENT:-98}"
+SCENARIOS="${NVPN_E2E_ROAMING_SCENARIOS:-all}"
+
+case "$SCENARIOS" in
+  all|fallback|network-change) ;;
+  *)
+    echo "fips roaming e2e failed: NVPN_E2E_ROAMING_SCENARIOS must be 'all', 'fallback', or 'network-change'" >&2
+    exit 2
+    ;;
+esac
 
 cleanup() {
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 || true
-  docker network rm "${PROJECT_NAME}_e2e" >/dev/null 2>&1 || true
+  docker network rm "$PRIMARY_NETWORK_NAME" >/dev/null 2>&1 || true
+  docker network rm "$ROAM_NETWORK_NAME" >/dev/null 2>&1 || true
   for _ in $(seq 1 20); do
-    docker network inspect "${PROJECT_NAME}_e2e" >/dev/null 2>&1 || break
+    docker network inspect "$PRIMARY_NETWORK_NAME" >/dev/null 2>&1 || break
     sleep 1
   done
 }
@@ -157,6 +176,7 @@ disable_nat_discovery() {
 start_nvpn_daemon() {
   local node="$1"
   "${COMPOSE[@]}" exec -T "$node" env \
+    RUST_LOG="$FIPS_RUST_LOG" \
     NVPN_FIPS_NOSTR_DISCOVERY_POLICY="$FIPS_NOSTR_DISCOVERY_POLICY" \
     NVPN_MESH_MTU_PROFILE=safe \
     NVPN_MESH_UNDERLAY_UDP_MTU=1280 \
@@ -254,11 +274,19 @@ peer_matches_direct_addr() {
   local status="$1"
   local peer_key="$2"
   local direct_addr="$3"
-  jq -e --arg peer_key "$peer_key" --arg direct_addr "$direct_addr" '
+  local after_data_seen_at="${4:-0}"
+  jq -e --arg peer_key "$peer_key" --arg direct_addr "$direct_addr" \
+    --argjson after_data_seen_at "$after_data_seen_at" '
     .daemon.state.peers
     | any(
       (.participant_pubkey == $peer_key or .fips_endpoint_npub == $peer_key)
       and .reachable == true
+      and (
+        $after_data_seen_at == 0
+        or ((.last_fips_data_seen_at? // 0) > $after_data_seen_at)
+      )
+      and (.direct_probe_pending? != true)
+      and (.direct_probe_after_ms? == null)
       and ((.runtime_endpoint? // "") != "fips")
       and (
         ((.runtime_endpoint? // "") | contains($direct_addr))
@@ -289,11 +317,12 @@ wait_for_direct_peer() {
   local direct_addr="$3"
   local label="$4"
   local deadline="$5"
+  local after_data_seen_at="${6:-0}"
   local status=""
   local end=$(( $(date +%s) + deadline ))
   while [[ "$(date +%s)" -le "$end" ]]; do
     status="$(status_json "$node")"
-    if peer_matches_direct_addr "$status" "$peer_key" "$direct_addr"; then
+    if peer_matches_direct_addr "$status" "$peer_key" "$direct_addr" "$after_data_seen_at"; then
       printf '%s\n' "$status"
       return 0
     fi
@@ -373,7 +402,8 @@ assert_payload_probe_success_since() {
   local output="$2"
   local since="$3"
   local label="$4"
-  local end=$(( $(date +%s) + PAYLOAD_RECOVERY_DEADLINE_SECS ))
+  local deadline="${5:-$PAYLOAD_RECOVERY_DEADLINE_SECS}"
+  local end=$(( $(date +%s) + deadline ))
   while [[ "$(date +%s)" -le "$end" ]]; do
     if "${COMPOSE[@]}" exec -T "$node" sh -s -- "$output" "$since" <<'SH'
 set -eu
@@ -387,8 +417,40 @@ SH
     sleep "$PAYLOAD_PROBE_INTERVAL_SECS"
   done
 
-  echo "fips roaming e2e failed: $label did not recover tunnel payload after churn within ${PAYLOAD_RECOVERY_DEADLINE_SECS}s" >&2
+  echo "fips roaming e2e failed: $label did not recover tunnel payload after churn within ${deadline}s" >&2
   "${COMPOSE[@]}" exec -T "$node" sh -lc "cat '$output' 2>/dev/null || true" >&2 || true
+  exit 1
+}
+
+daemon_process_id() {
+  local node="$1"
+  "${COMPOSE[@]}" exec -T "$node" sh -lc 'pgrep -o -x nvpn' | tr -d '\r'
+}
+
+wait_for_network_change_restart_after_marker() {
+  local node="$1"
+  local marker="$2"
+  local label="$3"
+  local end=$(( $(date +%s) + NETWORK_CHANGE_RECOVERY_DEADLINE_SECS ))
+  while [[ "$(date +%s)" -le "$end" ]]; do
+    if "${COMPOSE[@]}" exec -T "$node" sh -s -- "$marker" <<'SH'
+set -eu
+marker="$1"
+awk -v marker="$marker" '
+  $0 ~ "NVPN_E2E_MARKER " marker { seen = 1; next }
+  seen && /network change detected; refreshing FIPS endpoint state/ { changed = 1 }
+  changed && /restarted FIPS private mesh/ { restarted = 1 }
+  END { exit (changed && restarted) ? 0 : 1 }
+' /root/.config/nvpn/daemon.log
+SH
+    then
+      return 0
+    fi
+    sleep 1
+  done
+
+  echo "fips roaming e2e failed: $label did not restart the FIPS endpoint after the underlay changed" >&2
+  "${COMPOSE[@]}" exec -T "$node" sh -lc 'tail -n 180 /root/.config/nvpn/daemon.log' >&2 || true
   exit 1
 }
 
@@ -684,8 +746,8 @@ run_roam_flap() {
   esac
 
   local alice_direct bob_direct
-  alice_direct="$(wait_for_direct_peer node-a "$BOB_NPUB" "$alice_direct_addr" "alice after $flap_name restore" "$DIRECT_RECOVERY_DEADLINE_SECS")"
-  bob_direct="$(wait_for_direct_peer node-b "$ALICE_NPUB" "$bob_direct_addr" "bob after $flap_name restore" "$DIRECT_RECOVERY_DEADLINE_SECS")"
+  alice_direct="$(wait_for_direct_peer node-a "$BOB_NPUB" "$alice_direct_addr" "alice after $flap_name restore" "$DIRECT_RECOVERY_DEADLINE_SECS" "$restore_started")"
+  bob_direct="$(wait_for_direct_peer node-b "$ALICE_NPUB" "$bob_direct_addr" "bob after $flap_name restore" "$DIRECT_RECOVERY_DEADLINE_SECS" "$restore_started")"
   assert_payload_probe_success_since node-a "$alice_probe" "$restore_started" "alice continuous payload after $flap_name restore"
   assert_payload_probe_success_since node-b "$bob_probe" "$restore_started" "bob continuous payload after $flap_name restore"
   local alice_probe_log bob_probe_log
@@ -709,10 +771,100 @@ run_roam_flap() {
   echo "$bob_probe_log"
 }
 
+run_underlay_network_change() {
+  local node_a_container
+  node_a_container="$("${COMPOSE[@]}" ps -q node-a)"
+  local roam_marker="underlay-to-roam-$(date +%s)"
+  local home_marker="underlay-to-home-$(date +%s)"
+  local alice_probe="/tmp/underlay-move-alice-payload-probe.log"
+  local bob_probe="/tmp/underlay-move-bob-payload-probe.log"
+  local pid_before pid_after change_started restore_started
+
+  pid_before="$(daemon_process_id node-a)"
+  mark_daemon_log node-a "$roam_marker"
+  start_payload_probe node-a "$BOB_TUNNEL_IP" "$alice_probe"
+  start_payload_probe node-b "$ALICE_TUNNEL_IP" "$bob_probe"
+
+  echo "--- underlay-network-change: move Alice to a different interface, address, gateway, and Docker bridge ---"
+  change_started="$(date +%s)"
+  docker network connect --ip "$ROAM_NODE_A_IP" "$ROAM_NETWORK_NAME" "$node_a_container"
+  docker network disconnect "$PRIMARY_NETWORK_NAME" "$node_a_container"
+
+  wait_for_network_change_restart_after_marker node-a "$roam_marker" "alice moving to alternate underlay"
+  local alice_roam_direct bob_roam_direct
+  alice_roam_direct="$(wait_for_direct_peer node-a "$BOB_NPUB" "$ROAM_NODE_B_IP:51820" "alice after alternate-underlay move" "$NETWORK_CHANGE_RECOVERY_DEADLINE_SECS" "$change_started")"
+  bob_roam_direct="$(wait_for_direct_peer node-b "$ALICE_NPUB" "$ROAM_NODE_A_IP:51820" "bob after alice alternate-underlay move" "$NETWORK_CHANGE_RECOVERY_DEADLINE_SECS" "$change_started")"
+  assert_payload_probe_success_since node-a "$alice_probe" "$change_started" "alice payload after alternate-underlay move" "$NETWORK_CHANGE_RECOVERY_DEADLINE_SECS"
+  assert_payload_probe_success_since node-b "$bob_probe" "$change_started" "bob payload after alice alternate-underlay move" "$NETWORK_CHANGE_RECOVERY_DEADLINE_SECS"
+  assert_ping_tunnel node-a "$BOB_TUNNEL_IP" "alice-to-bob after alternate-underlay move" /tmp/underlay-move-alice-to-bob-ping.log
+  assert_ping_tunnel node-b "$ALICE_TUNNEL_IP" "bob-to-alice after alternate-underlay move" /tmp/underlay-move-bob-to-alice-ping.log
+  pid_after="$(daemon_process_id node-a)"
+  if [[ "$pid_after" != "$pid_before" ]]; then
+    echo "fips roaming e2e failed: nvpn daemon restarted during underlay move ($pid_before -> $pid_after)" >&2
+    exit 1
+  fi
+
+  echo "--- underlay-network-change: move Alice back to the original underlay ---"
+  mark_daemon_log node-a "$home_marker"
+  restore_started="$(date +%s)"
+  docker network connect --ip "$NVPN_E2E_NODE_A_UNDERLAY_IP" "$PRIMARY_NETWORK_NAME" "$node_a_container"
+  docker network disconnect "$ROAM_NETWORK_NAME" "$node_a_container"
+
+  wait_for_network_change_restart_after_marker node-a "$home_marker" "alice returning to original underlay"
+  local alice_home_direct bob_home_direct
+  alice_home_direct="$(wait_for_direct_peer node-a "$BOB_NPUB" "$NVPN_E2E_NODE_B_UNDERLAY_IP:51820" "alice after original-underlay restore" "$NETWORK_CHANGE_RECOVERY_DEADLINE_SECS" "$restore_started")"
+  bob_home_direct="$(wait_for_direct_peer node-b "$ALICE_NPUB" "$NVPN_E2E_NODE_A_UNDERLAY_IP:51820" "bob after alice original-underlay restore" "$NETWORK_CHANGE_RECOVERY_DEADLINE_SECS" "$restore_started")"
+  assert_payload_probe_success_since node-a "$alice_probe" "$restore_started" "alice payload after original-underlay restore" "$NETWORK_CHANGE_RECOVERY_DEADLINE_SECS"
+  assert_payload_probe_success_since node-b "$bob_probe" "$restore_started" "bob payload after alice original-underlay restore" "$NETWORK_CHANGE_RECOVERY_DEADLINE_SECS"
+  assert_ping_tunnel node-a "$BOB_TUNNEL_IP" "alice-to-bob after original-underlay restore" /tmp/underlay-restore-alice-to-bob-ping.log
+  assert_ping_tunnel node-b "$ALICE_TUNNEL_IP" "bob-to-alice after original-underlay restore" /tmp/underlay-restore-bob-to-alice-ping.log
+  pid_after="$(daemon_process_id node-a)"
+  if [[ "$pid_after" != "$pid_before" ]]; then
+    echo "fips roaming e2e failed: nvpn daemon restarted while restoring the underlay ($pid_before -> $pid_after)" >&2
+    exit 1
+  fi
+
+  local alice_probe_log bob_probe_log
+  alice_probe_log="$(stop_payload_probe node-a "$alice_probe")"
+  bob_probe_log="$(stop_payload_probe node-b "$bob_probe")"
+  echo "--- Alternate-underlay direct status: alice ---"
+  echo "$alice_roam_direct"
+  echo "--- Alternate-underlay direct status: bob ---"
+  echo "$bob_roam_direct"
+  echo "--- Restored-underlay direct status: alice ---"
+  echo "$alice_home_direct"
+  echo "--- Restored-underlay direct status: bob ---"
+  echo "$bob_home_direct"
+  echo "--- Underlay move continuous payload probe: alice ---"
+  echo "$alice_probe_log"
+  echo "--- Underlay move continuous payload probe: bob ---"
+  echo "$bob_probe_log"
+}
+
+configure_roam_endpoint_hints() {
+  "${COMPOSE[@]}" exec -T node-a nvpn set \
+    --fips-peer-endpoint "$BOB_NPUB=$NVPN_E2E_NODE_B_UNDERLAY_IP:51820" \
+    --fips-peer-endpoint "$BOB_NPUB=$ROAM_NODE_B_IP:51820" \
+    --fips-peer-endpoint "$CHARLIE_NPUB=$NVPN_E2E_NODE_C_UNDERLAY_IP:51820" \
+    --fips-peer-endpoint "$CHARLIE_NPUB=$ROAM_NODE_C_IP:51820" >/dev/null
+  "${COMPOSE[@]}" exec -T node-b nvpn set \
+    --fips-peer-endpoint "$ALICE_NPUB=$NVPN_E2E_NODE_A_UNDERLAY_IP:51820" \
+    --fips-peer-endpoint "$ALICE_NPUB=$ROAM_NODE_A_IP:51820" \
+    --fips-peer-endpoint "$CHARLIE_NPUB=$NVPN_E2E_NODE_C_UNDERLAY_IP:51820" \
+    --fips-peer-endpoint "$CHARLIE_NPUB=$ROAM_NODE_C_IP:51820" >/dev/null
+  "${COMPOSE[@]}" exec -T node-c nvpn set \
+    --fips-peer-endpoint "$ALICE_NPUB=$NVPN_E2E_NODE_A_UNDERLAY_IP:51820" \
+    --fips-peer-endpoint "$ALICE_NPUB=$ROAM_NODE_A_IP:51820" \
+    --fips-peer-endpoint "$BOB_NPUB=$NVPN_E2E_NODE_B_UNDERLAY_IP:51820" \
+    --fips-peer-endpoint "$BOB_NPUB=$ROAM_NODE_B_IP:51820" >/dev/null
+}
+
 cleanup
 
-"${COMPOSE[@]}" build >/dev/null
-"${COMPOSE[@]}" up -d node-a node-b node-c >/dev/null
+# All three nodes run the same artifact. Build one service/image rather than
+# asking BuildKit to perform three identical release compilations in parallel.
+"${COMPOSE[@]}" build node-a >/dev/null
+"${COMPOSE[@]}" up -d --no-build node-a node-b node-c >/dev/null
 for service in node-a node-b node-c; do
   wait_for_service "$service"
 done
@@ -807,12 +959,24 @@ assert_tunnel_mtu node-b
 assert_ping_tunnel node-a "$BOB_TUNNEL_IP" "initial alice-to-bob direct LAN" /tmp/initial-alice-to-bob-ping.log
 assert_ping_tunnel node-b "$ALICE_TUNNEL_IP" "initial bob-to-alice direct LAN" /tmp/initial-bob-to-alice-ping.log
 run_udp_roundtrip node-a node-b "$BOB_TUNNEL_IP" "alice-to-bob-roaming-initial" /tmp/bob-roaming-initial-udp.out
-run_loaded_latency_probe "initial-direct" node-a node-b "$BOB_TUNNEL_IP"
-
-run_roam_flap "mobile-flap-1"
-run_roam_flap "mobile-flap-2"
-run_roam_flap "route-unreachable-flap" "route-unreachable"
-run_loaded_latency_probe "restored-direct" node-a node-b "$BOB_TUNNEL_IP"
+if [[ "$SCENARIOS" == "all" ]]; then
+  run_loaded_latency_probe "initial-direct" node-a node-b "$BOB_TUNNEL_IP"
+fi
+if [[ "$SCENARIOS" != "network-change" ]]; then
+  run_roam_flap "mobile-flap-1"
+  run_roam_flap "mobile-flap-2"
+  run_roam_flap "route-unreachable-flap" "route-unreachable"
+fi
+if [[ "$SCENARIOS" != "fallback" ]]; then
+  docker network create --driver bridge --subnet "$ROAM_UNDERLAY_SUBNET" "$ROAM_NETWORK_NAME" >/dev/null
+  docker network connect --ip "$ROAM_NODE_B_IP" "$ROAM_NETWORK_NAME" "$("${COMPOSE[@]}" ps -q node-b)"
+  docker network connect --ip "$ROAM_NODE_C_IP" "$ROAM_NETWORK_NAME" "$("${COMPOSE[@]}" ps -q node-c)"
+  configure_roam_endpoint_hints
+  run_underlay_network_change
+fi
+if [[ "$SCENARIOS" == "all" ]]; then
+  run_loaded_latency_probe "restored-direct" node-a node-b "$BOB_TUNNEL_IP"
+fi
 
 echo "--- Initial direct status: alice ---"
 echo "$ALICE_DIRECT"
@@ -827,4 +991,10 @@ cat /tmp/initial-bob-to-alice-ping.log
 echo "--- Initial UDP payload ---"
 "${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/bob-roaming-initial-udp.out'
 
-echo "fips roaming docker e2e passed: direct LAN path established, loaded-latency probes stayed bounded, mobile/WiFi-style direct drops and a route-unreachable flap used FIPS fallback while direct probing stayed pending, continuous payload recovered during churn, and each restore upgraded back to direct within ${DIRECT_RECOVERY_DEADLINE_SECS}s"
+if [[ "$SCENARIOS" == "all" ]]; then
+  echo "fips roaming docker e2e passed: direct LAN path established, loaded-latency probes stayed bounded, mobile/WiFi-style direct drops and a route-unreachable flap used FIPS fallback, a live daemon moved between interface/address/gateway/bridge underlays in both directions, continuous payload recovered during churn, and each restore upgraded back to direct"
+elif [[ "$SCENARIOS" == "fallback" ]]; then
+  echo "fips roaming docker e2e passed: repeated direct drops and a route-unreachable flap used FIPS fallback, continuous bidirectional payload recovered, and each restore upgraded back to direct"
+else
+  echo "fips roaming docker e2e passed: a live daemon moved between interface/address/gateway/bridge underlays in both directions, continuous bidirectional payload recovered, and the daemon process stayed alive"
+fi

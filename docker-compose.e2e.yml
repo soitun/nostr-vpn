@@ -1,5 +1,6 @@
 services:
   node-a:
+    image: ${NVPN_E2E_NODE_IMAGE:-nostr-vpn-e2e-node}
     build:
       context: .
       dockerfile: Dockerfile.e2e
@@ -25,6 +26,7 @@ services:
         ipv4_address: ${NVPN_E2E_NODE_A_UNDERLAY_IP:-10.203.0.10}
 
   node-b:
+    image: ${NVPN_E2E_NODE_IMAGE:-nostr-vpn-e2e-node}
     build:
       context: .
       dockerfile: Dockerfile.e2e
@@ -50,6 +52,7 @@ services:
         ipv4_address: ${NVPN_E2E_NODE_B_UNDERLAY_IP:-10.203.0.11}
 
   node-c:
+    image: ${NVPN_E2E_NODE_IMAGE:-nostr-vpn-e2e-node}
     build:
       context: .
       dockerfile: Dockerfile.e2e
