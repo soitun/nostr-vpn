@@ -153,8 +153,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         join_request_sends: &mut fips_join_request_sends,
                     })
                     .await;
-                    if let Some(runtime) = fips_tunnel_runtime.as_mut() {
-                        send_queued_join_rosters_once(runtime, &app, &config_path).await;
+                    if let Some(runtime) = fips_tunnel_runtime.as_ref() {
+                        start_queued_join_roster_deliveries(runtime, &app, &config_path);
                     }
                 }
                 if !vpn_active {

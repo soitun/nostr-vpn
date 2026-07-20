@@ -52,29 +52,32 @@ impl FipsPrivateMeshRuntime {
         )
     }
 
-    pub(crate) async fn send_join_roster(
-        &self,
-        control: &FipsControlTcpRuntime,
-        participant: &str,
+    pub(crate) fn join_roster_delivery(
+        self: &Arc<Self>,
+        control: FipsControlTcpSender,
+        participant: String,
         join_roster: JoinRosterControl,
-    ) -> Result<()> {
-        let participant_key = participant_pubkey_bytes(participant);
+    ) -> Result<FipsJoinRosterDelivery> {
+        let participant_key = participant_pubkey_bytes(&participant);
         let destination = {
             let mesh = self.mesh.load();
             let peer_identities = self.peer_identities.load();
-            control_frame_destination_peer(&mesh, &peer_identities, participant)?
+            control_frame_destination_peer(&mesh, &peer_identities, &participant)?
         };
-        let sent_len = send_join_roster_with_receipt(
-            &control.sender(),
-            destination,
-            &join_roster,
-            Duration::from_secs(90),
-        )
-        .await
-        .with_context(|| {
-            format!("failed to deliver and apply FIPS-TCP join roster to {participant}")
-        })?;
-        self.note_tx(Some(participant), participant_key.as_ref(), sent_len)
+        let runtime = Arc::clone(self);
+        Ok(Box::pin(async move {
+            let sent_len = send_join_roster_with_receipt(
+                &control,
+                destination,
+                &join_roster,
+                Duration::from_secs(90),
+            )
+            .await
+            .with_context(|| {
+                format!("failed to deliver and apply FIPS-TCP join roster to {participant}")
+            })?;
+            runtime.note_tx(Some(&participant), participant_key.as_ref(), sent_len)
+        }))
     }
 
     pub(crate) fn enqueue_join_roster_ack(

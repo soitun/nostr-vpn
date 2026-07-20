@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -5,7 +6,9 @@ use anyhow::{Context, Result, anyhow};
 use nostr_vpn_core::config::{AppConfig, SharedNetworkRoster, normalize_nostr_pubkey};
 use nostr_vpn_core::fips_control::{JoinRosterControl, NetworkRoster, SignedRoster};
 use nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap;
-use nostr_vpn_core::join_delivery::{load_join_rosters, record_join_roster_attempt};
+use nostr_vpn_core::join_delivery::{
+    join_roster_delivery_expired, load_join_rosters, record_join_roster_attempt,
+};
 use nostr_vpn_core::join_requests::AppliedNostrJoinRoster;
 
 use crate::mobile_tunnel::{MobileTunnel, MobileTunnelConfig};
@@ -90,7 +93,25 @@ pub fn apply_join_roster(
 /// control a platform service.
 pub fn deliver_queued_join_rosters(config_path: &Path, timeout: Duration) -> Result<usize> {
     let app = AppConfig::load(config_path)?;
-    let queued = load_join_rosters(config_path);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let queued = load_join_rosters(config_path)
+        .into_iter()
+        .filter(|(path, delivery)| {
+            if !join_roster_delivery_expired(delivery, now) {
+                return true;
+            }
+            if let Err(error) = fs::remove_file(path) {
+                eprintln!(
+                    "failed to remove expired join approval {}: {error}",
+                    path.display()
+                );
+            }
+            false
+        })
+        .collect::<Vec<_>>();
     if queued.is_empty() {
         return Ok(0);
     }
@@ -209,6 +230,41 @@ mod tests {
                 .expect("signer"),
             admin.own_nostr_pubkey_hex().expect("admin pubkey")
         );
+    }
+
+    #[test]
+    fn accepting_a_fresh_request_for_an_existing_device_is_idempotent() {
+        let joiner = pending_joiner();
+        let bootstrap = pending_bootstrap(&joiner);
+        let device_pubkey =
+            normalize_nostr_pubkey(&bootstrap.device_app_key_npub).expect("device pubkey");
+        let (mut admin, network_id) = approval_admin();
+        admin.networks[0].devices.push(device_pubkey.clone());
+        admin.networks[0].devices.sort();
+        admin.networks[0].devices.dedup();
+
+        let prepared = prepare_join_approval(&admin, &network_id, &bootstrap, REQUESTED_AT + 1)
+            .expect("re-accept existing device");
+        let roster = prepared
+            .join_roster
+            .signed_roster
+            .roster()
+            .expect("decode refreshed roster");
+
+        assert_eq!(
+            roster
+                .devices
+                .iter()
+                .filter(|configured| *configured == &device_pubkey)
+                .count(),
+            1,
+            "re-acceptance must not duplicate the roster member"
+        );
+        assert_eq!(
+            prepared.join_roster.request_secret,
+            bootstrap.request_secret
+        );
+        assert_eq!(roster.signed_at, REQUESTED_AT + 1);
     }
 
     #[test]

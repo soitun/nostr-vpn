@@ -51,12 +51,14 @@ use nostr_vpn_core::paid_routes::PaidRouteUsage;
 use nostr_vpn_core::paid_routes::{PaidExitConfig, PaidRouteSessionOpen};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::PathBuf;
+use std::pin::Pin;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use std::process::Command as ProcessCommand;
 #[cfg(feature = "paid-exit")]
@@ -126,6 +128,8 @@ const FIPS_TUN_READ_BURST: usize = 64;
 const MACOS_UDP_SEND_BUF_MIN_MULTIPLIER: usize = 4;
 const MIN_FIPS_UDP_SEND_BUF_SIZE: usize = 64 * 1024;
 const MAX_FIPS_UDP_SEND_BUF_SIZE: usize = 8 * 1024 * 1024;
+
+pub(crate) type FipsJoinRosterDelivery = Pin<Box<dyn Future<Output = Result<()>> + Send + 'static>>;
 
 #[cfg(any(target_os = "macos", test))]
 const fn macos_default_udp_send_buf_size() -> usize {

@@ -101,12 +101,12 @@ impl FipsPrivateTunnelRuntime {
         Ok(())
     }
 
-    pub(crate) async fn send_join_roster(
+    pub(crate) fn join_roster_delivery(
         &self,
-        _participant: &str,
+        _participant: String,
         _join_roster: JoinRosterControl,
-    ) -> Result<()> {
-        Ok(())
+    ) -> Result<FipsJoinRosterDelivery> {
+        Ok(Box::pin(async { Ok(()) }))
     }
 
     pub(crate) fn enqueue_join_roster_ack(

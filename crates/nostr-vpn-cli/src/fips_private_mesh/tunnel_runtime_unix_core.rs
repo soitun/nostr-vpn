@@ -745,14 +745,16 @@ impl FipsPrivateTunnelRuntime {
             .enqueue_roster(&self.state_control.sender(), participant, signed_roster)
     }
 
-    pub(crate) async fn send_join_roster(
+    pub(crate) fn join_roster_delivery(
         &self,
-        participant: &str,
+        participant: String,
         join_roster: JoinRosterControl,
-    ) -> Result<()> {
-        self.mesh
-            .send_join_roster(&self.state_control, participant, join_roster)
-            .await
+    ) -> Result<FipsJoinRosterDelivery> {
+        self.mesh.join_roster_delivery(
+            self.state_control.sender(),
+            participant,
+            join_roster,
+        )
     }
 
     pub(crate) fn enqueue_join_roster_ack(

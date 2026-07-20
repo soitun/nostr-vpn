@@ -12,6 +12,7 @@ use crate::fips_control::JoinRosterControl;
 
 const JOIN_ROSTER_OUTBOX_VERSION: u8 = 1;
 const MAX_QUEUED_JOIN_ROSTERS: usize = 8;
+pub const JOIN_ROSTER_OUTBOX_TTL_SECS: u64 = 15 * 60;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QueuedJoinRoster {
@@ -22,6 +23,10 @@ pub struct QueuedJoinRoster {
     pub attempts: u32,
     #[serde(default)]
     pub last_attempt_at: u64,
+}
+
+pub fn join_roster_delivery_expired(queued: &QueuedJoinRoster, now: u64) -> bool {
+    now.saturating_sub(queued.join_roster.signed_roster.signed_at()) > JOIN_ROSTER_OUTBOX_TTL_SECS
 }
 
 pub fn join_roster_outbox_directory(config_path: &Path) -> PathBuf {
@@ -219,6 +224,14 @@ mod tests {
         assert_eq!(queued[0].1.join_roster.request_secret, "request-secret");
         assert_eq!(queued[0].1.recipient_npub, recipient);
         assert_eq!(queued[0].1.attempts, 0);
+        assert!(!join_roster_delivery_expired(
+            &queued[0].1,
+            100 + JOIN_ROSTER_OUTBOX_TTL_SECS
+        ));
+        assert!(join_roster_delivery_expired(
+            &queued[0].1,
+            101 + JOIN_ROSTER_OUTBOX_TTL_SECS
+        ));
 
         let mut delivery = queued[0].1.clone();
         record_join_roster_attempt(&path, &mut delivery, 123).expect("record send attempt");

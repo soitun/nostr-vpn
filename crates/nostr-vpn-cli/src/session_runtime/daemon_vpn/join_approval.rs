@@ -1,30 +1,103 @@
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::{Mutex, OnceLock};
 
 use nostr_vpn_core::config::AppConfig;
-use nostr_vpn_core::join_delivery::load_join_rosters;
+use nostr_vpn_core::join_delivery::{
+    join_roster_delivery_expired, load_join_rosters, record_join_roster_attempt,
+};
 
 use crate::fips_private_mesh::FipsPrivateTunnelRuntime;
 
-pub(super) async fn send_queued_join_rosters_once(
-    runtime: &mut FipsPrivateTunnelRuntime,
+static IN_FLIGHT_JOIN_ROSTERS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+
+fn in_flight_join_rosters() -> &'static Mutex<HashSet<PathBuf>> {
+    IN_FLIGHT_JOIN_ROSTERS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+fn claim_join_roster_delivery(path: &Path) -> bool {
+    in_flight_join_rosters()
+        .lock()
+        .is_ok_and(|mut paths| paths.insert(path.to_path_buf()))
+}
+
+fn release_join_roster_delivery(path: &Path) {
+    if let Ok(mut paths) = in_flight_join_rosters().lock() {
+        paths.remove(path);
+    }
+}
+
+struct JoinRosterDeliveryClaim(PathBuf);
+
+impl Drop for JoinRosterDeliveryClaim {
+    fn drop(&mut self) {
+        release_join_roster_delivery(&self.0);
+    }
+}
+
+fn track_join_roster_delivery(
+    path: PathBuf,
+    participant: String,
+    delivery: crate::fips_private_mesh::FipsJoinRosterDelivery,
+) {
+    tokio::spawn(async move {
+        let _claim = JoinRosterDeliveryClaim(path.clone());
+        let result = delivery.await;
+        finish_join_roster_delivery(&path, &participant, result);
+    });
+}
+
+pub(super) fn start_queued_join_roster_deliveries(
+    runtime: &FipsPrivateTunnelRuntime,
     app: &AppConfig,
     config_path: &Path,
 ) {
     let participants = app.participant_pubkeys_hex();
-    for (path, queued) in load_join_rosters(config_path) {
-        let delivery = if !participants.contains(&queued.recipient_npub) {
-            Err(anyhow::anyhow!(
-                "recipient {} is not in the roster",
+    for (path, mut queued) in load_join_rosters(config_path) {
+        if !claim_join_roster_delivery(&path) {
+            continue;
+        }
+        if join_roster_delivery_expired(&queued, crate::unix_timestamp()) {
+            release_join_roster_delivery(&path);
+            consume_join_roster(&path);
+            eprintln!(
+                "expired queued join approval for {}; removed it from the outbox",
                 queued.recipient_npub
-            ))
-        } else {
-            runtime
-                .send_join_roster(&queued.recipient_npub, queued.join_roster)
-                .await
-        };
+            );
+            continue;
+        }
+        if !participants.contains(&queued.recipient_npub) {
+            release_join_roster_delivery(&path);
+            finish_join_roster_delivery(
+                &path,
+                &queued.recipient_npub,
+                Err(anyhow::anyhow!(
+                    "recipient {} is not in the roster",
+                    queued.recipient_npub
+                )),
+            );
+            continue;
+        }
+        let participant = queued.recipient_npub.clone();
+        let delivery =
+            match runtime.join_roster_delivery(participant.clone(), queued.join_roster.clone()) {
+                Ok(delivery) => delivery,
+                Err(error) => {
+                    release_join_roster_delivery(&path);
+                    finish_join_roster_delivery(&path, &participant, Err(error));
+                    continue;
+                }
+            };
+        if let Err(error) = record_join_roster_attempt(&path, &mut queued, crate::unix_timestamp())
+        {
+            release_join_roster_delivery(&path);
+            finish_join_roster_delivery(&path, &participant, Err(error));
+            continue;
+        }
 
-        finish_join_roster_delivery(&path, &queued.recipient_npub, delivery);
+        track_join_roster_delivery(path, participant, delivery);
     }
 }
 
@@ -52,6 +125,7 @@ fn consume_join_roster(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
 
     #[test]
     fn failed_join_roster_delivery_keeps_outbox_file_for_retry() {
@@ -70,5 +144,42 @@ mod tests {
             !path.exists(),
             "durable receipt may consume the outbox file"
         );
+    }
+
+    #[tokio::test]
+    async fn slow_join_roster_delivery_runs_without_blocking_the_daemon_loop() {
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-join-roster-background-{}-{}",
+            std::process::id(),
+            crate::unix_timestamp()
+        ));
+        fs::write(&path, b"queued").expect("write queued roster");
+        assert!(claim_join_roster_delivery(&path));
+
+        let (complete_tx, complete_rx) = tokio::sync::oneshot::channel();
+        track_join_roster_delivery(
+            path.clone(),
+            "recipient".to_string(),
+            Box::pin(async move {
+                complete_rx.await.expect("release delivery");
+                Ok(())
+            }),
+        );
+
+        assert!(path.exists(), "the slow delivery must still be pending");
+        assert!(
+            !claim_join_roster_delivery(&path),
+            "a pending background delivery must not be started twice"
+        );
+        complete_tx.send(()).expect("complete delivery");
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while path.exists() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("background delivery did not finish");
+        assert!(claim_join_roster_delivery(&path));
+        release_join_roster_delivery(&path);
     }
 }
