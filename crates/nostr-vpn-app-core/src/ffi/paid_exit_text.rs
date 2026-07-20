@@ -21,15 +21,21 @@ fn paid_route_price_text(price_msat: u64, per_units: u64) -> String {
         "free".to_string()
     } else {
         let denominator = u128::from(per_units.max(1));
-        let per_gb_msat = u128::from(price_msat)
-            .saturating_mul(1_000_000_000)
-            .saturating_add(denominator.saturating_sub(1))
-            .saturating_div(denominator)
-            .min(u128::from(u64::MAX)) as u64;
-        let bytes_per_sat = denominator
-            .saturating_mul(1_000)
-            .saturating_div(u128::from(price_msat))
-            .min(u128::from(u64::MAX)) as u64;
+        let per_gb_msat = u64::try_from(
+            u128::from(price_msat)
+                .saturating_mul(1_000_000_000)
+                .saturating_add(denominator.saturating_sub(1))
+                .saturating_div(denominator)
+                .min(u128::from(u64::MAX)),
+        )
+        .unwrap_or(u64::MAX);
+        let bytes_per_sat = u64::try_from(
+            denominator
+                .saturating_mul(1_000)
+                .saturating_div(u128::from(price_msat))
+                .min(u128::from(u64::MAX)),
+        )
+        .unwrap_or(u64::MAX);
         let price = format!("{} / GB", paid_route_msat_text(per_gb_msat));
         if bytes_per_sat == 0 {
             price

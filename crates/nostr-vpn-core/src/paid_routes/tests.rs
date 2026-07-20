@@ -164,7 +164,6 @@ fn connection_minimum_is_prorated_and_acts_as_floor() {
             price_msat: 100,
             per_units: 10,
             connection_minimum_msat_per_day: 86_400,
-            ..PaidRoutePricing::default()
         },
         channel: PaidRouteChannelTerms {
             free_probe_units: 0,
@@ -203,7 +202,6 @@ fn connection_minimum_due_can_tolerate_active_time_skew_without_discounting_traf
             price_msat: 100,
             per_units: 10,
             connection_minimum_msat_per_day: 86_400,
-            ..PaidRoutePricing::default()
         },
         channel: PaidRouteChannelTerms {
             free_probe_units: 0,

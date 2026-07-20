@@ -22,8 +22,10 @@
         let seller = Keys::generate();
         let seller_npub = seller.public_key().to_bech32().expect("seller npub");
         let mint = "https://mint.minibits.cash/Bitcoin";
-        let mut offer_config = PaidExitConfig::default();
-        offer_config.enabled = true;
+        let mut offer_config = PaidExitConfig {
+            enabled: true,
+            ..PaidExitConfig::default()
+        };
         offer_config.pricing.price_msat = 25;
         offer_config.pricing.per_units = 1_000_000;
         offer_config.channel.accepted_mints = vec![mint.to_string()];
