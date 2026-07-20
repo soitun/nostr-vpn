@@ -40,8 +40,6 @@ final class AppManager: ObservableObject {
             UserDefaults.standard.set(autoInstallUpdates, forKey: "updates.autoInstall")
         }
     }
-    @Published var inviteInput = ""
-
     let app: FfiApp?
     let fixtureMode: Bool
     var refreshTask: Task<Void, Never>?
@@ -215,7 +213,10 @@ final class AppManager: ObservableObject {
         } while refreshPending && !Task.isCancelled
     }
 
-    static let paidRouteRefreshIntervalNanoseconds: UInt64 = 2_000_000_000
+    // A refresh shells out to the daemon and republishes the full SwiftUI
+    // state. Five seconds keeps live payment state responsive without making
+    // an existing paid session rebuild the whole app twice per CPU sample.
+    static let paidRouteRefreshIntervalNanoseconds: UInt64 = 5_000_000_000
     static let activeVpnRefreshIntervalNanoseconds: UInt64 = 15_000_000_000
     static let idleRefreshIntervalNanoseconds: UInt64 = 30_000_000_000
 

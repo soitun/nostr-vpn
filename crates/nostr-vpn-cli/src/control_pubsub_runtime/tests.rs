@@ -311,8 +311,10 @@ async fn offers_ratings_and_updates_are_carried_p2p_without_relays_run() {
     let seller_pubsub = start_pubsub(Arc::clone(&seller_endpoint), updates).await;
     wait_pubsub_connected(&buyer_pubsub).await;
     wait_pubsub_connected(&seller_pubsub).await;
-    let mut paid_exit = PaidExitConfig::default();
-    paid_exit.enabled = true;
+    let mut paid_exit = PaidExitConfig {
+        enabled: true,
+        ..PaidExitConfig::default()
+    };
     paid_exit.pricing.price_msat = 25;
     paid_exit.pricing.per_units = 1_000_000_000;
     paid_exit.channel.accepted_mints = vec!["https://mint.example".to_string()];
@@ -370,6 +372,22 @@ async fn offers_ratings_and_updates_are_carried_p2p_without_relays_run() {
     buyer_pubsub.stop().await;
     seller_endpoint.shutdown().await.expect("shutdown seller");
     buyer_endpoint.shutdown().await.expect("shutdown buyer");
+}
+
+#[test]
+fn subscription_identity_set_ignores_link_churn_but_detects_peer_arrival() {
+    let stable =
+        subscription_peer_ids(vec![("npub-a".to_string(), 11), ("npub-b".to_string(), 12)]);
+    let same_identities_after_link_churn =
+        subscription_peer_ids(vec![("npub-b".to_string(), 92), ("npub-a".to_string(), 91)]);
+    let with_late_peer = subscription_peer_ids(vec![
+        ("npub-a".to_string(), 91),
+        ("npub-b".to_string(), 92),
+        ("npub-c".to_string(), 93),
+    ]);
+
+    assert_eq!(stable, same_identities_after_link_churn);
+    assert_ne!(stable, with_late_peer);
 }
 
 #[test]

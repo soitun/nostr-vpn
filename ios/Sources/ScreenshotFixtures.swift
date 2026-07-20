@@ -26,7 +26,6 @@ enum ScreenshotFixtures {
         state.tunnelIp = "10.44.0.2/32"
         state.endpoint = "local network"
         state.listenPort = 51820
-        state.activeNetworkInvite = "nvpn://invite/demo-home-mesh"
         state.joinRequestQrCodeOrLink = "nvpn://join-request/demo"
         state.connectedPeerCount = 3
         state.expectedPeerCount = 4
@@ -67,7 +66,7 @@ enum ScreenshotFixtures {
         state.fipsNostrDiscoveryEnabled = true
         state.fipsWebrtcEnabled = false
         state.fipsBootstrapEnabled = false
-        state.inviteBroadcastActive = false
+        state.joinRequestBroadcastActive = false
         state.nearbyDiscoveryActive = true
         state.nearbyDiscoveryRemainingSecs = 112
         state.configPath = "Fixture data"
@@ -82,7 +81,7 @@ enum ScreenshotFixtures {
             )
         ]
         state.lanPeers = [
-            lanPeer(name: "iPadOS nearby", network: "Home Mesh", invite: "nvpn://invite/demo-ipad")
+            lanPeer(name: "iPadOS nearby", network: "Join request", joinRequest: "nvpn://join-request/demo-ipad")
         ]
         state.paidExitSeller = paidExitSeller()
         state.paidRouteMarket = paidRouteMarket()
@@ -271,12 +270,12 @@ enum ScreenshotFixtures {
         return participant
     }
 
-    private static func lanPeer(name: String, network: String, invite: String) -> LanPeerState {
+    private static func lanPeer(name: String, network: String, joinRequest: String) -> LanPeerState {
         var peer = LanPeerState()
         peer.npub = fakeNpub("y")
         peer.nodeName = name
         peer.networkName = network
-        peer.invite = invite
+        peer.joinRequest = joinRequest
         peer.lastSeenText = "Nearby now"
         return peer
     }

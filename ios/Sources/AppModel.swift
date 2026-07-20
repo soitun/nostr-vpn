@@ -297,10 +297,8 @@ final class AppModel: ObservableObject {
 
     private func actionRequiresPacketTunnelConfigSync(_ type: String) -> Bool {
         switch type {
-        case "import_network_invite",
-             "import_join_request",
+        case "import_join_request",
              "add_network",
-             "manual_add_network",
              "remove_network",
              "set_network_enabled",
              "set_network_mesh_id",
@@ -315,26 +313,9 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func importInvite(_ invite: String) {
-        let trimmed = invite.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return
-        }
-        debugLog("importInvite len=\(trimmed.count)")
-        dispatch(NativeActions.linkNetwork(trimmed), status: "Linking network")
-    }
-
-    func linkNetwork(_ link: String) {
-        importInvite(link)
-    }
-
     func handle(url: URL) {
         debugLog("handle url=\(url.absoluteString)")
         let raw = url.absoluteString
-        if raw.lowercased().hasPrefix("nvpn://invite/") {
-            importInvite(raw)
-            return
-        }
         if raw.lowercased().hasPrefix("nvpn://join-request") {
             dispatch(NativeActions.importJoinRequest(raw), status: "Adding device")
             return

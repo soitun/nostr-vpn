@@ -369,7 +369,7 @@ impl ConnectMagicDnsRuntime {
     /// to the in-process responder (and the `/etc/hosts` fallback block on
     /// Linux if it's active). Without this, the records map is frozen at
     /// daemon-start time and any peer added later (via `add-participant`,
-    /// invite acceptance, FIPS roster event, or peer-alias rename) returns
+    /// join approval, FIPS roster event, or peer-alias rename) returns
     /// NXDOMAIN until the daemon is restarted.
     fn refresh_records(&self, app: &AppConfig) {
         let records = build_magic_dns_records(app);

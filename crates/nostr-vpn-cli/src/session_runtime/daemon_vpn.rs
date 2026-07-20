@@ -74,7 +74,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         Instant::now() - Duration::from_secs(PAID_EXIT_SESSION_OPEN_RETRY_SECS);
     let mut last_recent_peer_refresh_signature = None;
     let mut last_recent_peer_cache_persisted_at = 0;
-    let mut join_approval_runtime = None;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -154,13 +153,10 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         join_request_sends: &mut fips_join_request_sends,
                     })
                     .await;
+                    if let Some(runtime) = fips_tunnel_runtime.as_mut() {
+                        send_queued_join_rosters_once(runtime, &app, &config_path).await;
+                    }
                 }
-                send_queued_join_rosters_once(
-                    &mut join_approval_runtime,
-                    &app,
-                    &config_path,
-                )
-                .await;
                 if !vpn_active {
                     continue;
                 }
@@ -444,7 +440,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &config_path,
                         &mut vpn_status,
                     ) {
-                        Ok(drained) => {
+                        Ok(mut drained) => {
                             if drained.roster_changed {
                                 let reload = build_daemon_reload_config(
                                     app.clone(),
@@ -498,171 +494,21 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                     format!("FIPS endpoint hint refresh failed ({error})");
                             }
                             #[cfg(feature = "paid-exit")]
-                            if !drained.paid_route_session_opens.is_empty() {
-                                match apply_paid_exit_session_opens(
-                                    &app,
-                                    &config_path,
-                                    drained.paid_route_session_opens,
-                                ) {
-                                    Ok(result) => {
-                                        eprintln!(
-                                            "paid-exit: authenticated session opens received={} applied={} errors={} changed={}",
-                                            result.received_count,
-                                            result.applied_count,
-                                            result.error_count,
-                                            result.changed
-                                        );
-                                        if result.changed
-                                            && let Err(error) = refresh_fips_tunnel_config(
-                                                runtime,
-                                                &app,
-                                                &config_path,
-                                                &network_id,
-                                                network_snapshot.default_interface_mtu,
-                                                own_pubkey.as_deref(),
-                                            )
-                                            .await
-                                        {
-                                            vpn_status = format!(
-                                                "paid-exit free-probe admission refresh failed ({error})"
-                                            );
-                                        }
-                                        for (buyer_pubkey, lease_id) in result.acknowledgments {
-                                            if let Err(error) = runtime
-                                                .send_paid_route_session_open_ack(
-                                                    &buyer_pubkey,
-                                                    lease_id.clone(),
-                                                )
-                                                .await
-                                            {
-                                                eprintln!(
-                                                    "paid-exit: failed to acknowledge session open {lease_id}: {error}"
-                                                );
-                                            }
-                                        }
-                                    }
-                                    Err(error) => eprintln!(
-                                        "paid-exit: failed to apply authenticated session open: {error}"
-                                    ),
-                                }
-                            }
-                            #[cfg(feature = "paid-exit")]
-                            for (seller_pubkey, lease_id) in drained.paid_route_session_open_acks {
-                                match acknowledge_paid_exit_session_open(
-                                    &config_path,
-                                    &seller_pubkey,
-                                    &lease_id,
-                                ) {
-                                    Ok(true) => {
-                                        eprintln!(
-                                            "paid-exit: seller admitted session {lease_id}"
-                                        );
-                                        if let Err(error) = refresh_fips_tunnel_config(
-                                            runtime,
-                                            &app,
-                                            &config_path,
-                                            &network_id,
-                                            network_snapshot.default_interface_mtu,
-                                            own_pubkey.as_deref(),
-                                        )
-                                        .await
-                                        {
-                                            vpn_status = format!(
-                                                "paid-exit admission acknowledgment refresh failed ({error})"
-                                            );
-                                        }
-                                    }
-                                    Ok(false) => {}
-                                    Err(error) => eprintln!(
-                                        "paid-exit: rejected session acknowledgment from {seller_pubkey}: {error}"
-                                    ),
-                                }
-                            }
-                            #[cfg(feature = "paid-exit")]
-                            for (seller_pubkey, id) in drained.paid_route_payment_acks {
-                                match acknowledge_paid_exit_payment(
-                                    &config_path,
-                                    &seller_pubkey,
-                                    &id,
-                                ) {
-                                    Ok(true) => {
-                                        eprintln!(
-                                            "paid-exit: seller acknowledged direct FIPS payment {id}"
-                                        );
-                                        if let Err(error) = refresh_fips_tunnel_config(
-                                            runtime,
-                                            &app,
-                                            &config_path,
-                                            &network_id,
-                                            network_snapshot.default_interface_mtu,
-                                            own_pubkey.as_deref(),
-                                        )
-                                        .await
-                                        {
-                                            vpn_status = format!(
-                                                "paid-exit payment acknowledgment refresh failed ({error})"
-                                            );
-                                        }
-                                    }
-                                    Ok(false) => {}
-                                    Err(error) => eprintln!(
-                                        "paid-exit: rejected direct FIPS payment acknowledgment: {error}"
-                                    ),
-                                }
-                            }
-                            #[cfg(feature = "paid-exit")]
-                            if !drained.paid_route_payments.is_empty() {
-                                match paid_exit_apply_fips_payments(
-                                    &app,
-                                    &config_path,
-                                    drained.paid_route_payments,
-                                    paid_exit_spilman_receiver.as_ref(),
-                                    paid_exit_spilman_receiver_error.as_deref(),
-                                )
-                                {
-                                    Ok(result) => {
-                                        eprintln!(
-                                            "paid-exit: direct FIPS payments received={} applied={} errors={} changed={} receiver={}",
-                                            result.received_count,
-                                            result.applied_count,
-                                            result.error_count,
-                                            result.changed,
-                                            result.spilman_receiver_processing
-                                        );
-                                        if result.changed
-                                            && let Err(error) = refresh_fips_tunnel_config(
-                                                runtime,
-                                                &app,
-                                                &config_path,
-                                                &network_id,
-                                                network_snapshot.default_interface_mtu,
-                                                own_pubkey.as_deref(),
-                                            )
-                                            .await
-                                        {
-                                            vpn_status = format!(
-                                                "paid-exit payment refresh failed ({error})"
-                                            );
-                                        }
-                                        for (buyer_pubkey, id) in result.acknowledgments {
-                                            if let Err(error) = runtime
-                                                .send_paid_route_payment_ack(
-                                                    &buyer_pubkey,
-                                                    id.clone(),
-                                                )
-                                                .await
-                                            {
-                                                eprintln!(
-                                                    "paid-exit: failed to acknowledge direct FIPS payment {id}: {error}"
-                                                );
-                                            }
-                                        }
-                                    }
-                                    Err(error) => eprintln!(
-                                        "paid-exit: failed to apply direct FIPS payment: {error}"
-                                    ),
-                                }
-                            }
+                            handle_paid_exit_mesh_events(
+                                PaidExitMeshEventContext {
+                                    runtime,
+                                    app: &app,
+                                    config_path: &config_path,
+                                    network_id: &network_id,
+                                    underlay_interface_mtu: network_snapshot.default_interface_mtu,
+                                    own_pubkey: own_pubkey.as_deref(),
+                                    vpn_status: &mut vpn_status,
+                                    spilman_receiver: paid_exit_spilman_receiver.as_ref(),
+                                    spilman_receiver_error: paid_exit_spilman_receiver_error.as_deref(),
+                                },
+                                &mut drained,
+                            )
+                            .await;
                         }
                         Err(error) => {
                             vpn_status = format!("FIPS event handling failed ({error})");

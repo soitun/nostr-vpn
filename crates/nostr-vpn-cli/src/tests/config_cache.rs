@@ -1,7 +1,7 @@
 use std::{collections::HashMap, fs};
 
 use crate::*;
-use nostr_sdk::prelude::{Keys, Tag, ToBech32};
+use nostr_sdk::prelude::{Keys, Tag};
 use nostr_vpn_core::config::{NetworkConfig, PendingOutboundJoinRequest};
 
 fn activate_first_network(config: &mut AppConfig) {
@@ -24,12 +24,12 @@ fn participants_override_targets_the_active_network() {
             name: "Home".to_string(),
             enabled: false,
             network_id: "mesh-home".to_string(),
-            invite_secret: "home-secret".to_string(),
+            join_secret: "home-secret".to_string(),
             devices: vec![alice.clone()],
             removed_devices: Vec::new(),
             admins: Vec::new(),
             listen_for_join_requests: true,
-            invite_inviter: String::new(),
+            join_request_admin: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
@@ -40,12 +40,12 @@ fn participants_override_targets_the_active_network() {
             name: "Work".to_string(),
             enabled: true,
             network_id: "mesh-work".to_string(),
-            invite_secret: "work-secret".to_string(),
+            join_secret: "work-secret".to_string(),
             devices: vec![bob],
             removed_devices: Vec::new(),
             admins: Vec::new(),
             listen_for_join_requests: true,
-            invite_inviter: String::new(),
+            join_request_admin: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
@@ -259,6 +259,86 @@ fn inbound_fips_roster_requires_signed_event() {
 }
 
 #[test]
+fn join_roster_receipt_requires_exact_durable_config_and_roster_artifact() {
+    let now = unix_timestamp();
+    let dir = std::env::temp_dir().join(format!(
+        "nvpn-durable-join-roster-{}-{now}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let config_path = dir.join("config.toml");
+    let mut joiner = AppConfig::generated_without_networks();
+    joiner
+        .ensure_pending_nostr_join_request(now.saturating_sub(10))
+        .expect("create pending join request");
+    joiner.save(&config_path).expect("persist pending joiner");
+    let admin = Keys::generate();
+    let signed_roster = SignedRoster::sign(
+        "durable-network",
+        NetworkRoster {
+            network_name: "Durable Home".to_string(),
+            devices: vec![joiner.own_nostr_pubkey_hex().expect("joiner pubkey")],
+            admins: vec![admin.public_key().to_hex()],
+            aliases: HashMap::new(),
+            signed_at: now,
+        },
+        &admin,
+    )
+    .expect("sign join roster");
+    let request_secret = joiner
+        .pending_nostr_join_request
+        .as_ref()
+        .expect("pending request")
+        .request
+        .request_secret
+        .clone();
+    let control = JoinRosterControl::new(signed_roster.clone(), &request_secret)
+        .expect("join roster control");
+    let mut status = String::new();
+
+    assert!(
+        persist_join_roster(&mut joiner, &config_path, &control, &mut status)
+            .expect("persist join roster")
+            .is_some()
+    );
+    assert!(
+        join_roster_is_durably_persisted(&config_path, &control)
+            .expect("verify durable join roster")
+    );
+    assert!(
+        persist_join_roster(&mut joiner, &config_path, &control, &mut status)
+            .expect("duplicate join roster")
+            .is_none()
+    );
+    assert!(
+        join_roster_is_durably_persisted(&config_path, &control).expect("verify durable duplicate")
+    );
+
+    let other = JoinRosterControl::new(
+        SignedRoster::sign(
+            "durable-network",
+            NetworkRoster {
+                network_name: "Other".to_string(),
+                devices: vec![joiner.own_nostr_pubkey_hex().expect("joiner pubkey")],
+                admins: vec![admin.public_key().to_hex()],
+                aliases: HashMap::new(),
+                signed_at: now.saturating_add(1),
+            },
+            &admin,
+        )
+        .expect("sign other roster"),
+        &request_secret,
+    )
+    .expect("other join roster control");
+    assert!(
+        !join_roster_is_durably_persisted(&config_path, &other)
+            .expect("reject unpersisted receipt")
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn inbound_fips_roster_accepts_admin_signed_event() {
     let nonce = unix_timestamp();
     let dir = std::env::temp_dir().join(format!("nvpn-admin-roster-{nonce}"));
@@ -402,224 +482,6 @@ fn inbound_fips_roster_ignores_signed_event_from_non_admin_author() {
 }
 
 #[test]
-fn active_network_invite_code_roundtrips_current_roster() {
-    let participant_hex = Keys::generate().public_key().to_hex();
-    let admin_hex = Keys::generate().public_key().to_hex();
-
-    let mut config = AppConfig::generated();
-    activate_first_network(&mut config);
-    let inviter_hex = config
-        .own_nostr_pubkey_hex()
-        .expect("generated config has own key");
-    let inviter_npub = nostr_vpn_core::invite::to_npub(&inviter_hex);
-    config.networks[0].name = "Work".to_string();
-    config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
-    config.networks[0].devices = vec![participant_hex];
-    config.networks[0].admins = vec![inviter_hex.clone(), admin_hex];
-    config.networks[0].invite_inviter = inviter_hex;
-    config.node.endpoint = "192.168.50.10:51820".to_string();
-    config.nostr.relays = vec!["wss://temp.iris.to".to_string()];
-
-    let invite = active_network_invite_code(&config).expect("invite should encode");
-    let parsed = parse_network_invite(&invite).expect("invite should decode");
-
-    assert!(invite.starts_with(NETWORK_INVITE_PREFIX));
-    assert!(parsed.network_name.is_empty());
-    assert_eq!(parsed.network_id, "8d4f34f5425bc50e");
-    assert_eq!(parsed.invite_secret, config.networks[0].invite_secret);
-    assert_eq!(parsed.admins.len(), 2);
-    assert_eq!(parsed.inviter_npub, inviter_npub);
-    assert_eq!(parsed.inviter_endpoints, vec!["192.168.50.10:51820"]);
-    assert!(parsed.participants.is_empty());
-    assert!(parsed.relays.is_empty());
-}
-
-#[test]
-fn active_network_invite_omits_non_transport_inviter_endpoint() {
-    let mut config = AppConfig::generated();
-    activate_first_network(&mut config);
-    let inviter_hex = config
-        .own_nostr_pubkey_hex()
-        .expect("generated config has own key");
-    config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
-    config.networks[0].admins = vec![inviter_hex.clone()];
-    config.networks[0].invite_inviter = inviter_hex;
-    config.node.endpoint = "fips".to_string();
-
-    let invite = active_network_invite_code(&config).expect("invite should encode");
-    let parsed = parse_network_invite(&invite).expect("invite should decode");
-
-    assert!(parsed.inviter_endpoints.is_empty());
-}
-
-#[test]
-fn active_network_invite_requires_local_admin_key() {
-    let other_admin = Keys::generate().public_key().to_hex();
-
-    let mut config = AppConfig::generated();
-    activate_first_network(&mut config);
-    let own_pubkey = config
-        .own_nostr_pubkey_hex()
-        .expect("generated config has own key");
-    config.networks[0].network_id = "8d4f34f5425bc50e".to_string();
-    config.networks[0].devices = vec![own_pubkey];
-    config.networks[0].admins = vec![other_admin];
-    config.node.endpoint = "192.168.50.10:51820".to_string();
-
-    let error =
-        active_network_invite_code(&config).expect_err("non-admin device must not create invite");
-
-    assert!(error.to_string().contains("network admin"));
-}
-
-#[test]
-fn importing_current_invite_queues_join_request_to_admin() {
-    let admin_npub = Keys::generate()
-        .public_key()
-        .to_bech32()
-        .expect("admin npub");
-    let admin_hex = normalize_nostr_pubkey(&admin_npub).expect("normalize admin");
-    let invite = serde_json::json!({
-        "v": 3,
-        "networkId": "8d4f34f5425bc50e",
-        "inviteSecret": "join-secret",
-        "inviterEndpoints": [" 192.168.50.20:51820 ", "fips", "198.51.100.10:51820", admin_npub],
-        "admins": [admin_npub],
-        "relays": ["wss://temp.iris.to"]
-    })
-    .to_string();
-
-    let mut config = AppConfig::generated();
-    let parsed = parse_network_invite(&invite).expect("invite should parse");
-    apply_network_invite_to_active_network(&mut config, &parsed).expect("invite should apply");
-    let queued = queue_active_network_join_request(&mut config).expect("join request should queue");
-
-    let network = config.active_network();
-    assert!(queued);
-    assert_eq!(config.networks.len(), 1);
-    assert_eq!(network.id, "network-1");
-    assert_eq!(
-        network
-            .outbound_join_request
-            .as_ref()
-            .expect("pending join request")
-            .recipient,
-        admin_hex
-    );
-    assert_eq!(network.invite_secret, "join-secret");
-    assert_eq!(
-        config.fips_peer_endpoints.get(&admin_npub),
-        Some(&vec!["192.168.50.20:51820".to_string()])
-    );
-    assert!(network.devices.is_empty());
-}
-
-#[test]
-fn importing_invite_with_existing_established_network_id_is_rejected() {
-    let existing_admin = Keys::generate().public_key().to_hex();
-    let invite_admin = Keys::generate();
-    let invite_admin_npub = invite_admin.public_key().to_bech32().expect("admin npub");
-    let invite_peer_npub = Keys::generate()
-        .public_key()
-        .to_bech32()
-        .expect("peer npub");
-    let invite = serde_json::json!({
-        "v": 3,
-        "networkId": "mesh-home",
-        "inviteSecret": "new-secret",
-        "inviterNpub": invite_admin_npub,
-        "admins": [invite_admin_npub],
-        "participants": [invite_peer_npub]
-    })
-    .to_string();
-
-    let mut config = AppConfig::generated_without_networks();
-    config.networks.push(NetworkConfig {
-        id: "home".to_string(),
-        name: "Home".to_string(),
-        enabled: true,
-        network_id: "mesh-home".to_string(),
-        invite_secret: "old-secret".to_string(),
-        devices: Vec::new(),
-        removed_devices: Vec::new(),
-        admins: vec![existing_admin.clone()],
-        listen_for_join_requests: true,
-        invite_inviter: String::new(),
-        outbound_join_request: None,
-        inbound_join_requests: Vec::new(),
-        shared_roster_updated_at: 1,
-        shared_roster_signed_by: String::new(),
-    });
-    let parsed = parse_network_invite(&invite).expect("invite should parse");
-
-    let error = apply_network_invite_to_active_network(&mut config, &parsed)
-        .expect_err("established network must not accept unsigned invite membership");
-
-    assert!(error.to_string().contains("existing network"));
-    assert_eq!(config.networks[0].name, "Home");
-    assert_eq!(config.networks[0].invite_secret, "old-secret");
-    assert_eq!(config.networks[0].admins, vec![existing_admin]);
-    assert!(config.networks[0].devices.is_empty());
-}
-
-#[test]
-fn manual_join_invite_with_admin_id_and_mesh_id_queues_join_request() {
-    // Mirrors the iOS / Android manual-join UI: user has the admin's
-    // Device ID (npub) and the mesh network id but no invite link, so
-    // the shell builds a synthetic JSON invite shaped like
-    //   {"v":3,"networkId":"...","inviterNpub":"npub1...","admins":["npub1..."]}
-    // and hands it to import_network_invite. The end state must be the
-    // same as importing the equivalent invite link: network present
-    // locally with the admin in its admin set, join request queued for
-    // the admin to accept (which then sends back the roster including
-    // us once the admin Add-by-Device-IDs us).
-    let admin_npub = Keys::generate()
-        .public_key()
-        .to_bech32()
-        .expect("admin npub");
-    let admin_hex = normalize_nostr_pubkey(&admin_npub).expect("normalize admin");
-    let manual_invite = serde_json::json!({
-        "v": 3,
-        "networkId": "abcdef0123456789",
-        "inviterNpub": admin_npub,
-        "admins": [admin_npub],
-        "participants": []
-    })
-    .to_string();
-
-    let mut config = AppConfig::generated();
-    let parsed = parse_network_invite(&manual_invite).expect("manual invite parses");
-    apply_network_invite_to_active_network(&mut config, &parsed).expect("manual invite applies");
-    let queued = queue_active_network_join_request(&mut config).expect("join request queues");
-
-    let network = config.active_network();
-    assert!(queued, "join request should be queued for the admin");
-    assert_eq!(
-        network.network_id, "abcdef0123456789",
-        "mesh id from manual invite should land on the active network"
-    );
-    assert!(
-        network.admins.iter().any(|admin| admin == &admin_hex),
-        "admin Device ID must end up in the active network's admin set"
-    );
-    assert_eq!(
-        network
-            .outbound_join_request
-            .as_ref()
-            .expect("pending join request")
-            .recipient,
-        admin_hex,
-        "join request must be addressed to the admin from the manual invite"
-    );
-    // Manual invite carries no participants — the requester is added
-    // only after the admin accepts and broadcasts the updated roster.
-    assert!(
-        network.devices.is_empty(),
-        "no participants until the admin accepts and propagates the roster"
-    );
-}
-
-#[test]
 fn config_overrides_set_the_active_network_mesh_id() {
     let nonce = unix_timestamp();
     let dir = std::env::temp_dir().join(format!("nvpn-load-config-override-{nonce}"));
@@ -633,12 +495,12 @@ fn config_overrides_set_the_active_network_mesh_id() {
             name: "Home".to_string(),
             enabled: false,
             network_id: "mesh-home".to_string(),
-            invite_secret: "home-secret".to_string(),
+            join_secret: "home-secret".to_string(),
             devices: vec!["11".repeat(32)],
             removed_devices: Vec::new(),
             admins: Vec::new(),
             listen_for_join_requests: true,
-            invite_inviter: String::new(),
+            join_request_admin: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
@@ -649,12 +511,12 @@ fn config_overrides_set_the_active_network_mesh_id() {
             name: "Work".to_string(),
             enabled: true,
             network_id: "mesh-work".to_string(),
-            invite_secret: "work-secret".to_string(),
+            join_secret: "work-secret".to_string(),
             devices: vec!["22".repeat(32)],
             removed_devices: Vec::new(),
             admins: Vec::new(),
             listen_for_join_requests: true,
-            invite_inviter: String::new(),
+            join_request_admin: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,

@@ -50,8 +50,8 @@ final class NativeCoreClient {
         )
     }
 
-    func qrMatrix(invite: String) -> QrMatrix {
-        let json = invite.withCString { textPointer in
+    func qrMatrix(text: String) -> QrMatrix {
+        let json = text.withCString { textPointer in
             consume(nostr_vpn_qr_matrix_json(textPointer))
         }
         guard let data = json.data(using: .utf8),
@@ -119,24 +119,16 @@ enum NativeActions {
         ["type": "disconnect_vpn"]
     }
 
-    static func importInvite(_ invite: String) -> [String: Any] {
-        ["type": "import_network_invite", "invite": invite]
-    }
-
     static func importJoinRequest(_ request: String) -> [String: Any] {
         ["type": "import_join_request", "request": request]
     }
 
     static func startJoinRequestBroadcast() -> [String: Any] {
-        ["type": "start_invite_broadcast"]
+        ["type": "start_join_request_broadcast"]
     }
 
     static func stopJoinRequestBroadcast() -> [String: Any] {
-        ["type": "stop_invite_broadcast"]
-    }
-
-    static func linkNetwork(_ link: String) -> [String: Any] {
-        importInvite(link)
+        ["type": "stop_join_request_broadcast"]
     }
 
     static func startNearbyDiscovery() -> [String: Any] {
@@ -149,14 +141,6 @@ enum NativeActions {
 
     static func addNetwork(_ name: String) -> [String: Any] {
         ["type": "add_network", "name": name]
-    }
-
-    static func manualAddNetwork(adminNpub: String, meshNetworkId: String) -> [String: Any] {
-        [
-            "type": "manual_add_network",
-            "adminNpub": adminNpub,
-            "meshNetworkId": meshNetworkId,
-        ]
     }
 
     static func setNetworkEnabled(_ networkId: String, _ enabled: Bool) -> [String: Any] {

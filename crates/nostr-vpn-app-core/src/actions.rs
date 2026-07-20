@@ -42,9 +42,6 @@ pub enum NativeAppAction {
         network_id: String,
         enabled: bool,
     },
-    RequestNetworkJoin {
-        network_id: String,
-    },
     AddParticipant {
         network_id: String,
         npub: String,
@@ -54,29 +51,14 @@ pub enum NativeAppAction {
         network_id: String,
         npub: String,
     },
-    ResetNetworkInvite {
-        network_id: String,
-    },
-    ImportNetworkInvite {
-        invite: String,
-    },
     #[serde(alias = "import_join_request_qr_or_link")]
     ImportJoinRequest {
         request: String,
     },
-    /// Manual pairing: the joiner enters the admin's Device ID + mesh
-    /// network id from out-of-band. We just add a local network with the
-    /// admin seeded as participant + admin and let mesh discovery converge
-    /// once the admin adds us back. No join request is queued — both sides
-    /// are expected to add each other directly.
-    ManualAddNetwork {
-        admin_npub: String,
-        mesh_network_id: String,
-    },
-    /// Start broadcasting our active-network invite over LAN multicast/broadcast.
-    StartInviteBroadcast,
-    StopInviteBroadcast,
-    /// Start listening for nearby invites (populates `lan_peers`).
+    /// Broadcast this device's signed join request over LAN multicast/broadcast.
+    StartJoinRequestBroadcast,
+    StopJoinRequestBroadcast,
+    /// Listen for nearby signed join requests (populates `lan_peers`).
     StartNearbyDiscovery,
     StopNearbyDiscovery,
     RemoveParticipant {

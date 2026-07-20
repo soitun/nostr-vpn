@@ -50,12 +50,6 @@ pub(crate) struct NetworkPeerRequest {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct InviteRequest {
-    pub invite: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub(crate) struct ImportJoinRequest {
     pub request: String,
 }
@@ -65,13 +59,6 @@ pub(crate) struct ImportJoinRequest {
 pub(crate) struct NearbyPeerRequest {
     pub npub: String,
     pub network_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ManualNetworkRequest {
-    pub admin_npub: String,
-    pub mesh_network_id: String,
 }
 
 #[derive(Debug, Deserialize)]

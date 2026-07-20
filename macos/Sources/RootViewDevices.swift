@@ -472,20 +472,6 @@ extension RootView {
         }
     }
 
-    func importJoinRequestOrAddDevice(_ value: String, network: NativeNetworkState) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        if looksLikeJoinRequestQrOrLink(trimmed) {
-            stageJoinRequest(trimmed, network: network)
-            return
-        }
-        if isValidDeviceId(trimmed) {
-            manager.addParticipant(networkId: network.id, npub: trimmed)
-        } else {
-            manager.importJoinRequest(trimmed)
-        }
-    }
-
     func stageJoinRequest(_ value: String, network: NativeNetworkState) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard looksLikeJoinRequestQrOrLink(trimmed) else { return }
@@ -494,41 +480,6 @@ extension RootView {
             networkName: network.name.isEmpty ? "this network" : network.name,
             request: trimmed
         )
-    }
-
-    func addByDeviceIdSection(_ network: NativeNetworkState) -> some View {
-        let trimmed = addByDeviceIdInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        let invalid = !trimmed.isEmpty && !isValidDeviceId(trimmed)
-        return surface {
-            sectionHeader("Add by Device ID", systemImage: "plus")
-            Text("Paste the joining device's npub to add it directly. The joining device still needs your Device ID and this network ID for manual pairing.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                TextField("Device ID", text: $addByDeviceIdInput)
-                    .textFieldStyle(.roundedBorder)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.red, lineWidth: invalid ? 1 : 0)
-                    )
-                TextField("Name (optional)", text: $addByDeviceIdAlias)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 200)
-                Button {
-                    manager.addParticipant(networkId: network.id, npub: trimmed, alias: addByDeviceIdAlias)
-                    addByDeviceIdInput = ""
-                    addByDeviceIdAlias = ""
-                } label: {
-                    Label("Add to Roster", systemImage: "plus")
-                }
-                .disabled(trimmed.isEmpty || invalid || manager.actionInFlight)
-            }
-            if invalid {
-                Text("Not a valid device ID")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-            }
-        }
     }
 
     var createNetworkSection: some View {
@@ -573,7 +524,7 @@ extension RootView {
         return surface {
             sectionHeader("Join Network", systemImage: "arrow.down.circle")
             if !joinRequestQrCodeOrLink.isEmpty {
-                InviteQRCodeView(invite: joinRequestQrCodeOrLink)
+                QrCodeView(text: joinRequestQrCodeOrLink)
                     .frame(width: 220, height: 220)
                     .frame(maxWidth: .infinity, alignment: .center)
                 HStack(spacing: 8) {
@@ -592,34 +543,6 @@ extension RootView {
                 detailValueRow("Your Device ID", state.ownNpub)
             }
 
-            DisclosureGroup("Legacy invite link", isExpanded: $legacyInviteExpanded) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
-                        TextField("nvpn://invite/…", text: $manager.inviteInput)
-                            .onChange(of: manager.inviteInput) { _, newValue in
-                                // Auto-import when the field becomes a valid invite —
-                                // saves the user a click. importInvite clears the
-                                // field, which prevents re-firing.
-                                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
-                                if trimmed.lowercased().hasPrefix("nvpn://invite/") {
-                                    manager.linkNetwork(trimmed)
-                                }
-                            }
-                            .onSubmit {
-                                manager.linkNetwork(manager.inviteInput)
-                            }
-                        Button {
-                            pasteInviteFromClipboard()
-                        } label: {
-                            Label("Paste", systemImage: "doc.on.clipboard")
-                        }
-                    }
-                }
-                .padding(.top, 6)
-            }
-
-            manualJoinDisclosure
-
             advertiseJoinRequestSection
         }
     }
@@ -632,18 +555,18 @@ extension RootView {
                     .font(.subheadline.weight(.medium))
                 Spacer()
                 Button {
-                    state.inviteBroadcastActive ? manager.stopJoinRequestBroadcast() : manager.startJoinRequestBroadcast()
+                    state.joinRequestBroadcastActive ? manager.stopJoinRequestBroadcast() : manager.startJoinRequestBroadcast()
                 } label: {
                     Label(
-                        state.inviteBroadcastActive
-                            ? "Advertising · \(formatRemaining(state.inviteBroadcastRemainingSecs))"
+                        state.joinRequestBroadcastActive
+                            ? "Advertising · \(formatRemaining(state.joinRequestBroadcastRemainingSecs))"
                             : "Advertise nearby",
-                        systemImage: state.inviteBroadcastActive ? "stop.circle" : "dot.radiowaves.left.and.right"
+                        systemImage: state.joinRequestBroadcastActive ? "stop.circle" : "dot.radiowaves.left.and.right"
                     )
                 }
                 .disabled(manager.actionInFlight)
             }
-            Text(state.inviteBroadcastActive ? "Admins nearby can add this device from its join request." : "Advertise this device's join request to nearby admins.")
+            Text(state.joinRequestBroadcastActive ? "Admins nearby can add this device from its join request." : "Advertise this device's join request to nearby admins.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -669,7 +592,7 @@ extension RootView {
             if state.nearbyDiscoveryActive && state.lanPeers.isEmpty {
                 emptyRow("No nearby join requests yet", systemImage: "wifi")
             } else {
-                ForEach(state.lanPeers, id: \.invite) { peer in
+                ForEach(state.lanPeers, id: \.joinRequest) { peer in
                     HStack {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(peer.nodeName.isEmpty ? peer.npub : peer.nodeName)
@@ -681,56 +604,12 @@ extension RootView {
                         }
                         Spacer()
                         Button("Add") {
-                            manager.importJoinRequest(peer.invite)
+                            manager.importJoinRequest(peer.joinRequest)
                         }
                     }
                     .padding(.vertical, 4)
                 }
             }
-        }
-    }
-
-    var manualJoinDisclosure: some View {
-        let admin = manualJoinAdminId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mesh = manualJoinMeshId.trimmingCharacters(in: .whitespacesAndNewlines)
-        let adminInvalid = !admin.isEmpty && !isValidDeviceId(admin)
-        let canSubmit = !admin.isEmpty && !mesh.isEmpty && !adminInvalid
-        return DisclosureGroup("Manual join", isExpanded: $manualJoinExpanded) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Enter the admin's Device ID and network ID, then give the admin your Device ID shown above.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextField("Admin Device ID", text: $manualJoinAdminId)
-                    .textFieldStyle(.roundedBorder)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.red, lineWidth: adminInvalid ? 1 : 0)
-                    )
-                if adminInvalid {
-                    Text("Not a valid device ID")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                }
-                TextField("Network ID", text: $manualJoinMeshId)
-                    .textFieldStyle(.roundedBorder)
-                Button {
-                    manager.manualAddNetwork(adminNpub: admin, meshNetworkId: mesh)
-                    manualJoinAdminId = ""
-                    manualJoinMeshId = ""
-                    manualJoinExpanded = false
-                } label: {
-                    Label("Add", systemImage: "plus")
-                }
-                .disabled(!canSubmit || manager.actionInFlight)
-            }
-            .padding(.top, 6)
-        }
-        .font(.subheadline)
-    }
-
-    func pasteInviteFromClipboard() {
-        if let text = NSPasteboard.general.string(forType: .string) {
-            manager.inviteInput = text.trimmingCharacters(in: .whitespacesAndNewlines)
         }
     }
 

@@ -25,18 +25,17 @@ cargo install nvpn --force
 nvpn init
 MY_NPUB='<paste nostr_pubkey from nvpn init>'
 nvpn set --participant "$MY_NPUB"
-nvpn create-invite
 nvpn start --daemon --connect
 ```
 
-Use the printed invite on another device; do not paste the example placeholder:
+On a new device, generate its signed join request and show it to an admin in a Nostr VPN app:
 
 ```bash
-INVITE='<paste invite copied from nvpn create-invite>'
 nvpn init
-nvpn import-invite "$INVITE"
-nvpn start --daemon --connect
+nvpn join-request
 ```
+
+The admin scans or pastes that request. Approval returns an admin-signed roster to the joining device. This signed request is the only join flow.
 
 For the background daemon flow used by desktop apps:
 
@@ -73,7 +72,7 @@ Use `just run-macos` or `just run-linux` when you want a specific desktop target
 ## What Works Today
 
 - Generates Nostr identity keys automatically
-- Shares networks through invites and roster/admin sync
+- Enrolls devices through signed join requests and admin-signed roster delivery
 - Stores multiple named networks with one active network at a time
 - Brings up [FIPS] private mesh tunnels for private network traffic
 - Routes private traffic directly when possible and through [FIPS] neighbors when direct UDP is blocked
@@ -94,7 +93,7 @@ Use `just run-macos` or `just run-linux` when you want a specific desktop target
 
 ## Further Reading
 
-- [Protocol](docs/protocol.md): invites, admin roster sync, and the [FIPS] mesh data plane
+- [Protocol](docs/protocol.md): join requests, admin roster sync, and the [FIPS] mesh data plane
 - [Experiments](docs/EXPERIMENTS.md): chronological benchmark and reliability log
 - [Native UI parity matrix](docs/native-ui-parity-matrix.md): native app rewrite status
 - [Contributing](CONTRIBUTING.md): maintainer commands and package notes

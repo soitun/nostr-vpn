@@ -41,7 +41,6 @@ import org.nostrvpn.app.vpn.VpnStartState
 class MainActivity : ComponentActivity() {
     private var deepLink by mutableStateOf<String?>(null)
     private var debugAction by mutableStateOf<String?>(null)
-    private var debugInvite by mutableStateOf<String?>(null)
     private var debugExitNode by mutableStateOf<String?>(null)
     private var debugNetworkName by mutableStateOf<String?>(null)
     private var debugWireGuardConfig by mutableStateOf<String?>(null)
@@ -51,7 +50,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         deepLink = intent?.dataString
         debugAction = intent?.getStringExtra(EXTRA_DEBUG_ACTION)
-        debugInvite = intent?.getStringExtra(EXTRA_DEBUG_INVITE)
         debugExitNode = intent?.getStringExtra(EXTRA_DEBUG_EXIT_NODE)
         debugNetworkName = intent?.getStringExtra(EXTRA_DEBUG_NETWORK_NAME)
         debugWireGuardConfig = debugWireGuardConfigFromIntent(intent)
@@ -191,7 +189,7 @@ class MainActivity : ComponentActivity() {
 
             fun requiresLocalNetworkPermission(action: JSONObject): Boolean =
                 when (action.optString("type")) {
-                    "connect_vpn", "start_invite_broadcast", "start_nearby_discovery" -> true
+                    "connect_vpn", "start_join_request_broadcast", "start_nearby_discovery" -> true
                     else -> false
                 }
 
@@ -287,20 +285,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
-            LaunchedEffect(deepLink, debugAction, debugInvite, debugExitNode, debugNetworkName, debugWireGuardConfig) {
-                val invite = deepLink
-                if (!invite.isNullOrBlank() && invite.startsWith("nvpn://", ignoreCase = true)) {
-                    if (looksLikeJoinRequestQrOrLink(invite)) {
-                        dispatch(NativeActions.importJoinRequest(invite))
-                    } else {
-                        dispatch(NativeActions.importInvite(invite))
-                    }
+            LaunchedEffect(deepLink, debugAction, debugExitNode, debugNetworkName, debugWireGuardConfig) {
+                val request = deepLink
+                if (!request.isNullOrBlank() && looksLikeJoinRequestQrOrLink(request)) {
+                    dispatch(NativeActions.importJoinRequest(request))
                     deepLink = null
-                }
-                val inviteExtra = debugInvite
-                if (BuildConfig.DEBUG && !inviteExtra.isNullOrBlank()) {
-                    dispatch(NativeActions.importInvite(inviteExtra.trim()))
-                    debugInvite = null
                 }
                 when (val action = debugAction) {
                     DEBUG_ACTION_CONNECT -> {
@@ -391,7 +380,7 @@ class MainActivity : ComponentActivity() {
                 val displayState = state.withAndroidNotice(androidError, vpnLockdownActive)
                 NostrVpnApp(
                     state = displayState,
-                    qrJson = { invite -> core.qrMatrix(invite) },
+                    qrJson = { text -> core.qrMatrix(text) },
                     scanDeviceQr = { networkId -> requestDeviceQrScan(networkId) },
                     dispatch = dispatch,
                     selfUpdateState = selfUpdateState,
@@ -462,7 +451,6 @@ class MainActivity : ComponentActivity() {
         writeAndroidBuildMetadata(appCoreDataDir(this))
         deepLink = intent.dataString
         debugAction = intent.getStringExtra(EXTRA_DEBUG_ACTION)
-        debugInvite = intent.getStringExtra(EXTRA_DEBUG_INVITE)
         debugExitNode = intent.getStringExtra(EXTRA_DEBUG_EXIT_NODE)
         debugNetworkName = intent.getStringExtra(EXTRA_DEBUG_NETWORK_NAME)
         debugWireGuardConfig = debugWireGuardConfigFromIntent(intent)
@@ -529,7 +517,6 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_DEBUG_ACTION = "fi.siriusbusiness.nvpn.DEBUG_ACTION"
-        const val EXTRA_DEBUG_INVITE = "fi.siriusbusiness.nvpn.DEBUG_INVITE"
         const val EXTRA_DEBUG_EXIT_NODE = "fi.siriusbusiness.nvpn.DEBUG_EXIT_NODE"
         const val EXTRA_DEBUG_NETWORK_NAME = "fi.siriusbusiness.nvpn.DEBUG_NETWORK_NAME"
         const val EXTRA_DEBUG_WIREGUARD_CONFIG = "fi.siriusbusiness.nvpn.DEBUG_WIREGUARD_CONFIG"

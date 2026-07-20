@@ -287,7 +287,7 @@ fn empty_config() -> MobileTunnelConfig {
         identity_nsec: String::new(),
         node_name: String::new(),
         network_id: String::new(),
-        invite_secret: String::new(),
+        join_secret: String::new(),
         local_address: String::new(),
         advertised_endpoint: String::new(),
         listen_port: 0,
@@ -310,7 +310,7 @@ fn empty_config() -> MobileTunnelConfig {
         join_requests_enabled: false,
         device_approval_pending: false,
         pending_join_request_recipient: String::new(),
-        pending_join_invite_secret: String::new(),
+        pending_join_secret: String::new(),
         pending_join_requested_at: 0,
         error: String::new(),
     }

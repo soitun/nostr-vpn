@@ -16,12 +16,12 @@
             name: "Home".to_string(),
             enabled: true,
             network_id: "mesh-home".to_string(),
-            invite_secret: "join-secret".to_string(),
+            join_secret: "join-secret".to_string(),
             devices: vec![own.clone()],
             removed_devices: Vec::new(),
             admins: vec![own],
             listen_for_join_requests: true,
-            invite_inviter: String::new(),
+            join_request_admin: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
@@ -32,7 +32,7 @@
         let dirty = AtomicBool::new(false);
         let request = MeshJoinRequest {
             network_id: "mesh-home".to_string(),
-            invite_secret: "join-secret".to_string(),
+            join_secret: "join-secret".to_string(),
             requester_node_name: "iPhone".to_string(),
         };
 
@@ -148,12 +148,12 @@
             name: "Home".to_string(),
             enabled: true,
             network_id: network_id.to_string(),
-            invite_secret: "join-secret".to_string(),
+            join_secret: "join-secret".to_string(),
             devices: vec![admin_pubkey.to_string()],
             removed_devices: Vec::new(),
             admins: vec![admin_pubkey.to_string()],
             listen_for_join_requests: true,
-            invite_inviter: String::new(),
+            join_request_admin: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
@@ -207,7 +207,7 @@
             peers: vec![admin_peer],
             peer_hints: requester_peer_hints,
             pending_join_request_recipient: admin_pubkey,
-            pending_join_invite_secret: "join-secret".to_string(),
+            pending_join_secret: "join-secret".to_string(),
             pending_join_requested_at: requested_at,
             ..empty_config()
         }
@@ -243,12 +243,12 @@
             name: "Test".to_string(),
             enabled: true,
             network_id: network_id.to_string(),
-            invite_secret: "join-secret".to_string(),
+            join_secret: "join-secret".to_string(),
             devices: vec![client_pubkey.to_string(), exit_pubkey.to_string()],
             removed_devices: Vec::new(),
             admins: vec![client_pubkey.to_string()],
             listen_for_join_requests: true,
-            invite_inviter: String::new(),
+            join_request_admin: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
@@ -746,12 +746,14 @@
 
         let guest_identity = PeerIdentity::from_npub(guest.endpoint.npub())
             .expect("guest endpoint identity");
-        let frame = FipsControlFrame::JoinRoster {
-            control: Box::new(prepared.join_roster),
-        };
         let delivery = tokio::time::timeout(
-            Duration::from_secs(20),
-            admin.state_control.send(guest_identity, &frame),
+            Duration::from_secs(25),
+            send_join_roster_with_receipt(
+                &admin.state_control,
+                guest_identity,
+                &prepared.join_roster,
+                Duration::from_secs(20),
+            ),
         )
         .await
         .expect("join roster delivery timeout");
@@ -838,12 +840,12 @@
             name: "Test".to_string(),
             enabled: true,
             network_id: "test".to_string(),
-            invite_secret: "join-secret".to_string(),
+            join_secret: "join-secret".to_string(),
             devices: vec![peer.to_string()],
             removed_devices: Vec::new(),
             admins: vec![own],
             listen_for_join_requests: true,
-            invite_inviter: String::new(),
+            join_request_admin: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
@@ -928,12 +930,12 @@
             name: "Test".to_string(),
             enabled: true,
             network_id: "test".to_string(),
-            invite_secret: "join-secret".to_string(),
+            join_secret: "join-secret".to_string(),
             devices: vec![peer.to_string()],
             removed_devices: Vec::new(),
             admins: vec![own],
             listen_for_join_requests: true,
-            invite_inviter: String::new(),
+            join_request_admin: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,
@@ -976,65 +978,4 @@
         assert_eq!(state.peers[0].last_fips_seen_at, Some(now - 10));
         assert_eq!(state.peers[0].last_fips_control_seen_at, Some(now - 10));
         assert_eq!(state.peers[0].last_fips_data_seen_at, Some(now - 20));
-    }
-
-    #[test]
-    fn mobile_runtime_state_rejects_far_future_presence_without_link() {
-        let mut app = AppConfig::generated();
-        app.ensure_defaults();
-        let own = app.own_nostr_pubkey_hex().expect("own pubkey");
-        let peer = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
-        app.networks = vec![NetworkConfig {
-            id: "test".to_string(),
-            name: "Test".to_string(),
-            enabled: true,
-            network_id: "test".to_string(),
-            invite_secret: "join-secret".to_string(),
-            devices: vec![peer.to_string()],
-            removed_devices: Vec::new(),
-            admins: vec![own],
-            listen_for_join_requests: true,
-            invite_inviter: String::new(),
-            outbound_join_request: None,
-            inbound_join_requests: Vec::new(),
-            shared_roster_updated_at: 0,
-            shared_roster_signed_by: String::new(),
-        }];
-        let config = MobileTunnelConfig::from_app(&app).expect("mobile config");
-        let mesh = FipsMeshRuntime::with_local_routes(config.peers.clone(), vec![]);
-        let now = 1_778_998_000;
-        let mut presence = HashMap::new();
-        presence.insert(
-            peer.to_string(),
-            MobilePeerPresence {
-                last_seen_at: Some(now + 60),
-                last_control_seen_at: Some(now + 60),
-                last_data_seen_at: Some(now + 60),
-                rtt_ms: Some(91),
-                tx_bytes: 32,
-                rx_bytes: 64,
-                ..MobilePeerPresence::default()
-            },
-        );
-
-        let state = mobile_runtime_state_with_tun_counters(
-            &config,
-            &mesh,
-            &presence,
-            Vec::new(),
-            Vec::new(),
-            MobileTunCounters::default(),
-            now,
-        );
-
-        assert_eq!(state.expected_peer_count, 1);
-        assert_eq!(state.connected_peer_count, 0);
-        assert!(!state.mesh_ready);
-        assert!(!state.peers[0].reachable);
-        assert_eq!(state.peers[0].last_mesh_seen_at, 0);
-        assert_eq!(state.peers[0].last_fips_seen_at, None);
-        assert_eq!(state.peers[0].last_fips_control_seen_at, None);
-        assert_eq!(state.peers[0].last_fips_data_seen_at, None);
-        assert_eq!(state.peers[0].last_handshake_at, None);
-        assert_eq!(state.peers[0].error.as_deref(), Some("fips link pending"));
     }

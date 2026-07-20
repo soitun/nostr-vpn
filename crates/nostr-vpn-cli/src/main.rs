@@ -168,12 +168,8 @@ use crate::diagnostics::{
     PortMappingRuntime, build_health_issues, capture_network_snapshot, detect_captive_portal,
     run_netcheck_report, write_doctor_bundle,
 };
-#[cfg(test)]
-use crate::network_signaling::NETWORK_INVITE_PREFIX;
 use crate::network_signaling::{
-    RosterEditAction, active_network_invite_code, apply_network_invite_to_active_network,
-    maybe_reload_running_daemon, parse_network_invite, queue_active_network_join_request,
-    update_active_network_roster,
+    RosterEditAction, maybe_reload_running_daemon, update_active_network_roster,
 };
 #[cfg(any(test, not(target_os = "windows")))]
 pub(crate) use crate::platform_routing::*;
@@ -246,7 +242,6 @@ include!("main/runtime_helpers.rs");
 include!("main/runtime_roster.rs");
 include!("main/daemon_commands.rs");
 include!("main/doctor_and_parsing.rs");
-include!("main/lan_pairing.rs");
 
 #[cfg(test)]
 mod tests {

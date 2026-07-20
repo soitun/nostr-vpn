@@ -81,7 +81,7 @@ export type NetworkView = {
   localIsAdmin: boolean;
   adminNpubs: string[];
   joinRequestsEnabled: boolean;
-  inviteInviterNpub: string;
+  joinRequestAdminNpub: string;
   outboundJoinRequest?: OutboundJoinRequestView | null;
   inboundJoinRequests: InboundJoinRequestView[];
   onlineCount: number;
@@ -122,7 +122,6 @@ export type UiState = {
   ownNpub: string;
   ownPubkeyHex: string;
   networkId: string;
-  activeNetworkInvite: string;
   joinRequestQrCodeOrLink: string;
   nodeId: string;
   nodeName: string;
@@ -157,8 +156,8 @@ export type UiState = {
   magicDnsSuffix: string;
   magicDnsStatus: string;
   autoconnect: boolean;
-  inviteBroadcastActive: boolean;
-  inviteBroadcastRemainingSecs: number;
+  joinRequestBroadcastActive: boolean;
+  joinRequestBroadcastRemainingSecs: number;
   nearbyDiscoveryActive: boolean;
   nearbyDiscoveryRemainingSecs: number;
   launchOnStartup: boolean;

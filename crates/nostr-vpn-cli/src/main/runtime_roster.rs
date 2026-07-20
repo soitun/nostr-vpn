@@ -44,6 +44,9 @@ fn persist_join_roster(
     control: &JoinRosterControl,
     vpn_status: &mut String,
 ) -> Result<Option<String>> {
+    if join_roster_is_durably_persisted(config_path, control)? {
+        return Ok(None);
+    }
     let Some(applied) = app.apply_nostr_join_roster(control, unix_timestamp())? else {
         return Ok(None);
     };
@@ -65,6 +68,28 @@ fn persist_join_roster(
         .unwrap_or(applied.network_id);
     *vpn_status = format!("Join approved for {network_name}.");
     Ok(Some(network_name))
+}
+
+fn join_roster_is_durably_persisted(
+    config_path: &Path,
+    control: &JoinRosterControl,
+) -> Result<bool> {
+    let network_id = control.signed_roster.network_id()?;
+    let roster_event_id = control.signed_roster.artifact_hash();
+    let persisted = AppConfig::load(config_path)?;
+    let original_request_is_pending = persisted
+        .pending_nostr_join_request
+        .as_ref()
+        .is_some_and(|pending| pending.request.request_secret == control.request_secret);
+    if original_request_is_pending
+        || !signed_roster_is_current_for_app(&persisted, &network_id, &control.signed_roster)
+    {
+        return Ok(false);
+    }
+    let store = load_signed_rosters(&signed_rosters_file_path(config_path))?;
+    Ok(store
+        .latest_for(&network_id)
+        .is_some_and(|signed| signed.artifact_hash() == roster_event_id))
 }
 
 fn split_ready_fips_roster_recipients(recipients: Vec<String>) -> (Vec<String>, HashSet<String>) {

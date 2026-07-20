@@ -151,7 +151,7 @@ public sealed partial class AppViewModel
         OnPropertyChanged(nameof(PublicFipsRoutingEnabled));
         OnPropertyChanged(nameof(NearbyDiscoveryButtonText));
         OnPropertyChanged(nameof(JoinRequestBroadcastButtonText));
-        OnPropertyChanged(nameof(NoNearbyInvitesNoticeVisibility));
+        OnPropertyChanged(nameof(NoNearbyJoinRequestsNoticeVisibility));
         OnPropertyChanged(nameof(ServiceSummary));
         OnPropertyChanged(nameof(CliSummary));
         OnPropertyChanged(nameof(SystemVersionLabel));

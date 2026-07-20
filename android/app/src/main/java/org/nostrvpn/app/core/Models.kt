@@ -22,7 +22,6 @@ data class AppState(
     val endpoint: String = "",
     val listenPort: Int = 0,
     val relays: List<RelayState> = emptyList(),
-    val activeNetworkInvite: String = "",
     val joinRequestQrCodeOrLink: String = "",
     val connectedPeerCount: Long = 0,
     val expectedPeerCount: Long = 0,
@@ -62,8 +61,8 @@ data class AppState(
     val magicDnsSuffix: String = "",
     val magicDnsStatus: String = "",
     val autoconnect: Boolean = false,
-    val inviteBroadcastActive: Boolean = false,
-    val inviteBroadcastRemainingSecs: Long = 0,
+    val joinRequestBroadcastActive: Boolean = false,
+    val joinRequestBroadcastRemainingSecs: Long = 0,
     val nearbyDiscoveryActive: Boolean = false,
     val nearbyDiscoveryRemainingSecs: Long = 0,
     val networks: List<NetworkState> = emptyList(),
@@ -84,7 +83,7 @@ data class NetworkState(
     val networkId: String = "",
     val localIsAdmin: Boolean = false,
     val joinRequestsEnabled: Boolean = false,
-    val inviteInviterNpub: String = "",
+    val joinRequestAdminNpub: String = "",
     val outboundJoinRequest: Boolean = false,
     val joinRequestQrCodeOrLink: String = "",
     val inboundJoinRequests: List<InboundJoinRequest> = emptyList(),
@@ -135,7 +134,7 @@ data class InboundJoinRequest(
 data class LanPeerState(
     val nodeName: String = "",
     val networkName: String = "",
-    val invite: String = "",
+    val joinRequest: String = "",
     val lastSeenText: String = "",
 )
 
@@ -381,13 +380,6 @@ data class PaidRouteMarketState(
 val AppState.activeNetwork: NetworkState?
     get() = networks.firstOrNull { it.enabled }
 
-val AppState.joinRequestNetwork: NetworkState?
-    get() =
-        networks.firstOrNull { it.outboundJoinRequest }
-            ?: activeNetwork
-            ?: networks.firstOrNull { it.joinRequestQrCodeOrLink.isNotBlank() }
-            ?: networks.firstOrNull { it.inviteInviterNpub.isNotBlank() }
-
 fun parseAppState(jsonText: String): AppState {
     val json = JSONObject(jsonText.ifBlank { "{}" })
     return AppState(
@@ -409,7 +401,6 @@ fun parseAppState(jsonText: String): AppState {
         endpoint = json.optString("endpoint"),
         listenPort = json.optInt("listenPort"),
         relays = json.optJSONArray("relays").toRelayList(),
-        activeNetworkInvite = json.optString("activeNetworkInvite"),
         joinRequestQrCodeOrLink = json.optString("joinRequestQrCodeOrLink"),
         connectedPeerCount = json.optLong("connectedPeerCount"),
         expectedPeerCount = json.optLong("expectedPeerCount"),
@@ -449,8 +440,8 @@ fun parseAppState(jsonText: String): AppState {
         magicDnsSuffix = json.optString("magicDnsSuffix"),
         magicDnsStatus = json.optString("magicDnsStatus"),
         autoconnect = json.optBoolean("autoconnect"),
-        inviteBroadcastActive = json.optBoolean("inviteBroadcastActive"),
-        inviteBroadcastRemainingSecs = json.optLong("inviteBroadcastRemainingSecs"),
+        joinRequestBroadcastActive = json.optBoolean("joinRequestBroadcastActive"),
+        joinRequestBroadcastRemainingSecs = json.optLong("joinRequestBroadcastRemainingSecs"),
         nearbyDiscoveryActive = json.optBoolean("nearbyDiscoveryActive"),
         nearbyDiscoveryRemainingSecs = json.optLong("nearbyDiscoveryRemainingSecs"),
         networks = json.optJSONArray("networks").toNetworkList(),
@@ -475,7 +466,7 @@ private fun JSONArray?.toNetworkList(): List<NetworkState> = mapObjects { item -
         networkId = item.optString("networkId"),
         localIsAdmin = item.optBoolean("localIsAdmin"),
         joinRequestsEnabled = item.optBoolean("joinRequestsEnabled"),
-        inviteInviterNpub = item.optString("inviteInviterNpub"),
+        joinRequestAdminNpub = item.optString("joinRequestAdminNpub"),
         outboundJoinRequest = !item.isNull("outboundJoinRequest"),
         joinRequestQrCodeOrLink = item.optString("joinRequestQrCodeOrLink"),
         inboundJoinRequests = item.optJSONArray("inboundJoinRequests").toInboundJoinRequestList(),
@@ -532,7 +523,7 @@ private fun JSONArray?.toLanPeerList(): List<LanPeerState> = mapObjects { item -
     LanPeerState(
         nodeName = item.optString("nodeName"),
         networkName = item.optString("networkName"),
-        invite = item.optString("invite"),
+        joinRequest = item.optString("joinRequest"),
         lastSeenText = item.optString("lastSeenText"),
     )
 }

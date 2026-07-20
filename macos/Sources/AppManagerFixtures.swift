@@ -254,7 +254,7 @@ extension AppManager {
             networkId: networkId,
             localIsAdmin: true,
             joinRequestsEnabled: true,
-            inviteInviterNpub: "",
+            joinRequestAdminNpub: "",
             adminNpubs: [selfNpub],
             outboundJoinRequest: nil,
             joinRequestQrCodeOrLink: "",
@@ -309,7 +309,6 @@ extension AppManager {
             nostrPubsubMaxHops: 2,
             nostrPubsubMaxEventBytes: 65_536,
             networkId: networkId,
-            activeNetworkInvite: "nvpn://invite/demo-mesh",
             joinRequestQrCodeOrLink: "nvpn://join-request/demo",
             internetSource: sellerScreenshot ? "direct" : "paid_manual",
             exitNode: sellerScreenshot ? "" : "npub1paidexitfinlanddemo",
@@ -669,8 +668,8 @@ extension AppManager {
             magicDnsSuffix: "nvpn",
             magicDnsStatus: "Serving .nvpn names",
             autoconnect: true,
-            inviteBroadcastActive: true,
-            inviteBroadcastRemainingSecs: 417,
+            joinRequestBroadcastActive: true,
+            joinRequestBroadcastRemainingSecs: 417,
             nearbyDiscoveryActive: true,
             nearbyDiscoveryRemainingSecs: 417,
             launchOnStartup: true,
@@ -708,7 +707,7 @@ extension AppManager {
                     endpoint: "192.0.2.44:51820",
                     networkName: "Nearby Mesh",
                     networkId: "nearby-mesh",
-                    invite: "nvpn://invite/nearby-mesh",
+                    joinRequest: "nvpn://join-request/nearby-mesh",
                     lastSeenText: "3s ago"
                 )
             ]

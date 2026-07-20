@@ -199,7 +199,7 @@ pub struct NetworkView {
     pub admin_npubs: Vec<String>,
     #[serde(rename = "joinRequestsEnabled")]
     pub listen_for_join_requests: bool,
-    pub invite_inviter_npub: String,
+    pub join_request_admin_npub: String,
     pub outbound_join_request: Option<OutboundJoinRequestView>,
     pub join_request_qr_code_or_link: String,
     pub inbound_join_requests: Vec<InboundJoinRequestView>,
@@ -216,7 +216,7 @@ pub struct LanPeerView {
     pub endpoint: String,
     pub network_name: String,
     pub network_id: String,
-    pub invite: String,
+    pub join_request: String,
     pub last_seen_text: String,
 }
 
@@ -250,7 +250,6 @@ pub struct UiState {
     pub own_npub: String,
     pub own_pubkey_hex: String,
     pub network_id: String,
-    pub active_network_invite: String,
     pub join_request_qr_code_or_link: String,
     pub node_id: String,
     pub node_name: String,
@@ -295,8 +294,8 @@ pub struct UiState {
     pub magic_dns_suffix: String,
     pub magic_dns_status: String,
     pub autoconnect: bool,
-    pub invite_broadcast_active: bool,
-    pub invite_broadcast_remaining_secs: u64,
+    pub join_request_broadcast_active: bool,
+    pub join_request_broadcast_remaining_secs: u64,
     pub nearby_discovery_active: bool,
     pub nearby_discovery_remaining_secs: u64,
     pub launch_on_startup: bool,

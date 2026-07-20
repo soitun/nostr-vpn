@@ -135,7 +135,7 @@ pub(crate) fn default_network_id() -> String {
     Uuid::new_v4().simple().to_string()[..8].to_string()
 }
 
-pub(crate) fn default_invite_secret() -> String {
+pub(crate) fn default_join_secret() -> String {
     URL_SAFE_NO_PAD.encode(Uuid::new_v4().as_bytes())
 }
 
@@ -143,7 +143,7 @@ pub(crate) fn needs_generated_network_id(value: &str) -> bool {
     value.trim().is_empty() || value.trim() == "nostr-vpn"
 }
 
-pub(crate) fn npub_for_pubkey_hex(pubkey_hex: &str) -> String {
+pub fn npub_for_pubkey_hex(pubkey_hex: &str) -> String {
     PublicKey::from_hex(pubkey_hex)
         .ok()
         .and_then(|public_key| public_key.to_bech32().ok())

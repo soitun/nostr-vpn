@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn decodes_qr_png() {
-        let text = "nvpn://invite/test";
+        let text = "nvpn://join-request/test";
         let code = QrCode::new(text.as_bytes()).expect("build qr");
         let modules = code.width();
         let quiet = 4usize;

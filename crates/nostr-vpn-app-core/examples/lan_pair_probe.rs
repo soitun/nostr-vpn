@@ -1,7 +1,7 @@
 //! Cross-process probe for the LAN pairing worker.
 //!
 //! Designed for two-container e2e testing — each instance generates a fresh
-//! keypair, builds an invite that lists itself as admin, and spawns a worker
+//! keypair, builds a join-request marker, and spawns a worker
 //! that broadcasts + listens. Every received `LanPairingSignal` is emitted as
 //! a single JSON line on stdout so the test runner can grep for the peer.
 //!
@@ -18,7 +18,6 @@ use std::io::Write;
 use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Context, Result};
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use nostr_sdk::prelude::ToBech32;
 use nostr_vpn_app_core::lan_pairing::{
     LanPairingAnnouncement, LanPairingSignal, spawn_lan_pairing_worker,
@@ -38,9 +37,7 @@ fn main() -> Result<()> {
 
     let keys = nostr_sdk::Keys::generate();
     let npub = keys.public_key().to_bech32().expect("npub");
-    let network_id = format!("probe-{}", &npub[5..13]);
-    let network_name = format!("{node_name}'s probe net");
-    let invite = encode_probe_invite(&npub, &network_name, &network_id);
+    let request = format!("nvpn://join-request/probe-{}", &npub[5..13]);
 
     let mut stdout = std::io::stdout().lock();
     emit_line(
@@ -53,7 +50,7 @@ fn main() -> Result<()> {
             npub: npub.clone(),
             node_name: node_name.clone(),
             endpoint: "127.0.0.1:51820".to_string(),
-            invite,
+            join_request: request,
         },
         keys,
     )
@@ -81,18 +78,6 @@ fn main() -> Result<()> {
         std::process::exit(2);
     }
     Ok(())
-}
-
-fn encode_probe_invite(admin_npub: &str, network_name: &str, network_id: &str) -> String {
-    let payload = json!({
-        "v": 3,
-        "networkName": network_name,
-        "networkId": network_id,
-        "admins": [admin_npub],
-        "relays": ["wss://relay.example"],
-    })
-    .to_string();
-    format!("nvpn://invite/{}", URL_SAFE_NO_PAD.encode(payload))
 }
 
 fn peer_event(signal: &LanPairingSignal) -> serde_json::Value {

@@ -54,7 +54,7 @@ class DeviceQrParserTest {
     }
 
     @Test
-    fun parseScannedDeviceLinkQrRejectsNetworkInvites() {
-        assertNull(parseScannedDeviceLinkQr("nvpn://invite/not-a-device"))
+    fun parseScannedDeviceLinkQrRejectsUnrelatedUrls() {
+        assertNull(parseScannedDeviceLinkQr("https://example.invalid/not-a-device"))
     }
 }

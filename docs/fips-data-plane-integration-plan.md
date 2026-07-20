@@ -8,7 +8,7 @@ that model has been removed from `nostr-vpn`.
 
 `nostr-vpn` owns:
 
-- device identity, invites, admin rosters, aliases, and route policy
+- device identity, signed join requests, admin rosters, aliases, and route policy
 - the visible VPN adapter on each platform
 - packet admission from the active roster into the local tunnel
 
@@ -27,8 +27,8 @@ through its configured mechanisms, but discovery is not membership authority.
   tunnel.
 - FIPS relays or rendezvous peers are connectivity aids, not nostr-vpn roster
   peers.
-- Invites may carry relay URLs for the FIPS discovery layer. Importing an
-  invite must not enable the removed nostr-vpn relay-signaling protocol.
+- Relay discovery is connectivity only; membership and relay settings arrive
+  from an admin-signed roster after join-request approval.
 - `nostr-vpn` must not publish or consume legacy peer announcements.
 - Exit-node work belongs in a separate component later, not in the main private
   mesh runtime.

@@ -574,7 +574,7 @@ private fun PaidRouteWalletActionResult(
         if (action.paymentRequest.isNotBlank()) {
             if (showInvoiceQrCode && action.kind == "topup" && qrJson != null) {
                 QrCode(
-                    invite = action.paymentRequest,
+                    text = action.paymentRequest,
                     qrJson = qrJson,
                     modifier = Modifier.align(Alignment.CenterHorizontally),
                     side = 220.dp,

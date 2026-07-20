@@ -1,302 +1,286 @@
-//! On-disk cache of recently successful non-LAN FIPS peer endpoints.
+//! Compatibility wrapper around FIPS's shared recent-peer cache.
 //!
-//! When two peers complete a handshake over a public-routable address, that
-//! address is the strongest hint we have that they can reach each other again
-//! without first dialing a Nostr relay. Persist a TTL'd snapshot to disk so
-//! the daemon can re-seed FIPS with those addresses on the next boot, before
-//! relays come up. Entries are not limited to the private-network roster:
-//! authenticated open-discovery transit peers are useful overlay neighbors
-//! too, while the nvpn data plane still admits only roster-owned packets.
-//!
-//! LAN addresses (RFC1918, CGNAT, link-local, loopback, ULA) are excluded:
-//! they're either re-learned via mDNS instantly or genuinely useless after a
-//! network move. NAT-traversed source ports are inherently ephemeral; we
-//! accept the staleness risk and rely on the FIPS retry path
-//! (`initiate_peer_retry_connection`) to prefer just-refreshed overlay
-//! adverts over stale statics when a relay becomes available.
+//! The cache is routing memory only. It records reusable endpoints after a
+//! FIPS-authenticated connection, but callers must merge those routes only
+//! into peers that are already authorized or explicitly configured.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+use std::net::{IpAddr, SocketAddr};
 
-use crate::config::split_peer_transport_addr;
-use serde::{Deserialize, Serialize};
+use fips_core::{
+    FipsEndpointPeer, RECENT_PEERS_MAX_ENDPOINTS_PER_PEER, RECENT_PEERS_MAX_PEERS, RecentPeer,
+    RecentPeerEndpoint, RecentPeerTransport, RecentPeers, RecentPeersError,
+};
 
-const CURRENT_VERSION: u8 = 1;
-const MAX_RECENT_ENDPOINTS_PER_PEER: usize = 4;
+use crate::config::{
+    normalize_nostr_pubkey, normalize_runtime_network_id, npub_for_pubkey_hex,
+    split_peer_transport_addr,
+};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+const RECENT_PEERS_SCOPE_PREFIX: &str = "nostr-vpn:";
+
+/// Scope shared by one nostr-vpn network's recent-peer cache.
+pub fn recent_peers_scope(network_id: &str) -> String {
+    format!(
+        "{RECENT_PEERS_SCOPE_PREFIX}{}",
+        normalize_runtime_network_id(network_id)
+    )
+}
+
+/// Seconds-facing compatibility API backed by FIPS's millisecond v1 model.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentPeerEndpoints {
-    #[serde(default = "default_version")]
-    version: u8,
-    #[serde(default)]
-    entries: HashMap<String, Vec<RecentPeerEndpoint>>,
-}
-
-fn default_version() -> u8 {
-    CURRENT_VERSION
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct RecentPeerEndpoint {
-    pub addr: String,
-    pub last_success_at: u64,
+    inner: RecentPeers,
 }
 
 impl RecentPeerEndpoints {
-    pub fn is_empty(&self) -> bool {
-        self.entries.values().all(|endpoints| endpoints.is_empty())
+    /// Create an empty cache bound to a canonical local npub and app scope.
+    pub fn new(
+        local_npub: impl Into<String>,
+        scope: impl Into<String>,
+    ) -> Result<Self, RecentPeersError> {
+        RecentPeers::new(local_npub, scope).map(Self::from_recent_peers)
     }
 
-    /// Record a successful handshake against `addr` for `participant`.
-    ///
-    /// Bare `host:port` and `udp:host:port` are stored as legacy-compatible
-    /// UDP hints; `tcp:host:port` keeps its tag. Returns `true` if the
-    /// in-memory state changed (caller should persist to disk). Returns
-    /// `false` and ignores LAN, loopback, link-local, CGNAT, or unparseable
-    /// addresses — those are not useful as restart hints.
+    /// Wrap an already validated shared recent-peer document.
+    pub fn from_recent_peers(inner: RecentPeers) -> Self {
+        Self { inner }
+    }
+
+    /// Shared recent-peer document used by native persistence adapters.
+    pub fn as_recent_peers(&self) -> &RecentPeers {
+        &self.inner
+    }
+
+    pub fn local_npub(&self) -> &str {
+        self.inner.local_npub()
+    }
+
+    pub fn scope(&self) -> &str {
+        self.inner.scope()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner
+            .peers
+            .values()
+            .all(|peer| peer.endpoints.is_empty())
+    }
+
+    /// Record a reusable authenticated UDP endpoint using the legacy seconds
+    /// timestamp API. Hex public keys are canonicalized to npubs before being
+    /// placed in the shared document. TCP and unusable socket addresses are
+    /// ignored.
     pub fn note_success(&mut self, participant: &str, addr: &str, success_at: u64) -> bool {
-        let Some(addr) = normalize_persistable_endpoint(addr) else {
+        let Some(participant) = canonical_npub(participant) else {
             return false;
         };
-
-        let endpoints = self.entries.entry(participant.to_string()).or_default();
-        let before = endpoints.clone();
-
-        if let Some(existing) = endpoints.iter_mut().find(|entry| entry.addr == addr) {
-            if existing.last_success_at >= success_at {
-                return false;
-            }
-            existing.last_success_at = success_at;
-            cap_endpoint_list(endpoints, MAX_RECENT_ENDPOINTS_PER_PEER);
-            return *endpoints != before;
+        if participant == self.inner.local_npub {
+            return false;
         }
+        let Some(addr) = normalize_reusable_udp_endpoint(addr) else {
+            return false;
+        };
+        let authenticated_at_ms = success_at.saturating_mul(1000);
+        let previous = self.inner.peers.get(&participant).cloned();
+        let peer = self
+            .inner
+            .peers
+            .entry(participant.clone())
+            .or_insert(RecentPeer {
+                last_authenticated_at_ms: authenticated_at_ms,
+                endpoints: Vec::new(),
+            });
+        peer.last_authenticated_at_ms = peer.last_authenticated_at_ms.max(authenticated_at_ms);
 
-        endpoints.push(RecentPeerEndpoint {
-            addr,
-            last_success_at: success_at,
+        if let Some(endpoint) = peer.endpoints.iter_mut().find(|endpoint| {
+            endpoint
+                .addr
+                .parse::<SocketAddr>()
+                .is_ok_and(|stored| stored == addr)
+        }) {
+            endpoint.addr = addr.to_string();
+            endpoint.last_authenticated_at_ms =
+                endpoint.last_authenticated_at_ms.max(authenticated_at_ms);
+        } else {
+            peer.endpoints.push(RecentPeerEndpoint {
+                transport: RecentPeerTransport::Udp,
+                addr: addr.to_string(),
+                last_authenticated_at_ms: authenticated_at_ms,
+            });
+        }
+        peer.endpoints.sort_by(|left, right| {
+            right
+                .last_authenticated_at_ms
+                .cmp(&left.last_authenticated_at_ms)
+                .then_with(|| left.addr.cmp(&right.addr))
         });
-        cap_endpoint_list(endpoints, MAX_RECENT_ENDPOINTS_PER_PEER);
-        *endpoints != before
+        peer.endpoints.truncate(RECENT_PEERS_MAX_ENDPOINTS_PER_PEER);
+        self.retain_newest_peers();
+
+        self.inner.peers.get(&participant) != previous.as_ref()
     }
 
-    /// Drop entries older than `now - ttl_secs`.
+    /// Record one runtime FIPS snapshot only when its authenticated transport
+    /// is a reusable UDP restart candidate.
+    pub fn observe_authenticated_peer(
+        &mut self,
+        peer: &FipsEndpointPeer,
+        authenticated_at_secs: u64,
+    ) -> Result<bool, RecentPeersError> {
+        if peer.authenticated_udp_restart_addr().is_none() {
+            return Ok(false);
+        }
+        self.inner
+            .observe_authenticated_peer(peer, authenticated_at_secs.saturating_mul(1000))
+    }
+
+    /// Drop entries older than `now - ttl_secs` while preserving the legacy
+    /// convention that a zero TTL disables pruning.
     pub fn prune_stale(&mut self, now: u64, ttl_secs: u64) -> bool {
         if ttl_secs == 0 {
             return false;
         }
-        let cutoff = now.saturating_sub(ttl_secs);
-        let mut changed = false;
-
-        self.entries.retain(|_, endpoints| {
-            let before = endpoints.len();
-            endpoints.retain(|entry| entry.last_success_at > cutoff);
-            if endpoints.len() != before {
-                changed = true;
-            }
-            !endpoints.is_empty()
-        });
-
-        changed
+        let peer_count = self.inner.peers.len();
+        let endpoint_count = self
+            .inner
+            .peers
+            .values()
+            .map(|peer| peer.endpoints.len())
+            .sum::<usize>();
+        self.inner
+            .prune(now.saturating_mul(1000), ttl_secs.saturating_mul(1000));
+        self.inner.peers.len() != peer_count
+            || self
+                .inner
+                .peers
+                .values()
+                .map(|peer| peer.endpoints.len())
+                .sum::<usize>()
+                != endpoint_count
     }
 
-    pub fn prune_to_limits(&mut self) -> bool {
-        let mut changed = false;
-        self.entries.retain(|_, endpoints| {
-            if cap_endpoint_list(endpoints, MAX_RECENT_ENDPOINTS_PER_PEER) {
-                changed = true;
-            }
-            !endpoints.is_empty()
-        });
-        changed
-    }
-
-    /// Keep only entries for npubs in `participants`, drop the rest. Available
-    /// for callers that want a roster-scoped cache; nvpn's FIPS overlay keeps
-    /// authenticated non-roster transit peers until TTL expiry.
+    /// Keep only entries for the supplied public keys.
     pub fn retain_participants(&mut self, participants: &HashSet<String>) -> bool {
-        let before = self.entries.len();
-        self.entries
-            .retain(|participant, _| participants.contains(participant));
-        self.entries.len() != before
+        let canonical = participants
+            .iter()
+            .filter_map(|participant| canonical_npub(participant))
+            .collect::<HashSet<_>>();
+        let before = self.inner.peers.len();
+        self.inner
+            .peers
+            .retain(|participant, _| canonical.contains(participant));
+        self.inner.peers.len() != before
     }
 
     /// Endpoint strings recorded for a single participant.
     pub fn endpoints_for(&self, participant: &str) -> Vec<String> {
-        let mut endpoints: Vec<String> = self
-            .entries
-            .get(participant)
-            .map(|entries| entries.iter().map(|entry| entry.addr.clone()).collect())
+        let Some(participant) = canonical_npub(participant) else {
+            return Vec::new();
+        };
+        let mut endpoints = self
+            .inner
+            .peers
+            .get(&participant)
+            .map(|peer| {
+                peer.endpoints
+                    .iter()
+                    .map(|endpoint| endpoint.addr.clone())
+                    .collect::<Vec<_>>()
+            })
             .unwrap_or_default();
         endpoints.sort();
         endpoints.dedup();
         endpoints
     }
 
-    /// Snapshot suitable for merging with `AppConfig.fips_peer_endpoints`
-    /// before constructing the FIPS endpoint config: a sorted vector of
-    /// `(participant, sorted_endpoints)`.
+    /// Sorted compatibility snapshot without timestamps.
     pub fn as_static_peer_endpoints(&self) -> Vec<(String, Vec<String>)> {
-        let mut out: Vec<(String, Vec<String>)> = self
-            .entries
+        self.inner
+            .peers
             .iter()
-            .filter_map(|(participant, endpoints)| {
-                let mut addrs: Vec<String> =
-                    endpoints.iter().map(|entry| entry.addr.clone()).collect();
-                addrs.sort();
-                addrs.dedup();
-                if addrs.is_empty() {
-                    None
-                } else {
-                    Some((participant.clone(), addrs))
-                }
-            })
-            .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        out
-    }
-
-    /// Snapshot with per-address freshness preserved. fips's dialer ranks
-    /// `PeerAddress` candidates by `seen_at_ms` descending — by handing it
-    /// the cache's `last_success_at_ms` we let recently-working endpoints
-    /// race ahead of unstamped operator-supplied hints in the same pass,
-    /// without any source-aware preference logic.
-    ///
-    /// `last_success_at` is stored in seconds; the returned value is in
-    /// milliseconds to match fips's `PeerAddress::seen_at_ms` unit.
-    pub fn as_static_peer_endpoints_with_seen_at(&self) -> Vec<(String, Vec<(String, u64)>)> {
-        let mut out: Vec<(String, Vec<(String, u64)>)> = self
-            .entries
-            .iter()
-            .filter_map(|(participant, endpoints)| {
-                let mut addrs: Vec<(String, u64)> = endpoints
+            .filter_map(|(participant, peer)| {
+                let mut endpoints = peer
+                    .endpoints
                     .iter()
-                    .map(|entry| {
-                        (
-                            entry.addr.clone(),
-                            entry.last_success_at.saturating_mul(1000),
-                        )
-                    })
-                    .collect();
-                addrs.sort_by(|a, b| a.0.cmp(&b.0));
-                addrs.dedup_by(|a, b| a.0 == b.0);
-                if addrs.is_empty() {
-                    None
-                } else {
-                    Some((participant.clone(), addrs))
-                }
+                    .map(|endpoint| endpoint.addr.clone())
+                    .collect::<Vec<_>>();
+                endpoints.sort();
+                endpoints.dedup();
+                (!endpoints.is_empty()).then(|| (participant.clone(), endpoints))
             })
-            .collect();
-        out.sort_by(|a, b| a.0.cmp(&b.0));
-        out
+            .collect()
     }
 
-    pub fn to_json_pretty(&self) -> serde_json::Result<String> {
-        let snapshot = SerializedRecentPeers {
-            version: CURRENT_VERSION,
-            entries: &self.entries,
-        };
-        serde_json::to_string_pretty(&snapshot)
+    /// Sorted compatibility snapshot preserving FIPS's millisecond freshness.
+    pub fn as_static_peer_endpoints_with_seen_at(&self) -> Vec<(String, Vec<(String, u64)>)> {
+        self.inner
+            .peers
+            .iter()
+            .filter_map(|(participant, peer)| {
+                let mut endpoints = peer
+                    .endpoints
+                    .iter()
+                    .map(|endpoint| (endpoint.addr.clone(), endpoint.last_authenticated_at_ms))
+                    .collect::<Vec<_>>();
+                endpoints.sort_by(|left, right| left.0.cmp(&right.0));
+                endpoints.dedup_by(|left, right| left.0 == right.0);
+                (!endpoints.is_empty()).then(|| (participant.clone(), endpoints))
+            })
+            .collect()
     }
 
-    pub fn from_json(raw: &str) -> serde_json::Result<Self> {
-        let trimmed = raw.trim();
-        if trimmed.is_empty() {
-            return Ok(Self::default());
+    pub fn to_json_pretty(&self) -> Result<String, RecentPeersError> {
+        self.inner.to_json_pretty()
+    }
+
+    pub fn from_json(
+        raw: &str,
+        expected_local_npub: &str,
+        expected_scope: &str,
+    ) -> Result<Self, RecentPeersError> {
+        RecentPeers::from_json(raw, expected_local_npub, expected_scope)
+            .map(Self::from_recent_peers)
+    }
+
+    fn retain_newest_peers(&mut self) {
+        while self.inner.peers.len() > RECENT_PEERS_MAX_PEERS {
+            let Some(oldest) = self
+                .inner
+                .peers
+                .iter()
+                .min_by(|left, right| {
+                    left.1
+                        .last_authenticated_at_ms
+                        .cmp(&right.1.last_authenticated_at_ms)
+                        .then_with(|| left.0.cmp(right.0))
+                })
+                .map(|(participant, _)| participant.clone())
+            else {
+                break;
+            };
+            self.inner.peers.remove(&oldest);
         }
-        let mut parsed: Self = serde_json::from_str(trimmed)?;
-        if parsed.version == 0 {
-            parsed.version = CURRENT_VERSION;
-        }
-        parsed.prune_to_limits();
-        Ok(parsed)
     }
 }
 
-fn cap_endpoint_list(endpoints: &mut Vec<RecentPeerEndpoint>, max_endpoints: usize) -> bool {
-    let before = endpoints.len();
-    if before <= max_endpoints {
-        return false;
-    }
-    endpoints.sort_by(|left, right| {
-        right
-            .last_success_at
-            .cmp(&left.last_success_at)
-            .then_with(|| left.addr.cmp(&right.addr))
-    });
-    endpoints.truncate(max_endpoints);
-    before != endpoints.len()
+fn canonical_npub(value: &str) -> Option<String> {
+    normalize_nostr_pubkey(value.trim())
+        .ok()
+        .map(|pubkey| npub_for_pubkey_hex(&pubkey))
 }
 
-#[derive(Serialize)]
-struct SerializedRecentPeers<'a> {
-    version: u8,
-    entries: &'a HashMap<String, Vec<RecentPeerEndpoint>>,
-}
-
-/// Return an address we'd actually want to retry across a daemon restart:
-/// IP literals with a port, on public-routable space. The returned string keeps
-/// TCP transport tags and normalizes UDP/bare hints to bare `host:port` for
-/// compatibility with existing recent-peer JSON.
-fn normalize_persistable_endpoint(addr: &str) -> Option<String> {
-    if addr.is_empty() {
+fn normalize_reusable_udp_endpoint(addr: &str) -> Option<SocketAddr> {
+    let (transport, host_port) = split_peer_transport_addr(addr.trim());
+    if !transport.eq_ignore_ascii_case("udp") {
         return None;
     }
-    let (transport, host_port) = split_peer_transport_addr(addr);
-    let transport = transport.to_ascii_lowercase();
-    if transport != "udp" && transport != "tcp" {
-        return None;
-    }
-    let Ok(socket_addr) = host_port.parse::<std::net::SocketAddr>() else {
-        return None;
+    let addr = host_port.parse::<SocketAddr>().ok()?;
+    let unusable_ip = match addr.ip() {
+        IpAddr::V4(ip) => ip.is_unspecified() || ip.is_multicast(),
+        IpAddr::V6(ip) => ip.is_unspecified() || ip.is_multicast(),
     };
-    if socket_addr.port() == 0 {
-        return None;
-    }
-    if is_private_or_local_ip(&socket_addr.ip()) {
-        return None;
-    }
-    let host_port = socket_addr.to_string();
-    if transport == "tcp" {
-        Some(format!("tcp:{host_port}"))
-    } else {
-        Some(host_port)
-    }
-}
-
-fn is_private_or_local_ip(ip: &std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            // Documentation prefixes (192.0.2.0/24, 198.51.100.0/24,
-            // 203.0.113.0/24) are intentionally NOT excluded — they're
-            // unroutable on the public internet by convention but FIPS
-            // can legitimately handshake against them in test overlays.
-            if v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_unspecified()
-                || v4.is_multicast()
-            {
-                return true;
-            }
-            let octets = v4.octets();
-            // RFC 6598 CGNAT 100.64.0.0/10
-            if octets[0] == 100 && (64..=127).contains(&octets[1]) {
-                return true;
-            }
-            // RFC 2544 benchmarking 198.18.0.0/15
-            if octets[0] == 198 && matches!(octets[1], 18 | 19) {
-                return true;
-            }
-            false
-        }
-        std::net::IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_multicast()
-                || v6.is_unicast_link_local()
-                || v6.is_unique_local()
-        }
-    }
+    (addr.port() != 0 && !unusable_ip).then_some(addr)
 }
 
 #[cfg(test)]
@@ -304,42 +288,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn public_ipv4_is_persistable() {
+    fn scope_is_namespaced_and_network_bound() {
+        assert_eq!(recent_peers_scope("  My Network  "), "nostr-vpn:My Network");
+    }
+
+    #[test]
+    fn reusable_udp_normalizes_bare_and_tagged_addresses() {
         assert_eq!(
-            normalize_persistable_endpoint("203.0.113.5:51820"),
-            Some("203.0.113.5:51820".to_string())
+            normalize_reusable_udp_endpoint("203.0.113.5:51820"),
+            Some("203.0.113.5:51820".parse().unwrap())
         );
         assert_eq!(
-            normalize_persistable_endpoint("8.8.8.8:53"),
-            Some("8.8.8.8:53".to_string())
-        );
-        assert_eq!(
-            normalize_persistable_endpoint("tcp:203.0.113.5:443"),
-            Some("tcp:203.0.113.5:443".to_string())
-        );
-        assert_eq!(
-            normalize_persistable_endpoint("udp:203.0.113.5:51820"),
-            Some("203.0.113.5:51820".to_string())
+            normalize_reusable_udp_endpoint("udp:10.0.0.5:51820"),
+            Some("10.0.0.5:51820".parse().unwrap())
         );
     }
 
     #[test]
-    fn private_ranges_are_excluded() {
-        assert_eq!(normalize_persistable_endpoint("10.0.0.1:51820"), None);
-        assert_eq!(normalize_persistable_endpoint("192.168.1.1:51820"), None);
-        assert_eq!(normalize_persistable_endpoint("172.16.0.1:51820"), None);
-        assert_eq!(normalize_persistable_endpoint("100.64.0.1:51820"), None);
-        assert_eq!(normalize_persistable_endpoint("198.18.0.1:51820"), None);
-        assert_eq!(normalize_persistable_endpoint("127.0.0.1:51820"), None);
-        assert_eq!(normalize_persistable_endpoint("[fe80::1]:51820"), None);
-        assert_eq!(normalize_persistable_endpoint("[fd00::1]:51820"), None);
-    }
-
-    #[test]
-    fn malformed_or_zero_port_rejected() {
-        assert_eq!(normalize_persistable_endpoint(""), None);
-        assert_eq!(normalize_persistable_endpoint("203.0.113.5"), None);
-        assert_eq!(normalize_persistable_endpoint("203.0.113.5:0"), None);
-        assert_eq!(normalize_persistable_endpoint("not-an-address"), None);
+    fn tcp_and_unusable_udp_are_rejected() {
+        assert_eq!(normalize_reusable_udp_endpoint("tcp:203.0.113.5:443"), None);
+        assert_eq!(normalize_reusable_udp_endpoint("203.0.113.5:0"), None);
+        assert_eq!(normalize_reusable_udp_endpoint("0.0.0.0:51820"), None);
+        assert_eq!(normalize_reusable_udp_endpoint("[ff02::1]:51820"), None);
     }
 }

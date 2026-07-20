@@ -50,6 +50,9 @@ fn apply_mobile_join_roster(
     config_path: Option<&Path>,
     join_roster: &JoinRosterControl,
 ) -> Result<Option<MobileTunnelConfig>> {
+    if mobile_join_roster_is_durably_persisted(app_config, config_path, join_roster)? {
+        return Ok(None);
+    }
     let mut app = app_config
         .write()
         .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
@@ -57,29 +60,64 @@ fn apply_mobile_join_roster(
     let Some(_applied) = app.apply_nostr_join_roster(join_roster, unix_timestamp())? else {
         return Ok(None);
     };
-    if let Some(config_path) = config_path
-        && let Err(error) = upsert_signed_roster(
+    if let Some(config_path) = config_path {
+        upsert_signed_roster(
             &signed_rosters_file_path(config_path),
             join_roster.signed_roster.clone(),
-        )
-    {
-        mobile_debug_log(format!(
-            "mobile: join roster saved in config but artifact save failed: {error:#}"
-        ));
-        tracing::warn!(?error, "mobile: join roster artifact save failed");
+        )?;
     }
     maybe_autoconfigure_node(&mut app);
-    if let Some(config_path) = config_path
-        && let Err(error) = app.save(config_path)
-    {
-        mobile_debug_log(format!(
-            "mobile: join roster applied in memory but config save failed: {error:#}"
-        ));
-        tracing::warn!(?error, "mobile: join roster applied in memory but config save failed");
+    if let Some(config_path) = config_path {
+        app.save(config_path)?;
     }
     app_config_dirty.store(true, Ordering::Relaxed);
     let config_path = config_path.unwrap_or_else(|| Path::new(""));
     MobileTunnelConfig::from_app_with_config_path(&app, config_path).map(Some)
+}
+
+fn mobile_join_roster_is_durably_persisted(
+    app_config: &Arc<RwLock<AppConfig>>,
+    config_path: Option<&Path>,
+    join_roster: &JoinRosterControl,
+) -> Result<bool> {
+    let network_id = join_roster.signed_roster.network_id()?;
+    let roster_event_id = join_roster.signed_roster.artifact_hash();
+    if let Some(config_path) = config_path {
+        let persisted = AppConfig::load(config_path)?;
+        let original_request_is_pending = persisted
+            .pending_nostr_join_request
+            .as_ref()
+            .is_some_and(|pending| pending.request.request_secret == join_roster.request_secret);
+        if original_request_is_pending
+            || !mobile_signed_roster_is_current_for_app(
+                &persisted,
+                &network_id,
+                &join_roster.signed_roster,
+            )
+        {
+            return Ok(false);
+        }
+        let store = nostr_vpn_core::signed_rosters::load_signed_rosters(
+            &signed_rosters_file_path(config_path),
+        )?;
+        return Ok(store
+            .latest_for(&network_id)
+            .is_some_and(|signed| signed.artifact_hash() == roster_event_id));
+    }
+
+    let app = app_config
+        .read()
+        .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
+    let original_request_is_pending = app
+        .pending_nostr_join_request
+        .as_ref()
+        .is_some_and(|pending| pending.request.request_secret == join_roster.request_secret);
+    Ok(!original_request_is_pending
+        && mobile_signed_roster_is_current_for_app(
+            &app,
+            &network_id,
+            &join_roster.signed_roster,
+        ))
 }
 
 fn mobile_signed_roster_is_current_for_app(
@@ -113,7 +151,7 @@ fn record_mobile_join_request(
     app.ensure_defaults();
     let changed = match app.record_inbound_join_request(
         &request.network_id,
-        &request.invite_secret,
+        &request.join_secret,
         sender_pubkey,
         &request.requester_node_name,
         requested_at,
@@ -804,7 +842,7 @@ fn pending_mobile_join_request_frame(
         requested_at: config.pending_join_requested_at,
         request: MeshJoinRequest {
             network_id: normalize_runtime_network_id(&config.network_id),
-            invite_secret: config.pending_join_invite_secret.trim().to_string(),
+            join_secret: config.pending_join_secret.trim().to_string(),
             requester_node_name: config.node_name.trim().to_string(),
         },
     };

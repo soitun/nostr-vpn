@@ -691,8 +691,8 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.peer_pubkeys()
     }
 
-    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
-        self.mesh.authenticated_peer_transport_addrs().await
+    pub(crate) async fn authenticated_endpoint_peers(&self) -> Result<Vec<FipsEndpointPeer>> {
+        self.mesh.authenticated_endpoint_peers().await
     }
 
     pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {
@@ -745,6 +745,27 @@ impl FipsPrivateTunnelRuntime {
             .enqueue_roster(&self.state_control.sender(), participant, signed_roster)
     }
 
+    pub(crate) async fn send_join_roster(
+        &self,
+        participant: &str,
+        join_roster: JoinRosterControl,
+    ) -> Result<()> {
+        self.mesh
+            .send_join_roster(&self.state_control, participant, join_roster)
+            .await
+    }
+
+    pub(crate) fn enqueue_join_roster_ack(
+        &self,
+        participant: &str,
+        roster_event_id: String,
+    ) -> Result<()> {
+        self.mesh.enqueue_join_roster_ack(
+            &self.state_control.sender(),
+            participant,
+            roster_event_id,
+        )
+    }
     pub(crate) fn enqueue_capabilities(
         &self,
         participant: &str,

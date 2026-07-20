@@ -369,23 +369,12 @@ fn drain_pending_urls(runtime: &AppRuntime) {
 
 fn handle_deep_link(app: &AppRef, raw: &str) {
     match deep_link::parse(raw) {
-        Some(deep_link::DeepLink::Invite(invite)) => import_invite(app, invite),
         Some(deep_link::DeepLink::JoinRequest(request)) => {
             dispatch(app, NativeAppAction::ImportJoinRequest { request });
         }
         #[cfg(debug_assertions)]
         Some(deep_link::DeepLink::Debug(deep_link::DebugAction::Tick)) => {
             dispatch(app, NativeAppAction::Tick);
-        }
-        #[cfg(debug_assertions)]
-        Some(deep_link::DeepLink::Debug(deep_link::DebugAction::RequestJoin { network_id })) => {
-            let network_id = {
-                let state = app.borrow().state.clone();
-                resolve_network_id(&state, network_id)
-            };
-            if let Some(network_id) = network_id {
-                dispatch(app, NativeAppAction::RequestNetworkJoin { network_id });
-            }
         }
         #[cfg(debug_assertions)]
         Some(deep_link::DeepLink::Debug(deep_link::DebugAction::AcceptJoin {
@@ -421,23 +410,6 @@ fn handle_deep_link(app: &AppRef, raw: &str) {
             }
         }
         None => {}
-    }
-}
-
-fn import_invite(app: &AppRef, invite: String) {
-    let invite = invite.trim().to_string();
-    if invite.is_empty() {
-        return;
-    }
-    {
-        let mut model = app.borrow_mut();
-        model.drafts.invite.clear();
-        model.notice.clear();
-        model.add_network_join_status.clear();
-    }
-    let state = dispatch(app, NativeAppAction::ImportNetworkInvite { invite });
-    if active_network(&state).is_some() {
-        set_page(app, Page::Share);
     }
 }
 

@@ -13,8 +13,7 @@ use nostr_sdk::prelude::{Event, EventBuilder, Keys, Kind, Timestamp};
 use serde::{Deserialize, Serialize};
 use socket2::{Domain, Protocol, SockRef, Socket, Type};
 
-use crate::config::normalize_nostr_pubkey;
-use crate::invite::{parse_network_invite, to_npub};
+use crate::config::{normalize_nostr_pubkey, npub_for_pubkey_hex};
 
 const LAN_PAIRING_ANNOUNCEMENT_VERSION: u8 = 3;
 const LAN_PAIRING_ANNOUNCEMENT_KIND: u16 = 37_389;
@@ -36,7 +35,7 @@ pub struct LanPairingSignal {
     pub endpoint: String,
     pub network_name: String,
     pub network_id: String,
-    pub invite: String,
+    pub join_request: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +43,7 @@ pub struct LanPairingAnnouncement {
     pub npub: String,
     pub node_name: String,
     pub endpoint: String,
-    pub invite: String,
+    pub join_request: String,
 }
 
 /// Shared control surface for the worker thread.
@@ -118,7 +117,7 @@ struct LanPairingAnnouncementContent {
     node_name: String,
     #[serde(default)]
     endpoint: String,
-    invite: String,
+    join_request: String,
 }
 
 impl LanPairingWorker {
@@ -130,14 +129,14 @@ impl LanPairingWorker {
         signals
     }
 
-    /// Mark the worker as broadcasting our invite until `expires_at`.
+    /// Mark the worker as broadcasting our join request until `expires_at`.
     pub fn set_broadcast_until(&self, expires_at: SystemTime) {
         self.control
             .broadcast_until
             .store(unix_seconds(expires_at), Ordering::Relaxed);
     }
 
-    /// Mark the worker as listening for nearby invites until `expires_at`.
+    /// Mark the worker as listening for nearby join requests until `expires_at`.
     pub fn set_listen_until(&self, expires_at: SystemTime) {
         self.control
             .listen_until
@@ -341,39 +340,23 @@ fn decode_lan_pairing_payload_at(
             Err(_) => return Ok(None),
         };
 
-    let sender_npub = to_npub(&signed.event.pubkey.to_hex());
+    let sender_npub = npub_for_pubkey_hex(&signed.event.pubkey.to_hex());
     if sender_npub == own_npub.trim() {
         return Ok(None);
     }
 
-    let advertised = announcement.invite.trim();
-    if is_join_request_link(advertised) {
-        return Ok(Some(LanPairingSignal {
-            npub: sender_npub.clone(),
-            node_name: announcement.node_name.trim().to_string(),
-            endpoint: announcement.endpoint.trim().to_string(),
-            network_name: "Join request".to_string(),
-            network_id: sender_npub,
-            invite: advertised.to_string(),
-        }));
-    }
-
-    let invite = parse_network_invite(advertised).context("failed to parse LAN pairing invite")?;
-    if !invite.admins.iter().any(|admin| admin == &sender_npub) {
+    let join_request = announcement.join_request.trim();
+    if !is_join_request_link(join_request) {
         return Ok(None);
     }
 
     Ok(Some(LanPairingSignal {
-        npub: sender_npub,
+        npub: sender_npub.clone(),
         node_name: announcement.node_name.trim().to_string(),
         endpoint: announcement.endpoint.trim().to_string(),
-        network_name: if invite.network_name.trim().is_empty() {
-            invite.network_id.clone()
-        } else {
-            invite.network_name
-        },
-        network_id: invite.network_id,
-        invite: advertised.to_string(),
+        network_name: "Join request".to_string(),
+        network_id: sender_npub,
+        join_request: join_request.to_string(),
     }))
 }
 
@@ -491,7 +474,7 @@ fn encode_signed_lan_pairing_announcement(
     let content = serde_json::to_string(&LanPairingAnnouncementContent {
         node_name: announcement.node_name.clone(),
         endpoint: announcement.endpoint.clone(),
-        invite: announcement.invite.clone(),
+        join_request: announcement.join_request.clone(),
     })
     .context("failed to encode LAN announcement content")?;
     let event = EventBuilder::new(Kind::Custom(LAN_PAIRING_ANNOUNCEMENT_KIND), content)
@@ -526,7 +509,6 @@ fn unix_seconds(time: SystemTime) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     use nostr_sdk::prelude::ToBech32;
     use serde_json::json;
     use std::time::Instant;
@@ -577,37 +559,6 @@ mod tests {
     }
 
     #[test]
-    fn decodes_lan_announcement_with_invite_metadata() {
-        let admin = nostr_sdk::Keys::generate();
-        let admin_npub = admin.public_key().to_bech32().expect("npub");
-        let own_npub = nostr_sdk::Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("npub");
-        let invite = invite_for(&admin_npub, "Office mesh", "office-mesh");
-        let payload = encode_signed_lan_pairing_announcement(
-            &LanPairingAnnouncement {
-                npub: admin_npub,
-                node_name: "Alice Mac".to_string(),
-                endpoint: "192.0.2.10:51820".to_string(),
-                invite,
-            },
-            &admin,
-            unix_timestamp(),
-        )
-        .expect("signed payload");
-
-        let signal = decode_lan_pairing_payload(&payload, &own_npub)
-            .expect("decode")
-            .expect("peer");
-
-        assert_eq!(signal.node_name, "Alice Mac");
-        assert_eq!(signal.endpoint, "192.0.2.10:51820");
-        assert_eq!(signal.network_name, "Office mesh");
-        assert_eq!(signal.network_id, "office-mesh");
-    }
-
-    #[test]
     fn decodes_lan_announcement_with_join_request() {
         let requester = nostr_sdk::Keys::generate();
         let requester_npub = requester.public_key().to_bech32().expect("requester npub");
@@ -621,7 +572,7 @@ mod tests {
                 npub: requester_npub,
                 node_name: "Pixel Phone".to_string(),
                 endpoint: String::new(),
-                invite: join_request.to_string(),
+                join_request: join_request.to_string(),
             },
             &requester,
             unix_timestamp(),
@@ -634,7 +585,7 @@ mod tests {
 
         assert_eq!(signal.node_name, "Pixel Phone");
         assert_eq!(signal.network_name, "Join request");
-        assert_eq!(signal.invite, join_request);
+        assert_eq!(signal.join_request, join_request);
     }
 
     #[test]
@@ -648,7 +599,7 @@ mod tests {
             "npub": admin_npub,
             "nodeName": "Spoofed peer",
             "endpoint": "192.0.2.10:51820",
-            "invite": invite_for(&admin_npub, "Spoofed", "spoofed"),
+            "joinRequest": "nvpn://join-request/spoofed",
             "timestamp": unix_timestamp()
         })
         .to_string();
@@ -668,7 +619,7 @@ mod tests {
             npub: npub.clone(),
             node_name: "Alice".to_string(),
             endpoint: "192.0.2.10:51820".to_string(),
-            invite: invite_for(&npub, "Alice mesh", "alice-mesh"),
+            join_request: "nvpn://join-request/alice".to_string(),
         };
         let now = unix_timestamp();
         let stale = now.saturating_sub(LAN_PAIRING_STALE_AFTER.as_secs() + 1);
@@ -690,7 +641,7 @@ mod tests {
             npub: npub.clone(),
             node_name: "Alice".to_string(),
             endpoint: "192.0.2.10:51820".to_string(),
-            invite: invite_for(&npub, "Alice mesh", "alice-mesh"),
+            join_request: "nvpn://join-request/alice".to_string(),
         };
         let payload =
             encode_signed_lan_pairing_announcement(&announcement, &keys, unix_timestamp())
@@ -699,7 +650,7 @@ mod tests {
         tampered["event"]["content"] = json!({
             "nodeName": "Mallory",
             "endpoint": "192.0.2.99:51820",
-            "invite": announcement.invite,
+            "joinRequest": announcement.join_request,
         })
         .to_string()
         .into();
@@ -713,18 +664,14 @@ mod tests {
     }
 
     #[test]
-    fn signed_lan_announcement_must_match_invite_admin() {
+    fn signed_lan_announcement_rejects_non_join_request_content() {
         let signer = nostr_sdk::Keys::generate();
         let signer_npub = signer.public_key().to_bech32().expect("npub");
-        let actual_admin = nostr_sdk::Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("npub");
         let announcement = LanPairingAnnouncement {
             npub: signer_npub,
             node_name: "Mallory".to_string(),
             endpoint: "192.0.2.10:51820".to_string(),
-            invite: invite_for(&actual_admin, "Alice mesh", "alice-mesh"),
+            join_request: "https://obsolete.example".to_string(),
         };
         let now = unix_timestamp();
         let payload = encode_signed_lan_pairing_announcement(&announcement, &signer, now)
@@ -738,13 +685,13 @@ mod tests {
     }
 
     #[test]
-    fn lan_pairing_workers_exchange_invites_over_loopback_transport() {
+    fn lan_pairing_workers_exchange_join_requests_over_loopback_transport() {
         let alice_keys = nostr_sdk::Keys::generate();
         let alice_npub = alice_keys.public_key().to_bech32().expect("alice npub");
         let bob_keys = nostr_sdk::Keys::generate();
         let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
-        let alice_invite = invite_for(&alice_npub, "Alice mesh", "alice-mesh");
-        let bob_invite = invite_for(&bob_npub, "Bob mesh", "bob-mesh");
+        let alice_request = "nvpn://join-request/alice".to_string();
+        let bob_request = "nvpn://join-request/bob".to_string();
         let expires_at = SystemTime::now()
             .checked_add(Duration::from_secs(7))
             .expect("expiry");
@@ -759,7 +706,7 @@ mod tests {
                 npub: alice_npub.clone(),
                 node_name: "Alice".to_string(),
                 endpoint: "192.0.2.10:51820".to_string(),
-                invite: alice_invite,
+                join_request: alice_request,
             },
             alice_keys,
             alice_socket,
@@ -772,7 +719,7 @@ mod tests {
                 npub: bob_npub.clone(),
                 node_name: "Bob".to_string(),
                 endpoint: "192.0.2.11:51820".to_string(),
-                invite: bob_invite,
+                join_request: bob_request,
             },
             bob_keys,
             bob_socket,
@@ -788,12 +735,12 @@ mod tests {
             alice_saw_bob |= alice.drain().into_iter().any(|signal| {
                 signal.npub == bob_npub
                     && signal.node_name == "Bob"
-                    && signal.network_id == "bob-mesh"
+                    && signal.network_name == "Join request"
             });
             bob_saw_alice |= bob.drain().into_iter().any(|signal| {
                 signal.npub == alice_npub
                     && signal.node_name == "Alice"
-                    && signal.network_id == "alice-mesh"
+                    && signal.network_name == "Join request"
             });
             thread::sleep(Duration::from_millis(100));
         }
@@ -801,8 +748,14 @@ mod tests {
         alice.stop();
         bob.stop();
 
-        assert!(alice_saw_bob, "alice did not receive bob's LAN invite");
-        assert!(bob_saw_alice, "bob did not receive alice's LAN invite");
+        assert!(
+            alice_saw_bob,
+            "alice did not receive bob's LAN join request"
+        );
+        assert!(
+            bob_saw_alice,
+            "bob did not receive alice's LAN join request"
+        );
     }
 
     #[test]
@@ -811,13 +764,13 @@ mod tests {
         let alice_npub = alice_keys.public_key().to_bech32().expect("alice npub");
         let bob_keys = nostr_sdk::Keys::generate();
         let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
-        let alice_invite = invite_for(&alice_npub, "Alice mesh", "alice-mesh");
-        let bob_invite = invite_for(&bob_npub, "Bob mesh", "bob-mesh");
+        let alice_request = "nvpn://join-request/alice".to_string();
+        let bob_request = "nvpn://join-request/bob".to_string();
         let expires_at = SystemTime::now()
             .checked_add(Duration::from_secs(7))
             .expect("expiry");
 
-        // Alice broadcasts only — she should never surface bob's invite.
+        // Alice broadcasts only — she should never surface bob's request.
         let alice_socket = bind_loopback_socket();
         let bob_socket = bind_loopback_socket();
         let bob_addr = local_addr_v4(&bob_socket);
@@ -827,7 +780,7 @@ mod tests {
                 npub: alice_npub.clone(),
                 node_name: "Alice".to_string(),
                 endpoint: "192.0.2.10:51820".to_string(),
-                invite: alice_invite,
+                join_request: alice_request,
             },
             alice_keys,
             alice_socket,
@@ -841,7 +794,7 @@ mod tests {
                 npub: bob_npub.clone(),
                 node_name: "Bob".to_string(),
                 endpoint: "192.0.2.11:51820".to_string(),
-                invite: bob_invite,
+                join_request: bob_request,
             },
             bob_keys,
             bob_socket,
@@ -856,11 +809,11 @@ mod tests {
             bob_saw_alice |= bob
                 .drain()
                 .into_iter()
-                .any(|signal| signal.npub == alice_npub && signal.network_id == "alice-mesh");
+                .any(|signal| signal.npub == alice_npub && signal.network_name == "Join request");
             alice_saw_bob |= alice
                 .drain()
                 .into_iter()
-                .any(|signal| signal.npub == bob_npub && signal.network_id == "bob-mesh");
+                .any(|signal| signal.npub == bob_npub && signal.network_name == "Join request");
             thread::sleep(Duration::from_millis(100));
         }
 
@@ -889,17 +842,5 @@ mod tests {
         );
         assert_eq!(directed_broadcast(Ipv4Addr::new(10, 0, 0, 5), 32), None);
         assert_eq!(directed_broadcast(Ipv4Addr::new(10, 0, 0, 5), 0), None);
-    }
-
-    fn invite_for(admin_npub: &str, network_name: &str, network_id: &str) -> String {
-        let payload = json!({
-            "v": 3,
-            "networkName": network_name,
-            "networkId": network_id,
-            "admins": [admin_npub],
-            "relays": ["wss://relay.example"]
-        })
-        .to_string();
-        format!("nvpn://invite/{}", URL_SAFE_NO_PAD.encode(payload))
     }
 }

@@ -8,7 +8,7 @@ The `README.md` stays product-facing. Protocol details live here so they can tra
 
 `nostr-vpn` is split into three layers:
 
-- Out-of-band bootstrapping with invite payloads and QR codes
+- Out-of-band signed join requests carried as links or QR codes
 - Network membership and admin roster state
 - A FIPS-backed private mesh data plane for tunnel traffic
 
@@ -18,7 +18,7 @@ Only the active network participates in the live runtime. `nostr-vpn` no longer 
 
 | Name | Purpose | Format |
 | --- | --- | --- |
-| Nostr identity keypair | Authenticates device identity, invites, admin actions, and FIPS discovery identity | `nsec`/`npub` at the edges, normalized to hex internally |
+| Nostr identity keypair | Authenticates device identity, join requests, admin actions, and FIPS discovery identity | `nsec`/`npub` at the edges, normalized to hex internally |
 | `network_id` | Stable mesh identifier used for roster scope and tunnel-IP derivation | String |
 
 Important details:
@@ -29,16 +29,16 @@ Important details:
   - `SHA256(network_id + "\n" + own_nostr_pubkey_hex)`
   - `10.44.(digest[0] % 254 + 1).(digest[1] % 254 + 1)/32`
 
-## Invites
+## Join Requests
 
-Network invites are `nvpn://invite` payloads. They carry enough information for another device to join or request access:
+A device that has no approved network creates a signed `nvpn://join-request` link. The request carries only the identity and reply information needed for an admin to approve that device:
 
-- network name and stable `network_id`
-- inviter identity
-- optional admin and participant metadata
-- optional relay list for the discovery layer
+- the device's stable application identity
+- an ephemeral request identity and secret
+- the device name
+- reply endpoints used to deliver approval
 
-Relay URLs in invites configure the discovery/rendezvous layer used by FIPS. They are not a nostr-vpn relay roster, and importing an invite does not enable the removed legacy peer-announcement protocol.
+An admin verifies the request, adds the application identity to the active network, signs the resulting roster, and delivers it to the requester. The joining device persists that roster before acknowledging delivery. Network membership, network identifiers, admin identities, and relay configuration come only from the signed roster; they are never accepted from an unsigned bootstrap payload.
 
 ## Admin Roster Sync
 

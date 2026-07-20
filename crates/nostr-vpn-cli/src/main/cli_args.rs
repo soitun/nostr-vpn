@@ -81,22 +81,6 @@ enum Command {
     Status(StatusArgs),
     /// Update persisted node/network settings.
     Set(SetArgs),
-    /// Emit a full `nvpn://invite/...` code for the active network.
-    #[command(hide = true)]
-    CreateInvite(CreateInviteArgs),
-    /// Import a full `nvpn://invite/...` code into the active network config.
-    #[command(hide = true)]
-    ImportInvite(ImportInviteArgs),
-    /// Broadcast the active network's invite over LAN multicast so nearby
-    /// devices running `nvpn discover` can pair without copy/pasting a code.
-    /// Runs in the foreground; Ctrl-C stops broadcasting.
-    #[command(hide = true)]
-    InviteBroadcast(InviteBroadcastArgs),
-    /// Listen for nearby LAN invite broadcasts and print what's found. With
-    /// `--accept`, import the first valid invite seen (queues a join request
-    /// to the broadcaster, same as `nvpn import-invite`).
-    #[command(hide = true)]
-    Discover(DiscoverArgs),
     /// Add one or more devices to the active network roster.
     #[command(alias = "add-participant")]
     AddDevice(UpdateRosterArgs),
@@ -585,49 +569,6 @@ struct SetArgs {
     fips_host_inbound_tcp_ports: Option<String>,
     #[arg(long = "fips-peer-endpoint")]
     fips_peer_endpoints: Vec<String>,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
-struct CreateInviteArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
-struct ImportInviteArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    invite: String,
-    #[arg(long)]
-    json: bool,
-}
-
-#[derive(Debug, Args)]
-struct InviteBroadcastArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    /// How long to keep broadcasting before exiting. Defaults to 15 minutes,
-    /// matching the GUI's broadcast window.
-    #[arg(long, value_name = "SECS")]
-    duration_secs: Option<u64>,
-}
-
-#[derive(Debug, Args)]
-struct DiscoverArgs {
-    #[arg(long)]
-    config: Option<PathBuf>,
-    /// Stop listening after this many seconds (default: keep listening until
-    /// Ctrl-C, or until the first invite when `--accept` is set).
-    #[arg(long, value_name = "SECS")]
-    duration_secs: Option<u64>,
-    /// Import the first valid invite seen and exit. Equivalent to piping the
-    /// discovered code through `nvpn import-invite`.
-    #[arg(long)]
-    accept: bool,
     #[arg(long)]
     json: bool,
 }

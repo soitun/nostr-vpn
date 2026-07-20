@@ -164,12 +164,12 @@ fn record_inbound_join_request_ignores_mismatched_mesh_id() {
     let requester = Keys::generate().public_key().to_hex();
     let mut config = AppConfig::generated();
     config.networks[0].network_id = "mesh-home".to_string();
-    let invite_secret = config.networks[0].invite_secret.clone();
+    let join_secret = config.networks[0].join_secret.clone();
 
     let recorded = config
         .record_inbound_join_request(
             "mesh-other",
-            &invite_secret,
+            &join_secret,
             &requester,
             "alice-phone",
             1_726_000_000,
@@ -193,12 +193,12 @@ fn record_inbound_join_request_updates_matching_listening_network() {
     let mut config = AppConfig::generated();
     config.networks[0].name = "Home".to_string();
     config.networks[0].network_id = "mesh-home".to_string();
-    let invite_secret = config.networks[0].invite_secret.clone();
+    let join_secret = config.networks[0].join_secret.clone();
 
     let recorded = config
         .record_inbound_join_request(
             "mesh-home",
-            &invite_secret,
+            &join_secret,
             &requester,
             "alice-phone",
             1_726_000_000,
@@ -218,11 +218,11 @@ fn record_inbound_join_request_updates_matching_listening_network() {
 }
 
 #[test]
-fn record_inbound_join_request_ignores_wrong_invite_secret() {
+fn record_inbound_join_request_ignores_wrong_join_secret() {
     let requester = Keys::generate().public_key().to_hex();
     let mut config = AppConfig::generated();
     config.networks[0].network_id = "mesh-home".to_string();
-    config.networks[0].invite_secret = "expected-secret".to_string();
+    config.networks[0].join_secret = "expected-secret".to_string();
 
     let recorded = config
         .record_inbound_join_request(
@@ -239,32 +239,18 @@ fn record_inbound_join_request_ignores_wrong_invite_secret() {
 }
 
 #[test]
-fn reset_network_invite_rotates_the_join_request_secret() {
-    let mut config = AppConfig::generated();
-    let network_id = config.networks[0].id.clone();
-    let previous = config.networks[0].invite_secret.clone();
-
-    config
-        .reset_network_invite(&network_id)
-        .expect("reset invite");
-
-    assert_ne!(config.networks[0].invite_secret, previous);
-    assert!(!config.networks[0].invite_secret.is_empty());
-}
-
-#[test]
 fn reject_inbound_join_request_removes_matching_request() {
     let requester = Keys::generate().public_key().to_hex();
     let other = Keys::generate().public_key().to_hex();
     let mut config = AppConfig::generated();
     let network_id = config.networks[0].id.clone();
     config.networks[0].network_id = "mesh-home".to_string();
-    let invite_secret = config.networks[0].invite_secret.clone();
+    let join_secret = config.networks[0].join_secret.clone();
 
     config
         .record_inbound_join_request(
             "mesh-home",
-            &invite_secret,
+            &join_secret,
             &requester,
             "alice-phone",
             1_726_000_000,
@@ -273,7 +259,7 @@ fn reject_inbound_join_request_removes_matching_request() {
     config
         .record_inbound_join_request(
             "mesh-home",
-            &invite_secret,
+            &join_secret,
             &other,
             "bob-phone",
             1_726_000_001,

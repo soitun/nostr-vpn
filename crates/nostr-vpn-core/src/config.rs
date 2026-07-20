@@ -28,16 +28,15 @@ use crate::config_defaults::{
     default_connect_to_non_roster_fips_peers, default_endpoint,
     default_fips_advertise_public_endpoint, default_fips_bootstrap_enabled,
     default_fips_host_tunnel_enabled, default_fips_nostr_discovery_enabled,
-    default_fips_webrtc_enabled, default_invite_secret, default_lan_discovery_enabled,
+    default_fips_webrtc_enabled, default_join_secret, default_lan_discovery_enabled,
     default_launch_on_startup, default_listen_for_join_requests, default_listen_port,
     default_nat_discovery_timeout_secs, default_nat_enabled, default_nat_stun_servers,
     default_network_enabled, default_network_id, default_node_id, default_relays,
     default_tunnel_ip, generate_nostr_identity, is_true, is_zero, needs_generated_network_id,
-    npub_for_pubkey_hex,
 };
 pub use crate::config_defaults::{
     maybe_autoconfigure_node, needs_endpoint_autoconfig, needs_tunnel_ip_autoconfig,
-    normalize_nostr_pubkey, normalize_runtime_network_id,
+    normalize_nostr_pubkey, normalize_runtime_network_id, npub_for_pubkey_hex,
 };
 use crate::config_magic_dns::{
     default_magic_dns_suffix, default_network_entry_id, default_network_name, default_node_name,

@@ -105,7 +105,7 @@ impl NativeAppRuntime {
         let mut admins = network
             .admins
             .iter()
-            .map(|admin| to_npub(admin))
+            .map(|admin| npub_for_pubkey_hex(admin))
             .collect::<Vec<_>>();
         admins.sort();
         admins.dedup();
@@ -139,10 +139,10 @@ impl NativeAppRuntime {
             network_id: normalize_runtime_network_id(&network.network_id),
             local_is_admin: self.config.is_network_admin(&network.id, own_pubkey_hex),
             join_requests_enabled: network.listen_for_join_requests,
-            invite_inviter_npub: if network.invite_inviter.is_empty() {
+            join_request_admin_npub: if network.join_request_admin.is_empty() {
                 String::new()
             } else {
-                to_npub(&network.invite_inviter)
+                npub_for_pubkey_hex(&network.join_request_admin)
             },
             admin_npubs: admins.clone(),
             outbound_join_request: network
@@ -237,7 +237,7 @@ impl NativeAppRuntime {
         };
 
         NativeParticipantState {
-            npub: to_npub(participant),
+            npub: npub_for_pubkey_hex(participant),
             pubkey_hex: participant.to_string(),
             alias,
             magic_dns_alias,

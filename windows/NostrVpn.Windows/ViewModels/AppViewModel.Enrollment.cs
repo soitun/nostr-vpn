@@ -20,38 +20,6 @@ namespace NostrVpn.Windows.ViewModels;
 
 public sealed partial class AppViewModel
 {
-    private async Task ImportInviteAsync(string invite)
-    {
-        var trimmed = invite.Trim();
-        if (string.IsNullOrEmpty(trimmed))
-        {
-            return;
-        }
-        await DispatchAsync(NativeActions.ImportNetworkInvite(trimmed), "Importing invite");
-        // Always clear the paste field after a dispatch — keeps stale invites
-        // from sticking around between sessions, and gives instant visual
-        // feedback that the import was accepted.
-        InviteInput = "";
-    }
-
-    private void PasteInviteFromClipboard()
-    {
-        try
-        {
-            if (Clipboard.ContainsText())
-            {
-                InviteInput = Clipboard.GetText().Trim();
-            }
-        }
-        catch (Exception error)
-        {
-            Notice = error.Message;
-        }
-    }
-
-    private static bool LooksLikeInviteCode(string value)
-        => value.StartsWith("nvpn://invite/", StringComparison.OrdinalIgnoreCase);
-
     private static bool LooksLikeJoinRequest(string value)
     {
         const string prefix = "nvpn://join-request/";
@@ -137,15 +105,7 @@ public sealed partial class AppViewModel
             await ConfirmAndImportJoinRequestAsync(value);
             return;
         }
-        var network = ActiveNetwork;
-        if (IsValidDeviceId(value) && network?.LocalIsAdmin == true)
-        {
-            await DispatchAsync(NativeActions.AddParticipant(network.Id, value, null), "Adding device");
-        }
-        else
-        {
-            await DispatchAsync(NativeActions.ImportJoinRequest(value), "Adding device");
-        }
+        Notice = "Not a Nostr VPN join request.";
     }
 
     private async Task ImportWireGuardExitAsync()
@@ -204,20 +164,6 @@ public sealed partial class AppViewModel
         // meaningful destination.
         SetNetworkSetupMode("");
         Page = AppPage.Devices;
-    }
-
-    private async Task ManualAddNetworkAsync()
-    {
-        var admin = (ManualJoinAdminId ?? string.Empty).Trim();
-        var mesh = NormalizeNetworkIdInput(ManualJoinMeshId);
-        if (admin.Length == 0 || mesh.Length == 0 || ManualJoinAdminInvalid)
-        {
-            return;
-        }
-        await DispatchAsync(NativeActions.ManualAddNetwork(admin, mesh), "Adding network");
-        ManualJoinAdminId = "";
-        ManualJoinMeshId = "";
-        ManualJoinExpanded = false;
     }
 
     private Task ActivateInactiveNetworkAsync(string? networkId)

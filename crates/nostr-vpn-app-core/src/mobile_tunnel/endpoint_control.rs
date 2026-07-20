@@ -155,8 +155,9 @@ async fn handle_mobile_control_frame(
 
     match frame {
         FipsControlFrame::JoinRoster { control: join_roster } => {
-            apply_mobile_join_roster_frame(control, join_roster.as_ref()).await?;
+            apply_mobile_join_roster_frame(control, source_peer, join_roster.as_ref()).await?;
         }
+        FipsControlFrame::JoinRosterAck { .. } => {}
         FipsControlFrame::Roster { signed_roster, .. } => {
             apply_mobile_roster_frame(control, signed_roster.as_deref()).await?;
         }
@@ -356,18 +357,33 @@ async fn apply_mobile_roster_runtime_update(
 
 async fn apply_mobile_join_roster_frame(
     control: &MobileEndpointReceiveContext<'_>,
+    source_peer: PeerIdentity,
     join_roster: &JoinRosterControl,
 ) -> Result<()> {
-    let Some(updated) = apply_mobile_join_roster(
+    let updated = apply_mobile_join_roster(
         control.app_config,
         control.app_config_dirty,
         control.config_path,
         join_roster,
-    )?
-    else {
-        return Ok(());
-    };
-    apply_mobile_roster_runtime_update(control, updated).await
+    )?;
+    let durably_applied = updated.is_some()
+        || mobile_join_roster_is_durably_persisted(
+            control.app_config,
+            control.config_path,
+            join_roster,
+        )?;
+    if durably_applied {
+        control.state_control.enqueue(
+            source_peer,
+            &FipsControlFrame::JoinRosterAck {
+                roster_event_id: join_roster.signed_roster.artifact_hash(),
+            },
+        )?;
+    }
+    if let Some(updated) = updated {
+        apply_mobile_roster_runtime_update(control, updated).await?;
+    }
+    Ok(())
 }
 
 async fn reply_mobile_ping(
@@ -406,7 +422,7 @@ fn control_frame_network_matches(expected_network_id: &str, frame: &FipsControlF
         | FipsControlFrame::Pong { network_id, .. }
         | FipsControlFrame::Roster { network_id, .. }
         | FipsControlFrame::Capabilities { network_id, .. } => network_id,
-        FipsControlFrame::JoinRoster { .. } => return true,
+        FipsControlFrame::JoinRoster { .. } | FipsControlFrame::JoinRosterAck { .. } => return true,
         FipsControlFrame::JoinRequest { request, .. } => &request.network_id,
         #[cfg(feature = "paid-exit")]
         FipsControlFrame::PaidRouteSessionOpen { .. }
@@ -427,7 +443,9 @@ fn control_frame_source_pubkey(
         .or_else(|| {
             let allow_unknown = matches!(
                 frame,
-                FipsControlFrame::JoinRequest { .. } | FipsControlFrame::JoinRoster { .. }
+                FipsControlFrame::JoinRequest { .. }
+                    | FipsControlFrame::JoinRoster { .. }
+                    | FipsControlFrame::JoinRosterAck { .. }
             );
             #[cfg(feature = "paid-exit")]
             let allow_unknown =
@@ -510,7 +528,7 @@ fn normalize_mobile_endpoint_npub(value: &str) -> String {
     let trimmed = value.trim();
     normalize_nostr_pubkey(trimmed).ok().map_or_else(
         || trimmed.to_string(),
-        |pubkey| nostr_vpn_core::invite::to_npub(&pubkey),
+        |pubkey| nostr_vpn_core::config::npub_for_pubkey_hex(&pubkey),
     )
 }
 

@@ -21,10 +21,9 @@ use tower_http::services::{ServeDir, ServeFile};
 mod ui_types;
 
 use crate::ui_types::{
-    AliasRequest, EndpointHintsRequest, ImportJoinRequest, InviteRequest, JoinRequestAction,
-    ManualNetworkRequest, NameRequest, NearbyPeerRequest, NetworkEnabledRequest, NetworkIdRequest,
-    NetworkMeshRequest, NetworkNameRequest, NetworkPeerRequest, ParticipantRequest,
-    QrMatrixRequest, QrMatrixResponse,
+    AliasRequest, EndpointHintsRequest, ImportJoinRequest, JoinRequestAction, NameRequest,
+    NearbyPeerRequest, NetworkEnabledRequest, NetworkIdRequest, NetworkMeshRequest,
+    NetworkNameRequest, NetworkPeerRequest, ParticipantRequest, QrMatrixRequest, QrMatrixResponse,
 };
 
 const NVPN_BIN_ENV: &str = "NVPN_CLI_PATH";
@@ -126,7 +125,6 @@ async fn main() -> Result<()> {
         .route("/api/connect_vpn", post(connect_vpn))
         .route("/api/disconnect_vpn", post(disconnect_vpn))
         .route("/api/add_network", post(add_network))
-        .route("/api/manual_add_network", post(manual_add_network))
         .route("/api/rename_network", post(rename_network))
         .route("/api/set_network_mesh_id", post(set_network_mesh_id))
         .route("/api/remove_network", post(remove_network))
@@ -135,15 +133,18 @@ async fn main() -> Result<()> {
             "/api/set_network_join_requests_enabled",
             post(set_network_join_requests_enabled),
         )
-        .route("/api/request_network_join", post(request_network_join))
         .route("/api/add_participant", post(add_participant))
         .route("/api/add_admin", post(add_admin))
-        .route("/api/reset_network_invite", post(reset_network_invite))
-        .route("/api/import_network_invite", post(import_network_invite))
         .route("/api/import_join_request", post(import_join_request))
         .route("/api/import_nearby_peer", post(import_nearby_peer))
-        .route("/api/start_invite_broadcast", post(start_invite_broadcast))
-        .route("/api/stop_invite_broadcast", post(stop_invite_broadcast))
+        .route(
+            "/api/start_join_request_broadcast",
+            post(start_join_request_broadcast),
+        )
+        .route(
+            "/api/stop_join_request_broadcast",
+            post(stop_join_request_broadcast),
+        )
         .route("/api/start_nearby_discovery", post(start_nearby_discovery))
         .route("/api/stop_nearby_discovery", post(stop_nearby_discovery))
         .route("/api/remove_participant", post(remove_participant))
@@ -254,19 +255,6 @@ async fn add_network(
     dispatch(&state, NativeAppAction::AddNetwork { name: request.name })
 }
 
-async fn manual_add_network(
-    State(state): State<ServerState>,
-    Json(request): Json<ManualNetworkRequest>,
-) -> ApiResult<UiStateResponse> {
-    dispatch(
-        &state,
-        NativeAppAction::ManualAddNetwork {
-            admin_npub: request.admin_npub,
-            mesh_network_id: request.mesh_network_id,
-        },
-    )
-}
-
 async fn rename_network(
     State(state): State<ServerState>,
     Json(request): Json<NetworkNameRequest>,
@@ -331,18 +319,6 @@ async fn set_network_join_requests_enabled(
     )
 }
 
-async fn request_network_join(
-    State(state): State<ServerState>,
-    Json(request): Json<NetworkIdRequest>,
-) -> ApiResult<UiStateResponse> {
-    dispatch(
-        &state,
-        NativeAppAction::RequestNetworkJoin {
-            network_id: request.network_id,
-        },
-    )
-}
-
 async fn add_participant(
     State(state): State<ServerState>,
     Json(request): Json<ParticipantRequest>,
@@ -370,30 +346,6 @@ async fn add_admin(
     )
 }
 
-async fn reset_network_invite(
-    State(state): State<ServerState>,
-    Json(request): Json<NetworkIdRequest>,
-) -> ApiResult<UiStateResponse> {
-    dispatch(
-        &state,
-        NativeAppAction::ResetNetworkInvite {
-            network_id: request.network_id,
-        },
-    )
-}
-
-async fn import_network_invite(
-    State(state): State<ServerState>,
-    Json(request): Json<InviteRequest>,
-) -> ApiResult<UiStateResponse> {
-    dispatch(
-        &state,
-        NativeAppAction::ImportNetworkInvite {
-            invite: request.invite,
-        },
-    )
-}
-
 async fn import_join_request(
     State(state): State<ServerState>,
     Json(request): Json<ImportJoinRequest>,
@@ -416,33 +368,30 @@ async fn import_nearby_peer(
         .iter()
         .find(|peer| peer.npub == request.npub && peer.network_id == request.network_id)
         .ok_or_else(|| ApiError::bad_request("nearby peer is no longer available"))?;
-    let invite = peer.invite.trim();
-    if invite.is_empty() {
+    let request = peer.join_request.trim();
+    if request.is_empty() {
         return Err(ApiError::bad_request(
-            "nearby peer did not provide an invitation",
+            "nearby peer did not provide a join request",
         ));
     }
-    let action = if invite
-        .get(.."nvpn://join-request".len())
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("nvpn://join-request"))
-    {
+    dispatch(
+        &state,
         NativeAppAction::ImportJoinRequest {
-            request: invite.to_string(),
-        }
-    } else {
-        NativeAppAction::ImportNetworkInvite {
-            invite: invite.to_string(),
-        }
-    };
-    dispatch(&state, action)
+            request: request.to_string(),
+        },
+    )
 }
 
-async fn start_invite_broadcast(State(state): State<ServerState>) -> ApiResult<UiStateResponse> {
-    dispatch(&state, NativeAppAction::StartInviteBroadcast)
+async fn start_join_request_broadcast(
+    State(state): State<ServerState>,
+) -> ApiResult<UiStateResponse> {
+    dispatch(&state, NativeAppAction::StartJoinRequestBroadcast)
 }
 
-async fn stop_invite_broadcast(State(state): State<ServerState>) -> ApiResult<UiStateResponse> {
-    dispatch(&state, NativeAppAction::StopInviteBroadcast)
+async fn stop_join_request_broadcast(
+    State(state): State<ServerState>,
+) -> ApiResult<UiStateResponse> {
+    dispatch(&state, NativeAppAction::StopJoinRequestBroadcast)
 }
 
 async fn start_nearby_discovery(State(state): State<ServerState>) -> ApiResult<UiStateResponse> {
@@ -603,7 +552,6 @@ fn umbrel_state_value(state: NativeAppState) -> ApiResult<Value> {
         json!("Managed directly by the Umbrel app"),
     );
     for field in [
-        "activeNetworkInvite",
         "wireguardExitPrivateKey",
         "wireguardExitPeerPresharedKey",
         "wireguardExitConfig",
@@ -613,7 +561,7 @@ fn umbrel_state_value(state: NativeAppState) -> ApiResult<Value> {
     if let Some(peers) = object.get_mut("lanPeers").and_then(Value::as_array_mut) {
         for peer in peers {
             if let Some(peer) = peer.as_object_mut() {
-                peer.remove("invite");
+                peer.remove("joinRequest");
             }
         }
     }
@@ -809,8 +757,8 @@ mod tests {
     }
 
     #[test]
-    fn qr_matrix_encodes_invite_text() {
-        let matrix = build_qr_matrix("nvpn://invite/example").expect("qr matrix");
+    fn qr_matrix_encodes_join_request_text() {
+        let matrix = build_qr_matrix("nvpn://join-request/example").expect("qr matrix");
 
         assert!(matrix.width > 0);
         assert_eq!(matrix.cells.len(), matrix.width * matrix.width);
@@ -852,14 +800,13 @@ mod tests {
     #[test]
     fn web_state_does_not_serialize_network_credentials() {
         let state = NativeAppState {
-            active_network_invite: "nvpn://invite/secret".to_string(),
             wireguard_exit_private_key: "private-key".to_string(),
             wireguard_exit_peer_preshared_key: "preshared-key".to_string(),
             wireguard_exit_config: "[Interface]\nPrivateKey = private-key".to_string(),
             lan_peers: vec![nostr_vpn_app_core::native_state::NativeLanPeerState {
                 npub: "npub1peer".to_string(),
                 network_id: "network-id".to_string(),
-                invite: "nvpn://join-request/nearby-secret".to_string(),
+                join_request: "nvpn://join-request/nearby-secret".to_string(),
                 ..nostr_vpn_app_core::native_state::NativeLanPeerState::default()
             }],
             ..NativeAppState::default()
@@ -868,14 +815,12 @@ mod tests {
         let value = umbrel_state_value(state).expect("state value");
         let encoded = serde_json::to_string(&value).expect("state JSON");
 
-        assert_eq!(value["activeNetworkInvite"], "");
         assert_eq!(value["wireguardExitPrivateKey"], "");
         assert_eq!(value["wireguardExitPeerPresharedKey"], "");
         assert_eq!(value["wireguardExitConfig"], "");
-        assert!(value["lanPeers"][0].get("invite").is_none());
+        assert!(value["lanPeers"][0].get("joinRequest").is_none());
         assert!(!encoded.contains("private-key"));
         assert!(!encoded.contains("preshared-key"));
-        assert!(!encoded.contains("nvpn://invite/secret"));
         assert!(!encoded.contains("nearby-secret"));
     }
 

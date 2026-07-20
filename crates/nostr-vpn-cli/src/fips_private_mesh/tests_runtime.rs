@@ -609,6 +609,8 @@
             config.node.discovery.nostr.extended_cooldown_secs,
             FIPS_NOSTR_EXTENDED_COOLDOWN_SECS
         );
+        assert_eq!(config.node.discovery.nostr.failure_streak_threshold, 3);
+        assert_eq!(config.node.discovery.nostr.extended_cooldown_secs, 1_800);
         assert_eq!(
             config.node.discovery.nostr.startup_sweep_max_age_secs,
             FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS
@@ -931,12 +933,11 @@
     }
 
     #[test]
-    fn stamped_endpoint_hints_seed_outside_roster_transit_peers() {
+    fn stamped_endpoint_hints_do_not_create_non_roster_peers() {
         let bob_keys = Keys::generate();
         let charlie_keys = Keys::generate();
         let bob_pubkey = bob_keys.public_key().to_hex();
         let charlie_pubkey = charlie_keys.public_key().to_hex();
-        let charlie_npub = charlie_keys.public_key().to_bech32().expect("charlie npub");
         let mesh_peer =
             FipsMeshPeerConfig::from_participant_pubkey(&bob_pubkey, vec!["10.44.1.2/32".into()])
                 .expect("mesh peer");
@@ -950,7 +951,7 @@
             )],
         );
 
-        assert_eq!(endpoint_peers.len(), 2);
+        assert_eq!(endpoint_peers.len(), 1);
         let bob = endpoint_peers
             .iter()
             .find(|peer| peer.npub == mesh_peer.endpoint_npub)
@@ -959,20 +960,5 @@
         assert!(
             bob.auto_reconnect,
             "roster peers should keep nvpn's fast auto-reconnect"
-        );
-        let charlie = endpoint_peers
-            .iter()
-            .find(|peer| peer.npub == charlie_npub)
-            .expect("recent non-roster peer should be retained as transit");
-        assert_eq!(charlie.addresses.len(), 1);
-        assert_eq!(charlie.addresses[0].addr, "10.203.0.12:51820");
-        assert_eq!(charlie.addresses[0].seen_at_ms, Some(123_000));
-        assert!(
-            !charlie.auto_reconnect,
-            "recent transit-only peers should not retry forever"
-        );
-        assert!(
-            charlie.discovery_fallback_transit,
-            "recent non-roster peers should remain useful as fallback lookup transit"
         );
     }

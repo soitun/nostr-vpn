@@ -141,7 +141,7 @@ impl AppConfig {
         devices.retain(|device| !removed_devices.contains(device));
         let network = &mut self.networks[network_index];
         let mut admins =
-            normalize_network_admins(admins, own_pubkey.as_deref(), &network.invite_inviter);
+            normalize_network_admins(admins, own_pubkey.as_deref(), &network.join_request_admin);
         let suppressed_stale_admins = admins
             .iter()
             .any(|admin| removed_devices.contains(admin));
@@ -160,9 +160,9 @@ impl AppConfig {
         if !network
             .admins
             .iter()
-            .any(|admin| admin == &network.invite_inviter)
+            .any(|admin| admin == &network.join_request_admin)
         {
-            network.invite_inviter = normalized_signed_by.clone();
+            network.join_request_admin = normalized_signed_by.clone();
         }
         network.shared_roster_updated_at = signed_at;
         network.shared_roster_signed_by = normalized_signed_by;

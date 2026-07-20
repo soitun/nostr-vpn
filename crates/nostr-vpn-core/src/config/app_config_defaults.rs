@@ -104,12 +104,12 @@ impl AppConfig {
             if network.network_id.trim().is_empty() {
                 network.network_id = default_network_id();
             }
-            network.invite_secret = network.invite_secret.trim().to_string();
-            if network.invite_secret.is_empty() {
-                network.invite_secret = default_invite_secret();
+            network.join_secret = network.join_secret.trim().to_string();
+            if network.join_secret.is_empty() {
+                network.join_secret = default_join_secret();
             }
-            network.invite_inviter =
-                normalize_nostr_pubkey(&network.invite_inviter).unwrap_or_default();
+            network.join_request_admin =
+                normalize_nostr_pubkey(&network.join_request_admin).unwrap_or_default();
 
             network.devices = network
                 .devices
@@ -128,7 +128,7 @@ impl AppConfig {
             network.admins = normalize_network_admins(
                 std::mem::take(&mut network.admins),
                 own_pubkey_hex.as_deref(),
-                &network.invite_inviter,
+                &network.join_request_admin,
             );
             network.outbound_join_request = normalize_outbound_join_request(
                 network.outbound_join_request.take(),
@@ -222,8 +222,8 @@ impl AppConfig {
                 .collect();
             network.admins.sort();
             network.admins.dedup();
-            network.invite_inviter =
-                canonical_npub_key(&network.invite_inviter).unwrap_or_default();
+            network.join_request_admin =
+                canonical_npub_key(&network.join_request_admin).unwrap_or_default();
             network.outbound_join_request =
                 canonicalize_outbound_join_request(network.outbound_join_request.take());
             network.inbound_join_requests = canonicalize_inbound_join_requests(std::mem::take(
@@ -378,12 +378,12 @@ impl AppConfig {
             name,
             enabled,
             network_id: default_network_id(),
-            invite_secret: default_invite_secret(),
+            join_secret: default_join_secret(),
             devices: Vec::new(),
             removed_devices: Vec::new(),
             admins: Vec::new(),
             listen_for_join_requests: default_listen_for_join_requests(),
-            invite_inviter: String::new(),
+            join_request_admin: String::new(),
             outbound_join_request: None,
             inbound_join_requests: Vec::new(),
             shared_roster_updated_at: 0,

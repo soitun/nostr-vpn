@@ -36,7 +36,7 @@ just android-smoke
 Use `NVPN_ANDROID_SERIAL=<adb-serial>` or `ANDROID_SERIAL=<adb-serial>` when more
 than one device or emulator is online. `just android-smoke-vpn` also cycles the
 debug VPN action and expects the VPN permission/config path to be usable on that
-device. On a fresh install, seed private peer state with `NVPN_ANDROID_DEBUG_INVITE`,
+device. On a fresh install, approve its signed join request from an admin device,
 or use `scripts/mobile-android-smoke.sh --vpn-cycle --create-network` for local
 OS VPN/TUN coverage without peer dataplane coverage. On trusted local test
 devices, add `--accept-vpn-dialog` to tap Android's system VPN consent prompt.
@@ -48,6 +48,6 @@ runtime-state JSON, Android VPN `ip -s link` counters, ping-probe output, a
 ping latency/loss summary JSON, and a native TUN counter summary JSON under
 `artifacts/mobile-android`.
 
-The native shell includes state, invite, roster, routing, diagnostics,
+The native shell includes state, join-request, roster, routing, diagnostics,
 deep-link, VPN permission surfaces, and Android `VpnService` packet handling
 backed by the shared Rust core.

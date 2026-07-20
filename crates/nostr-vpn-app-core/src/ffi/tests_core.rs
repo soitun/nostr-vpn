@@ -268,7 +268,6 @@
         assert_eq!(state.node_name, "real-config");
         assert!(state.networks.is_empty());
         assert!(state.network_id.is_empty());
-        assert!(state.active_network_invite.is_empty());
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -292,7 +291,6 @@
         assert!(runtime.config.networks.is_empty());
         assert!(state.networks.is_empty());
         assert!(state.network_id.is_empty());
-        assert!(state.active_network_invite.is_empty());
 
         runtime.dispatch(NativeAppAction::AddNetwork {
             name: "Home".to_string(),
@@ -304,7 +302,6 @@
         assert_eq!(state.networks.len(), 1);
         assert_eq!(state.networks[0].name, "Home");
         assert!(!state.network_id.is_empty());
-        assert!(!state.active_network_invite.is_empty());
         assert_eq!(state.expected_peer_count, 0);
 
         let _ = fs::remove_dir_all(&dir);
@@ -340,13 +337,12 @@
         assert!(state.error.is_empty(), "{}", state.error);
         assert!(state.networks.is_empty());
         assert!(state.network_id.is_empty());
-        assert!(state.active_network_invite.is_empty());
         assert!(state.join_request_qr_code_or_link.starts_with("nvpn://join-request/"));
         assert_eq!(state.expected_peer_count, 0);
 
-        runtime.dispatch(NativeAppAction::StartInviteBroadcast);
+        runtime.dispatch(NativeAppAction::StartJoinRequestBroadcast);
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
-        assert!(runtime.state().invite_broadcast_active);
+        assert!(runtime.state().join_request_broadcast_active);
 
         let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
         assert!(saved.networks.is_empty());
@@ -408,13 +404,6 @@
                 .expect("saved network")
                 .enabled
         );
-        let old_invite_secret = runtime
-            .config
-            .network_by_id(&saved_id)
-            .expect("saved network")
-            .invite_secret
-            .clone();
-
         runtime.dispatch(NativeAppAction::RenameNetwork {
             network_id: saved_id.clone(),
             name: "Office".to_string(),
@@ -426,9 +415,6 @@
         runtime.dispatch(NativeAppAction::SetNetworkJoinRequestsEnabled {
             network_id: saved_id.clone(),
             enabled: true,
-        });
-        runtime.dispatch(NativeAppAction::ResetNetworkInvite {
-            network_id: saved_id.clone(),
         });
         runtime.dispatch(NativeAppAction::AddParticipant {
             network_id: saved_id.clone(),
@@ -473,7 +459,6 @@
         assert_eq!(saved_config.name, "Office");
         assert_eq!(saved_config.network_id, "abcd1234ef56");
         assert!(saved_config.listen_for_join_requests);
-        assert_ne!(saved_config.invite_secret, old_invite_secret);
         assert!(saved_config.devices.contains(&peer_hex));
         assert!(saved_config.admins.contains(&admin_one_hex));
         assert!(saved_config.admins.contains(&admin_two_hex));
@@ -634,7 +619,7 @@
         runtime.config.networks[0].devices = Vec::new();
 
         runtime.dispatch(NativeAppAction::SetParticipantAlias {
-            npub: to_npub(&own_pubkey),
+            npub: npub_for_pubkey_hex(&own_pubkey),
             alias: "My iPhone".to_string(),
         });
 
@@ -736,64 +721,6 @@
         let state = runtime.state();
         assert_eq!(state.fips_roster_peer_count, 0);
         assert_eq!(state.non_fips_roster_peer_count, 0);
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn join_request_seeds_working_temporary_magic_dns_names() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-join-dns-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
-
-        let admin = Keys::generate();
-        let admin_hex = admin.public_key().to_hex();
-        let admin_npub = admin.public_key().to_bech32().expect("admin npub");
-        let error = anyhow!("boom");
-        let mut runtime = NativeAppRuntime::from_startup_error(&error);
-        runtime.startup_error = None;
-        runtime.last_error.clear();
-        runtime.mobile_runtime = true;
-        runtime.config_path = dir.join("config.toml");
-
-        runtime.dispatch(NativeAppAction::ManualAddNetwork {
-            admin_npub,
-            mesh_network_id: "mesh-home".to_string(),
-        });
-        let network_id = runtime.config.networks[0].id.clone();
-        runtime.dispatch(NativeAppAction::RequestNetworkJoin { network_id });
-
-        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
-        assert_eq!(
-            runtime.config.peer_alias(&admin_hex).as_deref(),
-            Some("admin")
-        );
-        let own_pubkey = runtime
-            .config
-            .own_nostr_pubkey_hex()
-            .expect("generated config should have own pubkey");
-        let self_alias = runtime
-            .config
-            .peer_alias(&own_pubkey)
-            .expect("join request seeds local alias");
-        assert_eq!(self_alias, "self");
-
-        let records = nostr_vpn_core::magic_dns::build_magic_dns_records(&runtime.config);
-        let admin_ip = derive_mesh_tunnel_ip("mesh-home", &admin_hex)
-            .expect("admin tunnel ip")
-            .trim_end_matches("/32")
-            .parse()
-            .expect("admin ipv4");
-        let own_ip = derive_mesh_tunnel_ip("mesh-home", &own_pubkey)
-            .expect("own tunnel ip")
-            .trim_end_matches("/32")
-            .parse()
-            .expect("own ipv4");
-        assert_eq!(records.get("admin.nvpn").copied(), Some(admin_ip));
-        assert_eq!(records.get("self.nvpn").copied(), Some(own_ip));
 
         let _ = fs::remove_dir_all(&dir);
     }

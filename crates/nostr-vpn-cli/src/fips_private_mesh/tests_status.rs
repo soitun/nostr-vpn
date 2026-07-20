@@ -533,7 +533,7 @@
             requested_at: 42,
             request: MeshJoinRequest {
                 network_id: "network".to_string(),
-                invite_secret: String::new(),
+                join_secret: String::new(),
                 requester_node_name: "new-device".to_string(),
             },
         };

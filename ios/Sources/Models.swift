@@ -23,7 +23,6 @@ struct AppState: Decodable {
     var nostrPubsubFanout: UInt32 = 4
     var nostrPubsubMaxHops: UInt8 = 2
     var nostrPubsubMaxEventBytes: UInt32 = 65_536
-    var activeNetworkInvite = ""
     var joinRequestQrCodeOrLink = ""
     var connectedPeerCount: UInt64 = 0
     var expectedPeerCount: UInt64 = 0
@@ -63,8 +62,8 @@ struct AppState: Decodable {
     var magicDnsSuffix = ""
     var magicDnsStatus = ""
     var autoconnect = false
-    var inviteBroadcastActive = false
-    var inviteBroadcastRemainingSecs: UInt64 = 0
+    var joinRequestBroadcastActive = false
+    var joinRequestBroadcastRemainingSecs: UInt64 = 0
     var nearbyDiscoveryActive = false
     var nearbyDiscoveryRemainingSecs: UInt64 = 0
     var configPath = ""
@@ -81,7 +80,7 @@ struct AppState: Decodable {
         case runtimeStatusDetail, vpnEnabled, vpnActive, vpnStatus, daemonRunning
         case ownNpub, nodeName, selfMagicDnsName, tunnelIp, endpoint, listenPort, relays
         case nostrPubsubMode, nostrPubsubFanout, nostrPubsubMaxHops, nostrPubsubMaxEventBytes
-        case activeNetworkInvite, joinRequestQrCodeOrLink
+        case joinRequestQrCodeOrLink
         case connectedPeerCount, expectedPeerCount
         case fipsConnectedPeerCount, fipsRosterPeerCount, nonFipsRosterPeerCount
         case meshReady, internetSource, exitNode, exitNodeLeakProtection
@@ -96,7 +95,7 @@ struct AppState: Decodable {
         case connectToNonRosterFipsPeers
         case fipsNostrDiscoveryEnabled, fipsWebrtcEnabled, fipsBootstrapEnabled
         case magicDnsSuffix, magicDnsStatus, autoconnect
-        case inviteBroadcastActive, inviteBroadcastRemainingSecs
+        case joinRequestBroadcastActive, joinRequestBroadcastRemainingSecs
         case nearbyDiscoveryActive, nearbyDiscoveryRemainingSecs, configPath
         case networks, lanPeers, health
     }
@@ -127,7 +126,6 @@ struct AppState: Decodable {
         nostrPubsubFanout = UInt32(container.int(.nostrPubsubFanout, default: 4))
         nostrPubsubMaxHops = UInt8(container.int(.nostrPubsubMaxHops, default: 2))
         nostrPubsubMaxEventBytes = UInt32(container.int(.nostrPubsubMaxEventBytes, default: 65_536))
-        activeNetworkInvite = container.string(.activeNetworkInvite)
         joinRequestQrCodeOrLink = container.string(.joinRequestQrCodeOrLink)
         connectedPeerCount = container.uint64(.connectedPeerCount)
         expectedPeerCount = container.uint64(.expectedPeerCount)
@@ -167,8 +165,8 @@ struct AppState: Decodable {
         magicDnsSuffix = container.string(.magicDnsSuffix)
         magicDnsStatus = container.string(.magicDnsStatus)
         autoconnect = container.bool(.autoconnect)
-        inviteBroadcastActive = container.bool(.inviteBroadcastActive)
-        inviteBroadcastRemainingSecs = container.uint64(.inviteBroadcastRemainingSecs)
+        joinRequestBroadcastActive = container.bool(.joinRequestBroadcastActive)
+        joinRequestBroadcastRemainingSecs = container.uint64(.joinRequestBroadcastRemainingSecs)
         nearbyDiscoveryActive = container.bool(.nearbyDiscoveryActive)
         nearbyDiscoveryRemainingSecs = container.uint64(.nearbyDiscoveryRemainingSecs)
         configPath = container.string(.configPath)
@@ -193,7 +191,7 @@ struct NetworkState: Decodable, Identifiable {
     var networkId = ""
     var localIsAdmin = false
     var joinRequestsEnabled = false
-    var inviteInviterNpub = ""
+    var joinRequestAdminNpub = ""
     var outboundJoinRequest: OutboundJoinRequest?
     var joinRequestQrCodeOrLink = ""
     var inboundJoinRequests: [InboundJoinRequest] = []
@@ -207,7 +205,7 @@ struct NetworkState: Decodable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id, name, enabled, networkId, localIsAdmin, joinRequestsEnabled
-        case inviteInviterNpub, outboundJoinRequest, joinRequestQrCodeOrLink, inboundJoinRequests
+        case joinRequestAdminNpub, outboundJoinRequest, joinRequestQrCodeOrLink, inboundJoinRequests
         case onlineCount, expectedCount, participants
     }
 
@@ -221,7 +219,7 @@ struct NetworkState: Decodable, Identifiable {
         networkId = container.string(.networkId)
         localIsAdmin = container.bool(.localIsAdmin)
         joinRequestsEnabled = container.bool(.joinRequestsEnabled)
-        inviteInviterNpub = container.string(.inviteInviterNpub)
+        joinRequestAdminNpub = container.string(.joinRequestAdminNpub)
         outboundJoinRequest = try? container.decodeIfPresent(OutboundJoinRequest.self, forKey: .outboundJoinRequest)
         joinRequestQrCodeOrLink = container.string(.joinRequestQrCodeOrLink)
         inboundJoinRequests = container.array(.inboundJoinRequests)
@@ -332,11 +330,11 @@ struct InboundJoinRequest: Decodable, Identifiable {
 }
 
 struct LanPeerState: Decodable, Identifiable {
-    var id: String { invite.isEmpty ? npub : invite }
+    var id: String { joinRequest.isEmpty ? npub : joinRequest }
     var npub = ""
     var nodeName = ""
     var networkName = ""
-    var invite = ""
+    var joinRequest = ""
     var lastSeenText = ""
 }
 

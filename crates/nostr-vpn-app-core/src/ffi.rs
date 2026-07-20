@@ -14,7 +14,7 @@ use nostr_vpn_core::config::{
     PendingInboundJoinRequest, PendingOutboundJoinRequest, derive_mesh_tunnel_ip,
     maybe_autoconfigure_node, normalize_advertised_route, normalize_magic_dns_label,
     normalize_nostr_pubkey, normalize_relay_urls, normalize_runtime_network_id,
-    parse_wireguard_exit_config, wireguard_exit_config_text,
+    npub_for_pubkey_hex, parse_wireguard_exit_config, wireguard_exit_config_text,
 };
 use nostr_vpn_core::diagnostics::ProbeStatus;
 use nostr_vpn_core::paid_routes::{ExitNetworkClass, PaidExitUpstream};
@@ -23,11 +23,6 @@ use serde::Deserialize;
 
 use crate::actions::NativeAppAction;
 use crate::exchange_rate::{ExchangeRateService, apply_exchange_rate};
-use crate::invite::{
-    NETWORK_INVITE_VERSION, NetworkInvite, active_network_invite_code_with_endpoints,
-    apply_network_invite_to_active_network, parse_network_invite, preferred_join_request_recipient,
-    to_npub,
-};
 use crate::join_approval::prepare_join_approval;
 use crate::join_request_link::{
     own_join_request_qr_code_or_link, parse_join_request_qr_code_or_link,
@@ -195,7 +190,7 @@ struct NativeAppRuntime {
     daemon_status_grace_until: Option<Instant>,
     last_service_status_refresh_at: Option<Instant>,
     lan_pairing_worker: Option<NativeLanPairingWorker>,
-    invite_broadcast_expires_at: Option<SystemTime>,
+    join_request_broadcast_expires_at: Option<SystemTime>,
     nearby_discovery_expires_at: Option<SystemTime>,
     lan_peers: HashMap<String, LanPeerRecord>,
     paid_route_market_filter: NativePaidRouteMarketFilterState,
@@ -249,7 +244,7 @@ impl NativeLanPairingWorker {
             npub,
             node_name,
             endpoint,
-            invite,
+            join_request,
         } = announcement;
         anyhow::ensure!(!npub.trim().is_empty(), "LAN pairing npub is missing");
         anyhow::ensure!(
@@ -257,7 +252,7 @@ impl NativeLanPairingWorker {
             "LAN pairing announcement identity does not match signer"
         );
         drop(signer);
-        let _ = (node_name, endpoint, invite);
+        let _ = (node_name, endpoint, join_request);
         Ok(Self)
     }
 
@@ -383,5 +378,6 @@ mod tests {
     include!("ffi/tests_network.rs");
     include!("ffi/tests_network_join_actions.rs");
     include!("ffi/tests_service.rs");
+    include!("ffi/tests_service_paid_exit_buy.rs");
     include!("ffi/tests_service_macos.rs");
 }

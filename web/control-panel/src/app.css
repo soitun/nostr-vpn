@@ -1180,11 +1180,6 @@ input.invalid {
   margin-bottom: 0;
 }
 
-.invite-section {
-  grid-template-columns: minmax(180px, min(50%, 300px)) minmax(0, 1fr);
-  align-items: start;
-}
-
 .qr-frame.compact {
   width: min(100%, 300px);
   height: auto;
@@ -1336,10 +1331,6 @@ input.invalid {
   .detail-stack,
   .detail-empty {
     padding: 16px;
-  }
-
-  .invite-section {
-    grid-template-columns: 1fr;
   }
 
   .qr-frame,

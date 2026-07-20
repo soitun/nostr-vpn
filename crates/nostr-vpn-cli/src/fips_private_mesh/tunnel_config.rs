@@ -214,7 +214,12 @@ impl FipsPrivateTunnelConfig {
         } else if app.node.advertise_exit_node {
             FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING
         } else if allow_non_roster_transit {
-            open_discovery_limit_after_transit_seeds(static_non_roster_transit_seeds)
+            let limit = if app.fips_websocket_bind_addr.is_empty() {
+                FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING
+            } else {
+                FIPS_WEBSOCKET_LISTENER_OPEN_DISCOVERY_MAX_PENDING
+            };
+            open_discovery_limit_after_transit_seeds(limit, static_non_roster_transit_seeds)
         } else {
             0
         };
@@ -233,19 +238,8 @@ impl FipsPrivateTunnelConfig {
             &tunnel_endpoint_hosts,
             &local_private_subnets,
         );
-        // Roster/admin endpoint hints are part of the user's network and are
-        // always retained. Recent authenticated non-roster peers are only
-        // ambient transit seeds; cap them before handing the list to fips so
-        // they don't bypass the open-discovery queue limit as configured peers.
-        recent_peer_endpoints = cap_recent_non_roster_transit_endpoints(
-            recent_peer_endpoints,
-            &desired_endpoint_hint_npubs,
-            if allow_non_roster_transit {
-                FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS
-            } else {
-                0
-            },
-        );
+        // Membership is enforced when these hints are merged below: cached
+        // entries can only augment roster/operator/bootstrap peers.
         // Live capability hints are accepted only for network signal peers because
         // they are claims carried by that peer. The disk cache above is
         // different: it records peers this endpoint already authenticated.
@@ -495,31 +489,6 @@ fn local_interface_address_for_tunnel(tunnel_ip: &str) -> String {
 
 fn strip_cidr(value: &str) -> &str {
     value.split('/').next().unwrap_or(value)
-}
-
-fn tag_authenticated_transport_addr(
-    addr: Option<String>,
-    transport_type: Option<String>,
-) -> Option<String> {
-    let addr = addr?;
-    let addr = addr.trim();
-    if addr.is_empty() {
-        return None;
-    }
-
-    let (addr_transport, host_port) = split_peer_transport_addr(addr);
-    let transport = transport_type
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(addr_transport.as_str())
-        .to_ascii_lowercase();
-
-    match transport.as_str() {
-        "udp" => Some(host_port),
-        "tcp" => Some(format!("tcp:{host_port}")),
-        _ => None,
-    }
 }
 
 fn fips_tunnel_requires_endpoint_restart(

@@ -79,7 +79,7 @@ impl AppConfig {
     pub fn record_inbound_join_request(
         &mut self,
         requested_network_id: &str,
-        requested_invite_secret: &str,
+        requested_join_secret: &str,
         requester: &str,
         requester_node_name: &str,
         requested_at: u64,
@@ -97,8 +97,8 @@ impl AppConfig {
         }) else {
             return Ok(None);
         };
-        if !network.invite_secret.trim().is_empty()
-            && network.invite_secret.trim() != requested_invite_secret.trim()
+        if !network.join_secret.trim().is_empty()
+            && network.join_secret.trim() != requested_join_secret.trim()
         {
             return Ok(None);
         }
@@ -167,14 +167,6 @@ impl AppConfig {
             .ok_or_else(|| anyhow::anyhow!("network not found"))?;
         network.network_id = normalized;
 
-        Ok(())
-    }
-
-    pub fn reset_network_invite(&mut self, network_id: &str) -> Result<()> {
-        let network = self
-            .network_by_id_mut(network_id)
-            .ok_or_else(|| anyhow::anyhow!("network not found"))?;
-        network.invite_secret = default_invite_secret();
         Ok(())
     }
 
@@ -272,8 +264,8 @@ impl AppConfig {
                 network.removed_devices.push(normalized.clone());
                 network.removed_devices.sort();
             }
-            if network.invite_inviter == normalized {
-                network.invite_inviter = network.admins.first().cloned().unwrap_or_default();
+            if network.join_request_admin == normalized {
+                network.join_request_admin = network.admins.first().cloned().unwrap_or_default();
             }
         }
 
@@ -306,8 +298,8 @@ impl AppConfig {
                 network.admins.sort();
                 network.admins.dedup();
             }
-            if network.invite_inviter.is_empty() {
-                network.invite_inviter = normalized.clone();
+            if network.join_request_admin.is_empty() {
+                network.join_request_admin = normalized.clone();
             }
         }
         self.note_network_roster_local_change(network_id)?;
@@ -334,8 +326,8 @@ impl AppConfig {
             network
                 .admins
                 .retain(|configured| configured != &normalized);
-            if network.invite_inviter == normalized {
-                network.invite_inviter = network.admins.first().cloned().unwrap_or_default();
+            if network.join_request_admin == normalized {
+                network.join_request_admin = network.admins.first().cloned().unwrap_or_default();
             }
         }
         self.note_network_roster_local_change(network_id)?;

@@ -164,51 +164,6 @@
     }
 
     #[test]
-    fn invite_import_adopts_network_without_queueing_join_request() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-invite-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
-
-        let admin_npub = Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("admin npub");
-        let invite = serde_json::json!({
-            "v": 3,
-            "networkId": "8d4f34f5425bc50e",
-            "inviterEndpoints": ["192.168.50.20:51820"],
-            "admins": [admin_npub],
-            "relays": ["wss://temp.iris.to"]
-        })
-        .to_string();
-
-        let error = anyhow!("boom");
-        let mut runtime = NativeAppRuntime::from_startup_error(&error);
-        runtime.startup_error = None;
-        runtime.mobile_runtime = true;
-        runtime.config_path = dir.join("config.toml");
-
-        runtime
-            .import_network_invite(&invite)
-            .expect("import invite");
-
-        let network = runtime.config.active_network();
-        assert!(network.outbound_join_request.is_none());
-        assert!(network.devices.is_empty());
-        assert_eq!(
-            runtime.config.fips_peer_endpoints.get(&admin_npub),
-            Some(&vec!["192.168.50.20:51820".to_string()])
-        );
-        let state = runtime.state();
-        assert_eq!(state.networks.len(), 1);
-        assert_eq!(state.networks[0].network_id, "8d4f34f5425bc50e");
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-    #[test]
     #[allow(clippy::too_many_lines)]
     fn compact_join_bootstrap_is_added_by_admin_without_request_event() {
         let nonce = SystemTime::now()
@@ -470,93 +425,7 @@ exit 0
     }
 
     #[test]
-    fn invite_import_reuses_inactive_default_network_placeholder() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-placeholder-invite-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
-
-        let admin_npub = Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("admin npub");
-        let invite = serde_json::json!({
-            "v": 3,
-            "networkName": "Network 1",
-            "networkId": "8d4f34f5425bc50e",
-            "admins": [admin_npub]
-        })
-        .to_string();
-
-        let error = anyhow!("boom");
-        let mut runtime = NativeAppRuntime::from_startup_error(&error);
-        runtime.startup_error = None;
-        runtime.mobile_runtime = true;
-        runtime.config_path = dir.join("config.toml");
-        runtime.config = AppConfig::generated();
-
-        runtime
-            .import_network_invite(&invite)
-            .expect("import invite");
-
-        assert_eq!(runtime.config.networks.len(), 1);
-        let network = runtime.config.active_network();
-        assert_eq!(network.id, "network-1");
-        assert_eq!(network.name, "Network 1");
-        assert_eq!(network.network_id, "8d4f34f5425bc50e");
-        assert!(network.outbound_join_request.is_none());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn invite_import_creates_new_network_when_active_network_is_named() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-named-active-invite-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
-
-        let admin_npub = "npub1akgu9lxldpt32lnjf97k005a4kgasewmvsrmkpzqeff398ssev0ssd6t3u";
-        let admin_hex = normalize_nostr_pubkey(admin_npub).expect("normalize admin");
-        let invite = "nvpn://invite/eyJ2IjozLCJuZXR3b3JrSWQiOiI3YTYwMTQ4MzVkNDA0Y2IwIiwiYWRtaW5zIjpbIm5wdWIxYWtndTlseGxkcHQzMmxuamY5N2swMDVhNGtnYXNld212c3Jta3B6cWVmZjM5OHNzZXYwc3NkNnQzdSJdfQ";
-
-        let error = anyhow!("boom");
-        let mut runtime = NativeAppRuntime::from_startup_error(&error);
-        runtime.startup_error = None;
-        runtime.mobile_runtime = true;
-        runtime.config_path = dir.join("config.toml");
-
-        let old_network_id = create_test_network(&mut runtime, "Home");
-        runtime.config.networks[0].network_id = "5a249444c4254f98".to_string();
-        runtime.config.networks[0].admins = vec![admin_hex.clone()];
-
-        runtime
-            .import_network_invite(invite)
-            .expect("import invite");
-
-        assert_eq!(runtime.config.networks.len(), 2);
-        let old_network = runtime
-            .config
-            .network_by_id(&old_network_id)
-            .expect("old network should remain");
-        assert_eq!(old_network.network_id, "5a249444c4254f98");
-        assert!(!old_network.enabled);
-
-        let network = runtime.config.active_network();
-        assert_eq!(network.network_id, "7a6014835d404cb0");
-        assert_eq!(network.admins, vec![admin_hex.clone()]);
-        assert_eq!(network.invite_inviter, admin_hex);
-        assert!(network.outbound_join_request.is_none());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn native_state_marks_reachable_invite_admin_as_pending_until_join_is_accepted() {
+    fn native_state_marks_reachable_join_admin_as_pending_until_join_is_accepted() {
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
@@ -569,7 +438,7 @@ exit 0
         runtime.config.networks[0].network_id = "mesh-home".to_string();
         runtime.config.networks[0].devices = Vec::new();
         runtime.config.networks[0].admins = vec![admin_hex.clone()];
-        runtime.config.networks[0].invite_inviter = admin_hex.clone();
+        runtime.config.networks[0].join_request_admin = admin_hex.clone();
         runtime.config.networks[0].outbound_join_request = Some(PendingOutboundJoinRequest {
             recipient: admin_hex.clone(),
             requested_at: 1_726_000_000,
@@ -602,42 +471,6 @@ exit 0
     }
 
     #[test]
-    fn manual_add_network_seeds_admin_without_join_request() {
-        let nonce = SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock is after epoch")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!("nvpn-app-core-manual-add-{nonce}"));
-        fs::create_dir_all(&dir).expect("create test dir");
-
-        let admin_npub = Keys::generate()
-            .public_key()
-            .to_bech32()
-            .expect("admin npub");
-        let admin_hex = normalize_nostr_pubkey(&admin_npub).expect("normalize admin");
-
-        let error = anyhow!("boom");
-        let mut runtime = NativeAppRuntime::from_startup_error(&error);
-        runtime.startup_error = None;
-        runtime.mobile_runtime = true;
-        runtime.config_path = dir.join("config.toml");
-
-        runtime.dispatch(NativeAppAction::ManualAddNetwork {
-            admin_npub,
-            mesh_network_id: "8d4f34f5425bc50e".to_string(),
-        });
-
-        let network = runtime.config.active_network();
-        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
-        assert_eq!(network.network_id, "8d4f34f5425bc50e");
-        assert_eq!(network.devices, vec![admin_hex.clone()]);
-        assert_eq!(network.admins, vec![admin_hex]);
-        assert!(network.outbound_join_request.is_none());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
     fn lan_pairing_runs_for_fifteen_minutes_until_cancelled() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -652,23 +485,23 @@ exit 0
         runtime.mobile_runtime = true;
         runtime.config_path = dir.join("config.toml");
 
-        runtime.dispatch(NativeAppAction::StartInviteBroadcast);
+        runtime.dispatch(NativeAppAction::StartJoinRequestBroadcast);
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
         runtime.dispatch(NativeAppAction::StartNearbyDiscovery);
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
 
         let state = runtime.state();
-        assert!(state.invite_broadcast_active);
+        assert!(state.join_request_broadcast_active);
         assert!(state.nearby_discovery_active);
-        assert!(state.invite_broadcast_remaining_secs <= LAN_PAIRING_DURATION.as_secs());
-        assert!(state.invite_broadcast_remaining_secs > LAN_PAIRING_DURATION.as_secs() - 10);
+        assert!(state.join_request_broadcast_remaining_secs <= LAN_PAIRING_DURATION.as_secs());
+        assert!(state.join_request_broadcast_remaining_secs > LAN_PAIRING_DURATION.as_secs() - 10);
         assert!(state.nearby_discovery_remaining_secs <= LAN_PAIRING_DURATION.as_secs());
         assert!(state.nearby_discovery_remaining_secs > LAN_PAIRING_DURATION.as_secs() - 10);
 
-        runtime.dispatch(NativeAppAction::StopInviteBroadcast);
+        runtime.dispatch(NativeAppAction::StopJoinRequestBroadcast);
         let state = runtime.state();
-        assert!(!state.invite_broadcast_active);
-        assert_eq!(state.invite_broadcast_remaining_secs, 0);
+        assert!(!state.join_request_broadcast_active);
+        assert_eq!(state.join_request_broadcast_remaining_secs, 0);
         assert!(
             state.nearby_discovery_active,
             "discovery should keep running"
@@ -705,10 +538,10 @@ exit 0
             .join_request_qr_code_or_link
             .starts_with("nvpn://join-request/"));
 
-        runtime.dispatch(NativeAppAction::StartInviteBroadcast);
+        runtime.dispatch(NativeAppAction::StartJoinRequestBroadcast);
 
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
-        assert!(runtime.state().invite_broadcast_active);
+        assert!(runtime.state().join_request_broadcast_active);
         assert_eq!(runtime.config.networks[0].id, network_id);
 
         let _ = fs::remove_dir_all(&dir);
@@ -736,7 +569,7 @@ exit 0
                     endpoint: String::new(),
                     network_name: "Join request".to_string(),
                     network_id: peer_hex.clone(),
-                    invite: "nvpn://join-request/test".to_string(),
+                    join_request: "nvpn://join-request/test".to_string(),
                 },
                 last_seen: SystemTime::now(),
             },

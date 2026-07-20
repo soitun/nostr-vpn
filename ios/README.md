@@ -44,6 +44,6 @@ port, count, and wait can be overridden with `NVPN_IOS_TUN_PACKET_PROBE_*`.
 Physical VPN cycles save the raw debug result and TUN packet-probe summary JSON
 under `artifacts/mobile-ios`.
 
-The native shell includes SwiftUI state/action surfaces, invite QR,
+The native shell includes SwiftUI state/action surfaces, join-request QR,
 copy/share/import, roster, routing, settings, diagnostics, deep links, app icon,
 and Packet Tunnel integration backed by the shared Rust core.

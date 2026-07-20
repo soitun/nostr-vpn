@@ -41,7 +41,7 @@
     }
 
     #[test]
-    fn endpoint_peer_hints_make_private_recent_addresses_last_resort() {
+    fn recent_cache_does_not_create_configured_peer_membership() {
         let endpoint_peers = fips_endpoint_peers_from_mesh(
             &[],
             Vec::new(),
@@ -51,25 +51,7 @@
             )],
         );
 
-        let peer = endpoint_peers
-            .iter()
-            .find(|peer| peer.npub == "peer")
-            .expect("peer");
-        let recent_hint = peer
-            .addresses
-            .iter()
-            .find(|hint| hint.addr == "192.168.178.91:51830")
-            .expect("recent hint");
-
-        assert_eq!(recent_hint.seen_at_ms, Some(123_000));
-        assert_eq!(
-            recent_hint.priority,
-            FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY
-        );
-        assert_eq!(
-            fips_peer_address_from_hint(recent_hint).priority,
-            FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY
-        );
+        assert!(endpoint_peers.is_empty());
     }
 
     #[test]

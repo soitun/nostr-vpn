@@ -10,7 +10,7 @@ use crate::config::{
 pub(crate) fn normalize_network_admins(
     admins: Vec<String>,
     own_pubkey_hex: Option<&str>,
-    invite_inviter: &str,
+    join_request_admin: &str,
 ) -> Vec<String> {
     let mut normalized = admins
         .into_iter()
@@ -22,8 +22,8 @@ pub(crate) fn normalize_network_admins(
         return normalized;
     }
 
-    if let Ok(inviter) = normalize_nostr_pubkey(invite_inviter) {
-        return vec![inviter];
+    if let Ok(join_admin) = normalize_nostr_pubkey(join_request_admin) {
+        return vec![join_admin];
     }
 
     own_pubkey_hex

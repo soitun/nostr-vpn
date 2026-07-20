@@ -24,7 +24,6 @@
     { id: 'settings', label: 'Settings' },
   ];
   const SEARCH_VISIBILITY_THRESHOLD = 7;
-  const DEVICE_ID_BODY = /^[qpzry9x8gf2tvdw0s3jn54khce6mua7l]+$/;
 
   let state: UiState | null = null;
   let tab: Tab = 'devices';
@@ -41,9 +40,6 @@
   let settingsDirty = false;
   let participantNpub = '';
   let participantAlias = '';
-  let inviteDraft = '';
-  let manualAdminNpub = '';
-  let manualNetworkId = '';
   let newNetworkName = '';
   let addNetworkOpen = false;
   let addNetworkMode: 'choice' | 'create' | 'join' = 'choice';
@@ -114,14 +110,6 @@
     : null;
   $: publicFipsAddress = state?.ownNpub ? `${state.ownNpub}.fips` : '';
   $: participants = shownNetwork?.participants ?? [];
-  $: manualAdminNpubTrimmed = manualAdminNpub.trim();
-  $: manualNetworkIdNormalized = normalizeNetworkIdInput(manualNetworkId);
-  $: manualAdminInvalid =
-    manualAdminNpubTrimmed.length > 0 && !isValidDeviceId(manualAdminNpubTrimmed);
-  $: canManualAddNetwork =
-    Boolean(manualAdminNpubTrimmed) &&
-    Boolean(manualNetworkIdNormalized) &&
-    !manualAdminInvalid;
   $: showDeviceSearch = participants.length > SEARCH_VISIBILITY_THRESHOLD;
   $: deviceSearchQuery = showDeviceSearch ? deviceSearch.trim().toLowerCase() : '';
   $: visibleParticipants = participants
@@ -339,15 +327,6 @@
       return '';
     }
     return compact && /^[0-9a-f]+$/i.test(compact) ? compact.toLowerCase() : trimmed;
-  }
-
-  function isValidDeviceId(value: string): boolean {
-    const trimmed = value.trim();
-    return (
-      trimmed.length === 63 &&
-      trimmed.startsWith('npub1') &&
-      DEVICE_ID_BODY.test(trimmed.slice(5))
-    );
   }
 
   function looksLikeJoinRequest(value: string): boolean {
@@ -723,30 +702,6 @@
     }
   }
 
-  async function importNetworkInvite(invite: string, label = 'Importing') {
-    const existingIds = new Set(state?.networks.map((network) => network.id) ?? []);
-    const next = await runState('/api/import_network_invite', { invite }, label);
-    if (!next) {
-      return false;
-    }
-    const createdNetwork = next.networks.find((network) => !existingIds.has(network.id));
-    shownNetworkId = createdNetwork?.id ?? preferredNetworkId(next, '');
-    return true;
-  }
-
-  async function importInvite() {
-    const invite = inviteDraft.trim();
-    if (!invite) {
-      return;
-    }
-    const ok = await importNetworkInvite(invite, 'Importing');
-    if (ok) {
-      inviteDraft = '';
-      closeAddNetwork();
-      tab = 'devices';
-    }
-  }
-
   async function toggleNearbyDiscovery() {
     if (!state) {
       return;
@@ -763,9 +718,11 @@
       return;
     }
     await run(
-      state.inviteBroadcastActive ? '/api/stop_invite_broadcast' : '/api/start_invite_broadcast',
+      state.joinRequestBroadcastActive
+        ? '/api/stop_join_request_broadcast'
+        : '/api/start_join_request_broadcast',
       undefined,
-      state.inviteBroadcastActive ? 'Stopping nearby' : 'Advertising nearby',
+      state.joinRequestBroadcastActive ? 'Stopping nearby' : 'Advertising nearby',
     );
   }
 
@@ -782,37 +739,6 @@
       newNetworkName = '';
       closeAddNetwork();
       tab = 'devices';
-    }
-  }
-
-  async function manualAddNetwork() {
-    if (!canManualAddNetwork) {
-      return;
-    }
-    const existingIds = new Set(state?.networks.map((network) => network.id) ?? []);
-    const next = await runState(
-      '/api/manual_add_network',
-      {
-        adminNpub: manualAdminNpubTrimmed,
-        meshNetworkId: manualNetworkIdNormalized,
-      },
-      'Adding network',
-    );
-    if (next) {
-      const createdNetwork = next.networks.find((network) => !existingIds.has(network.id));
-      shownNetworkId = createdNetwork?.id ?? preferredNetworkId(next, '');
-      manualAdminNpub = '';
-      manualNetworkId = '';
-      closeAddNetwork();
-      tab = 'devices';
-    }
-  }
-
-  async function pasteInviteFromClipboard() {
-    try {
-      inviteDraft = (await navigator.clipboard.readText()).trim();
-    } catch (err) {
-      error = messageOf(err);
     }
   }
 
@@ -1287,80 +1213,19 @@
               />
             </div>
 
-            <form class="modal-section" on:submit|preventDefault={importInvite}>
-              <div class="section-heading">
-                <div>
-                  <h3>Legacy Invite Link</h3>
-                  <p>Paste an invite</p>
-                </div>
-              </div>
-              <label>
-                <span>Invite</span>
-                <textarea bind:value={inviteDraft} rows="6"></textarea>
-              </label>
-              <div class="button-row">
-                <button class="secondary-button" type="submit" disabled={Boolean(busyAction) || !inviteDraft.trim()}>
-                  Join
-                </button>
-                <button class="small-button" type="button" on:click={pasteInviteFromClipboard}>
-                  Paste
-                </button>
-              </div>
-            </form>
-
-            <form class="modal-section" on:submit|preventDefault={manualAddNetwork}>
-              <div class="section-heading">
-                <div>
-                  <h3>Add manually</h3>
-                  <p>Your Device ID + admin network details</p>
-                </div>
-              </div>
-              <div class="detail-list">
-                <div>
-                  <span>Your Device ID</span>
-                  <strong>{state.ownNpub}</strong>
-                  <CopyButton value={state.ownNpub} label="Device ID" on:copied={handleCopied} />
-                </div>
-              </div>
-              <div class="form-grid">
-                <label>
-                  <span>Admin Device ID</span>
-                  <input
-                    bind:value={manualAdminNpub}
-                    class:invalid={manualAdminInvalid}
-                    autocomplete="off"
-                  />
-                </label>
-                <label>
-                  <span>Network ID</span>
-                  <input bind:value={manualNetworkId} autocomplete="off" />
-                </label>
-              </div>
-              {#if manualAdminInvalid}
-                <div class="field-error">Not a valid device ID</div>
-              {/if}
-              <button
-                class="secondary-button"
-                type="submit"
-                disabled={Boolean(busyAction) || !canManualAddNetwork}
-              >
-                Add
-              </button>
-            </form>
-
             <div class="modal-section">
               <div class="section-heading">
                 <div>
                   <h3>Nearby join request</h3>
-                  <p>{state.inviteBroadcastActive ? 'Advertising' : 'Ready'}</p>
+                  <p>{state.joinRequestBroadcastActive ? 'Advertising' : 'Ready'}</p>
                 </div>
                 <button
                   type="button"
                   class="small-button"
                   on:click={toggleJoinRequestBroadcast}
                 >
-                  {state.inviteBroadcastActive
-                    ? `Advertising · ${remainingText(state.inviteBroadcastRemainingSecs)}`
+                  {state.joinRequestBroadcastActive
+                    ? `Advertising · ${remainingText(state.joinRequestBroadcastRemainingSecs)}`
                     : 'Advertise nearby'}
                 </button>
               </div>

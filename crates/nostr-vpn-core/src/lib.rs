@@ -13,7 +13,6 @@ pub mod fips_control_tcp;
 pub mod fips_discovery;
 pub mod fips_mesh;
 pub mod identity_bridge;
-pub mod invite;
 pub mod join_delivery;
 pub mod join_requests;
 pub mod lan_pairing;

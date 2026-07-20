@@ -24,7 +24,7 @@ extension AppManager {
 
     func share(_ value: String) {
         guard let contentView = NSApp.keyWindow?.contentView else {
-            copy(value, as: .invite)
+            copy(value, as: .joinRequest)
             return
         }
         let item: Any = URL(string: value) ?? value
@@ -34,10 +34,6 @@ extension AppManager {
 
     func handle(url: URL) {
         let raw = url.absoluteString
-        if raw.starts(with: "nvpn://invite/") {
-            importInvite(raw)
-            return
-        }
         if raw.lowercased().hasPrefix("nvpn://join-request") {
             importJoinRequest(raw)
             return
@@ -51,14 +47,6 @@ extension AppManager {
         switch action {
         case "tick":
             dispatch(.tick, status: "Refreshing")
-        case "request-join":
-            let requestedNetwork = Self.debugQueryValue("networkId", aliases: ["network"], in: url)
-            guard let network = state.networks.first(where: {
-                requestedNetwork == nil || $0.id == requestedNetwork || $0.networkId == requestedNetwork
-            }) else {
-                return
-            }
-            dispatch(.requestNetworkJoin(networkId: network.id), status: "Requesting access")
         case "accept-join":
             let requestedNetwork = Self.debugQueryValue("networkId", aliases: ["network"], in: url)
             guard let network = state.networks.first(where: {
@@ -92,22 +80,6 @@ extension AppManager {
             .first(where: { names.contains($0.name) })?
             .value?
             .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    func importInvite(_ invite: String) {
-        let trimmed = invite.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            return
-        }
-        // Clear immediately so the field reflects "import in flight" rather
-        // than holding the same text the user just submitted (and so a stale
-        // invite from a prior session doesn't quietly re-fire).
-        inviteInput = ""
-        dispatch(.importNetworkInvite(invite: trimmed), status: "Linking network")
-    }
-
-    func linkNetwork(_ link: String) {
-        importInvite(link)
     }
 
     func importJoinRequest(_ request: String) {

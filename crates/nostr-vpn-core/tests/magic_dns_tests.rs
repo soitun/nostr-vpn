@@ -126,7 +126,7 @@ fn magic_dns_server_answers_a_and_nxdomain() {
 #[test]
 fn magic_dns_server_update_records_reflects_newly_added_alias() {
     // Regression: peers added via `nvpn add-participant` or imported via
-    // invite after the daemon started used to keep returning NXDOMAIN until
+    // roster update after the daemon started used to keep returning NXDOMAIN until
     // the daemon was restarted, because the records map was baked at boot
     // and `update_records` was never called outside tests. The session
     // runtime now wires `update_records` into every reload point — guard

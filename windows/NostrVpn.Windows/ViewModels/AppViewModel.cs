@@ -40,7 +40,6 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _shownNetworkId = "";
     private bool _actionInFlight;
     private string _notice = "";
-    private string _inviteInput = "";
     private string _joinRequestInput = "";
     private string _participantInput = "";
     private string _participantAliasInput = "";
@@ -61,9 +60,6 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _paidRouteSendAmount = "";
     private string _paidRouteReceiveToken = "";
     private string _paidRouteWithdrawInvoice = "";
-    private string _manualJoinAdminId = "";
-    private string _manualJoinMeshId = "";
-    private bool _manualJoinExpanded;
     private string _networkSetupMode = "";
     private string _updateStatus = "";
     private Uri? _updateAssetUrl;
@@ -116,11 +112,9 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         ToggleVpnCommand = new AsyncRelayCommand(_ => ToggleVpnAsync(), _ => !ActionInFlight && State.VpnControlSupported && RuntimeActiveNetwork is not null);
         CopyThisDeviceCommand = new RelayCommand(_ => CopyText(ThisDeviceCopyValue), _ => !string.IsNullOrWhiteSpace(ThisDeviceCopyValue));
         CopyPeerCommand = new RelayCommand(parameter => CopyText(parameter as string ?? ""));
-        ImportInviteCommand = new AsyncRelayCommand(_ => ImportInviteAsync(InviteInput), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(InviteInput));
-        PasteInviteCommand = new RelayCommand(_ => PasteInviteFromClipboard(), _ => !ActionInFlight);
         ImportJoinRequestQrImageCommand = new AsyncRelayCommand(_ => ImportJoinRequestQrImageAsync(), _ => !ActionInFlight && ActiveNetwork?.LocalIsAdmin == true);
         ToggleNearbyDiscoveryCommand = new AsyncRelayCommand(_ => DispatchAsync(State.NearbyDiscoveryActive ? NativeActions.StopNearbyDiscovery() : NativeActions.StartNearbyDiscovery(), "Finding nearby"));
-        ToggleJoinRequestBroadcastCommand = new AsyncRelayCommand(_ => DispatchAsync(State.InviteBroadcastActive ? NativeActions.StopJoinRequestBroadcast() : NativeActions.StartJoinRequestBroadcast(), State.InviteBroadcastActive ? "Stopping nearby" : "Advertising nearby"));
+        ToggleJoinRequestBroadcastCommand = new AsyncRelayCommand(_ => DispatchAsync(State.JoinRequestBroadcastActive ? NativeActions.StopJoinRequestBroadcast() : NativeActions.StartJoinRequestBroadcast(), State.JoinRequestBroadcastActive ? "Stopping nearby" : "Advertising nearby"));
         AddParticipantCommand = new AsyncRelayCommand(_ => AddParticipantAsync(), _ => !ActionInFlight && ActiveNetwork is { LocalIsAdmin: true, Enabled: true } && !string.IsNullOrWhiteSpace(ParticipantInput) && !ParticipantInputInvalid);
         SaveNodeCommand = new AsyncRelayCommand(_ => SaveNodeAsync(), _ => !ActionInFlight);
         AddRelayCommand = new AsyncRelayCommand(_ => AddRelayAsync(), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(RelayInput));
@@ -132,10 +126,6 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         ShowJoinNetworkSetupCommand = new RelayCommand(_ => SetNetworkSetupMode("join"));
         BackToNetworkSetupChoicesCommand = new RelayCommand(_ => SetNetworkSetupMode(""));
         AddNetworkCommand = new AsyncRelayCommand(_ => AddNetworkAsync(), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(NetworkNameInput));
-        ManualAddNetworkCommand = new AsyncRelayCommand(
-            _ => ManualAddNetworkAsync(),
-            _ => !ActionInFlight && CanSubmitManualJoin);
-        ToggleManualJoinCommand = new RelayCommand(_ => ManualJoinExpanded = !ManualJoinExpanded);
         ActivateInactiveNetworkCommand = new AsyncRelayCommand(
             parameter => ActivateInactiveNetworkAsync(parameter as string),
             parameter => !ActionInFlight && parameter is string id && !string.IsNullOrWhiteSpace(id));
@@ -220,27 +210,6 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    public string InviteInput
-    {
-        get => _inviteInput;
-        set
-        {
-            if (!SetField(ref _inviteInput, value))
-            {
-                return;
-            }
-            CommandManager.InvalidateRequerySuggested();
-            // Auto-import as soon as the field contains a recognisable invite —
-            // saves the user a click and matches "paste and you're in" mental
-            // model. We only fire on full nvpn:// URLs so partial typing
-            // doesn't trigger; the import itself clears the field.
-            var trimmed = (value ?? string.Empty).Trim();
-            if (!ActionInFlight && LooksLikeInviteCode(trimmed))
-            {
-                _ = ImportInviteAsync(trimmed);
-            }
-        }
-    }
     public string JoinRequestInput
     {
         get => _joinRequestInput;
@@ -281,69 +250,6 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         }
     }
     public Visibility ParticipantInputErrorVisibility => ParticipantInputInvalid ? Visibility.Visible : Visibility.Collapsed;
-
-    public string ManualJoinAdminId
-    {
-        get => _manualJoinAdminId;
-        set
-        {
-            if (SetField(ref _manualJoinAdminId, value))
-            {
-                OnPropertyChanged(nameof(ManualJoinAdminInvalid));
-                OnPropertyChanged(nameof(ManualJoinAdminErrorVisibility));
-                OnPropertyChanged(nameof(CanSubmitManualJoin));
-                CommandManager.InvalidateRequerySuggested();
-            }
-        }
-    }
-
-    public string ManualJoinMeshId
-    {
-        get => _manualJoinMeshId;
-        set
-        {
-            if (SetField(ref _manualJoinMeshId, value))
-            {
-                OnPropertyChanged(nameof(CanSubmitManualJoin));
-                CommandManager.InvalidateRequerySuggested();
-            }
-        }
-    }
-
-    public bool ManualJoinExpanded
-    {
-        get => _manualJoinExpanded;
-        set
-        {
-            if (SetField(ref _manualJoinExpanded, value))
-            {
-                OnPropertyChanged(nameof(ManualJoinExpanderToggleText));
-            }
-        }
-    }
-
-    public string ManualJoinExpanderToggleText => ManualJoinExpanded ? "Add manually ▴" : "Add manually ▾";
-
-    public bool ManualJoinAdminInvalid
-    {
-        get
-        {
-            var trimmed = (_manualJoinAdminId ?? string.Empty).Trim();
-            return trimmed.Length > 0 && !IsValidDeviceId(trimmed);
-        }
-    }
-
-    public Visibility ManualJoinAdminErrorVisibility => ManualJoinAdminInvalid ? Visibility.Visible : Visibility.Collapsed;
-
-    public bool CanSubmitManualJoin
-    {
-        get
-        {
-            var admin = (_manualJoinAdminId ?? string.Empty).Trim();
-            var mesh = (_manualJoinMeshId ?? string.Empty).Trim();
-            return admin.Length > 0 && mesh.Length > 0 && !ManualJoinAdminInvalid;
-        }
-    }
 
     public string NetworkNameInput { get => _networkNameInput; set => SetField(ref _networkNameInput, value); }
     public string NetworkNameDraft
@@ -593,14 +499,14 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
             StringComparison.Ordinal);
 
     public string ThisDeviceCopyValue => !string.IsNullOrWhiteSpace(State.OwnNpub) ? State.OwnNpub : State.TunnelIp;
-    public Visibility NoNearbyInvitesNoticeVisibility => State.NearbyDiscoveryActive && State.LanPeers.Count == 0
+    public Visibility NoNearbyJoinRequestsNoticeVisibility => State.NearbyDiscoveryActive && State.LanPeers.Count == 0
         ? Visibility.Visible
         : Visibility.Collapsed;
     public string NearbyDiscoveryButtonText => State.NearbyDiscoveryActive
         ? $"Finding nearby · {FormatRemaining(State.NearbyDiscoveryRemainingSecs)}"
         : "Find nearby";
-    public string JoinRequestBroadcastButtonText => State.InviteBroadcastActive
-        ? $"Advertising · {FormatRemaining(State.InviteBroadcastRemainingSecs)}"
+    public string JoinRequestBroadcastButtonText => State.JoinRequestBroadcastActive
+        ? $"Advertising · {FormatRemaining(State.JoinRequestBroadcastRemainingSecs)}"
         : "Advertise nearby";
 
     private static string FormatRemaining(ulong seconds)
@@ -682,8 +588,6 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand ToggleVpnCommand { get; }
     public ICommand CopyThisDeviceCommand { get; }
     public ICommand CopyPeerCommand { get; }
-    public ICommand ImportInviteCommand { get; }
-    public ICommand PasteInviteCommand { get; }
     public ICommand ImportJoinRequestQrImageCommand { get; }
     public ICommand ToggleNearbyDiscoveryCommand { get; }
     public ICommand ToggleJoinRequestBroadcastCommand { get; }
@@ -698,8 +602,6 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand ShowJoinNetworkSetupCommand { get; }
     public ICommand BackToNetworkSetupChoicesCommand { get; }
     public ICommand AddNetworkCommand { get; }
-    public ICommand ManualAddNetworkCommand { get; }
-    public ICommand ToggleManualJoinCommand { get; }
     public ICommand ActivateInactiveNetworkCommand { get; }
     public ICommand SaveNetworkNameCommand { get; }
     public ICommand SaveNetworkMeshIdCommand { get; }

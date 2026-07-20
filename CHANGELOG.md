@@ -6,6 +6,8 @@ All notable changes to this project are documented in this file.
 
 ### Changed
 
+- Replace network invitations and manual device entry with one signed
+  join-request flow across desktop, mobile, web, CLI, and nearby pairing.
 - Enable paid exits in standard release builds, mark automatic paid internet
   as experimental, and leave exit fail-closed behavior off by default.
 - Replace the mutually exclusive byte/time/packet tariff with a version 2,
@@ -30,7 +32,31 @@ All notable changes to this project are documented in this file.
   before packets use the standard discovery, routing, and session pipeline.
 - Keep the ordinary VPN tunnel alive when `.fips` host access is disabled,
   while removing only its host IPv6 address, route, DNS, and firewall state.
-
+- Install and restore the local authenticated DNS resolver on OpenRC Linux
+  hosts as well as systemd-resolved and container environments.
+- Allow authenticated `.fips` ICMPv6 echo diagnostics while retaining the
+  host firewall's default-deny policy for other non-TCP overlay traffic.
+- Route explicitly resolved `.fips` identities through an already-admitted
+  physical FIPS adjacency under both configured-only and Open discovery,
+  without granting ambient learned identities the same fallback transit.
+- Keep standard FIPS pubsub subscriptions stable when an authenticated peer
+  moves to a replacement link, avoiding full retained-event replay to every
+  peer while preserving catch-up for newly connected identities.
+- Retain queued device approvals until the authenticated guest confirms that
+  the exact signed roster was applied, with idempotent retries after lost
+  transport records or application receipts.
+- Keep routed FSP establishment on its authenticated reply-learned seed path
+  through the final Noise handshake message, and ignore stale session errors
+  from unrelated seed branches while that path remains healthy.
+- Keep ambient open-discovery retries bounded and cooldown-aware, skip retry
+  work for already-authenticated WebSocket adjacencies, and reserve transit
+  loop-check bypass for the bounded route proven by a verified lookup response
+  rather than every learned path.
+- Cool unaffiliated peers learned from public relay announcements for thirty
+  minutes after three failed connection attempts, while preserving unlimited
+  reconnect for configured and roster peers.
+- Apply that same bounded cooldown when an ambient transport accepts the probe
+  but the remote endpoint never completes its authenticated FIPS handshake.
 - Delay the first macOS automatic update check for ten seconds after startup
   so networking can settle, then retry failures after one minute instead of
   silently waiting for the normal six-hour polling interval.
