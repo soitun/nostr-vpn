@@ -723,8 +723,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 eprintln!("paid-exit: failed to record FIPS usage: {error}");
                             }
                         }
-                        if app.public_paid_exit_node_pubkey_hex().is_some() {
-                            if automatic_paid_exit.payments_allowed(&app, unix_timestamp()) {
+                        if app.public_paid_exit_node_pubkey_hex().is_some()
+                            && automatic_paid_exit.payments_allowed(&app, unix_timestamp())
+                        {
                                 match paid_exit_stream_due_payments_for_daemon(
                                     &app,
                                     &config_path,
@@ -751,7 +752,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         );
                                     }
                                 }
-                            }
                         }
                         let flushed = flush_paid_exit_payment_outbox(runtime, &config_path).await;
                         if flushed.sent > 0 || flushed.errors > 0 {

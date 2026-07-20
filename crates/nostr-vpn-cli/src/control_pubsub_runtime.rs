@@ -311,6 +311,13 @@ struct PubsubRunState {
     update_events: UpdateEventCache,
 }
 
+#[derive(Default)]
+struct FipsSubscriptionState {
+    subscription: Option<FipsPubsubSubscription>,
+    peer_links: Vec<(String, u64)>,
+    pubsub_readiness: (usize, usize),
+}
+
 #[derive(Clone, Copy)]
 struct PublishContext<'a> {
     endpoint: &'a FipsEndpoint,
@@ -340,18 +347,14 @@ async fn run(
     maintenance_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut outbox_tick = tokio::time::interval(OUTBOX_POLL_INTERVAL);
     outbox_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut subscription = None;
-    let mut subscribed_peer_links = Vec::new();
-    let mut subscribed_pubsub_readiness = (0, 0);
+    let mut fips_subscription = FipsSubscriptionState::default();
     sync_fips_subscription(
         &endpoint,
         &fips_pubsub,
         peer_policy.as_ref(),
         &events,
         &update_events,
-        &mut subscription,
-        &mut subscribed_peer_links,
-        &mut subscribed_pubsub_readiness,
+        &mut fips_subscription,
     )
     .await;
 
@@ -406,7 +409,7 @@ async fn run(
                 )
                 .await;
             }
-            delivery = fips_notification(&mut subscription) => {
+            delivery = fips_notification(&mut fips_subscription.subscription) => {
                 let Some(delivery) = delivery else { continue; };
                 process_fips_delivery(
                     &endpoint,
@@ -470,9 +473,7 @@ async fn run(
                     peer_policy.as_ref(),
                     &events,
                     &update_events,
-                    &mut subscription,
-                    &mut subscribed_peer_links,
-                    &mut subscribed_pubsub_readiness,
+                    &mut fips_subscription,
                 )
                 .await;
                 publish_policy_maintenance(
@@ -677,24 +678,22 @@ async fn sync_fips_subscription(
     peer_policy: &dyn MeshPeerPolicy,
     events: &Arc<Mutex<ControlEventStore>>,
     update_events: &UpdateEventCache,
-    subscription: &mut Option<FipsPubsubSubscription>,
-    subscribed_peer_links: &mut Vec<(String, u64)>,
-    subscribed_pubsub_readiness: &mut (usize, usize),
+    state: &mut FipsSubscriptionState,
 ) {
     let peers = connected_peers(endpoint, peer_policy).await;
     let pubsub_readiness = (
         fips_pubsub.connected_peer_count().unwrap_or_default(),
         fips_pubsub.peer_subscription_count().unwrap_or_default(),
     );
-    if subscription.is_some()
-        && *subscribed_peer_links == peers
-        && *subscribed_pubsub_readiness == pubsub_readiness
+    if state.subscription.is_some()
+        && state.peer_links == peers
+        && state.pubsub_readiness == pubsub_readiness
     {
         return;
     }
-    subscription.take();
-    subscribed_peer_links.clear();
-    *subscribed_pubsub_readiness = pubsub_readiness;
+    state.subscription.take();
+    state.peer_links.clear();
+    state.pubsub_readiness = pubsub_readiness;
     if peers.is_empty() {
         return;
     }
@@ -706,8 +705,8 @@ async fn sync_fips_subscription(
             return;
         }
     };
-    *subscribed_peer_links = peers;
-    *subscription = Some(next);
+    state.peer_links = peers;
+    state.subscription = Some(next);
 
     for event in bounded_fips_replay(events.lock().await.snapshot()) {
         let event_id = event.id;
