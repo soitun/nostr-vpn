@@ -2,8 +2,8 @@
 mod tests {
     use super::{
         AdminSignedSharedRosterUpdate, AppConfig, InternetSource, PendingOutboundJoinRequest,
-        effective_fips_nostr_relays, normalize_nostr_pubkey, parse_wireguard_exit_config,
-        split_peer_transport_addr, wireguard_exit_config_text,
+        effective_fips_nostr_relays, normalize_nostr_pubkey, npub_for_pubkey_hex,
+        parse_wireguard_exit_config, split_peer_transport_addr, wireguard_exit_config_text,
     };
     use crate::config_defaults::generate_nostr_identity;
 
@@ -75,6 +75,24 @@ mod tests {
         assert!(config.fips_bootstrap_peers.contains_key(
             "npub1zv3qmj7xz7znehyqwzpc26fcjxtcf7tpxeevxx93ymgm6kw7gjpqp9npvh"
         ));
+    }
+
+    #[test]
+    fn bootstrap_endpoints_never_include_own_identity() {
+        let mut config = AppConfig::generated_without_networks();
+        let own_npub = npub_for_pubkey_hex(
+            &config
+                .own_nostr_pubkey_hex()
+                .expect("generated identity public key"),
+        );
+        config
+            .fips_bootstrap_peers
+            .insert(own_npub.clone(), vec!["127.0.0.1:51820".to_string()]);
+
+        let endpoints = config.fips_bootstrap_peer_endpoints();
+
+        assert_eq!(endpoints.len(), 2);
+        assert!(endpoints.iter().all(|(npub, _)| npub != &own_npub));
     }
 
     #[test]
