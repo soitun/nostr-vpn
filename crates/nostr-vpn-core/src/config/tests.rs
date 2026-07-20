@@ -30,6 +30,54 @@ mod tests {
     }
 
     #[test]
+    fn generated_config_uses_public_native_fips_bootstrap_seeds() {
+        let config = AppConfig::generated_without_networks();
+
+        assert!(config.fips_bootstrap_enabled);
+        assert_eq!(config.fips_bootstrap_peers.len(), 2);
+        assert_eq!(
+            config
+                .fips_bootstrap_peers
+                .get("npub1927ye6w57stma7yntatltdphes2fugdn8ktqdmp72225crrvgwqq4p7rkd"),
+            Some(&vec!["185.18.221.232:51820".to_string()])
+        );
+        assert_eq!(
+            config
+                .fips_bootstrap_peers
+                .get("npub1zv3qmj7xz7znehyqwzpc26fcjxtcf7tpxeevxx93ymgm6kw7gjpqp9npvh"),
+            Some(&vec!["65.109.48.91:51820".to_string()])
+        );
+        assert!(config.fips_bootstrap_peers.values().flatten().all(|addr| {
+            addr.parse::<std::net::SocketAddr>()
+                .is_ok_and(|socket| socket.is_ipv4())
+        }));
+    }
+
+    #[test]
+    fn existing_custom_bootstraps_gain_missing_public_native_seeds() {
+        let mut config = AppConfig::generated_without_networks();
+        let (_, custom_npub) = generate_nostr_identity();
+        config.fips_bootstrap_peers = std::collections::HashMap::from([(
+            custom_npub.clone(),
+            vec!["203.0.113.9:51820".to_string()],
+        )]);
+
+        config.ensure_defaults();
+
+        assert_eq!(config.fips_bootstrap_peers.len(), 3);
+        assert_eq!(
+            config.fips_bootstrap_peers.get(&custom_npub),
+            Some(&vec!["203.0.113.9:51820".to_string()])
+        );
+        assert!(config.fips_bootstrap_peers.contains_key(
+            "npub1927ye6w57stma7yntatltdphes2fugdn8ktqdmp72225crrvgwqq4p7rkd"
+        ));
+        assert!(config.fips_bootstrap_peers.contains_key(
+            "npub1zv3qmj7xz7znehyqwzpc26fcjxtcf7tpxeevxx93ymgm6kw7gjpqp9npvh"
+        ));
+    }
+
+    #[test]
     fn websocket_seed_urls_are_trimmed_deduplicated_and_preserved_as_multiple_seeds() {
         let mut config = AppConfig::generated();
         config.fips_websocket_seed_urls = vec![

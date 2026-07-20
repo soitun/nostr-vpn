@@ -1,8 +1,18 @@
 pub const DEFAULT_RELAYS: &[&str] = &[];
 
-/// No identity is privileged as a built-in FIPS gateway. New configs discover
-/// peers over Nostr; operators can still add explicit bootstrap/transit peers.
-pub const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[];
+/// Public native FIPS transit seeds used to establish the first authenticated
+/// route. Advert discovery can then find and upgrade paths to other peers.
+/// These literal IPv4 endpoints remain usable when DNS or IPv6 is unavailable.
+pub const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
+    (
+        "npub1927ye6w57stma7yntatltdphes2fugdn8ktqdmp72225crrvgwqq4p7rkd",
+        &["185.18.221.232:51820"],
+    ),
+    (
+        "npub1zv3qmj7xz7znehyqwzpc26fcjxtcf7tpxeevxx93ymgm6kw7gjpqp9npvh",
+        &["65.109.48.91:51820"],
+    ),
+];
 
 /// The default bootstrap peer list as an owned map, used to seed configs and to
 /// power "reset to defaults".
@@ -146,9 +156,9 @@ pub struct AppConfig {
         skip_serializing_if = "is_false"
     )]
     pub fips_bootstrap_enabled: bool,
-    /// Editable operator-supplied transit/bootstrap peers (npub ->
-    /// transport-tagged addresses). New configs leave this empty so Nostr
-    /// discovery, rather than a privileged identity, chooses peers.
+    /// Editable transit/bootstrap peers (npub -> transport-tagged addresses).
+    /// New configs start with the public native seeds so private FIPS signaling
+    /// has an authenticated route before direct peer discovery succeeds.
     #[serde(default = "default_fips_bootstrap_peers")]
     pub fips_bootstrap_peers: HashMap<String, Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

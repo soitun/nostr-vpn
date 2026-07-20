@@ -1,5 +1,8 @@
 impl AppConfig {
     pub fn ensure_defaults(&mut self) {
+        for (npub, addrs) in default_fips_bootstrap_peers() {
+            self.fips_bootstrap_peers.entry(npub).or_insert(addrs);
+        }
         self.fips_websocket_seed_urls = normalize_relay_urls(std::mem::take(
             &mut self.fips_websocket_seed_urls,
         ));

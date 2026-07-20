@@ -66,7 +66,7 @@ impl AppConfig {
         peers
     }
 
-    /// Clear the bootstrap/transit peer list back to its identity-neutral default.
+    /// Clear the bootstrap/transit peer list back to the public native seeds.
     pub fn reset_fips_bootstrap_peers(&mut self) {
         self.fips_bootstrap_peers = default_fips_bootstrap_peers();
     }
