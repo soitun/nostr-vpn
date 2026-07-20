@@ -675,10 +675,7 @@ async fn sync_fips_subscription(
     }
 }
 
-fn should_create_fips_subscription(
-    subscription_exists: bool,
-    connected_peer_count: usize,
-) -> bool {
+fn should_create_fips_subscription(subscription_exists: bool, connected_peer_count: usize) -> bool {
     !subscription_exists && connected_peer_count > 0
 }
 

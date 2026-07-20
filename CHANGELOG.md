@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+### Fixed
+
+- Update the integrated FIPS core to 0.4.27 so delayed path promotion preserves
+  an already-recovered session and production first-ping name resolution does
+  not lose the newly established route.
+
 ## 4.0.99 - 2026-07-19
 
 ### Fixed
