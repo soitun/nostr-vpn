@@ -600,6 +600,13 @@ fn static_transit_group_rank(addrs: &[String]) -> u8 {
         .unwrap_or(0)
 }
 
+fn is_public_native_bootstrap_peer(participant: &str) -> bool {
+    let participant = normalize_fips_endpoint_npub(participant);
+    DEFAULT_FIPS_BOOTSTRAP_PEERS
+        .iter()
+        .any(|(npub, _)| participant == *npub)
+}
+
 fn cap_static_non_roster_transit_endpoints(
     groups: Vec<(String, Vec<String>)>,
     roster_endpoint_npubs: &HashSet<String>,
@@ -617,8 +624,12 @@ fn cap_static_non_roster_transit_endpoints(
     }
 
     non_roster.sort_by(|left, right| {
-        static_transit_group_rank(&right.1)
+        is_public_native_bootstrap_peer(&right.0)
+            .cmp(&is_public_native_bootstrap_peer(&left.0))
+            .then_with(|| {
+                static_transit_group_rank(&right.1)
             .cmp(&static_transit_group_rank(&left.1))
+            })
             .then_with(|| left.0.cmp(&right.0))
     });
     non_roster.truncate(max_non_roster);

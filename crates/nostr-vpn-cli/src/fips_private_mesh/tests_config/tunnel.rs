@@ -756,6 +756,66 @@
     }
 
     #[test]
+    fn tunnel_config_keeps_public_native_seeds_inside_static_cap() {
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let network_id = "fips-public-bootstrap-priority-test";
+
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = alice_nsec;
+        app.connect_to_non_roster_fips_peers = true;
+        app.fips_bootstrap_enabled = true;
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = network_id.to_string();
+        app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey];
+        for i in 0..2 {
+            let npub = Keys::generate()
+                .public_key()
+                .to_bech32()
+                .expect("custom bootstrap npub");
+            app.fips_bootstrap_peers
+                .insert(npub, vec![format!("[2001:db8::{:x}]:51820", i + 10)]);
+        }
+
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            None,
+            &[],
+        )
+        .expect("fips tunnel config");
+
+        let endpoint_npubs = config
+            .endpoint_peers
+            .iter()
+            .map(|peer| peer.npub.as_str())
+            .collect::<HashSet<_>>();
+        for (npub, _) in nostr_vpn_core::config::DEFAULT_FIPS_BOOTSTRAP_PEERS {
+            assert!(
+                endpoint_npubs.contains(npub),
+                "public native seed {npub} must survive the static transit cap"
+            );
+        }
+        assert_eq!(
+            config
+                .endpoint_peers
+                .iter()
+                .filter(|peer| {
+                    nostr_vpn_core::config::DEFAULT_FIPS_BOOTSTRAP_PEERS
+                        .iter()
+                        .any(|(npub, _)| peer.npub == *npub)
+                })
+                .count(),
+            FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS
+        );
+    }
+
+    #[test]
     fn websocket_listener_reserves_a_bounded_public_adjacency_budget() {
         let alice_keys = Keys::generate();
         let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
