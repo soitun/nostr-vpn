@@ -165,7 +165,7 @@ fn fips_join_approval_config(
     });
     for recipient in recipients {
         config.endpoint_peers =
-            prioritize_join_roster_recipient(config.endpoint_peers, recipient)?;
+            prioritize_fips_control_recipient(config.endpoint_peers, recipient)?;
     }
     config.network_id.clear();
     config.iface.clear();

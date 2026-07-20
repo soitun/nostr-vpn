@@ -995,6 +995,44 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
             .is_empty()
     );
 
+    app.set_internet_source(InternetSource::Direct);
+    let seller_npub = seller.public_key().to_bech32().expect("seller npub");
+    let mut recent_peers = nostr_vpn_core::recent_peers::RecentPeerEndpoints::default();
+    assert!(recent_peers.note_success(&seller.public_key().to_hex(), "203.0.113.40:51821", 128,));
+    let network_id = app.effective_network_id();
+    let own_pubkey = app.own_nostr_pubkey_hex().expect("buyer pubkey");
+    let config = fips_tunnel_config_from_app(FipsTunnelConfigInput {
+        app: &app,
+        config_path: &dir.join("config.toml"),
+        network_id: &network_id,
+        iface: "utun-test".to_string(),
+        underlay_interface_mtu: None,
+        own_pubkey: Some(&own_pubkey),
+        recent_peers: Some(&recent_peers),
+        live_peer_endpoints: &[],
+        ethernet_underlay: None,
+    })
+    .expect("build direct-mode config with pending close");
+    let seller_control_peer = config
+        .endpoint_peers
+        .iter()
+        .find(|peer| peer.npub == seller_npub)
+        .expect("pending close keeps seller as a control peer");
+    assert!(seller_control_peer.auto_reconnect);
+    assert!(
+        seller_control_peer
+            .addresses
+            .iter()
+            .any(|hint| hint.addr == "203.0.113.40:51821")
+    );
+    assert!(
+        config
+            .peers
+            .iter()
+            .all(|peer| peer.participant_pubkey != seller.public_key().to_hex()),
+        "pending close must not restore the seller as an exit route"
+    );
+
     let _ = std::fs::remove_dir_all(&dir);
 
     struct RuntimeFakePaymentSigner;

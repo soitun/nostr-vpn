@@ -552,13 +552,25 @@ fn fips_tunnel_config_from_app(
     )?;
     config.ethernet_underlay = ethernet_underlay.cloned();
     for (_, queued) in nostr_vpn_core::join_delivery::load_join_rosters(config_path) {
-        match crate::fips_private_mesh::prioritize_join_roster_recipient(
+        match crate::fips_private_mesh::prioritize_fips_control_recipient(
             config.endpoint_peers.clone(),
             &queued.recipient_npub,
         ) {
             Ok(peers) => config.endpoint_peers = peers,
             Err(error) => {
                 eprintln!("ignoring invalid pending join roster recipient: {error}");
+            }
+        }
+    }
+    #[cfg(feature = "paid-exit")]
+    for queued in load_paid_exit_payment_outbox(config_path) {
+        match crate::fips_private_mesh::prioritize_fips_control_recipient(
+            config.endpoint_peers.clone(),
+            &queued.envelope.seller,
+        ) {
+            Ok(peers) => config.endpoint_peers = peers,
+            Err(error) => {
+                eprintln!("ignoring invalid pending paid-exit recipient: {error}");
             }
         }
     }

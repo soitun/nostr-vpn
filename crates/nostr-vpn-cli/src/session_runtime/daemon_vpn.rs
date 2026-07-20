@@ -751,14 +751,13 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                     }
                                 }
                             }
-                            let flushed =
-                                flush_paid_exit_payment_outbox(runtime, &config_path).await;
-                            if flushed.sent > 0 || flushed.errors > 0 {
-                                eprintln!(
-                                    "paid-exit: direct FIPS payment outbox sent={} errors={}",
-                                    flushed.sent, flushed.errors
-                                );
-                            }
+                        }
+                        let flushed = flush_paid_exit_payment_outbox(runtime, &config_path).await;
+                        if flushed.sent > 0 || flushed.errors > 0 {
+                            eprintln!(
+                                "paid-exit: direct FIPS payment outbox sent={} errors={}",
+                                flushed.sent, flushed.errors
+                            );
                         }
                     }
                 }

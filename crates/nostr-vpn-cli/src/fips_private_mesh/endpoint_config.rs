@@ -69,12 +69,12 @@ pub(crate) struct FipsEndpointPeerTransportConfig {
     pub(crate) discovery_fallback_transit: bool,
 }
 
-pub(crate) fn prioritize_join_roster_recipient(
+pub(crate) fn prioritize_fips_control_recipient(
     peers: Vec<FipsEndpointPeerTransportConfig>,
     recipient_pubkey: &str,
 ) -> Result<Vec<FipsEndpointPeerTransportConfig>> {
     let recipient_pubkey = normalize_nostr_pubkey(recipient_pubkey)
-        .with_context(|| format!("invalid join roster recipient {recipient_pubkey}"))?;
+        .with_context(|| format!("invalid FIPS control recipient {recipient_pubkey}"))?;
     let recipient_npub = PublicKey::from_hex(&recipient_pubkey)?.to_bech32()?;
     Ok(prioritize_join_roster_peer(peers, &recipient_npub))
 }
@@ -754,7 +754,7 @@ mod endpoint_config_tests {
             ],
             Vec::new(),
         );
-        let peers = prioritize_join_roster_recipient(peers, &roster.endpoint_npub)
+        let peers = prioritize_fips_control_recipient(peers, &roster.endpoint_npub)
             .expect("join roster recipient");
 
         let roster_peer = &peers[0];
@@ -793,7 +793,7 @@ mod endpoint_config_tests {
         }];
 
         retain_enabled_peer_transport_addresses(&mut peers, false);
-        let peers = prioritize_join_roster_recipient(peers, &recipient_pubkey)
+        let peers = prioritize_fips_control_recipient(peers, &recipient_pubkey)
             .expect("join roster recipient");
 
         let webrtc_addresses = peers

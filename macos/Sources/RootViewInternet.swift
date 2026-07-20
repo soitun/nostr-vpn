@@ -45,7 +45,9 @@ extension RootView {
 
                     routeChoice(
                         title: "Paid Internet · Manual",
-                        subtitle: "Experimental · Browse and choose a provider",
+                        subtitle: state.internetSource == "paid_manual"
+                            ? "Experimental · \(state.exitNodeStatusText)"
+                            : "Experimental · Browse and choose a provider",
                         selected: state.internetSource == "paid_manual",
                         enabled: true
                     ) {
