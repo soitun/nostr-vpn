@@ -30,9 +30,10 @@ All notable changes to this project are documented in this file.
 - Keep routed FSP establishment on its authenticated reply-learned seed path
   through the final Noise handshake message, and ignore stale session errors
   from unrelated seed branches while that path remains healthy.
-- Keep ambient open-discovery retries bounded and cooldown-aware, and reserve
-  transit loop-check bypass for the bounded route proven by a verified lookup
-  response rather than every learned path.
+- Keep ambient open-discovery retries bounded and cooldown-aware, skip retry
+  work for already-authenticated WebSocket adjacencies, and reserve transit
+  loop-check bypass for the bounded route proven by a verified lookup response
+  rather than every learned path.
 - Delay the first macOS automatic update check for ten seconds after startup
   so networking can settle, then retry failures after one minute instead of
   silently waiting for the normal six-hour polling interval.
