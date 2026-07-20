@@ -314,7 +314,7 @@ struct PubsubRunState {
 #[derive(Default)]
 struct FipsSubscriptionState {
     subscription: Option<FipsPubsubSubscription>,
-    peer_links: Vec<(String, u64)>,
+    peer_ids: Vec<String>,
     pubsub_readiness: (usize, usize),
 }
 
@@ -686,13 +686,13 @@ async fn sync_fips_subscription(
         fips_pubsub.peer_subscription_count().unwrap_or_default(),
     );
     if state.subscription.is_some()
-        && state.peer_links == peers
+        && state.peer_ids == peers
         && state.pubsub_readiness == pubsub_readiness
     {
         return;
     }
     state.subscription.take();
-    state.peer_links.clear();
+    state.peer_ids.clear();
     state.pubsub_readiness = pubsub_readiness;
     if peers.is_empty() {
         return;
@@ -705,7 +705,7 @@ async fn sync_fips_subscription(
             return;
         }
     };
-    state.peer_links = peers;
+    state.peer_ids = peers;
     state.subscription = Some(next);
 
     for event in bounded_fips_replay(events.lock().await.snapshot()) {
@@ -740,11 +740,8 @@ fn bounded_fips_replay(mut events: Vec<Event>) -> Vec<Event> {
     events
 }
 
-async fn connected_peers(
-    endpoint: &FipsEndpoint,
-    peer_policy: &dyn MeshPeerPolicy,
-) -> Vec<(String, u64)> {
-    let mut peers = endpoint
+async fn connected_peers(endpoint: &FipsEndpoint, peer_policy: &dyn MeshPeerPolicy) -> Vec<String> {
+    let peers = endpoint
         .peers()
         .await
         .unwrap_or_default()
@@ -758,9 +755,20 @@ async fn connected_peers(
                 .map(|selected| (selected.id, peer.link_id))
         })
         .collect::<Vec<_>>();
-    peers.sort();
-    peers.dedup();
-    peers
+    subscription_peer_ids(peers)
+}
+
+// The FIPS pubsub client replays each active REQ onto a replacement link for
+// the same authenticated identity. Recreating the whole subscription here on
+// link-id churn would instead replay every retained event to every peer.
+fn subscription_peer_ids(peers: Vec<(String, u64)>) -> Vec<String> {
+    let mut peer_ids = peers
+        .into_iter()
+        .map(|(peer_id, _link_id)| peer_id)
+        .collect::<Vec<_>>();
+    peer_ids.sort();
+    peer_ids.dedup();
+    peer_ids
 }
 
 async fn fips_notification(

@@ -26,6 +26,7 @@ use nostr_vpn_core::fips_control::{
 };
 use nostr_vpn_core::fips_control_tcp::{
     FipsControlTcpRuntime, FipsControlTcpSender, ReceivedFipsControlFrame,
+    send_join_roster_with_receipt,
 };
 #[cfg(test)]
 use nostr_vpn_core::fips_discovery::FIPS_LAN_DISCOVERY_SCOPE_PREFIX;
@@ -83,10 +84,17 @@ const FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING: usize = 8;
 // Keep this bounded, but leave enough room that a handful of ambient public
 // scanners cannot permanently occupy every admission slot.
 const FIPS_NOSTR_PAID_EXIT_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
+// Public WebSocket listeners are explicit FIPS bootstrap routers. Keep their
+// unaffiliated authenticated-adjacency budget bounded, but large enough that
+// a handful of slow or abandoned handshakes cannot deny all fresh clients.
+const FIPS_WEBSOCKET_LISTENER_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 const FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 2;
 const FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 4;
-const FIPS_NOSTR_FAILURE_STREAK_THRESHOLD: u32 = 6;
-const FIPS_NOSTR_EXTENDED_COOLDOWN_SECS: u64 = 60;
+// Relay announcements are discovery hints, not a reason to keep probing an
+// unaffiliated peer forever. Configured peers retain their ordinary unlimited
+// auto-reconnect path; these bounds apply to ambient open-discovery candidates.
+const FIPS_NOSTR_FAILURE_STREAK_THRESHOLD: u32 = 3;
+const FIPS_NOSTR_EXTENDED_COOLDOWN_SECS: u64 = 30 * 60;
 const FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS: u64 = 300;
 // Keep traversal/NAT paths warm enough for interactive traffic. FIPS core uses
 // this cadence plus fast_link_dead_timeout_secs for recent-path recovery, while
@@ -239,7 +247,7 @@ include!("fips_private_mesh/runtime_control.rs");
 include!("fips_private_mesh/control_frame.rs");
 include!("fips_private_mesh/endpoint_config.rs");
 include!("fips_private_mesh/tunnel_config.rs");
-include!("fips_private_mesh/join_approval_runtime.rs");
+include!("fips_private_mesh/mesh_bind.rs");
 include!("fips_private_mesh/tunnel_runtime_unix_core.rs");
 include!("fips_private_mesh/linux_interface_state.rs");
 include!("fips_private_mesh/tunnel_runtime_linux.rs");

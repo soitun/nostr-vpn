@@ -770,6 +770,42 @@
     }
 
     #[test]
+    fn websocket_listener_reserves_a_bounded_public_adjacency_budget() {
+        let alice_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let network_id = "fips-websocket-listener-admission-test";
+
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = alice_nsec;
+        app.connect_to_non_roster_fips_peers = true;
+        app.fips_websocket_bind_addr = "127.0.0.1:8765".to_string();
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = network_id.to_string();
+        app.networks[0].devices = vec![alice_pubkey.clone()];
+
+        let config = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            None,
+            &[],
+        )
+        .expect("fips tunnel config");
+
+        assert_eq!(
+            config.open_discovery_max_pending,
+            FIPS_WEBSOCKET_LISTENER_OPEN_DISCOVERY_MAX_PENDING
+                - FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
+        );
+        assert!(
+            config.open_discovery_max_pending > FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            "a public WSS listener must not share the small endpoint admission budget"
+        );
+    }
+
+    #[test]
     fn recent_transit_seed_cap_prefers_static_public_endpoints() {
         let capped = cap_recent_non_roster_transit_endpoints(
             vec![

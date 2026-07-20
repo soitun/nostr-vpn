@@ -173,6 +173,17 @@ mod tests {
     }
 
     #[test]
+    fn join_roster_ack_roundtrips_as_application_control_data() {
+        let frame = join_roster_ack_control_frame("ab".repeat(32));
+        let encoded = encode_fips_control_frame(&frame).expect("encode join roster receipt");
+
+        assert_eq!(
+            decode_fips_control_frame(&encoded).expect("decode join roster receipt"),
+            Some(frame)
+        );
+    }
+
+    #[test]
     fn signed_roster_rejects_tampered_content() {
         let admin = Keys::generate();
         let member = Keys::generate().public_key().to_hex();

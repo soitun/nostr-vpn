@@ -338,7 +338,12 @@ struct SystemDnsGuard {
 #[cfg(target_os = "linux")]
 enum LinuxDnsRestore {
     Resolved { interface: String },
-    ContainerResolvConf { previous: Vec<u8> },
+    DirectResolvConf { previous: Vec<u8> },
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_direct_resolv_conf_allowed(container: bool, openrc: bool) -> bool {
+    container || openrc
 }
 
 impl SystemDnsGuard {
@@ -362,7 +367,12 @@ impl SystemDnsGuard {
             let _ = Command::new("resolvectl")
                 .args(["revert", interface])
                 .status();
-            if !std::path::Path::new("/.dockerenv").exists() {
+            let direct_resolv_conf_allowed = linux_direct_resolv_conf_allowed(
+                std::path::Path::new("/.dockerenv").exists(),
+                std::path::Path::new("/run/openrc").exists()
+                    || std::path::Path::new("/sbin/openrc").exists(),
+            );
+            if !direct_resolv_conf_allowed {
                 return Err(resolved.expect_err("failed resolved setup has an error"));
             }
             let path = std::path::Path::new("/etc/resolv.conf");
@@ -373,7 +383,7 @@ impl SystemDnsGuard {
             )
             .context("failed to install container secure DNS resolver")?;
             return Ok(Self {
-                linux: LinuxDnsRestore::ContainerResolvConf { previous },
+                linux: LinuxDnsRestore::DirectResolvConf { previous },
             });
         }
 
@@ -446,7 +456,7 @@ impl Drop for SystemDnsGuard {
                     .status();
                 let _ = Command::new("resolvectl").arg("flush-caches").status();
             }
-            LinuxDnsRestore::ContainerResolvConf { previous } => {
+            LinuxDnsRestore::DirectResolvConf { previous } => {
                 let _ = std::fs::write("/etc/resolv.conf", previous);
             }
         }
@@ -605,6 +615,13 @@ mod tests {
         let cleanup = windows_secure_dns_uninstall_script(42);
         assert!(cleanup.contains("-InterfaceIndex 42"));
         assert!(cleanup.contains("-ResetServerAddresses"));
+    }
+
+    #[test]
+    fn direct_resolv_conf_is_limited_to_containers_and_openrc_hosts() {
+        assert!(linux_direct_resolv_conf_allowed(true, false));
+        assert!(linux_direct_resolv_conf_allowed(false, true));
+        assert!(!linux_direct_resolv_conf_allowed(false, false));
     }
 
     #[tokio::test]

@@ -373,6 +373,22 @@ async fn offers_ratings_and_updates_are_carried_p2p_without_relays_run() {
 }
 
 #[test]
+fn subscription_identity_set_ignores_link_churn_but_detects_peer_arrival() {
+    let stable =
+        subscription_peer_ids(vec![("npub-a".to_string(), 11), ("npub-b".to_string(), 12)]);
+    let same_identities_after_link_churn =
+        subscription_peer_ids(vec![("npub-b".to_string(), 92), ("npub-a".to_string(), 91)]);
+    let with_late_peer = subscription_peer_ids(vec![
+        ("npub-a".to_string(), 91),
+        ("npub-b".to_string(), 92),
+        ("npub-c".to_string(), 93),
+    ]);
+
+    assert_eq!(stable, same_identities_after_link_churn);
+    assert_ne!(stable, with_late_peer);
+}
+
+#[test]
 fn plain_control_events_are_verified_before_entering_the_verified_path() {
     let publisher = Keys::generate();
     let update_events = update_events(&publisher, "releases/verified-boundary");

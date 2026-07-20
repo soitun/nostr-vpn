@@ -37,6 +37,7 @@ use nostr_vpn_core::fips_control::{
 };
 use nostr_vpn_core::fips_control_tcp::{
     FipsControlTcpRuntime, FipsControlTcpSender, ReceivedFipsControlFrame,
+    send_join_roster_with_receipt,
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
 use nostr_vpn_core::join_requests::{FIPS_JOIN_REQUEST_RETRY_SECS, MeshJoinRequest};
@@ -68,6 +69,7 @@ include!("mobile_tunnel/magic_dns.rs");
 mod tests {
     include!("mobile_tunnel/tests_core.rs");
     include!("mobile_tunnel/tests_runtime.rs");
+    include!("mobile_tunnel/tests_runtime_future_presence.rs");
     include!("mobile_tunnel/tests_paid_route.rs");
     include!("mobile_tunnel/tests_config.rs");
 }

@@ -58,14 +58,36 @@ impl FipsPrivateMeshRuntime {
         participant: &str,
         join_roster: JoinRosterControl,
     ) -> Result<()> {
-        self.send_stateful_control_frame(
-            control,
-            participant,
-            &FipsControlFrame::JoinRoster {
-                control: Box::new(join_roster),
-            },
+        let participant_key = participant_pubkey_bytes(participant);
+        let destination = {
+            let mesh = self.mesh.load();
+            let peer_identities = self.peer_identities.load();
+            control_frame_destination_peer(&mesh, &peer_identities, participant)?
+        };
+        let sent_len = send_join_roster_with_receipt(
+            &control.sender(),
+            destination,
+            &join_roster,
+            Duration::from_secs(90),
         )
         .await
+        .with_context(|| {
+            format!("failed to deliver and apply FIPS-TCP join roster to {participant}")
+        })?;
+        self.note_tx(Some(participant), participant_key.as_ref(), sent_len)
+    }
+
+    pub(crate) fn enqueue_join_roster_ack(
+        &self,
+        control: &FipsControlTcpSender,
+        participant: &str,
+        roster_event_id: String,
+    ) -> Result<()> {
+        self.enqueue_stateful_control_frame(
+            control,
+            participant,
+            &FipsControlFrame::JoinRosterAck { roster_event_id },
+        )
     }
 
     pub(crate) fn enqueue_capabilities(

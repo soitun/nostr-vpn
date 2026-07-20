@@ -259,6 +259,86 @@ fn inbound_fips_roster_requires_signed_event() {
 }
 
 #[test]
+fn join_roster_receipt_requires_exact_durable_config_and_roster_artifact() {
+    let now = unix_timestamp();
+    let dir = std::env::temp_dir().join(format!(
+        "nvpn-durable-join-roster-{}-{now}",
+        std::process::id()
+    ));
+    fs::create_dir_all(&dir).expect("create temp dir");
+    let config_path = dir.join("config.toml");
+    let mut joiner = AppConfig::generated_without_networks();
+    joiner
+        .ensure_pending_nostr_join_request(now.saturating_sub(10))
+        .expect("create pending join request");
+    joiner.save(&config_path).expect("persist pending joiner");
+    let admin = Keys::generate();
+    let signed_roster = SignedRoster::sign(
+        "durable-network",
+        NetworkRoster {
+            network_name: "Durable Home".to_string(),
+            devices: vec![joiner.own_nostr_pubkey_hex().expect("joiner pubkey")],
+            admins: vec![admin.public_key().to_hex()],
+            aliases: HashMap::new(),
+            signed_at: now,
+        },
+        &admin,
+    )
+    .expect("sign join roster");
+    let request_secret = joiner
+        .pending_nostr_join_request
+        .as_ref()
+        .expect("pending request")
+        .request
+        .request_secret
+        .clone();
+    let control = JoinRosterControl::new(signed_roster.clone(), &request_secret)
+        .expect("join roster control");
+    let mut status = String::new();
+
+    assert!(
+        persist_join_roster(&mut joiner, &config_path, &control, &mut status)
+            .expect("persist join roster")
+            .is_some()
+    );
+    assert!(
+        join_roster_is_durably_persisted(&config_path, &control)
+            .expect("verify durable join roster")
+    );
+    assert!(
+        persist_join_roster(&mut joiner, &config_path, &control, &mut status)
+            .expect("duplicate join roster")
+            .is_none()
+    );
+    assert!(
+        join_roster_is_durably_persisted(&config_path, &control).expect("verify durable duplicate")
+    );
+
+    let other = JoinRosterControl::new(
+        SignedRoster::sign(
+            "durable-network",
+            NetworkRoster {
+                network_name: "Other".to_string(),
+                devices: vec![joiner.own_nostr_pubkey_hex().expect("joiner pubkey")],
+                admins: vec![admin.public_key().to_hex()],
+                aliases: HashMap::new(),
+                signed_at: now.saturating_add(1),
+            },
+            &admin,
+        )
+        .expect("sign other roster"),
+        &request_secret,
+    )
+    .expect("other join roster control");
+    assert!(
+        !join_roster_is_durably_persisted(&config_path, &other)
+            .expect("reject unpersisted receipt")
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn inbound_fips_roster_accepts_admin_signed_event() {
     let nonce = unix_timestamp();
     let dir = std::env::temp_dir().join(format!("nvpn-admin-roster-{nonce}"));
