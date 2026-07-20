@@ -173,6 +173,7 @@ impl FipsPrivateTunnelConfig {
         };
         let nostr_discovery_policy = fips_nostr_discovery_policy_from_app(app);
         let allow_non_roster_transit = nostr_discovery_policy == NostrDiscoveryPolicy::Open;
+        let websocket_listener = !app.fips_websocket_bind_addr.is_empty();
         let tunnel_endpoint_hosts = fips_tunnel_endpoint_hosts(app, network_id);
         let local_private_subnets = local_private_ipv4_subnets();
         // In static-only mode, the configured endpoint is the user's only path.
@@ -214,12 +215,14 @@ impl FipsPrivateTunnelConfig {
         } else if app.node.advertise_exit_node {
             FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING
         } else if allow_non_roster_transit {
-            let limit = if app.fips_websocket_bind_addr.is_empty() {
-                FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING
-            } else {
+            if websocket_listener {
                 FIPS_WEBSOCKET_LISTENER_OPEN_DISCOVERY_MAX_PENDING
-            };
-            open_discovery_limit_after_transit_seeds(limit, static_non_roster_transit_seeds)
+            } else {
+                open_discovery_limit_after_transit_seeds(
+                    FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+                    static_non_roster_transit_seeds,
+                )
+            }
         } else {
             0
         };
@@ -244,7 +247,7 @@ impl FipsPrivateTunnelConfig {
         recent_peer_endpoints = cap_recent_non_roster_transit_endpoints(
             recent_peer_endpoints,
             &desired_endpoint_hint_npubs,
-            if allow_non_roster_transit {
+            if allow_non_roster_transit && !websocket_listener {
                 FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS
             } else {
                 0

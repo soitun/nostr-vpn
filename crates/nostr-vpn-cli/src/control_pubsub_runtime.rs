@@ -334,8 +334,6 @@ struct PubsubRunState {
 #[derive(Default)]
 struct FipsSubscriptionState {
     subscription: Option<FipsPubsubSubscription>,
-    peer_ids: Vec<String>,
-    pubsub_readiness: (usize, usize),
 }
 
 #[derive(Clone, Copy)]
@@ -783,21 +781,14 @@ async fn sync_fips_subscription(
     update_events: &UpdateEventCache,
     state: &mut FipsSubscriptionState,
 ) {
-    let peers = connected_peers(endpoint, peer_policy).await;
-    let pubsub_readiness = (
-        fips_pubsub.connected_peer_count().unwrap_or_default(),
-        fips_pubsub.peer_subscription_count().unwrap_or_default(),
-    );
-    if state.subscription.is_some()
-        && state.peer_ids == peers
-        && state.pubsub_readiness == pubsub_readiness
-    {
+    // FIPS replays an active REQ onto newly connected/replacement links.
+    // Recreating it on peer churn would replay retained events to all peers.
+    let subscription_exists = state.subscription.is_some();
+    if subscription_exists {
         return;
     }
-    state.subscription.take();
-    state.peer_ids.clear();
-    state.pubsub_readiness = pubsub_readiness;
-    if peers.is_empty() {
+    let peers = connected_peers(endpoint, peer_policy).await;
+    if !should_create_fips_subscription(subscription_exists, peers.len()) {
         return;
     }
     let filters = fips_subscription_filters(update_events);
@@ -808,7 +799,6 @@ async fn sync_fips_subscription(
             return;
         }
     };
-    state.peer_ids = peers;
     state.subscription = Some(next);
 
     for event in bounded_fips_replay(events.lock().await.snapshot()) {
@@ -823,6 +813,10 @@ async fn sync_fips_subscription(
             tracing::debug!(%error, %event_id, "stored FIPS pubsub replay deferred");
         }
     }
+}
+
+fn should_create_fips_subscription(subscription_exists: bool, connected_peer_count: usize) -> bool {
+    !subscription_exists && connected_peer_count > 0
 }
 
 fn fips_subscription_filters(update_events: &UpdateEventCache) -> Vec<Filter> {
@@ -861,9 +855,6 @@ async fn connected_peers(endpoint: &FipsEndpoint, peer_policy: &dyn MeshPeerPoli
     subscription_peer_ids(peers)
 }
 
-// The FIPS pubsub client replays each active REQ onto a replacement link for
-// the same authenticated identity. Recreating the whole subscription here on
-// link-id churn would instead replay every retained event to every peer.
 fn subscription_peer_ids(peers: Vec<(String, u64)>) -> Vec<String> {
     let mut peer_ids = peers
         .into_iter()

@@ -346,6 +346,15 @@ fn linux_direct_resolv_conf_allowed(container: bool, openrc: bool) -> bool {
     container || openrc
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn read_linux_resolv_conf(path: &std::path::Path) -> Result<Vec<u8>> {
+    match std::fs::read(path) {
+        Ok(contents) => Ok(contents),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+    }
+}
+
 impl SystemDnsGuard {
     fn install(interface: &str, interface_index: Option<u32>) -> Result<Self> {
         #[cfg(target_os = "linux")]
@@ -376,7 +385,7 @@ impl SystemDnsGuard {
                 return Err(resolved.expect_err("failed resolved setup has an error"));
             }
             let path = std::path::Path::new("/etc/resolv.conf");
-            let previous = std::fs::read(path).context("failed to read container resolv.conf")?;
+            let previous = read_linux_resolv_conf(path)?;
             std::fs::write(
                 path,
                 b"# Managed by nvpn secure DNS\nnameserver 127.0.0.1\noptions timeout:1 attempts:1\n",
@@ -622,6 +631,20 @@ mod tests {
         assert!(linux_direct_resolv_conf_allowed(true, false));
         assert!(linux_direct_resolv_conf_allowed(false, true));
         assert!(!linux_direct_resolv_conf_allowed(false, false));
+    }
+
+    #[test]
+    fn missing_openrc_resolv_conf_has_an_empty_restore_baseline() {
+        let path = std::env::temp_dir().join(format!(
+            "nvpn-missing-resolv-conf-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        assert!(!path.exists());
+        assert_eq!(
+            read_linux_resolv_conf(&path).expect("missing baseline"),
+            b""
+        );
     }
 
     #[tokio::test]
