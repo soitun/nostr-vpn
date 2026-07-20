@@ -121,8 +121,13 @@ mod tests {
     }
     #[test]
     fn recent_peer_refresh_signature_ignores_freshness_but_tracks_topology() {
-        let participant = "a".repeat(64);
-        let mut recent = nostr_vpn_core::recent_peers::RecentPeerEndpoints::default();
+        let participant = fips_core::Identity::generate().npub();
+        let local_npub = fips_core::Identity::generate().npub();
+        let mut recent = nostr_vpn_core::recent_peers::RecentPeerEndpoints::new(
+            local_npub,
+            nostr_vpn_core::recent_peers::recent_peers_scope("signature-test"),
+        )
+        .unwrap();
         assert!(recent.note_success(&participant, "203.0.113.20:51820", 100));
         let first = recent_peer_refresh_signature(
             &recent,

@@ -98,21 +98,33 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
     }
     app.ensure_defaults();
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
+    let recent_peers_local_npub = own_pubkey
+        .as_deref()
+        .map(nostr_vpn_core::config::npub_for_pubkey_hex)
+        .ok_or_else(|| anyhow!("could not derive local npub for recent peers cache"))?;
+    let recent_peers_scope = nostr_vpn_core::recent_peers::recent_peers_scope(&network_id);
     let expected_peers = expected_peer_count(&app);
     let state_file = daemon_state_file_path(&config_path);
     let _ = fs::remove_file(daemon_control_file_path(&config_path));
     let recent_peers_path = crate::recent_peers_store::recent_peers_file_path(&config_path);
-    let recent_peers =
-        match crate::recent_peers_store::load_recent_peers(&recent_peers_path, unix_timestamp()) {
-            Ok(state) => state,
-            Err(error) => {
-                eprintln!(
-                    "daemon: failed to load recent peers cache {}: {error}",
-                    recent_peers_path.display()
-                );
-                nostr_vpn_core::recent_peers::RecentPeerEndpoints::default()
-            }
-        };
+    let recent_peers = match crate::recent_peers_store::load_recent_peers(
+        &recent_peers_path,
+        &recent_peers_local_npub,
+        &recent_peers_scope,
+        unix_timestamp(),
+    ) {
+        Ok(state) => state,
+        Err(error) => {
+            eprintln!(
+                "daemon: failed to load recent peers cache {}: {error}",
+                recent_peers_path.display()
+            );
+            nostr_vpn_core::recent_peers::RecentPeerEndpoints::new(
+                &recent_peers_local_npub,
+                &recent_peers_scope,
+            )?
+        }
+    };
     let fips_join_request_sends = HashMap::new();
     let pending_fips_roster_recipients = HashSet::new();
     let fips_roster_sync_state = FipsRosterSyncState::default();

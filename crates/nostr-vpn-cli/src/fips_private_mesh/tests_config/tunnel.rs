@@ -468,7 +468,7 @@
     }
 
     #[test]
-    fn tunnel_config_seeds_recent_outside_roster_transit_peers() {
+    fn tunnel_config_does_not_grant_membership_from_recent_cache() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
         let charlie_keys = Keys::generate();
@@ -486,7 +486,7 @@
         app.networks[0].network_id = network_id.to_string();
         app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];
 
-        let mut recent = nostr_vpn_core::recent_peers::RecentPeerEndpoints::default();
+        let mut recent = recent_peer_cache(&alice_keys, network_id);
         assert!(recent.note_success(&charlie_pubkey, "203.0.113.55:51820", 123));
 
         let config = FipsPrivateTunnelConfig::from_app(
@@ -506,21 +506,12 @@
                 .all(|peer| peer.participant_pubkey != charlie_pubkey),
             "non-roster transit peers must not get private-network routes",
         );
-        let charlie = config
-            .endpoint_peers
-            .iter()
-            .find(|peer| peer.npub == charlie_npub)
-            .expect("recent non-roster peer should seed endpoint config");
-        assert_eq!(charlie.addresses.len(), 1);
-        assert_eq!(charlie.addresses[0].addr, "203.0.113.55:51820");
-        assert_eq!(charlie.addresses[0].seen_at_ms, Some(123_000));
         assert!(
-            !charlie.auto_reconnect,
-            "recent transit-only peers should not retry forever"
-        );
-        assert!(
-            charlie.discovery_fallback_transit,
-            "recent non-roster peers should receive fallback lookup fanout"
+            config
+                .endpoint_peers
+                .iter()
+                .all(|peer| peer.npub != charlie_npub),
+            "routing memory must not create configured FIPS membership"
         );
     }
 
@@ -553,7 +544,7 @@
             vec!["203.0.113.55:51820".to_string()],
         );
 
-        let mut recent = nostr_vpn_core::recent_peers::RecentPeerEndpoints::default();
+        let mut recent = recent_peer_cache(&alice_keys, network_id);
         assert!(recent.note_success(&bob_pubkey, "1.1.1.1:51820", 123));
         assert!(recent.note_success(&charlie_pubkey, "203.0.113.66:51820", 456));
 
@@ -598,7 +589,7 @@
         app.fips_peer_endpoints
             .insert(bob_npub.clone(), vec!["192.168.64.5:52528".to_string()]);
 
-        let mut recent = nostr_vpn_core::recent_peers::RecentPeerEndpoints::default();
+        let mut recent = recent_peer_cache(&alice_keys, network_id);
         assert!(recent.note_success(&bob_pubkey, "198.51.100.7:52528", 123));
 
         let config = FipsPrivateTunnelConfig::from_app(
@@ -629,7 +620,7 @@
     }
 
     #[test]
-    fn tunnel_config_caps_recent_outside_roster_transit_peers() {
+    fn tunnel_config_ignores_all_recent_peers_without_configured_membership() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
         let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
@@ -646,7 +637,7 @@
         app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];
         app.fips_bootstrap_enabled = false;
 
-        let mut recent = nostr_vpn_core::recent_peers::RecentPeerEndpoints::default();
+        let mut recent = recent_peer_cache(&alice_keys, network_id);
         assert!(recent.note_success(&bob_pubkey, "1.1.1.1:51820", 1));
 
         let mut non_roster_npubs = Vec::new();
@@ -677,32 +668,15 @@
         assert_eq!(bob.addresses.len(), 1);
         assert_eq!(bob.addresses[0].addr, "1.1.1.1:51820");
 
-        let seeded_recent_non_roster = config
-            .endpoint_peers
-            .iter()
-            .filter(|peer| non_roster_npubs.iter().any(|npub| npub == &peer.npub))
-            .collect::<Vec<_>>();
-        assert_eq!(
-            seeded_recent_non_roster.len(),
-            FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
-            "recent non-roster transit cache should not consume the whole open-discovery cap"
-        );
+        assert!(config.endpoint_peers.iter().all(|peer| {
+            !non_roster_npubs
+                .iter()
+                .any(|npub| npub == &peer.npub)
+        }));
         assert_eq!(
             config.open_discovery_max_pending,
-            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING - FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
-            "recent transit seeds should leave a fixed budget for fresh open discovery"
-        );
-        assert!(
-            !seeded_recent_non_roster
-                .iter()
-                .any(|peer| peer.npub == non_roster_npubs[0]),
-            "oldest non-roster transit hint should be dropped first"
-        );
-        assert!(
-            seeded_recent_non_roster
-                .iter()
-                .any(|peer| peer.npub == *non_roster_npubs.last().unwrap()),
-            "freshest non-roster transit hint should be retained"
+            FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
+            "ignored cache entries must not consume open-discovery capacity"
         );
     }
 
@@ -762,8 +736,7 @@
         assert_eq!(
             config.open_discovery_max_pending,
             FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING
-                - FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS
-                - FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
+                - FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS,
             "bounded bootstrap transit should leave a nonzero fresh open-discovery budget"
         );
         assert!(config.open_discovery_max_pending > 0);
@@ -796,32 +769,10 @@
 
         assert_eq!(
             config.open_discovery_max_pending,
-            FIPS_WEBSOCKET_LISTENER_OPEN_DISCOVERY_MAX_PENDING
-                - FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
+            FIPS_WEBSOCKET_LISTENER_OPEN_DISCOVERY_MAX_PENDING,
         );
         assert!(
             config.open_discovery_max_pending > FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
             "a public WSS listener must not share the small endpoint admission budget"
         );
-    }
-
-    #[test]
-    fn recent_transit_seed_cap_prefers_static_public_endpoints() {
-        let capped = cap_recent_non_roster_transit_endpoints(
-            vec![
-                (
-                    "fresh-ephemeral".to_string(),
-                    vec![("203.0.113.10:62000".to_string(), 999_000)],
-                ),
-                (
-                    "older-stable".to_string(),
-                    vec![("203.0.113.11:51820".to_string(), 1_000)],
-                ),
-            ],
-            &HashSet::new(),
-            1,
-        );
-
-        assert_eq!(capped.len(), 1);
-        assert_eq!(capped[0].0, "older-stable");
     }

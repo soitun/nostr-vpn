@@ -691,8 +691,8 @@ impl FipsPrivateTunnelRuntime {
         self.mesh.peer_pubkeys()
     }
 
-    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
-        self.mesh.authenticated_peer_transport_addrs().await
+    pub(crate) async fn authenticated_endpoint_peers(&self) -> Result<Vec<FipsEndpointPeer>> {
+        self.mesh.authenticated_endpoint_peers().await
     }
 
     pub(crate) fn peer_endpoint_hints(&self) -> Vec<(String, Vec<(String, u64)>)> {

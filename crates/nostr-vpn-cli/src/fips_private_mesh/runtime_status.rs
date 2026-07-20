@@ -241,24 +241,14 @@ impl FipsPrivateMeshRuntime {
             .collect())
     }
 
-    /// Snapshot `(endpoint_npub, transport-tagged addr)` pairs for every peer
-    /// that currently has an authenticated FIPS link, including open-discovery
-    /// transit peers outside the private-network roster. Used by the daemon
-    /// heartbeat to update the on-disk recent-peers cache so restarts can seed
-    /// useful overlay peers before relay discovery has warmed up.
-    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
-        let peers = self
-            .endpoint
+    /// Snapshot authenticated FIPS peer state for the recent-route cache.
+    /// The shared cache model decides whether a peer exposes a reusable UDP
+    /// restart address; transport source addresses are not reinterpreted here.
+    pub(crate) async fn authenticated_endpoint_peers(&self) -> Result<Vec<FipsEndpointPeer>> {
+        self.endpoint
             .peers()
             .await
-            .context("failed to snapshot FIPS endpoint peers")?;
-        Ok(peers
-            .into_iter()
-            .filter_map(|peer| {
-                tag_authenticated_transport_addr(peer.transport_addr, peer.transport_type)
-                    .map(|addr| (peer.npub, addr))
-            })
-            .collect())
+            .context("failed to snapshot FIPS endpoint peers")
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]

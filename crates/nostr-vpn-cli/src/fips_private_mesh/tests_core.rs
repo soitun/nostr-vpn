@@ -9,17 +9,17 @@
         FIPS_NOSTR_EXTENDED_COOLDOWN_SECS, FIPS_NOSTR_FAILURE_STREAK_THRESHOLD,
         FIPS_NOSTR_EXIT_OPEN_DISCOVERY_MAX_PENDING, FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         FIPS_NOSTR_PAID_EXIT_OPEN_DISCOVERY_MAX_PENDING,
-        FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS, FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS,
+        FIPS_NOSTR_STARTUP_SWEEP_MAX_AGE_SECS,
         FIPS_RECONNECT_BACKOFF_BASE_SECS, FIPS_RECONNECT_BACKOFF_MAX_SECS,
         FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS,
         FIPS_WEBSOCKET_LISTENER_OPEN_DISCOVERY_MAX_PENDING,
-        FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY, FIPS_PRIVATE_DYNAMIC_PEER_ENDPOINT_PRIORITY,
-        FipsEndpointPeerTransportConfig, FipsEndpointTransportConfig, FipsPeerActivity,
+        FIPS_CONFIGURED_PEER_ENDPOINT_PRIORITY, FipsEndpointPeerTransportConfig,
+        FipsEndpointTransportConfig, FipsPeerActivity,
         FipsPeerActivitySnapshot, FipsPeerAddressHint, FipsPeerIdentityMap, FipsPeerRxKind,
         FipsPrivateMeshEvent,
         FipsPrivateMeshRuntime, FipsPrivateTunnelConfig, Ipv4Subnet,
-        cap_recent_non_roster_transit_endpoints, control_frame_destination_peer,
-        control_frame_source_pubkey, decode_endpoint_control_frame, drain_event_batch,
+        control_frame_destination_peer, control_frame_source_pubkey, decode_endpoint_control_frame,
+        drain_event_batch,
         endpoint_identity_for_send,
         filter_stamped_tunnel_endpoints, filter_static_tunnel_endpoints_with_policy,
         filter_static_tunnel_endpoints_with_policy_and_route_check,
@@ -33,8 +33,7 @@
         other_endpoint_peer_statuses, parse_fips_nostr_discovery_policy,
         parse_linux_tun_tx_queue_len, participant_pubkey_bytes, peer_activity_map, peer_identity_map,
         prioritize_fips_control_peer,
-        static_endpoint_allowed_on_current_underlay_with_route_check, strip_cidr,
-        tag_authenticated_transport_addr, unix_timestamp,
+        static_endpoint_allowed_on_current_underlay_with_route_check, strip_cidr, unix_timestamp,
     };
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     use super::{
@@ -67,6 +66,15 @@
     use std::time::Duration;
 
     const FIPS_NOSTR_DISCOVERY_APP: &str = "fips-overlay-v1";
+
+    fn recent_peer_cache(local_keys: &Keys, network_id: &str) -> nostr_vpn_core::recent_peers::RecentPeerEndpoints {
+        let local_npub = local_keys.public_key().to_bech32().expect("local npub");
+        nostr_vpn_core::recent_peers::RecentPeerEndpoints::new(
+            local_npub,
+            nostr_vpn_core::recent_peers::recent_peers_scope(network_id),
+        )
+        .expect("recent peers cache")
+    }
 
     #[test]
     fn only_fips_ipv6_destinations_use_the_integrated_host_pipeline() {
@@ -456,27 +464,6 @@
         assert_eq!(parse_fips_nostr_discovery_policy("wat"), None);
     }
 
-    #[test]
-    fn authenticated_transport_addr_preserves_tcp_type_and_legacy_udp() {
-        assert_eq!(
-            tag_authenticated_transport_addr(
-                Some("203.0.113.20:51820".to_string()),
-                Some("udp".to_string())
-            ),
-            Some("203.0.113.20:51820".to_string())
-        );
-        assert_eq!(
-            tag_authenticated_transport_addr(
-                Some("203.0.113.20:443".to_string()),
-                Some("tcp".to_string())
-            ),
-            Some("tcp:203.0.113.20:443".to_string())
-        );
-        assert_eq!(
-            tag_authenticated_transport_addr(Some("tcp:203.0.113.20:443".to_string()), None),
-            Some("tcp:203.0.113.20:443".to_string())
-        );
-    }
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     #[test]
     fn raw_tun_write_keeps_fd_open_and_writes_platform_frame() {

@@ -46,7 +46,7 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
     let session = store
         .open_buyer_session(OpenPaidRouteBuyerSessionRequest {
             offer_selector: "internet-exit".to_string(),
-            buyer_npub,
+            buyer_npub: buyer_npub.clone(),
             mint_url: Some("https://mint.example".to_string()),
             channel_capacity_sat: Some(10),
             initial_paid_msat: 0,
@@ -125,10 +125,14 @@ async fn paid_exit_settle_signs_manual_cooperative_close_from_wallet() {
 
     app.set_internet_source(InternetSource::Direct);
     let seller_npub = seller.public_key().to_bech32().expect("seller npub");
-    let mut recent_peers = nostr_vpn_core::recent_peers::RecentPeerEndpoints::default();
-    assert!(recent_peers.note_success(&seller.public_key().to_hex(), "203.0.113.40:51821", 128,));
     let network_id = app.effective_network_id();
     let own_pubkey = app.own_nostr_pubkey_hex().expect("buyer pubkey");
+    let mut recent_peers = nostr_vpn_core::recent_peers::RecentPeerEndpoints::new(
+        buyer_npub,
+        nostr_vpn_core::recent_peers::recent_peers_scope(&network_id),
+    )
+    .expect("recent peers cache");
+    assert!(recent_peers.note_success(&seller.public_key().to_hex(), "203.0.113.40:51821", 128,));
     let config = fips_tunnel_config_from_app(FipsTunnelConfigInput {
         app: &app,
         config_path: &dir.join("config.toml"),

@@ -42,7 +42,7 @@ impl FipsPrivateTunnelRuntime {
         Vec::new()
     }
 
-    pub(crate) async fn authenticated_peer_transport_addrs(&self) -> Result<Vec<(String, String)>> {
+    pub(crate) async fn authenticated_endpoint_peers(&self) -> Result<Vec<FipsEndpointPeer>> {
         Ok(Vec::new())
     }
 

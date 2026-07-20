@@ -318,13 +318,10 @@ fn endpoint_peers_for_participant_refresh(
         .collect()
 }
 
-/// Snapshot the runtime's authenticated peer transport addresses, update
+/// Snapshot the runtime's authenticated FIPS peers, update
 /// the on-disk recent-peers cache, and hand fips the refreshed peer hint
-/// list via `update_peers` so new direct candidates race the existing ones
-/// in the next dial cycle without restarting the endpoint. Public (non-LAN)
-/// endpoints get rotated into the cache, including authenticated non-roster
-/// transit peers; mesh-carried live hints can include LAN endpoints but stay
-/// in memory only.
+/// list via `update_peers` so reusable authenticated UDP candidates can race
+/// existing configured routes without restarting the endpoint.
 async fn update_recent_peers_from_runtime(
     runtime: &crate::fips_private_mesh::FipsPrivateTunnelRuntime,
     app: &nostr_vpn_core::config::AppConfig,
@@ -333,7 +330,7 @@ async fn update_recent_peers_from_runtime(
     refresh: RecentPeerRefresh<'_>,
     now: u64,
 ) {
-    let snapshot = match runtime.authenticated_peer_transport_addrs().await {
+    let snapshot = match runtime.authenticated_endpoint_peers().await {
         Ok(snapshot) => snapshot,
         Err(error) => {
             eprintln!("fips: peer endpoint snapshot failed: {error}");
@@ -342,9 +339,16 @@ async fn update_recent_peers_from_runtime(
     };
     let recent_topology_before = refresh.recent_peers.as_static_peer_endpoints();
     let mut changed = false;
-    for (participant, addr) in snapshot {
-        if refresh.recent_peers.note_success(&participant, &addr, now) {
-            changed = true;
+    for peer in snapshot {
+        match refresh
+            .recent_peers
+            .observe_authenticated_peer(&peer, now)
+        {
+            Ok(true) => changed = true,
+            Ok(false) => {}
+            Err(error) => {
+                eprintln!("fips: ignoring invalid authenticated peer {}: {error}", peer.npub);
+            }
         }
     }
     if refresh

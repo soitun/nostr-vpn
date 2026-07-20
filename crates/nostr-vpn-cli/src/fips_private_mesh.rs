@@ -89,7 +89,6 @@ const FIPS_NOSTR_PAID_EXIT_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 // a handful of slow or abandoned handshakes cannot deny all fresh clients.
 const FIPS_WEBSOCKET_LISTENER_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 const FIPS_STATIC_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 2;
-const FIPS_RECENT_NON_ROSTER_TRANSIT_MAX_SEEDS: usize = 4;
 // Relay announcements are discovery hints, not a reason to keep probing an
 // unaffiliated peer forever. Configured peers retain their ordinary unlimited
 // auto-reconnect path; these bounds apply to ambient open-discovery candidates.
