@@ -17,6 +17,22 @@ fn in_flight_join_rosters() -> &'static Mutex<HashSet<PathBuf>> {
     IN_FLIGHT_JOIN_ROSTERS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+pub(super) fn respond_to_join_request(
+    app: &mut AppConfig,
+    request: crate::DaemonJoinRequestIpcRequest,
+) {
+    if request.reset {
+        app.clear_pending_nostr_join_request();
+    }
+    let response = app
+        .ensure_pending_nostr_join_request(crate::unix_timestamp())
+        .and_then(|_| {
+            app.pending_nostr_join_request_link(crate::pairing_qr::JOIN_REQUEST_LINK_PREFIX)
+        })
+        .map_err(|error| error.to_string());
+    let _ = request.response.send(response);
+}
+
 fn claim_join_roster_delivery(path: &Path) -> bool {
     in_flight_join_rosters()
         .lock()

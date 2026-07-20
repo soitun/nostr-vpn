@@ -92,18 +92,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 break;
             }
             Some(request) = join_request_ipc_rx.recv() => {
-                if request.reset {
-                    app.clear_pending_nostr_join_request();
-                }
-                let response = app
-                    .ensure_pending_nostr_join_request(unix_timestamp())
-                    .and_then(|_| {
-                        app.pending_nostr_join_request_link(
-                            crate::pairing_qr::JOIN_REQUEST_LINK_PREFIX,
-                        )
-                    })
-                    .map_err(|error| error.to_string());
-                let _ = request.response.send(response);
+                respond_to_join_request(&mut app, request);
             }
             _ = announce_interval.tick() => {
                 if let Some(runtime) = fips_tunnel_runtime.as_ref() {
@@ -466,7 +455,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &config_path,
                         &mut vpn_status,
                     ) {
-                        Ok(mut drained) => {
+                        Ok(drained) => {
+                            #[cfg(feature = "paid-exit")]
+                            let mut drained = drained;
                             if drained.roster_changed {
                                 let reload = build_daemon_reload_config(
                                     app.clone(),
@@ -654,7 +645,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 {
                     vpn_status = format!("automatic paid-exit failover failed ({error})");
                 }
-
                 if let Some(request) = take_daemon_control_request(&config_path) {
                     let publish_fips_roster_after_control =
                         matches!(request, DaemonControlRequest::Reload | DaemonControlRequest::Resume);
@@ -985,21 +975,17 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             }
         }
     }
-    port_mapping_runtime.stop().await;
-    if let Some(runtime) = fips_tunnel_runtime
-        && let Err(error) = runtime.stop().await
-    {
-        eprintln!("daemon: failed to stop FIPS private mesh: {error}");
-    }
-    tunnel_runtime.stop();
-    if let Err(error) = persist_daemon_network_cleanup_state(&config_path, &tunnel_runtime) {
-        eprintln!("daemon: failed to clear network cleanup state: {error}");
-    }
-    let final_state = disconnected_daemon_runtime_state(
+    shutdown_daemon_vpn(DaemonVpnShutdown {
+        port_mapping_runtime: &mut port_mapping_runtime,
+        fips_tunnel_runtime,
+        tunnel_runtime: &mut tunnel_runtime,
+        config_path: &config_path,
+        state_file: &state_file,
+        pid_file: &pid_file,
         expected_peers,
-        &network_snapshot.summary(network_changed_at, captive_portal),
-    );
-    let _ = write_daemon_state(&state_file, &final_state);
-    remove_current_daemon_pid_record(&pid_file);
-    Ok(())
+        network_snapshot: &network_snapshot,
+        network_changed_at,
+        captive_portal,
+    })
+    .await
 }
