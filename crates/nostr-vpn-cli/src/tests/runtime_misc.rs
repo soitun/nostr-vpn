@@ -551,6 +551,50 @@ fn suppressed_platform_network_event_schedules_snapshot_recheck() {
     );
 }
 
+#[tokio::test]
+async fn network_roam_during_route_suppression_rechecks_and_restarts_fips() {
+    let previous = crate::diagnostics::NetworkSnapshot {
+        default_interface: Some("en0".to_string()),
+        default_interface_mtu: Some(1_500),
+        primary_ipv4: Some(Ipv4Addr::new(192, 0, 2, 55)),
+        primary_ipv6: None,
+        gateway_ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
+        gateway_ipv6: None,
+    };
+    let after_roam = crate::diagnostics::NetworkSnapshot {
+        primary_ipv4: Some(Ipv4Addr::new(198, 51, 100, 4)),
+        gateway_ipv4: Some(Ipv4Addr::new(198, 51, 100, 1)),
+        ..previous.clone()
+    };
+    let mut sparse_snapshot_timer = tokio::time::interval(std::time::Duration::from_secs(
+        DAEMON_NETWORK_REFRESH_INTERVAL_SECS,
+    ));
+    sparse_snapshot_timer.tick().await;
+
+    assert!(reschedule_suppressed_platform_network_event(
+        &mut sparse_snapshot_timer,
+        Some(std::time::Instant::now() + std::time::Duration::from_millis(25)),
+    ));
+    tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        sparse_snapshot_timer.tick(),
+    )
+    .await
+    .expect("suppressed route event must wake the sparse snapshot timer");
+
+    let network_changed = after_roam.changed_since(&previous);
+    assert!(network_changed, "the new IP and gateway must be observed");
+    assert_eq!(
+        fips_link_event_refresh(false, network_changed, false, false),
+        FipsLinkEventRefresh::RestartEndpoint
+    );
+    assert_eq!(
+        fips_link_event_refresh(false, previous.changed_since(&previous), false, false),
+        FipsLinkEventRefresh::None,
+        "nvpn-only route notifications must remain a no-op"
+    );
+}
+
 #[test]
 fn fips_link_events_restart_endpoint_for_major_link_changes() {
     assert_eq!(
