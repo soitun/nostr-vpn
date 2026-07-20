@@ -811,7 +811,7 @@
             configured
                 .addresses
                 .iter()
-                .any(|address| address.addr.to_string() == "45.79.10.10:443")
+                .any(|address| address.addr == "45.79.10.10:443")
         );
         assert!(configured.discovery_fallback_transit);
         assert!(

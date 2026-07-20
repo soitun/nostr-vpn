@@ -92,18 +92,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 break;
             }
             Some(request) = join_request_ipc_rx.recv() => {
-                if request.reset {
-                    app.clear_pending_nostr_join_request();
-                }
-                let response = app
-                    .ensure_pending_nostr_join_request(unix_timestamp())
-                    .and_then(|_| {
-                        app.pending_nostr_join_request_link(
-                            crate::pairing_qr::JOIN_REQUEST_LINK_PREFIX,
-                        )
-                    })
-                    .map_err(|error| error.to_string());
-                let _ = request.response.send(response);
+                respond_to_join_request(&mut app, request);
             }
             _ = announce_interval.tick() => {
                 if let Some(runtime) = fips_tunnel_runtime.as_ref() {
@@ -466,7 +455,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         &config_path,
                         &mut vpn_status,
                     ) {
-                        Ok(mut drained) => {
+                        Ok(drained) => {
+                            #[cfg(feature = "paid-exit")]
+                            let mut drained = drained;
                             if drained.roster_changed {
                                 let reload = build_daemon_reload_config(
                                     app.clone(),

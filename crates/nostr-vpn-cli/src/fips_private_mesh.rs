@@ -49,6 +49,7 @@ use nostr_vpn_core::paid_route_store::PaidRouteSellerAdmission;
 use nostr_vpn_core::paid_routes::PaidRouteUsage;
 #[cfg(feature = "paid-exit")]
 use nostr_vpn_core::paid_routes::{PaidExitConfig, PaidRouteSessionOpen};
+#[cfg(feature = "paid-exit")]
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;

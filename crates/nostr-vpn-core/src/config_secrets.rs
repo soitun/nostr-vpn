@@ -42,7 +42,7 @@ pub(crate) fn prepare_config_secrets_for_save(
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
         config.pending_nostr_join_request = None;
-        return platform::delete_secret(path, ConfigSecret::PendingJoinRequest);
+        platform::delete_secret(path, ConfigSecret::PendingJoinRequest)
     }
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     persist_pending_join_request(path, config)
@@ -240,7 +240,7 @@ fn hydrate_pending_join_request(path: &Path, config: &mut AppConfig) -> Result<(
     {
         config.pending_nostr_join_request = None;
         let _ = platform::delete_secret(path, ConfigSecret::PendingJoinRequest);
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
