@@ -257,7 +257,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
+    #[cfg(target_os = "windows")]
     #[test]
     fn clearing_join_request_deletes_its_persisted_secret() {
         let nonce = std::time::SystemTime::now()
@@ -290,6 +290,39 @@ mod tests {
         assert!(error.contains("no matching secret exists"), "{error}");
         AppConfig::delete_persisted_secrets_for_path(&path).expect("delete persisted secrets");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    #[test]
+    fn desktop_unix_never_persists_ephemeral_join_request_material() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |duration| duration.as_nanos());
+        let dir = std::env::temp_dir().join(format!(
+            "nvpn-ephemeral-join-request-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let path = dir.join("config.toml");
+        let mut config = AppConfig::generated_without_networks();
+        config
+            .ensure_pending_nostr_join_request(1_778_998_000)
+            .expect("pending request");
+        let pending = config
+            .pending_nostr_join_request
+            .as_ref()
+            .expect("in-memory request")
+            .clone();
+
+        config.save(&path).expect("save config");
+
+        let raw = std::fs::read_to_string(&path).expect("read config");
+        assert!(!raw.contains("pending_nostr_join_request"));
+        assert!(!raw.contains(&pending.request.request_secret));
+        assert!(!raw.contains(&pending.request_private_key));
+        let loaded = AppConfig::load(&path).expect("reload config");
+        assert!(loaded.pending_nostr_join_request.is_none());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

@@ -129,8 +129,7 @@ impl NativeAppRuntime {
             .filter(|participant| participant.reachable)
             .count() as u64;
         let expected_count = participants.len() as u64;
-        let join_request_qr_code_or_link =
-            own_join_request_qr_code_or_link(&self.config).unwrap_or_default();
+        let join_request_qr_code_or_link = self.current_join_request_link();
 
         NativeNetworkState {
             id: network.id.clone(),

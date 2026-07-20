@@ -799,15 +799,23 @@
         let mobile = MobileTunnelConfig::from_app(&app).expect("mobile config");
         let config = fips_endpoint_config("nostr-vpn:test", &mobile);
 
-        assert_eq!(config.peers.len(), 1);
+        let configured = config
+            .peers
+            .iter()
+            .find(|peer| {
+                peer.npub
+                    == "npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8"
+            })
+            .expect("operator bootstrap peer");
         assert!(
-            config
-                .peers
+            configured
+                .addresses
                 .iter()
-                .all(|peer| peer.discovery_fallback_transit)
+                .any(|address| address.addr.to_string() == "45.79.10.10:443")
         );
+        assert!(configured.discovery_fallback_transit);
         assert!(
-            config.peers.iter().all(|peer| !peer.auto_reconnect),
+            !configured.auto_reconnect,
             "bootstrap/transit peers should not use nvpn roster-style fast reconnect"
         );
         assert!(mobile.nostr_discovery_enabled);

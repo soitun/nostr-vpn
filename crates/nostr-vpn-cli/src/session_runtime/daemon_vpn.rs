@@ -74,6 +74,15 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
         Instant::now() - Duration::from_secs(PAID_EXIT_SESSION_OPEN_RETRY_SECS);
     let mut last_recent_peer_refresh_signature = None;
     let mut last_recent_peer_cache_persisted_at = 0;
+    let (join_request_ipc_tx, mut join_request_ipc_rx) =
+        tokio::sync::mpsc::unbounded_channel::<DaemonJoinRequestIpcRequest>();
+    #[cfg(unix)]
+    let _join_request_ipc = crate::join_request_ipc::JoinRequestIpcServer::spawn(
+        &config_path,
+        join_request_ipc_tx,
+    )?;
+    #[cfg(not(unix))]
+    let _join_request_ipc_keepalive = join_request_ipc_tx;
     loop {
         tokio::select! {
             _ = tokio::signal::ctrl_c() => {
@@ -81,6 +90,20 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             }
             _ = &mut terminate_wait => {
                 break;
+            }
+            Some(request) = join_request_ipc_rx.recv() => {
+                if request.reset {
+                    app.clear_pending_nostr_join_request();
+                }
+                let response = app
+                    .ensure_pending_nostr_join_request(unix_timestamp())
+                    .and_then(|_| {
+                        app.pending_nostr_join_request_link(
+                            crate::pairing_qr::JOIN_REQUEST_LINK_PREFIX,
+                        )
+                    })
+                    .map_err(|error| error.to_string());
+                let _ = request.response.send(response);
             }
             _ = announce_interval.tick() => {
                 if let Some(runtime) = fips_tunnel_runtime.as_ref() {
@@ -378,6 +401,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 }
             }
             _ = state_interval.tick() => {
+                if let Err(error) = app.ensure_pending_nostr_join_request(unix_timestamp()) {
+                    eprintln!("daemon: failed to rotate expired join request: {error}");
+                }
                 if daemon_log_compact_check_due(&mut last_log_compact_check)
                     && let Err(error) = compact_daemon_log_if_needed(&config_path)
                 {
@@ -692,7 +718,21 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         participants_override.clone(),
                                         ConfigLoadMode::Persist,
                                     ) {
-                                        Ok((reloaded_app, reloaded_network_id)) => {
+                                        Ok((mut reloaded_app, reloaded_network_id)) => {
+                                            reloaded_app.pending_nostr_join_request =
+                                                app.pending_nostr_join_request.clone();
+                                            if let Err(error) = reloaded_app
+                                                .ensure_pending_nostr_join_request(unix_timestamp())
+                                            {
+                                                let _ = write_daemon_control_result(
+                                                    &config_path,
+                                                    request,
+                                                    Err(error.context(
+                                                        "failed to preserve daemon join request",
+                                                    )),
+                                                );
+                                                continue;
+                                            }
                                             let reload = build_daemon_reload_config(
                                                 reloaded_app,
                                                 reloaded_network_id,

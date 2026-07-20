@@ -445,7 +445,9 @@ exit 0
         let calls = fs::read_to_string(&calls_path).expect("read fake nvpn calls");
         assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
         assert!(resumed_path.exists(), "service reinstall should resume VPN");
-        assert!(calls.contains("status --json --discover-secs 0 --config"));
+        assert!(calls.contains(
+            "status --json --include-join-request --discover-secs 0 --config"
+        ));
         assert!(calls.contains("resume --config"));
         assert!(!calls.contains("start --daemon --connect"));
         assert!(runtime.vpn_enabled);

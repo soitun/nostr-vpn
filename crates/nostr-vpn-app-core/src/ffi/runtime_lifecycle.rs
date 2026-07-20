@@ -28,8 +28,12 @@ impl NativeAppRuntime {
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
-        let pending_join_request_changed =
-            config.ensure_pending_nostr_join_request(unix_timestamp())?;
+        let capabilities = current_runtime_capabilities();
+        let pending_join_request_changed = if capabilities.mobile {
+            config.ensure_pending_nostr_join_request(unix_timestamp())?
+        } else {
+            false
+        };
         if !config_exists
             || migrated_config_secrets
             || persist_identity_defaults
@@ -38,9 +42,13 @@ impl NativeAppRuntime {
             config.save(&config_path)?;
         }
 
-        let capabilities = current_runtime_capabilities();
         let exchange_rate_service =
             ExchangeRateService::for_currency(config.wallet_fiat_currency);
+        let join_request_qr_code_or_link = if capabilities.mobile {
+            own_join_request_qr_code_or_link(&config).unwrap_or_default()
+        } else {
+            String::new()
+        };
         #[cfg(feature = "paid-exit")]
         let cashu_wallet_runtime = Some(paid_exit::PaidRouteWalletRuntime::open(&config_path)?);
         let mut runtime = Self {
@@ -56,6 +64,7 @@ impl NativeAppRuntime {
             vpn_enabled: false,
             vpn_active: false,
             vpn_status: "Disconnected".to_string(),
+            join_request_qr_code_or_link,
             daemon_state: None,
             service_supported: !capabilities.mobile && desktop_service_supported(),
             service_enablement_supported: !capabilities.mobile && desktop_service_supported(),
@@ -106,6 +115,8 @@ impl NativeAppRuntime {
         }
         let exchange_rate_service =
             ExchangeRateService::for_currency(config.wallet_fiat_currency);
+        let join_request_qr_code_or_link =
+            own_join_request_qr_code_or_link(&config).unwrap_or_default();
         Self {
             rev: 0,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -119,6 +130,7 @@ impl NativeAppRuntime {
             vpn_enabled: false,
             vpn_active: false,
             vpn_status: "Startup failed".to_string(),
+            join_request_qr_code_or_link,
             daemon_state: None,
             service_supported: desktop_service_supported(),
             service_enablement_supported: desktop_service_supported(),
@@ -146,6 +158,14 @@ impl NativeAppRuntime {
             queued_join_rosters: Vec::new(),
             #[cfg(target_os = "macos")]
             privileged_command_runner: None,
+        }
+    }
+
+    fn current_join_request_link(&self) -> String {
+        if self.mobile_runtime {
+            own_join_request_qr_code_or_link(&self.config).unwrap_or_default()
+        } else {
+            self.join_request_qr_code_or_link.clone()
         }
     }
 
@@ -342,7 +362,7 @@ impl NativeAppRuntime {
             join_request_qr_code_or_link: if config_unavailable {
                 String::new()
             } else {
-                own_join_request_qr_code_or_link(&self.config).unwrap_or_default()
+                self.current_join_request_link()
             },
             internet_source: if config_unavailable {
                 String::new()

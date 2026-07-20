@@ -439,6 +439,9 @@ struct StatusArgs {
     discover_secs: u64,
     #[arg(long)]
     json: bool,
+    /// Include the daemon's ephemeral join link in JSON output for the native app.
+    #[arg(long, hide = true)]
+    include_join_request: bool,
 }
 
 #[derive(Debug, Args)]

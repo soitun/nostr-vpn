@@ -446,6 +446,7 @@ impl NativeAppRuntime {
         let output = self.run_nvpn([
             "status",
             "--json",
+            "--include-join-request",
             "--discover-secs",
             "0",
             "--config",
@@ -459,6 +460,7 @@ impl NativeAppRuntime {
                 let json_text = extract_json_document(&stdout)?;
                 let parsed = serde_json::from_str::<CliStatusResponse>(json_text)
                     .context("failed to parse `nvpn status --json` output")?;
+                self.join_request_qr_code_or_link = parsed.join_request_qr_code_or_link;
                 self.daemon_state = parsed.daemon.state;
                 self.daemon_running = parsed.daemon.running;
                 self.vpn_enabled = self
@@ -482,6 +484,7 @@ impl NativeAppRuntime {
                 Ok(())
             }
             Ok(output) => {
+                self.join_request_qr_code_or_link.clear();
                 self.daemon_state = None;
                 self.daemon_running = false;
                 self.vpn_active = false;
@@ -575,8 +578,10 @@ impl NativeAppRuntime {
     fn save_config(&mut self) -> Result<()> {
         self.config.ensure_defaults();
         maybe_autoconfigure_node(&mut self.config);
-        self.config
-            .ensure_pending_nostr_join_request(unix_timestamp())?;
+        if self.mobile_runtime {
+            self.config
+                .ensure_pending_nostr_join_request(unix_timestamp())?;
+        }
         self.config.save(&self.config_path)
     }
 
@@ -584,8 +589,10 @@ impl NativeAppRuntime {
     fn save_config(&mut self) -> Result<()> {
         self.config.ensure_defaults();
         maybe_autoconfigure_node(&mut self.config);
-        self.config
-            .ensure_pending_nostr_join_request(unix_timestamp())?;
+        if self.mobile_runtime {
+            self.config
+                .ensure_pending_nostr_join_request(unix_timestamp())?;
+        }
 
         if self.service_installed || self.service_running || self.daemon_running {
             return self.save_config_via_macos_service();
@@ -690,7 +697,16 @@ impl NativeAppRuntime {
             ));
         }
 
+        let in_memory_join_request = self
+            .mobile_runtime
+            .then(|| self.config.pending_nostr_join_request.clone())
+            .flatten();
         self.config = AppConfig::load(&self.config_path)?;
+        if self.mobile_runtime {
+            self.config.pending_nostr_join_request = in_memory_join_request;
+            self.config
+                .ensure_pending_nostr_join_request(unix_timestamp())?;
+        }
         self.config.ensure_defaults();
         self.sync_exchange_rate_currency();
         maybe_autoconfigure_node(&mut self.config);
@@ -713,8 +729,11 @@ impl NativeAppRuntime {
         };
         config.ensure_defaults();
         maybe_autoconfigure_node(&mut config);
-        let pending_join_request_changed =
-            config.ensure_pending_nostr_join_request(unix_timestamp())?;
+        let pending_join_request_changed = if self.mobile_runtime {
+            config.ensure_pending_nostr_join_request(unix_timestamp())?
+        } else {
+            false
+        };
         if !config_exists || pending_join_request_changed {
             config.save(&self.config_path)?;
         }

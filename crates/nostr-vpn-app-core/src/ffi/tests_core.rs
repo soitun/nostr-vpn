@@ -64,7 +64,7 @@
     }
 
     #[test]
-    fn startup_persists_identity_defaults_for_seeded_mobile_config() {
+    fn desktop_startup_persists_identity_without_join_request_material() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -84,21 +84,17 @@
         assert!(!saved.nostr.secret_key.trim().is_empty());
         assert!(!saved.nostr.public_key.trim().is_empty());
         let first_join_link = runtime.state().join_request_qr_code_or_link;
-        assert!(first_join_link.starts_with("nvpn://join-request/"));
-        let pending = saved
-            .pending_nostr_join_request
-            .as_ref()
-            .expect("pending join request");
+        assert!(first_join_link.is_empty());
+        assert!(saved.pending_nostr_join_request.is_none());
         let raw = fs::read_to_string(&config_path).expect("read persisted config");
         assert!(raw.contains("[nostr]"));
         assert!(raw.contains("public_key"));
-        assert!(!raw.contains(&pending.request.request_secret));
-        assert!(!raw.contains(&pending.request_private_key));
+        assert!(!raw.contains("pending_nostr_join_request"));
 
         drop(runtime);
         let reloaded = NativeAppRuntime::new(dir.to_str().expect("utf8 temp dir"), String::new())
             .expect("runtime reloads");
-        assert_eq!(reloaded.state().join_request_qr_code_or_link, first_join_link);
+        assert!(reloaded.state().join_request_qr_code_or_link.is_empty());
 
         drop(reloaded);
         let _ = fs::remove_dir_all(&dir);
@@ -346,6 +342,9 @@
 
         let saved = AppConfig::load(&runtime.config_path).expect("load persisted config");
         assert!(saved.networks.is_empty());
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        assert!(saved.pending_nostr_join_request.is_none());
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         assert!(saved.pending_nostr_join_request.is_some());
 
         let _ = fs::remove_dir_all(&dir);

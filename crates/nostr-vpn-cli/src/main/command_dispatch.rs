@@ -101,6 +101,7 @@ async fn run_command(command: Command) -> Result<()> {
             pairing_qr::run_join_request(args).await?;
         }
         Command::Status(args) => {
+            let include_join_request = args.include_join_request;
             let config_path = args.config.unwrap_or_else(default_config_path);
             let (app, network_id) = load_config_with_overrides(
                 &config_path,
@@ -163,6 +164,26 @@ async fn run_command(command: Command) -> Result<()> {
             if args.json {
                 let endpoint = status_endpoint(&app, &daemon);
                 let listen_port = status_listen_port(&app, &daemon);
+                let join_request_qr_code_or_link = if include_join_request {
+                    #[cfg(unix)]
+                    {
+                        crate::join_request_ipc::request_daemon_join_request_link(
+                            &config_path,
+                            false,
+                        )
+                        .await
+                        .unwrap_or_default()
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        app.pending_nostr_join_request_link(
+                            crate::pairing_qr::JOIN_REQUEST_LINK_PREFIX,
+                        )
+                        .unwrap_or_default()
+                    }
+                } else {
+                    String::new()
+                };
                 #[cfg(feature = "paid-exit")]
                 let paid_exit_status = paid_exit_status_json(&app);
                 #[cfg(not(feature = "paid-exit"))]
@@ -201,6 +222,7 @@ async fn run_command(command: Command) -> Result<()> {
                         "expected_peer_count": expected_peers,
                         "peer_count": peer_count,
                         "mesh_ready": mesh_ready,
+                        "join_request_qr_code_or_link": join_request_qr_code_or_link,
                         "peers": status_json_peers(daemon_peers.as_deref(), &peers),
                     }))?
                 );

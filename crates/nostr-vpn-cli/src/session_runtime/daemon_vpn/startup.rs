@@ -97,6 +97,13 @@ pub(super) async fn initialize_daemon_vpn(args: &DaemonArgs) -> Result<DaemonVpn
         app.fips_websocket_public_url = public_url.to_string();
     }
     app.ensure_defaults();
+    #[cfg(unix)]
+    app.clear_pending_nostr_join_request();
+    if app.ensure_pending_nostr_join_request(unix_timestamp())? {
+        // Desktop Unix keeps this request only in the daemon's in-memory `app`;
+        // AppConfig::save strips it from disk and deletes any legacy secret.
+        app.save(&config_path)?;
+    }
     let own_pubkey = app.own_nostr_pubkey_hex().ok();
     let recent_peers_local_npub = own_pubkey
         .as_deref()

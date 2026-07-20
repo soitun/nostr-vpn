@@ -1,3 +1,4 @@
+#[cfg(not(unix))]
 use std::path::Path;
 use std::time::Duration;
 
@@ -5,16 +6,19 @@ use anyhow::{Context, Result};
 use qrcode::QrCode;
 use qrcode::render::unicode::Dense1x2;
 
+#[cfg(not(unix))]
 use nostr_vpn_core::config::AppConfig;
 
+#[cfg(not(unix))]
+use crate::maybe_reload_running_daemon;
 use crate::{
     DaemonRuntimeState, JoinRequestArgs, daemon_state_file_path, default_config_path,
-    maybe_reload_running_daemon, read_daemon_state, unix_timestamp,
+    read_daemon_state, unix_timestamp,
 };
 
-const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
+pub(crate) const JOIN_REQUEST_LINK_PREFIX: &str = "nvpn://join-request/";
 
-#[cfg(test)]
+#[cfg(all(test, not(unix)))]
 pub(crate) fn pending_pairing_uri(config_path: &Path) -> Result<String> {
     let app = AppConfig::load(config_path)
         .with_context(|| format!("failed to load {}", config_path.display()))?;
@@ -30,19 +34,17 @@ pub(crate) fn render_pairing_output(uri: &str) -> Result<String> {
 
 pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
     let config_path = args.config.unwrap_or_else(default_config_path);
+    #[cfg(unix)]
+    let uri = crate::join_request_ipc::request_daemon_join_request_link(&config_path, args.reset)
+        .await
+        .context("the nVPN daemon must be running to create an ephemeral join request")?;
+    #[cfg(not(unix))]
     let app = ensure_pending_join_request_and_reload(
         &config_path,
         args.reset,
         maybe_reload_running_daemon,
     )?;
-    if app.active_network_has_confirmed_local_identity() {
-        println!(
-            "Already approved for network {}.",
-            app.effective_network_id()
-        );
-        return Ok(());
-    }
-
+    #[cfg(not(unix))]
     let uri = app
         .pending_nostr_join_request_link(JOIN_REQUEST_LINK_PREFIX)
         .context("config has no valid pending device-approval request")?;
@@ -70,8 +72,18 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
                 return Ok(());
             }
             _ = poll.tick() => {
+                #[cfg(not(unix))]
                 let app = AppConfig::load(&config_path)
                     .with_context(|| format!("failed to reload {}", config_path.display()))?;
+                #[cfg(unix)]
+                if crate::join_request_ipc::request_daemon_join_request_link(&config_path, false)
+                    .await
+                    .is_ok_and(|current| current != uri)
+                {
+                    println!("Join request accepted.");
+                    return Ok(());
+                }
+                #[cfg(not(unix))]
                 if app.active_network_has_confirmed_local_identity() {
                     println!("Join approved for network {}.", app.effective_network_id());
                     return Ok(());
@@ -86,6 +98,7 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
     }
 }
 
+#[cfg(not(unix))]
 fn ensure_pending_join_request_and_reload(
     config_path: &Path,
     reset: bool,
@@ -98,6 +111,7 @@ fn ensure_pending_join_request_and_reload(
     Ok(app)
 }
 
+#[cfg(not(unix))]
 fn ensure_pending_join_request(config_path: &Path, reset: bool) -> Result<AppConfig> {
     let exists = config_path
         .try_exists()
@@ -169,6 +183,7 @@ fn request_reachability(state: Option<&DaemonRuntimeState>) -> RequestReachabili
 
 #[cfg(test)]
 mod tests {
+    #[cfg(not(unix))]
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
@@ -184,6 +199,7 @@ mod tests {
         assert!(output.ends_with(&format!("\n\n{uri}\n")));
     }
 
+    #[cfg(not(unix))]
     #[test]
     fn reads_the_canonical_pending_bootstrap_from_config() {
         let nonce = SystemTime::now()
@@ -207,6 +223,7 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[cfg(not(unix))]
     #[test]
     fn pending_request_is_reused_until_explicit_reset() {
         let nonce = SystemTime::now()
@@ -237,6 +254,7 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[cfg(not(unix))]
     #[test]
     fn pending_request_reload_is_requested_after_the_request_is_persisted() {
         let nonce = SystemTime::now()
@@ -267,6 +285,7 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[cfg(not(unix))]
     #[test]
     fn approved_request_does_not_reload_the_daemon() {
         let nonce = SystemTime::now()

@@ -5,6 +5,8 @@ mod diagnostics;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod fips_host_tunnel;
 mod fips_private_mesh;
+#[cfg(unix)]
+mod join_request_ipc;
 #[cfg(target_os = "linux")]
 mod linux_network;
 #[cfg(any(target_os = "macos", test))]
@@ -206,6 +208,12 @@ const MAJOR_LINK_CHANGE_TIME_JUMP_SECS: u64 = 30;
 const WAITING_FOR_PARTICIPANTS_STATUS: &str = "Waiting for participants";
 const LISTENING_FOR_JOIN_REQUESTS_STATUS: &str = "Listening for join requests";
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub(crate) struct DaemonJoinRequestIpcRequest {
+    pub(crate) reset: bool,
+    pub(crate) response: tokio::sync::oneshot::Sender<Result<String, String>>,
+}
+
 pub(crate) fn fips_core_build_version() -> String {
     fips_core::version::short_version().to_string()
 }

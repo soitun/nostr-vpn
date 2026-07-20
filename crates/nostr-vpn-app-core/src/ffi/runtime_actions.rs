@@ -479,6 +479,9 @@ impl NativeAppRuntime {
     }
 
     fn start_join_request_broadcast(&mut self) -> Result<()> {
+        if !self.mobile_runtime {
+            self.refresh_status()?;
+        }
         self.refresh_lan_pairing();
         let announcement = self.build_lan_pairing_announcement()?;
         let expires_at = lan_pairing_deadline();
@@ -500,6 +503,9 @@ impl NativeAppRuntime {
     }
 
     fn start_nearby_discovery(&mut self) -> Result<()> {
+        if !self.mobile_runtime {
+            self.refresh_status()?;
+        }
         self.refresh_lan_pairing();
         let announcement = self.build_lan_pairing_announcement()?;
         let expires_at = lan_pairing_deadline();
@@ -541,7 +547,10 @@ impl NativeAppRuntime {
 
     fn build_lan_pairing_announcement(&self) -> Result<LanPairingAnnouncement> {
         let own_npub = npub_for_pubkey_hex(&self.config.own_nostr_pubkey_hex()?);
-        let request = own_join_request_qr_code_or_link(&self.config)?;
+        let request = self.current_join_request_link();
+        if request.is_empty() {
+            return Err(anyhow!("daemon join request is unavailable"));
+        }
         let endpoint = self
             .daemon_state
             .as_ref()

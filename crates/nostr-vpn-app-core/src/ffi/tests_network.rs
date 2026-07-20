@@ -202,9 +202,10 @@
             .config
             .own_nostr_pubkey_hex()
             .expect("joiner pubkey");
+        let requested_at = unix_timestamp();
         joiner
             .config
-            .ensure_pending_nostr_join_request(1_778_998_000)
+            .ensure_pending_nostr_join_request(requested_at)
             .expect("joiner request");
         let pending = joiner
             .config
@@ -291,6 +292,9 @@
         assert_eq!(joiner.config.active_network().network_id, "8d4f34f5425bc50e");
         assert!(joiner.config.active_network_has_confirmed_local_identity());
         let persisted_joiner = AppConfig::load(&joiner.config_path).expect("reload joined iPhone");
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        assert!(persisted_joiner.pending_nostr_join_request.is_none());
+        #[cfg(not(any(target_os = "macos", target_os = "linux")))]
         assert!(persisted_joiner.pending_nostr_join_request.is_some());
         assert_eq!(
             persisted_joiner.active_network().network_id,

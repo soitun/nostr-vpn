@@ -7,6 +7,7 @@ use nostr_sdk::prelude::Keys;
 use sha2::{Digest as _, Sha256};
 
 use crate::config::{AppConfig, normalize_nostr_pubkey};
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 use crate::join_requests::{PENDING_NOSTR_JOIN_REQUEST_VERSION, PendingNostrJoinRequest};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +39,12 @@ pub(crate) fn prepare_config_secrets_for_save(
         ConfigSecret::WireGuardExitPeerPreshared,
         &mut config.wireguard_exit.peer_preshared_key,
     )?;
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        config.pending_nostr_join_request = None;
+        return platform::delete_secret(path, ConfigSecret::PendingJoinRequest);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     persist_pending_join_request(path, config)
 }
 
@@ -229,43 +236,54 @@ fn hydrate_config_secret_fields(path: &Path, config: &mut AppConfig) -> Result<(
 }
 
 fn hydrate_pending_join_request(path: &Path, config: &mut AppConfig) -> Result<()> {
-    let Some(redacted) = config.pending_nostr_join_request.as_ref() else {
-        return Ok(());
-    };
-    if redacted.version != PENDING_NOSTR_JOIN_REQUEST_VERSION {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
         config.pending_nostr_join_request = None;
+        let _ = platform::delete_secret(path, ConfigSecret::PendingJoinRequest);
         return Ok(());
     }
-    let secret_redacted = is_redacted_secret(&redacted.request.request_secret);
-    let key_redacted = is_redacted_secret(&redacted.request_private_key);
-    match (secret_redacted, key_redacted) {
-        (false, false) => return Ok(()),
-        (true, true) => {}
-        _ => {
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let Some(redacted) = config.pending_nostr_join_request.as_ref() else {
+            return Ok(());
+        };
+        if redacted.version != PENDING_NOSTR_JOIN_REQUEST_VERSION {
+            config.pending_nostr_join_request = None;
+            return Ok(());
+        }
+        let secret_redacted = is_redacted_secret(&redacted.request.request_secret);
+        let key_redacted = is_redacted_secret(&redacted.request_private_key);
+        match (secret_redacted, key_redacted) {
+            (false, false) => return Ok(()),
+            (true, true) => {}
+            _ => {
+                return Err(anyhow!(
+                    "pending Nostr join request has partially redacted secret material"
+                ));
+            }
+        }
+
+        let raw = read_required_secret(path, ConfigSecret::PendingJoinRequest)?;
+        let hydrated: PendingNostrJoinRequest = serde_json::from_str(&raw)
+            .context("failed to parse pending Nostr join request from secret storage")?;
+        let mut expected_public = hydrated.clone();
+        expected_public.request.request_secret.clear();
+        expected_public.request_private_key.clear();
+        let mut configured_public = redacted.clone();
+        configured_public.request.request_secret.clear();
+        configured_public.request_private_key.clear();
+        if configured_public != expected_public {
             return Err(anyhow!(
-                "pending Nostr join request has partially redacted secret material"
+                "pending Nostr join request in config does not match secret storage"
             ));
         }
+        config.pending_nostr_join_request = Some(hydrated);
+        Ok(())
     }
-
-    let raw = read_required_secret(path, ConfigSecret::PendingJoinRequest)?;
-    let hydrated: PendingNostrJoinRequest = serde_json::from_str(&raw)
-        .context("failed to parse pending Nostr join request from secret storage")?;
-    let mut expected_public = hydrated.clone();
-    expected_public.request.request_secret.clear();
-    expected_public.request_private_key.clear();
-    let mut configured_public = redacted.clone();
-    configured_public.request.request_secret.clear();
-    configured_public.request_private_key.clear();
-    if configured_public != expected_public {
-        return Err(anyhow!(
-            "pending Nostr join request in config does not match secret storage"
-        ));
-    }
-    config.pending_nostr_join_request = Some(hydrated);
-    Ok(())
 }
 
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn persist_pending_join_request(path: &Path, config: &mut AppConfig) -> Result<()> {
     let Some(pending) = config.pending_nostr_join_request.as_mut() else {
         return platform::delete_secret(path, ConfigSecret::PendingJoinRequest);

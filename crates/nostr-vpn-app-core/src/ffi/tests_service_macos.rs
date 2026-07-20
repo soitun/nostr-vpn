@@ -122,7 +122,9 @@ exit 0
 
         let calls = fs::read_to_string(&calls_path).expect("read fake nvpn calls");
         assert!(calls.contains("service status --json --skip-binary-version --config"));
-        assert!(calls.contains("status --json --discover-secs 0 --config"));
+        assert!(calls.contains(
+            "status --json --include-join-request --discover-secs 0 --config"
+        ));
         assert!(!calls.contains("start --daemon --connect"));
         assert_eq!(runtime.last_error, "Install background service first");
         assert!(!runtime.vpn_enabled);

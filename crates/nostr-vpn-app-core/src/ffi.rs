@@ -178,6 +178,7 @@ struct NativeAppRuntime {
     vpn_enabled: bool,
     vpn_active: bool,
     vpn_status: String,
+    join_request_qr_code_or_link: String,
     daemon_state: Option<DaemonRuntimeState>,
     service_supported: bool,
     service_enablement_supported: bool,
@@ -331,6 +332,8 @@ impl NativeLanPairingWorker {
 #[derive(Debug, Deserialize)]
 struct CliStatusResponse {
     daemon: CliDaemonStatus,
+    #[serde(default)]
+    join_request_qr_code_or_link: String,
 }
 
 #[derive(Debug, Deserialize)]
