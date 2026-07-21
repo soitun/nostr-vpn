@@ -6,9 +6,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow};
 use hashtree_updater::{
     ProductAssetPolicy, SecureNostrBlossomConfig, SecureNostrBlossomSelection, UpdateAsset,
-    UpdateManifest, build_secure_nostr_blossom_updater,
-    build_secure_nostr_blossom_updater_with_events, current_archive_target, dedupe_nonempty,
-    download_product_selection, env_csv, platform_app_asset_suffixes,
+    UpdateManifest, build_secure_nostr_blossom_updater_with_events, current_archive_target,
+    dedupe_nonempty, download_product_selection, env_csv, platform_app_asset_suffixes,
     preferred_app_asset_for_suffixes, preferred_cli_asset_for_target, select_product_update,
     selected_download_path as shared_selected_download_path, update_ref_from_override,
 };
@@ -315,12 +314,16 @@ async fn build_secure_updater(
         }),
         None => Vec::new(),
     };
-    let config = SecureNostrBlossomConfig {
-        relays: if cached_events.is_empty() {
-            update_relays()
-        } else {
-            Vec::new()
-        },
+    build_secure_nostr_blossom_updater_with_events(secure_updater_config(), cached_events)
+        .await
+        .context("failed to connect to Nostr release relays")
+}
+
+fn secure_updater_config() -> SecureNostrBlossomConfig {
+    SecureNostrBlossomConfig {
+        // Cached pubsub events are a fast starting point, not an authority for
+        // freshness. Keep querying relays so an old cache cannot pin updates.
+        relays: update_relays(),
         manifest_timeout: Duration::from_secs(
             UPDATE_MANIFEST_TIMEOUT_SECS.parse::<u64>().unwrap_or(8),
         ),
@@ -328,15 +331,6 @@ async fn build_secure_updater(
             UPDATE_DOWNLOAD_TIMEOUT_SECS.parse::<u64>().unwrap_or(180),
         ),
         blossom_read_servers: blossom_read_servers(),
-    };
-    if cached_events.is_empty() {
-        build_secure_nostr_blossom_updater(config)
-            .await
-            .context("failed to connect to Nostr release relays")
-    } else {
-        build_secure_nostr_blossom_updater_with_events(config, cached_events)
-            .await
-            .context("failed to load decentralized update-root events")
     }
 }
 
@@ -720,5 +714,13 @@ mod tests {
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].created_at.as_secs(), 1_700_000_001);
         let _ = std::fs::remove_dir_all(directory);
+    }
+
+    #[test]
+    fn secure_updater_refreshes_relays_even_with_cached_roots() {
+        let config = secure_updater_config();
+
+        assert_eq!(config.relays, update_relays());
+        assert!(!config.relays.is_empty());
     }
 }

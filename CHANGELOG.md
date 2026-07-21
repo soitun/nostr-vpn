@@ -14,6 +14,8 @@ All notable changes to this project are documented in this file.
 - Keep the authenticated mobile onboarding route alive while switching to the
   joined network scope so the new configuration can be acknowledged reliably.
 - Avoid duplicate macOS daemon reloads after applying a configuration change.
+- Refresh signed hashtree release roots from relays even when the local pubsub
+  cache contains an older valid root.
 
 ## 4.1.1 - 2026-07-21
 
