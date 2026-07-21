@@ -46,9 +46,9 @@ LOADED_LATENCY_MIN_PING_REPLY_PERCENT="${NVPN_E2E_ROAMING_LOADED_LATENCY_MIN_PIN
 SCENARIOS="${NVPN_E2E_ROAMING_SCENARIOS:-all}"
 
 case "$SCENARIOS" in
-  all|fallback|network-change) ;;
+  all|fallback|network-change|latency) ;;
   *)
-    echo "fips roaming e2e failed: NVPN_E2E_ROAMING_SCENARIOS must be 'all', 'fallback', or 'network-change'" >&2
+    echo "fips roaming e2e failed: NVPN_E2E_ROAMING_SCENARIOS must be 'all', 'fallback', 'network-change', or 'latency'" >&2
     exit 2
     ;;
 esac
@@ -970,15 +970,15 @@ assert_tunnel_mtu node-b
 assert_ping_tunnel node-a "$BOB_TUNNEL_IP" "initial alice-to-bob direct LAN" /tmp/initial-alice-to-bob-ping.log
 assert_ping_tunnel node-b "$ALICE_TUNNEL_IP" "initial bob-to-alice direct LAN" /tmp/initial-bob-to-alice-ping.log
 run_udp_roundtrip node-a node-b "$BOB_TUNNEL_IP" "alice-to-bob-roaming-initial" /tmp/bob-roaming-initial-udp.out
-if [[ "$SCENARIOS" == "all" ]]; then
+if [[ "$SCENARIOS" == "all" || "$SCENARIOS" == "latency" ]]; then
   run_loaded_latency_probe "initial-direct" node-a node-b "$BOB_TUNNEL_IP"
 fi
-if [[ "$SCENARIOS" != "network-change" ]]; then
+if [[ "$SCENARIOS" == "all" || "$SCENARIOS" == "fallback" ]]; then
   run_roam_flap "mobile-flap-1"
   run_roam_flap "mobile-flap-2"
   run_roam_flap "route-unreachable-flap" "route-unreachable"
 fi
-if [[ "$SCENARIOS" != "fallback" ]]; then
+if [[ "$SCENARIOS" == "all" || "$SCENARIOS" == "network-change" ]]; then
   docker network create --driver bridge --subnet "$ROAM_UNDERLAY_SUBNET" "$ROAM_NETWORK_NAME" >/dev/null
   docker network connect --ip "$ROAM_NODE_B_IP" "$ROAM_NETWORK_NAME" "$("${COMPOSE[@]}" ps -q node-b)"
   docker network connect --ip "$ROAM_NODE_C_IP" "$ROAM_NETWORK_NAME" "$("${COMPOSE[@]}" ps -q node-c)"
@@ -1006,6 +1006,8 @@ if [[ "$SCENARIOS" == "all" ]]; then
   echo "fips roaming docker e2e passed: direct LAN path established, loaded-latency probes stayed bounded, mobile/WiFi-style direct drops and a route-unreachable flap used FIPS fallback, a live daemon moved between interface/address/gateway/bridge underlays in both directions, continuous payload recovered during churn, and each restore upgraded back to direct"
 elif [[ "$SCENARIOS" == "fallback" ]]; then
   echo "fips roaming docker e2e passed: repeated direct drops and a route-unreachable flap used FIPS fallback, continuous bidirectional payload recovered, and each restore upgraded back to direct"
+elif [[ "$SCENARIOS" == "latency" ]]; then
+  echo "fips roaming docker e2e passed: direct LAN path established and the focused loaded-latency probe stayed bounded"
 else
   echo "fips roaming docker e2e passed: a live daemon moved between interface/address/gateway/bridge underlays in both directions, continuous bidirectional payload recovered, and the daemon process stayed alive"
 fi

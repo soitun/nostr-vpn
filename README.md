@@ -156,6 +156,7 @@ Useful focused checks:
 ```bash
 pnpm --dir web/control-panel check
 ( cd linux && cargo check )
+NVPN_E2E_ROAMING_SCENARIOS=latency ./scripts/e2e-fips-roaming-docker.sh
 ```
 
 Run the Windows build from a checkout on the configured Windows dev VM:

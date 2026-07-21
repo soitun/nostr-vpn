@@ -20,6 +20,8 @@ All notable changes to this project are documented in this file.
   Docker image build alongside host checks, then overlapping subnet-isolated
   NAT and kernel/userspace WireGuard fixtures while keeping roaming, throughput,
   device, and idle-CPU measurements contention-free and serial.
+- Add a focused loaded-latency scenario so performance outliers can be repeated
+  without paying for the full roaming and network-change suite.
 
 ### Fixed
 
