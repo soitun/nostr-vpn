@@ -718,7 +718,7 @@
 
         let capabilities = FipsControlFrame::Capabilities {
             network_id: "wss-join-roster".to_string(),
-            capabilities: Default::default(),
+            capabilities: PeerCapabilities::default(),
         };
         let received_before = guest
             .presence
