@@ -75,5 +75,7 @@ grep -Fq 'release_gate_parallel_start "Docker userspace WireGuard exit"' "$relea
   || fail "release gate does not dispatch the isolated userspace WireGuard lane"
 grep -Fq 'NVPN_WG_EXIT_USERSPACE_INTERNET_SUBNET' "$release_gate" \
   || fail "parallel userspace WireGuard fixture has no isolated subnet"
+grep -Fq 'Release gate test selector matched no passing test' "$release_gate" \
+  || fail "focused release-gate tests can pass with an empty selector"
 
 printf 'release gate parallel harness passed\n'

@@ -195,6 +195,26 @@ release_cargo() {
   fi
 }
 
+release_cargo_test_filter() (
+  set -o pipefail
+  local package="$1"
+  local filter="$2"
+  local output
+  output="$(mktemp "${TMPDIR:-/tmp}/nvpn-release-gate-test.XXXXXX")"
+  if ! release_cargo test "${release_cargo_lock_args[@]}" -p "$package" "$filter" 2>&1 \
+    | tee "$output"; then
+    rm -f "$output"
+    return 1
+  fi
+  if ! grep -E "^test .*${filter} .*\\.\\.\\. ok$" "$output" >/dev/null; then
+    printf 'Release gate test selector matched no passing test: %s (%s)\n' \
+      "$filter" "$package" >&2
+    rm -f "$output"
+    return 1
+  fi
+  rm -f "$output"
+)
+
 run_release_gate_preflight() {
   node scripts/sync-versions.mjs
   npm ci
@@ -215,16 +235,16 @@ run_rust_validation_lane() {
   release_cargo test "${release_cargo_lock_args[@]}" --workspace -- --test-threads=1
   # Mobile VPN basics run without requiring a device/emulator: join over FIPS,
   # MagicDNS from TUN, exit DNS policy, and Android WG socket startup ordering.
-  release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_join_request_sends_and_records_over_real_fips_endpoint
-  release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_magic_dns_answers_peer_name_from_tun_packet
-  release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_config_wireguard_exit_replaces_plaintext_dns_with_secure_local_stub
-  release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-core exit_dns_supported_policy_matrix_selects_exact_resolver
-  release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core settings_patch_validates_exit_dns_atomically_and_exposes_saved_policy
-  release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_wireguard_start_returns_before_handshake_watchdog
-  release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_fips_exit_node_routes_default_traffic_to_selected_member
+  release_cargo_test_filter nostr-vpn-app-core mobile_join_request_sends_and_records_over_real_fips_endpoint
+  release_cargo_test_filter nostr-vpn-app-core mobile_magic_dns_answers_peer_name_from_tun_packet
+  release_cargo_test_filter nostr-vpn-app-core mobile_config_wireguard_exit_keeps_local_stub_and_uses_profile_dns_only_while_active
+  release_cargo_test_filter nostr-vpn-core exit_dns_supported_policy_matrix_selects_exact_resolver
+  release_cargo_test_filter nostr-vpn-app-core settings_patch_validates_exit_dns_atomically_and_exposes_saved_policy
+  release_cargo_test_filter nostr-vpn-app-core mobile_wireguard_start_returns_before_handshake_watchdog
+  release_cargo_test_filter nostr-vpn-app-core mobile_fips_exit_node_routes_default_traffic_to_selected_member
   # Shared userspace WG dataplane, including the mpsc channel path used by
   # Android VpnService and iOS NEPacketTunnelProvider.
-  release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-core channels_round_trip_plaintext_packets_against_paired_responder
+  release_cargo_test_filter nostr-vpn-core channels_round_trip_plaintext_packets_against_paired_responder
   ./scripts/e2e-update-cli.sh
 }
 
@@ -518,7 +538,7 @@ run_docker_signal_gates() {
     return
   fi
 
-  release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core \
+  release_cargo_test_filter nostr-vpn-app-core \
     websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin
   NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_ROUTED_UDP_DISCOVERY_POLICY:-open}" \
     ./scripts/e2e-fips-routed-udp-docker.sh
