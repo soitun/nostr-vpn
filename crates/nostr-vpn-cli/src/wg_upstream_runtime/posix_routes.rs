@@ -189,6 +189,7 @@ pub fn apply_full_default_route(
         iface: iface.to_string(),
         bypass_target: upstream_ip,
         original_default,
+        reverted: false,
     })
 }
 
@@ -198,6 +199,7 @@ pub struct FullDefaultRoute {
     iface: String,
     bypass_target: IpAddr,
     original_default: CapturedDefaultRoute,
+    reverted: bool,
 }
 
 /// Captured underlay default route, used to restore on Drop. The
@@ -389,6 +391,9 @@ impl FullDefaultRoute {
     /// Cleanup explicitly. Returning a `Result` lets the caller see
     /// what failed; on Drop the result is ignored.
     pub fn revert(&mut self) -> Result<()> {
+        if self.reverted {
+            return Ok(());
+        }
         let target_str = self.bypass_target.to_string();
         // Restore the original default route FIRST so the host has a
         // working route to the internet again before we delete the
@@ -475,6 +480,7 @@ impl FullDefaultRoute {
                 .arg(&target_str)
                 .status();
         }
+        self.reverted = true;
         Ok(())
     }
 }

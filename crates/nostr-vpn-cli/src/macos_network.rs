@@ -279,6 +279,35 @@ pub(crate) fn macos_tunnel_default_route_targets() -> &'static [&'static str] {
 }
 
 #[cfg(any(target_os = "macos", test))]
+fn macos_split_default_route_interface(output: &str) -> Option<&str> {
+    let has_split_mask = output.lines().map(str::trim).any(|line| {
+        line.strip_prefix("mask:")
+            .is_some_and(|mask| mask.trim() == "128.0.0.0")
+    });
+    if !has_split_mask {
+        return None;
+    }
+
+    output.lines().map(str::trim).find_map(|line| {
+        line.strip_prefix("interface:")
+            .map(str::trim)
+            .filter(|iface| !iface.is_empty())
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_split_default_route_owner(target: &str) -> Result<Option<String>> {
+    let probe = match target {
+        "0.0.0.0/1" => "1.0.0.1",
+        "128.0.0.0/1" => "129.0.0.1",
+        _ => return Err(anyhow!("unsupported macOS split-default target {target}")),
+    };
+    let output =
+        command_stdout_checked(ProcessCommand::new("route").arg("-n").arg("get").arg(probe))?;
+    Ok(macos_split_default_route_interface(&output).map(ToOwned::to_owned))
+}
+
+#[cfg(any(target_os = "macos", test))]
 fn macos_gateway_route_args(action: &str, target: &str, gateway: &str) -> Vec<String> {
     let target_ip = strip_cidr(target);
     let is_host = target.ends_with("/32") || !target.contains('/');
@@ -342,6 +371,14 @@ pub(super) fn apply_macos_default_route(
 pub(super) fn delete_macos_default_route_for_interface(iface: &str) -> Result<()> {
     let mut failures = Vec::new();
     for target in macos_tunnel_default_route_targets() {
+        match macos_split_default_route_owner(target) {
+            Ok(Some(owner)) if owner == iface => {}
+            Ok(Some(_)) | Ok(None) => continue,
+            Err(error) => {
+                failures.push(format!("inspect {target}: {error}"));
+                continue;
+            }
+        }
         if let Err(error) = delete_macos_direct_route_variants(target, iface) {
             failures.push(format!("remove {target} on {iface}: {error}"));
         }
@@ -668,5 +705,27 @@ default            link#26            UCSIg           bridge100      !\n",
             output,
             Ipv4Addr::new(10, 44, 10, 24)
         ));
+    }
+
+    #[test]
+    fn split_default_cleanup_only_claims_the_route_owner() {
+        let wireguard_route = "\
+   route to: 1.0.0.1\n\
+destination: 0.0.0.0\n\
+       mask: 128.0.0.0\n\
+    gateway: utun6\n\
+  interface: utun6\n";
+        assert_eq!(
+            macos_split_default_route_interface(wireguard_route),
+            Some("utun6")
+        );
+
+        let physical_default = "\
+   route to: 1.0.0.1\n\
+destination: default\n\
+       mask: default\n\
+    gateway: 192.168.64.1\n\
+  interface: en0\n";
+        assert_eq!(macos_split_default_route_interface(physical_default), None);
     }
 }

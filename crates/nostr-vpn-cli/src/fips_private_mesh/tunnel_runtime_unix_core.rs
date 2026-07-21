@@ -273,6 +273,8 @@ impl FipsPrivateTunnelRuntime {
         }
         #[cfg(target_os = "macos")]
         {
+            self.cleanup_stale_macos_wg_upstream(&config.wireguard_exit)
+                .await;
             self.apply_macos_network_state(config).await?;
             self.reconcile_macos_wg_upstream(&config.wireguard_exit)
                 .await;
@@ -283,6 +285,25 @@ impl FipsPrivateTunnelRuntime {
         }
         self.exit_route_ready = fips_exit_route_ready(config, &self.mesh.peer_statuses());
         Ok(())
+    }
+
+    #[cfg(any(target_os = "macos", test))]
+    fn macos_wg_upstream_needs_cleanup(want_up: bool, existing_matches: Option<bool>) -> bool {
+        existing_matches.is_some_and(|matches| !want_up || !matches)
+    }
+
+    #[cfg(target_os = "macos")]
+    async fn cleanup_stale_macos_wg_upstream(&mut self, wg_config: &WireGuardExitConfig) {
+        let want_up = wg_config.enabled && wg_config.configured();
+        let existing_matches = self
+            .wg_upstream
+            .as_ref()
+            .map(|existing| existing.matches(wg_config));
+        if Self::macos_wg_upstream_needs_cleanup(want_up, existing_matches)
+            && let Some(existing) = self.wg_upstream.take()
+        {
+            existing.cleanup().await;
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -487,7 +508,9 @@ impl FipsPrivateTunnelRuntime {
     /// peer-dependent route refresh). The function is idempotent: a
     /// no-op if the existing tunnel already matches the config, a
     /// teardown-then-bring-up if the config changed, just a teardown
-    /// if WG is now disabled.
+    /// if WG is now disabled. Stale WG routing is normally removed by
+    /// `cleanup_stale_macos_wg_upstream` before FIPS routes are applied;
+    /// the cleanup below is a defensive fallback.
     ///
     /// **Safe-by-construction**: if the WG handshake doesn't complete
     /// within the watchdog window (10s), nothing modifies the routing
@@ -648,6 +671,30 @@ impl FipsPrivateTunnelRuntime {
         }
 
         self.exit_node_runtime = crate::MacosExitNodeRuntime::default();
+    }
+}
+
+#[cfg(test)]
+mod macos_wg_transition_tests {
+    use super::FipsPrivateTunnelRuntime;
+
+    #[test]
+    fn stale_wireguard_is_removed_before_fips_routes_change() {
+        assert!(FipsPrivateTunnelRuntime::macos_wg_upstream_needs_cleanup(
+            false,
+            Some(true)
+        ));
+        assert!(FipsPrivateTunnelRuntime::macos_wg_upstream_needs_cleanup(
+            true,
+            Some(false)
+        ));
+        assert!(!FipsPrivateTunnelRuntime::macos_wg_upstream_needs_cleanup(
+            true,
+            Some(true)
+        ));
+        assert!(!FipsPrivateTunnelRuntime::macos_wg_upstream_needs_cleanup(
+            false, None
+        ));
     }
 }
 
