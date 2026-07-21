@@ -572,6 +572,7 @@
 
     #[allow(clippy::too_many_lines)]
     async fn websocket_seed_router_join_roster_roundtrip() {
+        let test_started_at = Instant::now();
         let requested_at = unix_timestamp().saturating_sub(1);
         let approved_at = unix_timestamp();
 
@@ -741,6 +742,7 @@
         })
         .await
         .expect("admin, WSS seed, router, and physical guest should authenticate");
+        let authenticated_at = Instant::now();
 
         let guest_identity = PeerIdentity::from_npub(guest.endpoint.npub())
             .expect("guest endpoint identity");
@@ -764,6 +766,7 @@
                 seed.peers().await,
             );
         }
+        let roster_applied_at = Instant::now();
 
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
@@ -814,6 +817,7 @@
         })
         .await
         .expect("joined guest must accept its new network id and process peer capabilities");
+        let new_network_control_at = Instant::now();
 
         let joined_config = guest
             .take_app_config_toml()
@@ -852,6 +856,15 @@
                 .take_app_config_toml()
                 .expect("read acknowledged UI handoff"),
             ""
+        );
+        let ui_handoff_acknowledged_at = Instant::now();
+        eprintln!(
+            "mobile QR join latency: setup_auth={:?} signed_roster_delivery_and_durable_apply={:?} new_network_control={:?} ui_handoff_ack={:?} total={:?}",
+            authenticated_at.duration_since(test_started_at),
+            roster_applied_at.duration_since(authenticated_at),
+            new_network_control_at.duration_since(roster_applied_at),
+            ui_handoff_acknowledged_at.duration_since(new_network_control_at),
+            ui_handoff_acknowledged_at.duration_since(test_started_at),
         );
 
         shutdown_started_mobile_tunnel(admin).await;
