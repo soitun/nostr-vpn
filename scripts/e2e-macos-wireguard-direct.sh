@@ -97,6 +97,10 @@ direct_route_is_live() {
 restore_direct() {
   "$NVPN_BIN" set --config "$CONFIG" --exit-node "" >/dev/null 2>&1 || true
   if [[ "$DROP_UNDERLAY_DEFAULT" == "1" ]]; then
+    if [[ -n "${SCOPED_DEFAULT_IFACE:-}" ]]; then
+      sudo -n /sbin/route -n delete -ifscope "$SCOPED_DEFAULT_IFACE" \
+        default -interface "$SCOPED_DEFAULT_IFACE" >/dev/null 2>&1 || true
+    fi
     sudo -n /sbin/route -n add default "$DIRECT_GATEWAY" >/dev/null 2>&1 || true
   fi
 }
@@ -106,6 +110,19 @@ DIRECT_GATEWAY="$(route_field default gateway)"
 if [[ -z "$DIRECT_IFACE" || -z "$DIRECT_GATEWAY" || "$DIRECT_GATEWAY" == link#* ]]; then
   echo "could not capture the pre-test physical Direct route" >&2
   exit 1
+fi
+SCOPED_DEFAULT_IFACE=""
+if [[ "$DROP_UNDERLAY_DEFAULT" == "1" ]]; then
+  for iface in $(ifconfig -l); do
+    if [[ "$iface" == utun* ]] && ifconfig "$iface" 2>/dev/null | grep -q '^[[:space:]]*inet '; then
+      SCOPED_DEFAULT_IFACE="$iface"
+      break
+    fi
+  done
+  if [[ -z "$SCOPED_DEFAULT_IFACE" ]]; then
+    echo "the scoped-default recovery test needs an existing IPv4 utun" >&2
+    exit 1
+  fi
 fi
 trap restore_direct EXIT
 
@@ -127,9 +144,9 @@ if [[ "$DROP_UNDERLAY_DEFAULT" == "1" ]]; then
   # like a packet-tunnel Network Extension (for example Tailscale), too. The
   # live WG /1 routes keep Internet working while the Direct transition is
   # asked to restore the DHCP underlay alongside that foreign-looking route.
-  SCOPED_DEFAULT_IFACE="$(split_default_owner 1.0.0.1)"
+  sudo -n /sbin/route -n add -ifscope "$SCOPED_DEFAULT_IFACE" \
+    default -interface "$SCOPED_DEFAULT_IFACE" >/dev/null
   sudo -n /sbin/route -n delete default "$DIRECT_GATEWAY" >/dev/null
-  sudo -n /sbin/route -n add default -interface "$SCOPED_DEFAULT_IFACE" >/dev/null
   if netstat -rn -f inet \
     | awk -v iface="$DIRECT_IFACE" '$1 == "default" && $NF == iface { found=1 } END { exit found ? 0 : 1 }'
   then
@@ -149,6 +166,13 @@ direct_start=$SECONDS
 "$NVPN_BIN" set --config "$CONFIG" --exit-node "" >/dev/null
 wait_until "the original Direct route and external HTTPS" direct_route_is_live
 direct_elapsed=$((SECONDS - direct_start))
+
+if [[ -n "$SCOPED_DEFAULT_IFACE" ]]; then
+  sudo -n /sbin/route -n delete -ifscope "$SCOPED_DEFAULT_IFACE" \
+    default -interface "$SCOPED_DEFAULT_IFACE" >/dev/null
+  SCOPED_DEFAULT_IFACE=""
+  direct_route_is_live
+fi
 
 trap - EXIT
 echo "MACOS_WG_DIRECT_E2E_OK"
