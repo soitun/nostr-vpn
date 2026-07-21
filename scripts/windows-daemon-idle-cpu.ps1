@@ -91,7 +91,11 @@ try {
     '--fips-nostr-discovery-enabled', 'false',
     '--fips-bootstrap-enabled', 'false'
   ) | Out-Null
-  Invoke-Nvpn @('start', '--config', $Config, '--daemon', '--connect') | Out-Null
+  Invoke-Nvpn @(
+    'start', '--config', $Config,
+    '--iface', 'nvpn-idle-cpu',
+    '--daemon', '--connect'
+  ) | Out-Null
 
   $deadline = (Get-Date).AddSeconds(20)
   while ((Get-Date) -lt $deadline -and !$daemon) {

@@ -216,6 +216,8 @@ if grep -F -- '--fips-peer-endpoint' "$ROOT_DIR/scripts/windows-daemon-idle-cpu.
 fi
 grep -Fq 'if ($LASTEXITCODE -ne 0)' "$ROOT_DIR/scripts/windows-daemon-idle-cpu.ps1" \
   || fail "Windows daemon idle CPU fixture ignores native nvpn command failures"
+grep -Fq "'--iface', 'nvpn-idle-cpu'" "$ROOT_DIR/scripts/windows-daemon-idle-cpu.ps1" \
+  || fail "Windows daemon idle CPU fixture can collide with the installed tunnel interface"
 grep -Fq '"NVPN_IDLE_CPU_SAMPLE_SECONDS" 60' "$ROOT_DIR/scripts/windows-app-launch-smoke.ps1" \
   || fail "Windows app idle CPU gate does not sample a full minute"
 grep -Fq '"NVPN_IDLE_CPU_SETTLE_SECONDS" 20' "$ROOT_DIR/scripts/windows-app-launch-smoke.ps1" \
