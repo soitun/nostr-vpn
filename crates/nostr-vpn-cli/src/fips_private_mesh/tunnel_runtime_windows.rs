@@ -184,18 +184,6 @@ impl FipsPrivateTunnelRuntime {
         Ok(())
     }
 
-    pub(crate) fn join_roster_delivery(
-        &self,
-        participant: String,
-        join_roster: JoinRosterControl,
-    ) -> Result<FipsJoinRosterDelivery> {
-        self.mesh.join_roster_delivery(
-            self.state_control.sender(),
-            participant,
-            join_roster,
-        )
-    }
-
     fn apply_windows_route_config(&mut self, config: &FipsPrivateTunnelConfig) -> Result<()> {
         let peer_statuses = self.mesh.peer_statuses();
         let exit_route_ready = fips_exit_route_ready(config, &peer_statuses);

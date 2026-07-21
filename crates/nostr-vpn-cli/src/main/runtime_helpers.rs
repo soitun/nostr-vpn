@@ -14,7 +14,6 @@ fn parse_exit_node_arg(value: &str) -> Result<Option<String>> {
     normalize_nostr_pubkey(value).map(Some)
 }
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn is_exit_node_route(route: &str) -> bool {
     route == "0.0.0.0/0" || route == "::/0"
 }

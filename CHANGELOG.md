@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.1.1 - 2026-07-21
+
+### Fixed
+
+- Restore the native Windows build after the shared exit-route and roster
+  delivery paths were extended for the FIPS roaming repair.
+
 ## 4.1.0 - 2026-07-21
 
 ### Changed
