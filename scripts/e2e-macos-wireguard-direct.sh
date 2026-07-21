@@ -123,13 +123,23 @@ wg_elapsed=$((SECONDS - start))
 
 if [[ "$DROP_UNDERLAY_DEFAULT" == "1" ]]; then
   # Reproduce recovery from older nVPN builds that could remove the physical
-  # default during WG cleanup. The live WG /1 routes keep Internet working
-  # while the Direct transition is asked to restore the DHCP underlay.
+  # default during WG cleanup. Retain an interface-scoped utun default shaped
+  # like a packet-tunnel Network Extension (for example Tailscale), too. The
+  # live WG /1 routes keep Internet working while the Direct transition is
+  # asked to restore the DHCP underlay alongside that foreign-looking route.
+  SCOPED_DEFAULT_IFACE="$(split_default_owner 1.0.0.1)"
   sudo -n /sbin/route -n delete default "$DIRECT_GATEWAY" >/dev/null
+  sudo -n /sbin/route -n add default -interface "$SCOPED_DEFAULT_IFACE" >/dev/null
   if netstat -rn -f inet \
     | awk -v iface="$DIRECT_IFACE" '$1 == "default" && $NF == iface { found=1 } END { exit found ? 0 : 1 }'
   then
     echo "failed to remove the physical default for the recovery test" >&2
+    exit 1
+  fi
+  if ! netstat -rn -f inet \
+    | awk -v iface="$SCOPED_DEFAULT_IFACE" '$1 == "default" && $NF == iface { found=1 } END { exit found ? 0 : 1 }'
+  then
+    echo "failed to install the scoped utun default for the recovery test" >&2
     exit 1
   fi
   wireguard_route_is_live
