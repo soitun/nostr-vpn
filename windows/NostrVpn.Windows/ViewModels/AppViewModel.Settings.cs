@@ -133,4 +133,16 @@ public sealed partial class AppViewModel
             WireguardExitConfig = WireguardExitConfig,
         }), "Saving WireGuard");
     }
+
+    private Task SaveExitDnsAsync()
+    {
+        return DispatchAsync(NativeActions.UpdateSettings(new SettingsPatch
+        {
+            ExitDnsMode = ExitDnsMode,
+            ExitDnsDohProvider = ExitDnsDohProvider,
+            ExitDnsCustomDohUrl = ExitDnsCustomDohUrl,
+            ExitDnsCustomDohBootstrapIps = ExitDnsCustomDohBootstrapIps,
+            ExitDnsThroughExitServers = ExitDnsThroughExitServers,
+        }), "Saving Exit DNS");
+    }
 }

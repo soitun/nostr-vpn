@@ -1,5 +1,7 @@
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+#[cfg(any(test, target_os = "windows"))]
+use std::net::IpAddr;
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 #[cfg(target_os = "macos")]
 use std::path::PathBuf;
 #[cfg(any(target_os = "linux", target_os = "windows"))]
@@ -9,9 +11,10 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use fips_endpoint::{FipsEndpoint, PeerIdentity};
+use nostr_vpn_core::config::ExitDnsResolverConfig;
 use nostr_vpn_core::secure_dns::{
-    SECURE_DNS_MAX_MESSAGE_BYTES, SecureDnsLookup, SecureDnsResolver, WireGuardDnsResolver,
-    build_servfail_response,
+    SECURE_DNS_MAX_MESSAGE_BYTES, SecureDnsError, SecureDnsLookup, SecureDnsResolver,
+    WireGuardDnsResolver, build_servfail_response,
 };
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::Semaphore;
@@ -35,7 +38,7 @@ pub(crate) struct SecureDnsRuntime {
     tcp_task: JoinHandle<()>,
     records: Arc<RwLock<HashMap<String, Ipv4Addr>>>,
     resolver: ResolverState,
-    wireguard_dns_servers: Vec<IpAddr>,
+    resolver_config: ExitDnsResolverConfig,
     _system_dns: SystemDnsGuard,
 }
 
@@ -44,7 +47,7 @@ impl SecureDnsRuntime {
         interface: &str,
         interface_index: Option<u32>,
         records: HashMap<String, Ipv4Addr>,
-        wireguard_dns_servers: Vec<IpAddr>,
+        resolver_config: ExitDnsResolverConfig,
         fips_endpoint: FipsDnsEndpoint,
     ) -> Result<Self> {
         let udp = Arc::new(
@@ -55,7 +58,7 @@ impl SecureDnsRuntime {
         let tcp = tokio::net::TcpListener::bind(SECURE_DNS_BIND)
             .await
             .with_context(|| format!("failed to bind secure DNS TCP on {SECURE_DNS_BIND}"))?;
-        let resolver = Arc::new(RwLock::new(dns_resolver(&wireguard_dns_servers)?));
+        let resolver = Arc::new(RwLock::new(dns_resolver(&resolver_config)?));
         let records = Arc::new(RwLock::new(records));
         let udp_task = tokio::spawn(run_udp(
             udp,
@@ -82,7 +85,7 @@ impl SecureDnsRuntime {
             tcp_task,
             records,
             resolver,
-            wireguard_dns_servers,
+            resolver_config,
             _system_dns: system_dns,
         })
     }
@@ -90,18 +93,18 @@ impl SecureDnsRuntime {
     pub(crate) fn update_config(
         &mut self,
         records: HashMap<String, Ipv4Addr>,
-        wireguard_dns_servers: Vec<IpAddr>,
+        resolver_config: ExitDnsResolverConfig,
     ) -> Result<()> {
         if let Ok(mut current) = self.records.write() {
             *current = records;
         }
-        if self.wireguard_dns_servers != wireguard_dns_servers {
-            let resolver = dns_resolver(&wireguard_dns_servers)?;
+        if self.resolver_config != resolver_config {
+            let resolver = dns_resolver(&resolver_config)?;
             *self
                 .resolver
                 .write()
                 .map_err(|_| anyhow!("secure DNS resolver lock poisoned"))? = resolver;
-            self.wireguard_dns_servers = wireguard_dns_servers;
+            self.resolver_config = resolver_config;
         }
         Ok(())
     }
@@ -131,16 +134,27 @@ impl SecureDnsRuntime {
     }
 }
 
-fn dns_resolver(wireguard_dns_servers: &[IpAddr]) -> Result<SharedResolver> {
-    if wireguard_dns_servers.is_empty() {
-        return Ok(Arc::new(
-            SecureDnsResolver::new().context("failed to initialize secure DNS")?,
-        ));
+fn dns_resolver(config: &ExitDnsResolverConfig) -> Result<SharedResolver> {
+    match config {
+        ExitDnsResolverConfig::Doh { .. } => Ok(Arc::new(
+            SecureDnsResolver::from_resolver_config(config)
+                .context("failed to initialize encrypted DNS")?,
+        )),
+        ExitDnsResolverConfig::ThroughExit { servers } => Ok(Arc::new(
+            WireGuardDnsResolver::new(servers)
+                .context("failed to initialize DNS through the selected exit")?,
+        )),
+        ExitDnsResolverConfig::FailClosed => Ok(Arc::new(FailClosedDnsResolver)),
     }
-    Ok(Arc::new(
-        WireGuardDnsResolver::new(wireguard_dns_servers)
-            .context("failed to initialize WireGuard exit DNS")?,
-    ))
+}
+
+struct FailClosedDnsResolver;
+
+#[async_trait::async_trait]
+impl SecureDnsLookup for FailClosedDnsResolver {
+    async fn resolve(&self, _query: &[u8]) -> Result<Vec<u8>, SecureDnsError> {
+        Err(SecureDnsError::ExitNotReady)
+    }
 }
 
 fn current_resolver(resolver: &ResolverState) -> Option<SharedResolver> {
@@ -576,9 +590,10 @@ fn windows_wireguard_dns_script(interface: &str, servers: &[IpAddr]) -> String {
             "Get-DnsClientNrptRule -ErrorAction SilentlyContinue | Where-Object {{ $_.DisplayName -eq $displayName -or $_.Comment -eq $comment }} | ForEach-Object {{ $_ | Remove-DnsClientNrptRule -Force -ErrorAction SilentlyContinue | Out-Null }}\n",
             "Add-DnsClientNrptRule -Namespace '.nvpn' -NameServers '127.0.0.1' -DisplayName $displayName -Comment $comment -ErrorAction Stop | Out-Null\n",
             "Add-DnsClientNrptRule -Namespace '.fips' -NameServers '127.0.0.1' -DisplayName $displayName -Comment $comment -ErrorAction Stop | Out-Null\n",
+            "Add-DnsClientNrptRule -Namespace '.' -NameServers @({}) -DisplayName $displayName -Comment $comment -ErrorAction Stop | Out-Null\n",
             "Clear-DnsClientCache -ErrorAction SilentlyContinue\n",
         ),
-        interface, servers
+        interface, servers, servers
     )
 }
 
@@ -686,7 +701,8 @@ mod tests {
         assert!(script.contains("-ServerAddresses @('10.99.99.1')"));
         assert!(script.contains("-Namespace '.nvpn'"));
         assert!(script.contains("-Namespace '.fips'"));
-        assert!(!script.contains("-Namespace '.' -NameServers"));
+        assert!(script.contains("-Namespace '.' -NameServers @('10.99.99.1')"));
+        assert!(!script.contains("-Namespace '.' -NameServers '127.0.0.1'"));
     }
 
     #[test]

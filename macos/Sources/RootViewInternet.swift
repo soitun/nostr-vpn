@@ -15,6 +15,7 @@ extension RootView {
             trustedDeviceInternetSettings(network, search: search)
             shareInternetSettings
             wireGuardUpstreamSettings
+            exitDnsSettings
         }
     }
 
@@ -138,6 +139,58 @@ extension RootView {
                 }
                 .buttonStyle(.borderless)
             }
+        }
+    }
+
+    var exitDnsSettings: some View {
+        surface {
+            sectionHeader("Exit DNS", systemImage: "lock.shield")
+            Text("MagicDNS stays local. Public DNS follows this policy while an internet exit is active.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Picker("Mode", selection: $exitDnsMode) {
+                Text("Automatic (recommended)").tag("automatic")
+                Text("Encrypted DNS").tag("encrypted")
+                Text("DNS through exit").tag("through_exit")
+            }
+
+            if exitDnsMode == "encrypted" {
+                Picker("Provider", selection: $exitDnsDohProvider) {
+                    Text("Cloudflare").tag("cloudflare")
+                    Text("Quad9").tag("quad9")
+                    Text("Custom DoH").tag("custom")
+                }
+                if exitDnsDohProvider == "custom" {
+                    TextField("HTTPS DoH URL", text: $exitDnsCustomDohUrl)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("Bootstrap IPs, comma separated", text: $exitDnsCustomDohBootstrapIps)
+                        .textFieldStyle(.roundedBorder)
+                }
+            } else if exitDnsMode == "through_exit" {
+                TextField("DNS server IPs, comma separated", text: $exitDnsThroughExitServers)
+                    .textFieldStyle(.roundedBorder)
+                Text("These DNS packets are sent only through the selected exit.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Uses WireGuard profile DNS when supplied; otherwise built-in encrypted DNS.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button {
+                manager.saveExitDnsSettings(
+                    mode: exitDnsMode,
+                    provider: exitDnsDohProvider,
+                    customUrl: exitDnsCustomDohUrl,
+                    bootstrapIps: exitDnsCustomDohBootstrapIps,
+                    throughExitServers: exitDnsThroughExitServers
+                )
+            } label: {
+                Label("Save Exit DNS", systemImage: "checkmark")
+            }
+            .disabled(manager.actionInFlight)
         }
     }
 

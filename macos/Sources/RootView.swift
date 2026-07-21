@@ -22,6 +22,11 @@ struct RootView: View {
     @State var nostrPubsubMaxHops = ""
     @State var nostrPubsubMaxEventBytes = ""
     @State var wireguardExitConfig = ""
+    @State var exitDnsMode = "automatic"
+    @State var exitDnsDohProvider = "cloudflare"
+    @State var exitDnsCustomDohUrl = ""
+    @State var exitDnsCustomDohBootstrapIps = ""
+    @State var exitDnsThroughExitServers = ""
     @State var paidExitPriceMsat = ""
     @State var paidExitPerUnits = ""
     @State var paidExitAcceptedMints = ""
@@ -78,6 +83,11 @@ struct RootView: View {
     @State var lastSyncedNostrPubsubMaxHops: UInt8 = 0
     @State var lastSyncedNostrPubsubMaxEventBytes: UInt32 = 0
     @State var lastSyncedWireguardExitConfig: String? = nil
+    @State var lastSyncedExitDnsMode: String? = nil
+    @State var lastSyncedExitDnsDohProvider: String? = nil
+    @State var lastSyncedExitDnsCustomDohUrl: String? = nil
+    @State var lastSyncedExitDnsCustomDohBootstrapIps: String? = nil
+    @State var lastSyncedExitDnsThroughExitServers: String? = nil
     @State var lastSyncedPaidExitSeller: NativePaidExitSellerState? = nil
 
     var state: NativeAppState {

@@ -124,13 +124,14 @@ impl MobileTunnel {
         #[cfg(target_os = "android")]
         let mut wg_socket_fd: c_int = -1;
         let mut wg_address_ipv4: Option<Ipv4Addr> = None;
-        let wireguard_dns_nat = parse_ipv4(&config.magic_dns_server)
+        let exit_dns_resolver_config = mobile_exit_dns_resolver_config(&config)?;
+        let exit_dns_nat = parse_ipv4(&config.magic_dns_server)
             .and_then(|local_dns_server| {
-                MobileWireGuardDnsNat::new(
-                    local_dns_server,
-                    active_mobile_wireguard_dns_servers(&config),
-                )
+                active_mobile_exit_dns_servers(&config)
+                    .map(|servers| MobileExitDnsNat::new(local_dns_server, servers))
+                    .transpose()
             })
+            .transpose()?
             .map(Arc::new);
         if let Some(wg_config) = config.wireguard_exit.as_ref() {
             wg_address_ipv4 = parse_ipv4(&wg_config.address);
@@ -156,7 +157,7 @@ impl MobileTunnel {
             let inbound_tx_for_wg = inbound_tx.clone();
             let wg_addr = wg_address_ipv4;
             let mesh_addr = mesh_ipv4;
-            let inbound_wireguard_dns_nat = wireguard_dns_nat.clone();
+            let inbound_exit_dns_nat = exit_dns_nat.clone();
             tasks.push(tokio::spawn(async move {
                 let mut packets = Vec::with_capacity(MOBILE_FIPS_RECV_BATCH);
                 while let Some(batch) = recv_rx.recv().await {
@@ -166,7 +167,7 @@ impl MobileTunnel {
                         &inbound_tx_for_wg,
                         wg_addr,
                         mesh_addr,
-                        inbound_wireguard_dns_nat.as_deref(),
+                        inbound_exit_dns_nat.as_deref(),
                     )
                     .await
                     {
@@ -182,7 +183,7 @@ impl MobileTunnel {
                             &inbound_tx_for_wg,
                             wg_addr,
                             mesh_addr,
-                            inbound_wireguard_dns_nat.as_deref(),
+                            inbound_exit_dns_nat.as_deref(),
                         )
                         .await
                         {
@@ -226,8 +227,9 @@ impl MobileTunnel {
             let inbound_tx_for_dns = inbound_tx.clone();
             let app_config_for_dns = Arc::clone(&app_config);
             let magic_dns_server = parse_ipv4(&config.magic_dns_server);
-            let secure_dns = (magic_dns_server.is_some() && wireguard_dns_nat.is_none())
-                .then(SecureDnsResolver::new)
+            let outbound_exit_dns_nat = exit_dns_nat.clone();
+            let secure_dns = (magic_dns_server.is_some() && exit_dns_nat.is_none())
+                .then(|| SecureDnsResolver::from_resolver_config(&exit_dns_resolver_config))
                 .transpose()
                 .context("failed to initialize mobile secure DNS")?;
             tokio::spawn(async move {
@@ -243,7 +245,7 @@ impl MobileTunnel {
                         &app_config_for_dns,
                         secure_dns.as_ref(),
                         magic_dns_server,
-                        wireguard_dns_nat.as_deref(),
+                        outbound_exit_dns_nat.as_deref(),
                         packets,
                     )
                     .await
@@ -403,6 +405,7 @@ impl MobileTunnel {
             let config_path = config_path.clone();
             let join_request_active = Arc::clone(&join_request_active);
             let state_control_sender = state_control_sender.clone();
+            let inbound_exit_dns_nat = exit_dns_nat.clone();
             tokio::spawn(async move {
                 let control = MobileEndpointReceiveContext {
                     endpoint: endpoint.as_ref(),
@@ -442,6 +445,11 @@ impl MobileTunnel {
                                     Err(error) => {
                                         tracing::warn!(?error, "mobile: failed to handle FIPS datagram");
                                     }
+                                }
+                            }
+                            if let Some(exit_dns_nat) = inbound_exit_dns_nat.as_deref() {
+                                for packet in &mut inbound_packets {
+                                    exit_dns_nat.rewrite_response(packet);
                                 }
                             }
                             if !inbound_packets.is_empty()
@@ -622,11 +630,11 @@ async fn push_mobile_wg_inbound_batch(
     inbound_tx: &tokio_mpsc::Sender<Vec<Vec<u8>>>,
     wg_addr: Option<Ipv4Addr>,
     mesh_addr: Option<Ipv4Addr>,
-    wireguard_dns_nat: Option<&MobileWireGuardDnsNat>,
+    exit_dns_nat: Option<&MobileExitDnsNat>,
 ) -> bool {
     for mut packet in batch {
-        if let Some(wireguard_dns_nat) = wireguard_dns_nat {
-            wireguard_dns_nat.rewrite_response(&mut packet);
+        if let Some(exit_dns_nat) = exit_dns_nat {
+            exit_dns_nat.rewrite_response(&mut packet);
         }
         if let (Some(wg), Some(mesh)) = (wg_addr, mesh_addr) {
             rewrite_ipv4_destination(&mut packet, wg, mesh);

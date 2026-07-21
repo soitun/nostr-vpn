@@ -7,18 +7,21 @@ use reqwest::header::{ACCEPT, CONTENT_TYPE};
 use thiserror::Error;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-const DOH_ENDPOINT: &str = "https://cloudflare-dns.com/dns-query";
+#[cfg(test)]
+use crate::config::CLOUDFLARE_DOH_URL;
+use crate::config::{ExitDnsConfig, ExitDnsResolverConfig};
+
+#[cfg(test)]
 const DOH_HOST: &str = "cloudflare-dns.com";
 const DOH_CONTENT_TYPE: &str = "application/dns-message";
 const DOH_TIMEOUT: Duration = Duration::from_secs(3);
 const WIREGUARD_DNS_TIMEOUT: Duration = Duration::from_secs(3);
-const DOH_BOOTSTRAP: &[&str] = &["1.1.1.1:443", "1.0.0.1:443"];
 pub const SECURE_DNS_MAX_MESSAGE_BYTES: usize = 4_096;
 
 #[derive(Clone)]
 pub struct SecureDnsResolver {
     client: reqwest::Client,
-    endpoint: &'static str,
+    endpoint: reqwest::Url,
 }
 
 #[derive(Clone)]
@@ -33,15 +36,39 @@ pub trait SecureDnsLookup: Send + Sync {
 
 impl SecureDnsResolver {
     pub fn new() -> Result<Self, SecureDnsError> {
-        let bootstrap = DOH_BOOTSTRAP
-            .iter()
-            .map(|address| address.parse::<SocketAddr>())
-            .collect::<Result<Vec<_>, _>>()
-            .expect("built-in DoH bootstrap addresses are valid");
-        Self::with_bootstrap(&bootstrap)
+        let config = ExitDnsConfig::default()
+            .resolver_config(None)
+            .expect("built-in DoH settings are valid");
+        Self::from_resolver_config(&config)
     }
 
-    fn with_bootstrap(bootstrap: &[SocketAddr]) -> Result<Self, SecureDnsError> {
+    pub fn from_resolver_config(config: &ExitDnsResolverConfig) -> Result<Self, SecureDnsError> {
+        let ExitDnsResolverConfig::Doh { url, bootstrap_ips } = config else {
+            return Err(SecureDnsError::InvalidDohConfig(
+                "encrypted DNS requires a DoH resolver plan".to_string(),
+            ));
+        };
+        Self::with_endpoint(url, bootstrap_ips)
+    }
+
+    fn with_endpoint(endpoint: &str, bootstrap_ips: &[IpAddr]) -> Result<Self, SecureDnsError> {
+        let endpoint = validate_doh_resolver(endpoint, bootstrap_ips)?;
+        let port = endpoint
+            .port_or_known_default()
+            .expect("validated HTTPS URL has a port");
+        let bootstrap = bootstrap_ips
+            .iter()
+            .copied()
+            .map(|ip| SocketAddr::new(ip, port))
+            .collect::<Vec<_>>();
+        Self::with_endpoint_and_bootstrap(endpoint, &bootstrap)
+    }
+
+    fn with_endpoint_and_bootstrap(
+        endpoint: reqwest::Url,
+        bootstrap: &[SocketAddr],
+    ) -> Result<Self, SecureDnsError> {
+        let host = endpoint.host_str().expect("validated DoH URL has a host");
         let client = reqwest::Client::builder()
             .https_only(true)
             .no_proxy()
@@ -49,20 +76,27 @@ impl SecureDnsResolver {
             .connect_timeout(DOH_TIMEOUT)
             .timeout(DOH_TIMEOUT)
             .http2_adaptive_window(true)
-            .resolve_to_addrs(DOH_HOST, bootstrap)
+            .resolve_to_addrs(host, bootstrap)
             .build()
             .map_err(SecureDnsError::ClientBuild)?;
-        Ok(Self {
-            client,
-            endpoint: DOH_ENDPOINT,
-        })
+        Ok(Self { client, endpoint })
+    }
+
+    #[cfg(test)]
+    fn with_bootstrap(bootstrap: &[SocketAddr]) -> Result<Self, SecureDnsError> {
+        let ips = bootstrap
+            .iter()
+            .map(|address| address.ip())
+            .collect::<Vec<_>>();
+        let endpoint = validate_doh_resolver(CLOUDFLARE_DOH_URL, &ips)?;
+        Self::with_endpoint_and_bootstrap(endpoint, bootstrap)
     }
 
     async fn resolve_query(&self, query: &[u8]) -> Result<Vec<u8>, SecureDnsError> {
         let request = validated_query(query)?;
         let mut response = self
             .client
-            .post(self.endpoint)
+            .post(self.endpoint.clone())
             .header(ACCEPT, DOH_CONTENT_TYPE)
             .header(CONTENT_TYPE, DOH_CONTENT_TYPE)
             .body(query.to_vec())
@@ -102,8 +136,50 @@ impl SecureDnsResolver {
 
     #[cfg(test)]
     fn with_test_endpoint(client: reqwest::Client, endpoint: &'static str) -> Self {
-        Self { client, endpoint }
+        Self {
+            client,
+            endpoint: reqwest::Url::parse(endpoint).expect("test DoH URL"),
+        }
     }
+}
+
+pub fn validate_doh_resolver(
+    endpoint: &str,
+    bootstrap_ips: &[IpAddr],
+) -> Result<reqwest::Url, SecureDnsError> {
+    let endpoint = reqwest::Url::parse(endpoint)
+        .map_err(|error| SecureDnsError::InvalidDohConfig(error.to_string()))?;
+    if endpoint.scheme() != "https" {
+        return Err(SecureDnsError::InvalidDohConfig(
+            "DoH URL must use https".to_string(),
+        ));
+    }
+    if endpoint.username() != "" || endpoint.password().is_some() {
+        return Err(SecureDnsError::InvalidDohConfig(
+            "DoH URL must not contain credentials".to_string(),
+        ));
+    }
+    if endpoint.fragment().is_some() {
+        return Err(SecureDnsError::InvalidDohConfig(
+            "DoH URL must not contain a fragment".to_string(),
+        ));
+    }
+    if endpoint.host_str().is_none() {
+        return Err(SecureDnsError::InvalidDohConfig(
+            "DoH URL has no host".to_string(),
+        ));
+    }
+    if endpoint.port_or_known_default().is_none() {
+        return Err(SecureDnsError::InvalidDohConfig(
+            "DoH URL has no usable HTTPS port".to_string(),
+        ));
+    }
+    if bootstrap_ips.is_empty() {
+        return Err(SecureDnsError::InvalidDohConfig(
+            "DoH requires at least one bootstrap IP".to_string(),
+        ));
+    }
+    Ok(endpoint)
 }
 
 impl WireGuardDnsResolver {
@@ -207,6 +283,10 @@ impl SecureDnsLookup for WireGuardDnsResolver {
 
 #[derive(Debug, Error)]
 pub enum SecureDnsError {
+    #[error("DNS is unavailable until the selected exit is ready")]
+    ExitNotReady,
+    #[error("invalid encrypted DNS configuration: {0}")]
+    InvalidDohConfig(String),
     #[error("failed to build secure DNS client: {0}")]
     ClientBuild(reqwest::Error),
     #[error("invalid DNS query")]
@@ -351,6 +431,25 @@ mod tests {
             SecureDnsLookup::resolve(&resolver, &dns_query(9)).await,
             Err(SecureDnsError::Request(_))
         ));
+    }
+
+    #[test]
+    fn custom_doh_requires_https_and_bootstrap_without_credentials() {
+        let bootstrap = ["192.0.2.53".parse::<IpAddr>().unwrap()];
+        assert!(matches!(
+            SecureDnsResolver::with_endpoint("http://resolver.example/dns-query", &bootstrap),
+            Err(SecureDnsError::InvalidDohConfig(_))
+        ));
+        assert!(matches!(
+            SecureDnsResolver::with_endpoint("https://user@resolver.example/dns-query", &bootstrap),
+            Err(SecureDnsError::InvalidDohConfig(_))
+        ));
+        assert!(matches!(
+            SecureDnsResolver::with_endpoint("https://resolver.example/dns-query", &[]),
+            Err(SecureDnsError::InvalidDohConfig(_))
+        ));
+        SecureDnsResolver::with_endpoint("https://resolver.example/dns-query", &bootstrap)
+            .expect("strict custom DoH client");
     }
 
     #[tokio::test]

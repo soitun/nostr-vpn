@@ -61,6 +61,148 @@ fn build_wireguard_settings_card(app: &AppRef, page: &gtk::Box, state: &NativeAp
     page.append(&card);
 }
 
+fn build_exit_dns_settings_card(app: &AppRef, page: &gtk::Box) {
+    const MODES: [&str; 3] = ["automatic", "encrypted", "through_exit"];
+    const MODE_LABELS: [&str; 3] = [
+        "Automatic (recommended)",
+        "Encrypted DNS",
+        "DNS through exit",
+    ];
+    const PROVIDERS: [&str; 3] = ["cloudflare", "quad9", "custom"];
+    const PROVIDER_LABELS: [&str; 3] = ["Cloudflare", "Quad9", "Custom DoH"];
+
+    let card = card();
+    section_header(&card, "Exit DNS", "");
+    let note = gtk::Label::new(Some(
+        "MagicDNS stays local. Public DNS follows this policy while an internet exit is active.",
+    ));
+    note.add_css_class("muted");
+    note.set_wrap(true);
+    note.set_xalign(0.0);
+    card.append(&note);
+
+    let drafts = app.borrow().drafts.clone();
+    let mode = gtk::DropDown::from_strings(&MODE_LABELS);
+    mode.set_selected(
+        MODES
+            .iter()
+            .position(|value| *value == drafts.exit_dns_mode)
+            .unwrap_or_default() as u32,
+    );
+    card.append(&mode);
+
+    let encrypted = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let provider = gtk::DropDown::from_strings(&PROVIDER_LABELS);
+    provider.set_selected(
+        PROVIDERS
+            .iter()
+            .position(|value| *value == drafts.exit_dns_doh_provider)
+            .unwrap_or_default() as u32,
+    );
+    encrypted.append(&provider);
+    let custom = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let custom_url = entry("HTTPS DoH URL", &drafts.exit_dns_custom_doh_url);
+    let bootstrap_ips = entry(
+        "Bootstrap IPs, comma separated",
+        &drafts.exit_dns_custom_doh_bootstrap_ips,
+    );
+    custom.append(&custom_url);
+    custom.append(&bootstrap_ips);
+    encrypted.append(&custom);
+    card.append(&encrypted);
+
+    let through = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let through_servers = entry(
+        "DNS server IPs, comma separated",
+        &drafts.exit_dns_through_exit_servers,
+    );
+    through.append(&through_servers);
+    let through_note = gtk::Label::new(Some(
+        "These DNS packets are sent only through the selected exit.",
+    ));
+    through_note.add_css_class("muted");
+    through_note.set_wrap(true);
+    through_note.set_xalign(0.0);
+    through.append(&through_note);
+    card.append(&through);
+
+    encrypted.set_visible(drafts.exit_dns_mode == "encrypted");
+    through.set_visible(drafts.exit_dns_mode == "through_exit");
+    custom.set_visible(
+        drafts.exit_dns_mode == "encrypted" && drafts.exit_dns_doh_provider == "custom",
+    );
+
+    {
+        let app = app.clone();
+        let encrypted = encrypted.clone();
+        let through = through.clone();
+        mode.connect_selected_notify(move |dropdown| {
+            let Some(value) = MODES.get(dropdown.selected() as usize) else {
+                return;
+            };
+            app.borrow_mut().drafts.exit_dns_mode = (*value).to_string();
+            encrypted.set_visible(*value == "encrypted");
+            through.set_visible(*value == "through_exit");
+        });
+    }
+    {
+        let app = app.clone();
+        let custom = custom.clone();
+        provider.connect_selected_notify(move |dropdown| {
+            let Some(value) = PROVIDERS.get(dropdown.selected() as usize) else {
+                return;
+            };
+            app.borrow_mut().drafts.exit_dns_doh_provider = (*value).to_string();
+            custom.set_visible(*value == "custom");
+        });
+    }
+    {
+        let app = app.clone();
+        custom_url.connect_changed(move |entry| {
+            app.borrow_mut().drafts.exit_dns_custom_doh_url = entry.text().to_string();
+        });
+    }
+    {
+        let app = app.clone();
+        bootstrap_ips.connect_changed(move |entry| {
+            app.borrow_mut().drafts.exit_dns_custom_doh_bootstrap_ips = entry.text().to_string();
+        });
+    }
+    {
+        let app = app.clone();
+        through_servers.connect_changed(move |entry| {
+            app.borrow_mut().drafts.exit_dns_through_exit_servers = entry.text().to_string();
+        });
+    }
+
+    let save = icon_text_button("Save Exit DNS", "");
+    {
+        let app = app.clone();
+        save.connect_clicked(move |_| {
+            let drafts = app.borrow().drafts.clone();
+            dispatch(
+                &app,
+                NativeAppAction::UpdateSettings {
+                    patch: SettingsPatch {
+                        exit_dns_mode: Some(drafts.exit_dns_mode),
+                        exit_dns_doh_provider: Some(drafts.exit_dns_doh_provider),
+                        exit_dns_custom_doh_url: Some(drafts.exit_dns_custom_doh_url),
+                        exit_dns_custom_doh_bootstrap_ips: Some(
+                            drafts.exit_dns_custom_doh_bootstrap_ips,
+                        ),
+                        exit_dns_through_exit_servers: Some(
+                            drafts.exit_dns_through_exit_servers,
+                        ),
+                        ..SettingsPatch::default()
+                    },
+                },
+            );
+        });
+    }
+    card.append(&save);
+    page.append(&card);
+}
+
 fn saved_network_row(
     app: &AppRef,
     parent: &gtk::Box,

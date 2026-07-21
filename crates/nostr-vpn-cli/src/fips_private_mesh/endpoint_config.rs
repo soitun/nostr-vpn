@@ -582,6 +582,7 @@ pub(crate) struct FipsPrivateTunnelConfig {
     pub(crate) paid_route_wallet_data_dir: PathBuf,
     #[cfg(feature = "paid-exit")]
     pub(crate) paid_route_payment_relays: Vec<String>,
+    pub(crate) exit_dns: ExitDnsConfig,
     pub(crate) wireguard_exit: WireGuardExitConfig,
     pub(crate) exit_node_leak_protection: bool,
     nostr_discovery_enabled: bool,

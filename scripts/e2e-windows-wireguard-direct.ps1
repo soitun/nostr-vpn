@@ -43,6 +43,27 @@ function Test-ExternalHttps {
   $LASTEXITCODE -eq 0
 }
 
+function Test-ExternalDns {
+  try {
+    $hostName = ([Uri]$ProbeUrl).DnsSafeHost
+    Clear-DnsClientCache -ErrorAction SilentlyContinue
+    $addresses = [Net.Dns]::GetHostAddresses($hostName) |
+      Where-Object { $_.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetwork }
+    @($addresses).Count -gt 0
+  }
+  catch {
+    $false
+  }
+}
+
+function Get-NvpnExitDnsRules {
+  @(Get-DnsClientNrptRule -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.DisplayName -eq "nostr-vpn secure DNS" -or
+      $_.Comment -eq "nostr-vpn authenticated DNS-over-HTTPS stub"
+    })
+}
+
 function Wait-ForCondition {
   param(
     [string]$Description,
@@ -74,8 +95,8 @@ $directRoute = Get-BestInternetRoute
 $directInterfaceIndex = [uint32]$directRoute.InterfaceIndex
 $directInterfaceAlias = [string]$directRoute.InterfaceAlias
 $directNextHop = [string]$directRoute.NextHop
-if (!(Test-ExternalHttps)) {
-  throw "external HTTPS does not work before the test on Direct"
+if (!(Test-ExternalDns) -or !(Test-ExternalHttps)) {
+  throw "external DNS or HTTPS does not work before the test on Direct"
 }
 
 $wireGuardInterfaceIndex = $null
@@ -86,9 +107,11 @@ try {
     "--wireguard-exit-config-file", $WireGuardConfig,
     "--wireguard-exit-enabled", "true"
   )
-  Wait-ForCondition "WireGuard to own the best route with external HTTPS working" {
+  Wait-ForCondition "WireGuard to own the best route with external DNS and HTTPS working" {
     $route = Get-BestInternetRoute
-    $route.InterfaceIndex -ne $directInterfaceIndex -and (Test-ExternalHttps)
+    $route.InterfaceIndex -ne $directInterfaceIndex -and
+      (Test-ExternalDns) -and
+      (Test-ExternalHttps)
   }
   $wireGuardRoute = Get-BestInternetRoute
   $wireGuardInterfaceIndex = [uint32]$wireGuardRoute.InterfaceIndex
@@ -96,8 +119,15 @@ try {
   # Catch delayed route reconciliation that used to invalidate a live tunnel.
   Start-Sleep -Seconds $SettleSeconds
   $settledRoute = Get-BestInternetRoute
-  if ($settledRoute.InterfaceIndex -ne $wireGuardInterfaceIndex -or !(Test-ExternalHttps)) {
-    throw "WireGuard route or external HTTPS failed after the settle interval"
+  if (
+    $settledRoute.InterfaceIndex -ne $wireGuardInterfaceIndex -or
+    !(Test-ExternalDns) -or
+    !(Test-ExternalHttps)
+  ) {
+    throw "WireGuard route, external DNS, or external HTTPS failed after the settle interval"
+  }
+  if ((Get-NvpnExitDnsRules).Count -eq 0) {
+    throw "nostr-vpn exit DNS policy was not installed during WireGuard"
   }
   $wireGuardElapsed = [Math]::Round($wireGuardTimer.Elapsed.TotalSeconds, 2)
 
@@ -105,10 +135,11 @@ try {
   # Windows PowerShell 5 drops empty native arguments, so use clap's
   # --option=value form to express Direct reliably.
   Invoke-Nvpn @("set", "--config", $Config, "--exit-node=")
-  Wait-ForCondition "the original Direct route and external HTTPS" {
+  Wait-ForCondition "the original Direct route with external DNS and HTTPS" {
     $route = Get-BestInternetRoute
     $route.InterfaceIndex -eq $directInterfaceIndex -and
       $route.NextHop -eq $directNextHop -and
+      (Test-ExternalDns) -and
       (Test-ExternalHttps)
   }
   if ($wireGuardInterfaceIndex) {
@@ -119,11 +150,14 @@ try {
       throw "WireGuard default route remains after switching back to Direct"
     }
   }
+  Wait-ForCondition "nostr-vpn exit DNS policy cleanup" {
+    (Get-NvpnExitDnsRules).Count -eq 0
+  }
   $directElapsed = [Math]::Round($directTimer.Elapsed.TotalSeconds, 2)
 
   Write-Output "WINDOWS_WG_DIRECT_E2E_OK"
-  Write-Output "WireGuard route and external HTTPS stable after ${wireGuardElapsed}s"
-  Write-Output "Direct external HTTPS restored on $directInterfaceAlias after ${directElapsed}s"
+  Write-Output "WireGuard route, DNS, and external HTTPS stable after ${wireGuardElapsed}s"
+  Write-Output "Direct DNS and external HTTPS restored on $directInterfaceAlias after ${directElapsed}s"
 }
 finally {
   # Best-effort fail-safe. This changes only the disposable test VM.

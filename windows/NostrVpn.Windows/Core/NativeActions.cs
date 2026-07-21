@@ -62,6 +62,11 @@ public sealed class SettingsPatch
     public string? InternetSource { get; set; }
     public string? ExitNode { get; set; }
     public bool? ExitNodeLeakProtection { get; set; }
+    public string? ExitDnsMode { get; set; }
+    public string? ExitDnsDohProvider { get; set; }
+    public string? ExitDnsCustomDohUrl { get; set; }
+    public string? ExitDnsCustomDohBootstrapIps { get; set; }
+    public string? ExitDnsThroughExitServers { get; set; }
     public bool? AdvertiseExitNode { get; set; }
     public string? AdvertisedRoutes { get; set; }
     public bool? WireguardExitEnabled { get; set; }

@@ -412,14 +412,49 @@
             nostr_vpn_core::MESH_MAGIC_DNS_SERVER
         );
         assert_eq!(
-            active_mobile_wireguard_dns_servers(&config),
+            active_mobile_exit_dns_servers(&config).unwrap(),
             vec!["94.140.14.14".parse::<Ipv4Addr>().unwrap()]
         );
 
         app.set_internet_source(nostr_vpn_core::config::InternetSource::Direct);
         let direct = MobileTunnelConfig::from_app(&app).expect("direct mobile config");
         assert!(direct.wireguard_exit.is_none());
-        assert!(active_mobile_wireguard_dns_servers(&direct).is_empty());
+        assert!(active_mobile_exit_dns_servers(&direct).unwrap().is_empty());
+    }
+
+    #[test]
+    fn mobile_explicit_encrypted_dns_overrides_profile_and_through_exit_supports_fips() {
+        let mut config: MobileTunnelConfig = serde_json::from_value(serde_json::json!({
+            "identityNsec": "nsec-test",
+            "networkId": "exit-dns-test",
+            "localAddress": "10.44.0.2/32",
+            "mtu": 1280,
+            "peers": [],
+            "routeTargets": ["0.0.0.0/0"],
+            "magicDnsServer": nostr_vpn_core::MESH_MAGIC_DNS_SERVER
+        }))
+        .expect("minimal mobile config");
+        config.wireguard_exit = Some(WireGuardExitConfig {
+            dns: vec!["94.140.14.14".to_string()],
+            ..WireGuardExitConfig::default()
+        });
+        config.exit_dns.mode = nostr_vpn_core::config::ExitDnsMode::Encrypted;
+        config.exit_dns.doh_provider = nostr_vpn_core::config::ExitDohProvider::Quad9;
+
+        assert!(active_mobile_exit_dns_servers(&config).unwrap().is_empty());
+        assert!(matches!(
+            mobile_exit_dns_resolver_config(&config).unwrap(),
+            ExitDnsResolverConfig::Doh { url, .. }
+                if url == nostr_vpn_core::config::QUAD9_DOH_URL
+        ));
+
+        config.wireguard_exit = None;
+        config.exit_dns.mode = nostr_vpn_core::config::ExitDnsMode::ThroughExit;
+        config.exit_dns.through_exit_servers = vec!["9.9.9.9".to_string()];
+        assert_eq!(
+            active_mobile_exit_dns_servers(&config).unwrap(),
+            vec!["9.9.9.9".parse::<Ipv4Addr>().unwrap()]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

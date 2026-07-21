@@ -215,7 +215,7 @@ impl FipsPrivateTunnelRuntime {
                     &self.iface,
                     None,
                     config.magic_dns_records.clone(),
-                    Vec::new(),
+                    config.exit_dns_resolver_config(false)?,
                     config
                         .fips_host
                         .as_ref()
@@ -226,9 +226,10 @@ impl FipsPrivateTunnelRuntime {
         }
         if let Some(secure_dns) = self.secure_dns.as_mut() {
             secure_dns.update_records(config.magic_dns_records.clone());
-            if config.wireguard_dns_servers().is_empty() {
-                secure_dns.update_config(config.magic_dns_records.clone(), Vec::new())?;
-            }
+            secure_dns.update_config(
+                config.magic_dns_records.clone(),
+                config.exit_dns_resolver_config(false)?,
+            )?;
         }
         Ok(())
     }
@@ -248,13 +249,10 @@ impl FipsPrivateTunnelRuntime {
                     self.wg_upstream.is_some()
                 }
             };
-            let servers = if wireguard_active {
-                config.wireguard_dns_servers()
-            } else {
-                Vec::new()
-            };
-            if let Err(error) =
-                secure_dns.update_config(config.magic_dns_records.clone(), servers)
+            let resolver_config = config.exit_dns_resolver_config(wireguard_active);
+            if let Err(error) = resolver_config.and_then(|resolver_config| {
+                secure_dns.update_config(config.magic_dns_records.clone(), resolver_config)
+            })
             {
                 eprintln!("fips: failed to update exit DNS resolver: {error:#}");
             }

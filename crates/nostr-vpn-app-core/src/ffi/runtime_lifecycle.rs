@@ -378,6 +378,19 @@ impl NativeAppRuntime {
             exit_node_active: exit_node_status.active,
             exit_node_blocked: exit_node_status.blocked,
             exit_node_status_text: exit_node_status.text,
+            exit_dns_mode: self.config.exit_dns.mode.as_str().to_string(),
+            exit_dns_doh_provider: self.config.exit_dns.doh_provider.as_str().to_string(),
+            exit_dns_custom_doh_url: self.config.exit_dns.custom_doh_url.clone(),
+            exit_dns_custom_doh_bootstrap_ips: self
+                .config
+                .exit_dns
+                .custom_doh_bootstrap_ips
+                .join(", "),
+            exit_dns_through_exit_servers: self
+                .config
+                .exit_dns
+                .through_exit_servers
+                .join(", "),
             advertise_exit_node: !config_unavailable && self.config.node.advertise_exit_node,
             advertised_routes: if config_unavailable {
                 Vec::new()

@@ -492,6 +492,37 @@
                 </StackPanel>
               </StackPanel>
             </Border>
+
+            <Border Style="{StaticResource Card}">
+              <StackPanel>
+                <TextBlock Text="Exit DNS" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="MagicDNS stays local. Public DNS follows this policy while an internet exit is active." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,4,0,10" />
+                <TextBlock Text="Mode" FontWeight="SemiBold" />
+                <ComboBox SelectedValue="{Binding ExitDnsMode, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Tag" Margin="0,4,0,10">
+                  <ComboBoxItem Tag="automatic" Content="Automatic (recommended)" />
+                  <ComboBoxItem Tag="encrypted" Content="Encrypted DNS" />
+                  <ComboBoxItem Tag="through_exit" Content="DNS through exit" />
+                </ComboBox>
+                <StackPanel Visibility="{Binding ExitDnsEncryptedSelected, Converter={StaticResource BoolToVisibility}}">
+                  <TextBlock Text="Provider" FontWeight="SemiBold" />
+                  <ComboBox SelectedValue="{Binding ExitDnsDohProvider, UpdateSourceTrigger=PropertyChanged}" SelectedValuePath="Tag" Margin="0,4,0,10">
+                    <ComboBoxItem Tag="cloudflare" Content="Cloudflare" />
+                    <ComboBoxItem Tag="quad9" Content="Quad9" />
+                    <ComboBoxItem Tag="custom" Content="Custom DoH" />
+                  </ComboBox>
+                  <StackPanel Visibility="{Binding ExitDnsCustomSelected, Converter={StaticResource BoolToVisibility}}">
+                    <TextBox Text="{Binding ExitDnsCustomDohUrl, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8" ToolTip="HTTPS DoH URL" />
+                    <TextBox Text="{Binding ExitDnsCustomDohBootstrapIps, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8" ToolTip="Bootstrap IPs, comma separated" />
+                  </StackPanel>
+                </StackPanel>
+                <StackPanel Visibility="{Binding ExitDnsThroughExitSelected, Converter={StaticResource BoolToVisibility}}">
+                  <TextBox Text="{Binding ExitDnsThroughExitServers, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,8" ToolTip="DNS server IPs, comma separated" />
+                  <TextBlock Text="These DNS packets are sent only through the selected exit." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                </StackPanel>
+                <TextBlock Text="Automatic uses profile DNS when supplied; otherwise built-in encrypted DNS." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,10" />
+                <Button Content="Save Exit DNS" Command="{Binding SaveExitDnsCommand}" HorizontalAlignment="Left" />
+              </StackPanel>
+            </Border>
           </StackPanel>
 
           <StackPanel Visibility="{Binding Page, Converter={StaticResource PageVisibility}, ConverterParameter=PublicExits}">

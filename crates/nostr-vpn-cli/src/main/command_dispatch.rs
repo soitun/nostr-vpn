@@ -216,6 +216,13 @@ async fn run_command(command: Command) -> Result<()> {
                         "fips_webrtc_enabled": app.fips_webrtc_enabled,
                         "fips_bootstrap_enabled": app.fips_bootstrap_enabled,
                         "fips_host_inbound_tcp_ports": app.fips_host_inbound_tcp_ports,
+                        "exit_dns": {
+                            "mode": app.exit_dns.mode.as_str(),
+                            "doh_provider": app.exit_dns.doh_provider.as_str(),
+                            "custom_doh_url": app.exit_dns.custom_doh_url,
+                            "custom_doh_bootstrap_ips": app.exit_dns.custom_doh_bootstrap_ips,
+                            "through_exit_servers": app.exit_dns.through_exit_servers,
+                        },
                         "wireguard_exit": wireguard_exit_status_json(&app),
                         "paid_exit": paid_exit_status,
                         "daemon": daemon_status_json_value(&daemon),
@@ -263,6 +270,13 @@ async fn run_command(command: Command) -> Result<()> {
                 );
                 println!("fips_webrtc_enabled: {}", app.fips_webrtc_enabled);
                 println!("fips_bootstrap_enabled: {}", app.fips_bootstrap_enabled);
+                println!("exit_dns_mode: {}", app.exit_dns.mode.as_str());
+                if app.exit_dns.mode == ExitDnsMode::Encrypted {
+                    println!(
+                        "exit_dns_doh_provider: {}",
+                        app.exit_dns.doh_provider.as_str()
+                    );
+                }
                 if !app.fips_host_inbound_tcp_ports.is_empty() {
                     println!(
                         "fips_host_inbound_tcp_ports: {}",
@@ -503,6 +517,35 @@ async fn run_command(command: Command) -> Result<()> {
             }
             if let Some(value) = args.wireguard_exit_keepalive {
                 app.wireguard_exit.persistent_keepalive_secs = value;
+            }
+            let exit_dns_changed = args.exit_dns_mode.is_some()
+                || args.exit_dns_doh_provider.is_some()
+                || args.exit_dns_custom_doh_url.is_some()
+                || args.exit_dns_custom_doh_bootstrap_ips.is_some()
+                || args.exit_dns_through_exit_servers.is_some();
+            if let Some(value) = args.exit_dns_mode {
+                app.exit_dns.mode = value.parse::<ExitDnsMode>().map_err(|error| anyhow!(error))?;
+            }
+            if let Some(value) = args.exit_dns_doh_provider {
+                app.exit_dns.doh_provider = value
+                    .parse::<ExitDohProvider>()
+                    .map_err(|error| anyhow!(error))?;
+            }
+            if let Some(value) = args.exit_dns_custom_doh_url {
+                app.exit_dns.custom_doh_url = value;
+            }
+            if let Some(value) = args.exit_dns_custom_doh_bootstrap_ips {
+                app.exit_dns.custom_doh_bootstrap_ips = parse_csv_arg(&value);
+            }
+            if let Some(value) = args.exit_dns_through_exit_servers {
+                app.exit_dns.through_exit_servers = parse_csv_arg(&value);
+            }
+            if exit_dns_changed {
+                app.exit_dns.normalize();
+                let wireguard = (app.internet_source == InternetSource::WireGuard
+                    && app.wireguard_exit.configured())
+                .then_some(&app.wireguard_exit);
+                app.exit_dns.resolver_config(wireguard)?;
             }
             if let Some(value) = args.autoconnect {
                 app.autoconnect = value;

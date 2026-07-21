@@ -90,18 +90,20 @@ Exit-node behavior is represented in config and UI state. A node can optionally 
 
 ## Exit DNS privacy
 
-When a default exit route is active, the platform resolver points only at
-nostr-vpn's local DNS stub. MagicDNS names are answered locally. When the active
-exit is a configured WireGuard profile with DNS IP addresses, the stub forwards
-public DNS wire messages to those resolvers through the WireGuard data path.
-Those resolvers become active only after the WireGuard runtime is active and
-are removed before that exit is torn down; there is no underlay DNS fallback.
+When a default exit route is active, MagicDNS names are always answered by
+nostr-vpn's local DNS responder. Public DNS follows the independent Exit DNS
+policy. Existing configurations default to `automatic`: a ready WireGuard exit
+uses DNS IPs supplied by its profile, while every other exit uses the built-in
+Cloudflare DNS-over-HTTPS resolver. Profile DNS is not installed before the
+WireGuard data path is ready and is removed before the exit is torn down.
 
-For every other exit source, public queries are sent as DNS wire messages over
-authenticated HTTPS to Cloudflare's DoH service, using fixed bootstrap
-addresses so resolving the DoH hostname cannot itself leak through plaintext
-DNS. Plain HTTP, redirects, system proxies, and plaintext DNS fallback are
-disabled; an unavailable or invalid response fails closed.
+`encrypted` selects a built-in DoH preset or a custom HTTPS endpoint and
+overrides a WireGuard profile's `DNS =` line. Custom endpoints require literal
+bootstrap IPs, use normal TLS certificate and hostname verification, reject
+redirects, ignore system proxies, and never fall back to system or plaintext
+DNS. `through_exit` sends DNS wire messages to explicit IP resolvers only over
+the selected exit route. If the selected resolver or exit is unavailable,
+public DNS fails closed.
 
 With DoH, this prevents the exit operator from reading or spoofing DNS questions
 and answers. With a WireGuard profile resolver, the WireGuard provider can

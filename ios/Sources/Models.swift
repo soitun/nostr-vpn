@@ -36,6 +36,11 @@ struct AppState: Decodable {
     var exitNodeActive = false
     var exitNodeBlocked = false
     var exitNodeStatusText = ""
+    var exitDnsMode = "automatic"
+    var exitDnsDohProvider = "cloudflare"
+    var exitDnsCustomDohUrl = ""
+    var exitDnsCustomDohBootstrapIps = ""
+    var exitDnsThroughExitServers = ""
     var advertiseExitNode = false
     var advertisedRoutes: [String] = []
     var wireguardExitEnabled = false
@@ -84,7 +89,9 @@ struct AppState: Decodable {
         case connectedPeerCount, expectedPeerCount
         case fipsConnectedPeerCount, fipsRosterPeerCount, nonFipsRosterPeerCount
         case meshReady, internetSource, exitNode, exitNodeLeakProtection
-        case exitNodeActive, exitNodeBlocked, exitNodeStatusText, advertiseExitNode
+        case exitNodeActive, exitNodeBlocked, exitNodeStatusText
+        case exitDnsMode, exitDnsDohProvider, exitDnsCustomDohUrl
+        case exitDnsCustomDohBootstrapIps, exitDnsThroughExitServers, advertiseExitNode
         case advertisedRoutes
         case wireguardExitEnabled, wireguardExitConfigured, wireguardExitInterface, wireguardExitAddress
         case wireguardExitPrivateKey, wireguardExitPeerPublicKey, wireguardExitPeerPresharedKey
@@ -139,6 +146,11 @@ struct AppState: Decodable {
         exitNodeActive = container.bool(.exitNodeActive)
         exitNodeBlocked = container.bool(.exitNodeBlocked)
         exitNodeStatusText = container.string(.exitNodeStatusText)
+        exitDnsMode = container.string(.exitDnsMode, default: "automatic")
+        exitDnsDohProvider = container.string(.exitDnsDohProvider, default: "cloudflare")
+        exitDnsCustomDohUrl = container.string(.exitDnsCustomDohUrl)
+        exitDnsCustomDohBootstrapIps = container.string(.exitDnsCustomDohBootstrapIps)
+        exitDnsThroughExitServers = container.string(.exitDnsThroughExitServers)
         advertiseExitNode = container.bool(.advertiseExitNode)
         advertisedRoutes = container.array(.advertisedRoutes)
         wireguardExitEnabled = container.bool(.wireguardExitEnabled)

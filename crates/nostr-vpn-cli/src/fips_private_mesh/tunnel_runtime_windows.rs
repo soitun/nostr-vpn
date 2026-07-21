@@ -44,7 +44,7 @@ impl FipsPrivateTunnelRuntime {
                     &iface,
                     Some(interface_index),
                     config.magic_dns_records.clone(),
-                    Vec::new(),
+                    config.exit_dns_resolver_config(false)?,
                     None,
                 )
                 .await?,
@@ -109,13 +109,10 @@ impl FipsPrivateTunnelRuntime {
             .wg_upstream
             .as_ref()
             .map(|upstream| upstream.iface.clone());
-        let servers = if wireguard_interface.is_some() {
-            config.wireguard_dns_servers()
-        } else {
-            Vec::new()
-        };
+        let resolver_config = config.exit_dns_resolver_config(wireguard_interface.is_some())?;
+        let servers = resolver_config.through_exit_servers().to_vec();
         if let Some(secure_dns) = runtime.secure_dns.as_mut() {
-            secure_dns.update_config(config.magic_dns_records.clone(), servers.clone())?;
+            secure_dns.update_config(config.magic_dns_records.clone(), resolver_config)?;
             secure_dns
                 .update_windows_wireguard_dns(wireguard_interface.as_deref(), &servers)?;
         }
@@ -149,7 +146,7 @@ impl FipsPrivateTunnelRuntime {
                     &self.iface,
                     Some(self.interface_index),
                     config.magic_dns_records.clone(),
-                    Vec::new(),
+                    config.exit_dns_resolver_config(false)?,
                     None,
                 )
                 .await?,
@@ -157,9 +154,10 @@ impl FipsPrivateTunnelRuntime {
         }
         if let Some(secure_dns) = self.secure_dns.as_mut() {
             secure_dns.update_records(config.magic_dns_records.clone());
-            if config.wireguard_dns_servers().is_empty() {
-                secure_dns.update_config(config.magic_dns_records.clone(), Vec::new())?;
-            }
+            secure_dns.update_config(
+                config.magic_dns_records.clone(),
+                config.exit_dns_resolver_config(false)?,
+            )?;
         }
         self.apply_windows_route_config(&config)?;
         if !config.secure_dns_required()
@@ -173,13 +171,10 @@ impl FipsPrivateTunnelRuntime {
             .wg_upstream
             .as_ref()
             .map(|upstream| upstream.iface.clone());
-        let servers = if wireguard_interface.is_some() {
-            config.wireguard_dns_servers()
-        } else {
-            Vec::new()
-        };
+        let resolver_config = config.exit_dns_resolver_config(wireguard_interface.is_some())?;
+        let servers = resolver_config.through_exit_servers().to_vec();
         if let Some(secure_dns) = self.secure_dns.as_mut() {
-            secure_dns.update_config(config.magic_dns_records.clone(), servers.clone())?;
+            secure_dns.update_config(config.magic_dns_records.clone(), resolver_config)?;
             secure_dns
                 .update_windows_wireguard_dns(wireguard_interface.as_deref(), &servers)?;
         }

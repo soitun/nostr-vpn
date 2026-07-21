@@ -142,6 +142,39 @@ impl NativeAppRuntime {
             parsed.enabled = enabled;
             self.config.wireguard_exit = parsed;
         }
+        let exit_dns_changed = patch.exit_dns_mode.is_some()
+            || patch.exit_dns_doh_provider.is_some()
+            || patch.exit_dns_custom_doh_url.is_some()
+            || patch.exit_dns_custom_doh_bootstrap_ips.is_some()
+            || patch.exit_dns_through_exit_servers.is_some();
+        let mut exit_dns = self.config.exit_dns.clone();
+        if let Some(value) = patch.exit_dns_mode {
+            exit_dns.mode = value
+                .parse::<ExitDnsMode>()
+                .map_err(|error| anyhow!(error))?;
+        }
+        if let Some(value) = patch.exit_dns_doh_provider {
+            exit_dns.doh_provider = value
+                .parse::<ExitDohProvider>()
+                .map_err(|error| anyhow!(error))?;
+        }
+        if let Some(value) = patch.exit_dns_custom_doh_url {
+            exit_dns.custom_doh_url = value;
+        }
+        if let Some(value) = patch.exit_dns_custom_doh_bootstrap_ips {
+            exit_dns.custom_doh_bootstrap_ips = parse_csv_values(&value);
+        }
+        if let Some(value) = patch.exit_dns_through_exit_servers {
+            exit_dns.through_exit_servers = parse_csv_values(&value);
+        }
+        if exit_dns_changed {
+            exit_dns.normalize();
+            let wireguard = (self.config.internet_source == InternetSource::WireGuard
+                && self.config.wireguard_exit.configured())
+            .then_some(&self.config.wireguard_exit);
+            exit_dns.resolver_config(wireguard)?;
+            self.config.exit_dns = exit_dns;
+        }
         if let Some(value) = patch.wallet_fiat_enabled {
             self.config.wallet_fiat_enabled = value;
         }

@@ -165,6 +165,9 @@ pub(crate) struct MobileTunnelConfig {
     /// `MagicDNS` requires nvpn to own DNS resolution.
     #[serde(default)]
     pub(crate) magic_dns_server: String,
+    /// Shared Exit DNS policy. Existing configs deserialize to Automatic.
+    #[serde(default)]
+    pub(crate) exit_dns: ExitDnsConfig,
     /// The WG upstream config to drive boringtun against. None when
     /// the user hasn't enabled WG upstream — in which case the mobile
     /// tunnel runs in pure FIPS-mesh mode.
@@ -218,21 +221,32 @@ fn serialized_mobile_internet_source(app: &AppConfig) -> Option<String> {
         .map(str::to_string)
 }
 
-fn active_mobile_wireguard_dns_servers(config: &MobileTunnelConfig) -> Vec<Ipv4Addr> {
-    let Some(wireguard) = config
-        .wireguard_exit
-        .as_ref()
-        .filter(|wireguard| wireguard.enabled && wireguard.configured())
-    else {
-        return Vec::new();
-    };
+fn mobile_exit_dns_resolver_config(
+    config: &MobileTunnelConfig,
+) -> Result<ExitDnsResolverConfig> {
+    let exit_active = config.wireguard_exit.is_some()
+        || config
+            .route_targets
+            .iter()
+            .any(|route| matches!(route.as_str(), "0.0.0.0/0" | "::/0"));
+    if !exit_active {
+        return ExitDnsConfig::default().resolver_config(None);
+    }
+    config.exit_dns.resolver_config(config.wireguard_exit.as_ref())
+}
+
+fn active_mobile_exit_dns_servers(config: &MobileTunnelConfig) -> Result<Vec<Ipv4Addr>> {
+    let resolver = mobile_exit_dns_resolver_config(config)?;
     let local_dns = parse_ipv4(nostr_vpn_core::MESH_MAGIC_DNS_SERVER);
-    wireguard
-        .dns_server_ips()
-        .into_iter()
-        .filter_map(|server| match server {
-            IpAddr::V4(server) if Some(server) != local_dns => Some(server),
-            IpAddr::V4(_) | IpAddr::V6(_) => None,
+    resolver
+        .through_exit_servers()
+        .iter()
+        .map(|server| match server {
+            IpAddr::V4(server) if Some(*server) != local_dns => Ok(*server),
+            IpAddr::V4(_) => Err(anyhow!("exit DNS server conflicts with local MagicDNS")),
+            IpAddr::V6(_) => Err(anyhow!(
+                "mobile DNS through exit currently requires IPv4 server addresses"
+            )),
         })
         .collect()
 }
@@ -405,6 +419,7 @@ impl MobileTunnelConfig {
             excluded_routes,
             dns_servers,
             magic_dns_server,
+            exit_dns: app.exit_dns.clone(),
             wireguard_exit,
             join_requests_enabled: app.join_requests_enabled(),
             device_approval_pending: app.pending_nostr_join_request.is_some(),

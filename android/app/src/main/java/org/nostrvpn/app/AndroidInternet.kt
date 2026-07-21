@@ -147,6 +147,9 @@ internal fun androidx.compose.foundation.lazy.LazyListScope.internetPage(
     if (state.internetSource == "wireguard") {
         item { WireGuardSettingsCard(state, dispatch, importWireGuardConfigFile) }
     }
+    if (state.internetSource != "direct") {
+        item { ExitDnsSettingsCard(state, dispatch) }
+    }
 }
 
 @Composable

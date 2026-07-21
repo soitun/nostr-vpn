@@ -143,6 +143,26 @@ extension RootView {
             wireguardExitConfig = state.wireguardExitConfig
             lastSyncedWireguardExitConfig = state.wireguardExitConfig
         }
+        if lastSyncedExitDnsMode != state.exitDnsMode {
+            exitDnsMode = state.exitDnsMode
+            lastSyncedExitDnsMode = state.exitDnsMode
+        }
+        if lastSyncedExitDnsDohProvider != state.exitDnsDohProvider {
+            exitDnsDohProvider = state.exitDnsDohProvider
+            lastSyncedExitDnsDohProvider = state.exitDnsDohProvider
+        }
+        if lastSyncedExitDnsCustomDohUrl != state.exitDnsCustomDohUrl {
+            exitDnsCustomDohUrl = state.exitDnsCustomDohUrl
+            lastSyncedExitDnsCustomDohUrl = state.exitDnsCustomDohUrl
+        }
+        if lastSyncedExitDnsCustomDohBootstrapIps != state.exitDnsCustomDohBootstrapIps {
+            exitDnsCustomDohBootstrapIps = state.exitDnsCustomDohBootstrapIps
+            lastSyncedExitDnsCustomDohBootstrapIps = state.exitDnsCustomDohBootstrapIps
+        }
+        if lastSyncedExitDnsThroughExitServers != state.exitDnsThroughExitServers {
+            exitDnsThroughExitServers = state.exitDnsThroughExitServers
+            lastSyncedExitDnsThroughExitServers = state.exitDnsThroughExitServers
+        }
         if lastSyncedPaidExitSeller != state.paidExitSeller {
             let seller = state.paidExitSeller
             paidExitPriceMsat = String(seller.priceMsat)

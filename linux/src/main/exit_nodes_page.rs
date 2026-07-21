@@ -3,6 +3,7 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
 
     let Some(network) = active_network(state).cloned() else {
         build_wireguard_settings_card(app, page, state);
+        build_exit_dns_settings_card(app, page);
         return;
     };
 
@@ -147,6 +148,7 @@ fn build_exit_nodes_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) 
     if state.internet_source == "wireguard" {
         build_wireguard_settings_card(app, page, state);
     }
+    build_exit_dns_settings_card(app, page);
 }
 
 #[derive(Clone)]

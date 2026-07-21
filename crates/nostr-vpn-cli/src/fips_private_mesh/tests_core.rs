@@ -54,7 +54,8 @@
     };
     use nostr_sdk::prelude::{Keys, ToBech32};
     use nostr_vpn_core::config::{
-        AppConfig, InternetSource, PendingOutboundJoinRequest, derive_mesh_tunnel_ip,
+        AppConfig, ExitDnsResolverConfig, InternetSource, PendingOutboundJoinRequest,
+        derive_mesh_tunnel_ip,
     };
     use nostr_vpn_core::fips_control::{
         FipsControlFrame, JoinRosterControl, NetworkRoster, PeerEndpointHint, SignedRoster,

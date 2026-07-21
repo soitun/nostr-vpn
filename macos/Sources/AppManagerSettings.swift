@@ -8,6 +8,22 @@ extension AppManager {
         dispatch(.updateSettings(patch: settingsPatch(wireguardExitConfig: config)), status: "Saving WireGuard")
     }
 
+    func saveExitDnsSettings(
+        mode: String,
+        provider: String,
+        customUrl: String,
+        bootstrapIps: String,
+        throughExitServers: String
+    ) {
+        dispatch(.updateSettings(patch: settingsPatch(
+            exitDnsMode: mode,
+            exitDnsDohProvider: provider,
+            exitDnsCustomDohUrl: customUrl,
+            exitDnsCustomDohBootstrapIps: bootstrapIps,
+            exitDnsThroughExitServers: throughExitServers
+        )), status: "Saving Exit DNS")
+    }
+
     func saveWireGuardExitSettings(
         interface: String,
         address: String,

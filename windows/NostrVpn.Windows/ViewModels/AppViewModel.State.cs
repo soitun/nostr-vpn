@@ -67,6 +67,11 @@ public sealed partial class AppViewModel
         RelaysDraft = string.Join(Environment.NewLine, state.Relays.Select(relay => relay.Url));
         FipsHostInboundTcpPorts = state.FipsHostInboundTcpPorts;
         WireguardExitConfig = state.WireguardExitConfig;
+        ExitDnsMode = state.ExitDnsMode;
+        ExitDnsDohProvider = state.ExitDnsDohProvider;
+        ExitDnsCustomDohUrl = state.ExitDnsCustomDohUrl;
+        ExitDnsCustomDohBootstrapIps = state.ExitDnsCustomDohBootstrapIps;
+        ExitDnsThroughExitServers = state.ExitDnsThroughExitServers;
         if (string.IsNullOrWhiteSpace(PaidRouteMintUrl))
         {
             PaidRouteMintUrl = state.PaidRouteMarket.Wallet.DefaultMint;

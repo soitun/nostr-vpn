@@ -785,6 +785,84 @@ struct WireGuardSettingsCard: View {
     }
 }
 
+struct ExitDnsSettingsCard: View {
+    @ObservedObject var model: AppModel
+    @State private var mode = "automatic"
+    @State private var provider = "cloudflare"
+    @State private var customUrl = ""
+    @State private var bootstrapIps = ""
+    @State private var throughExitServers = ""
+    @State private var lastSyncedRev: UInt64?
+
+    var body: some View {
+        AppCard {
+            Text("Exit DNS")
+                .font(.headline)
+            Text("MagicDNS stays local. Public DNS follows this policy while an internet exit is active.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Picker("Mode", selection: $mode) {
+                Text("Automatic (recommended)").tag("automatic")
+                Text("Encrypted DNS").tag("encrypted")
+                Text("DNS through exit").tag("through_exit")
+            }
+            .pickerStyle(.menu)
+
+            if mode == "encrypted" {
+                Picker("Provider", selection: $provider) {
+                    Text("Cloudflare").tag("cloudflare")
+                    Text("Quad9").tag("quad9")
+                    Text("Custom DoH").tag("custom")
+                }
+                .pickerStyle(.menu)
+                if provider == "custom" {
+                    TextField("https://dns.example/dns-query", text: $customUrl)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                    TextField("Bootstrap IPs (comma separated)", text: $bootstrapIps)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                }
+            } else if mode == "through_exit" {
+                TextField("DNS server IPs (comma separated)", text: $throughExitServers)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                Text("These DNS packets are sent only through the selected exit.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Uses the WireGuard profile DNS when present; otherwise built-in encrypted DNS.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button("Save Exit DNS") {
+                model.dispatch(NativeActions.updateSettings([
+                    "exitDnsMode": mode,
+                    "exitDnsDohProvider": provider,
+                    "exitDnsCustomDohUrl": customUrl,
+                    "exitDnsCustomDohBootstrapIps": bootstrapIps,
+                    "exitDnsThroughExitServers": throughExitServers,
+                ]), status: "Saving DNS")
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(model.actionInFlight)
+        }
+        .onAppear { syncFromState(force: true) }
+        .onChange(of: model.state.rev) { _, _ in syncFromState() }
+    }
+
+    private func syncFromState(force: Bool = false) {
+        guard force || lastSyncedRev != model.state.rev else { return }
+        mode = model.state.exitDnsMode
+        provider = model.state.exitDnsDohProvider
+        customUrl = model.state.exitDnsCustomDohUrl
+        bootstrapIps = model.state.exitDnsCustomDohBootstrapIps
+        throughExitServers = model.state.exitDnsThroughExitServers
+        lastSyncedRev = model.state.rev
+    }
+}
+
 struct DiagnosticsCard: View {
     let state: AppState
 

@@ -620,7 +620,7 @@ async fn dispatch_mobile_outbound_packets(
     app_config_for_dns: &Arc<RwLock<AppConfig>>,
     secure_dns: Option<&SecureDnsResolver>,
     magic_dns_server: Option<Ipv4Addr>,
-    wireguard_dns_nat: Option<&MobileWireGuardDnsNat>,
+    exit_dns_nat: Option<&MobileExitDnsNat>,
     packets: Vec<Vec<u8>>,
 ) -> bool {
     let mut pending_run = None;
@@ -637,7 +637,7 @@ async fn dispatch_mobile_outbound_packets(
                 app_config_for_dns,
                 secure_dns.map(|resolver| resolver as &dyn SecureDnsLookup),
                 magic_dns_server,
-                wireguard_dns_nat.is_some(),
+                exit_dns_nat.is_some(),
             )
             .await
         {
@@ -652,7 +652,7 @@ async fn dispatch_mobile_outbound_packets(
                     pending_dns_responses.push(response);
                     continue;
                 }
-                MobileDnsPacketAction::ForwardViaWireGuard => {}
+                MobileDnsPacketAction::ForwardViaExit => {}
             }
         }
 
@@ -660,15 +660,8 @@ async fn dispatch_mobile_outbound_packets(
             return false;
         }
 
-        if wireguard_dns_nat.is_some_and(|wireguard_dns_nat| {
-            wireguard_dns_nat.rewrite_query(&mut packet).is_some()
-        })
-        {
-            if !flush_mobile_endpoint_send_run(endpoint, &mut pending_run).await {
-                return false;
-            }
-            push_mobile_wg_packet(&mut pending_wg_packets, packet, wg_addr, mesh_addr);
-            continue;
+        if let Some(exit_dns_nat) = exit_dns_nat {
+            exit_dns_nat.rewrite_query(&mut packet);
         }
 
         let outgoing_peer = mesh.as_ref().and_then(|mesh| {

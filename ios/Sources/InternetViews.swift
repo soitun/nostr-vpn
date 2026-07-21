@@ -110,6 +110,9 @@ struct InternetPage: View {
                 if model.state.internetSource == "wireguard" {
                     WireGuardSettingsCard(model: model)
                 }
+                if model.state.internetSource != "direct" {
+                    ExitDnsSettingsCard(model: model)
+                }
             }
             .padding()
         }

@@ -29,6 +29,7 @@ impl AppConfig {
         self.magic_dns_suffix = normalize_magic_dns_suffix(&self.magic_dns_suffix);
         self.fips_host_inbound_tcp_ports.sort_unstable();
         self.fips_host_inbound_tcp_ports.dedup();
+        self.exit_dns.normalize();
         normalize_wireguard_exit_config(&mut self.wireguard_exit);
         self.normalize_internet_source();
         self.paid_exit.normalize();

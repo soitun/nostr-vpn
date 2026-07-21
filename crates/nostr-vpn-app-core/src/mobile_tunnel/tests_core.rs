@@ -591,7 +591,7 @@
             Ipv4Addr::new(94, 140, 14, 14),
             Ipv4Addr::new(9, 9, 9, 9),
         ];
-        let dns_nat = MobileWireGuardDnsNat::new(local_dns, profile_dns.to_vec()).unwrap();
+        let dns_nat = MobileExitDnsNat::new(local_dns, profile_dns.to_vec()).unwrap();
         let mut first = ipv4_udp_packet(
             mesh,
             local_dns,

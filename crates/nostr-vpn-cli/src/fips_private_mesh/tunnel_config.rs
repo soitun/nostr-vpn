@@ -367,6 +367,7 @@ impl FipsPrivateTunnelConfig {
             paid_route_wallet_data_dir: PathBuf::new(),
             #[cfg(feature = "paid-exit")]
             paid_route_payment_relays: Vec::new(),
+            exit_dns: app.exit_dns.clone(),
             wireguard_exit: app.wireguard_exit.clone(),
             exit_node_leak_protection: app.exit_node_leak_protection,
             nostr_discovery_enabled: app.fips_nostr_discovery_enabled,
@@ -463,11 +464,21 @@ impl FipsPrivateTunnelConfig {
         }
     }
 
-    fn wireguard_dns_servers(&self) -> Vec<IpAddr> {
-        if !self.wireguard_exit.enabled || !self.wireguard_exit.configured() {
-            return Vec::new();
+    fn exit_dns_resolver_config(
+        &self,
+        wireguard_active: bool,
+    ) -> Result<ExitDnsResolverConfig> {
+        if !self.secure_dns_requested {
+            return ExitDnsConfig::default().resolver_config(None);
         }
-        self.wireguard_exit.dns_server_ips()
+        if self.exit_dns.mode == nostr_vpn_core::config::ExitDnsMode::ThroughExit
+            && self.wireguard_exit.enabled
+            && !wireguard_active
+        {
+            return Ok(ExitDnsResolverConfig::FailClosed);
+        }
+        let wireguard = wireguard_active.then_some(&self.wireguard_exit);
+        self.exit_dns.resolver_config(wireguard)
     }
 
     #[cfg(any(target_os = "linux", target_os = "macos", test))]

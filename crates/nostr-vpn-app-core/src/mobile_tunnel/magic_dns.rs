@@ -8,7 +8,7 @@ struct MobileDnsQuery<'a> {
 
 enum MobileDnsPacketAction {
     Respond(Vec<u8>),
-    ForwardViaWireGuard,
+    ForwardViaExit,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -18,14 +18,14 @@ struct MobileWireGuardDnsFlow {
     client_port: u16,
 }
 
-struct MobileWireGuardDnsNat {
+struct MobileExitDnsNat {
     local_dns_server: Ipv4Addr,
     servers: Vec<Ipv4Addr>,
     next_server: AtomicUsize,
     flows: Mutex<HashSet<MobileWireGuardDnsFlow>>,
 }
 
-impl MobileWireGuardDnsNat {
+impl MobileExitDnsNat {
     fn new(local_dns_server: Ipv4Addr, servers: Vec<Ipv4Addr>) -> Option<Self> {
         (!servers.is_empty()).then_some(Self {
             local_dns_server,
@@ -100,7 +100,7 @@ async fn mobile_dns_packet_action(
     let response = match response {
         Some(response) => response,
         None if forward_public_via_wireguard => {
-            return Some(MobileDnsPacketAction::ForwardViaWireGuard);
+            return Some(MobileDnsPacketAction::ForwardViaExit);
         }
         None => match secure_dns {
             Some(resolver) => match resolver.resolve(query.payload).await {
@@ -133,7 +133,7 @@ async fn mobile_magic_dns_response_packet(
     .await?
     {
         MobileDnsPacketAction::Respond(response) => Some(response),
-        MobileDnsPacketAction::ForwardViaWireGuard => None,
+        MobileDnsPacketAction::ForwardViaExit => None,
     }
 }
 
@@ -306,6 +306,7 @@ fn empty_config() -> MobileTunnelConfig {
         excluded_routes: Vec::new(),
         dns_servers: Vec::new(),
         magic_dns_server: String::new(),
+        exit_dns: ExitDnsConfig::default(),
         wireguard_exit: None,
         join_requests_enabled: false,
         device_approval_pending: false,

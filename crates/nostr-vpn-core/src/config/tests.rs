@@ -1,7 +1,9 @@
 #[cfg(test)]
 mod tests {
     use super::{
-        AdminSignedSharedRosterUpdate, AppConfig, InternetSource, PendingOutboundJoinRequest,
+        AdminSignedSharedRosterUpdate, AppConfig, CLOUDFLARE_DOH_URL, ExitDnsConfig,
+        ExitDnsMode, ExitDnsResolverConfig, ExitDohProvider, InternetSource,
+        PendingOutboundJoinRequest, QUAD9_DOH_URL, WireGuardExitConfig,
         effective_fips_nostr_relays, normalize_nostr_pubkey, npub_for_pubkey_hex,
         parse_wireguard_exit_config, split_peer_transport_addr, wireguard_exit_config_text,
     };
@@ -594,6 +596,97 @@ mod tests {
         assert_eq!(config.wireguard_exit.allowed_ips, vec!["0.0.0.0/0"]);
         assert_eq!(config.wireguard_exit.dns, vec!["9.9.9.9"]);
         assert!(config.wireguard_exit.configured());
+    }
+
+    #[test]
+    fn exit_dns_defaults_to_automatic_and_uses_profile_dns_when_available() {
+        let config: AppConfig = toml::from_str("").expect("legacy config parses");
+        assert_eq!(config.exit_dns, ExitDnsConfig::default());
+
+        let wireguard = WireGuardExitConfig {
+            dns: vec!["10.64.0.1".to_string()],
+            ..WireGuardExitConfig::default()
+        };
+        assert_eq!(
+            config
+                .exit_dns
+                .resolver_config(Some(&wireguard))
+                .expect("automatic resolver"),
+            ExitDnsResolverConfig::ThroughExit {
+                servers: vec!["10.64.0.1".parse().unwrap()]
+            }
+        );
+        assert!(matches!(
+            config.exit_dns.resolver_config(None).unwrap(),
+            ExitDnsResolverConfig::Doh { ref url, .. } if url == CLOUDFLARE_DOH_URL
+        ));
+    }
+
+    #[test]
+    fn explicit_encrypted_dns_overrides_wireguard_profile_dns() {
+        let exit_dns = ExitDnsConfig {
+            mode: ExitDnsMode::Encrypted,
+            doh_provider: ExitDohProvider::Quad9,
+            ..ExitDnsConfig::default()
+        };
+        let wireguard = WireGuardExitConfig {
+            dns: vec!["10.64.0.1".to_string()],
+            ..WireGuardExitConfig::default()
+        };
+
+        assert!(matches!(
+            exit_dns.resolver_config(Some(&wireguard)).unwrap(),
+            ExitDnsResolverConfig::Doh { ref url, ref bootstrap_ips }
+                if url == QUAD9_DOH_URL && bootstrap_ips.contains(&"9.9.9.9".parse().unwrap())
+        ));
+    }
+
+    #[test]
+    fn custom_exit_dns_requires_strict_complete_addresses() {
+        let custom_doh = ExitDnsConfig {
+            mode: ExitDnsMode::Encrypted,
+            doh_provider: ExitDohProvider::Custom,
+            custom_doh_url: "https://resolver.example/dns-query".to_string(),
+            ..ExitDnsConfig::default()
+        };
+        assert!(
+            custom_doh
+                .resolver_config(Some(&WireGuardExitConfig::default()))
+                .unwrap_err()
+                .to_string()
+                .contains("at least one IP")
+        );
+
+        let through_exit = ExitDnsConfig {
+            mode: ExitDnsMode::ThroughExit,
+            through_exit_servers: vec!["resolver.example".to_string()],
+            ..ExitDnsConfig::default()
+        };
+        assert!(
+            through_exit
+                .resolver_config(None)
+                .unwrap_err()
+                .to_string()
+                .contains("invalid DNS-through-exit")
+        );
+
+        #[cfg(feature = "secure-dns")]
+        {
+            let insecure_doh = ExitDnsConfig {
+                mode: ExitDnsMode::Encrypted,
+                doh_provider: ExitDohProvider::Custom,
+                custom_doh_url: "http://resolver.example/dns-query".to_string(),
+                custom_doh_bootstrap_ips: vec!["192.0.2.53".to_string()],
+                ..ExitDnsConfig::default()
+            };
+            assert!(
+                insecure_doh
+                    .resolver_config(None)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("must use https")
+            );
+        }
     }
 
     #[test]

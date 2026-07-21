@@ -105,6 +105,11 @@ struct Drafts {
     advertised_routes: String,
     exit_search: String,
     wireguard_exit_config: String,
+    exit_dns_mode: String,
+    exit_dns_doh_provider: String,
+    exit_dns_custom_doh_url: String,
+    exit_dns_custom_doh_bootstrap_ips: String,
+    exit_dns_through_exit_servers: String,
     paid_route_country: String,
     paid_route_network_class: String,
     paid_route_mint_url: String,
@@ -123,6 +128,12 @@ impl Drafts {
         self.fips_host_inbound_tcp_ports = state.fips_host_inbound_tcp_ports.clone();
         self.advertised_routes = state.advertised_routes.join(", ");
         self.wireguard_exit_config = state.wireguard_exit_config.clone();
+        self.exit_dns_mode = state.exit_dns_mode.clone();
+        self.exit_dns_doh_provider = state.exit_dns_doh_provider.clone();
+        self.exit_dns_custom_doh_url = state.exit_dns_custom_doh_url.clone();
+        self.exit_dns_custom_doh_bootstrap_ips =
+            state.exit_dns_custom_doh_bootstrap_ips.clone();
+        self.exit_dns_through_exit_servers = state.exit_dns_through_exit_servers.clone();
         if let Some(network) = active_network(state) {
             self.network_name = display_network_name(network);
             self.mesh_id = display_network_id(&network.network_id);

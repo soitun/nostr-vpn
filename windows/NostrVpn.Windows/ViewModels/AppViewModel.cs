@@ -55,6 +55,11 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _fipsHostInboundTcpPorts = "";
     private string _advertisedRoutes = "";
     private string _wireguardExitConfig = "";
+    private string _exitDnsMode = "automatic";
+    private string _exitDnsDohProvider = "cloudflare";
+    private string _exitDnsCustomDohUrl = "";
+    private string _exitDnsCustomDohBootstrapIps = "";
+    private string _exitDnsThroughExitServers = "";
     private string _paidRouteMintUrl = "";
     private string _paidRouteTopUpAmount = "";
     private string _paidRouteSendAmount = "";
@@ -121,6 +126,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         SaveRelaysCommand = new AsyncRelayCommand(_ => SaveRelaysAsync(), _ => !ActionInFlight);
         ImportWireGuardExitCommand = new AsyncRelayCommand(_ => ImportWireGuardExitAsync(), _ => !ActionInFlight);
         SaveWireGuardExitCommand = new AsyncRelayCommand(_ => SaveWireGuardExitAsync(), _ => !ActionInFlight);
+        SaveExitDnsCommand = new AsyncRelayCommand(_ => SaveExitDnsAsync(), _ => !ActionInFlight);
         CreateNetworkCommand = new AsyncRelayCommand(_ => CreateNetworkAsync(), _ => !ActionInFlight);
         ShowCreateNetworkSetupCommand = new RelayCommand(_ => SetNetworkSetupMode("create"));
         ShowJoinNetworkSetupCommand = new RelayCommand(_ => SetNetworkSetupMode("join"));
@@ -293,6 +299,35 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     public string FipsHostInboundTcpPorts { get => _fipsHostInboundTcpPorts; set => SetField(ref _fipsHostInboundTcpPorts, value); }
     public string AdvertisedRoutes { get => _advertisedRoutes; set => SetField(ref _advertisedRoutes, value); }
     public string WireguardExitConfig { get => _wireguardExitConfig; set => SetField(ref _wireguardExitConfig, value); }
+    public string ExitDnsMode
+    {
+        get => _exitDnsMode;
+        set
+        {
+            if (SetField(ref _exitDnsMode, value))
+            {
+                OnPropertyChanged(nameof(ExitDnsEncryptedSelected));
+                OnPropertyChanged(nameof(ExitDnsThroughExitSelected));
+            }
+        }
+    }
+    public string ExitDnsDohProvider
+    {
+        get => _exitDnsDohProvider;
+        set
+        {
+            if (SetField(ref _exitDnsDohProvider, value))
+            {
+                OnPropertyChanged(nameof(ExitDnsCustomSelected));
+            }
+        }
+    }
+    public string ExitDnsCustomDohUrl { get => _exitDnsCustomDohUrl; set => SetField(ref _exitDnsCustomDohUrl, value); }
+    public string ExitDnsCustomDohBootstrapIps { get => _exitDnsCustomDohBootstrapIps; set => SetField(ref _exitDnsCustomDohBootstrapIps, value); }
+    public string ExitDnsThroughExitServers { get => _exitDnsThroughExitServers; set => SetField(ref _exitDnsThroughExitServers, value); }
+    public bool ExitDnsEncryptedSelected => ExitDnsMode == "encrypted";
+    public bool ExitDnsCustomSelected => ExitDnsEncryptedSelected && ExitDnsDohProvider == "custom";
+    public bool ExitDnsThroughExitSelected => ExitDnsMode == "through_exit";
 
 
     public bool UpdateChecking
@@ -597,6 +632,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand SaveRelaysCommand { get; }
     public ICommand ImportWireGuardExitCommand { get; }
     public ICommand SaveWireGuardExitCommand { get; }
+    public ICommand SaveExitDnsCommand { get; }
     public ICommand CreateNetworkCommand { get; }
     public ICommand ShowCreateNetworkSetupCommand { get; }
     public ICommand ShowJoinNetworkSetupCommand { get; }

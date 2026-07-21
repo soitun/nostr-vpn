@@ -57,6 +57,11 @@ public sealed class NativeAppState
     public bool ExitNodeActive { get; set; }
     public bool ExitNodeBlocked { get; set; }
     public string ExitNodeStatusText { get; set; } = "";
+    public string ExitDnsMode { get; set; } = "automatic";
+    public string ExitDnsDohProvider { get; set; } = "cloudflare";
+    public string ExitDnsCustomDohUrl { get; set; } = "";
+    public string ExitDnsCustomDohBootstrapIps { get; set; } = "";
+    public string ExitDnsThroughExitServers { get; set; } = "";
     public bool AdvertiseExitNode { get; set; }
     public List<string> AdvertisedRoutes { get; set; } = [];
     public List<string> EffectiveAdvertisedRoutes { get; set; } = [];

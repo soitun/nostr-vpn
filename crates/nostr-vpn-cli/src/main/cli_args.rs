@@ -544,6 +544,20 @@ struct SetArgs {
     wireguard_exit_config: Option<String>,
     #[arg(long)]
     wireguard_exit_config_file: Option<PathBuf>,
+    /// Exit DNS policy: automatic, encrypted, or through_exit.
+    #[arg(long)]
+    exit_dns_mode: Option<String>,
+    /// Encrypted DNS preset: cloudflare, quad9, or custom.
+    #[arg(long)]
+    exit_dns_doh_provider: Option<String>,
+    #[arg(long)]
+    exit_dns_custom_doh_url: Option<String>,
+    /// Comma-separated bootstrap IPs for custom encrypted DNS.
+    #[arg(long)]
+    exit_dns_custom_doh_bootstrap_ips: Option<String>,
+    /// Comma-separated DNS IPs sent through the selected exit.
+    #[arg(long)]
+    exit_dns_through_exit_servers: Option<String>,
     #[arg(long)]
     autoconnect: Option<bool>,
     #[arg(long, num_args = 0..=1, default_missing_value = "true")]
