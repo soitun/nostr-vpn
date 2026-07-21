@@ -218,6 +218,26 @@ struct CapturedDefaultRoute {
     interface: String,
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn macos_underlay_gateway_interface_from_netstat(output: &str) -> Option<(String, String)> {
+    output.lines().find_map(|line| {
+        let tokens = line.split_whitespace().collect::<Vec<_>>();
+        if tokens.len() < 4 || tokens[0] != "default" {
+            return None;
+        }
+        let gateway = tokens[1];
+        let interface = tokens.last().copied().unwrap_or("");
+        if interface.starts_with("utun")
+            || interface.starts_with("bridge")
+            || interface == "lo0"
+            || gateway.starts_with("link#")
+        {
+            return None;
+        }
+        Some((gateway.to_string(), interface.to_string()))
+    })
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn capture_default_route() -> Result<CapturedDefaultRoute> {
     #[cfg(target_os = "linux")]
@@ -264,32 +284,29 @@ fn capture_default_route() -> Result<CapturedDefaultRoute> {
             return Err(anyhow!("netstat exited {}", output.status));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
-        // Find a "default <gateway> ... <interface>" row whose
-        // interface is not a utun (filter out our own / stale tunnels).
-        for line in stdout.lines() {
-            let tokens: Vec<&str> = line.split_whitespace().collect();
-            if tokens.len() < 4 || tokens[0] != "default" {
-                continue;
-            }
-            let gateway = tokens[1];
-            // last token is the interface name on macOS netstat -rn output.
-            let interface = tokens.last().copied().unwrap_or("");
-            if interface.starts_with("utun")
-                || interface.starts_with("bridge")
-                || interface == "lo0"
-            {
-                continue;
-            }
-            if gateway.starts_with("link#") {
-                continue;
-            }
+        if let Some((gateway, interface)) =
+            macos_underlay_gateway_interface_from_netstat(&stdout)
+        {
             return Ok(CapturedDefaultRoute {
-                gateway: gateway.to_string(),
-                interface: interface.to_string(),
+                gateway,
+                interface,
+            });
+        }
+
+        // Packet-tunnel Network Extensions can leave only an interface-scoped
+        // utun default visible in netstat. DHCP still knows the physical
+        // gateway, and that is the route the WireGuard endpoint bypass needs.
+        if let Some(route) = crate::macos_underlay_default_route_from_system()? {
+            let gateway = route
+                .gateway
+                .ok_or_else(|| anyhow!("macOS underlay route has no gateway"))?;
+            return Ok(CapturedDefaultRoute {
+                gateway,
+                interface: route.interface,
             });
         }
         Err(anyhow!(
-            "no underlay IPv4 default route found in netstat output"
+            "no physical IPv4 default route or DHCP underlay gateway found"
         ))
     }
 }

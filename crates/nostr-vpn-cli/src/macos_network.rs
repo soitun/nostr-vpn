@@ -125,6 +125,11 @@ pub(super) fn macos_underlay_default_route_from_routes(
 }
 
 #[cfg(any(target_os = "macos", test))]
+pub(crate) fn macos_underlay_default_route_needs_restore(routes: &[MacosRouteSpec]) -> bool {
+    macos_underlay_default_route_from_routes(routes).is_none()
+}
+
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn macos_endpoint_bypass_targets_for_hosts(hosts: &[Ipv4Addr]) -> Vec<String> {
     let mut targets = hosts
         .iter()
@@ -271,6 +276,58 @@ pub(super) fn delete_macos_managed_route(
 #[cfg(target_os = "macos")]
 pub(super) fn restore_macos_default_route(route: &MacosRouteSpec) -> Result<()> {
     apply_macos_default_route(route.gateway.as_deref(), Some(route.interface.as_str()))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_add_underlay_default_route_args(gateway: &str) -> Vec<String> {
+    vec![
+        "-n".to_string(),
+        "add".to_string(),
+        "default".to_string(),
+        gateway.to_string(),
+    ]
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn restore_macos_underlay_default_route_if_missing() -> Result<bool> {
+    let routes = macos_default_routes()?;
+    if !macos_underlay_default_route_needs_restore(&routes) {
+        return Ok(false);
+    }
+
+    let route = macos_underlay_default_route_from_system()?
+        .ok_or_else(|| anyhow!("no physical macOS underlay default route is available"))?;
+    let gateway = route
+        .gateway
+        .as_deref()
+        .ok_or_else(|| anyhow!("physical macOS underlay route has no gateway"))?;
+
+    // A Network Extension may retain an interface-scoped default on its utun.
+    // Add the physical default alongside it: changing `default` here could
+    // mutate a foreign VPN route and leave that VPN in an inconsistent state.
+    let mut command = ProcessCommand::new("route");
+    command.args(macos_add_underlay_default_route_args(gateway));
+    run_checked(&mut command).with_context(|| {
+        format!(
+            "failed to restore physical macOS default route via {} on {}",
+            gateway, route.interface
+        )
+    })?;
+
+    let restored = macos_default_routes()?;
+    if macos_underlay_default_route_needs_restore(&restored) {
+        return Err(anyhow!(
+            "physical macOS default route via {} on {} was not installed",
+            gateway,
+            route.interface
+        ));
+    }
+
+    eprintln!(
+        "tunnel: restored missing macOS underlay default route on {}",
+        route.interface
+    );
+    Ok(true)
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -727,5 +784,36 @@ destination: default\n\
     gateway: 192.168.64.1\n\
   interface: en0\n";
         assert_eq!(macos_split_default_route_interface(physical_default), None);
+    }
+
+    #[test]
+    fn direct_transition_repairs_only_a_missing_physical_default() {
+        let tunnel_only = vec![MacosRouteSpec {
+            gateway: None,
+            interface: "utun5".to_string(),
+        }];
+        assert!(macos_underlay_default_route_needs_restore(&tunnel_only));
+
+        let physical_and_tunnel = vec![
+            MacosRouteSpec {
+                gateway: Some("192.168.64.1".to_string()),
+                interface: "en0".to_string(),
+            },
+            MacosRouteSpec {
+                gateway: None,
+                interface: "utun5".to_string(),
+            },
+        ];
+        assert!(!macos_underlay_default_route_needs_restore(
+            &physical_and_tunnel
+        ));
+    }
+
+    #[test]
+    fn underlay_restore_adds_without_changing_a_foreign_default() {
+        assert_eq!(
+            macos_add_underlay_default_route_args("192.168.64.1"),
+            vec!["-n", "add", "default", "192.168.64.1"]
+        );
     }
 }

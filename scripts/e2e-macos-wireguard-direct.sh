@@ -27,6 +27,7 @@ CONFIG="${NVPN_E2E_CONFIG:-$HOME/Library/Application Support/nvpn/config.toml}"
 WG_CONFIG="${NVPN_WG_EXIT_CONFIG_FILE:-}"
 PROBE_URL="${NVPN_E2E_INTERNET_URL:-https://example.com/}"
 WAIT_SECS="${NVPN_E2E_WAIT_SECS:-60}"
+DROP_UNDERLAY_DEFAULT="${NVPN_E2E_DROP_UNDERLAY_DEFAULT:-0}"
 
 if [[ -z "$WG_CONFIG" || ! -f "$WG_CONFIG" ]]; then
   echo "NVPN_WG_EXIT_CONFIG_FILE must name a readable provider WireGuard config" >&2
@@ -59,6 +60,11 @@ internet_works() {
   curl -4fsS --max-time 12 "$PROBE_URL" >/dev/null
 }
 
+external_dns_works() {
+  dscacheutil -q host -a name example.com 2>/dev/null \
+    | grep -Eq '(^|[[:space:]])ip_address:'
+}
+
 wait_until() {
   local description="$1"
   shift
@@ -75,26 +81,33 @@ wait_until() {
 wireguard_route_is_live() {
   [[ -n "$(split_default_owner 1.0.0.1)" \
     && -n "$(split_default_owner 129.0.0.1)" ]] \
+    && external_dns_works \
     && internet_works
 }
 
 direct_route_is_live() {
   [[ -z "$(split_default_owner 1.0.0.1)" \
     && -z "$(split_default_owner 129.0.0.1)" \
-    && "$(route_field default interface)" == "$DIRECT_IFACE" ]] \
+    && "$(route_field default interface)" == "$DIRECT_IFACE" \
+    && "$(route_field default gateway)" == "$DIRECT_GATEWAY" ]] \
+    && external_dns_works \
     && internet_works
 }
 
-force_direct() {
+restore_direct() {
   "$NVPN_BIN" set --config "$CONFIG" --exit-node "" >/dev/null 2>&1 || true
+  if [[ "$DROP_UNDERLAY_DEFAULT" == "1" ]]; then
+    sudo -n /sbin/route -n add default "$DIRECT_GATEWAY" >/dev/null 2>&1 || true
+  fi
 }
 
 DIRECT_IFACE="$(route_field default interface)"
-if [[ -z "$DIRECT_IFACE" ]]; then
-  echo "could not capture the pre-test Direct interface" >&2
+DIRECT_GATEWAY="$(route_field default gateway)"
+if [[ -z "$DIRECT_IFACE" || -z "$DIRECT_GATEWAY" || "$DIRECT_GATEWAY" == link#* ]]; then
+  echo "could not capture the pre-test physical Direct route" >&2
   exit 1
 fi
-trap force_direct EXIT
+trap restore_direct EXIT
 
 start=$SECONDS
 "$NVPN_BIN" set --config "$CONFIG" \
@@ -108,6 +121,20 @@ sleep 3
 wireguard_route_is_live
 wg_elapsed=$((SECONDS - start))
 
+if [[ "$DROP_UNDERLAY_DEFAULT" == "1" ]]; then
+  # Reproduce recovery from older nVPN builds that could remove the physical
+  # default during WG cleanup. The live WG /1 routes keep Internet working
+  # while the Direct transition is asked to restore the DHCP underlay.
+  sudo -n /sbin/route -n delete default "$DIRECT_GATEWAY" >/dev/null
+  if netstat -rn -f inet \
+    | awk -v iface="$DIRECT_IFACE" '$1 == "default" && $NF == iface { found=1 } END { exit found ? 0 : 1 }'
+  then
+    echo "failed to remove the physical default for the recovery test" >&2
+    exit 1
+  fi
+  wireguard_route_is_live
+fi
+
 direct_start=$SECONDS
 "$NVPN_BIN" set --config "$CONFIG" --exit-node "" >/dev/null
 wait_until "the original Direct route and external HTTPS" direct_route_is_live
@@ -115,4 +142,4 @@ direct_elapsed=$((SECONDS - direct_start))
 
 trap - EXIT
 echo "MACOS_WG_DIRECT_E2E_OK"
-echo "WireGuard stable after ${wg_elapsed}s; Direct internet restored after ${direct_elapsed}s"
+echo "WireGuard route, DNS, and HTTPS stable after ${wg_elapsed}s; Direct route, DNS, and HTTPS restored after ${direct_elapsed}s"

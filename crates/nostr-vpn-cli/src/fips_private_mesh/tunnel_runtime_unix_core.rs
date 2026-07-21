@@ -271,6 +271,23 @@ impl FipsPrivateTunnelRuntime {
         }
         #[cfg(target_os = "macos")]
         {
+            let previous_exit_requested = self
+                .config
+                .route_targets
+                .iter()
+                .any(|route| route == "0.0.0.0/0")
+                || self.config.wireguard_exit.enabled;
+            let next_exit_requested = config
+                .route_targets
+                .iter()
+                .any(|route| route == "0.0.0.0/0")
+                || config.wireguard_exit.enabled;
+            if macos_direct_underlay_restore_needed(
+                previous_exit_requested,
+                next_exit_requested,
+            ) {
+                crate::macos_network::restore_macos_underlay_default_route_if_missing()?;
+            }
             self.cleanup_stale_macos_wg_upstream(&config.wireguard_exit)
                 .await;
             self.apply_macos_network_state(config).await?;
@@ -672,9 +689,17 @@ impl FipsPrivateTunnelRuntime {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn macos_direct_underlay_restore_needed(
+    previous_exit_requested: bool,
+    next_exit_requested: bool,
+) -> bool {
+    previous_exit_requested && !next_exit_requested
+}
+
 #[cfg(test)]
 mod macos_wg_transition_tests {
-    use super::FipsPrivateTunnelRuntime;
+    use super::{FipsPrivateTunnelRuntime, macos_direct_underlay_restore_needed};
 
     #[test]
     fn stale_wireguard_is_removed_before_fips_routes_change() {
@@ -693,6 +718,13 @@ mod macos_wg_transition_tests {
         assert!(!FipsPrivateTunnelRuntime::macos_wg_upstream_needs_cleanup(
             false, None
         ));
+    }
+
+    #[test]
+    fn only_an_exit_to_direct_transition_repairs_the_underlay_default() {
+        assert!(macos_direct_underlay_restore_needed(true, false));
+        assert!(!macos_direct_underlay_restore_needed(false, false));
+        assert!(!macos_direct_underlay_restore_needed(true, true));
     }
 }
 
