@@ -85,13 +85,8 @@ direct_route_is_live() {
     && internet_works
 }
 
-reload_daemon() {
-  "$NVPN_BIN" reload --config "$CONFIG" >/dev/null
-}
-
 force_direct() {
   "$NVPN_BIN" set --config "$CONFIG" --exit-node "" >/dev/null 2>&1 || true
-  reload_daemon >/dev/null 2>&1 || true
 }
 
 DIRECT_IFACE="$(route_field default interface)"
@@ -105,7 +100,6 @@ start=$SECONDS
 "$NVPN_BIN" set --config "$CONFIG" \
   --wireguard-exit-config-file "$WG_CONFIG" \
   --wireguard-exit-enabled true >/dev/null
-reload_daemon
 wait_until "stable WireGuard routes and internet" wireguard_route_is_live
 
 # The route monitor fires after the WG /1s are installed. The old bug removed
@@ -116,7 +110,6 @@ wg_elapsed=$((SECONDS - start))
 
 direct_start=$SECONDS
 "$NVPN_BIN" set --config "$CONFIG" --exit-node "" >/dev/null
-reload_daemon
 wait_until "the original Direct route and external HTTPS" direct_route_is_live
 direct_elapsed=$((SECONDS - direct_start))
 

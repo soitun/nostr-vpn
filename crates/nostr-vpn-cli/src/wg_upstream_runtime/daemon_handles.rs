@@ -200,10 +200,9 @@ impl DaemonWgUpstream {
         self.config_fingerprint == WireGuardExitFingerprint::from_config(new_config)
     }
 
-    /// Tear down the WG upstream cleanly: restore the default route
-    /// FIRST (so the host has a working route to the internet again
-    /// while the WG runtime is winding down), then stop the boringtun
-    /// pump, then drop the tun (which removes the utun device).
+    /// Tear down the WG upstream cleanly: remove the two WG split-default
+    /// routes while leaving the physical default untouched, then stop the
+    /// boringtun pump and drop the tun device.
     pub async fn cleanup(mut self) {
         if let Some(mut full_route) = self.full_route.take() {
             if let Err(error) = full_route.revert() {

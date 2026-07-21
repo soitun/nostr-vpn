@@ -148,4 +148,13 @@ Idx     Met         MTU          State                Name
             "nvpn-wg-exit"
         );
     }
+
+    #[test]
+    fn macos_wireguard_cleanup_never_touches_the_physical_default() {
+        let commands = macos_wg_default_route_cleanup_args("utun9");
+        assert_eq!(commands.len(), 2);
+        assert!(commands.iter().all(|args| args.contains(&"-net".to_string())));
+        assert!(commands.iter().all(|args| !args.contains(&"default".to_string())));
+        assert!(commands.iter().all(|args| args.last().is_some_and(|arg| arg == "utun9")));
+    }
 }

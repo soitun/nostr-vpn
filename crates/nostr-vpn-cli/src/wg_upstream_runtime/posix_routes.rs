@@ -117,8 +117,9 @@ pub struct ScopedHostRoute {
 ///   2. Spawn a watchdog that drops the returned guard if the
 ///      handshake doesn't complete within a few seconds.
 ///
-/// The returned guard restores the original default route + deletes
-/// the bypass on Drop, even on panic.
+/// The returned guard restores the original routing state + deletes the
+/// bypass on Drop, even on panic. On macOS the underlay default is never
+/// replaced; cleanup removes only the two WireGuard split-default routes.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn apply_full_default_route(
     iface: &str,
@@ -172,8 +173,8 @@ pub fn apply_full_default_route(
         )?;
     }
 
-    // 2. Capture the original default route so we can restore it on
-    // Drop. Do this before touching anything routing-related.
+    // 2. Capture the original default route for the endpoint bypass and,
+    // on Linux, restoration on Drop. Do this before touching routes.
     let original_default = capture_default_route()?;
 
     // 3. Install the bypass /32 for the WG endpoint via the original
@@ -386,6 +387,23 @@ fn install_default_via_iface(iface: &str, _src: &str) -> Result<()> {
     Ok(())
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn macos_wg_default_route_cleanup_args(iface: &str) -> Vec<Vec<String>> {
+    MACOS_WG_DEFAULT_ROUTE_TARGETS
+        .iter()
+        .map(|target| {
+            vec![
+                "-n".to_string(),
+                "delete".to_string(),
+                "-net".to_string(),
+                (*target).to_string(),
+                "-interface".to_string(),
+                iface.to_string(),
+            ]
+        })
+        .collect()
+}
+
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 impl FullDefaultRoute {
     /// Cleanup explicitly. Returning a `Result` lets the caller see
@@ -395,9 +413,8 @@ impl FullDefaultRoute {
             return Ok(());
         }
         let target_str = self.bypass_target.to_string();
-        // Restore the original default route FIRST so the host has a
-        // working route to the internet again before we delete the
-        // bypass for the WG endpoint.
+        // Linux replaces its default and restores it first. macOS leaves
+        // the underlay default intact and only removes its two covering /1s.
         #[cfg(target_os = "linux")]
         {
             // `ip route replace` is idempotent: it'll overwrite
@@ -417,44 +434,8 @@ impl FullDefaultRoute {
         }
         #[cfg(target_os = "macos")]
         {
-            let _ = ProcessCommand::new("route")
-                .arg("-n")
-                .arg("delete")
-                .arg("default")
-                .arg("-interface")
-                .arg(&self.iface)
-                .status();
-            for target in MACOS_WG_DEFAULT_ROUTE_TARGETS {
-                let _ = ProcessCommand::new("route")
-                    .arg("-n")
-                    .arg("delete")
-                    .arg("-net")
-                    .arg(target)
-                    .arg("-interface")
-                    .arg(&self.iface)
-                    .status();
-            }
-            let _ = ProcessCommand::new("route")
-                .arg("-n")
-                .arg("delete")
-                .arg("default")
-                .arg("-ifscope")
-                .arg(&self.original_default.interface)
-                .status();
-            let mut change = ProcessCommand::new("route");
-            change
-                .arg("-n")
-                .arg("change")
-                .arg("default")
-                .arg(&self.original_default.gateway);
-            if run_checked(&mut change).is_err() {
-                run_checked(
-                    ProcessCommand::new("route")
-                        .arg("-n")
-                        .arg("add")
-                        .arg("default")
-                        .arg(&self.original_default.gateway),
-                )?;
+            for args in macos_wg_default_route_cleanup_args(&self.iface) {
+                let _ = ProcessCommand::new("route").args(args).status();
             }
             let _ = ProcessCommand::new("route")
                 .arg("-n")
