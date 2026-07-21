@@ -169,9 +169,6 @@ pub(crate) fn fips_endpoint_control_requires_runtime_replacement(error: &anyhow:
                     error,
                     fips_endpoint::FipsEndpointError::Closed
                         | fips_endpoint::FipsEndpointError::Timeout { .. }
-                        | fips_endpoint::FipsEndpointError::Node(
-                            fips_core::NodeError::LocalRouteUnavailable(_)
-                        )
                 )
             })
     })

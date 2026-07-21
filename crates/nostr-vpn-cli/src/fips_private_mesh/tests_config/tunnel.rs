@@ -578,10 +578,12 @@
     fn tunnel_config_uses_only_static_endpoint_hints_when_discovery_disabled() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();
+        let charlie_keys = Keys::generate();
         let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
         let alice_pubkey = alice_keys.public_key().to_hex();
         let bob_pubkey = bob_keys.public_key().to_hex();
         let bob_npub = bob_keys.public_key().to_bech32().expect("bob npub");
+        let charlie_npub = charlie_keys.public_key().to_bech32().expect("charlie npub");
         let network_id = "fips-static-only-hints-test";
 
         let mut app = AppConfig::default();
@@ -592,6 +594,10 @@
         app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey.clone()];
         app.fips_peer_endpoints
             .insert(bob_npub.clone(), vec!["192.168.64.5:52528".to_string()]);
+        app.fips_peer_endpoints.insert(
+            charlie_npub.clone(),
+            vec!["192.168.64.6:52528".to_string()],
+        );
 
         let mut recent = recent_peer_cache(&alice_keys, network_id);
         assert!(recent.note_success(&bob_pubkey, "198.51.100.7:52528", 123));
@@ -620,6 +626,24 @@
         assert!(
             !bob.discovery_fallback_transit,
             "static-only peers must not become lookup transit"
+        );
+
+        let charlie = config
+            .endpoint_peers
+            .iter()
+            .find(|peer| peer.npub == charlie_npub)
+            .expect("operator-configured non-roster transit peer");
+        assert!(charlie.auto_reconnect);
+        assert!(
+            charlie.discovery_fallback_transit,
+            "an explicit non-roster static peer is the fallback transit path when ambient discovery is disabled"
+        );
+        assert!(
+            config
+                .peers
+                .iter()
+                .all(|peer| peer.endpoint_npub != charlie_npub),
+            "fallback transit must not become a private-network route target"
         );
     }
 

@@ -214,9 +214,9 @@ final class AppManager: ObservableObject {
     }
 
     // A refresh shells out to the daemon and republishes the full SwiftUI
-    // state. Five seconds keeps live payment state responsive without making
-    // an existing paid session rebuild the whole app twice per CPU sample.
-    static let paidRouteRefreshIntervalNanoseconds: UInt64 = 5_000_000_000
+    // state. Ten seconds keeps live payment state responsive without making
+    // an existing paid session keep the otherwise idle app above the CPU gate.
+    static let paidRouteRefreshIntervalNanoseconds: UInt64 = 10_000_000_000
     static let activeVpnRefreshIntervalNanoseconds: UInt64 = 15_000_000_000
     static let idleRefreshIntervalNanoseconds: UInt64 = 30_000_000_000
 

@@ -298,8 +298,10 @@ impl FipsPrivateTunnelConfig {
             .validate()
             .map_err(|error| anyhow!("invalid FIPS WebSocket configuration: {error}"))?;
         if !stamped_endpoint_hints_enabled {
+            // Without ambient discovery, route targets are direct-only. Preserve
+            // explicitly configured non-roster peers as designated FIPS transit.
             for peer in &mut endpoint_peers {
-                if peer.auto_reconnect {
+                if peer.auto_reconnect && desired_endpoint_hint_npubs.contains(&peer.npub) {
                     peer.discovery_fallback_transit = false;
                 }
             }

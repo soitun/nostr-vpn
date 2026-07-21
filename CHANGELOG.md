@@ -4,6 +4,8 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.1.0 - 2026-07-21
+
 ### Changed
 
 - Replace network invitations and manual device entry with one signed
@@ -21,9 +23,12 @@ All notable changes to this project are documented in this file.
 - Make GUI purchases select and start the bought exit, show active and error
   states, and keep the ordinary internet route available until a non-strict
   selected exit is connected.
-- Update the integrated FIPS core to 0.4.30 so endpoint restarts recover
-  one-way key splits and lost final rekey messages after a network roam, while
-  retaining the delayed-promotion and first-ping route fixes from 0.4.28.
+- Update the integrated FIPS core to 0.4.34 so repeated network roams converge
+  stale direct routes, asymmetric reconnects, same-path rekey races, and
+  orphaned responder rekeys without accepting FMP control heartbeats as direct
+  FSP payload validation or applying delayed outage loss reports to a newly
+  restored carrier.
+- Update `nostr-pubsub-fips` to 0.4.5.
 - Reserve the bounded public-ingress discovery budget for paid-exit sellers so
   ambient peers cannot exhaust the small endpoint budget and deny fresh WebVM
   clients before their first `.fips` lookup.

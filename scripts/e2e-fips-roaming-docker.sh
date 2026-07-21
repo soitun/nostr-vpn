@@ -300,13 +300,14 @@ peer_matches_fallback_with_probe() {
   local status="$1"
   local peer_key="$2"
   local _direct_addr="$3"
-  jq -e --arg peer_key "$peer_key" '
+  local after_data_seen_at="${4:-0}"
+  jq -e --arg peer_key "$peer_key" --argjson after_data_seen_at "$after_data_seen_at" '
     .daemon.state.peers
     | any(
       (.participant_pubkey == $peer_key or .fips_endpoint_npub == $peer_key)
       and .reachable == true
       and (.direct_probe_pending == true or (.direct_probe_after_ms? != null))
-      and ((.last_fips_data_seen_at? // 0) > 0)
+      and ((.last_fips_data_seen_at? // 0) > $after_data_seen_at)
     )
   ' >/dev/null <<<"$status"
 }
@@ -340,11 +341,12 @@ wait_for_fallback_probe_peer() {
   local direct_addr="$3"
   local label="$4"
   local deadline="$5"
+  local after_data_seen_at="${6:-0}"
   local status=""
   local end=$(( $(date +%s) + deadline ))
   while [[ "$(date +%s)" -le "$end" ]]; do
     status="$(status_json "$node")"
-    if peer_matches_fallback_with_probe "$status" "$peer_key" "$direct_addr"; then
+    if peer_matches_fallback_with_probe "$status" "$peer_key" "$direct_addr" "$after_data_seen_at"; then
       printf '%s\n' "$status"
       return 0
     fi
@@ -719,8 +721,8 @@ run_roam_flap() {
   esac
 
   local alice_fallback bob_fallback
-  alice_fallback="$(wait_for_fallback_probe_peer node-a "$BOB_NPUB" "$alice_direct_addr" "alice during $flap_name" "$FALLBACK_DEADLINE_SECS")"
-  bob_fallback="$(wait_for_fallback_probe_peer node-b "$ALICE_NPUB" "$bob_direct_addr" "bob during $flap_name" "$FALLBACK_DEADLINE_SECS")"
+  alice_fallback="$(wait_for_fallback_probe_peer node-a "$BOB_NPUB" "$alice_direct_addr" "alice during $flap_name" "$FALLBACK_DEADLINE_SECS" "$churn_started")"
+  bob_fallback="$(wait_for_fallback_probe_peer node-b "$ALICE_NPUB" "$bob_direct_addr" "bob during $flap_name" "$FALLBACK_DEADLINE_SECS" "$churn_started")"
   assert_payload_probe_success_since node-a "$alice_probe" "$churn_started" "alice continuous payload during $flap_name"
   assert_payload_probe_success_since node-b "$bob_probe" "$churn_started" "bob continuous payload during $flap_name"
   assert_local_route_handshake_failures_bounded node-a "$alice_marker" "alice during $flap_name"
@@ -730,8 +732,8 @@ run_roam_flap() {
   assert_ping_tunnel node-b "$ALICE_TUNNEL_IP" "bob-to-alice during $flap_name fallback" "/tmp/${flap_name}-bob-to-alice-fallback-ping.log"
   sleep "$FALLBACK_HOLD_SECS"
 
-  alice_fallback="$(wait_for_fallback_probe_peer node-a "$BOB_NPUB" "$alice_direct_addr" "alice after $flap_name hold" "$FALLBACK_DEADLINE_SECS")"
-  bob_fallback="$(wait_for_fallback_probe_peer node-b "$ALICE_NPUB" "$bob_direct_addr" "bob after $flap_name hold" "$FALLBACK_DEADLINE_SECS")"
+  alice_fallback="$(wait_for_fallback_probe_peer node-a "$BOB_NPUB" "$alice_direct_addr" "alice after $flap_name hold" "$FALLBACK_DEADLINE_SECS" "$churn_started")"
+  bob_fallback="$(wait_for_fallback_probe_peer node-b "$ALICE_NPUB" "$bob_direct_addr" "bob after $flap_name hold" "$FALLBACK_DEADLINE_SECS" "$churn_started")"
 
   echo "--- $flap_name: restore LAN/direct path, expect quick upgrade away from fallback ---"
   local restore_started

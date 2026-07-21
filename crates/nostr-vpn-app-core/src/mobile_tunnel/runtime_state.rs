@@ -243,6 +243,24 @@ fn mobile_runtime_state_with_tun_counters(
     tun_counters: MobileTunCounters,
     now: u64,
 ) -> DaemonRuntimeState {
+    let fips_direct_roster_peer_count = endpoint_peers
+        .iter()
+        .filter(|peer| {
+            peer.connected
+                && mesh
+                    .participant_for_endpoint_node_addr(peer.node_addr.as_bytes())
+                    .is_some()
+        })
+        .count();
+    let fips_other_peer_count = endpoint_peers
+        .iter()
+        .filter(|peer| {
+            peer.connected
+                && mesh
+                    .participant_for_endpoint_node_addr(peer.node_addr.as_bytes())
+                    .is_none()
+        })
+        .count();
     let link_by_participant = endpoint_peers
         .into_iter()
         .filter_map(|peer| {
@@ -359,6 +377,8 @@ fn mobile_runtime_state_with_tun_counters(
         },
         expected_peer_count,
         connected_peer_count,
+        fips_direct_roster_peer_count,
+        fips_other_peer_count,
         mesh_ready: connected_peer_count == expected_peer_count,
         relays: relay_statuses
             .into_iter()

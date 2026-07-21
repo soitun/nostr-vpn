@@ -690,9 +690,6 @@ fn fips_endpoint_failures_requiring_runtime_replacement_are_classified() {
             operation: "peer path refresh",
         },
         fips_endpoint::FipsEndpointError::Closed,
-        fips_endpoint::FipsEndpointError::Node(fips_core::NodeError::LocalRouteUnavailable(
-            "bound UDP address disappeared after network change".to_string(),
-        )),
     ] {
         let error = anyhow::Error::new(endpoint_error)
             .context("fips: refresh_peer_paths rejected by endpoint");
@@ -701,12 +698,17 @@ fn fips_endpoint_failures_requiring_runtime_replacement_are_classified() {
 }
 
 #[test]
-fn fips_endpoint_node_error_does_not_replace_runtime() {
-    let error = anyhow::Error::new(fips_endpoint::FipsEndpointError::Node(
+fn fips_endpoint_node_errors_do_not_replace_runtime() {
+    for node_error in [
         fips_core::NodeError::NotStarted,
-    ));
-
-    assert!(!fips_endpoint_control_requires_runtime_replacement(&error));
+        fips_core::NodeError::LocalRouteUnavailable(
+            "bound UDP address disappeared after network change".to_string(),
+        ),
+    ] {
+        let error = anyhow::Error::new(fips_endpoint::FipsEndpointError::Node(node_error))
+            .context("fips: refresh_peer_paths rejected by endpoint");
+        assert!(!fips_endpoint_control_requires_runtime_replacement(&error));
+    }
 }
 
 fn pending_fips_peer(pubkey: &str) -> MeshPeerStatus {

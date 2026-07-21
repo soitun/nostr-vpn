@@ -883,12 +883,24 @@
             nostr_traversal_cooldown_until_ms: Some(99_000),
             nostr_traversal_last_observed_skew_ms: Some(-75),
         };
+        let other_npub = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("other endpoint npub");
+        let other_node_addr = *PeerIdentity::from_npub(&other_npub)
+            .expect("other endpoint identity")
+            .node_addr();
+        let other_endpoint_peer = FipsEndpointPeer {
+            npub: other_npub,
+            node_addr: other_node_addr,
+            ..endpoint_peer.clone()
+        };
 
         let state = mobile_runtime_state_with_tun_counters(
             &config,
             &mesh,
             &HashMap::new(),
-            vec![endpoint_peer],
+            vec![endpoint_peer, other_endpoint_peer],
             Vec::new(),
             MobileTunCounters::default(),
             1_778_998_000,
@@ -896,6 +908,8 @@
 
         assert_eq!(state.expected_peer_count, 1);
         assert_eq!(state.connected_peer_count, 1);
+        assert_eq!(state.fips_direct_roster_peer_count, 1);
+        assert_eq!(state.fips_other_peer_count, 1);
         assert!(state.mesh_ready);
         assert_eq!(state.peers[0].participant_pubkey, peer);
         assert!(state.peers[0].reachable);

@@ -14,6 +14,10 @@ export NVPN_IDLE_CPU_GATE="${NVPN_RELEASE_GATE_IDLE_CPU:-${NVPN_IDLE_CPU_GATE:-1
 export NVPN_IDLE_CPU_MAX_PERCENT="${NVPN_RELEASE_GATE_IDLE_CPU_MAX_PERCENT:-${NVPN_IDLE_CPU_MAX_PERCENT:-2}}"
 export NVPN_IDLE_CPU_SAMPLE_SECONDS="${NVPN_RELEASE_GATE_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAMPLE_SECONDS:-60}}"
 export NVPN_IDLE_CPU_SETTLE_SECONDS="${NVPN_RELEASE_GATE_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-15}}"
+# The Android VPN fixture maintains the two production bootstrap adjacencies,
+# unlike the foreground/UI idle gates. Keep a separate bound for that active
+# encrypted overlay while retaining the packet/TUN correctness probe below.
+ANDROID_ACTIVE_OVERLAY_IDLE_CPU_MAX_PERCENT="${NVPN_ANDROID_ACTIVE_OVERLAY_IDLE_CPU_MAX_PERCENT:-4}"
 
 MACOS_WG_EXIT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MACOS_WG_EXIT_TIMEOUT_SECS:-300}"
 WINDOWS_WG_EXIT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_TIMEOUT_SECS:-1800}"
@@ -373,7 +377,8 @@ run_macos_daemon_idle_cpu_gate() {
     echo "Skipping macOS daemon idle CPU gate on this host."
     return
   fi
-  if ! { [[ "${EUID:-$(id -u)}" == "0" ]] || sudo -n true >/dev/null 2>&1; }; then
+  if ! { [[ "${EUID:-$(id -u)}" == "0" ]] \
+    || sudo -n /usr/local/sbin/nvpn-install-test-daemon --help >/dev/null 2>&1; }; then
     echo "Skipping macOS daemon idle CPU gate because passwordless sudo is unavailable."
     return
   fi
@@ -400,6 +405,7 @@ run_mobile_idle_cpu_gates() {
     && adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { found = 1 } END { exit !found }'; then
     release_gate_run_with_timeout "Android idle CPU smoke" "$MOBILE_GUI_SMOKE_TIMEOUT_SECS" \
       env NVPN_ANDROID_PACKAGE="fi.siriusbusiness.nvpn.releasegate" \
+      NVPN_IDLE_CPU_MAX_PERCENT="$ANDROID_ACTIVE_OVERLAY_IDLE_CPU_MAX_PERCENT" \
       ./scripts/mobile-android-smoke.sh --vpn-cycle --create-network --accept-vpn-dialog
   else
     echo "Skipping Android idle CPU smoke because no adb device is online."
