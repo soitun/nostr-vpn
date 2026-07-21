@@ -12,6 +12,8 @@ final class AppModel: ObservableObject {
     static let mobileRuntimeStateFileName = "mobile-runtime-state.json"
     static let vpnDisclosureAcceptedKey = "vpnDisclosureAccepted"
     static let vpnDisclosurePromptMessage = "Review VPN data use before turning VPN on."
+    private static let normalRefreshNanoseconds: UInt64 = 2_000_000_000
+    private static let onboardingRefreshNanoseconds: UInt64 = 250_000_000
 
     @Published var state: AppState
     @Published var actionInFlight = false
@@ -71,7 +73,10 @@ final class AppModel: ObservableObject {
         }
         refreshTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                let delay = self?.activeNetwork == nil
+                    ? Self.onboardingRefreshNanoseconds
+                    : Self.normalRefreshNanoseconds
+                try? await Task.sleep(nanoseconds: delay)
                 self?.refresh()
             }
         }

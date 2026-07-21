@@ -386,8 +386,11 @@ impl NativeAppRuntime {
         let prepared =
             prepare_join_approval(&self.config, &network_id, bootstrap, unix_timestamp())?;
         self.config = prepared.updated_config;
-        self.save_reload_and_refresh()?;
         self.queue_join_roster_delivery(bootstrap, &prepared.join_roster)?;
+        // Commit the durable outbox entry before asking the daemon to apply
+        // the new roster. The daemon can then start delivery as part of that
+        // same control transaction instead of waiting for its next heartbeat.
+        self.save_reload_and_refresh()?;
         if self.config.autoconnect && !self.vpn_enabled {
             // Approval and its durable roster outbox are already committed.
             // Failure to auto-start networking must not report the approval
@@ -401,9 +404,14 @@ impl NativeAppRuntime {
     #[allow(clippy::unnecessary_wraps)]
     fn queue_join_roster_delivery(
         &mut self,
-        _bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
+        bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
         join_roster: &nostr_vpn_core::fips_control::JoinRosterControl,
     ) -> Result<()> {
+        nostr_vpn_core::join_delivery::queue_join_roster(
+            &self.config_path,
+            &bootstrap.device_app_key_npub,
+            join_roster,
+        )?;
         self.queued_join_rosters.push(join_roster.clone());
         Ok(())
     }

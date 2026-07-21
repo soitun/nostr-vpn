@@ -895,6 +895,9 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 "fips: capabilities broadcast failed after control request: {error}"
                             );
                         }
+                        if fips_sync_succeeded {
+                            start_queued_join_roster_deliveries(runtime, &app, &config_path);
+                        }
                     }
                     let fips_peer_statuses = current_fips_peer_statuses!(fips_tunnel_runtime);
                     let fips_relay_statuses =

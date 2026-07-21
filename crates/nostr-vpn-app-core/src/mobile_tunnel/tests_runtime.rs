@@ -858,6 +858,8 @@
             ""
         );
         let ui_handoff_acknowledged_at = Instant::now();
+        let approval_to_ack =
+            ui_handoff_acknowledged_at.duration_since(authenticated_at);
         eprintln!(
             "mobile QR join latency: setup_auth={:?} signed_roster_delivery_and_durable_apply={:?} new_network_control={:?} ui_handoff_ack={:?} total={:?}",
             authenticated_at.duration_since(test_started_at),
@@ -865,6 +867,10 @@
             new_network_control_at.duration_since(roster_applied_at),
             ui_handoff_acknowledged_at.duration_since(new_network_control_at),
             ui_handoff_acknowledged_at.duration_since(test_started_at),
+        );
+        assert!(
+            approval_to_ack < Duration::from_secs(3),
+            "an authenticated QR approval should be durably applied and acknowledged in under 3s; took {approval_to_ack:?}"
         );
 
         shutdown_started_mobile_tunnel(admin).await;
