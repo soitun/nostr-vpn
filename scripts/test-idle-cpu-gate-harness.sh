@@ -209,6 +209,13 @@ grep -Fq 'assert_idle_daemon_cpu_below node-a' "$ROOT_DIR/scripts/e2e-fips-route
   || fail "release-gated Linux active-tunnel e2e has no daemon idle CPU check"
 grep -Fq 'windows-daemon-idle-cpu.ps1' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
   || fail "release-gated Windows VM smoke has no daemon idle CPU check"
+grep -Fq 'Get-UsableHostIPv4' "$ROOT_DIR/scripts/windows-daemon-idle-cpu.ps1" \
+  || fail "Windows daemon idle CPU fixture does not discover a usable host address"
+if grep -F -- '--fips-peer-endpoint' "$ROOT_DIR/scripts/windows-daemon-idle-cpu.ps1" | grep -Fq '127.0.0.1'; then
+  fail "Windows daemon idle CPU fixture advertises a rejected loopback peer endpoint"
+fi
+grep -Fq 'if ($LASTEXITCODE -ne 0)' "$ROOT_DIR/scripts/windows-daemon-idle-cpu.ps1" \
+  || fail "Windows daemon idle CPU fixture ignores native nvpn command failures"
 grep -Fq '"NVPN_IDLE_CPU_SAMPLE_SECONDS" 60' "$ROOT_DIR/scripts/windows-app-launch-smoke.ps1" \
   || fail "Windows app idle CPU gate does not sample a full minute"
 grep -Fq '"NVPN_IDLE_CPU_SETTLE_SECONDS" 20' "$ROOT_DIR/scripts/windows-app-launch-smoke.ps1" \

@@ -28,6 +28,31 @@ function Get-Npub([string]$Path) {
   return $match.Matches[0].Groups[1].Value
 }
 
+function Get-UsableHostIPv4 {
+  $routes = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop |
+    Where-Object { $_.NextHop -ne '0.0.0.0' } |
+    Sort-Object RouteMetric
+  foreach ($route in $routes) {
+    $address = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.AddressState -eq 'Preferred' -and
+        $_.IPAddress -notlike '127.*' -and
+        $_.IPAddress -notlike '169.254.*'
+      } |
+      Select-Object -First 1 -ExpandProperty IPAddress
+    if ($address) { return $address }
+  }
+  throw 'No usable non-loopback IPv4 address found for the Windows idle fixture'
+}
+
+function Invoke-Nvpn {
+  param([string[]]$Arguments)
+  & $Bin @Arguments
+  if ($LASTEXITCODE -ne 0) {
+    throw "nvpn $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+  }
+}
+
 function Find-FixtureDaemon {
   $pidFile = Join-Path $Fixture 'daemon.pid'
   if (!(Test-Path $pidFile)) { return $null }
@@ -49,15 +74,24 @@ function Wait-NvpnSeconds([double]$Seconds) {
 try {
   if (!(Test-Path $Bin)) { throw "nvpn.exe not found: $Bin" }
   New-Item -ItemType Directory -Force -Path $ArtifactRoot, $Fixture | Out-Null
-  & $Bin init --config $Config --force | Out-Null
-  & $Bin init --config $PeerConfig --force | Out-Null
+  Invoke-Nvpn @('init', '--config', $Config, '--force') | Out-Null
+  Invoke-Nvpn @('init', '--config', $PeerConfig, '--force') | Out-Null
   $ownNpub = Get-Npub $Config
   $peerNpub = Get-Npub $PeerConfig
-  & $Bin set --config $Config --participant $ownNpub --participant $peerNpub `
-    --network-id windows-idle-cpu --endpoint 127.0.0.1:51891 --listen-port 51891 `
-    --fips-peer-endpoint "$peerNpub=127.0.0.1:51892" --fips-advertise-endpoint true `
-    --fips-nostr-discovery-enabled false --fips-bootstrap-enabled false | Out-Null
-  & $Bin start --config $Config --daemon --connect | Out-Null
+  $hostIPv4 = Get-UsableHostIPv4
+  Invoke-Nvpn @(
+    'set', '--config', $Config,
+    '--participant', $ownNpub,
+    '--participant', $peerNpub,
+    '--network-id', 'windows-idle-cpu',
+    '--endpoint', "${hostIPv4}:51891",
+    '--listen-port', '51891',
+    '--fips-peer-endpoint', "${peerNpub}=${hostIPv4}:51892",
+    '--fips-advertise-endpoint', 'true',
+    '--fips-nostr-discovery-enabled', 'false',
+    '--fips-bootstrap-enabled', 'false'
+  ) | Out-Null
+  Invoke-Nvpn @('start', '--config', $Config, '--daemon', '--connect') | Out-Null
 
   $deadline = (Get-Date).AddSeconds(20)
   while ((Get-Date) -lt $deadline -and !$daemon) {

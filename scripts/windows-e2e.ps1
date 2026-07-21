@@ -52,6 +52,23 @@ function Read-NostrPublicKey {
   throw "public_key not found in $Path"
 }
 
+function Get-UsableHostIPv4 {
+  $routes = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop |
+    Where-Object { $_.NextHop -ne '0.0.0.0' } |
+    Sort-Object RouteMetric
+  foreach ($route in $routes) {
+    $address = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue |
+      Where-Object {
+        $_.AddressState -eq 'Preferred' -and
+        $_.IPAddress -notlike '127.*' -and
+        $_.IPAddress -notlike '169.254.*'
+      } |
+      Select-Object -First 1 -ExpandProperty IPAddress
+    if ($address) { return $address }
+  }
+  throw 'No usable non-loopback IPv4 address found for the Windows e2e fixture'
+}
+
 function Read-Text {
   param([string]$Path)
   if (Test-Path $Path) {
@@ -201,26 +218,27 @@ try {
   Invoke-Nvpn @("init", "--force", "--config", $BobConfig)
   $AliceNpub = Read-NostrPublicKey $AliceConfig
   $BobNpub = Read-NostrPublicKey $BobConfig
+  $hostIPv4 = Get-UsableHostIPv4
 
   Invoke-Nvpn @(
     "set", "--config", $AliceConfig,
     "--node-name", "Windows GUI",
     "--listen-port", "55181",
-    "--endpoint", "127.0.0.1:55181",
+    "--endpoint", "${hostIPv4}:55181",
     "--fips-advertise-endpoint", "true",
     "--participant", $AliceNpub,
     "--participant", $BobNpub,
-    "--fips-peer-endpoint", "$BobNpub=127.0.0.1:55182"
+    "--fips-peer-endpoint", "${BobNpub}=${hostIPv4}:55182"
   )
   Invoke-Nvpn @(
     "set", "--config", $BobConfig,
     "--node-name", "Windows peer",
     "--listen-port", "55182",
-    "--endpoint", "127.0.0.1:55182",
+    "--endpoint", "${hostIPv4}:55182",
     "--fips-advertise-endpoint", "true",
     "--participant", $AliceNpub,
     "--participant", $BobNpub,
-    "--fips-peer-endpoint", "$AliceNpub=127.0.0.1:55181"
+    "--fips-peer-endpoint", "${AliceNpub}=${hostIPv4}:55181"
   )
 
   if ($PacketDebug) {
