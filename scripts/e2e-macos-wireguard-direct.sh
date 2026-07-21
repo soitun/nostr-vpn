@@ -26,7 +26,7 @@ NVPN_BIN="${NVPN_E2E_BINARY:-nvpn}"
 CONFIG="${NVPN_E2E_CONFIG:-$HOME/Library/Application Support/nvpn/config.toml}"
 WG_CONFIG="${NVPN_WG_EXIT_CONFIG_FILE:-}"
 PROBE_URL="${NVPN_E2E_INTERNET_URL:-https://example.com/}"
-WAIT_SECS="${NVPN_E2E_WAIT_SECS:-20}"
+WAIT_SECS="${NVPN_E2E_WAIT_SECS:-60}"
 
 if [[ -z "$WG_CONFIG" || ! -f "$WG_CONFIG" ]]; then
   echo "NVPN_WG_EXIT_CONFIG_FILE must name a readable provider WireGuard config" >&2

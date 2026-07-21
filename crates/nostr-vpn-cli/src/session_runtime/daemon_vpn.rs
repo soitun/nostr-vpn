@@ -399,6 +399,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 }
             }
             _ = state_interval.tick() => {
+                // Taking the request removes the control file, which is the CLI's
+                // acknowledgement. Do this before any maintenance that may await
+                // tunnel I/O or a route refresh; the request is still applied at
+                // the normal point below, before the runtime configuration sync.
+                let pending_control_request = take_daemon_control_request(&config_path);
                 if let Err(error) = app.ensure_pending_nostr_join_request(unix_timestamp()) {
                     eprintln!("daemon: failed to rotate expired join request: {error}");
                 }
@@ -656,7 +661,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 {
                     vpn_status = format!("automatic paid-exit failover failed ({error})");
                 }
-                if let Some(request) = take_daemon_control_request(&config_path) {
+                if let Some(request) = pending_control_request {
                     let publish_fips_roster_after_control =
                         matches!(request, DaemonControlRequest::Reload | DaemonControlRequest::Resume);
                     let control_result = match request {
