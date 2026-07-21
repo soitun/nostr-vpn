@@ -879,25 +879,14 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     if publish_fips_roster_after_control
                         && let Some(runtime) = fips_tunnel_runtime.as_ref()
                     {
-                        if let Err(error) = publish_fips_active_network_roster(
+                        publish_fips_control_updates(
                             runtime,
                             &app,
                             &config_path,
                             &mut pending_fips_roster_recipients,
+                            fips_sync_succeeded,
                         )
-                        {
-                            eprintln!(
-                                "fips: roster publish failed after control request: {error}"
-                            );
-                        }
-                        if let Err(error) = broadcast_local_fips_capabilities(runtime, &app).await {
-                            eprintln!(
-                                "fips: capabilities broadcast failed after control request: {error}"
-                            );
-                        }
-                        if fips_sync_succeeded {
-                            start_queued_join_roster_deliveries(runtime, &app, &config_path);
-                        }
+                        .await;
                     }
                     let fips_peer_statuses = current_fips_peer_statuses!(fips_tunnel_runtime);
                     let fips_relay_statuses =

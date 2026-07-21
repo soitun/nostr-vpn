@@ -4,6 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.1.2 - 2026-07-21
+
+### Fixed
+
+- Deliver signed QR join approvals immediately instead of waiting for the next
+  daemon heartbeat, and refresh mobile onboarding promptly once the joined
+  network is ready.
+- Keep the authenticated mobile onboarding route alive while switching to the
+  joined network scope so the new configuration can be acknowledged reliably.
+- Avoid duplicate macOS daemon reloads after applying a configuration change.
+
 ## 4.1.1 - 2026-07-21
 
 ### Fixed

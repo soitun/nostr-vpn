@@ -10,6 +10,7 @@ use nostr_vpn_core::join_delivery::{
 };
 
 use crate::fips_private_mesh::FipsPrivateTunnelRuntime;
+use crate::{broadcast_local_fips_capabilities, publish_fips_active_network_roster};
 
 static IN_FLIGHT_JOIN_ROSTERS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
@@ -31,6 +32,26 @@ pub(super) fn respond_to_join_request(
         })
         .map_err(|error| error.to_string());
     let _ = request.response.send(response);
+}
+
+pub(super) async fn publish_fips_control_updates(
+    runtime: &FipsPrivateTunnelRuntime,
+    app: &AppConfig,
+    config_path: &Path,
+    pending_roster_recipients: &mut HashSet<String>,
+    fips_sync_succeeded: bool,
+) {
+    if let Err(error) =
+        publish_fips_active_network_roster(runtime, app, config_path, pending_roster_recipients)
+    {
+        eprintln!("fips: roster publish failed after control request: {error}");
+    }
+    if let Err(error) = broadcast_local_fips_capabilities(runtime, app).await {
+        eprintln!("fips: capabilities broadcast failed after control request: {error}");
+    }
+    if fips_sync_succeeded {
+        start_queued_join_roster_deliveries(runtime, app, config_path);
+    }
 }
 
 fn claim_join_roster_delivery(path: &Path) -> bool {
