@@ -112,6 +112,16 @@ impl SecureDnsRuntime {
         }
     }
 
+    #[cfg(target_os = "windows")]
+    pub(crate) fn update_windows_wireguard_dns(
+        &mut self,
+        interface: Option<&str>,
+        servers: &[IpAddr],
+    ) -> Result<()> {
+        self._system_dns
+            .update_windows_wireguard_dns(interface, servers)
+    }
+
     pub(crate) async fn stop(self) {
         let mut runtime = self;
         runtime.udp_task.abort();
@@ -439,6 +449,22 @@ impl SystemDnsGuard {
         #[allow(unreachable_code)]
         Err(anyhow!("secure system DNS is unsupported on this platform"))
     }
+
+    #[cfg(target_os = "windows")]
+    fn update_windows_wireguard_dns(
+        &mut self,
+        interface: Option<&str>,
+        servers: &[IpAddr],
+    ) -> Result<()> {
+        match interface.filter(|_| !servers.is_empty()) {
+            Some(interface) => {
+                run_windows_powershell(&windows_wireguard_dns_script(interface, servers))
+            }
+            None => {
+                run_windows_powershell(&windows_secure_dns_install_script(self.interface_index))
+            }
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -529,6 +555,30 @@ fn windows_secure_dns_uninstall_script(interface_index: u32) -> String {
             "Clear-DnsClientCache -ErrorAction SilentlyContinue\n",
         ),
         interface_index
+    )
+}
+
+#[cfg(any(target_os = "windows", test))]
+fn windows_wireguard_dns_script(interface: &str, servers: &[IpAddr]) -> String {
+    let interface = interface.replace('\'', "''");
+    let servers = servers
+        .iter()
+        .map(|server| format!("'{server}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        concat!(
+            "$ErrorActionPreference = 'Stop'\n",
+            "$displayName = 'nostr-vpn secure DNS'\n",
+            "$comment = 'nostr-vpn authenticated DNS-over-HTTPS stub'\n",
+            "$wireGuard = Get-NetAdapter -Name '{}' -ErrorAction Stop\n",
+            "Set-DnsClientServerAddress -InterfaceIndex $wireGuard.ifIndex -ServerAddresses @({}) -ErrorAction Stop\n",
+            "Get-DnsClientNrptRule -ErrorAction SilentlyContinue | Where-Object {{ $_.DisplayName -eq $displayName -or $_.Comment -eq $comment }} | ForEach-Object {{ $_ | Remove-DnsClientNrptRule -Force -ErrorAction SilentlyContinue | Out-Null }}\n",
+            "Add-DnsClientNrptRule -Namespace '.nvpn' -NameServers '127.0.0.1' -DisplayName $displayName -Comment $comment -ErrorAction Stop | Out-Null\n",
+            "Add-DnsClientNrptRule -Namespace '.fips' -NameServers '127.0.0.1' -DisplayName $displayName -Comment $comment -ErrorAction Stop | Out-Null\n",
+            "Clear-DnsClientCache -ErrorAction SilentlyContinue\n",
+        ),
+        interface, servers
     )
 }
 
@@ -624,6 +674,19 @@ mod tests {
         let cleanup = windows_secure_dns_uninstall_script(42);
         assert!(cleanup.contains("-InterfaceIndex 42"));
         assert!(cleanup.contains("-ResetServerAddresses"));
+    }
+
+    #[test]
+    fn windows_wireguard_policy_uses_provider_dns_and_keeps_magic_dns_local() {
+        let script = windows_wireguard_dns_script(
+            "nvpn-wg-'exit",
+            &["10.99.99.1".parse().expect("DNS address")],
+        );
+        assert!(script.contains("-Name 'nvpn-wg-''exit'"));
+        assert!(script.contains("-ServerAddresses @('10.99.99.1')"));
+        assert!(script.contains("-Namespace '.nvpn'"));
+        assert!(script.contains("-Namespace '.fips'"));
+        assert!(!script.contains("-Namespace '.' -NameServers"));
     }
 
     #[test]

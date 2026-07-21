@@ -105,13 +105,19 @@ impl FipsPrivateTunnelRuntime {
         runtime
             .reconcile_windows_wg_upstream(&config.wireguard_exit)
             .await;
+        let wireguard_interface = runtime
+            .wg_upstream
+            .as_ref()
+            .map(|upstream| upstream.iface.clone());
+        let servers = if wireguard_interface.is_some() {
+            config.wireguard_dns_servers()
+        } else {
+            Vec::new()
+        };
         if let Some(secure_dns) = runtime.secure_dns.as_mut() {
-            let servers = if runtime.wg_upstream.is_some() {
-                config.wireguard_dns_servers()
-            } else {
-                Vec::new()
-            };
-            secure_dns.update_config(config.magic_dns_records.clone(), servers)?;
+            secure_dns.update_config(config.magic_dns_records.clone(), servers.clone())?;
+            secure_dns
+                .update_windows_wireguard_dns(wireguard_interface.as_deref(), &servers)?;
         }
         Ok(runtime)
     }
@@ -163,13 +169,19 @@ impl FipsPrivateTunnelRuntime {
         }
         self.reconcile_windows_wg_upstream(&config.wireguard_exit)
             .await;
+        let wireguard_interface = self
+            .wg_upstream
+            .as_ref()
+            .map(|upstream| upstream.iface.clone());
+        let servers = if wireguard_interface.is_some() {
+            config.wireguard_dns_servers()
+        } else {
+            Vec::new()
+        };
         if let Some(secure_dns) = self.secure_dns.as_mut() {
-            let servers = if self.wg_upstream.is_some() {
-                config.wireguard_dns_servers()
-            } else {
-                Vec::new()
-            };
-            secure_dns.update_config(config.magic_dns_records.clone(), servers)?;
+            secure_dns.update_config(config.magic_dns_records.clone(), servers.clone())?;
+            secure_dns
+                .update_windows_wireguard_dns(wireguard_interface.as_deref(), &servers)?;
         }
         self.config = config;
         Ok(())

@@ -200,6 +200,13 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     &tunnel_runtime,
                     (app.wireguard_exit.enabled && app.wireguard_exit.configured())
                         .then_some(app.wireguard_exit.interface.trim()),
+                    (app.wireguard_exit.enabled && app.wireguard_exit.configured())
+                        .then(|| {
+                            strip_cidr(&app.wireguard_exit.address)
+                                .parse::<Ipv4Addr>()
+                                .ok()
+                        })
+                        .flatten(),
                     &network_snapshot,
                     capture_network_snapshot_for_daemon().await,
                 );

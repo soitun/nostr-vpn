@@ -710,6 +710,7 @@ fn fips_roster_pubkeys(app: &AppConfig, own_pubkey: Option<&str>) -> HashSet<Str
 fn prefer_nonself_tunnel_snapshot(
     tunnel_runtime: &CliTunnelRuntime,
     wireguard_exit_interface: Option<&str>,
+    wireguard_exit_ipv4: Option<Ipv4Addr>,
     previous: &crate::diagnostics::NetworkSnapshot,
     latest: crate::diagnostics::NetworkSnapshot,
 ) -> crate::diagnostics::NetworkSnapshot {
@@ -725,7 +726,8 @@ fn prefer_nonself_tunnel_snapshot(
     match latest.default_interface.as_deref() {
         Some(iface)
             if tunnel_runtime.owns_interface(iface)
-                || wireguard_exit_interface.is_some_and(|managed| managed == iface) =>
+                || wireguard_exit_interface.is_some_and(|managed| managed == iface)
+                || wireguard_exit_ipv4.is_some_and(|managed| latest.primary_ipv4 == Some(managed)) =>
         {
             previous.clone()
         }

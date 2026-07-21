@@ -24,7 +24,7 @@ mod tests {
         };
 
         let preferred =
-            prefer_nonself_tunnel_snapshot(&tunnel_runtime, None, &previous, latest);
+            prefer_nonself_tunnel_snapshot(&tunnel_runtime, None, None, &previous, latest);
 
         assert_eq!(preferred.default_interface.as_deref(), Some("eth0"));
         assert_eq!(preferred.primary_ipv4, Some(Ipv4Addr::new(192, 168, 64, 2)));
@@ -51,7 +51,7 @@ mod tests {
         };
 
         let preferred =
-            prefer_nonself_tunnel_snapshot(&tunnel_runtime, None, &previous, latest);
+            prefer_nonself_tunnel_snapshot(&tunnel_runtime, None, None, &previous, latest);
 
         assert_eq!(preferred.primary_ipv4, Some(Ipv4Addr::new(192, 168, 64, 5)));
         assert_eq!(preferred.gateway_ipv4, Some(Ipv4Addr::new(192, 168, 64, 1)));
@@ -81,6 +81,37 @@ mod tests {
         let preferred = prefer_nonself_tunnel_snapshot(
             &tunnel_runtime,
             Some("nvpn-wg-exit"),
+            Some(Ipv4Addr::new(10, 99, 99, 2)),
+            &previous,
+            latest,
+        );
+
+        assert_eq!(preferred, previous);
+    }
+    #[test]
+    fn prefer_nonself_tunnel_snapshot_ignores_windows_wireguard_guid() {
+        let tunnel_runtime = CliTunnelRuntime::new("nvpn");
+        let previous = crate::diagnostics::NetworkSnapshot {
+            default_interface: Some("{PHYSICAL-GUID}".to_string()),
+            default_interface_mtu: Some(1500),
+            primary_ipv4: Some(Ipv4Addr::new(192, 0, 2, 147)),
+            primary_ipv6: None,
+            gateway_ipv4: Some(Ipv4Addr::new(192, 0, 2, 1)),
+            gateway_ipv6: None,
+        };
+        let latest = crate::diagnostics::NetworkSnapshot {
+            default_interface: Some("{WIREGUARD-GUID}".to_string()),
+            default_interface_mtu: Some(1420),
+            primary_ipv4: Some(Ipv4Addr::new(10, 99, 99, 2)),
+            primary_ipv6: None,
+            gateway_ipv4: None,
+            gateway_ipv6: None,
+        };
+
+        let preferred = prefer_nonself_tunnel_snapshot(
+            &tunnel_runtime,
+            Some("nvpn-wg-exit"),
+            Some(Ipv4Addr::new(10, 99, 99, 2)),
             &previous,
             latest,
         );
