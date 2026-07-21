@@ -226,7 +226,7 @@ try {
   }
 
   $CargoOutputDir = Join-Path $CargoTargetRoot $CargoProfile
-  $AppCargoDir = Join-Path $Root "target\$Configuration"
+  $AppCargoDir = $CargoOutputDir
   New-Item -ItemType Directory -Force -Path $AppCargoDir | Out-Null
   foreach ($FileName in @("nostr_vpn_app_core.dll", "nvpn.exe")) {
     $Source = Join-Path $CargoOutputDir $FileName
@@ -238,10 +238,10 @@ try {
 
   if ($Publish -or $Installer) {
     $SelfContained = if ($Installer) { "true" } else { "false" }
-    Invoke-Checked dotnet @("publish", $Project, "-c", $Configuration, "-r", $Runtime, "--self-contained", $SelfContained, "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true")
+    Invoke-Checked dotnet @("publish", $Project, "-c", $Configuration, "-r", $Runtime, "--self-contained", $SelfContained, "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true", "-p:NvpnCargoArtifactsDir=$AppCargoDir")
     $DotnetOutputDir = Join-Path $Root "windows\NostrVpn.Windows\bin\$Configuration\net8.0-windows\$Runtime\publish"
   } else {
-    Invoke-Checked dotnet @("build", $Project, "-c", $Configuration, "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true")
+    Invoke-Checked dotnet @("build", $Project, "-c", $Configuration, "-p:Deterministic=true", "-p:ContinuousIntegrationBuild=true", "-p:NvpnCargoArtifactsDir=$AppCargoDir")
     $DotnetOutputDir = Join-Path $Root "windows\NostrVpn.Windows\bin\$Configuration\net8.0-windows"
   }
   Assert-BundledWindowsHelpers $DotnetOutputDir

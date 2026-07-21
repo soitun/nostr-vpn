@@ -385,8 +385,15 @@ assert_bidirectional_continuity() {
 
 cleanup
 
-"${COMPOSE[@]}" build >/dev/null
-"${COMPOSE[@]}" up -d node-a node-b node-c >/dev/null
+case "${NVPN_E2E_SKIP_NODE_BUILD:-0}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    "${COMPOSE[@]}" up -d --no-build node-a node-b node-c >/dev/null
+    ;;
+  *)
+    "${COMPOSE[@]}" build node-a >/dev/null
+    "${COMPOSE[@]}" up -d --no-build node-a node-b node-c >/dev/null
+    ;;
+esac
 for service in node-a node-b node-c; do
   wait_for_service "$service"
 done

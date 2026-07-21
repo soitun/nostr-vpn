@@ -517,6 +517,7 @@ ${pathSetup}
 ${deterministicEnvSetup}
 Set-Location ${guestRepoQuoted}
 cargo build --release --locked --target ${psQuote(target)} -p nvpn
+if ($LASTEXITCODE -ne 0) { throw "cargo build failed with exit code $LASTEXITCODE" }
 $cli = Join-Path ${guestRepoQuoted} ${psQuote(`target\\${target}\\release\\nvpn.exe`)}
 if (!(Test-Path $cli)) { throw "Missing nvpn.exe for ${target}" }
 $wintun = Join-Path ${guestRepoQuoted} ${psQuote(`target\\${target}\\release\\wintun.dll`)}
@@ -553,8 +554,11 @@ Remove-Item -Recurse -Force $tempDir
 ${pathSetup}
 ${deterministicEnvSetup}
 Set-Location ${guestRepoQuoted}
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-build.ps1 -Configuration Release -Publish -Installer -Tag ${psQuote(tag)} -OutputDir ${guestDistQuoted}
+$env:CARGO_TARGET_DIR = Join-Path ${guestDistQuoted} (${psQuote(`windows-release-cargo-${tag}-`)} + $PID)
 $installer = ${psQuote(`${guestDist}\\${installerName}`)}
+Remove-Item -Force $installer -ErrorAction SilentlyContinue
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\\scripts\\windows-build.ps1 -Configuration Release -Publish -Installer -Tag ${psQuote(tag)} -OutputDir ${guestDistQuoted}
+if ($LASTEXITCODE -ne 0) { throw "windows-build.ps1 failed with exit code $LASTEXITCODE" }
 if (!(Test-Path $installer)) { throw "Missing Windows installer: $installer" }
 `,
       { dryRun },

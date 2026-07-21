@@ -25,7 +25,10 @@ ROAM_NODE_C_IP="${NVPN_E2E_ROAM_NODE_C_IP:-$ROAM_UNDERLAY_PREFIX.12}"
 # Normal link-dead detection is 30s. Leave enough room for Docker scheduling,
 # status polling, and route-cache handoff before declaring fallback broken.
 FALLBACK_DEADLINE_SECS="${NVPN_E2E_ROAMING_FALLBACK_SECS:-60}"
-DIRECT_RECOVERY_DEADLINE_SECS="${NVPN_E2E_DIRECT_RECOVERY_SECS:-25}"
+# Consecutive flaps can meet a draining rekey and several bounded direct-probe
+# retries. Each active-path retry carries 10-20s of deterministic jitter, so
+# allow three attempts without weakening the payload-continuity assertions.
+DIRECT_RECOVERY_DEADLINE_SECS="${NVPN_E2E_DIRECT_RECOVERY_SECS:-60}"
 FALLBACK_HOLD_SECS="${NVPN_E2E_ROAMING_FALLBACK_HOLD_SECS:-12}"
 PAYLOAD_PROBE_INTERVAL_SECS="${NVPN_E2E_ROAMING_PAYLOAD_PROBE_INTERVAL_SECS:-1}"
 PAYLOAD_RECOVERY_DEADLINE_SECS="${NVPN_E2E_ROAMING_PAYLOAD_RECOVERY_SECS:-10}"
@@ -865,7 +868,13 @@ cleanup
 
 # All three nodes run the same artifact. Build one service/image rather than
 # asking BuildKit to perform three identical release compilations in parallel.
-"${COMPOSE[@]}" build node-a >/dev/null
+case "${NVPN_E2E_SKIP_NODE_BUILD:-0}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    ;;
+  *)
+    "${COMPOSE[@]}" build node-a >/dev/null
+    ;;
+esac
 "${COMPOSE[@]}" up -d --no-build node-a node-b node-c >/dev/null
 for service in node-a node-b node-c; do
   wait_for_service "$service"

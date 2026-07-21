@@ -144,6 +144,13 @@ Release gate before version bumps and tags:
 just release-gate
 ```
 
+The gate overlaps its resource-isolated Windows and Docker-build lanes with
+host validation, writes each lane to `artifacts/release-gate-logs`, and reuses
+one candidate Docker image across functional and performance checks. NAT and
+the kernel/userspace WireGuard fixtures also overlap on isolated subnets.
+Roaming, throughput, host-pair, physical-device, and idle-CPU measurements
+remain serial so concurrency cannot skew their results.
+
 Useful focused checks:
 
 ```bash

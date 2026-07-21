@@ -337,13 +337,19 @@ wait_for_payload_file() {
 
 cleanup
 
-"${COMPOSE[@]}" build node-a nat-b node-b >/dev/null
-"${COMPOSE[@]}" up -d node-a nat-b >/dev/null
+case "${NVPN_E2E_SKIP_NODE_BUILD:-0}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    ;;
+  *)
+    "${COMPOSE[@]}" build node-a >/dev/null
+    ;;
+esac
+"${COMPOSE[@]}" up -d --no-build node-a nat-b >/dev/null
 for service in node-a nat-b; do
   wait_for_service "$service"
 done
 
-"${COMPOSE[@]}" up -d node-b >/dev/null
+"${COMPOSE[@]}" up -d --no-build node-b >/dev/null
 wait_for_service node-b
 
 NODE_B_PRIVATE_IFACE="$(private_iface_for_ip node-b 172.30.242.3/24)"

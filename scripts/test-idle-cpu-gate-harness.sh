@@ -165,6 +165,8 @@ grep -Fq './scripts/mobile-android-smoke.sh --vpn-cycle --create-network' "$RELE
   || fail "release gate does not run the Android background active-VPN idle CPU smoke"
 grep -Fq 'NVPN_ANDROID_PACKAGE="fi.siriusbusiness.nvpn.releasegate"' "$RELEASE_GATE" \
   || fail "release gate Android smoke does not use an isolated package"
+grep -Fq 'env NVPN_ANDROID_IDLE_CPU_MAX_PERCENT="$ANDROID_ACTIVE_OVERLAY_IDLE_CPU_MAX_PERCENT"' "$RELEASE_GATE" \
+  || fail "release gate WireGuard exit smoke does not use the active Android overlay CPU bound"
 grep -Fq 'environmentVariable("NVPN_ANDROID_PACKAGE")' "$ROOT_DIR/android/app/build.gradle.kts" \
   || fail "Android Gradle application id cannot follow the smoke package override"
 grep -Fq 'ACTION_PACKAGE_NAME="${NVPN_ANDROID_ACTION_PACKAGE:-${NVPN_DEFAULT_APP_ID:-fi.siriusbusiness.nvpn}}"' "$MOBILE_ANDROID_SMOKE" \
@@ -209,6 +211,19 @@ grep -Fq 'assert_idle_daemon_cpu_below node-a' "$ROOT_DIR/scripts/e2e-fips-route
   || fail "release-gated Linux active-tunnel e2e has no daemon idle CPU check"
 grep -Fq 'windows-daemon-idle-cpu.ps1' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
   || fail "release-gated Windows VM smoke has no daemon idle CPU check"
+grep -Fq 'Remove-Item -Force \$installer' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
+  || fail "Windows VM smoke can reuse a stale installer after a failed build"
+grep -Fq '\$env:CARGO_TARGET_DIR = Join-Path' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
+  || fail "Windows VM smoke can rebuild binaries that its management service still locks"
+grep -Fq '$env:CARGO_TARGET_DIR = Join-Path' "$ROOT_DIR/scripts/local-release.mjs" \
+  || fail "Windows release can rebuild binaries that the VM management service still locks"
+grep -Fq 'NVPN_WINDOWS_SKIP_GIT_SYNC' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
+  || fail "Windows VM app smoke cannot reuse a release-gate candidate sync"
+grep -Fq 'NVPN_WINDOWS_SKIP_GIT_SYNC' "$ROOT_DIR/scripts/windows-vm-wireguard-exit-e2e.sh" \
+  || fail "Windows WG smoke cannot reuse a release-gate candidate sync"
+if [[ "$(grep -Fc 'if (\$LASTEXITCODE -ne 0)' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh")" -lt 3 ]]; then
+  fail "Windows VM smoke ignores a nested build, installer, or daemon check failure"
+fi
 grep -Fq 'Get-UsableHostIPv4' "$ROOT_DIR/scripts/windows-daemon-idle-cpu.ps1" \
   || fail "Windows daemon idle CPU fixture does not discover a usable host address"
 if grep -F -- '--fips-peer-endpoint' "$ROOT_DIR/scripts/windows-daemon-idle-cpu.ps1" | grep -Fq '127.0.0.1'; then

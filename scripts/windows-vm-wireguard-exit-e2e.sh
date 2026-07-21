@@ -97,7 +97,14 @@ if [[ ! "$WAIT_SECS" =~ ^[1-9][0-9]*$ || ! "$SETTLE_SECS" =~ ^[0-9]+$ ]]; then
   exit 2
 fi
 
-"$ROOT/scripts/windows-vm-git-sync.sh" "$SSH_HOST"
+case "${NVPN_WINDOWS_SKIP_GIT_SYNC:-0}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    echo "Skipping Windows VM git sync; release-gate lane already synced the candidate."
+    ;;
+  *)
+    "$ROOT/scripts/windows-vm-git-sync.sh" "$SSH_HOST"
+    ;;
+esac
 
 BUILD_CONFIGURATION="Debug"
 BUILD_PROFILE="debug"

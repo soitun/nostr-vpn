@@ -27,10 +27,10 @@ ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PROJECT_NAME="nostr-vpn-e2e-wireguard-exit-userspace"
 COMPOSE=(docker compose -p "$PROJECT_NAME" -f "$ROOT_DIR/docker-compose.wireguard-exit-e2e.yml")
 
-WG_UPSTREAM_IP="10.203.0.20"
-WG_UPSTREAM_PUBLIC_IP="203.0.113.20"
-NODE_A_IP="10.203.0.10"
-TARGET_IP="203.0.113.100"
+WG_UPSTREAM_IP="${NVPN_WG_EXIT_UPSTREAM_IP:-10.203.0.20}"
+WG_UPSTREAM_PUBLIC_IP="${NVPN_WG_EXIT_UPSTREAM_PUBLIC_IP:-203.0.113.20}"
+NODE_A_IP="${NVPN_WG_EXIT_NODE_A_IP:-10.203.0.10}"
+TARGET_IP="${NVPN_WG_EXIT_TARGET_IP:-203.0.113.100}"
 WG_LISTEN_PORT="51820"
 WG_TUNNEL_NET="10.99.99.0/24"
 WG_SERVER_TUNNEL_IP="10.99.99.1"
@@ -89,8 +89,14 @@ wait_for_service() {
 
 cleanup
 
-"${COMPOSE[@]}" build wg-upstream node-a internet-target >/dev/null
-"${COMPOSE[@]}" up -d wg-upstream node-a internet-target >/dev/null
+case "${NVPN_E2E_SKIP_NODE_BUILD:-0}" in
+  1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+    ;;
+  *)
+    "${COMPOSE[@]}" build node-a >/dev/null
+    ;;
+esac
+"${COMPOSE[@]}" up -d --no-build wg-upstream node-a internet-target >/dev/null
 for service in wg-upstream node-a internet-target; do
   wait_for_service "$service"
 done

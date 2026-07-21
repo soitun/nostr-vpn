@@ -3,6 +3,7 @@ services:
   # Without the WireGuard tunnel, node-a cannot reach this host, so any
   # successful ping to it proves traffic is going through the WG upstream.
   internet-target:
+    image: ${NVPN_E2E_NODE_IMAGE:-nostr-vpn-e2e-node}
     build:
       context: .
       dockerfile: Dockerfile.e2e
@@ -21,9 +22,10 @@ services:
     entrypoint: ["sleep", "infinity"]
     networks:
       public:
-        ipv4_address: 203.0.113.100
+        ipv4_address: ${NVPN_WG_EXIT_TARGET_IP:-203.0.113.100}
 
   wg-upstream:
+    image: ${NVPN_E2E_NODE_IMAGE:-nostr-vpn-e2e-node}
     build:
       context: .
       dockerfile: Dockerfile.e2e
@@ -48,11 +50,12 @@ services:
     entrypoint: ["sleep", "infinity"]
     networks:
       internet:
-        ipv4_address: 10.203.0.20
+        ipv4_address: ${NVPN_WG_EXIT_UPSTREAM_IP:-10.203.0.20}
       public:
-        ipv4_address: 203.0.113.20
+        ipv4_address: ${NVPN_WG_EXIT_UPSTREAM_PUBLIC_IP:-203.0.113.20}
 
   node-a:
+    image: ${NVPN_E2E_NODE_IMAGE:-nostr-vpn-e2e-node}
     build:
       context: .
       dockerfile: Dockerfile.e2e
@@ -73,9 +76,10 @@ services:
     entrypoint: ["sleep", "infinity"]
     networks:
       internet:
-        ipv4_address: 10.203.0.10
+        ipv4_address: ${NVPN_WG_EXIT_NODE_A_IP:-10.203.0.10}
 
   node-b:
+    image: ${NVPN_E2E_NODE_IMAGE:-nostr-vpn-e2e-node}
     build:
       context: .
       dockerfile: Dockerfile.e2e
@@ -96,16 +100,16 @@ services:
     entrypoint: ["sleep", "infinity"]
     networks:
       internet:
-        ipv4_address: 10.203.0.11
+        ipv4_address: ${NVPN_WG_EXIT_NODE_B_IP:-10.203.0.11}
 
 networks:
   internet:
     driver: bridge
     ipam:
       config:
-        - subnet: 10.203.0.0/24
+        - subnet: ${NVPN_WG_EXIT_INTERNET_SUBNET:-10.203.0.0/24}
   public:
     driver: bridge
     ipam:
       config:
-        - subnet: 203.0.113.0/24
+        - subnet: ${NVPN_WG_EXIT_PUBLIC_SUBNET:-203.0.113.0/24}

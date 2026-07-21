@@ -66,6 +66,8 @@ include!("session_runtime/connect_vpn.rs");
 
 #[path = "session_runtime/daemon_vpn/heartbeat.rs"]
 mod daemon_vpn_heartbeat;
+#[path = "session_runtime/daemon_vpn/intervals.rs"]
+mod daemon_vpn_intervals;
 #[path = "session_runtime/daemon_vpn/join_approval.rs"]
 mod daemon_vpn_join_approval;
 #[cfg(feature = "paid-exit")]
@@ -78,8 +80,8 @@ mod daemon_vpn_startup;
 #[cfg(feature = "paid-exit")]
 use daemon_vpn_paid_exit::*;
 use {
-    daemon_vpn_heartbeat::*, daemon_vpn_join_approval::*, daemon_vpn_shutdown::*,
-    daemon_vpn_startup::*,
+    daemon_vpn_heartbeat::*, daemon_vpn_intervals::*, daemon_vpn_join_approval::*,
+    daemon_vpn_shutdown::*, daemon_vpn_startup::*,
 };
 
 include!("session_runtime/daemon_vpn.rs");

@@ -509,10 +509,16 @@
 
     #[test]
     fn connect_vpn_allows_a_pending_device_approval_without_a_network() {
+        let dir = unique_service_test_dir("nvpn-pending-approval-connect");
         let error = anyhow!("boom");
         let mut runtime = NativeAppRuntime::from_startup_error(&error);
         runtime.startup_error = None;
         runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("persist isolated mobile config");
 
         runtime.dispatch(NativeAppAction::ConnectVpn);
         let state = runtime.state();
@@ -520,6 +526,8 @@
         assert!(state.error.is_empty(), "{}", state.error);
         assert!(state.vpn_enabled);
         assert!(state.vpn_active);
+
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]

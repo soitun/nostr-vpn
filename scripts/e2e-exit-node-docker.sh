@@ -398,6 +398,7 @@ cleanup
 
 if truthy "$PAID_EXIT_MODE"; then
   export NVPN_EXIT_NODE_E2E_DOCKERFILE="${NVPN_EXIT_NODE_E2E_DOCKERFILE:-Dockerfile.paid-exit-e2e}"
+  export NVPN_EXIT_NODE_E2E_IMAGE="${NVPN_EXIT_NODE_E2E_IMAGE:-nostr-vpn-paid-exit-e2e-node}"
   export NVPN_CASHU_SERVICE_REPO_PATH="${NVPN_CASHU_SERVICE_REPO_PATH:-../cashu-service}"
   export NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH="${NVPN_CASHU_SPILMAN_CHANNELS_REPO_PATH:-../cashu_spilman_channels}"
 fi

@@ -4,6 +4,37 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.1.3 - 2026-07-22
+
+### Added
+
+- Add one cross-platform exit DNS policy with automatic WireGuard-profile DNS,
+  built-in or custom encrypted DNS, and explicit DNS-through-exit options.
+- Add physical Android and iOS WireGuard exit release coverage that proves
+  provider-side forwarding, profile DNS, public Internet access, TUN traffic,
+  and native device DNS/Internet restoration after disconnect.
+
+### Changed
+
+- Shorten release validation by running the remote Windows lane and one shared
+  Docker image build alongside host checks, then overlapping subnet-isolated
+  NAT and kernel/userspace WireGuard fixtures while keeping roaming, throughput,
+  device, and idle-CPU measurements contention-free and serial.
+
+### Fixed
+
+- Restore the original Direct route and DNS ownership after WireGuard and
+  private-exit transitions on macOS and Windows without disturbing scoped VPN
+  routes or the WireGuard endpoint's underlay route.
+- Keep daemon reload acknowledgements and offline paid-exit retries from
+  delaying tunnel maintenance and route convergence.
+- Keep iOS physical-device debug signing independent from the App Store
+  distribution identity used by release uploads.
+- Reduce joined iOS onboarding polling so an idle app stays within the mobile
+  CPU release budget.
+- Build Windows release and smoke-test artifacts away from the live service,
+  and fail instead of reusing an installer after a nested build error.
+
 ## 4.1.2 - 2026-07-21
 
 ### Fixed

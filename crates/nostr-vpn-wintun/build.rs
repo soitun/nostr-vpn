@@ -1,6 +1,7 @@
 use std::env;
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 fn main() {
@@ -27,19 +28,28 @@ fn main() {
     };
 
     let target_dll = target_dir.join("wintun.dll");
-    if let Err(error) = fs::copy(&source, &target_dll) {
-        println!(
-            "cargo:warning=failed to copy wintun.dll to {}: {}",
-            target_dll.display(),
-            error
-        );
-        return;
+    let already_current = files_identical(&source, &target_dll).unwrap_or(false);
+    if !already_current {
+        fs::copy(&source, &target_dll).unwrap_or_else(|error| {
+            panic!(
+                "failed to copy wintun.dll from {} to {}: {error}",
+                source.display(),
+                target_dll.display()
+            )
+        });
     }
 
     println!(
         "cargo:rustc-env=NOSTR_VPN_WINTUN_DLL_SOURCE={}",
         target_dll.display()
     );
+}
+
+fn files_identical(left: &Path, right: &Path) -> io::Result<bool> {
+    if fs::metadata(left)?.len() != fs::metadata(right)?.len() {
+        return Ok(false);
+    }
+    Ok(fs::read(left)? == fs::read(right)?)
 }
 
 fn find_wintun_dll() -> Result<PathBuf, String> {

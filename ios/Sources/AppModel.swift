@@ -13,7 +13,7 @@ final class AppModel: ObservableObject {
     static let vpnDisclosureAcceptedKey = "vpnDisclosureAccepted"
     static let vpnDisclosurePromptMessage = "Review VPN data use before turning VPN on."
     private static let normalRefreshNanoseconds: UInt64 = 2_000_000_000
-    private static let onboardingRefreshNanoseconds: UInt64 = 250_000_000
+    private static let onboardingRefreshNanoseconds: UInt64 = 1_000_000_000
 
     @Published var state: AppState
     @Published var actionInFlight = false

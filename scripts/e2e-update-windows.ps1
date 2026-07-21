@@ -33,6 +33,9 @@ Set-Content -Path $AssetPath -Value "nostr vpn windows update fixture" -Encoding
 
 if (!$SkipBuild) {
   powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root "scripts\windows-build.ps1") -Configuration $Configuration
+  if ($LASTEXITCODE -ne 0) {
+    throw "windows-build.ps1 failed with exit code $LASTEXITCODE"
+  }
 }
 if (!(Test-Path $AppExe)) {
   throw "Built Windows app not found: $AppExe"

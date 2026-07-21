@@ -46,15 +46,13 @@ case "$(uname -s)" in
     if [[ "$(id -u)" == "0" ]]; then
       exec "$NVPN_BIN" "${TEST_ARGS[@]}"
     fi
-    if sudo -n true 2>/dev/null; then
-      exec sudo -n "$NVPN_BIN" "${TEST_ARGS[@]}"
-    fi
     if [[ "${NVPN_WG_EXIT_HOST_INTERACTIVE_SUDO:-0}" =~ ^(1|true|TRUE|True|yes|YES|Yes|on|ON|On)$ ]]; then
       exec sudo "$NVPN_BIN" "${TEST_ARGS[@]}"
     fi
-    echo "WireGuard exit host e2e needs passwordless sudo for tun/route changes." >&2
-    echo "Set NVPN_WG_EXIT_HOST_INTERACTIVE_SUDO=1 for an interactive local run." >&2
-    exit 1
+    # Invoke the exact privileged test command instead of probing with a broad
+    # `sudo -n true`. A narrowly-scoped sudoers rule can therefore authorize
+    # this path without granting unrelated passwordless commands.
+    exec sudo -n "$NVPN_BIN" "${TEST_ARGS[@]}"
     ;;
   *)
     echo "WireGuard exit host e2e supports Darwin/Linux here; use scripts/windows-vm-wireguard-exit-e2e.sh for Windows." >&2

@@ -2,17 +2,10 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     let startup = initialize_daemon_vpn(&args).await?;
     let mut magic_dns_runtime = start_split_magic_dns(&startup.app);
     let (mut announce_interval, mut recent_peer_refresh_interval) = daemon_refresh_intervals(&args);
-    let mut state_interval = tokio::time::interval(Duration::from_secs(1));
-    state_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut intervals = daemon_vpn_intervals();
     #[cfg(feature = "paid-exit")]
     let mut last_paid_exit_usage_flush_at = Instant::now();
-    let mut tunnel_heartbeat_interval = tokio::time::interval(Duration::from_secs(2));
-    tunnel_heartbeat_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut last_runtime_heartbeat_at = WallTimeJumpObserver::new(unix_timestamp());
-    let mut runtime_resume_pending = false;
-    let mut network_interval =
-        tokio::time::interval(Duration::from_secs(DAEMON_NETWORK_REFRESH_INTERVAL_SECS));
-    network_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut platform_network_change_rx = spawn_platform_network_change_monitor();
     #[cfg(unix)]
     let mut terminate_signal =
@@ -129,14 +122,14 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     .await;
                 }
             }
-            _ = tunnel_heartbeat_interval.tick() => {
+            _ = intervals.tunnel_heartbeat.tick() => {
                 if observe_wall_time_jump(
                     &mut last_runtime_heartbeat_at,
                     unix_timestamp(),
                     MAJOR_LINK_CHANGE_TIME_JUMP_SECS,
                 ) {
-                    runtime_resume_pending = true;
-                    network_interval.reset_immediately();
+                    intervals.runtime_resume_pending = true;
+                    intervals.network.reset_immediately();
                 }
                 let vpn_active = daemon_vpn_active(vpn_enabled, expected_peers);
                 let maintain_fips = if vpn_active {
@@ -180,19 +173,19 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 }
                 drain_platform_network_changes(&mut platform_network_change_rx);
                 if reschedule_suppressed_platform_network_event(
-                    &mut network_interval,
+                    &mut intervals.network,
                     platform_network_event_suppressed_until,
                 ) {
                     continue;
                 }
                 platform_network_event_pending = true;
-                network_interval.reset_after(Duration::from_millis(
+                intervals.network.reset_after(Duration::from_millis(
                     DAEMON_NETWORK_EVENT_DEBOUNCE_MILLIS,
                 ));
             }
-            _ = network_interval.tick() => {
+            _ = intervals.network.tick() => {
                 let now = unix_timestamp();
-                let resumed_after_sleep = std::mem::take(&mut runtime_resume_pending);
+                let resumed_after_sleep = std::mem::take(&mut intervals.runtime_resume_pending);
                 if resumed_after_sleep {
                     eprintln!("daemon: sleep/wake detected; refreshing FIPS endpoint state");
                 }
@@ -354,7 +347,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         ),
                                 );
                             schedule_platform_network_settle_recheck(
-                                &mut network_interval,
+                                &mut intervals.network,
                                 platform_network_event,
                             );
                         }
@@ -405,7 +398,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                     }
                 }
             }
-            _ = state_interval.tick() => {
+            _ = intervals.state.tick() => {
                 // Taking the request removes the control file, which is the CLI's
                 // acknowledgement. Do this before any maintenance that may await
                 // tunnel I/O or a route refresh; the request is still applied at

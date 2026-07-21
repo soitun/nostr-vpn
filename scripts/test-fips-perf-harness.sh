@@ -1181,6 +1181,24 @@ test_dockerfile_supports_local_base_images() {
     assert_file_contains "$compose" 'NVPN_E2E_BUILDER_APT_INSTALL: ${NVPN_E2E_BUILDER_APT_INSTALL:-1}' "compose builder apt arg"
     assert_file_contains "$compose" 'NVPN_E2E_RUNTIME_APT_INSTALL: ${NVPN_E2E_RUNTIME_APT_INSTALL:-1}' "compose runtime apt arg"
   done
+
+  assert_file_contains "$ROOT_DIR/docker-compose.exit-node-e2e.yml" \
+    'image: ${NVPN_EXIT_NODE_E2E_IMAGE:-nostr-vpn-e2e-node}' \
+    "exit-node fixtures share the release-gate node image"
+  assert_file_contains "$ROOT_DIR/docker-compose.wireguard-exit-e2e.yml" \
+    'image: ${NVPN_E2E_NODE_IMAGE:-nostr-vpn-e2e-node}' \
+    "WireGuard fixtures share the release-gate node image"
+  for script in \
+    "$ROOT_DIR/scripts/e2e-fips-routed-udp-docker.sh" \
+    "$ROOT_DIR/scripts/e2e-fips-roaming-docker.sh" \
+    "$ROOT_DIR/scripts/e2e-fips-nat-safe-mtu-docker.sh" \
+    "$ROOT_DIR/scripts/e2e-wireguard-exit-docker.sh" \
+    "$ROOT_DIR/scripts/e2e-wireguard-exit-userspace-docker.sh"; do
+    assert_file_contains "$script" "NVPN_E2E_SKIP_NODE_BUILD" \
+      "functional Docker gate can reuse the release-gate node image"
+    assert_file_contains "$script" "up -d --no-build" \
+      "functional Docker gate prevents an implicit rebuild"
+  done
 }
 
 test_perf_harness_supports_cpu_stress() {
