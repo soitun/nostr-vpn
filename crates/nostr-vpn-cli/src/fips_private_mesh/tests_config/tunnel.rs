@@ -719,6 +719,75 @@
     }
 
     #[test]
+    fn config_reload_preserves_recent_peer_admission_budget() {
+        let alice_keys = Keys::generate();
+        let bob_keys = Keys::generate();
+        let ambient_keys = Keys::generate();
+        let alice_nsec = alice_keys.secret_key().to_bech32().expect("alice nsec");
+        let alice_pubkey = alice_keys.public_key().to_hex();
+        let bob_pubkey = bob_keys.public_key().to_hex();
+        let ambient_pubkey = ambient_keys.public_key().to_hex();
+        let network_id = "fips-reload-recent-peer-budget-test";
+
+        let mut app = AppConfig::default();
+        app.nostr.secret_key = alice_nsec;
+        app.connect_to_non_roster_fips_peers = true;
+        app.fips_bootstrap_enabled = false;
+        app.networks[0].enabled = true;
+        app.networks[0].network_id = network_id.to_string();
+        app.networks[0].devices = vec![alice_pubkey.clone(), bob_pubkey];
+
+        let mut recent = recent_peer_cache(&alice_keys, network_id);
+        assert!(recent.note_success(&ambient_pubkey, "1.1.1.2:51820", 1));
+
+        let current = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            Some(&recent),
+            &[],
+        )
+        .expect("current fips tunnel config");
+        let consistent_reload = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            Some(&recent),
+            &[],
+        )
+        .expect("reloaded fips tunnel config");
+        let dropped_cache = FipsPrivateTunnelConfig::from_app(
+            &app,
+            network_id,
+            "utun-test",
+            Some(&alice_pubkey),
+            None,
+            &[],
+        )
+        .expect("cache-free fips tunnel config");
+
+        assert_eq!(
+            current.open_discovery_max_pending,
+            consistent_reload.open_discovery_max_pending
+        );
+        assert!(!fips_tunnel_requires_endpoint_restart(
+            &current,
+            &consistent_reload
+        ));
+        assert_ne!(
+            current.open_discovery_max_pending,
+            dropped_cache.open_discovery_max_pending,
+            "dropping authenticated recent peers changes the admission budget"
+        );
+        assert!(
+            fips_tunnel_requires_endpoint_restart(&current, &dropped_cache),
+            "a reload path that drops recent-peer state would flap the endpoint"
+        );
+    }
+
+    #[test]
     fn tunnel_config_caps_bootstrap_transit_peers_without_exhausting_open_discovery() {
         let alice_keys = Keys::generate();
         let bob_keys = Keys::generate();

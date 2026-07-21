@@ -47,7 +47,6 @@ struct MobileEndpointReceiveContext<'a> {
     app_config: &'a Arc<RwLock<AppConfig>>,
     app_config_dirty: &'a AtomicBool,
     config_path: Option<&'a Path>,
-    network_id: &'a str,
     join_request_active: &'a AtomicBool,
     #[cfg_attr(not(feature = "paid-exit"), allow(dead_code))]
     state_control: &'a FipsControlTcpSender,
@@ -140,7 +139,14 @@ async fn handle_mobile_control_frame(
     encoded_len: usize,
     frame: FipsControlFrame,
 ) -> Result<()> {
-    if !control_frame_network_matches(control.network_id, &frame) {
+    let network_matches = {
+        let config = control
+            .config_state
+            .read()
+            .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
+        control_frame_network_matches(&config.network_id, &frame)
+    };
+    if !network_matches {
         return Ok(());
     }
     let Some(source_pubkey) = mobile_control_source_pubkey(control.mesh, source_peer, &frame)? else {
@@ -309,6 +315,14 @@ async fn apply_mobile_roster_runtime_update(
     control: &MobileEndpointReceiveContext<'_>,
     updated: MobileTunnelConfig,
 ) -> Result<()> {
+    let discovery_scope_changed = {
+        let current = control
+            .config_state
+            .read()
+            .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?;
+        normalize_runtime_network_id(&current.network_id)
+            != normalize_runtime_network_id(&updated.network_id)
+    };
     let local_routes = vec![updated.local_address.clone()];
     let updated_peers = updated.peers.clone();
     let updated_peer_identities = mobile_peer_identity_map(&updated_peers);
@@ -347,6 +361,13 @@ async fn apply_mobile_roster_runtime_update(
     }
     if updated.pending_join_request_recipient.trim().is_empty() {
         control.join_request_active.store(false, Ordering::Relaxed);
+    }
+    if discovery_scope_changed {
+        // The FIPS discovery scope is fixed when the endpoint binds. Keep the
+        // authenticated onboarding route alive until the mobile host consumes
+        // the joined config and restarts the packet tunnel in its new scope.
+        // Replacing peers here would drop that only working route first.
+        return Ok(());
     }
     refresh_mobile_endpoint_peers(
         control.endpoint,

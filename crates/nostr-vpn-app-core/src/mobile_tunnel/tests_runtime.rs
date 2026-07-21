@@ -417,7 +417,6 @@
         admin_app: AppConfig,
         admin_mobile: MobileTunnelConfig,
         config_path: &Path,
-        network_id: &str,
         state_control: &FipsControlTcpSender,
         received: ReceivedFipsControlFrame,
     ) -> (Arc<RwLock<AppConfig>>, AtomicBool) {
@@ -444,7 +443,6 @@
             app_config: &admin_app_config,
             app_config_dirty: &app_config_dirty,
             config_path: Some(config_path),
-            network_id,
             join_request_active: &join_request_active,
             state_control,
         };
@@ -521,7 +519,6 @@
             admin_app,
             admin_mobile,
             &config_path,
-            &network_id,
             &admin_control_sender,
             received,
         )
@@ -620,14 +617,15 @@
         .expect("guest join bootstrap");
 
         let admin_keys = Keys::generate();
+        let admin_pubkey = admin_keys.public_key().to_hex();
         let mut admin_app = AppConfig::generated();
         admin_app.nostr.secret_key = admin_keys.secret_key().to_secret_hex();
-        admin_app.nostr.public_key = admin_keys.public_key().to_hex();
+        admin_app.nostr.public_key = admin_pubkey.clone();
         admin_app.networks[0].name = "Home".to_string();
         admin_app.networks[0].enabled = true;
         admin_app.networks[0].network_id = "wss-join-roster".to_string();
-        admin_app.networks[0].devices = vec![admin_keys.public_key().to_hex()];
-        admin_app.networks[0].admins = vec![admin_keys.public_key().to_hex()];
+        admin_app.networks[0].devices = vec![admin_pubkey.clone()];
+        admin_app.networks[0].admins = vec![admin_pubkey.clone()];
         // A real household/team roster pushes the completed config past the
         // safe NetworkExtension response size, so the UI handoff must use the
         // chunked protocol instead of relying on a tiny two-device fixture.
@@ -783,6 +781,39 @@
         })
         .await
         .expect("guest should apply the signed roster");
+
+        let capabilities = FipsControlFrame::Capabilities {
+            network_id: "wss-join-roster".to_string(),
+            capabilities: Default::default(),
+        };
+        let received_before = guest
+            .presence
+            .read()
+            .ok()
+            .and_then(|presence| presence.get(&admin_pubkey).map(|peer| peer.rx_bytes))
+            .unwrap_or_default();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            admin.state_control.send(guest_identity, &capabilities),
+        )
+        .await
+        .expect("post-join capabilities delivery timeout")
+        .expect("send post-join capabilities to guest");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let capabilities_processed = guest.presence.read().is_ok_and(|presence| {
+                    presence
+                        .get(&admin_pubkey)
+                        .is_some_and(|peer| peer.rx_bytes > received_before)
+                });
+                if capabilities_processed {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("joined guest must accept its new network id and process peer capabilities");
 
         let joined_config = guest
             .take_app_config_toml()

@@ -202,3 +202,63 @@ exit 0
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_service_config_save_requests_exactly_one_reload() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = unique_service_test_dir("nvpn-app-core-single-config-reload");
+        let calls_path = dir.join("calls.txt");
+        let script_path = dir.join("nvpn");
+        let calls_literal = calls_path
+            .to_string_lossy()
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"");
+        let script = format!(
+            r#"#!/bin/sh
+CALLS="{calls_literal}"
+printf '%s\n' "$*" >> "$CALLS"
+if [ "$1" = "status" ]; then
+  cat <<'JSON'
+{{"daemon":{{"running":true,"state":{{"updated_at":1,"binary_version":"test","local_endpoint":"","advertised_endpoint":"","listen_port":0,"vpn_enabled":true,"vpn_active":true,"vpn_status":"VPN on","expected_peer_count":0,"connected_peer_count":0,"mesh_ready":true,"peers":[]}}}}}}
+JSON
+fi
+exit 0
+"#
+        );
+        fs::write(&script_path, script).expect("write fake nvpn");
+        let mut permissions = fs::metadata(&script_path)
+            .expect("fake nvpn metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&script_path, permissions).expect("make fake nvpn executable");
+
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.last_error.clear();
+        runtime.config_path = dir.join("config.toml");
+        create_test_network(&mut runtime, "Home");
+        runtime
+            .config
+            .save(&runtime.config_path)
+            .expect("save initial config");
+        runtime.nvpn_bin = Some(script_path);
+        runtime.service_installed = true;
+        runtime.service_running = true;
+        runtime.daemon_running = true;
+
+        runtime
+            .save_reload_and_refresh()
+            .expect("save config through running service");
+
+        let calls = fs::read_to_string(&calls_path).expect("read fake nvpn calls");
+        assert_eq!(calls.lines().filter(|line| line.starts_with("apply-config-daemon ")).count(), 1);
+        assert!(
+            !calls.lines().any(|line| line.starts_with("reload ")),
+            "apply-config-daemon already reloads the service; calls were:\n{calls}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }

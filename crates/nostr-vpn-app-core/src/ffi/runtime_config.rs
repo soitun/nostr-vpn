@@ -512,6 +512,12 @@ impl NativeAppRuntime {
         if self.mobile_runtime {
             self.refresh_mobile_status()
         } else {
+            // On macOS, save_config() routes through apply-config-daemon while
+            // a daemon/service is active. That command already stages the new
+            // file and waits for the daemon's reload result. Asking for a
+            // second reload here tears down/reconfigures the peer set twice for
+            // one UI edit.
+            #[cfg(not(target_os = "macos"))]
             if self.daemon_running {
                 let output = self.run_nvpn(["reload", "--config", self.config_path_str()?])?;
                 ensure_success("nvpn reload", &output)?;

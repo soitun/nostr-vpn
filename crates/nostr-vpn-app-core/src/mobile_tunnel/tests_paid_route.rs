@@ -185,7 +185,6 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         app_config: &seller_app_config,
         app_config_dirty: &seller_dirty,
         config_path: Some(&seller_config_path),
-        network_id: &network_id,
         join_request_active: &seller_join,
         state_control: &seller_state_sender,
     };
@@ -289,7 +288,6 @@ async fn mobile_paid_route_payment_and_ack_roundtrip() {
         app_config: &buyer_app_config,
         app_config_dirty: &buyer_dirty,
         config_path: Some(&buyer_config_path),
-        network_id: &network_id,
         join_request_active: &buyer_join,
         state_control: &buyer_state_sender,
     };

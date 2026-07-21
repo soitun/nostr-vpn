@@ -237,7 +237,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func schedulePacketTunnelConfigSync(reason: String, force: Bool = false) {
+    func schedulePacketTunnelConfigSync(reason: String, force: Bool = false) {
         guard !fixtureMode else {
             return
         }

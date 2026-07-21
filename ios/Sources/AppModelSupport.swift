@@ -54,10 +54,11 @@ extension AppModel {
             // the UI displaying a stale QR after the tunnel already joined.
             let appConfigToml = await self?.vpnController.takeAppConfigToml()
             let runtimeJson = await self?.vpnController.runtimeStateJson()
-            let appConfigAccepted = await MainActor.run {
+            let acceptance = await MainActor.run {
                 guard let self else {
-                    return false
+                    return (accepted: false, networkChanged: false)
                 }
+                let previousNetworkId = self.activeNetwork?.networkId ?? ""
                 var wrote = false
                 var appConfigAccepted = false
                 if let appConfigToml {
@@ -71,13 +72,23 @@ extension AppModel {
                 if wrote {
                     self.state = self.core?.refresh() ?? self.state
                 }
-                return appConfigAccepted
+                let currentNetworkId = self.activeNetwork?.networkId ?? ""
+                return (
+                    accepted: appConfigAccepted,
+                    networkChanged: wrote && previousNetworkId != currentNetworkId
+                )
             }
-            if appConfigAccepted {
+            if acceptance.accepted {
                 _ = await self?.vpnController.acknowledgeAppConfigToml()
             }
             await MainActor.run {
                 self?.tunnelStateRefreshInFlight = false
+                if acceptance.networkChanged {
+                    // A FIPS endpoint's discovery scope is bound to its network
+                    // id. Restart exactly once after a join so the accepted
+                    // roster does not remain on its QR/onboarding scope.
+                    self?.schedulePacketTunnelConfigSync(reason: "network joined", force: true)
+                }
             }
         }
     }

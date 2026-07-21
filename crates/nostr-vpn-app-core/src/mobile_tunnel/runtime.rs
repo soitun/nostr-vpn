@@ -328,14 +328,23 @@ impl MobileTunnel {
             }));
         }
 
-        if !config.network_id.trim().is_empty() {
+        {
             let endpoint = Arc::clone(&endpoint);
             let mesh = Arc::clone(&mesh);
             let peer_identities = Arc::clone(&peer_identities);
             let presence = Arc::clone(&presence);
-            let network_id = config.network_id.clone();
+            let ping_config = Arc::clone(&config_state);
             tasks.push(tokio::spawn(async move {
                 loop {
+                    let network_id = ping_config
+                        .read()
+                        .map(|config| config.network_id.clone())
+                        .unwrap_or_default();
+                    if network_id.trim().is_empty() {
+                        tokio::time::sleep(Duration::from_secs(MOBILE_RUNTIME_STATE_REFRESH_SECS))
+                            .await;
+                        continue;
+                    }
                     if let Err(error) = mobile_ping_peers(
                         &endpoint,
                         &mesh,
@@ -394,7 +403,6 @@ impl MobileTunnel {
             let config_path = config_path.clone();
             let join_request_active = Arc::clone(&join_request_active);
             let state_control_sender = state_control_sender.clone();
-            let network_id = config.network_id.clone();
             tokio::spawn(async move {
                 let control = MobileEndpointReceiveContext {
                     endpoint: endpoint.as_ref(),
@@ -407,7 +415,6 @@ impl MobileTunnel {
                     app_config: &app_config,
                     app_config_dirty: app_config_dirty.as_ref(),
                     config_path: config_path.as_deref(),
-                    network_id: &network_id,
                     join_request_active: join_request_active.as_ref(),
                     state_control: &state_control_sender,
                 };

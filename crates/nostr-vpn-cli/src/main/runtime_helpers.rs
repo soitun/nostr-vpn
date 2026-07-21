@@ -618,6 +618,7 @@ struct SyncFipsPrivateRuntimeContext<'a> {
     iface: &'a str,
     underlay_interface_mtu: Option<u32>,
     own_pubkey: Option<&'a str>,
+    recent_peers: Option<&'a nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
     ethernet_underlay: Option<&'a crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
     vpn_enabled: bool,
     expected_peers: usize,
@@ -656,7 +657,12 @@ async fn sync_fips_private_runtime(
         iface: config_iface,
         underlay_interface_mtu: context.underlay_interface_mtu,
         own_pubkey: context.own_pubkey,
-        recent_peers: None,
+        // Keep the endpoint admission budget identical to startup and link
+        // refreshes. Dropping authenticated non-roster seeds here changes
+        // open_discovery_max_pending, which forces an endpoint restart on
+        // every ordinary config reload; the resulting utun route event then
+        // changes it back and restarts the endpoint again.
+        recent_peers: context.recent_peers,
         live_peer_endpoints: &live_peer_endpoints,
         ethernet_underlay,
     })
