@@ -81,6 +81,7 @@ info:
     @echo "  just e2e-wireguard-exit-userspace"
     @echo "  just e2e-wireguard-exit-host"
     @echo "  just e2e-wireguard-exit-windows-vm"
+    @echo "  just e2e-wireguard-direct-windows-vm"
 
 run:
     @case "$(uname -s)" in \
@@ -298,3 +299,7 @@ e2e-wireguard-exit-host:
 
 e2e-wireguard-exit-windows-vm:
     ./scripts/windows-vm-wireguard-exit-e2e.sh
+
+# Requires NVPN_WINDOWS_WG_EXIT_CONFIG_FILE and a disposable elevated Windows VM.
+e2e-wireguard-direct-windows-vm:
+    NVPN_WINDOWS_REQUIRE_WG_DIRECT_E2E=1 ./scripts/windows-vm-wireguard-exit-e2e.sh
