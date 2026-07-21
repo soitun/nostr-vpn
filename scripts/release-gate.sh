@@ -27,6 +27,7 @@ MACOS_DAEMON_IDLE_CPU_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MACOS_DAEMON_IDLE_CPU_TI
 WINDOWS_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE_TIMEOUT_SECS:-1800}"
 MOBILE_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MOBILE_GUI_SMOKE_TIMEOUT_SECS:-1800}"
 IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS="${NVPN_RELEASE_GATE_IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS:-180}"
+MOBILE_WG_EXIT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MOBILE_WG_EXIT_TIMEOUT_SECS:-3600}"
 
 release_cargo_config_args=()
 release_cargo_config_backup=""
@@ -214,6 +215,8 @@ release_cargo test "${release_cargo_lock_args[@]}" --workspace -- --test-threads
 release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_join_request_sends_and_records_over_real_fips_endpoint
 release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_magic_dns_answers_peer_name_from_tun_packet
 release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_config_wireguard_exit_replaces_plaintext_dns_with_secure_local_stub
+release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-core exit_dns_supported_policy_matrix_selects_exact_resolver
+release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core settings_patch_validates_exit_dns_atomically_and_exposes_saved_policy
 release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_wireguard_start_returns_before_handshake_watchdog
 release_cargo test "${release_cargo_lock_args[@]}" -p nostr-vpn-app-core mobile_fips_exit_node_routes_default_traffic_to_selected_member
 # Shared userspace WG dataplane, including the mpsc channel path used by
@@ -425,6 +428,42 @@ run_mobile_idle_cpu_gates() {
   fi
 }
 
+run_mobile_wireguard_exit_gates() {
+  local mode="${NVPN_RELEASE_GATE_MOBILE_WG_EXIT_E2E:-auto}"
+  case "$mode" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "Skipping mobile WireGuard exit e2e because NVPN_RELEASE_GATE_MOBILE_WG_EXIT_E2E=$mode"
+      return
+      ;;
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+      ;;
+    auto|AUTO|Auto|"")
+      if [[ "$(uname -s)" != "Darwin" ]] \
+        || ! command -v docker >/dev/null 2>&1 \
+        || ! command -v wg >/dev/null 2>&1 \
+        || ! command -v adb >/dev/null 2>&1 \
+        || ! adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { found = 1 } END { exit !found }' \
+        || ! xcrun xctrace list devices 2>/dev/null | awk '
+          /^== Devices ==/ { devices = 1; next }
+          /^== Devices Offline ==/ { devices = 0 }
+          devices && /iPhone|iPad/ { found = 1 }
+          END { exit !found }
+        '
+      then
+        echo "Skipping mobile WireGuard exit e2e because both physical mobile devices and the local fixture tools are not available."
+        return
+      fi
+      ;;
+    *)
+      echo "Unsupported NVPN_RELEASE_GATE_MOBILE_WG_EXIT_E2E=$mode" >&2
+      exit 2
+      ;;
+  esac
+
+  release_gate_run_with_timeout "Android/iOS WireGuard exit e2e" "$MOBILE_WG_EXIT_TIMEOUT_SECS" \
+    ./scripts/mobile-wireguard-exit-e2e.sh all
+}
+
 case "${NVPN_RELEASE_GATE_DOCKER_E2E:-1}" in
   0|false|FALSE|False|no|NO|No|off|OFF|Off)
     echo "Skipping Docker e2e because NVPN_RELEASE_GATE_DOCKER_E2E=${NVPN_RELEASE_GATE_DOCKER_E2E}"
@@ -461,3 +500,4 @@ run_wireguard_exit_platform_gates
 run_desktop_app_launch_smokes
 run_macos_daemon_idle_cpu_gate
 run_mobile_idle_cpu_gates
+run_mobile_wireguard_exit_gates

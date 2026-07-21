@@ -36,6 +36,11 @@ TUN_PACKET_PROBE_COUNT="${NVPN_ANDROID_TUN_PACKET_PROBE_COUNT:-4}"
 TUN_PACKET_PROBE_WAIT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_WAIT_SECS:-15}"
 TUN_PACKET_PROBE_TIMEOUT_SECS="${NVPN_ANDROID_TUN_PACKET_PROBE_TIMEOUT_SECS:-1}"
 TUN_PACKET_PROBE_REQUIRE_REPLY="${NVPN_ANDROID_TUN_PACKET_PROBE_REQUIRE_REPLY:-0}"
+EXIT_PROBE_HOST="${NVPN_ANDROID_EXIT_PROBE_HOST:-}"
+EXIT_PROBE_EXPECTED_IP="${NVPN_ANDROID_EXIT_PROBE_EXPECTED_IP:-}"
+DIRECT_PROBE_HOST="${NVPN_ANDROID_DIRECT_PROBE_HOST:-example.com}"
+DIRECT_RESTORE_WAIT_SECS="${NVPN_ANDROID_DIRECT_RESTORE_WAIT_SECS:-20}"
+EXPECTED_VPN_DNS="${NVPN_ANDROID_EXPECTED_VPN_DNS:-10.44.0.53}"
 DEBUG_SEED_WAIT_SECS="${NVPN_ANDROID_DEBUG_SEED_WAIT_SECS:-10}"
 DEBUG_EXIT_NODE="${NVPN_ANDROID_DEBUG_EXIT_NODE:-}"
 DEBUG_WIREGUARD_CONFIG="${NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG:-}"
@@ -92,6 +97,13 @@ targets preserve loss/jitter evidence; a separate TUN counter summary JSON recor
 the native packet observation. Use --probe-target with --probe-require-reply for
 a reachable peer row that requires ping replies plus native TUN write counters.
 Disable with --no-tun-probe if a device image lacks ping.
+
+When NVPN_ANDROID_EXIT_PROBE_HOST is set, the cycle additionally proves a full
+Direct -> WireGuard exit -> Direct transition. The named host must resolve only
+through the fixture/profile DNS; NVPN_ANDROID_EXIT_PROBE_EXPECTED_IP pins its
+answer. Public DNS and Internet reachability are checked before connect, while
+the exit is active, and after disconnect. The Android VPN network must advertise
+the local authenticated DNS stub (10.44.0.53 by default).
 
 After a successful --vpn-cycle pass, the script disconnects the debug VPN so
 devices are left clean for the next smoke. Use --leave-vpn-active to preserve a
@@ -336,6 +348,100 @@ android_ping_probe_summary_path() {
 
 android_tun_packet_probe_summary_path() {
   printf '%s/%s\n' "$RUNTIME_STATE_RESULT_DIR" "$TUN_PACKET_PROBE_SUMMARY_RESULT_NAME"
+}
+
+android_network_probe_path() {
+  local label="$1"
+  printf '%s/mobile-android-network-%s-%s.txt\n' "$RUNTIME_STATE_RESULT_DIR" "$label" "$$"
+}
+
+android_vpn_dns_servers() {
+  "$ADB" -s "$serial" shell dumpsys connectivity 2>/dev/null \
+    | tr -d '\r' \
+    | python3 -c '
+import re
+import sys
+
+text = sys.stdin.read()
+owner = sys.argv[1]
+for block in re.split(r"(?=NetworkAgentInfo\{)", text):
+    if "ni{VPN CONNECTED" not in block or f"OwnerUid: {owner}" not in block:
+        continue
+    match = re.search(r"DnsAddresses:\s*\[([^]]*)\]", block)
+    if not match:
+        sys.exit(1)
+    for value in re.findall(r"/?([0-9a-fA-F:.]+)", match.group(1)):
+        print(value)
+    sys.exit(0)
+sys.exit(1)
+' "$PACKAGE_UID"
+}
+
+run_android_direct_network_probe() {
+  local label="$1" result_path start now attempt
+  [[ -n "$EXIT_PROBE_HOST" ]] || return 0
+  result_path="$(android_network_probe_path "$label")"
+  mkdir -p "$RUNTIME_STATE_RESULT_DIR"
+  if vpn_state_present; then
+    echo "Android $label Direct probe failed: VPN state is still present" >&2
+    return 1
+  fi
+  if [[ "$("$ADB" -s "$serial" shell settings get secure always_on_vpn_app 2>/dev/null | tr -d '\r')" == "$PACKAGE_NAME" \
+    && "$("$ADB" -s "$serial" shell settings get secure always_on_vpn_lockdown 2>/dev/null | tr -d '\r')" == "1" ]]; then
+    echo "Android $label Direct probe cannot run while system always-on VPN lockdown is enabled for $PACKAGE_NAME" >&2
+    return 1
+  fi
+  start="$(date +%s)"
+  attempt=0
+  : >"$result_path"
+  while true; do
+    attempt=$((attempt + 1))
+    {
+      printf 'label=%s attempt=%s elapsed=%ss host=%s\n' \
+        "$label" "$attempt" "$(( $(date +%s) - start ))" "$DIRECT_PROBE_HOST"
+      "$ADB" -s "$serial" shell ping -c 2 -W 3 "$DIRECT_PROBE_HOST"
+    } >>"$result_path" 2>&1 && {
+      echo "Android $label Direct DNS/Internet probe passed after $(( $(date +%s) - start ))s: $result_path"
+      return 0
+    }
+    now="$(date +%s)"
+    if (( now - start >= DIRECT_RESTORE_WAIT_SECS )); then
+      echo "Android $label Direct DNS/Internet probe failed after $((now - start))s: $result_path" >&2
+      return 1
+    fi
+    sleep 1
+  done
+}
+
+run_android_exit_network_probe() {
+  [[ -n "$EXIT_PROBE_HOST" ]] || return 0
+  local dns_servers result_path resolved_ip
+  result_path="$(android_network_probe_path wireguard-exit)"
+  mkdir -p "$RUNTIME_STATE_RESULT_DIR"
+  if ! dns_servers="$(android_vpn_dns_servers)"; then
+    echo "Android WireGuard exit probe failed: active VPN DNS servers were unavailable" >&2
+    return 1
+  fi
+  if ! grep -Fxq "$EXPECTED_VPN_DNS" <<<"$dns_servers"; then
+    echo "Android WireGuard exit probe failed: VPN DNS is '$dns_servers', expected local stub $EXPECTED_VPN_DNS" >&2
+    return 1
+  fi
+  {
+    printf 'vpnDnsServers=%s\n' "$(tr '\n' ',' <<<"$dns_servers" | sed 's/,$//')"
+    printf 'exitHost=%s\n' "$EXIT_PROBE_HOST"
+    "$ADB" -s "$serial" shell ping -c 3 -W 3 "$EXIT_PROBE_HOST"
+    printf 'publicHost=%s\n' "$DIRECT_PROBE_HOST"
+    "$ADB" -s "$serial" shell ping -c 2 -W 3 "$DIRECT_PROBE_HOST"
+  } >"$result_path" 2>&1 || {
+    echo "Android WireGuard exit DNS/Internet probe failed: $result_path" >&2
+    return 1
+  }
+  resolved_ip="$(sed -n 's/^PING [^(]*(\([^)]*\)).*/\1/p' "$result_path" | head -n 1)"
+  if [[ -n "$EXIT_PROBE_EXPECTED_IP" && "$resolved_ip" != "$EXIT_PROBE_EXPECTED_IP" ]]; then
+    echo "Android WireGuard exit DNS resolved $EXIT_PROBE_HOST to '$resolved_ip', expected $EXIT_PROBE_EXPECTED_IP: $result_path" >&2
+    return 1
+  fi
+  echo "Android WireGuard exit DNS/Internet probe passed: $result_path DNS=$EXPECTED_VPN_DNS answer=$resolved_ip"
 }
 
 copy_android_runtime_state() {
@@ -1338,6 +1444,9 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
     echo "Android smoke failed: VPN remained active after debug disconnect." >&2
     exit 1
   fi
+  if ! run_android_direct_network_probe before-connect; then
+    exit 1
+  fi
   start_main_activity --es "$DEBUG_ACTION_EXTRA" connect
   maybe_accept_vpn_dialog
   if ! wait_until "$VPN_START_WAIT_SECS" vpn_active; then
@@ -1356,9 +1465,16 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
     echo "Android smoke failed: native TUN packet probe failed." >&2
     exit 1
   fi
+  if ! run_android_exit_network_probe; then
+    dump_vpn_diagnostics
+    exit 1
+  fi
   "$ADB" -s "$serial" shell input keyevent KEYCODE_HOME
   run_android_idle_cpu_gate "Android background active VPN"
   if ! cleanup_android_vpn_after_pass; then
+    exit 1
+  fi
+  if ! run_android_direct_network_probe after-disconnect; then
     exit 1
   fi
 fi

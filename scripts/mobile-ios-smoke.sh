@@ -19,7 +19,7 @@ SCHEME="${NVPN_IOS_SCHEME:-NostrVpnIos}"
 DEVICE_CONFIGURATION="${NVPN_IOS_DEVICE_CONFIGURATION:-Debug}"
 DEVICE_DERIVED_DATA="${NVPN_IOS_DEVICE_DERIVED_DATA:-$ROOT/ios/.build/DeviceDerivedData}"
 DEVICE_DESTINATION="${NVPN_IOS_DEVICE_DESTINATION:-generic/platform=iOS}"
-DEVICE_CODE_SIGN_IDENTITY="${NVPN_IOS_CODE_SIGN_IDENTITY:-Apple Development}"
+DEVICE_CODE_SIGN_IDENTITY="${NVPN_IOS_DEVICE_CODE_SIGN_IDENTITY:-Apple Development}"
 INSTALL_DEVICE_APP="${NVPN_IOS_INSTALL:-0}"
 CREATE_NETWORK="${NVPN_IOS_DEBUG_CREATE_NETWORK:-0}"
 DEBUG_NETWORK_NAME="${NVPN_IOS_DEBUG_NETWORK_NAME:-iOS smoke}"
@@ -34,6 +34,14 @@ TUN_PACKET_PROBE_PORT="${NVPN_IOS_TUN_PACKET_PROBE_PORT:-9}"
 TUN_PACKET_PROBE_COUNT="${NVPN_IOS_TUN_PACKET_PROBE_COUNT:-4}"
 TUN_PACKET_PROBE_WAIT_SECS="${NVPN_IOS_TUN_PACKET_PROBE_WAIT_SECS:-6}"
 TUN_PACKET_PROBE_REQUIRE_REPLY="${NVPN_IOS_TUN_PACKET_PROBE_REQUIRE_REPLY:-0}"
+DEBUG_WIREGUARD_CONFIG="${NVPN_IOS_DEBUG_WIREGUARD_CONFIG:-}"
+DEBUG_WIREGUARD_CONFIG_FILE="${NVPN_IOS_DEBUG_WIREGUARD_CONFIG_FILE:-}"
+EXIT_PROBE_HOST="${NVPN_IOS_EXIT_PROBE_HOST:-}"
+EXIT_PROBE_EXPECTED_IP="${NVPN_IOS_EXIT_PROBE_EXPECTED_IP:-}"
+EXIT_PROBE_URL="${NVPN_IOS_EXIT_PROBE_URL:-}"
+DIRECT_PROBE_HOST="${NVPN_IOS_DIRECT_PROBE_HOST:-example.com}"
+DIRECT_PROBE_URL="${NVPN_IOS_DIRECT_PROBE_URL:-https://example.com/}"
+VERIFY_DIRECT_RESTORATION="${NVPN_IOS_VERIFY_DIRECT_RESTORATION:-0}"
 cleanup_after_vpn_cycle="${NVPN_IOS_CLEANUP_AFTER_VPN_CYCLE:-1}"
 IDLE_CPU_GATE="${NVPN_IOS_IDLE_CPU_GATE:-${NVPN_IDLE_CPU_GATE:-1}}"
 IDLE_CPU_MAX_PERCENT="${NVPN_IOS_IDLE_CPU_MAX_PERCENT:-${NVPN_IDLE_CPU_MAX_PERCENT:-5}}"
@@ -79,6 +87,11 @@ non-local tunnel probe target. Use --probe-target, --probe-port, --probe-count,
 and --probe-require-reply for a reachable peer row that requires native TUN write
 counters to increase. NVPN_IOS_TUN_PACKET_PROBE_WAIT_SECS still controls the
 observation window.
+
+Set NVPN_IOS_DEBUG_WIREGUARD_CONFIG_FILE with NVPN_IOS_EXIT_PROBE_HOST,
+NVPN_IOS_EXIT_PROBE_EXPECTED_IP, and NVPN_IOS_EXIT_PROBE_URL for a real exit
+probe. NVPN_IOS_VERIFY_DIRECT_RESTORATION=1 additionally requires native DNS
+and HTTPS before connect and after the packet tunnel is fully disconnected.
 EOF
 }
 
@@ -354,12 +367,22 @@ copy_ios_debug_logs() {
 validate_vpn_probe_result() {
   local result_path="$1"
   local summary_path="$VPN_RESULT_DIR/$TUN_PACKET_PROBE_SUMMARY_NAME"
-  python3 - "$result_path" "$summary_path" "$NVPN_BUILD_GIT_SHA" "$TUN_PACKET_PROBE_REQUIRE_REPLY" <<'PY'
+  python3 - "$result_path" "$summary_path" "$NVPN_BUILD_GIT_SHA" \
+    "$TUN_PACKET_PROBE_REQUIRE_REPLY" "$EXIT_PROBE_EXPECTED_IP" \
+    "$VERIFY_DIRECT_RESTORATION" <<'PY'
 import json
 import sys
 
-path, summary_path, expected_build_git_sha, require_reply_raw = sys.argv[1:5]
+(
+    path,
+    summary_path,
+    expected_build_git_sha,
+    require_reply_raw,
+    expected_exit_ip,
+    verify_direct_raw,
+) = sys.argv[1:7]
 require_reply = require_reply_raw.strip().lower() in {"1", "true", "yes", "on"}
+verify_direct = verify_direct_raw.strip().lower() in {"1", "true", "yes", "on"}
 with open(path, encoding="utf-8") as fh:
     result = json.load(fh)
 
@@ -527,6 +550,34 @@ if result.get("packetTunnelStatusRawValue") != 3:
     errors.append(f"packetTunnelStatusRawValue={result.get('packetTunnelStatusRawValue')!r}")
 if result.get("vpnEnabled") is not True:
     errors.append(f"vpnEnabled={result.get('vpnEnabled')!r}")
+if expected_exit_ip:
+    resolved = result.get("resolvedAddresses")
+    if result.get("resolveError"):
+        errors.append(f"resolveError={result['resolveError']}")
+    if not isinstance(resolved, list) or expected_exit_ip not in resolved:
+        errors.append(
+            f"resolvedAddresses={resolved!r} expected to contain {expected_exit_ip!r}"
+        )
+    if result.get("fetchError"):
+        errors.append(f"fetchError={result['fetchError']}")
+    status = result.get("statusCode")
+    if not isinstance(status, int) or not 200 <= status < 400:
+        errors.append(f"statusCode={status!r}")
+if verify_direct:
+    for phase in ("directBefore", "directAfter"):
+        if result.get(f"{phase}ResolveError"):
+            errors.append(f"{phase}ResolveError={result[f'{phase}ResolveError']}")
+        addresses = result.get(f"{phase}ResolvedAddresses")
+        if not isinstance(addresses, list) or not addresses:
+            errors.append(f"{phase}ResolvedAddresses={addresses!r}")
+        if result.get(f"{phase}FetchError"):
+            errors.append(f"{phase}FetchError={result[f'{phase}FetchError']}")
+        status = result.get(f"{phase}StatusCode")
+        if not isinstance(status, int) or not 200 <= status < 400:
+            errors.append(f"{phase}StatusCode={status!r}")
+        tunnel_status = result.get(f"{phase}PacketTunnelStatusRawValue")
+        if tunnel_status not in (0, 1):
+            errors.append(f"{phase}PacketTunnelStatusRawValue={tunnel_status!r}")
 runtime_json = result.get("packetTunnelRuntimeStateJson") or ""
 if result.get("packetTunnelStatusRawValue") == 3:
     if not runtime_json:
@@ -640,7 +691,6 @@ run_vpn_cycle() {
   local device="$1"
   local args=(
     --nvpn-debug-exit-probe
-    --nvpn-debug-skip-fetch
     --nvpn-debug-wait-seconds "$VPN_START_WAIT_SECS"
     --nvpn-debug-result "$VPN_RESULT_NAME"
     --nvpn-debug-tun-probe-target "$TUN_PACKET_PROBE_TARGET"
@@ -648,6 +698,30 @@ run_vpn_cycle() {
     --nvpn-debug-tun-probe-count "$TUN_PACKET_PROBE_COUNT"
     --nvpn-debug-tun-probe-wait-seconds "$TUN_PACKET_PROBE_WAIT_SECS"
   )
+  local wireguard_config=""
+  if [[ -n "$DEBUG_WIREGUARD_CONFIG_FILE" ]]; then
+    wireguard_config="$(<"$DEBUG_WIREGUARD_CONFIG_FILE")"
+  elif [[ -n "$DEBUG_WIREGUARD_CONFIG" ]]; then
+    wireguard_config="$DEBUG_WIREGUARD_CONFIG"
+  fi
+  if [[ -n "$wireguard_config" ]]; then
+    args+=(--nvpn-debug-wireguard-config-base64 "$(printf '%s' "$wireguard_config" | base64 | tr -d '\n')")
+  fi
+  if [[ -n "$EXIT_PROBE_HOST" ]]; then
+    args+=(--nvpn-debug-resolve-host "$EXIT_PROBE_HOST")
+  fi
+  if [[ -n "$EXIT_PROBE_URL" ]]; then
+    args+=(--nvpn-debug-fetch-url "$EXIT_PROBE_URL")
+  else
+    args+=(--nvpn-debug-skip-fetch)
+  fi
+  if bool_is_true "$VERIFY_DIRECT_RESTORATION"; then
+    args+=(
+      --nvpn-debug-verify-direct-restoration
+      --nvpn-debug-direct-resolve-host "$DIRECT_PROBE_HOST"
+      --nvpn-debug-direct-fetch-url "$DIRECT_PROBE_URL"
+    )
+  fi
   if bool_is_true "$CREATE_NETWORK"; then
     args+=(--nvpn-debug-add-network "$DEBUG_NETWORK_NAME")
   fi
@@ -663,7 +737,9 @@ run_vpn_cycle() {
     return 1
   fi
   echo "iOS device VPN probe passed: $result_path"
-  run_ios_device_idle_cpu_gate "$device" '^Nostr VPN Tunnel$' "iOS packet tunnel"
+  if ! bool_is_true "$VERIFY_DIRECT_RESTORATION"; then
+    run_ios_device_idle_cpu_gate "$device" '^Nostr VPN Tunnel$' "iOS packet tunnel"
+  fi
   cleanup_ios_vpn_after_pass "$device"
 }
 

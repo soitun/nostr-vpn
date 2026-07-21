@@ -3,6 +3,10 @@
 !Cargo.lock
 !Cargo.toml
 
+!scripts
+scripts/**
+!scripts/mobile-wireguard-exit-server.sh
+
 !crates
 !crates/**
 

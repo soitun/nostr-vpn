@@ -55,6 +55,7 @@ info:
     @echo "  just mobile-test-kit-rust"
     @echo "  just mobile-test-kit-sim"
     @echo "  just mobile-test-kit-device"
+    @echo "  just mobile-test-kit-exit"
     @echo "  just check-source-file-lines"
     @echo "  just dataplane-safety-fast [suites...]"
     @echo "  just dataplane-host-pair-comparison-dry-run"
@@ -173,6 +174,9 @@ mobile-test-kit-sim:
 
 mobile-test-kit-device:
     ./scripts/mobile-test-kit.sh device
+
+mobile-test-kit-exit:
+    ./scripts/mobile-test-kit.sh exit
 
 macos-gen-swift:
     ./scripts/macos-build macos-gen-swift

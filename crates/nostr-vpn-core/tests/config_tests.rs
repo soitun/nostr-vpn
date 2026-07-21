@@ -49,6 +49,8 @@ fn unique_temp_config_path(name: &str) -> std::path::PathBuf {
 
 #[path = "config_tests/defaults.rs"]
 mod defaults;
+#[path = "config_tests/exit_dns.rs"]
+mod exit_dns;
 #[path = "config_tests/magic_dns.rs"]
 mod magic_dns;
 #[path = "config_tests/network.rs"]

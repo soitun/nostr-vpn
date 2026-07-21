@@ -7,13 +7,14 @@ source "$ROOT/scripts/local-fips-workspace.sh"
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/mobile-test-kit.sh [rust|fast|simulator|device]
+usage: scripts/mobile-test-kit.sh [rust|fast|simulator|device|exit]
 
 Modes:
   rust       Run shared Rust mobile/core tests only.
   fast       Run Rust tests plus Android and iOS debug builds.
   simulator  Run fast checks, then iOS simulator and Android adb launch smokes.
   device     Run opt-in local physical-device VPN/TUN smokes.
+  exit       Run physical Android/iOS WireGuard exit, DNS, and Direct restore e2e.
 
 Device identifiers are intentionally not stored in the repo. Use environment
 variables such as NVPN_ANDROID_SERIAL and NVPN_IOS_DEVICE when needed, or copy
@@ -89,6 +90,9 @@ case "$mode" in
   device)
     "$ROOT/scripts/mobile-android-smoke.sh" --create-network --accept-vpn-dialog --vpn-cycle
     "$ROOT/scripts/mobile-ios-smoke.sh" device --install --create-network --vpn-cycle
+    ;;
+  exit)
+    "$ROOT/scripts/mobile-wireguard-exit-e2e.sh" all
     ;;
   -h|--help|help)
     usage

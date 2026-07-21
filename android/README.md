@@ -51,3 +51,9 @@ ping latency/loss summary JSON, and a native TUN counter summary JSON under
 The native shell includes state, join-request, roster, routing, diagnostics,
 deep-link, VPN permission surfaces, and Android `VpnService` packet handling
 backed by the shared Rust core.
+
+For a production-like physical-device exit test, run
+`just mobile-test-kit-exit`. It starts a LAN-reachable WireGuard provider and
+profile DNS in Docker, proves default-route and DNS traffic at the provider,
+checks public Internet access, disconnects, and requires native device DNS and
+Internet to work again. The same command runs the corresponding iOS test.

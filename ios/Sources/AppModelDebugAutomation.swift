@@ -124,6 +124,15 @@ extension AppModel {
         let wireGuardConfig = Self.wireGuardConfig(from: arguments, supportDir: supportDir)
         let resolveHost = Self.argumentValue(after: "--nvpn-debug-resolve-host", in: arguments)
         let skipFetch = arguments.contains("--nvpn-debug-skip-fetch")
+        let verifyDirectRestoration = arguments.contains("--nvpn-debug-verify-direct-restoration")
+        let directFetchUrl = Self.argumentValue(
+            after: "--nvpn-debug-direct-fetch-url",
+            in: arguments
+        )
+        let directResolveHost = Self.argumentValue(
+            after: "--nvpn-debug-direct-resolve-host",
+            in: arguments
+        )
         let probeStartedAt = Date()
         var result: [String: Any] = [
             "url": urlString,
@@ -135,6 +144,16 @@ extension AppModel {
         }
 
         await stopVpnForDebugProbe()
+        if verifyDirectRestoration {
+            for (key, value) in await debugNetworkProbe(
+                urlString: directFetchUrl,
+                resolveHost: directResolveHost
+            ) {
+                result["directBefore\(key.prefix(1).uppercased())\(key.dropFirst())"] = value
+            }
+            result["directBeforePacketTunnelStatusRawValue"] =
+                await vpnController.statusRawValue()
+        }
 
         if let wireGuardConfig, !wireGuardConfig.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             dispatch(NativeActions.updateSettings([
@@ -225,6 +244,17 @@ extension AppModel {
             }
             result["fetchElapsedMs"] = Self.elapsedMilliseconds(since: fetchStartedAt)
         }
+        if verifyDirectRestoration {
+            await stopVpnForDebugProbe()
+            result["directAfterPacketTunnelStatusRawValue"] =
+                await vpnController.statusRawValue()
+            for (key, value) in await debugNetworkProbe(
+                urlString: directFetchUrl,
+                resolveHost: directResolveHost
+            ) {
+                result["directAfter\(key.prefix(1).uppercased())\(key.dropFirst())"] = value
+            }
+        }
         result["debugProbeElapsedMs"] = Self.elapsedMilliseconds(since: probeStartedAt)
         result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
         writeDebugProbeResult(result, name: resultName)
@@ -309,6 +339,29 @@ extension AppModel {
             }
         } catch {
             result["fetchError"] = String(describing: error)
+        }
+        return result
+    }
+
+    private func debugNetworkProbe(
+        urlString: String?,
+        resolveHost: String?
+    ) async -> [String: Any] {
+        var result: [String: Any] = [:]
+        if let host = resolveHost?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !host.isEmpty {
+            let resolved = Self.resolveDebugHost(host)
+            result["resolvedHost"] = host
+            result["resolvedAddresses"] = resolved.addresses
+            if let error = resolved.error {
+                result["resolveError"] = error
+            }
+        }
+        if let urlString = urlString?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !urlString.isEmpty {
+            for (key, value) in await fetchDebugProbe(urlString: urlString) {
+                result[key] = value
+            }
         }
         return result
     }
@@ -698,6 +751,8 @@ extension AppModel {
         let sensitiveFlags = [
             "--nvpn-debug-exit-node",
             "--nvpn-debug-fetch-url",
+            "--nvpn-debug-direct-fetch-url",
+            "--nvpn-debug-direct-resolve-host",
             "--nvpn-debug-result",
             "--nvpn-debug-idle-cpu-result",
             "--nvpn-debug-tun-probe-target",
