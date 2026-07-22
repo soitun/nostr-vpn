@@ -219,6 +219,10 @@ release_cargo_test_filter() (
 )
 
 run_release_gate_preflight() {
+  if ! command -v rg >/dev/null 2>&1; then
+    echo "Release gate requires ripgrep (rg) for source contract harnesses." >&2
+    return 1
+  fi
   node scripts/sync-versions.mjs
   npm ci
   npm run check
