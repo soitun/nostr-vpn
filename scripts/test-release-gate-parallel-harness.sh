@@ -77,5 +77,8 @@ grep -Fq 'NVPN_WG_EXIT_USERSPACE_INTERNET_SUBNET' "$release_gate" \
   || fail "parallel userspace WireGuard fixture has no isolated subnet"
 grep -Fq 'Release gate test selector matched no passing test' "$release_gate" \
   || fail "focused release-gate tests can pass with an empty selector"
+if grep -Eq '(windows_platform_lane_requested|docker_release_gates_enabled) \|\| return$' "$release_gate"; then
+  fail "a disabled optional lane returns failure under set -e"
+fi
 
 printf 'release gate parallel harness passed\n'

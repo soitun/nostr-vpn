@@ -74,7 +74,10 @@ jobs:
           # Keep verify focused on Rust/Docker gates so Docker perf artifacts do
           # not leave the runner resource-starved before the duplicate GUI build.
           NVPN_RELEASE_GATE_LINUX_GUI_SMOKE: '0'
-          NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE: '0'
+          # v4.1.3's tagged gate predates the explicit-success optional-lane
+          # skip fix, so leave one Windows check in auto mode. Hosted Linux has
+          # no configured VM and skips it without consuming build resources.
+          NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE: 'auto'
           NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E: '0'
         run: ./scripts/release-gate.sh
 

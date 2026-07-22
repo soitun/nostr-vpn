@@ -282,7 +282,7 @@ windows_platform_lane_requested() {
 
 prepare_windows_platform_lane_sync() {
   WINDOWS_LANE_PRE_SYNCED=0
-  windows_platform_lane_requested || return
+  windows_platform_lane_requested || return 0
 
   local host="${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
   if ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" hostname >/dev/null 2>&1; then
@@ -562,7 +562,7 @@ run_userspace_wireguard_exit_docker_gate() {
 }
 
 run_docker_isolated_functional_gates() {
-  docker_release_gates_enabled || return
+  docker_release_gates_enabled || return 0
 
   local lanes=()
   release_gate_parallel_start "Docker NAT-safe MTU" \
@@ -585,7 +585,7 @@ run_docker_isolated_functional_gates() {
 }
 
 run_docker_perf_gate() {
-  docker_release_gates_enabled || return
+  docker_release_gates_enabled || return 0
   case "${NVPN_RELEASE_GATE_PERF_E2E:-1}" in
     0|false|FALSE|False|no|NO|No|off|OFF|Off)
       echo "Skipping Docker perf regression e2e because NVPN_RELEASE_GATE_PERF_E2E=${NVPN_RELEASE_GATE_PERF_E2E}"
