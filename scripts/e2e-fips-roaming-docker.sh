@@ -952,7 +952,14 @@ echo "--- Initial UDP payload ---"
 "${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/bob-roaming-initial-udp.out'
 
 if [[ "$SCENARIOS" == "all" ]]; then
-  echo "fips roaming docker e2e passed: direct LAN path established, loaded-latency probes stayed bounded, repeated mobile/WiFi-style direct drops used FIPS fallback, a live daemon moved between interface/address/gateway/bridge underlays in both directions, continuous payload recovered during churn, and each restore upgraded back to direct"
+  case "$LOADED_LATENCY_ENABLED" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "fips roaming docker e2e passed: direct LAN path established, repeated mobile/WiFi-style direct drops used FIPS fallback, a live daemon moved between interface/address/gateway/bridge underlays in both directions, continuous payload recovered during churn, and each restore upgraded back to direct; host-calibrated loaded-latency probes were skipped"
+      ;;
+    *)
+      echo "fips roaming docker e2e passed: direct LAN path established, loaded-latency probes stayed bounded, repeated mobile/WiFi-style direct drops used FIPS fallback, a live daemon moved between interface/address/gateway/bridge underlays in both directions, continuous payload recovered during churn, and each restore upgraded back to direct"
+      ;;
+  esac
 elif [[ "$SCENARIOS" == "fallback" ]]; then
   echo "fips roaming docker e2e passed: repeated direct drops used FIPS fallback, continuous bidirectional payload recovered, and each restore upgraded back to direct"
 elif [[ "$SCENARIOS" == "latency" ]]; then

@@ -94,8 +94,9 @@ jobs:
           NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE: 'auto'
           NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E: '0'
           # Hosted runners have no stable latency baseline. The mandatory local
-          # release gate measures this after its contention-sensitive join.
+          # release gate measures these after contention-sensitive joins.
           NVPN_RELEASE_GATE_QR_JOIN_LATENCY: '0'
+          NVPN_E2E_ROAMING_LOADED_LATENCY: '0'
         run: ./scripts/release-gate.sh
 
   build-cli:
