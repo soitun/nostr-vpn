@@ -16,6 +16,7 @@ resolve_shared_build_metadata "$ROOT"
 IOS_DIST_DIR="$ROOT/dist/ios"
 IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-$NVPN_DEFAULT_IOS_BUNDLE_ID}"
 IOS_PACKET_TUNNEL_BUNDLE_ID="${NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID:-$IOS_BUNDLE_ID.PacketTunnel}"
+IOS_APP_GROUP_IDENTIFIER="${NVPN_IOS_APP_GROUP_IDENTIFIER:-group.$IOS_BUNDLE_ID.shared}"
 IOS_PROFILE_TYPE="${NVPN_IOS_PROFILE_TYPE:-IOS_APP_STORE}"
 if [[ "$IOS_PROFILE_TYPE" == *DEVELOPMENT* ]]; then
   DEFAULT_PROFILE_LABEL="Development"
@@ -79,6 +80,7 @@ export NVPN_IOS_PACKET_TUNNEL_PROFILE_NAME="$IOS_PACKET_TUNNEL_PROFILE_NAME"
 export NVPN_IOS_CODE_SIGN_IDENTITY="$IOS_CODE_SIGN_IDENTITY"
 export NVPN_IOS_PROFILES_ENV_PATH="$IOS_PROFILES_ENV_PATH"
 export NVPN_IOS_DEVICE_UDIDS="${NVPN_IOS_DEVICE_UDIDS:-}"
+export NVPN_IOS_TEAM_ID="${NVPN_IOS_TEAM_ID:-}"
 
 python3 <<'PY'
 import base64
@@ -229,9 +231,22 @@ def exact_bundle_id(identifier):
         "bundleIds",
         {"filter[identifier]": identifier, "limit": "200"},
     )
-    for bundle_id in bundle_ids:
-        if bundle_id.get("attributes", {}).get("identifier") == identifier:
-            return bundle_id
+    exact = [
+        bundle_id
+        for bundle_id in bundle_ids
+        if bundle_id.get("attributes", {}).get("identifier") == identifier
+    ]
+    team_id = os.environ.get("NVPN_IOS_TEAM_ID", "").strip()
+    if team_id:
+        exact = [
+            bundle_id
+            for bundle_id in exact
+            if bundle_id.get("attributes", {}).get("seedId") == team_id
+        ]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        fail(f"Multiple Apple Developer bundle IDs found for {identifier}; set NVPN_IOS_TEAM_ID")
     fail(f"No Apple Developer bundle ID found for {identifier}")
 
 
@@ -334,7 +349,23 @@ def profile_bundle_id(profile):
     )
 
 
-def find_profile(bundle_id, name=None):
+def profile_relationship_ids(profile, relationship):
+    related, _ = get_all(f"profiles/{profile['id']}/{relationship}")
+    return {item.get("id") for item in related if item.get("id")}
+
+
+def profile_matches_signing(profile, certificate_id, devices):
+    if certificate_id not in profile_relationship_ids(profile, "certificates"):
+        return False
+    expected_devices = {device["id"] for device in devices}
+    if expected_devices and not expected_devices.issubset(
+        profile_relationship_ids(profile, "devices")
+    ):
+        return False
+    return True
+
+
+def find_profile(bundle_id, certificate_id, devices, name=None):
     profiles = [
         profile
         for profile in list_profiles()
@@ -348,16 +379,18 @@ def find_profile(bundle_id, name=None):
         ]
         if named:
             profiles = named
-    if not profiles:
-        return None
-    return sorted(
+    profiles = sorted(
         profiles,
         key=lambda profile: parse_time(
             profile.get("attributes", {}).get("createdDate")
             or profile.get("attributes", {}).get("expirationDate")
         ),
         reverse=True,
-    )[0]
+    )
+    for profile in profiles:
+        if profile_matches_signing(profile, certificate_id, devices):
+            return profile
+    return None
 
 
 def fetch_profile(profile_id):
@@ -444,7 +477,7 @@ def ensure_profiles():
         bundle_id = exact_bundle_id(target["identifier"])
         profile = None
         if os.environ.get("NVPN_IOS_PROFILE_RECREATE") != "true":
-            profile = find_profile(bundle_id)
+            profile = find_profile(bundle_id, certificate_id, devices)
         if profile is None:
             profile = create_profile(target, bundle_id, certificate_id, devices)
 
@@ -481,3 +514,31 @@ if ACTION == "list":
 
 ensure_profiles()
 PY
+
+if [[ "$ACTION" == "ensure" ]]; then
+  # shellcheck disable=SC1090
+  source "$IOS_PROFILES_ENV_PATH"
+
+  verify_profile_app_group() {
+    local role="$1"
+    local uuid="$2"
+    local profile="$HOME/Library/MobileDevice/Provisioning Profiles/$uuid.mobileprovision"
+
+    if ! security cms -D -i "$profile" 2>/dev/null |
+      EXPECTED_APP_GROUP="$IOS_APP_GROUP_IDENTIFIER" python3 -c '
+import os
+import plistlib
+import sys
+
+profile = plistlib.loads(sys.stdin.buffer.read())
+groups = profile.get("Entitlements", {}).get("com.apple.security.application-groups", [])
+raise SystemExit(0 if os.environ["EXPECTED_APP_GROUP"] in groups else 1)
+'; then
+      echo "Provisioning profile for $role is missing required App Group $IOS_APP_GROUP_IDENTIFIER" >&2
+      exit 1
+    fi
+  }
+
+  verify_profile_app_group "main app" "$NVPN_IOS_PROVISIONING_PROFILE_UUID"
+  verify_profile_app_group "packet tunnel" "$NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID"
+fi

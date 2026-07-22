@@ -135,32 +135,9 @@ pub async fn send_join_roster_with_receipt(
     let mut last_transport_error = None;
 
     loop {
-        let send = sender.send(destination, &frame);
-        tokio::pin!(send);
-        loop {
-            tokio::select! {
-                receipt = receipts.recv() => {
-                    if receipt.is_ok_and(|receipt| {
-                        join_roster_ack_matches(&receipt, destination, &roster_event_id)
-                    }) {
-                        return Ok(sent_len);
-                    }
-                }
-                result = &mut send => {
-                    if let Err(error) = result {
-                        last_transport_error = Some(error.to_string());
-                    }
-                    break;
-                }
-                () = tokio::time::sleep_until(deadline) => {
-                    return Err(join_roster_ack_timeout_error(
-                        destination,
-                        last_transport_error.as_deref(),
-                    ));
-                }
-            }
+        if let Err(error) = sender.enqueue(destination, &frame) {
+            last_transport_error = Some(error.to_string());
         }
-
         let retry_at = (tokio::time::Instant::now() + JOIN_ROSTER_ACK_RETRY_INTERVAL).min(deadline);
         loop {
             tokio::select! {

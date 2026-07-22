@@ -5,6 +5,11 @@ options:
     iOS: "17.0"
   createIntermediateGroups: true
 
+configs:
+  Debug: debug
+  DeviceDebug: debug
+  Release: release
+
 settings:
   base:
     MARKETING_VERSION: ${NVPN_APP_VERSION_NAME}
@@ -47,6 +52,10 @@ targets:
         HEADER_SEARCH_PATHS: $(PROJECT_DIR)/Bindings
         SWIFT_OBJC_BRIDGING_HEADER: Bindings/NostrVpnAppCoreC.h
       configs:
+        DeviceDebug:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: $(NVPN_IOS_CODE_SIGN_IDENTITY)
+          PROVISIONING_PROFILE: $(NVPN_IOS_PROVISIONING_PROFILE_UUID)
         Release:
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: $(NVPN_IOS_CODE_SIGN_IDENTITY)
@@ -80,6 +89,10 @@ targets:
         HEADER_SEARCH_PATHS: $(PROJECT_DIR)/Bindings
         SWIFT_OBJC_BRIDGING_HEADER: Bindings/NostrVpnAppCoreC.h
       configs:
+        DeviceDebug:
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: $(NVPN_IOS_CODE_SIGN_IDENTITY)
+          PROVISIONING_PROFILE: $(NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID)
         Release:
           CODE_SIGN_STYLE: Manual
           CODE_SIGN_IDENTITY: $(NVPN_IOS_CODE_SIGN_IDENTITY)

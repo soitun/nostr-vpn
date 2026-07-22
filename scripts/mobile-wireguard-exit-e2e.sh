@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/mobile_env.sh"
 IMAGE="${NVPN_MOBILE_WG_EXIT_IMAGE:-nostr-vpn-mobile-wireguard-exit-e2e}"
 CONTAINER="${NVPN_MOBILE_WG_EXIT_CONTAINER:-nostr-vpn-mobile-wireguard-exit-e2e}"
 HOST_PORT="${NVPN_MOBILE_WG_EXIT_HOST_PORT:-51886}"
@@ -11,7 +12,9 @@ DNS_NAME="${NVPN_MOBILE_WG_EXIT_DNS_NAME:-wireguard-exit.nvpn-e2e.test}"
 DIRECT_HOST="${NVPN_MOBILE_WG_EXIT_DIRECT_HOST:-example.com}"
 DIRECT_URL="${NVPN_MOBILE_WG_EXIT_DIRECT_URL:-https://example.com/}"
 PLATFORMS="${NVPN_MOBILE_WG_EXIT_PLATFORMS:-android,ios}"
+INSTALL_IOS="${NVPN_MOBILE_WG_EXIT_INSTALL_IOS:-1}"
 FIXTURE_DIR=""
+ANDROID_DEVICE_SERIAL=""
 
 usage() {
   cat >&2 <<'EOF'
@@ -56,6 +59,16 @@ for command in docker wg; do
     exit 1
   fi
 done
+
+if has_platform android; then
+  if ! command -v adb >/dev/null 2>&1; then
+    echo "mobile WireGuard exit e2e requires adb for the physical Android device" >&2
+    exit 1
+  fi
+  ANDROID_DEVICE_SERIAL="$(select_physical_android_serial \
+    "$(command -v adb)" \
+    "${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}")"
+fi
 
 HOST_IP="${NVPN_MOBILE_WG_EXIT_HOST_IP:-}"
 if [[ -z "$HOST_IP" && "$(uname -s)" == "Darwin" ]]; then
@@ -168,6 +181,7 @@ run_android() {
   before_forward="$(forward_packets)"
   before_dns="$(dns_query_count "$DNS_NAME")"
   env \
+    NVPN_ANDROID_SERIAL="$ANDROID_DEVICE_SERIAL" \
     NVPN_ANDROID_PACKAGE="${NVPN_ANDROID_PACKAGE:-fi.siriusbusiness.nvpn.mobileexit}" \
     NVPN_ANDROID_DEBUG_WIREGUARD_CONFIG_FILE="$FIXTURE_DIR/client.conf" \
     NVPN_ANDROID_EXIT_PROBE_HOST="$DNS_NAME" \
@@ -185,6 +199,19 @@ run_android() {
 
 run_ios() {
   local before_bytes before_forward before_dns
+  local ios_args=(
+    device
+    --create-network
+    --vpn-cycle
+    --probe-target "$TUNNEL_SERVER_IP"
+    --probe-port 9
+    --probe-count 4
+    --probe-require-reply
+  )
+  case "$INSTALL_IOS" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off) ;;
+    *) ios_args=(device --install "${ios_args[@]:1}") ;;
+  esac
   before_bytes="$(wg_bytes)"
   before_forward="$(forward_packets)"
   before_dns="$(dns_query_count "$DNS_NAME")"
@@ -196,14 +223,7 @@ run_ios() {
     NVPN_IOS_DIRECT_PROBE_HOST="$DIRECT_HOST" \
     NVPN_IOS_DIRECT_PROBE_URL="$DIRECT_URL" \
     NVPN_IOS_VERIFY_DIRECT_RESTORATION=1 \
-    "$ROOT/scripts/mobile-ios-smoke.sh" device \
-      --install \
-      --create-network \
-      --vpn-cycle \
-      --probe-target "$TUNNEL_SERVER_IP" \
-      --probe-port 9 \
-      --probe-count 4 \
-      --probe-require-reply
+    "$ROOT/scripts/mobile-ios-smoke.sh" "${ios_args[@]}"
   assert_platform_traffic iOS "$before_bytes" "$before_forward" "$before_dns"
 }
 

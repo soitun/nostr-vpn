@@ -15,6 +15,7 @@ pub mod fips_mesh;
 pub mod identity_bridge;
 pub mod join_delivery;
 pub mod join_requests;
+pub mod join_roster_persistence;
 pub mod lan_pairing;
 pub mod magic_dns;
 mod network_roster;

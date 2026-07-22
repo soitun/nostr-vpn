@@ -61,6 +61,18 @@ export function deterministicBuildEnv(env = {}, { sourceDateEpoch = null } = {})
   }
 }
 
+export function windowsSshTransportArgs(env = {}, { connectTimeout = 10 } = {}) {
+  const args = ['-o', 'BatchMode=yes', '-o', `ConnectTimeout=${connectTimeout}`]
+  const proxyCommand = String(env.NVPN_WINDOWS_SSH_PROXY_COMMAND || '').trim()
+  const jumpHost = String(env.NVPN_WINDOWS_SSH_JUMP || '').trim()
+  if (proxyCommand) {
+    args.push('-o', `ProxyCommand=${proxyCommand}`)
+  } else if (jumpHost) {
+    args.push('-J', jumpHost)
+  }
+  return args
+}
+
 export function linuxReleaseTargetsForDockerPlatform(platform) {
   const normalized = String(platform || '').trim()
   const match = normalized.match(/^linux\/([^/]+)(?:\/[^/]+)?$/)

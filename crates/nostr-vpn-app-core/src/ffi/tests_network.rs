@@ -305,6 +305,56 @@
         let _ = fs::remove_dir_all(&joiner_dir);
     }
 
+    #[test]
+    fn manual_join_seeds_only_the_out_of_band_admin_and_network_id() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-manual-join-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+
+        let admin_npub = Keys::generate()
+            .public_key()
+            .to_bech32()
+            .expect("admin npub");
+        let admin_hex = normalize_nostr_pubkey(&admin_npub).expect("normalize admin");
+        let error = anyhow!("boom");
+        let mut runtime = NativeAppRuntime::from_startup_error(&error);
+        runtime.startup_error = None;
+        runtime.mobile_runtime = true;
+        runtime.config_path = dir.join("config.toml");
+
+        runtime.dispatch(NativeAppAction::ManualAddNetwork {
+            admin_npub,
+            mesh_network_id: "8d4f-34f5-425b-c50e".to_string(),
+        });
+
+        let network = runtime.config.active_network();
+        assert!(runtime.last_error.is_empty(), "{}", runtime.last_error);
+        assert_eq!(network.network_id, "8d4f34f5425bc50e");
+        assert_eq!(network.devices, vec![admin_hex.clone()]);
+        assert_eq!(network.admins, vec![admin_hex.clone()]);
+        assert_eq!(network.join_request_admin, admin_hex);
+        assert!(!network.join_secret.is_empty());
+        assert!(network.outbound_join_request.is_none());
+        assert!(runtime.vpn_enabled);
+
+        let persisted = AppConfig::load(&runtime.config_path).expect("reload manual network");
+        assert_eq!(persisted.active_network().network_id, "8d4f34f5425bc50e");
+
+        runtime.dispatch(NativeAppAction::ManualAddNetwork {
+            admin_npub: Keys::generate()
+                .public_key()
+                .to_bech32()
+                .expect("second admin npub"),
+            mesh_network_id: "8d4f34f5425bc50e".to_string(),
+        });
+        assert!(runtime.last_error.contains("already configured"));
+        assert_eq!(runtime.config.networks.len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[cfg(unix)]
     #[test]
     fn join_approval_respects_disabled_autoconnect() {

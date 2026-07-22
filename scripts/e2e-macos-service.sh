@@ -73,7 +73,7 @@ SERVICE_LABEL="to.nostrvpn.nvpn.$(printf '%s' "$TEST_DIR/$SUFFIX" \
 
 cleanup() {
   echo "Cleaning up test service ($SERVICE_LABEL)..."
-  sudo "$NVPN_BIN" service uninstall --config "$TEST_CONFIG" 2>/dev/null || true
+  sudo -n "$NVPN_BIN" service uninstall --config "$TEST_CONFIG" 2>/dev/null || true
   rm -rf "$TEST_DIR"
 }
 trap cleanup EXIT
@@ -91,7 +91,7 @@ test -n "$own_npub" && test -n "$peer_npub"
   --fips-nostr-discovery-enabled false --fips-bootstrap-enabled false >/dev/null
 
 echo "Installing test service..."
-sudo "$NVPN_BIN" service install --force --config "$TEST_CONFIG" >/dev/null
+sudo -n "$NVPN_BIN" service install --force --config "$TEST_CONFIG" >/dev/null
 
 # Give launchd a moment to actually spawn the daemon.
 sleep 3

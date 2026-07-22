@@ -153,6 +153,24 @@ public sealed partial class AppViewModel
         return DispatchAsync(NativeActions.AddNetwork(NetworkNameInput.Trim()), "Adding network");
     }
 
+    private async Task ManualAddNetworkAsync()
+    {
+        var admin = ManualJoinAdminId.Trim();
+        var mesh = NormalizeNetworkIdInput(ManualJoinMeshId);
+        if (!IsValidDeviceId(admin) || string.IsNullOrWhiteSpace(mesh))
+        {
+            return;
+        }
+        await DispatchAsync(NativeActions.ManualAddNetwork(admin, mesh), "Adding network");
+        if (string.IsNullOrWhiteSpace(State.Error))
+        {
+            ManualJoinAdminId = "";
+            ManualJoinMeshId = "";
+            SetNetworkSetupMode("");
+            Page = AppPage.Devices;
+        }
+    }
+
     private async Task CreateNetworkAsync()
     {
         var name = string.IsNullOrWhiteSpace(NetworkNameInput) ? "My Network" : NetworkNameInput.Trim();

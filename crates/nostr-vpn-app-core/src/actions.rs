@@ -55,6 +55,12 @@ pub enum NativeAppAction {
     ImportJoinRequest {
         request: String,
     },
+    /// Explicit out-of-band join: trust an admin Device ID and Network ID
+    /// entered by the user. The admin must add this device's ID on their side.
+    ManualAddNetwork {
+        admin_npub: String,
+        mesh_network_id: String,
+    },
     /// Broadcast this device's signed join request over LAN multicast/broadcast.
     StartJoinRequestBroadcast,
     StopJoinRequestBroadcast,
@@ -289,6 +295,23 @@ mod tests {
             NativeAppAction::ImportJoinRequest {
                 request: "nvpn://join-request/payload".to_string(),
             }
+        );
+    }
+
+    #[test]
+    fn manual_join_action_uses_cross_platform_camel_case_fields() {
+        let action = NativeAppAction::ManualAddNetwork {
+            admin_npub: "npub1admin".to_string(),
+            mesh_network_id: "8d4f34f5425bc50e".to_string(),
+        };
+        let encoded = serde_json::to_string(&action).expect("serialize action");
+        assert_eq!(
+            encoded,
+            r#"{"type":"manual_add_network","adminNpub":"npub1admin","meshNetworkId":"8d4f34f5425bc50e"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<NativeAppAction>(&encoded).expect("parse action"),
+            action
         );
     }
 

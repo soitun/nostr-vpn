@@ -112,6 +112,78 @@ fn append_join_network_card(
         join_card.append(&copy);
     }
 
+    let manual = gtk::Expander::new(Some("Manual join"));
+    let manual_body = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    let help = gtk::Label::new(Some(
+        "Give the admin your Device ID. Enter their Device ID and Network ID here; they must add your Device ID too.",
+    ));
+    help.set_wrap(true);
+    help.set_xalign(0.0);
+    help.add_css_class("caption");
+    help.add_css_class("dim-label");
+    manual_body.append(&help);
+    let own_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let own = gtk::Label::new(Some(&state.own_npub));
+    own.set_hexpand(true);
+    own.set_xalign(0.0);
+    own.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    own_row.append(&own);
+    let copy_own = icon_text_button("Copy Device ID", "edit-copy-symbolic");
+    {
+        let value = state.own_npub.clone();
+        copy_own.connect_clicked(move |_| copy_text(&value));
+    }
+    own_row.append(&copy_own);
+    manual_body.append(&own_row);
+    let admin = entry("Admin Device ID", &app.borrow().drafts.manual_admin_npub);
+    {
+        let app = app.clone();
+        admin.connect_changed(move |entry| {
+            app.borrow_mut().drafts.manual_admin_npub = entry.text().to_string();
+        });
+    }
+    manual_body.append(&admin);
+    let mesh = entry("Network ID", &app.borrow().drafts.manual_mesh_id);
+    {
+        let app = app.clone();
+        mesh.connect_changed(move |entry| {
+            app.borrow_mut().drafts.manual_mesh_id = entry.text().to_string();
+        });
+    }
+    manual_body.append(&mesh);
+    let add_manual = icon_text_button("Add manually", "list-add-symbolic");
+    {
+        let app = app.clone();
+        add_manual.connect_clicked(move |_| {
+            let (admin_npub, mesh_network_id) = {
+                let model = app.borrow();
+                (
+                    model.drafts.manual_admin_npub.trim().to_string(),
+                    normalize_network_id_input(&model.drafts.manual_mesh_id),
+                )
+            };
+            if !is_valid_device_id(&admin_npub) || mesh_network_id.is_empty() {
+                set_notice(&app, "Enter a valid admin Device ID and Network ID".to_string());
+                return;
+            }
+            {
+                let mut model = app.borrow_mut();
+                model.drafts.manual_admin_npub.clear();
+                model.drafts.manual_mesh_id.clear();
+            }
+            dispatch(
+                &app,
+                NativeAppAction::ManualAddNetwork {
+                    admin_npub,
+                    mesh_network_id,
+                },
+            );
+        });
+    }
+    manual_body.append(&add_manual);
+    manual.set_child(Some(&manual_body));
+    join_card.append(&manual);
+
     append_notice(app, &join_card, "Join");
     page.append(&join_card);
 }
@@ -223,6 +295,30 @@ fn build_share_page(app: &AppRef, page: &gtk::Box, state: &NativeAppState) {
 fn append_link_device_card(app: &AppRef, page: &gtk::Box, network: &NativeNetworkState) {
     let link = card();
     section_header(&link, "Link Device", "contact-new-symbolic");
+
+    let manual_help = gtk::Label::new(Some(
+        "For manual join, share this admin Device ID and Network ID, then add the joining Device ID below.",
+    ));
+    manual_help.set_wrap(true);
+    manual_help.set_xalign(0.0);
+    manual_help.add_css_class("caption");
+    manual_help.add_css_class("dim-label");
+    link.append(&manual_help);
+    for (label, raw, shown) in [
+        ("Admin Device ID", app.borrow().state.own_npub.clone(), app.borrow().state.own_npub.clone()),
+        ("Network ID", network.network_id.clone(), display_network_id(&network.network_id)),
+    ] {
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let value = gtk::Label::new(Some(&format!("{label}: {shown}")));
+        value.set_hexpand(true);
+        value.set_xalign(0.0);
+        value.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        row.append(&value);
+        let copy = icon_text_button("Copy", "edit-copy-symbolic");
+        copy.connect_clicked(move |_| copy_text(&raw));
+        row.append(&copy);
+        link.append(&row);
+    }
 
     let request_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let request = entry(

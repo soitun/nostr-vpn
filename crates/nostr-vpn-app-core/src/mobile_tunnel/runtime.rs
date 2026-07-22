@@ -3,8 +3,9 @@ impl MobileTunnel {
         const MOBILE_TUNNEL_WORKER_STACK_SIZE: usize = 4 * 1024 * 1024;
 
         mobile_debug_log("MobileTunnel::start parse begin");
-        let config: MobileTunnelConfig =
+        let launch: MobileTunnelLaunchConfig =
             serde_json::from_str(config_json).context("invalid mobile tunnel config JSON")?;
+        let config = launch.tunnel;
         mobile_debug_log(format!(
             "MobileTunnel::start parsed peers={} routes={} nostr_relays={} share_lan={} listen={}",
             config.peers.len(),
@@ -33,7 +34,12 @@ impl MobileTunnel {
             .context("failed to start mobile FIPS runtime")?;
         mobile_debug_log("MobileTunnel::start entering start_async");
         let started = runtime.block_on(async move {
-            tokio::spawn(Self::start_async(config, app_config))
+            tokio::spawn(Self::start_async_with_launch_state(
+                config,
+                app_config,
+                launch.queued_join_rosters,
+                launch.signed_roster,
+            ))
                 .await
                 .context("mobile FIPS startup task failed")?
         })?;
@@ -60,10 +66,21 @@ impl MobileTunnel {
         })
     }
 
+    #[cfg(test)]
     #[allow(clippy::large_futures, clippy::too_many_lines)]
     async fn start_async(
         config: MobileTunnelConfig,
         app_config: AppConfig,
+    ) -> Result<MobileTunnelStarted> {
+        Self::start_async_with_launch_state(config, app_config, Vec::new(), None).await
+    }
+
+    #[allow(clippy::large_futures, clippy::too_many_lines)]
+    async fn start_async_with_launch_state(
+        config: MobileTunnelConfig,
+        app_config: AppConfig,
+        queued_join_rosters: Vec<QueuedJoinRoster>,
+        launch_signed_roster: Option<SignedRoster>,
     ) -> Result<MobileTunnelStarted> {
         mobile_debug_log("MobileTunnel::start_async begin");
         let scope = mobile_lan_discovery_scope(&config.network_id);
@@ -273,6 +290,28 @@ impl MobileTunnel {
             }));
         }
 
+        for queued in queued_join_rosters {
+            let Some(destination) = mobile_join_roster_destination(&config, &queued.recipient_npub)?
+            else {
+                tracing::warn!(
+                    recipient = %queued.recipient_npub,
+                    "mobile: queued join-roster recipient is not in the active roster"
+                );
+                continue;
+            };
+            let state_control = state_control_sender.clone();
+            let config_path = config_path.clone();
+            tasks.push(tokio::spawn(async move {
+                deliver_mobile_queued_join_roster(
+                    &state_control,
+                    destination,
+                    config_path.as_deref(),
+                    queued,
+                )
+                .await;
+            }));
+        }
+
         if !config.network_id.trim().is_empty() && !local_capability_hints.is_empty() {
             let state_control = state_control_sender.clone();
             let mesh_peers = Arc::clone(&mesh_peers);
@@ -364,22 +403,27 @@ impl MobileTunnel {
             }));
         }
 
-        if let Some(config_path) = config_path.clone() {
+        if config_path.is_some() || launch_signed_roster.is_some() {
             let state_control = state_control_sender.clone();
             let mesh = Arc::clone(&mesh);
             let peer_identities = Arc::clone(&peer_identities);
             let presence = Arc::clone(&presence);
             let app_config = Arc::clone(&app_config);
+            let config_path = config_path.clone();
             tasks.push(tokio::spawn(async move {
+                let context = MobileRosterSyncContext {
+                    state_control,
+                    mesh,
+                    peer_identities,
+                    presence,
+                    app_config,
+                    config_path,
+                    launch_signed_roster,
+                };
                 let mut roster_sync = MobileRosterSyncState::default();
                 loop {
                     if let Err(error) = sync_mobile_signed_roster_with_connected_peers(
-                        &state_control,
-                        &mesh,
-                        &peer_identities,
-                        &presence,
-                        &app_config,
-                        &config_path,
+                        &context,
                         &mut roster_sync,
                     )
                     .await
@@ -596,20 +640,14 @@ impl MobileTunnel {
         join_roster: &JoinRosterControl,
         timeout: Duration,
     ) -> Result<()> {
-        let recipient = normalize_nostr_pubkey(recipient)?;
-        let endpoint_npub = self
+        let config = self
             .config
             .read()
             .map_err(|_| anyhow!("mobile FIPS config lock poisoned"))?
-            .peers
-            .iter()
-            .find(|peer| peer.participant_pubkey == recipient)
-            .map(|peer| peer.endpoint_npub.clone())
-            .with_context(|| {
-                format!("missing FIPS endpoint identity for participant {recipient}")
-            })?;
-        let destination = PeerIdentity::from_npub(&endpoint_npub)
-            .with_context(|| format!("invalid FIPS endpoint identity {endpoint_npub}"))?;
+            .clone();
+        let destination = mobile_join_roster_destination(&config, recipient)?.with_context(|| {
+            format!("missing FIPS endpoint identity for participant {recipient}")
+        })?;
         self.runtime.block_on(send_join_roster_with_receipt(
             &self.state_control,
             destination,
@@ -617,6 +655,85 @@ impl MobileTunnel {
             timeout,
         ))?;
         Ok(())
+    }
+}
+
+fn mobile_join_roster_destination(
+    config: &MobileTunnelConfig,
+    recipient: &str,
+) -> Result<Option<PeerIdentity>> {
+    let recipient = normalize_nostr_pubkey(recipient)?;
+    config
+        .peers
+        .iter()
+        .find(|peer| peer.participant_pubkey == recipient)
+        .map(|peer| {
+            PeerIdentity::from_npub(&peer.endpoint_npub)
+                .with_context(|| format!("invalid FIPS endpoint identity {}", peer.endpoint_npub))
+        })
+        .transpose()
+}
+
+async fn deliver_mobile_queued_join_roster(
+    state_control: &FipsControlTcpSender,
+    destination: PeerIdentity,
+    config_path: Option<&Path>,
+    mut queued: QueuedJoinRoster,
+) {
+    const DELIVERY_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
+    const DELIVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+    let outbox_path = config_path.and_then(|config_path| {
+        let event_id = queued.join_roster.signed_roster.artifact_hash();
+        load_join_rosters(config_path)
+            .into_iter()
+            .find(|(_, candidate)| {
+                candidate.recipient_npub == queued.recipient_npub
+                    && candidate.join_roster.signed_roster.artifact_hash() == event_id
+            })
+            .map(|(path, _)| path)
+    });
+
+    loop {
+        let now = unix_timestamp();
+        if join_roster_delivery_expired(&queued, now) {
+            if let Some(path) = outbox_path.as_deref()
+                && let Err(error) = fs::remove_file(path)
+            {
+                tracing::warn!(?error, "mobile: failed to remove expired join approval");
+            }
+            return;
+        }
+        if let Some(path) = outbox_path.as_deref()
+            && let Err(error) = record_join_roster_attempt(path, &mut queued, now)
+        {
+            tracing::warn!(?error, "mobile: failed to record join approval attempt");
+        }
+        match send_join_roster_with_receipt(
+            state_control,
+            destination,
+            &queued.join_roster,
+            DELIVERY_ATTEMPT_TIMEOUT,
+        )
+        .await
+        {
+            Ok(_) => {
+                if let Some(path) = outbox_path.as_deref()
+                    && let Err(error) = fs::remove_file(path)
+                {
+                    tracing::warn!(?error, "mobile: failed to consume delivered join approval");
+                }
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    recipient = %queued.recipient_npub,
+                    "mobile: join approval not yet acknowledged; retrying"
+                );
+                tokio::time::sleep(DELIVERY_RETRY_DELAY).await;
+            }
+        }
     }
 }
 

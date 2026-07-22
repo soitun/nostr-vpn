@@ -1,10 +1,18 @@
 import Foundation
 import NetworkExtension
 
-private let appGroupIdentifier = Bundle.main.object(
-    forInfoDictionaryKey: "NVPNAppGroupIdentifier"
-) as? String ?? "group.fi.siriusbusiness.nvpn"
+private let appGroupIdentifier: String = {
+    guard let value = Bundle.main.object(
+        forInfoDictionaryKey: "NVPNAppGroupIdentifier"
+    ) as? String,
+    !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else {
+        fatalError("NVPNAppGroupIdentifier is missing from Info.plist")
+    }
+    return value
+}()
 private let defaultMobileMtu = 1150
+private let packetDebugLogLimitBytes = 1_048_576
 
 final class PacketTunnelProvider: NEPacketTunnelProvider {
     private static let appMessageChunkSize = 3_072
@@ -503,17 +511,25 @@ private func consumeCString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
 
 private func packetDebugLog(_ message: String) {
     #if DEBUG
-    let logDir = FileManager.default
+    guard let logDir = FileManager.default
         .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
         .appendingPathComponent("Nostr VPN", isDirectory: true)
-        ?? FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)
-            .first
-        ?? FileManager.default.temporaryDirectory
+    else {
+        return
+    }
     try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
     let logUrl = logDir.appendingPathComponent("nvpn-pkt-debug.log")
     let line = "[\(Date())] \(message)\n"
     guard let data = line.data(using: .utf8) else {
         return
+    }
+    let existingBytes = (
+        try? FileManager.default.attributesOfItem(atPath: logUrl.path)[.size] as? NSNumber
+    )?.intValue ?? 0
+    if existingBytes + data.count > packetDebugLogLimitBytes {
+        let previousURL = logUrl.appendingPathExtension("previous")
+        try? FileManager.default.removeItem(at: previousURL)
+        try? FileManager.default.moveItem(at: logUrl, to: previousURL)
     }
     if FileManager.default.fileExists(atPath: logUrl.path),
        let handle = try? FileHandle(forWritingTo: logUrl)
@@ -522,7 +538,7 @@ private func packetDebugLog(_ message: String) {
         handle.write(data)
         try? handle.close()
     } else {
-        try? data.write(to: logUrl)
+        try? data.write(to: logUrl, options: .atomic)
     }
     #endif
 }

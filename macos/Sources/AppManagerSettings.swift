@@ -155,6 +155,13 @@ extension AppManager {
         }
     }
 
+    func manualAddNetwork(adminNpub: String, meshNetworkId: String) {
+        dispatch(
+            .manualAddNetwork(adminNpub: adminNpub, meshNetworkId: meshNetworkId),
+            status: "Adding network"
+        )
+    }
+
     func renameNetwork(networkId: String, name: String) {
         dispatch(.renameNetwork(networkId: networkId, name: name), status: "Renaming network")
     }

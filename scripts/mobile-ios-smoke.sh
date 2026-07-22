@@ -7,11 +7,12 @@ source "$ROOT/scripts/release_common.sh"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/mobile_env.sh"
 load_release_env "$ROOT"
+load_appstoreconnect_defaults
 load_mobile_env "$ROOT"
 resolve_shared_build_metadata "$ROOT"
 export NVPN_IOS_BUNDLE_ID="${NVPN_IOS_BUNDLE_ID:-${NVPN_DEFAULT_IOS_BUNDLE_ID:-fi.siriusbusiness.nvpn}}"
 export NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID="${NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID:-$NVPN_IOS_BUNDLE_ID.PacketTunnel}"
-export NVPN_IOS_APP_GROUP_IDENTIFIER="${NVPN_IOS_APP_GROUP_IDENTIFIER:-group.$NVPN_IOS_BUNDLE_ID}"
+export NVPN_IOS_APP_GROUP_IDENTIFIER="${NVPN_IOS_APP_GROUP_IDENTIFIER:-group.$NVPN_IOS_BUNDLE_ID.shared}"
 BUNDLE_ID="$NVPN_IOS_BUNDLE_ID"
 SIMULATOR_NAME="${NVPN_IOS_SIMULATOR_NAME:-iPhone 17 Pro}"
 PROJECT="$ROOT/ios/NostrVpnIos.xcodeproj"
@@ -20,6 +21,10 @@ DEVICE_CONFIGURATION="${NVPN_IOS_DEVICE_CONFIGURATION:-Debug}"
 DEVICE_DERIVED_DATA="${NVPN_IOS_DEVICE_DERIVED_DATA:-$ROOT/ios/.build/DeviceDerivedData}"
 DEVICE_DESTINATION="${NVPN_IOS_DEVICE_DESTINATION:-generic/platform=iOS}"
 DEVICE_CODE_SIGN_IDENTITY="${NVPN_IOS_DEVICE_CODE_SIGN_IDENTITY:-Apple Development}"
+DEVICE_SIGNING_MODE="${NVPN_IOS_DEVICE_SIGNING_MODE:-adhoc}"
+DEVICE_SIGNING_PREPARED=0
+DEVICE_PROVISIONING_DIR="${NVPN_IOS_DEVICE_PROVISIONING_DIR:-$ROOT/ios/.build/DeviceSigning}"
+DEVICE_PROVISIONING_ENV="$DEVICE_PROVISIONING_DIR/provisioning.env"
 INSTALL_DEVICE_APP="${NVPN_IOS_INSTALL:-0}"
 CREATE_NETWORK="${NVPN_IOS_DEBUG_CREATE_NETWORK:-0}"
 DEBUG_NETWORK_NAME="${NVPN_IOS_DEBUG_NETWORK_NAME:-iOS smoke}"
@@ -49,15 +54,20 @@ IDLE_CPU_SAMPLE_SECONDS="${NVPN_IOS_IDLE_CPU_SAMPLE_SECONDS:-${NVPN_IDLE_CPU_SAM
 IDLE_CPU_SETTLE_SECONDS="${NVPN_IOS_IDLE_CPU_SETTLE_SECONDS:-${NVPN_IDLE_CPU_SETTLE_SECONDS:-3}}"
 IOS_SIM_PROCESS_NAME="${NVPN_IOS_SIM_PROCESS_NAME:-Nostr VPN}"
 SCREENSHOT="$ROOT/artifacts/nostr-vpn-ios.png"
+vpn_cleanup_armed=0
+vpn_cleanup_device=""
 
 usage() {
   cat >&2 <<'EOF'
-usage: scripts/mobile-ios-smoke.sh [simulator|device] [--install] [--create-network] [--vpn-cycle] [--device DEVICE] [--leave-vpn-active] [--probe-target IP] [--probe-port PORT] [--probe-count N] [--probe-require-reply]
+usage: scripts/mobile-ios-smoke.sh [simulator|device] [--install] [--disconnect] [--create-network] [--vpn-cycle] [--device DEVICE] [--leave-vpn-active] [--probe-target IP] [--probe-port PORT] [--probe-count N] [--probe-require-reply]
 
 simulator  Builds, installs, launches, and screenshots the simulator app.
-device     Launches an already installed development build on a physical device.
---install  Builds and installs the current development-signed iphoneos app
+device     Launches an already installed physical test build.
+--install  Builds and installs the current iphoneos test app
            before launching device mode.
+--disconnect
+           Confirm that the installed physical test app's packet tunnel is off,
+           then exit without running a smoke.
 --device DEVICE
            Selects the physical device identifier for this run. Equivalent to
            NVPN_IOS_DEVICE=DEVICE.
@@ -77,10 +87,13 @@ Simulator mode is a launch smoke only; iOS Packet Tunnel dataplane checks need
 a physical device, and first-run VPN/profile permission prompts may need a
 manual approval before --vpn-cycle can run unattended.
 
-Device install mode requires Xcode signing access for NVPN_IOS_BUNDLE_ID and
-NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID. Set NVPN_IOS_TEAM_ID in the shell or local
-env file; set NVPN_IOS_ALLOW_PROVISIONING_UPDATES=0 to avoid automatic profile
-updates.
+Device install mode requires signing access for NVPN_IOS_BUNDLE_ID and
+NVPN_IOS_PACKET_TUNNEL_BUNDLE_ID. When App Store Connect credentials are
+available, physical gates use company Ad Hoc profiles and fail if those profiles
+cannot be prepared. Set
+NVPN_IOS_DEVICE_SIGNING_MODE=development only for Xcode-managed development;
+that mode may require explicitly trusting its development certificate. Set
+NVPN_IOS_TEAM_ID in the shell or local env file.
 
 The physical-device packet probe defaults to 4 UDP packets toward the debug
 non-local tunnel probe target. Use --probe-target, --probe-port, --probe-count,
@@ -100,11 +113,15 @@ if [[ $# -gt 0 ]]; then
   shift
 fi
 vpn_cycle=0
+disconnect_only=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --install)
       INSTALL_DEVICE_APP=1
+      ;;
+    --disconnect)
+      disconnect_only=1
       ;;
     --create-network)
       CREATE_NETWORK=1
@@ -251,11 +268,7 @@ auto_select_ios_device() {
 launch_device() {
   local device="$1"
   shift
-  xcrun devicectl device process launch \
-    --device "$device" \
-    --terminate-existing \
-    "$BUNDLE_ID" \
-    "$@"
+  ios_device_launch "$device" "$BUNDLE_ID" "$@"
 }
 
 device_app_path() {
@@ -263,12 +276,95 @@ device_app_path() {
     -maxdepth 1 -name '*.app' -type d | sort | head -n 1
 }
 
+connected_ios_udid() {
+  local device="$1"
+  if [[ -n "${NVPN_IOS_DEVICE_UDID:-}" ]]; then
+    printf '%s\n' "$NVPN_IOS_DEVICE_UDID"
+    return 0
+  fi
+  if [[ "$device" =~ ^[0-9A-Fa-f-]{8,}$ ]]; then
+    printf '%s\n' "$device"
+    return 0
+  fi
+
+  local found=""
+  local candidate
+  if command -v idevice_id >/dev/null 2>&1; then
+    while IFS= read -r candidate; do
+      [[ -z "$candidate" ]] && continue
+      if [[ -n "$found" ]]; then
+        echo "Multiple physical iOS devices are connected; set NVPN_IOS_DEVICE_UDID for Ad Hoc signing." >&2
+        return 1
+      fi
+      found="$candidate"
+    done < <(idevice_id -l)
+  elif command -v ideviceinfo >/dev/null 2>&1; then
+    found="$(ideviceinfo -s -k UniqueDeviceID 2>/dev/null || true)"
+  fi
+  if [[ -z "$found" ]]; then
+    echo "Could not resolve the connected device UDID; set NVPN_IOS_DEVICE_UDID for Ad Hoc signing." >&2
+    return 1
+  fi
+  printf '%s\n' "$found"
+}
+
+prepare_device_signing() {
+  local device="$1"
+  if [[ "$DEVICE_SIGNING_PREPARED" -eq 1 ]]; then
+    return 0
+  fi
+
+  local mode="$DEVICE_SIGNING_MODE"
+
+  case "$mode" in
+    adhoc)
+      local udid profile_log
+      udid="$(connected_ios_udid "$device")"
+      mkdir -p "$DEVICE_PROVISIONING_DIR"
+      profile_log="$DEVICE_PROVISIONING_DIR/ios-profiles.log"
+      if ! NVPN_IOS_PROFILE_TYPE=IOS_APP_ADHOC \
+        NVPN_IOS_PROFILE_NAME="Nostr VPN Ad Hoc main physical gate" \
+        NVPN_IOS_PACKET_TUNNEL_PROFILE_NAME="Nostr VPN Ad Hoc packet tunnel physical gate" \
+        NVPN_IOS_CODE_SIGN_IDENTITY="Apple Distribution" \
+        NVPN_IOS_DEVICE_UDIDS="$udid" \
+        NVPN_IOS_PROFILES_ENV_PATH="$DEVICE_PROVISIONING_ENV" \
+        "$ROOT/scripts/ios-profiles" ensure >"$profile_log" 2>&1
+      then
+        echo "Unable to prepare company Ad Hoc signing; private details are in $profile_log" >&2
+        return 1
+      fi
+      # shellcheck disable=SC1090
+      source "$DEVICE_PROVISIONING_ENV"
+      : "${NVPN_IOS_CODE_SIGN_IDENTITY:?Ad Hoc signing identity not set}"
+      : "${NVPN_IOS_PROVISIONING_PROFILE_UUID:?Ad Hoc app profile not set}"
+      : "${NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID:?Ad Hoc tunnel profile not set}"
+      DEVICE_CONFIGURATION="DeviceDebug"
+      DEVICE_CODE_SIGN_IDENTITY="$NVPN_IOS_CODE_SIGN_IDENTITY"
+      echo "Using company Ad Hoc signing for the physical iOS gate (no development-certificate trust required)."
+      ;;
+    development)
+      DEVICE_CONFIGURATION="${NVPN_IOS_DEVICE_CONFIGURATION:-Debug}"
+      DEVICE_CODE_SIGN_IDENTITY="${NVPN_IOS_DEVICE_CODE_SIGN_IDENTITY:-Apple Development}"
+      echo "Using Xcode development signing for the physical iOS gate."
+      ;;
+    *)
+      echo "NVPN_IOS_DEVICE_SIGNING_MODE must be adhoc or development (got $mode)." >&2
+      return 2
+      ;;
+  esac
+  DEVICE_SIGNING_MODE="$mode"
+  DEVICE_SIGNING_PREPARED=1
+}
+
 build_device_app() {
+  local device="$1"
   local team="${NVPN_IOS_TEAM_ID:-}"
   if [[ -z "$team" ]]; then
     echo "Set NVPN_IOS_TEAM_ID to build/install a physical iOS device app." >&2
     exit 1
   fi
+
+  prepare_device_signing "$device"
 
   "$ROOT/tools/run-ios" xcframework
   "$ROOT/tools/run-ios" project
@@ -287,24 +383,101 @@ build_device_app() {
     -derivedDataPath "$DEVICE_DERIVED_DATA"
     -destination "$DEVICE_DESTINATION"
     DEVELOPMENT_TEAM="$team"
-    CODE_SIGN_IDENTITY="$DEVICE_CODE_SIGN_IDENTITY"
     NVPN_BUILD_GIT_SHA="$NVPN_BUILD_GIT_SHA"
     NVPN_BUILD_TIMESTAMP_UTC="$NVPN_BUILD_TIMESTAMP_UTC"
-    build
   )
+  if [[ "$DEVICE_SIGNING_MODE" == "adhoc" ]]; then
+    cmd+=(
+      NVPN_IOS_CODE_SIGN_IDENTITY="$DEVICE_CODE_SIGN_IDENTITY"
+      NVPN_IOS_PROVISIONING_PROFILE_UUID="$NVPN_IOS_PROVISIONING_PROFILE_UUID"
+      NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID="$NVPN_IOS_PACKET_TUNNEL_PROVISIONING_PROFILE_UUID"
+    )
+  else
+    cmd+=(CODE_SIGN_IDENTITY="$DEVICE_CODE_SIGN_IDENTITY")
+  fi
+  cmd+=(build)
   "${cmd[@]}"
 }
 
 install_device_app() {
   local device="$1"
   local app_path
-  build_device_app
+  disconnect_ios_vpn_before_install "$device"
+  build_device_app "$device"
   app_path="$(device_app_path)"
   if [[ -z "$app_path" ]]; then
     echo "Built iOS device app not found under $DEVICE_DERIVED_DATA" >&2
     exit 1
   fi
-  xcrun devicectl device install app --device "$device" "$app_path"
+  xcrun devicectl device install app --device "$device" "$app_path" --quiet
+}
+
+device_app_is_installed() {
+  local device="$1"
+  xcrun devicectl device info apps --device "$device" 2>/dev/null \
+    | awk -v bundle="$BUNDLE_ID" '$0 ~ bundle { found = 1 } END { exit !found }'
+}
+
+copy_ios_disconnect_result() {
+  local device="$1"
+  local result_name="$2"
+  local destination="$3"
+  rm -f "$destination"
+  xcrun devicectl device copy from \
+    --device "$device" \
+    --domain-type appDataContainer \
+    --domain-identifier "$BUNDLE_ID" \
+    --source "Library/Application Support/Nostr VPN Debug Results/$result_name" \
+    --destination "$destination" \
+    --quiet
+}
+
+validate_ios_disconnect_result() {
+  python3 - "$1" <<'PY'
+import json, sys
+
+with open(sys.argv[1], encoding="utf-8") as fh:
+    result = json.load(fh)
+status = result.get("packetTunnelStatusRawValue")
+if result.get("ok") is not True or not isinstance(status, int) or status > 1:
+    raise SystemExit(1)
+PY
+}
+
+disconnect_ios_vpn_confirmed() {
+  local device="$1"
+  local result_name="mobile-ios-disconnect-$$-$(date +%s).json"
+  local destination="${TMPDIR:-/tmp}/$result_name"
+  if ! launch_device "$device" --nvpn-debug-disconnect-result "$result_name" >/dev/null; then
+    echo "iOS VPN cleanup failed: debug disconnect launch failed" >&2
+    return 1
+  fi
+  local ignored
+  for ignored in $(seq 1 20); do
+    sleep 0.5
+    if copy_ios_disconnect_result "$device" "$result_name" "$destination" 2>/dev/null \
+      && validate_ios_disconnect_result "$destination"
+    then
+      rm -f "$destination"
+      echo "iOS VPN cleanup verified: packet tunnel is disconnected"
+      return 0
+    fi
+  done
+  rm -f "$destination"
+  echo "iOS VPN cleanup failed: packet tunnel did not confirm disconnection" >&2
+  return 1
+}
+
+disconnect_ios_vpn_before_install() {
+  local device="$1"
+  if ! device_app_is_installed "$device"; then
+    return 0
+  fi
+  if ! disconnect_ios_vpn_confirmed "$device"; then
+    echo "Refusing to replace $BUNDLE_ID while its existing packet tunnel may still be active." >&2
+    echo "Disconnect it in iOS Settings or trust/launch the installed development app, then retry." >&2
+    return 1
+  fi
 }
 
 copy_vpn_probe_result() {
@@ -316,11 +489,11 @@ copy_vpn_probe_result() {
     --device "$device" \
     --domain-type appDataContainer \
     --domain-identifier "$BUNDLE_ID" \
-    --source "Library/Application Support/Nostr VPN/$VPN_RESULT_NAME" \
+    --source "Library/Application Support/Nostr VPN Debug Results/$VPN_RESULT_NAME" \
     --destination "$result_path" \
     --quiet
   then
-    echo "Failed to copy iOS VPN probe result from app data container for $BUNDLE_ID" >&2
+    echo "Failed to copy the current iOS VPN probe receipt for $BUNDLE_ID" >&2
     echo "If this is a first run, approve the iOS VPN configuration prompt on the device and retry." >&2
     return 1
   fi
@@ -339,11 +512,15 @@ copy_ios_debug_logs() {
   for name in app-debug.log nvpn-pkt-debug.log; do
     local destination="$VPN_RESULT_DIR/$stem-$name"
     rm -f "$destination"
+    launch_device "$device" \
+      --nvpn-debug-export-support-file "$name" \
+      --nvpn-debug-export-result "$name" >/dev/null 2>&1 || continue
+    sleep 0.5
     if xcrun devicectl device copy from \
       --device "$device" \
       --domain-type appDataContainer \
       --domain-identifier "$BUNDLE_ID" \
-      --source "Library/Application Support/Nostr VPN/$name" \
+      --source "Library/Application Support/Nostr VPN Debug Results/$name" \
       --destination "$destination" \
       --quiet \
       2>/dev/null
@@ -725,6 +902,10 @@ run_vpn_cycle() {
   if bool_is_true "$CREATE_NETWORK"; then
     args+=(--nvpn-debug-add-network "$DEBUG_NETWORK_NAME")
   fi
+  if bool_is_true "$cleanup_after_vpn_cycle"; then
+    vpn_cleanup_armed=1
+    vpn_cleanup_device="$device"
+  fi
   launch_device "$device" "${args[@]}"
   sleep "$((VPN_START_WAIT_SECS + VPN_RESULT_WAIT_SECS))"
   local result_path
@@ -740,19 +921,34 @@ run_vpn_cycle() {
   if ! bool_is_true "$VERIFY_DIRECT_RESTORATION"; then
     run_ios_device_idle_cpu_gate "$device" '^Nostr VPN Tunnel$' "iOS packet tunnel"
   fi
-  cleanup_ios_vpn_after_pass "$device"
+  cleanup_ios_vpn "$device"
 }
 
-cleanup_ios_vpn_after_pass() {
+cleanup_ios_vpn() {
   local device="$1"
   bool_is_true "$cleanup_after_vpn_cycle" || return 0
-  if ! launch_device "$device" --nvpn-disconnect >/dev/null; then
-    echo "iOS VPN cleanup failed: debug disconnect launch failed" >&2
+  if ! disconnect_ios_vpn_confirmed "$device"; then
     return 1
   fi
-  sleep 2
-  echo "iOS VPN cleanup requested: debug disconnect launched"
+  vpn_cleanup_armed=0
+  vpn_cleanup_device=""
 }
+
+cleanup_ios_vpn_on_exit() {
+  local status="$?"
+  trap - EXIT
+  if [[ "$vpn_cleanup_armed" -eq 1 && -n "$vpn_cleanup_device" ]]; then
+    if ! cleanup_ios_vpn "$vpn_cleanup_device"; then
+      echo "iOS VPN emergency cleanup failed; turn the VPN off in iOS Settings before replacing the app." >&2
+      if [[ "$status" -eq 0 ]]; then
+        status=1
+      fi
+    fi
+  fi
+  exit "$status"
+}
+
+trap cleanup_ios_vpn_on_exit EXIT
 
 run_device() {
   local device="${NVPN_IOS_DEVICE:-${NVPN_IOS_DEVICE_ID:-}}"
@@ -773,13 +969,17 @@ run_device() {
   fi
 
   xcrun devicectl device info details --device "$device" >/dev/null
+  if [[ "$disconnect_only" -eq 1 ]]; then
+    disconnect_ios_vpn_confirmed "$device"
+    return
+  fi
   if bool_is_true "$INSTALL_DEVICE_APP"; then
     install_device_app "$device"
   fi
   if [[ "$vpn_cycle" -eq 1 ]]; then
     run_vpn_cycle "$device"
   else
-    launch_device "$device"
+    disconnect_ios_vpn_confirmed "$device"
     run_ios_device_idle_cpu_gate "$device" '^Nostr VPN$' "iOS foreground app"
   fi
   echo "iOS device smoke launched bundle $BUNDLE_ID"

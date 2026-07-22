@@ -43,6 +43,8 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     private string _joinRequestInput = "";
     private string _participantInput = "";
     private string _participantAliasInput = "";
+    private string _manualJoinAdminId = "";
+    private string _manualJoinMeshId = "";
     private string _networkNameInput = "";
     private string _networkNameDraft = "";
     private string _networkMeshIdDraft = "";
@@ -132,6 +134,9 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         ShowJoinNetworkSetupCommand = new RelayCommand(_ => SetNetworkSetupMode("join"));
         BackToNetworkSetupChoicesCommand = new RelayCommand(_ => SetNetworkSetupMode(""));
         AddNetworkCommand = new AsyncRelayCommand(_ => AddNetworkAsync(), _ => !ActionInFlight && !string.IsNullOrWhiteSpace(NetworkNameInput));
+        ManualAddNetworkCommand = new AsyncRelayCommand(
+            _ => ManualAddNetworkAsync(),
+            _ => !ActionInFlight && CanSubmitManualJoin);
         ActivateInactiveNetworkCommand = new AsyncRelayCommand(
             parameter => ActivateInactiveNetworkAsync(parameter as string),
             parameter => !ActionInFlight && parameter is string id && !string.IsNullOrWhiteSpace(id));
@@ -256,6 +261,40 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
         }
     }
     public Visibility ParticipantInputErrorVisibility => ParticipantInputInvalid ? Visibility.Visible : Visibility.Collapsed;
+
+    public string ManualJoinAdminId
+    {
+        get => _manualJoinAdminId;
+        set
+        {
+            if (SetField(ref _manualJoinAdminId, value))
+            {
+                OnPropertyChanged(nameof(ManualJoinAdminInvalid));
+                OnPropertyChanged(nameof(ManualJoinAdminErrorVisibility));
+                OnPropertyChanged(nameof(CanSubmitManualJoin));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+    public string ManualJoinMeshId
+    {
+        get => _manualJoinMeshId;
+        set
+        {
+            if (SetField(ref _manualJoinMeshId, value))
+            {
+                OnPropertyChanged(nameof(CanSubmitManualJoin));
+                CommandManager.InvalidateRequerySuggested();
+            }
+        }
+    }
+    public bool ManualJoinAdminInvalid =>
+        !string.IsNullOrWhiteSpace(_manualJoinAdminId) && !IsValidDeviceId(_manualJoinAdminId.Trim());
+    public Visibility ManualJoinAdminErrorVisibility => ManualJoinAdminInvalid ? Visibility.Visible : Visibility.Collapsed;
+    public bool CanSubmitManualJoin =>
+        !string.IsNullOrWhiteSpace(_manualJoinAdminId)
+        && !string.IsNullOrWhiteSpace(NormalizeNetworkIdInput(_manualJoinMeshId))
+        && !ManualJoinAdminInvalid;
 
     public string NetworkNameInput { get => _networkNameInput; set => SetField(ref _networkNameInput, value); }
     public string NetworkNameDraft
@@ -638,6 +677,7 @@ public sealed partial class AppViewModel : INotifyPropertyChanged, IDisposable
     public ICommand ShowJoinNetworkSetupCommand { get; }
     public ICommand BackToNetworkSetupChoicesCommand { get; }
     public ICommand AddNetworkCommand { get; }
+    public ICommand ManualAddNetworkCommand { get; }
     public ICommand ActivateInactiveNetworkCommand { get; }
     public ICommand SaveNetworkNameCommand { get; }
     public ICommand SaveNetworkMeshIdCommand { get; }

@@ -209,6 +209,36 @@
     }
 
     #[test]
+    fn ffi_startup_error_recovery_stays_on_requested_data_directory() {
+        let nonce = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock is after epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("nvpn-app-core-startup-path-{nonce}"));
+        fs::create_dir_all(&dir).expect("create test dir");
+        let config_path = dir.join("config.toml");
+        fs::write(&config_path, "not valid toml").expect("write invalid config");
+
+        let app = FfiApp::new(
+            dir.to_str().expect("utf8 temp dir").to_string(),
+            "test-version".to_string(),
+        );
+        let initial = app.state();
+        assert_eq!(initial.config_path, config_path.display().to_string());
+        assert!(!initial.error.is_empty());
+
+        let refreshed = app.refresh();
+        assert_eq!(refreshed.config_path, config_path.display().to_string());
+        assert!(!refreshed.error.is_empty());
+        assert_eq!(
+            fs::read_to_string(&config_path).expect("read original config"),
+            "not valid toml"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn startup_error_blocks_config_mutation_until_real_config_loads() {
         let nonce = SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

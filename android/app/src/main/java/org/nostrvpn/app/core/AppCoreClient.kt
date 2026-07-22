@@ -37,6 +37,9 @@ object NativeActions {
     fun connectVpn() = action("connect_vpn")
     fun disconnectVpn() = action("disconnect_vpn")
     fun importJoinRequest(request: String) = action("import_join_request", "request" to request)
+    fun manualAddNetwork(adminNpub: String, meshNetworkId: String) =
+        action("manual_add_network", "adminNpub" to adminNpub, "meshNetworkId" to meshNetworkId)
+
     fun startJoinRequestBroadcast() = action("start_join_request_broadcast")
     fun stopJoinRequestBroadcast() = action("stop_join_request_broadcast")
     fun startNearbyDiscovery() = action("start_nearby_discovery")
@@ -49,6 +52,9 @@ object NativeActions {
         action("add_participant", "networkId" to networkId, "npub" to npub, "alias" to alias)
 
     fun removeNetwork(networkId: String) = action("remove_network", "networkId" to networkId)
+
+    fun removeParticipant(networkId: String, npub: String) =
+        action("remove_participant", "networkId" to networkId, "npub" to npub)
 
     fun setParticipantEndpointHints(npub: String, endpointHints: List<String>) =
         action("set_participant_endpoint_hints", "npub" to npub, "endpointHints" to endpointHints)

@@ -57,19 +57,18 @@ fn apply_mobile_join_roster(
         .write()
         .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
     app.ensure_defaults();
-    let Some(_applied) = app.apply_nostr_join_roster(join_roster, unix_timestamp())? else {
+    let applied = if let Some(config_path) = config_path {
+        apply_join_roster_durably(&mut app, config_path, join_roster, unix_timestamp())?
+    } else {
+        let applied = apply_join_roster(&mut app, join_roster, unix_timestamp())?;
+        if applied.is_some() {
+            maybe_autoconfigure_node(&mut app);
+        }
+        applied
+    };
+    let Some(_applied_network_id) = applied else {
         return Ok(None);
     };
-    if let Some(config_path) = config_path {
-        upsert_signed_roster(
-            &signed_rosters_file_path(config_path),
-            join_roster.signed_roster.clone(),
-        )?;
-    }
-    maybe_autoconfigure_node(&mut app);
-    if let Some(config_path) = config_path {
-        app.save(config_path)?;
-    }
     app_config_dirty.store(true, Ordering::Relaxed);
     let config_path = config_path.unwrap_or_else(|| Path::new(""));
     MobileTunnelConfig::from_app_with_config_path(&app, config_path).map(Some)
@@ -81,28 +80,8 @@ fn mobile_join_roster_is_durably_persisted(
     join_roster: &JoinRosterControl,
 ) -> Result<bool> {
     let network_id = join_roster.signed_roster.network_id()?;
-    let roster_event_id = join_roster.signed_roster.artifact_hash();
     if let Some(config_path) = config_path {
-        let persisted = AppConfig::load(config_path)?;
-        let original_request_is_pending = persisted
-            .pending_nostr_join_request
-            .as_ref()
-            .is_some_and(|pending| pending.request.request_secret == join_roster.request_secret);
-        if original_request_is_pending
-            || !mobile_signed_roster_is_current_for_app(
-                &persisted,
-                &network_id,
-                &join_roster.signed_roster,
-            )
-        {
-            return Ok(false);
-        }
-        let store = nostr_vpn_core::signed_rosters::load_signed_rosters(
-            &signed_rosters_file_path(config_path),
-        )?;
-        return Ok(store
-            .latest_for(&network_id)
-            .is_some_and(|signed| signed.artifact_hash() == roster_event_id));
+        return join_roster_is_durably_persisted(config_path, join_roster);
     }
 
     let app = app_config
@@ -723,17 +702,23 @@ struct MobileRosterSyncState {
     sent_by_peer: HashMap<String, MobileRosterSentState>,
 }
 
+struct MobileRosterSyncContext {
+    state_control: FipsControlTcpSender,
+    mesh: MobileMesh,
+    peer_identities: Arc<RwLock<MobilePeerIdentityMap>>,
+    presence: Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
+    app_config: Arc<RwLock<AppConfig>>,
+    config_path: Option<PathBuf>,
+    launch_signed_roster: Option<SignedRoster>,
+}
+
 async fn sync_mobile_signed_roster_with_connected_peers(
-    state_control: &FipsControlTcpSender,
-    mesh: &MobileMesh,
-    peer_identities: &Arc<RwLock<MobilePeerIdentityMap>>,
-    presence: &Arc<RwLock<HashMap<String, MobilePeerPresence>>>,
-    app_config: &Arc<RwLock<AppConfig>>,
-    config_path: &Path,
+    context: &MobileRosterSyncContext,
     state: &mut MobileRosterSyncState,
 ) -> Result<usize> {
     let source = {
-        let app = app_config
+        let app = context
+            .app_config
             .read()
             .map_err(|_| anyhow!("mobile app config lock poisoned"))?;
         app.active_network_opt().map(|network| {
@@ -745,7 +730,11 @@ async fn sync_mobile_signed_roster_with_connected_peers(
         })
     };
     if state.source != source {
-        state.encoded = mobile_current_signed_roster_from_store(app_config, config_path)?
+        state.encoded = mobile_current_signed_roster(
+            &context.app_config,
+            context.config_path.as_deref(),
+            context.launch_signed_roster.as_ref(),
+        )?
             .map(|signed_roster| {
                 let roster_hash = signed_roster.content_hash();
                 let frame = FipsControlFrame::Roster {
@@ -763,7 +752,7 @@ async fn sync_mobile_signed_roster_with_connected_peers(
         return Ok(0);
     };
     let now = unix_timestamp();
-    let connected = mobile_connected_roster_peers(mesh, presence)?;
+    let connected = mobile_connected_roster_peers(&context.mesh, &context.presence)?;
     state
         .sent_by_peer
         .retain(|peer, _| connected.contains(peer));
@@ -776,7 +765,12 @@ async fn sync_mobile_signed_roster_with_connected_peers(
         }) {
             continue;
         }
-        if send_mobile_state_control(state_control, peer_identities, &participant, frame)
+        if send_mobile_state_control(
+            &context.state_control,
+            &context.peer_identities,
+            &participant,
+            frame,
+        )
             .await
             .is_ok()
         {
@@ -793,9 +787,10 @@ async fn sync_mobile_signed_roster_with_connected_peers(
     Ok(sent)
 }
 
-fn mobile_current_signed_roster_from_store(
+fn mobile_current_signed_roster(
     app_config: &Arc<RwLock<AppConfig>>,
-    config_path: &Path,
+    config_path: Option<&Path>,
+    launch_signed_roster: Option<&SignedRoster>,
 ) -> Result<Option<SignedRoster>> {
     let app = app_config
         .read()
@@ -808,6 +803,17 @@ fn mobile_current_signed_roster_from_store(
     if network_id.is_empty() || signed_by.is_empty() || network.shared_roster_updated_at == 0 {
         return Ok(None);
     }
+    if let Some(signed_roster) = launch_signed_roster
+        && signed_roster.verify().is_ok()
+        && signed_roster.network_id()? == network_id
+        && signed_roster.signed_at() == network.shared_roster_updated_at
+        && signed_roster.signer_pubkey_hex()? == signed_by
+    {
+        return Ok(Some(signed_roster.clone()));
+    }
+    let Some(config_path) = config_path else {
+        return Ok(None);
+    };
     let store = nostr_vpn_core::signed_rosters::load_signed_rosters(&signed_rosters_file_path(
         config_path,
     ))?;

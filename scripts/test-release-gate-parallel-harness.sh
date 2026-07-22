@@ -58,6 +58,18 @@ grep -Fq 'release_gate_parallel_start "Docker node image build"' "$release_gate"
   || fail "release gate does not overlap the reusable Docker build with host validation"
 grep -Fq 'export NVPN_E2E_SKIP_NODE_BUILD=1' "$release_gate" \
   || fail "release gate does not reuse its prebuilt Docker node image"
+grep -Fq 'cache_to:' "$ROOT_DIR/docker-compose.e2e.yml" \
+  || fail "shared Docker node image does not persist reusable cache metadata"
+grep -Fq 'type=local,src=${NVPN_E2E_BUILDX_CACHE_DIR:-.buildx-cache/e2e-node}' "$ROOT_DIR/docker-compose.e2e.yml" \
+  || fail "shared Docker node image does not import its local BuildKit cache"
+grep -Fq 'type=local,dest=${NVPN_E2E_BUILDX_CACHE_DIR:-.buildx-cache/e2e-node},mode=max' "$ROOT_DIR/docker-compose.e2e.yml" \
+  || fail "shared Docker node image does not export a complete local BuildKit cache"
+grep -Fq 'cache_to:' "$ROOT_DIR/linux/docker-compose.yml" \
+  || fail "Linux GUI image does not persist reusable cache metadata"
+grep -Fq 'type=local,src=${NVPN_LINUX_BUILDX_CACHE_DIR:-../.buildx-cache/linux-gui}' "$ROOT_DIR/linux/docker-compose.yml" \
+  || fail "Linux GUI image does not import its local BuildKit cache"
+grep -Fq 'type=local,dest=${NVPN_LINUX_BUILDX_CACHE_DIR:-../.buildx-cache/linux-gui},mode=max' "$ROOT_DIR/linux/docker-compose.yml" \
+  || fail "Linux GUI image does not export a complete local BuildKit cache"
 
 docker_wait_line="$(grep -n 'release_gate_parallel_wait "$docker_build_lane"' "$release_gate" | cut -d: -f1)"
 signal_line="$(grep -n '^  run_docker_signal_gates$' "$release_gate" | cut -d: -f1)"
@@ -79,8 +91,22 @@ grep -Fq 'Release gate test selector matched no passing test' "$release_gate" \
   || fail "focused release-gate tests can pass with an empty selector"
 grep -Fq -- '--skip websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin' "$release_gate" \
   || fail "the strict QR-join latency gate still runs during the cold Docker build"
+grep -Fq 'desktop_mobile_manual_join_desktop_admin_to_mobile_joiner' "$release_gate" \
+  || fail "release gate does not prove desktop-admin to mobile-joiner delivery"
+grep -Fq 'desktop_mobile_manual_join_mobile_admin_to_desktop_joiner' "$release_gate" \
+  || fail "release gate does not prove mobile-admin to desktop-joiner delivery"
 grep -Fq 'NVPN_RELEASE_GATE_QR_JOIN_LATENCY' "$release_gate" \
   || fail "the strict QR-join latency gate cannot be scoped to calibrated hosts"
+grep -Fq 'NVPN_RELEASE_GATE_TARGET_SECS:-1800' "$release_gate" \
+  || fail "release gate has no explicit 30-minute wall-clock target"
+grep -Fq 'NVPN_E2E_DIRECT_RECOVERY_SECS:-20' "$ROOT_DIR/scripts/e2e-fips-roaming-docker.sh" \
+  || fail "FIPS direct recovery can wait longer than the verified 20-second gate"
+grep -Fq 'NVPN_DESKTOP_ROSTER_E2E_TIMEOUT_SECS:-30' "$ROOT_DIR/scripts/e2e-desktop-roster-join.sh" \
+  || fail "desktop roster acceptance failures wait longer than 30 seconds"
+grep -Fq 'NVPN_MOBILE_WG_EXIT_INSTALL_IOS="$((1 - MOBILE_IOS_APP_READY))"' "$release_gate" \
+  || fail "release gate rebuilds the same physical iOS app for the exit lane"
+grep -Fq 'NVPN_MOBILE_JOIN_E2E_INSTALL_IOS="$((1 - MOBILE_IOS_APP_READY))"' "$release_gate" \
+  || fail "release gate rebuilds the same physical iOS app for the join lane"
 if grep -Eq '(windows_platform_lane_requested|docker_release_gates_enabled) \|\| return$' "$release_gate"; then
   fail "a disabled optional lane returns failure under set -e"
 fi

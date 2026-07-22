@@ -27,6 +27,7 @@ private actor ProviderSnapshotGate {
 enum PacketTunnelControllerError: LocalizedError {
     case managerUnavailable
     case preferencesTimedOut(String)
+    case disconnectTimedOut(Int)
 
     var errorDescription: String? {
         switch self {
@@ -34,6 +35,8 @@ enum PacketTunnelControllerError: LocalizedError {
             return "VPN manager unavailable"
         case .preferencesTimedOut(let operation):
             return "\(operation) VPN preferences timed out; approve any iOS VPN configuration prompt and retry"
+        case .disconnectTimedOut(let status):
+            return "VPN disconnect timed out with status \(status); refusing to start a replacement tunnel"
         }
     }
 }
@@ -56,6 +59,20 @@ final class PacketTunnelController {
         debugLog("PacketTunnelController.start begin")
         let manager = try await loadOrCreateManager()
         activeManager = manager
+        switch manager.connection.status {
+        case .invalid, .disconnected:
+            break
+        case .disconnecting:
+            let status = try await waitForDisconnected(manager)
+            debugLog("start confirmed prior disconnect status=\(status)")
+        default:
+            debugLog(
+                "stopping active tunnel before preferences update status=\(manager.connection.status.rawValue)"
+            )
+            manager.connection.stopVPNTunnel()
+            let status = try await waitForDisconnected(manager)
+            debugLog("start confirmed active tunnel stopped status=\(status)")
+        }
         let proto = (manager.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
         proto.providerBundleIdentifier = providerBundleIdentifier
         proto.serverAddress = network?.displayName ?? "Nostr VPN"
@@ -112,6 +129,31 @@ final class PacketTunnelController {
         activeManager = manager
         manager.connection.stopVPNTunnel()
         debugLog("stopVPNTunnel returned status=\(manager.connection.status.rawValue)")
+    }
+
+    func stopAndWaitForDisconnected() async throws -> Int {
+        debugLog("PacketTunnelController.stopAndWaitForDisconnected begin")
+        guard let manager = try await loadExistingManager() else {
+            debugLog("confirmed disconnected: no existing manager")
+            return NEVPNStatus.invalid.rawValue
+        }
+        activeManager = manager
+        manager.connection.stopVPNTunnel()
+        return try await waitForDisconnected(manager)
+    }
+
+    private func waitForDisconnected(_ manager: NETunnelProviderManager) async throws -> Int {
+        var status = manager.connection.status.rawValue
+        for _ in 0..<20 {
+            if status <= NEVPNStatus.disconnected.rawValue {
+                debugLog("confirmed disconnected status=\(status)")
+                return status
+            }
+            try await Task.sleep(nanoseconds: 500_000_000)
+            status = manager.connection.status.rawValue
+        }
+        debugLog("disconnect confirmation timed out status=\(status)")
+        throw PacketTunnelControllerError.disconnectTimedOut(status)
     }
 
     func statusRawValue() async -> Int? {
@@ -255,12 +297,20 @@ final class PacketTunnelController {
 
     private func loadAllManagers() async throws -> [NETunnelProviderManager] {
         try await withCheckedThrowingContinuation { continuation in
+            let completion = PreferenceManagerLoadCompletion(continuation)
             NETunnelProviderManager.loadAllFromPreferences { managers, error in
                 if let error {
-                    continuation.resume(throwing: error)
+                    _ = completion.resume(throwing: error)
                 } else {
-                    continuation.resume(returning: managers ?? [])
+                    _ = completion.resume(returning: managers ?? [])
                 }
+            }
+            let timeoutSeconds = Self.preferencesOperationTimeoutSeconds
+            Task.detached(priority: .utility) {
+                try? await Task.sleep(nanoseconds: UInt64(timeoutSeconds * 1_000_000_000))
+                _ = completion.resume(
+                    throwing: PacketTunnelControllerError.preferencesTimedOut("load")
+                )
             }
         }
     }
@@ -310,20 +360,8 @@ final class PacketTunnelController {
             return
         }
         try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
-        let line = "[\(Date())] \(message)\n"
-        guard let data = line.data(using: .utf8) else {
-            return
-        }
         let logUrl = supportDir.appendingPathComponent("app-debug.log")
-        if FileManager.default.fileExists(atPath: logUrl.path),
-           let handle = try? FileHandle(forWritingTo: logUrl)
-        {
-            handle.seekToEndOfFile()
-            handle.write(data)
-            try? handle.close()
-        } else {
-            try? data.write(to: logUrl)
-        }
+        appendIosDebugLog(message, to: logUrl)
         #endif
     }
 }
@@ -343,6 +381,44 @@ private final class PreferenceOperationCompletion: @unchecked Sendable {
             return false
         }
         continuation.resume(returning: value)
+        return true
+    }
+
+    @discardableResult
+    func resume(throwing error: Error) -> Bool {
+        guard markCompleted() else {
+            return false
+        }
+        continuation.resume(throwing: error)
+        return true
+    }
+
+    private func markCompleted() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !completed else {
+            return false
+        }
+        completed = true
+        return true
+    }
+}
+
+private final class PreferenceManagerLoadCompletion: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completed = false
+    private let continuation: CheckedContinuation<[NETunnelProviderManager], Error>
+
+    init(_ continuation: CheckedContinuation<[NETunnelProviderManager], Error>) {
+        self.continuation = continuation
+    }
+
+    @discardableResult
+    func resume(returning managers: [NETunnelProviderManager]) -> Bool {
+        guard markCompleted() else {
+            return false
+        }
+        continuation.resume(returning: managers)
         return true
     }
 

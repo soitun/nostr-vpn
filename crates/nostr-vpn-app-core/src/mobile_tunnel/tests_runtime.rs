@@ -583,9 +583,37 @@
         admin_app.fips_nostr_discovery_enabled = false;
         admin_app.fips_webrtc_enabled = false;
 
+        let admin_dir = std::env::temp_dir().join(format!(
+            "nvpn-mobile-queued-join-{}-{}",
+            std::process::id(),
+            approved_at
+        ));
+        std::fs::create_dir_all(&admin_dir).expect("create admin config directory");
+        let admin_config_path = admin_dir.join("config.toml");
+        admin_app
+            .save(&admin_config_path)
+            .expect("persist approved admin config");
+        nostr_vpn_core::join_delivery::queue_join_roster(
+            &admin_config_path,
+            &bootstrap.device_app_key_npub,
+            &prepared.join_roster,
+        )
+        .expect("queue approval through the production outbox");
+
         let mut guest_mobile = MobileTunnelConfig::from_app(&guest_app).expect("guest config");
         guest_mobile.listen_port = available_udp_port();
-        let mut admin_mobile = MobileTunnelConfig::from_app(&admin_app).expect("admin config");
+        let mut admin_mobile =
+            MobileTunnelConfig::from_app_with_config_path(&admin_app, &admin_config_path)
+                .expect("admin config");
+        let queued_join_rosters = nostr_vpn_core::join_delivery::load_join_rosters(
+            &admin_config_path,
+        )
+        .into_iter()
+        .map(|(_, queued)| queued)
+        .collect();
+        // Match iOS provider options: the packet extension receives a complete
+        // launch snapshot but cannot read the containing app's config path.
+        admin_mobile.detach_from_persisted_config_path();
         admin_mobile.listen_port = available_udp_port();
         assert!(guest_mobile.peers.is_empty(), "guest must not know the admin");
 
@@ -629,7 +657,12 @@
             .await
             .expect("bind WSS-to-physical router"),
         );
-        let admin = Box::pin(MobileTunnel::start_async(admin_mobile, admin_app))
+        let admin = Box::pin(MobileTunnel::start_async_with_launch_state(
+            admin_mobile,
+            admin_app,
+            queued_join_rosters,
+            None,
+        ))
             .await
             .expect("start admin through WebSocket seed");
 
@@ -677,29 +710,7 @@
 
         let guest_identity = PeerIdentity::from_npub(guest.endpoint.npub())
             .expect("guest endpoint identity");
-        let delivery = tokio::time::timeout(
-            Duration::from_secs(25),
-            send_join_roster_with_receipt(
-                &admin.state_control,
-                guest_identity,
-                &prepared.join_roster,
-                Duration::from_secs(20),
-            ),
-        )
-        .await
-        .expect("join roster delivery timeout");
-        if let Err(error) = delivery {
-            panic!(
-                "deliver join roster through WSS seed and physical router: {error:#}; admin={:?}; guest={:?}; router={:?}; seed={:?}",
-                admin.endpoint.peers().await,
-                guest.endpoint.peers().await,
-                router.peers().await,
-                seed.peers().await,
-            );
-        }
-        let roster_applied_at = Instant::now();
-
-        tokio::time::timeout(Duration::from_secs(5), async {
+        let queued_delivery = tokio::time::timeout(Duration::from_secs(25), async {
             loop {
                 let applied = guest.app_config.read().is_ok_and(|app| {
                     app.pending_nostr_join_request.is_some()
@@ -713,8 +724,16 @@
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
-        .await
-        .expect("guest should apply the signed roster");
+        .await;
+        assert!(
+            queued_delivery.is_ok(),
+                "production queued approval was not delivered through WSS seed and physical router; admin={:?}; guest={:?}; router={:?}; seed={:?}",
+                admin.endpoint.peers().await,
+                guest.endpoint.peers().await,
+                router.peers().await,
+                seed.peers().await,
+        );
+        let roster_applied_at = Instant::now();
 
         let capabilities = FipsControlFrame::Capabilities {
             network_id: "wss-join-roster".to_string(),
@@ -808,6 +827,7 @@
         shutdown_started_mobile_tunnel(guest).await;
         router.shutdown().await.expect("shutdown router");
         seed.shutdown().await.expect("shutdown WebSocket seed");
+        let _ = std::fs::remove_dir_all(admin_dir);
     }
 
     #[test]

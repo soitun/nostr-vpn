@@ -40,6 +40,8 @@
   let settingsDirty = false;
   let participantNpub = '';
   let participantAlias = '';
+  let manualAdminNpub = '';
+  let manualNetworkId = '';
   let newNetworkName = '';
   let addNetworkOpen = false;
   let addNetworkMode: 'choice' | 'create' | 'join' = 'choice';
@@ -614,6 +616,24 @@
       participantNpub = '';
       participantAlias = '';
       addDeviceOpen = false;
+    }
+  }
+
+  async function manualAddNetwork() {
+    const adminNpub = manualAdminNpub.trim();
+    const meshNetworkId = normalizeNetworkIdInput(manualNetworkId);
+    if (!adminNpub || !meshNetworkId) {
+      return;
+    }
+    const ok = await run(
+      '/api/manual_add_network',
+      { adminNpub, meshNetworkId },
+      'Adding network',
+    );
+    if (ok) {
+      manualAdminNpub = '';
+      manualNetworkId = '';
+      closeAddNetwork();
     }
   }
 
@@ -1231,6 +1251,24 @@
               </div>
               <p class="muted-copy">Advertise this device's join request to nearby admins.</p>
             </div>
+
+            <form class="modal-section" on:submit|preventDefault={manualAddNetwork}>
+              <div class="section-heading">
+                <div>
+                  <h3>Manual join</h3>
+                  <p>Exchange Device IDs out of band</p>
+                </div>
+              </div>
+              <p class="muted-copy">Give the admin your Device ID. Enter their Device ID and Network ID here; they must add your Device ID too.</p>
+              <CopyButton value={state.ownNpub} label="Device ID" text="Copy my Device ID" on:copied={handleCopied} />
+              <div class="form-grid">
+                <label><span>Admin Device ID</span><input bind:value={manualAdminNpub} autocomplete="off" /></label>
+                <label><span>Network ID</span><input bind:value={manualNetworkId} autocomplete="off" /></label>
+              </div>
+              <button class="secondary-button" type="submit" disabled={Boolean(busyAction) || !manualAdminNpub.trim() || !manualNetworkId.trim()}>
+                Add manually
+              </button>
+            </form>
           {/if}
         </Modal>
       {/if}

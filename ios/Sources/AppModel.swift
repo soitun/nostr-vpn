@@ -5,9 +5,16 @@ import UIKit
 
 @MainActor
 final class AppModel: ObservableObject {
-    nonisolated static let appGroupIdentifier = Bundle.main.object(
-        forInfoDictionaryKey: "NVPNAppGroupIdentifier"
-    ) as? String ?? "group.fi.siriusbusiness.nvpn"
+    nonisolated static let appGroupIdentifier: String = {
+        guard let value = Bundle.main.object(
+            forInfoDictionaryKey: "NVPNAppGroupIdentifier"
+        ) as? String,
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            fatalError("NVPNAppGroupIdentifier is missing from Info.plist")
+        }
+        return value
+    }()
     static let configFileName = "config.toml"
     static let mobileRuntimeStateFileName = "mobile-runtime-state.json"
     static let vpnDisclosureAcceptedKey = "vpnDisclosureAccepted"
@@ -40,17 +47,40 @@ final class AppModel: ObservableObject {
             return
         }
 
-        supportDir = Self.supportDirectory()
-        if let supportDir {
-            try? FileManager.default.createDirectory(at: supportDir, withIntermediateDirectories: true)
-            Self.seedMobileConfig(in: supportDir, deviceName: Self.deviceName())
+        guard let appGroupSupportDir = Self.supportDirectory() else {
+            supportDir = nil
+            core = nil
+            var unavailable = AppState()
+            unavailable.error = "Shared app storage is unavailable. Reinstall a correctly signed build."
+            state = unavailable
+            return
         }
+        do {
+            try FileManager.default.createDirectory(
+                at: appGroupSupportDir,
+                withIntermediateDirectories: true
+            )
+            try Self.migrateLegacySupportDirectoryIfNeeded(to: appGroupSupportDir)
+            try Self.seedMobileConfig(in: appGroupSupportDir, deviceName: Self.deviceName())
+        } catch {
+            supportDir = nil
+            core = nil
+            var unavailable = AppState()
+            unavailable.error = "Shared app storage setup failed: \(error.localizedDescription)"
+            state = unavailable
+            NSLog("nvpn-app: shared storage setup failed: \(String(describing: error))")
+            return
+        }
+        supportDir = appGroupSupportDir
         // Pass empty so the FFI falls back to its own CARGO_PKG_VERSION
         // (workspace-inherited). Avoids drift between MARKETING_VERSION in the
         // xcodeproj and the bundled nvpn binary.
-        let client = NativeCoreClient(dataDir: supportDir?.path ?? "", appVersion: "")
+        let client = NativeCoreClient(dataDir: appGroupSupportDir.path, appVersion: "")
         core = client
         state = client.state()
+        #if DEBUG
+        NSLog("nvpn-app: shared storage ready at \(appGroupSupportDir.path)")
+        #endif
         debugLog("init args=\(Self.redactedDebugArguments(ProcessInfo.processInfo.arguments))")
     }
 
@@ -256,7 +286,11 @@ final class AppModel: ObservableObject {
         }
         tunnelConfigSyncTask?.cancel()
         tunnelConfigSyncTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 250_000_000)
+            do {
+                try await Task.sleep(nanoseconds: 250_000_000)
+            } catch {
+                return
+            }
             await self?.syncPacketTunnelConfig(reason: reason, force: force)
         }
     }
@@ -277,12 +311,13 @@ final class AppModel: ObservableObject {
         )
         statusMessage = "Updating VPN"
         do {
-            try await vpnController.stop()
-            debugLog("PacketTunnel config sync stop returned")
+            let status = try await vpnController.stopAndWaitForDisconnected()
+            debugLog("PacketTunnel config sync confirmed disconnected status=\(status)")
         } catch {
+            statusMessage = error.localizedDescription
             debugLog("PacketTunnel config sync stop failed: \(String(describing: error))")
+            return
         }
-        try? await Task.sleep(nanoseconds: 500_000_000)
         do {
             try await vpnController.start(
                 state: state,
@@ -303,15 +338,20 @@ final class AppModel: ObservableObject {
     private func actionRequiresPacketTunnelConfigSync(_ type: String) -> Bool {
         switch type {
         case "import_join_request",
+             "manual_add_network",
              "add_network",
+             "rename_network",
              "remove_network",
              "set_network_enabled",
              "set_network_mesh_id",
+             "set_network_join_requests_enabled",
              "add_participant",
              "set_participant_endpoint_hints",
              "add_admin",
              "remove_participant",
-             "remove_admin":
+             "remove_admin",
+             "accept_join_request",
+             "set_participant_alias":
             return true
         default:
             return false
@@ -319,7 +359,7 @@ final class AppModel: ObservableObject {
     }
 
     func handle(url: URL) {
-        debugLog("handle url=\(url.absoluteString)")
+        debugLog("handle url scheme=\(url.scheme ?? "") host=\(url.host ?? "") path=\(url.path)")
         let raw = url.absoluteString
         if raw.lowercased().hasPrefix("nvpn://join-request") {
             dispatch(NativeActions.importJoinRequest(raw), status: "Adding device")
@@ -331,6 +371,24 @@ final class AppModel: ObservableObject {
         }
 
         let action = url.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        #if DEBUG
+        if action == "automation" {
+            guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+                  let encoded = components.queryItems?.first(where: { $0.name == "arguments" })?.value,
+                  let arguments = Self.debugArguments(fromBase64URL: encoded)
+            else {
+                debugLog("debug automation URL rejected: invalid arguments")
+                return
+            }
+            _ = runDebugAutomation(arguments: arguments)
+        } else if action == "tick" {
+            refresh()
+        } else if action == "connect" {
+            setVpnEnabled(true, force: true)
+        } else if action == "disconnect" {
+            setVpnEnabled(false, force: true)
+        }
+        #else
         if action == "tick" {
             refresh()
         } else if action == "connect" {
@@ -338,6 +396,7 @@ final class AppModel: ObservableObject {
         } else if action == "disconnect" {
             setVpnEnabled(false, force: true)
         }
+        #endif
     }
 
 }

@@ -33,8 +33,8 @@ android {
         applicationId = androidPackageName
         minSdk = 26
         targetSdk = 36
-        versionCode = 40103
-        versionName = "4.1.3"
+        versionCode = 40104
+        versionName = "4.1.4"
         buildConfigField("String", "NVPN_BUILD_GIT_SHA", buildConfigString(buildGitSha))
         buildConfigField("String", "NVPN_BUILD_TIMESTAMP_UTC", buildConfigString(buildTimestampUtc))
 
@@ -149,4 +149,5 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling:1.9.2")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
 }

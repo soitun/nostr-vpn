@@ -21,8 +21,8 @@ use tower_http::services::{ServeDir, ServeFile};
 mod ui_types;
 
 use crate::ui_types::{
-    AliasRequest, EndpointHintsRequest, ImportJoinRequest, JoinRequestAction, NameRequest,
-    NearbyPeerRequest, NetworkEnabledRequest, NetworkIdRequest, NetworkMeshRequest,
+    AliasRequest, EndpointHintsRequest, ImportJoinRequest, JoinRequestAction, ManualNetworkRequest,
+    NameRequest, NearbyPeerRequest, NetworkEnabledRequest, NetworkIdRequest, NetworkMeshRequest,
     NetworkNameRequest, NetworkPeerRequest, ParticipantRequest, QrMatrixRequest, QrMatrixResponse,
 };
 
@@ -125,6 +125,7 @@ async fn main() -> Result<()> {
         .route("/api/connect_vpn", post(connect_vpn))
         .route("/api/disconnect_vpn", post(disconnect_vpn))
         .route("/api/add_network", post(add_network))
+        .route("/api/manual_add_network", post(manual_add_network))
         .route("/api/rename_network", post(rename_network))
         .route("/api/set_network_mesh_id", post(set_network_mesh_id))
         .route("/api/remove_network", post(remove_network))
@@ -253,6 +254,19 @@ async fn add_network(
     Json(request): Json<NameRequest>,
 ) -> ApiResult<UiStateResponse> {
     dispatch(&state, NativeAppAction::AddNetwork { name: request.name })
+}
+
+async fn manual_add_network(
+    State(state): State<ServerState>,
+    Json(request): Json<ManualNetworkRequest>,
+) -> ApiResult<UiStateResponse> {
+    dispatch(
+        &state,
+        NativeAppAction::ManualAddNetwork {
+            admin_npub: request.admin_npub,
+            mesh_network_id: request.mesh_network_id,
+        },
+    )
 }
 
 async fn rename_network(

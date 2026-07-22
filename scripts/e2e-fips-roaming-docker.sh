@@ -26,9 +26,10 @@ ROAM_NODE_C_IP="${NVPN_E2E_ROAM_NODE_C_IP:-$ROAM_UNDERLAY_PREFIX.12}"
 # status polling, and route-cache handoff before declaring fallback broken.
 FALLBACK_DEADLINE_SECS="${NVPN_E2E_ROAMING_FALLBACK_SECS:-60}"
 # Consecutive flaps can meet a draining rekey and several bounded direct-probe
-# retries. Each active-path retry carries 10-20s of deterministic jitter, so
-# allow three attempts without weakening the payload-continuity assertions.
-DIRECT_RECOVERY_DEADLINE_SECS="${NVPN_E2E_DIRECT_RECOVERY_SECS:-60}"
+# retries. Active-path retries are paced at 2-4s, and repeated production-image
+# runs restore bidirectional direct payload in 5-13s. Fail at 20s instead of
+# hiding a stuck recovery behind a minute-long allowance.
+DIRECT_RECOVERY_DEADLINE_SECS="${NVPN_E2E_DIRECT_RECOVERY_SECS:-20}"
 FALLBACK_HOLD_SECS="${NVPN_E2E_ROAMING_FALLBACK_HOLD_SECS:-12}"
 PAYLOAD_PROBE_INTERVAL_SECS="${NVPN_E2E_ROAMING_PAYLOAD_PROBE_INTERVAL_SECS:-1}"
 PAYLOAD_RECOVERY_DEADLINE_SECS="${NVPN_E2E_ROAMING_PAYLOAD_RECOVERY_SECS:-10}"
@@ -703,6 +704,7 @@ run_roam_flap() {
   local alice_direct bob_direct
   alice_direct="$(wait_for_direct_peer node-a "$BOB_NPUB" "$alice_direct_addr" "alice after $flap_name restore" "$DIRECT_RECOVERY_DEADLINE_SECS" "$restore_started")"
   bob_direct="$(wait_for_direct_peer node-b "$ALICE_NPUB" "$bob_direct_addr" "bob after $flap_name restore" "$DIRECT_RECOVERY_DEADLINE_SECS" "$restore_started")"
+  echo "$flap_name direct payload recovery completed in $(( $(date +%s) - restore_started ))s"
   assert_payload_probe_success_since node-a "$alice_probe" "$restore_started" "alice continuous payload after $flap_name restore"
   assert_payload_probe_success_since node-b "$bob_probe" "$restore_started" "bob continuous payload after $flap_name restore"
   local alice_probe_log bob_probe_log

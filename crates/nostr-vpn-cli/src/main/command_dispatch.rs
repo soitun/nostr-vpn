@@ -100,6 +100,36 @@ async fn run_command(command: Command) -> Result<()> {
         Command::JoinRequest(args) => {
             pairing_qr::run_join_request(args).await?;
         }
+        Command::JoinManual(args) => {
+            let config_path = args.config.unwrap_or_else(default_config_path);
+            let mut app = load_or_default_config(&config_path)?;
+            app.add_manual_join_network(&args.admin_device_id, &args.network_id)?;
+            app.ensure_defaults();
+            maybe_autoconfigure_node(&mut app);
+            app.save(&config_path)?;
+            maybe_reload_running_daemon(&config_path);
+
+            let own_device_id = app.nostr.public_key.clone();
+            let admin_device_id = normalize_nostr_pubkey(&args.admin_device_id)?;
+            if args.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&json!({
+                        "network_id": app.effective_network_id(),
+                        "admin_device_id": admin_device_id,
+                        "device_id": own_device_id,
+                    }))?
+                );
+            } else {
+                println!("saved {}", config_path.display());
+                println!("network_id={}", app.effective_network_id());
+                println!("admin_device_id={admin_device_id}");
+                println!("your_device_id={own_device_id}");
+                println!(
+                    "Ask the admin to add your Device ID with `nvpn add-device --device <your_device_id>`."
+                );
+            }
+        }
         Command::Status(args) => {
             let include_join_request = args.include_join_request;
             let config_path = args.config.unwrap_or_else(default_config_path);
@@ -193,6 +223,7 @@ async fn run_command(command: Command) -> Result<()> {
                     serde_json::to_string_pretty(&json!({
                         "status_source": status_source,
                         "network_id": network_id,
+                        "device_id": app.nostr.public_key.clone(),
                         "magic_dns_suffix": app.magic_dns_suffix,
                         "autoconnect": app.autoconnect,
                         "node_id": app.node.id,
@@ -237,6 +268,7 @@ async fn run_command(command: Command) -> Result<()> {
                 let endpoint = status_endpoint(&app, &daemon);
                 let listen_port = status_listen_port(&app, &daemon);
                 println!("network: {network_id}");
+                println!("device_id={}", app.nostr.public_key);
                 println!("magic_dns_suffix: {}", app.magic_dns_suffix);
                 println!("autoconnect: {}", app.autoconnect);
                 println!("node: {}", app.node.id);

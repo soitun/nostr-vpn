@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Full regression lane for adding a phone-class device from native desktop UI:
-# shared mobile approval, every available desktop shell, and reciprocal FIPS
-# reachability after GUI acceptance.
+# Native desktop-shell regression lane for accepting a phone-class join request.
+# Transport-level desktop/mobile delivery and durable receipts are covered by
+# the app-core cross-class tests in the release gate.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -4,6 +4,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.e2e
+      cache_from:
+        - type=local,src=${NVPN_E2E_BUILDX_CACHE_DIR:-.buildx-cache/e2e-node}
+      cache_to:
+        - type=local,dest=${NVPN_E2E_BUILDX_CACHE_DIR:-.buildx-cache/e2e-node},mode=max
       args:
         NVPN_E2E_BUILDER_IMAGE: ${NVPN_E2E_BUILDER_IMAGE:-rust:1.93-bookworm}
         NVPN_E2E_RUNTIME_IMAGE: ${NVPN_E2E_RUNTIME_IMAGE:-debian:bookworm-slim}

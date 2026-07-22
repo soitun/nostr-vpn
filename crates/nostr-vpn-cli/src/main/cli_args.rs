@@ -77,6 +77,9 @@ enum Command {
     /// Show this device's join-request link and QR, then wait for approval.
     #[command(name = "join-request")]
     JoinRequest(JoinRequestArgs),
+    /// Join with an admin Device ID and Network ID exchanged out of band.
+    #[command(name = "join-manual", alias = "manual-join")]
+    JoinManual(ManualJoinArgs),
     /// Show local and discovered peer status.
     Status(StatusArgs),
     /// Update persisted node/network settings.
@@ -136,6 +139,22 @@ struct JoinRequestArgs {
     /// Replace the still-pending request, invalidating previously shared links.
     #[arg(long)]
     reset: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+struct ManualJoinArgs {
+    /// nvpn configuration to update.
+    #[arg(long)]
+    config: Option<PathBuf>,
+    /// Device ID shared by the network admin (npub or hex).
+    #[arg(long = "admin-device-id", alias = "admin")]
+    admin_device_id: String,
+    /// Network ID shared by the network admin.
+    #[arg(long = "network-id")]
+    network_id: String,
+    /// Print machine-readable output.
+    #[arg(long)]
+    json: bool,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]

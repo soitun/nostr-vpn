@@ -143,6 +143,14 @@ enum NativeActions {
         ["type": "add_network", "name": name]
     }
 
+    static func manualAddNetwork(adminNpub: String, meshNetworkId: String) -> [String: Any] {
+        [
+            "type": "manual_add_network",
+            "adminNpub": adminNpub,
+            "meshNetworkId": meshNetworkId,
+        ]
+    }
+
     static func setNetworkEnabled(_ networkId: String, _ enabled: Bool) -> [String: Any] {
         ["type": "set_network_enabled", "networkId": networkId, "enabled": enabled]
     }

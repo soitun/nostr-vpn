@@ -28,19 +28,23 @@ use nostr_vpn_core::config::{
     derive_mesh_tunnel_ip, effective_fips_nostr_relays, maybe_autoconfigure_node,
     normalize_nostr_pubkey, normalize_runtime_network_id, split_peer_transport_addr,
 };
-#[cfg(test)]
-use nostr_vpn_core::fips_control::NetworkRoster;
 use nostr_vpn_core::fips_control::{
-    FipsControlFrame, JoinRosterControl, PeerCapabilities, PeerEndpointHint, SignedRoster,
-    decode_fips_control_frame, encode_fips_control_frame, local_fips_dataplane_features,
-    peer_endpoint_hint_addr,
+    FipsControlFrame, JoinRosterControl, NetworkRoster, PeerCapabilities, PeerEndpointHint,
+    SignedRoster, decode_fips_control_frame, encode_fips_control_frame,
+    local_fips_dataplane_features, peer_endpoint_hint_addr,
 };
 use nostr_vpn_core::fips_control_tcp::{
     FipsControlTcpRuntime, FipsControlTcpSender, ReceivedFipsControlFrame,
     send_join_roster_with_receipt,
 };
 use nostr_vpn_core::fips_mesh::{FipsMeshPeerConfig, FipsMeshRuntime};
+use nostr_vpn_core::join_delivery::{
+    QueuedJoinRoster, join_roster_delivery_expired, load_join_rosters, record_join_roster_attempt,
+};
 use nostr_vpn_core::join_requests::{FIPS_JOIN_REQUEST_RETRY_SECS, MeshJoinRequest};
+use nostr_vpn_core::join_roster_persistence::{
+    apply_join_roster, apply_join_roster_durably, join_roster_is_durably_persisted,
+};
 use nostr_vpn_core::magic_dns::{
     build_magic_dns_records, build_magic_dns_response_if_handled,
     build_magic_dns_server_failure_response,
@@ -68,8 +72,11 @@ include!("mobile_tunnel/magic_dns.rs");
 #[cfg(test)]
 mod tests {
     include!("mobile_tunnel/tests_core.rs");
+    include!("mobile_tunnel/tests_identity.rs");
     include!("mobile_tunnel/tests_runtime_join_request.rs");
     include!("mobile_tunnel/tests_runtime.rs");
+    include!("mobile_tunnel/tests_runtime_manual_join.rs");
+    include!("mobile_tunnel/tests_runtime_desktop_mobile_join.rs");
     include!("mobile_tunnel/tests_runtime_future_presence.rs");
     include!("mobile_tunnel/tests_paid_route.rs");
     include!("mobile_tunnel/tests_config.rs");

@@ -4,6 +4,7 @@ use nostr_identity::{
 };
 use nostr_sdk::prelude::Keys;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use crate::config::{
     AppConfig, InternetSource, normalize_nostr_pubkey, normalize_runtime_network_id,
@@ -199,6 +200,68 @@ impl AppConfig {
         Ok(Some(applied))
     }
 
+    /// Applies a receipt-backed roster sent after an admin and joiner exchange
+    /// their device and network identifiers out of band. The deterministic
+    /// token is not an authentication secret: the configured admin's roster
+    /// signature remains the authority. It only binds this delivery to the
+    /// exact manual-join tuple and keeps it distinct from QR approvals.
+    pub fn apply_manual_join_roster(
+        &mut self,
+        join_control: &JoinRosterControl,
+        now: u64,
+    ) -> Result<Option<String>> {
+        let signed_roster = &join_control.signed_roster;
+        signed_roster.verify()?;
+        let network_id = normalize_runtime_network_id(&signed_roster.network_id()?);
+        if network_id.is_empty() {
+            return Err(anyhow!("signed manual join roster has no network id"));
+        }
+        let signer = normalize_nostr_pubkey(&signed_roster.signer_pubkey_hex()?)?;
+        let own_pubkey = self.own_nostr_pubkey_hex()?;
+        let Some(network_entry_id) = self.networks.iter().find_map(|network| {
+            (normalize_runtime_network_id(&network.network_id) == network_id
+                && network.shared_roster_updated_at == 0
+                && network.shared_roster_signed_by.is_empty()
+                && network.join_request_admin == signer
+                && network.admins.iter().any(|admin| admin == &signer))
+            .then(|| network.id.clone())
+        }) else {
+            return Ok(None);
+        };
+
+        let expected_token = manual_join_request_token(&network_id, &signer, &own_pubkey)?;
+        join_control.verify_for_request(&expected_token)?;
+        validate_manual_join_roster_freshness(signed_roster.signed_at(), now)?;
+        let roster = signed_roster.roster()?;
+        let members = roster
+            .devices
+            .iter()
+            .chain(roster.admins.iter())
+            .filter_map(|member| normalize_nostr_pubkey(member).ok())
+            .collect::<Vec<_>>();
+        if !members.iter().any(|member| member == &own_pubkey) {
+            return Err(anyhow!(
+                "signed manual join roster does not contain this device"
+            ));
+        }
+        if !roster
+            .admins
+            .iter()
+            .filter_map(|admin| normalize_nostr_pubkey(admin).ok())
+            .any(|admin| admin == signer)
+        {
+            return Err(anyhow!(
+                "signed manual join roster signer is not a roster admin"
+            ));
+        }
+        if !self.apply_verified_admin_signed_shared_roster(signed_roster)? {
+            return Err(anyhow!("signed manual join roster was not applied"));
+        }
+        self.set_network_enabled(&network_entry_id, true)?;
+        self.ensure_defaults();
+        Ok(Some(network_id))
+    }
+
     fn stage_signed_join_roster(
         &self,
         signed_roster: &SignedRoster,
@@ -269,6 +332,42 @@ impl AppConfig {
         };
         Ok((updated, applied))
     }
+}
+
+pub fn manual_join_request_token(
+    network_id: &str,
+    admin_pubkey: &str,
+    device_pubkey: &str,
+) -> Result<String> {
+    let network_id = normalize_runtime_network_id(network_id);
+    if network_id.is_empty() {
+        return Err(anyhow!("manual join network id is empty"));
+    }
+    let admin_pubkey = normalize_nostr_pubkey(admin_pubkey)?;
+    let device_pubkey = normalize_nostr_pubkey(device_pubkey)?;
+    let mut digest = Sha256::new();
+    digest.update(b"nostr-vpn-manual-join-v1\0");
+    for value in [
+        network_id.as_bytes(),
+        admin_pubkey.as_bytes(),
+        device_pubkey.as_bytes(),
+    ] {
+        digest.update((value.len() as u64).to_be_bytes());
+        digest.update(value);
+    }
+    Ok(format!("manual-v1:{:x}", digest.finalize()))
+}
+
+fn validate_manual_join_roster_freshness(signed_at: u64, now: u64) -> Result<()> {
+    if signed_at > now.saturating_add(MAX_NOSTR_JOIN_ROSTER_FUTURE_SECS) {
+        return Err(anyhow!(
+            "signed manual join roster is too far in the future"
+        ));
+    }
+    if now.saturating_sub(signed_at) > MAX_NOSTR_JOIN_ROSTER_AGE_SECS {
+        return Err(anyhow!("signed manual join roster is too old"));
+    }
+    Ok(())
 }
 
 fn bounded_device_approval_label(value: &str) -> Option<String> {

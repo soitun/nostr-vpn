@@ -33,6 +33,7 @@ import {
   splitCsv,
   validateReleaseAssetSet,
   validateStagedReleaseTree,
+  windowsSshTransportArgs,
 } from './local-release-lib.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -409,7 +410,14 @@ function runWindowsPowerShell(host, script, { capture = false, dryRun = false } 
   const encoded = encodePowerShellScript(script)
   return run(
     'ssh',
-    [host, 'powershell.exe', '-NoProfile', '-EncodedCommand', encoded],
+    [
+      ...windowsSshTransportArgs(process.env),
+      host,
+      'powershell.exe',
+      '-NoProfile',
+      '-EncodedCommand',
+      encoded,
+    ],
     { capture, dryRun },
   )
 }
@@ -445,7 +453,7 @@ function pullFileFromWindowsHost({ host, remotePath, localParent, name, dryRun }
   if (!dryRun) {
     mkdirSync(localParent, { recursive: true })
   }
-  run('scp', [`${host}:${remoteFile}`, dest], { dryRun })
+  run('scp', [...windowsSshTransportArgs(process.env), `${host}:${remoteFile}`, dest], { dryRun })
 }
 
 function buildWindowsArtifacts({ env, tag, dryRun, builtLines }) {
@@ -458,7 +466,7 @@ function buildWindowsArtifacts({ env, tag, dryRun, builtLines }) {
   if (!dryRun) {
     const probe = spawnSync(
       'ssh',
-      ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', host, 'whoami'],
+      [...windowsSshTransportArgs(env), host, 'whoami'],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     )
     if (probe.status !== 0) {

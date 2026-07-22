@@ -9,9 +9,22 @@ extension AppModel {
         launchAutomationHandled = true
 
         let rawArguments = ProcessInfo.processInfo.arguments
+        return runDebugAutomation(arguments: rawArguments)
+    }
+
+    func runDebugAutomation(arguments rawArguments: [String]) -> Bool {
         let arguments = Set(rawArguments)
-        debugLog("launch automation args=\(Self.redactedDebugArguments(rawArguments))")
+        debugLog("debug automation args=\(Self.redactedDebugArguments(rawArguments))")
+        let selectedNetwork = selectDebugNetworkIfPresent(arguments: rawArguments)
         let addedNetwork = addDebugNetworkIfPresent(arguments: rawArguments)
+        let importedJoinRequest = importDebugJoinRequestIfPresent(arguments: rawArguments)
+        let manuallyJoined = manualDebugJoinIfPresent(arguments: rawArguments)
+        let exportedJoinRequest = exportDebugJoinRequestIfRequested(arguments: rawArguments)
+        let addedParticipant = addDebugParticipantIfPresent(arguments: rawArguments)
+        let removedParticipant = removeDebugParticipantIfPresent(arguments: rawArguments)
+        let removedNetwork = removeDebugActiveNetworkIfRequested(arguments: rawArguments)
+        let exportedSupportFile = exportDebugSupportFileIfRequested(arguments: rawArguments)
+        let waitedForJoinedNetwork = waitForDebugJoinedNetworkIfRequested(arguments: rawArguments)
         if arguments.contains("--nvpn-debug-idle-cpu-probe") {
             Task {
                 await runDebugIdleCpuProbe(arguments: rawArguments)
@@ -24,6 +37,33 @@ extension AppModel {
             }
             return true
         }
+        if let resultName = Self.argumentValue(
+            after: "--nvpn-debug-disconnect-result",
+            in: rawArguments
+        ) {
+            Task {
+                await runDebugDisconnect(resultName: resultName)
+            }
+            return true
+        }
+        if let resultName = Self.argumentValue(
+            after: "--nvpn-debug-connect-result",
+            in: rawArguments
+        ) {
+            Task {
+                await runDebugConnect(resultName: resultName)
+            }
+            return true
+        }
+        if let resultName = Self.argumentValue(
+            after: "--nvpn-debug-runtime-result",
+            in: rawArguments
+        ) {
+            Task {
+                await writeDebugRuntimeSnapshot(resultName: resultName)
+            }
+            return true
+        }
         if arguments.contains("--nvpn-connect") {
             setVpnEnabled(true, force: true)
             return true
@@ -32,18 +72,51 @@ extension AppModel {
             setVpnEnabled(false, force: true)
             return true
         }
-        return addedNetwork
+        return selectedNetwork || addedNetwork || importedJoinRequest || manuallyJoined || exportedJoinRequest
+            || addedParticipant || removedParticipant || removedNetwork || exportedSupportFile
+            || waitedForJoinedNetwork
     }
 
-    private func addDebugNetworkIfPresent(arguments: [String]) -> Bool {
+    private func exportDebugSupportFileIfRequested(arguments: [String]) -> Bool {
         #if DEBUG
-        guard let name = Self.argumentValue(after: "--nvpn-debug-add-network", in: arguments) else {
+        guard let sourceName = Self.argumentValue(
+            after: "--nvpn-debug-export-support-file",
+            in: arguments
+        ),
+        let supportDir,
+        let debugResultsDir = Self.debugResultsDirectory()
+        else {
             return false
         }
-        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        dispatch(NativeActions.addNetwork(normalized.isEmpty ? "iOS smoke" : normalized))
-        refresh()
-        return true
+        let safeSourceName = sourceName.split(separator: "/").last.map(String.init) ?? ""
+        guard !safeSourceName.isEmpty,
+              let data = try? Data(
+                contentsOf: supportDir.appendingPathComponent(safeSourceName)
+              )
+        else {
+            return false
+        }
+        let requestedResultName = Self.argumentValue(
+            after: "--nvpn-debug-export-result",
+            in: arguments
+        ) ?? safeSourceName
+        let safeResultName = requestedResultName
+            .split(separator: "/")
+            .last
+            .map(String.init) ?? safeSourceName
+        do {
+            try FileManager.default.createDirectory(
+                at: debugResultsDir,
+                withIntermediateDirectories: true
+            )
+            try data.write(
+                to: debugResultsDir.appendingPathComponent(safeResultName),
+                options: .atomic
+            )
+            return true
+        } catch {
+            return false
+        }
         #else
         return false
         #endif
@@ -107,6 +180,94 @@ extension AppModel {
         result["cpuSeconds"] = max(0, endCpu - startCpu)
         result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
         result["debugProbeElapsedMs"] = Self.elapsedMilliseconds(since: startedAt)
+        writeDebugProbeResult(result, name: resultName)
+        #endif
+    }
+
+    private func runDebugDisconnect(resultName: String) async {
+        #if DEBUG
+        let startedAt = Date()
+        var result: [String: Any] = [
+            "ok": false,
+            "phase": "stopping",
+            "startedAt": ISO8601DateFormatter().string(from: startedAt),
+        ]
+        for (key, value) in Self.appBuildMetadata() {
+            result[key] = value
+        }
+        writeDebugProbeResult(result, name: resultName)
+
+        refresh()
+        if state.vpnEnabled {
+            dispatch(NativeActions.disconnectVpn())
+        }
+        var status: Int?
+        do {
+            status = try await vpnController.stopAndWaitForDisconnected()
+        } catch {
+            result["stopError"] = error.localizedDescription
+            debugLog("debug disconnect stop failed: \(String(describing: error))")
+        }
+        refresh()
+        if let status {
+            result["packetTunnelStatusRawValue"] = status
+        }
+        result["ok"] = status.map { $0 <= 1 } ?? false
+        result["phase"] = "finished"
+        result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
+        result["debugProbeElapsedMs"] = Self.elapsedMilliseconds(since: startedAt)
+        writeDebugProbeResult(result, name: resultName)
+        #endif
+    }
+
+    private func runDebugConnect(resultName: String) async {
+        #if DEBUG
+        let startedAt = Date()
+        var result: [String: Any] = [
+            "ok": false,
+            "phase": "starting",
+            "startedAt": ISO8601DateFormatter().string(from: startedAt),
+        ]
+        for (key, value) in Self.appBuildMetadata() {
+            result[key] = value
+        }
+        writeDebugProbeResult(result, name: resultName)
+
+        if let error = await startVpnForDebugProbe() {
+            result["startError"] = error
+        } else {
+            for _ in 0..<30 {
+                if await vpnController.statusRawValue() == 3 {
+                    break
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        let status = await vpnController.statusRawValue()
+        if let status {
+            result["packetTunnelStatusRawValue"] = status
+        }
+        result["ok"] = status == 3
+        result["phase"] = "finished"
+        result["finishedAt"] = ISO8601DateFormatter().string(from: Date())
+        result["debugProbeElapsedMs"] = Self.elapsedMilliseconds(since: startedAt)
+        writeDebugProbeResult(result, name: resultName)
+        if status != 3 {
+            await stopFailedDebugProbeTunnel()
+        }
+        #endif
+    }
+
+    private func writeDebugRuntimeSnapshot(resultName: String) async {
+        #if DEBUG
+        var result: [String: Any] = ["ok": false]
+        if let json = await vpnController.runtimeStateJson(),
+           let data = json.data(using: .utf8),
+           let runtime = try? JSONSerialization.jsonObject(with: data)
+        {
+            result["ok"] = true
+            result["runtime"] = runtime
+        }
         writeDebugProbeResult(result, name: resultName)
         #endif
     }
@@ -653,7 +814,7 @@ extension AppModel {
         return String(value)
     }
 
-    nonisolated private static func elapsedMilliseconds(since start: Date) -> Int {
+    nonisolated static func elapsedMilliseconds(since start: Date) -> Int {
         max(0, Int(Date().timeIntervalSince(start) * 1000))
     }
 
@@ -690,22 +851,40 @@ extension AppModel {
         return metadata
     }
 
-    private func writeDebugProbeResult(_ result: [String: Any], name: String) {
-        guard let supportDir else {
-            return
-        }
+    func writeDebugProbeResult(_ result: [String: Any], name: String) {
         let safeName = name
             .split(separator: "/")
             .last
             .map(String.init) ?? "debug-exit-probe.json"
-        let url = supportDir.appendingPathComponent(safeName)
         guard JSONSerialization.isValidJSONObject(result),
               let data = try? JSONSerialization.data(withJSONObject: result, options: [.prettyPrinted, .sortedKeys])
         else {
             return
         }
-        try? data.write(to: url, options: .atomic)
-        debugLog("debug probe wrote \(url.path)")
+        if let supportDir {
+            let url = supportDir.appendingPathComponent(safeName)
+            try? data.write(to: url, options: .atomic)
+            debugLog("debug probe wrote \(url.path)")
+        }
+        #if DEBUG
+        if let debugResultsDir = Self.debugResultsDirectory() {
+            try? FileManager.default.createDirectory(
+                at: debugResultsDir,
+                withIntermediateDirectories: true
+            )
+            try? data.write(
+                to: debugResultsDir.appendingPathComponent(safeName),
+                options: .atomic
+            )
+        }
+        #endif
+    }
+
+    nonisolated static func debugResultsDirectory() -> URL? {
+        FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first?.appendingPathComponent("Nostr VPN Debug Results", isDirectory: true)
     }
 
     nonisolated static func argumentValue(after name: String, in arguments: [String]) -> String? {
@@ -745,38 +924,6 @@ extension AppModel {
             return defaultValue
         }
         return min(max(parsed, minValue), maxValue)
-    }
-
-    nonisolated static func redactedDebugArguments(_ arguments: [String]) -> [String] {
-        let sensitiveFlags = [
-            "--nvpn-debug-exit-node",
-            "--nvpn-debug-fetch-url",
-            "--nvpn-debug-direct-fetch-url",
-            "--nvpn-debug-direct-resolve-host",
-            "--nvpn-debug-result",
-            "--nvpn-debug-idle-cpu-result",
-            "--nvpn-debug-tun-probe-target",
-            "--nvpn-debug-wireguard-config-base64",
-            "--nvpn-debug-wireguard-config-file",
-        ]
-        var output: [String] = []
-        var redactNext = false
-        for argument in arguments {
-            if redactNext {
-                output.append("<redacted>")
-                redactNext = false
-                continue
-            }
-            if let flag = sensitiveFlags.first(where: { argument.hasPrefix($0 + "=") }) {
-                output.append("\(flag)=<redacted>")
-                continue
-            }
-            output.append(argument)
-            if sensitiveFlags.contains(argument) {
-                redactNext = true
-            }
-        }
-        return output
     }
 
     nonisolated private static func wireGuardConfig(from arguments: [String], supportDir: URL?) -> String? {

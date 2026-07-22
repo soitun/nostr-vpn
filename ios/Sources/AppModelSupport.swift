@@ -1,6 +1,32 @@
 import Foundation
 import UIKit
 
+private let iosDebugLogLimitBytes = 1_048_576
+
+func appendIosDebugLog(_ message: String, to logURL: URL) {
+    let line = "[\(Date())] \(message)\n"
+    guard let data = line.data(using: .utf8) else {
+        return
+    }
+    let existingBytes = (
+        try? FileManager.default.attributesOfItem(atPath: logURL.path)[.size] as? NSNumber
+    )?.intValue ?? 0
+    if existingBytes + data.count > iosDebugLogLimitBytes {
+        let previousURL = logURL.appendingPathExtension("previous")
+        try? FileManager.default.removeItem(at: previousURL)
+        try? FileManager.default.moveItem(at: logURL, to: previousURL)
+    }
+    if FileManager.default.fileExists(atPath: logURL.path),
+       let handle = try? FileHandle(forWritingTo: logURL)
+    {
+        handle.seekToEndOfFile()
+        handle.write(data)
+        try? handle.close()
+    } else {
+        try? data.write(to: logURL, options: .atomic)
+    }
+}
+
 extension AppModel {
     func qrMatrix(for text: String) -> QrMatrix {
         if fixtureMode {
@@ -26,7 +52,76 @@ extension AppModel {
         }
     }
 
-    static func seedMobileConfig(in supportDir: URL, deviceName: String) {
+    static func migrateLegacySupportDirectoryIfNeeded(to supportDir: URL) throws {
+        let fileManager = FileManager.default
+        let migrationMarker = supportDir.appendingPathComponent(
+            ".legacy-private-container-migrated"
+        )
+        guard !fileManager.fileExists(atPath: migrationMarker.path) else {
+            return
+        }
+        guard let applicationSupport = fileManager.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+              ).first
+        else {
+            return
+        }
+        let legacySupportDir = applicationSupport.appendingPathComponent(
+            "Nostr VPN",
+            isDirectory: true
+        )
+        let legacyConfig = legacySupportDir.appendingPathComponent(configFileName)
+        guard legacySupportDir.resolvingSymlinksInPath() != supportDir.resolvingSymlinksInPath(),
+              configurationHasNetworks(at: legacyConfig)
+        else {
+            return
+        }
+
+        for source in try fileManager.contentsOfDirectory(
+            at: legacySupportDir,
+            includingPropertiesForKeys: nil
+        ) {
+            let name = source.lastPathComponent
+            if legacyMigrationExcludes(name) {
+                continue
+            }
+            let destination = supportDir.appendingPathComponent(name)
+            if name == configFileName {
+                let data = try Data(contentsOf: source)
+                try data.write(to: destination, options: .atomic)
+                continue
+            }
+            if fileManager.fileExists(atPath: destination.path) {
+                if name == "cashu" || name == "\(configFileName).join-roster-outbox" {
+                    try fileManager.removeItem(at: destination)
+                } else {
+                    continue
+                }
+            }
+            try fileManager.copyItem(at: source, to: destination)
+        }
+        try "migrated\n".write(
+            to: migrationMarker,
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    private static func configurationHasNetworks(at url: URL) -> Bool {
+        (try? String(contentsOf: url, encoding: .utf8))?.contains("[[networks]]") == true
+    }
+
+    private static func legacyMigrationExcludes(_ name: String) -> Bool {
+        name == "app-debug.log"
+            || name == "nvpn-pkt-debug.log"
+            || name == mobileRuntimeStateFileName
+            || name == "final-phone-status.json"
+            || name == "ios-join-request.json"
+            || name.hasPrefix("mobile-ios-")
+    }
+
+    static func seedMobileConfig(in supportDir: URL, deviceName: String) throws {
         let name = deviceName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
             return
@@ -40,7 +135,7 @@ extension AppModel {
         let escaped = name
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "\"", with: "\\\"")
-        try? "node_name = \"\(escaped)\"\n".write(to: config, atomically: true, encoding: .utf8)
+        try "node_name = \"\(escaped)\"\n".write(to: config, atomically: true, encoding: .utf8)
     }
 
     func refreshTunnelSidecarState() {
@@ -147,39 +242,9 @@ extension AppModel {
     }
 
     nonisolated static func supportDirectory() -> URL? {
-        let legacy = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)
-            .first?
-            .appendingPathComponent("Nostr VPN", isDirectory: true)
-        guard let shared = FileManager.default
+        FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)?
             .appendingPathComponent("Nostr VPN", isDirectory: true)
-        else {
-            return legacy
-        }
-        migrateLegacySupportDirectory(from: legacy, to: shared)
-        return shared
-    }
-
-    nonisolated private static func migrateLegacySupportDirectory(from legacy: URL?, to shared: URL) {
-        guard let legacy, legacy.path != shared.path else {
-            return
-        }
-        let manager = FileManager.default
-        guard manager.fileExists(atPath: legacy.path) else {
-            return
-        }
-        try? manager.createDirectory(at: shared, withIntermediateDirectories: true)
-        guard let items = try? manager.contentsOfDirectory(at: legacy, includingPropertiesForKeys: nil)
-        else {
-            return
-        }
-        for item in items {
-            let destination = shared.appendingPathComponent(item.lastPathComponent)
-            guard !manager.fileExists(atPath: destination.path) else {
-                continue
-            }
-            try? manager.copyItem(at: item, to: destination)
-        }
     }
 
     static func deviceName() -> String {
@@ -214,20 +279,8 @@ extension AppModel {
         guard let supportDir else {
             return
         }
-        let line = "[\(Date())] \(message)\n"
-        guard let data = line.data(using: .utf8) else {
-            return
-        }
         let logUrl = supportDir.appendingPathComponent("app-debug.log")
-        if FileManager.default.fileExists(atPath: logUrl.path),
-           let handle = try? FileHandle(forWritingTo: logUrl)
-        {
-            handle.seekToEndOfFile()
-            handle.write(data)
-            try? handle.close()
-        } else {
-            try? data.write(to: logUrl)
-        }
+        appendIosDebugLog(message, to: logUrl)
         #endif
     }
 }

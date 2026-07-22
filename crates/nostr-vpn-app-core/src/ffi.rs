@@ -23,7 +23,7 @@ use serde::Deserialize;
 
 use crate::actions::NativeAppAction;
 use crate::exchange_rate::{ExchangeRateService, apply_exchange_rate};
-use crate::join_approval::prepare_join_approval;
+use crate::join_approval::{prepare_join_approval, prepare_manual_join_delivery};
 use crate::join_request_link::{
     own_join_request_qr_code_or_link, parse_join_request_qr_code_or_link,
 };
@@ -91,8 +91,16 @@ impl FfiApp {
     #[allow(clippy::needless_pass_by_value)]
     #[must_use]
     pub fn new(data_dir: String, app_version: String) -> Arc<Self> {
-        let runtime = NativeAppRuntime::new(&data_dir, app_version)
-            .unwrap_or_else(|error| NativeAppRuntime::from_startup_error(&error));
+        let config_path = native_config_path(&data_dir);
+        let runtime =
+            NativeAppRuntime::new_with_config_path(config_path.clone(), app_version.clone(), None)
+                .unwrap_or_else(|error| {
+                    NativeAppRuntime::from_startup_error_for_config(
+                        &error,
+                        config_path,
+                        app_version,
+                    )
+                });
         Arc::new(Self {
             runtime: Mutex::new(runtime),
         })

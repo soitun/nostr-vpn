@@ -25,6 +25,7 @@ import {
   splitCsv,
   validateReleaseAssetSet,
   validateStagedReleaseTree,
+  windowsSshTransportArgs,
 } from './local-release-lib.mjs'
 
 test('parseEnvFile reads basic dotenv syntax', () => {
@@ -86,6 +87,31 @@ test('deterministicBuildEnv rejects non-numeric source dates', () => {
   assert.throws(
     () => deterministicBuildEnv({}, { sourceDateEpoch: 'today' }),
     /SOURCE_DATE_EPOCH/,
+  )
+})
+
+test('Windows release transport supports jump hosts and proxy commands', () => {
+  assert.deepEqual(windowsSshTransportArgs({ NVPN_WINDOWS_SSH_JUMP: 'vader' }), [
+    '-o',
+    'BatchMode=yes',
+    '-o',
+    'ConnectTimeout=10',
+    '-J',
+    'vader',
+  ])
+  assert.deepEqual(
+    windowsSshTransportArgs({
+      NVPN_WINDOWS_SSH_JUMP: 'ignored',
+      NVPN_WINDOWS_SSH_PROXY_COMMAND: 'ssh gateway -W %h:%p',
+    }),
+    [
+      '-o',
+      'BatchMode=yes',
+      '-o',
+      'ConnectTimeout=10',
+      '-o',
+      'ProxyCommand=ssh gateway -W %h:%p',
+    ],
   )
 })
 

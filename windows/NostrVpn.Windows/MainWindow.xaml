@@ -128,6 +128,16 @@
                   <controls:QrCodeView Width="220" Height="220" Matrix="{Binding JoinRequestQr}" />
                 </Viewbox>
                 <Button Content="Copy Request" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding JoinRequestQrCodeOrLink}" HorizontalAlignment="Center" Margin="0,8,0,10" Visibility="{Binding ShowJoinRequestQr, Converter={StaticResource BoolToVisibility}}" />
+                <Expander Header="Manual join" Margin="0,8,0,0">
+                  <StackPanel Margin="0,8,0,0">
+                    <TextBlock Text="Give the admin your Device ID. Enter their Device ID and Network ID here; they must add your Device ID too." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Button Content="Copy my Device ID" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding State.OwnNpub}" HorizontalAlignment="Left" Margin="0,0,0,8" />
+                    <TextBox Text="{Binding ManualJoinAdminId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Admin Device ID" Margin="0,0,0,6" />
+                    <TextBlock Text="Not a valid device ID" Foreground="{StaticResource Danger}" FontSize="11" Visibility="{Binding ManualJoinAdminErrorVisibility}" />
+                    <TextBox Text="{Binding ManualJoinMeshId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Network ID" Margin="0,6,0,8" />
+                    <Button Content="Add manually" Command="{Binding ManualAddNetworkCommand}" HorizontalAlignment="Left" />
+                  </StackPanel>
+                </Expander>
               </StackPanel>
             </Border>
             <Border Style="{StaticResource Card}" Visibility="{Binding ShowNetworkSetupJoin, Converter={StaticResource BoolToVisibility}}">
@@ -376,6 +386,16 @@
                   <controls:QrCodeView Width="220" Height="220" Matrix="{Binding JoinRequestQr}" />
                 </Viewbox>
                 <Button Content="Copy Request" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding JoinRequestQrCodeOrLink}" HorizontalAlignment="Center" Margin="0,8,0,10" Visibility="{Binding ShowJoinRequestQr, Converter={StaticResource BoolToVisibility}}" />
+                <Expander Header="Manual join" Margin="0,8,0,0">
+                  <StackPanel Margin="0,8,0,0">
+                    <TextBlock Text="Give the admin your Device ID. Enter their Device ID and Network ID here; they must add your Device ID too." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,0,0,8" />
+                    <Button Content="Copy my Device ID" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding State.OwnNpub}" HorizontalAlignment="Left" Margin="0,0,0,8" />
+                    <TextBox Text="{Binding ManualJoinAdminId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Admin Device ID" Margin="0,0,0,6" />
+                    <TextBlock Text="Not a valid device ID" Foreground="{StaticResource Danger}" FontSize="11" Visibility="{Binding ManualJoinAdminErrorVisibility}" />
+                    <TextBox Text="{Binding ManualJoinMeshId, UpdateSourceTrigger=PropertyChanged}" ToolTip="Network ID" Margin="0,6,0,8" />
+                    <Button Content="Add manually" Command="{Binding ManualAddNetworkCommand}" HorizontalAlignment="Left" />
+                  </StackPanel>
+                </Expander>
               </StackPanel>
             </Border>
             <Border Style="{StaticResource Card}" Visibility="{Binding ShowNetworkSetupJoin, Converter={StaticResource BoolToVisibility}}">
@@ -421,6 +441,19 @@
                 <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
                   <Button Content="Import join request QR file" Command="{Binding ImportJoinRequestQrImageCommand}" Margin="0,0,8,0" />
                 </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <Border Style="{StaticResource Card}" Visibility="{Binding ActiveNetwork.LocalIsAdmin, Converter={StaticResource BoolToVisibility}}">
+              <StackPanel>
+                <TextBlock Text="For manual join" FontSize="18" FontWeight="SemiBold" />
+                <TextBlock Text="Share your Device ID and Network ID, then add the joining Device ID below." Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,4,0,10" />
+                <Button Content="Copy admin Device ID" Command="{Binding CopyPeerCommand}" CommandParameter="{Binding State.OwnNpub}" HorizontalAlignment="Left" Margin="0,0,0,6" />
+                <Button Content="Copy Network ID" Command="{Binding CopyNetworkIdCommand}" HorizontalAlignment="Left" Margin="0,0,0,10" />
+                <TextBox Text="{Binding ParticipantInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Joining Device ID" Margin="0,0,0,4" />
+                <TextBlock Text="Not a valid device ID" Foreground="{StaticResource Danger}" FontSize="11" Visibility="{Binding ParticipantInputErrorVisibility}" />
+                <TextBox Text="{Binding ParticipantAliasInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Name" Margin="0,6,0,8" />
+                <Button Content="Add by Device ID" Command="{Binding AddParticipantCommand}" HorizontalAlignment="Left" />
               </StackPanel>
             </Border>
 

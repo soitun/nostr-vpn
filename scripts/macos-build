@@ -251,17 +251,25 @@ target_cli_bin() {
 }
 
 run_macos_gen_swift() {
+  local reuse_built_library="${1:-0}"
   local generated_bindings_dir
   local app_core_lock_snapshot=""
 
   prepare_cargo_config
 
-  if [[ "$PROFILE" == "release" ]]; then
-    CARGO_TARGET_DIR="$(target_root)" \
-      "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --release --target "$HOST_TARGET"
+  if [[ "$reuse_built_library" == "1" ]]; then
+    if [[ ! -f "$(host_dynamic_lib)" ]]; then
+      echo "Missing prebuilt app-core library for Swift bindings: $(host_dynamic_lib)" >&2
+      exit 1
+    fi
   else
-    CARGO_TARGET_DIR="$(target_root)" \
-      "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --target "$HOST_TARGET"
+    if [[ "$PROFILE" == "release" ]]; then
+      CARGO_TARGET_DIR="$(target_root)" \
+        "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --release --target "$HOST_TARGET"
+    else
+      CARGO_TARGET_DIR="$(target_root)" \
+        "${cargo_prefix[@]}" build "${cargo_app_core_package_args[@]+"${cargo_app_core_package_args[@]}"}" "${cargo_app_core_feature_args[@]+"${cargo_app_core_feature_args[@]}"}" --target "$HOST_TARGET"
+    fi
   fi
 
   if [[ -n "$LOCK_SNAPSHOT" ]]; then
@@ -427,9 +435,11 @@ run_macos_xcframework() {
   local modulemap_path
   local libs=()
   local target
-
-  run_macos_gen_swift
+  # Build app-core once with the canonical macOS SDK/linker settings, then use
+  # that same dylib for UniFFI generation. Building bindings first used to
+  # compile app-core again with a different Cargo fingerprint.
   run_macos_rust
+  run_macos_gen_swift 1
 
   header_path="$(find "$BINDINGS_DIR" -maxdepth 1 -name '*.h' | head -n 1)"
   modulemap_path="$(find "$BINDINGS_DIR" -maxdepth 1 -name '*.modulemap' | head -n 1)"

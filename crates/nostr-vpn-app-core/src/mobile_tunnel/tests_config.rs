@@ -145,7 +145,7 @@
             join_secret: "join-secret".to_string(),
             devices: vec![peer.to_string()],
             removed_devices: Vec::new(),
-            admins: vec![own],
+            admins: vec![own.clone()],
             listen_for_join_requests: true,
             join_request_admin: String::new(),
             outbound_join_request: None,
@@ -186,7 +186,7 @@
             join_secret: "join-secret".to_string(),
             devices: vec![peer.to_string()],
             removed_devices: Vec::new(),
-            admins: vec![own],
+            admins: vec![own.clone()],
             listen_for_join_requests: true,
             join_request_admin: String::new(),
             outbound_join_request: None,
@@ -310,7 +310,7 @@
             join_secret: "join-secret".to_string(),
             devices: vec![peer.to_string()],
             removed_devices: Vec::new(),
-            admins: vec![own],
+            admins: vec![own.clone()],
             listen_for_join_requests: true,
             join_request_admin: String::new(),
             outbound_join_request: None,
@@ -561,8 +561,7 @@
         );
     }
 
-    #[test]
-    fn mobile_tunnel_launch_config_redacts_persisted_secrets() {
+    fn mobile_launch_redaction_fixture() -> (PathBuf, String, &'static str) {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock is after epoch")
@@ -570,12 +569,12 @@
         let dir = std::env::temp_dir().join(format!("nvpn-mobile-launch-redaction-{nonce}"));
         fs::create_dir_all(&dir).expect("create temp dir");
         let path = dir.join("config.toml");
+        let peer = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
 
         let mut app = AppConfig::generated();
         app.ensure_defaults();
         let own = app.own_nostr_pubkey_hex().expect("own pubkey");
         let secret_key = app.nostr.secret_key.clone();
-        let peer = "26525c442dd039de4e728b41ee8d7f717b267ab25b7c219d53a3249e1c9174cc";
         app.networks = vec![NetworkConfig {
             id: "test".to_string(),
             name: "Test".to_string(),
@@ -584,7 +583,7 @@
             join_secret: "join-secret".to_string(),
             devices: vec![peer.to_string()],
             removed_devices: Vec::new(),
-            admins: vec![own],
+            admins: vec![own.clone()],
             listen_for_join_requests: true,
             join_request_admin: String::new(),
             outbound_join_request: None,
@@ -602,7 +601,32 @@
             allowed_ips: vec!["0.0.0.0/0".to_string()],
             ..WireGuardExitConfig::default()
         };
+        app.note_active_network_roster_local_change()
+            .expect("mark admin roster changed");
         app.save(&path).expect("save config");
+        let queued_roster = SignedRoster::sign(
+            "test",
+            NetworkRoster {
+                network_name: "Test".to_string(),
+                devices: vec![peer.to_string()],
+                admins: vec![own],
+                aliases: HashMap::new(),
+                signed_at: unix_timestamp(),
+            },
+            &app.nostr_keys().expect("admin keys"),
+        )
+        .expect("sign queued roster");
+        let queued_control = JoinRosterControl::new(queued_roster, "request-secret")
+            .expect("bind queued roster");
+        nostr_vpn_core::join_delivery::queue_join_roster(&path, peer, &queued_control)
+            .expect("queue mobile approval");
+        (dir, secret_key, peer)
+    }
+
+    #[test]
+    fn mobile_tunnel_launch_config_redacts_persisted_secrets() {
+        let (dir, secret_key, peer) = mobile_launch_redaction_fixture();
+        let path = dir.join("config.toml");
 
         let json = tunnel_config_json(dir.to_str().expect("utf8 temp dir"));
         assert!(!json.contains(&secret_key));
@@ -611,7 +635,12 @@
         assert!(!json.contains("client-peer-psk"));
         assert!(json.contains("198.51.100.20:51820"));
 
-        let launch_config: MobileTunnelConfig = serde_json::from_str(&json).expect("launch config");
+        let launch: MobileTunnelLaunchConfig =
+            serde_json::from_str(&json).expect("launch config");
+        assert_eq!(launch.queued_join_rosters.len(), 1);
+        assert_eq!(launch.queued_join_rosters[0].recipient_npub, peer);
+        assert!(launch.signed_roster.is_some());
+        let launch_config = launch.tunnel;
         assert!(launch_config.app_config_toml.is_empty());
         assert!(launch_config.identity_nsec.is_empty());
         assert!(launch_config.join_secret.is_empty());
@@ -645,8 +674,12 @@
         assert!(provider_json.contains("client-private-key"));
         assert!(provider_json.contains("client-peer-psk"));
 
-        let provider_config: MobileTunnelConfig =
+        let provider_launch: MobileTunnelLaunchConfig =
             serde_json::from_str(&provider_json).expect("provider options config");
+        assert_eq!(provider_launch.queued_join_rosters.len(), 1);
+        assert_eq!(provider_launch.queued_join_rosters[0].recipient_npub, peer);
+        assert!(provider_launch.signed_roster.is_some());
+        let provider_config = provider_launch.tunnel;
         assert!(
             provider_config.config_path.is_empty(),
             "packet tunnel extension must not read the containing app's private config path"

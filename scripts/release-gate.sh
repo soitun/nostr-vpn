@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+MOBILE_IOS_APP_READY=0
 cd "$ROOT_DIR"
 
 source "$ROOT_DIR/scripts/release_common.sh"
@@ -29,6 +30,8 @@ WINDOWS_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE_TIMEOUT_SE
 MOBILE_GUI_SMOKE_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MOBILE_GUI_SMOKE_TIMEOUT_SECS:-1800}"
 IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS="${NVPN_RELEASE_GATE_IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS:-180}"
 MOBILE_WG_EXIT_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MOBILE_WG_EXIT_TIMEOUT_SECS:-3600}"
+MOBILE_JOIN_E2E_TIMEOUT_SECS="${NVPN_RELEASE_GATE_MOBILE_JOIN_E2E_TIMEOUT_SECS:-1800}"
+RELEASE_GATE_TARGET_SECS="${NVPN_RELEASE_GATE_TARGET_SECS:-1800}"
 
 release_cargo_config_args=()
 release_cargo_config_backup=""
@@ -220,10 +223,14 @@ run_release_gate_preflight() {
   npm ci
   npm run check
   npm run build
+  node --test scripts/local-release.test.mjs
   ./scripts/check-source-file-lines.sh
   ./scripts/test-release-gate-parallel-harness.sh
   ./scripts/test-idle-cpu-gate-harness.sh
+  ./scripts/test-mobile-physical-device-selection-harness.sh
+  ./scripts/test-mobile-ios-vpn-cleanup-harness.sh
   ./scripts/test-macos-sdk-compat-harness.sh
+  ./scripts/test-manual-join-platform-contract.sh
   cargo fmt --check
 }
 
@@ -237,14 +244,22 @@ run_rust_validation_lane() {
   # and measure it once after joining that build below.
   release_cargo test "${release_cargo_lock_args[@]}" --workspace -- \
     --test-threads=1 \
-    --skip websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin
+    --skip websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin \
+    --skip desktop_mobile_manual_join_desktop_admin_to_mobile_joiner \
+    --skip desktop_mobile_manual_join_mobile_admin_to_desktop_joiner
   # Mobile VPN basics run without requiring a device/emulator: join over FIPS,
   # MagicDNS from TUN, exit DNS policy, and Android WG socket startup ordering.
   release_cargo_test_filter nostr-vpn-app-core mobile_join_request_sends_and_records_over_real_fips_endpoint
+  # Cross the desktop-daemon/mobile-tunnel boundary with each side acting as
+  # admin once. Both paths require the joiner to persist the exact signed roster
+  # before acknowledging it, and the sender must consume its durable outbox.
+  release_cargo_test_filter nostr-vpn-app-core desktop_mobile_manual_join_desktop_admin_to_mobile_joiner
+  release_cargo_test_filter nostr-vpn-app-core desktop_mobile_manual_join_mobile_admin_to_desktop_joiner
   release_cargo_test_filter nostr-vpn-app-core mobile_magic_dns_answers_peer_name_from_tun_packet
   release_cargo_test_filter nostr-vpn-app-core mobile_config_wireguard_exit_keeps_local_stub_and_uses_profile_dns_only_while_active
   release_cargo_test_filter nostr-vpn-core exit_dns_supported_policy_matrix_selects_exact_resolver
   release_cargo_test_filter nostr-vpn-app-core settings_patch_validates_exit_dns_atomically_and_exposes_saved_policy
+  release_cargo_test_filter nostr-vpn-app-core settings_patch_persists_every_exit_dns_option
   release_cargo_test_filter nostr-vpn-app-core mobile_wireguard_start_returns_before_handshake_watchdog
   release_cargo_test_filter nostr-vpn-app-core mobile_fips_exit_node_routes_default_traffic_to_selected_member
   # Shared userspace WG dataplane, including the mpsc channel path used by
@@ -253,9 +268,26 @@ run_rust_validation_lane() {
   ./scripts/e2e-update-cli.sh
 }
 
+windows_ssh_command() {
+  local host="$1"
+  WINDOWS_SSH_CMD=(ssh -o BatchMode=yes -o ConnectTimeout=5)
+  if [[ -n "${NVPN_WINDOWS_SSH_PROXY_COMMAND:-}" ]]; then
+    WINDOWS_SSH_CMD+=(-o "ProxyCommand=${NVPN_WINDOWS_SSH_PROXY_COMMAND}")
+  elif [[ -n "${NVPN_WINDOWS_SSH_JUMP:-}" ]]; then
+    WINDOWS_SSH_CMD+=(-J "$NVPN_WINDOWS_SSH_JUMP")
+  fi
+  WINDOWS_SSH_CMD+=("$host")
+}
+
+windows_vm_reachable() {
+  local host="$1"
+  windows_ssh_command "$host"
+  "${WINDOWS_SSH_CMD[@]}" hostname >/dev/null 2>&1
+}
+
 run_auto_windows_vm_app_smoke() {
   local host="${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
-  if ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" hostname >/dev/null 2>&1; then
+  if windows_vm_reachable "$host"; then
     release_gate_run_with_timeout "Windows VM app launch smoke" "$WINDOWS_GUI_SMOKE_TIMEOUT_SECS" \
       ./scripts/windows-vm-app-launch-smoke.sh "$host"
   else
@@ -265,7 +297,7 @@ run_auto_windows_vm_app_smoke() {
 
 run_auto_windows_vm_wireguard_exit_e2e() {
   local host="${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
-  if ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" hostname >/dev/null 2>&1; then
+  if windows_vm_reachable "$host"; then
     release_gate_run_with_timeout "Windows WG exit e2e" "$WINDOWS_WG_EXIT_TIMEOUT_SECS" \
       ./scripts/windows-vm-wireguard-exit-e2e.sh "$host"
   else
@@ -290,7 +322,7 @@ prepare_windows_platform_lane_sync() {
   windows_platform_lane_requested || return 0
 
   local host="${NVPN_WINDOWS_SSH_HOST:-win11-dev}"
-  if ssh -o BatchMode=yes -o ConnectTimeout=5 "$host" hostname >/dev/null 2>&1; then
+  if windows_vm_reachable "$host"; then
     ./scripts/windows-vm-git-sync.sh "$host"
     WINDOWS_LANE_PRE_SYNCED=1
   fi
@@ -441,13 +473,61 @@ run_macos_daemon_idle_cpu_gate() {
     echo "Skipping macOS daemon idle CPU gate on this host."
     return
   fi
-  if ! { [[ "${EUID:-$(id -u)}" == "0" ]] \
-    || sudo -n /usr/local/sbin/nvpn-install-test-daemon --help >/dev/null 2>&1; }; then
-    echo "Skipping macOS daemon idle CPU gate because passwordless sudo is unavailable."
-    return
-  fi
+  local mode="${NVPN_RELEASE_GATE_MACOS_DAEMON_IDLE_CPU:-auto}"
+  case "$mode" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "Skipping macOS daemon idle CPU gate because NVPN_RELEASE_GATE_MACOS_DAEMON_IDLE_CPU=$mode"
+      return
+      ;;
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+      ;;
+    auto|AUTO|Auto|"")
+      if [[ "${EUID:-$(id -u)}" != "0" && "${CI:-}" != "true" ]]; then
+        echo "Skipping isolated macOS service E2E on this developer host; run it on a root-capable macOS gate host."
+        return
+      fi
+      ;;
+    *)
+      echo "Unsupported NVPN_RELEASE_GATE_MACOS_DAEMON_IDLE_CPU=$mode" >&2
+      return 2
+      ;;
+  esac
   release_gate_run_with_timeout "macOS daemon idle CPU" "$MACOS_DAEMON_IDLE_CPU_TIMEOUT_SECS" \
     env NVPN_RUN_MACOS_SERVICE_E2E=1 ./scripts/e2e-macos-service.sh
+}
+
+release_gate_has_physical_ios_device() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 1
+  xcrun xctrace list devices 2>/dev/null | awk '
+    /^== Devices ==/ { devices = 1; next }
+    /^== Devices Offline ==/ || /^== Simulators ==/ { devices = 0 }
+    devices && /iPhone|iPad/ { found = 1 }
+    END { exit !found }
+  '
+}
+
+release_gate_select_android_idle_serial() {
+  if [[ -n "${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}" ]]; then
+    printf '%s\n' "${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
+    return
+  fi
+
+  # Full release gates already require the physical Android device for the
+  # exit and join lanes. Prefer it for the idle sample too: unrelated projects
+  # commonly create and destroy default-port emulators, which can terminate a
+  # healthy VPN process halfway through the measurement. Keep an emulator as
+  # the explicit last choice for developer hosts without a phone attached.
+  adb devices 2>/dev/null | awk '
+    NR > 1 && $2 == "device" {
+      if (first == "") first = $1
+      if ($1 !~ /^emulator-/) {
+        print $1
+        selected = 1
+        exit
+      }
+    }
+    END { if (!selected && first != "") print first }
+  '
 }
 
 run_mobile_idle_cpu_gates() {
@@ -467,8 +547,15 @@ run_mobile_idle_cpu_gates() {
 
   if command -v adb >/dev/null 2>&1 \
     && adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" { found = 1 } END { exit !found }'; then
+    local android_idle_serial
+    android_idle_serial="$(release_gate_select_android_idle_serial)"
+    [[ -n "$android_idle_serial" ]] || {
+      echo "Android idle CPU smoke could not select an online device." >&2
+      return 1
+    }
     release_gate_run_with_timeout "Android idle CPU smoke" "$MOBILE_GUI_SMOKE_TIMEOUT_SECS" \
       env NVPN_ANDROID_PACKAGE="fi.siriusbusiness.nvpn.releasegate" \
+      NVPN_ANDROID_SERIAL="$android_idle_serial" \
       NVPN_IDLE_CPU_MAX_PERCENT="$ANDROID_ACTIVE_OVERLAY_IDLE_CPU_MAX_PERCENT" \
       ./scripts/mobile-android-smoke.sh --vpn-cycle --create-network --accept-vpn-dialog
   else
@@ -476,16 +563,22 @@ run_mobile_idle_cpu_gates() {
   fi
 
   local ios_device="${NVPN_IOS_DEVICE:-${NVPN_IOS_DEVICE_ID:-}}"
-  if [[ "$(uname -s)" == "Darwin" && -n "$ios_device" ]]; then
+  local ios_smoke_command=(./scripts/mobile-ios-smoke.sh device)
+  if [[ -n "$ios_device" ]]; then
+    ios_smoke_command+=(--device "$ios_device")
+  fi
+  ios_smoke_command+=(--install --create-network --vpn-cycle)
+  if release_gate_has_physical_ios_device || [[ -n "$ios_device" ]]; then
     release_gate_run_with_timeout "iOS packet tunnel idle CPU" "$IOS_TUNNEL_IDLE_CPU_TIMEOUT_SECS" \
       env \
         NVPN_IOS_RUST_PROFILE=release \
         NVPN_IOS_IDLE_CPU_MAX_PERCENT="${NVPN_IOS_PACKET_TUNNEL_IDLE_CPU_MAX_PERCENT:-$NVPN_IDLE_CPU_MAX_PERCENT}" \
         NVPN_IOS_IDLE_CPU_SETTLE_SECONDS="${NVPN_IOS_PACKET_TUNNEL_IDLE_CPU_SETTLE_SECONDS:-15}" \
         NVPN_IOS_IDLE_CPU_SAMPLE_SECONDS="${NVPN_IOS_PACKET_TUNNEL_IDLE_CPU_SAMPLE_SECONDS:-60}" \
-        ./scripts/mobile-ios-smoke.sh device --device "$ios_device" --install --create-network --vpn-cycle
+        "${ios_smoke_command[@]}"
+    MOBILE_IOS_APP_READY=1
   else
-    echo "Skipping iOS packet tunnel idle CPU gate because no physical device is configured."
+    echo "Skipping iOS packet tunnel idle CPU gate because no physical device is online."
   fi
 }
 
@@ -504,12 +597,7 @@ run_mobile_wireguard_exit_gates() {
         || ! command -v wg >/dev/null 2>&1 \
         || ! command -v adb >/dev/null 2>&1 \
         || ! adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { found = 1 } END { exit !found }' \
-        || ! xcrun xctrace list devices 2>/dev/null | awk '
-          /^== Devices ==/ { devices = 1; next }
-          /^== Devices Offline ==/ { devices = 0 }
-          devices && /iPhone|iPad/ { found = 1 }
-          END { exit !found }
-        '
+        || ! release_gate_has_physical_ios_device
       then
         echo "Skipping mobile WireGuard exit e2e because both physical mobile devices and the local fixture tools are not available."
         return
@@ -523,7 +611,47 @@ run_mobile_wireguard_exit_gates() {
 
   release_gate_run_with_timeout "Android/iOS WireGuard exit e2e" "$MOBILE_WG_EXIT_TIMEOUT_SECS" \
     env NVPN_ANDROID_IDLE_CPU_MAX_PERCENT="$ANDROID_ACTIVE_OVERLAY_IDLE_CPU_MAX_PERCENT" \
+    NVPN_MOBILE_WG_EXIT_INSTALL_IOS="$((1 - MOBILE_IOS_APP_READY))" \
     ./scripts/mobile-wireguard-exit-e2e.sh all
+  MOBILE_IOS_APP_READY=1
+}
+
+run_mobile_join_e2e_gate() {
+  local mode="${NVPN_RELEASE_GATE_MOBILE_JOIN_E2E:-auto}"
+  case "$mode" in
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      echo "Skipping physical bidirectional mobile join e2e because NVPN_RELEASE_GATE_MOBILE_JOIN_E2E=$mode"
+      return
+      ;;
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On)
+      ;;
+    auto|AUTO|Auto|"")
+      if [[ "$(uname -s)" != "Darwin" ]] \
+        || ! command -v adb >/dev/null 2>&1 \
+        || ! adb devices 2>/dev/null | awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { found = 1 } END { exit !found }' \
+        || ! xcrun xctrace list devices 2>/dev/null | awk '
+          /^== Devices ==/ { devices = 1; next }
+          /^== Devices Offline ==/ || /^== Simulators ==/ { devices = 0 }
+          devices && /iPhone|iPad/ { found = 1 }
+          END { exit !found }
+        '
+      then
+        echo "Skipping physical bidirectional mobile join e2e because both phones are not available."
+        return
+      fi
+      ;;
+    *)
+      echo "Unsupported NVPN_RELEASE_GATE_MOBILE_JOIN_E2E=$mode" >&2
+      exit 2
+      ;;
+  esac
+
+  release_gate_run_with_timeout \
+    "Physical iOS/Android bidirectional join e2e" \
+    "$MOBILE_JOIN_E2E_TIMEOUT_SECS" \
+    env NVPN_MOBILE_JOIN_E2E_INSTALL_IOS="$((1 - MOBILE_IOS_APP_READY))" \
+    ./scripts/mobile-ios-android-join-e2e.sh
+  MOBILE_IOS_APP_READY=1
 }
 
 docker_release_gates_enabled() {
@@ -543,7 +671,11 @@ run_docker_signal_gates() {
     return
   fi
 
-  NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_ROUTED_UDP_DISCOVERY_POLICY:-open}" \
+  # The standalone topology test keeps its longer soak default. The release
+  # gate needs a short continuity assertion here because roaming, loaded
+  # liveness, and idle CPU each get dedicated longer measurements below.
+  NVPN_E2E_CONTINUITY_SECS="${NVPN_RELEASE_GATE_CONTINUITY_SECS:-15}" \
+    NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_ROUTED_UDP_DISCOVERY_POLICY:-open}" \
     ./scripts/e2e-fips-routed-udp-docker.sh
   NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}" \
     ./scripts/e2e-fips-roaming-docker.sh
@@ -578,7 +710,8 @@ run_docker_isolated_functional_gates() {
 
   local lanes=()
   release_gate_parallel_start "Docker NAT-safe MTU" \
-    env NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}" \
+    env NVPN_E2E_CONTINUITY_SECS="${NVPN_RELEASE_GATE_CONTINUITY_SECS:-15}" \
+    NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}" \
     ./scripts/e2e-fips-nat-safe-mtu-docker.sh
   lanes+=("$RELEASE_GATE_PARALLEL_LAST_INDEX")
 
@@ -672,13 +805,34 @@ main() {
   run_macos_daemon_idle_cpu_gate
   run_mobile_idle_cpu_gates
   run_mobile_wireguard_exit_gates
+  run_mobile_join_e2e_gate
 
   if [[ -n "$windows_lane" ]]; then
     release_gate_parallel_wait "$windows_lane"
   fi
 
-  printf 'Release gate passed in %ss. Lane logs: %s\n' \
-    "$(( $(date +%s) - started_at ))" "$log_dir"
+  local elapsed target_status
+  elapsed="$(( $(date +%s) - started_at ))"
+  if (( elapsed <= RELEASE_GATE_TARGET_SECS )); then
+    target_status="met"
+  else
+    target_status="missed"
+  fi
+  python3 - "$log_dir/release-gate-summary.json" "$elapsed" \
+    "$RELEASE_GATE_TARGET_SECS" "$target_status" <<'PY'
+import json, sys
+
+path, elapsed, target, status = sys.argv[1:]
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump({
+        "elapsedSeconds": int(elapsed),
+        "targetSeconds": int(target),
+        "targetStatus": status,
+    }, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+PY
+  printf 'Release gate passed in %ss; %ss target %s. Lane logs and summary: %s\n' \
+    "$elapsed" "$RELEASE_GATE_TARGET_SECS" "$target_status" "$log_dir"
 }
 
 main "$@"

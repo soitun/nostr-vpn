@@ -113,6 +113,9 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 if [[ "$action" == "record" ]]; then
+  if [[ -n "${NVPN_FAKE_XCTRACE_SLEEP_SECONDS:-}" ]]; then
+    sleep "$NVPN_FAKE_XCTRACE_SLEEP_SECONDS"
+  fi
   mkdir -p "$output"
   exit 0
 fi
@@ -138,7 +141,7 @@ assert_status 0 "idle iOS process" \
     --sample-seconds 0.1 \
     --snapshot-seconds 0.1 \
     --max-percent 5
-assert_json_field "$ios_json" 'data["ok"] is True and data["mode"] == "ios-process"'
+assert_json_field "$ios_json" 'data["ok"] is True and data["mode"] == "ios-process" and data["xctraceTimeoutSeconds"] == 20'
 
 ios_busy_json="$tmp_dir/ios-busy.json"
 assert_status 1 "busy iOS process" \
@@ -155,9 +158,27 @@ assert_status 1 "busy iOS process" \
     --max-percent 5
 assert_json_field "$ios_busy_json" 'data["ok"] is False and data["cpuPercent"] > 5'
 
+ios_timeout_json="$tmp_dir/ios-timeout.json"
+assert_status 1 "hung iOS xctrace process" \
+  env NVPN_FAKE_XCTRACE_SLEEP_SECONDS=2 \
+  "$SCRIPT" ios-process \
+    --xcrun "$fake_xcrun" \
+    --device test-phone \
+    --process-pattern '^Nostr VPN Tunnel$' \
+    --label "iOS packet tunnel" \
+    --artifact "$ios_timeout_json" \
+    --settle-seconds 0 \
+    --sample-seconds 0.1 \
+    --snapshot-seconds 0.1 \
+    --xctrace-timeout-seconds 0.2 \
+    --max-percent 5
+assert_json_field "$ios_timeout_json" 'data["ok"] is False and "timed out" in data["error"]'
+
 grep -Fq 'idle-cpu-gate.py" ios-process' "$MOBILE_IOS_SMOKE" \
   || fail "iOS physical-device smoke does not run the packet-tunnel idle CPU check"
-grep -Fq './scripts/mobile-ios-smoke.sh device --device "$ios_device" --install --create-network --vpn-cycle' "$RELEASE_GATE" \
+grep -Fq 'local ios_smoke_command=(./scripts/mobile-ios-smoke.sh device)' "$RELEASE_GATE" \
+  || fail "release gate does not construct the physical iOS packet-tunnel command safely"
+grep -Fq 'ios_smoke_command+=(--install --create-network --vpn-cycle)' "$RELEASE_GATE" \
   || fail "release gate does not install and exercise the candidate iOS packet tunnel"
 grep -Fq './scripts/mobile-ios-smoke.sh simulator' "$RELEASE_GATE" \
   || fail "release gate does not run the iOS app idle CPU smoke"
@@ -165,6 +186,10 @@ grep -Fq './scripts/mobile-android-smoke.sh --vpn-cycle --create-network' "$RELE
   || fail "release gate does not run the Android background active-VPN idle CPU smoke"
 grep -Fq 'NVPN_ANDROID_PACKAGE="fi.siriusbusiness.nvpn.releasegate"' "$RELEASE_GATE" \
   || fail "release gate Android smoke does not use an isolated package"
+grep -Fq 'release_gate_select_android_idle_serial' "$RELEASE_GATE" \
+  || fail "release gate does not isolate Android idle sampling from shared emulators"
+grep -Fq 'NVPN_ANDROID_SERIAL="$android_idle_serial"' "$RELEASE_GATE" \
+  || fail "release gate Android idle smoke does not pin its selected device"
 grep -Fq 'env NVPN_ANDROID_IDLE_CPU_MAX_PERCENT="$ANDROID_ACTIVE_OVERLAY_IDLE_CPU_MAX_PERCENT"' "$RELEASE_GATE" \
   || fail "release gate WireGuard exit smoke does not use the active Android overlay CPU bound"
 grep -Fq 'environmentVariable("NVPN_ANDROID_PACKAGE")' "$ROOT_DIR/android/app/build.gradle.kts" \
@@ -181,6 +206,15 @@ grep -Fq 'env NVPN_MACOS_RUST_PROFILE=release NVPN_MACOS_XCODE_CONFIGURATION=Rel
   || fail "release gate does not measure an optimized macOS app candidate"
 grep -Fq 'run_macos_daemon_idle_cpu_gate' "$RELEASE_GATE" \
   || fail "release gate does not run the macOS daemon idle CPU check"
+grep -Fq 'NVPN_RELEASE_GATE_MACOS_DAEMON_IDLE_CPU:-auto' "$RELEASE_GATE" \
+  || fail "macOS daemon gate cannot distinguish root-capable CI from developer hosts"
+if grep -Fq 'nvpn-install-test-daemon --help' "$RELEASE_GATE"; then
+  fail "macOS daemon gate uses an invalid helper argument as a sudo probe"
+fi
+grep -Fq 'sudo -n "$NVPN_BIN" service install' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
+  || fail "macOS service E2E can block waiting for an interactive sudo password"
+grep -Fq 'ios_smoke_command+=(--device "$ios_device")' "$RELEASE_GATE" \
+  || fail "release gate does not allow the physical iOS idle gate to auto-select a device"
 grep -Fq -- '--fips-peer-endpoint' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
   || fail "macOS daemon idle CPU check does not exercise an active mesh fixture"
 grep -Fq 'ps -ww -p "$daemon_pid"' "$ROOT_DIR/scripts/e2e-macos-service.sh" \
@@ -211,10 +245,18 @@ grep -Fq 'assert_idle_daemon_cpu_below node-a' "$ROOT_DIR/scripts/e2e-fips-route
   || fail "release-gated Linux active-tunnel e2e has no daemon idle CPU check"
 grep -Fq 'windows-daemon-idle-cpu.ps1' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
   || fail "release-gated Windows VM smoke has no daemon idle CPU check"
+grep -Fq 'SSH_JUMP="${NVPN_WINDOWS_SSH_JUMP:-}"' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
+  || fail "Windows VM app smoke cannot traverse the configured VM host"
+grep -Fq 'windows_ssh_command "$host"' "$RELEASE_GATE" \
+  || fail "release gate Windows reachability checks ignore the configured VM host"
 grep -Fq 'Remove-Item -Force \$installer' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
   || fail "Windows VM smoke can reuse a stale installer after a failed build"
 grep -Fq '\$env:CARGO_TARGET_DIR = Join-Path' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
   || fail "Windows VM smoke can rebuild binaries that its management service still locks"
+grep -Fq "'windows-smoke-cargo'" "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
+  || fail "Windows VM smoke discards its Cargo cache on every gate"
+grep -Fq 'Get-CimInstance Win32_Process' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \
+  || fail "Windows VM smoke does not stop a stale candidate before rebuilding its stable cache"
 grep -Fq '$env:CARGO_TARGET_DIR = Join-Path' "$ROOT_DIR/scripts/local-release.mjs" \
   || fail "Windows release can rebuild binaries that the VM management service still locks"
 grep -Fq 'NVPN_WINDOWS_SKIP_GIT_SYNC' "$ROOT_DIR/scripts/windows-vm-app-launch-smoke.sh" \

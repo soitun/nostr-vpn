@@ -253,6 +253,7 @@ def record_ios_activity_snapshot(args: argparse.Namespace, output: Path) -> None
         ],
         check=True,
         stdout=subprocess.DEVNULL,
+        timeout=args.xctrace_timeout_seconds,
     )
 
 
@@ -271,6 +272,7 @@ def export_ios_activity_snapshot(args: argparse.Namespace, trace: Path, output: 
         ],
         check=True,
         stdout=subprocess.DEVNULL,
+        timeout=args.xctrace_timeout_seconds,
     )
 
 
@@ -302,6 +304,7 @@ def run_ios_process(args: argparse.Namespace) -> int:
     result["device"] = args.device
     result["processPattern"] = args.process_pattern
     result["snapshotSeconds"] = args.snapshot_seconds
+    result["xctraceTimeoutSeconds"] = args.xctrace_timeout_seconds
     try:
         pattern = re.compile(args.process_pattern)
         if args.settle_seconds > 0:
@@ -396,12 +399,20 @@ def main() -> int:
     ios.add_argument("--device", required=True)
     ios.add_argument("--process-pattern", required=True, help="regular expression for process name")
     ios.add_argument("--snapshot-seconds", type=float, default=2)
+    ios.add_argument(
+        "--xctrace-timeout-seconds",
+        type=float,
+        default=float(os.environ.get("NVPN_IOS_XCTRACE_TIMEOUT_SECONDS", "20")),
+        help="hard timeout for each xctrace record/export command",
+    )
     ios.set_defaults(func=run_ios_process)
 
     args = parser.parse_args()
     validate_common(args)
     if getattr(args, "snapshot_seconds", 1) <= 0:
         raise SystemExit("--snapshot-seconds must be positive")
+    if getattr(args, "xctrace_timeout_seconds", 1) <= 0:
+        raise SystemExit("--xctrace-timeout-seconds must be positive")
     if parse_bool(os.environ.get("NVPN_IDLE_CPU_GATE_DEBUG", "0")):
         print(f"idle CPU gate args: {args}", file=sys.stderr)
     return args.func(args)

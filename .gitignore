@@ -1,5 +1,6 @@
 /target
 .cargo-docker/
+.buildx-cache/
 **/target/
 node_modules/
 **/node_modules/

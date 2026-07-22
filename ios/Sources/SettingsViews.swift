@@ -320,6 +320,46 @@ struct DeviceDetailSheet: View {
     }
 }
 
+struct AddDeviceCard: View {
+    let network: NetworkState
+    let add: (String, String) -> Void
+    @State private var deviceId = ""
+    @State private var alias = ""
+
+    private var trimmedDeviceId: String {
+        deviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var deviceIdInvalid: Bool {
+        !trimmedDeviceId.isEmpty && !isValidDeviceId(trimmedDeviceId)
+    }
+
+    var body: some View {
+        AppCard {
+            Text("Add by Device ID")
+                .font(.headline)
+            TextField("Device ID", text: $deviceId)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .textFieldStyle(.roundedBorder)
+            if deviceIdInvalid {
+                Text("Not a valid device ID")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            TextField("Name", text: $alias)
+                .textFieldStyle(.roundedBorder)
+            Button("Add") {
+                add(trimmedDeviceId, alias)
+                deviceId = ""
+                alias = ""
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(trimmedDeviceId.isEmpty || deviceIdInvalid)
+        }
+    }
+}
+
 struct NearbyCard: View {
     @ObservedObject var model: AppModel
 

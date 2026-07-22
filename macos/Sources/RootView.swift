@@ -73,6 +73,11 @@ struct RootView: View {
     @State var addDevicePresented = false
     @State var addNetworkMode: AddNetworkMode?
     @State var joinRequestInput = ""
+    @State var manualJoinExpanded = false
+    @State var manualJoinAdminId = ""
+    @State var manualJoinMeshId = ""
+    @State var manualJoinDeviceId = ""
+    @State var manualJoinDeviceName = ""
     @State var lastSyncedNodeName = ""
     @State var lastSyncedEndpoint = ""
     @State var lastSyncedTunnelIp = ""
@@ -296,6 +301,7 @@ struct RootView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     joinRequestInputSection(network)
                     nearbyJoinRequestsSection
+                    manualAdminSection(network)
                 }
                 .padding(18)
             }

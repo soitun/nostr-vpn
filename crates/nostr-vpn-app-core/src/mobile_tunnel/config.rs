@@ -187,6 +187,77 @@ pub(crate) struct MobileTunnelConfig {
     pub(crate) error: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MobileTunnelLaunchConfig {
+    #[serde(flatten)]
+    tunnel: MobileTunnelConfig,
+    #[serde(default, rename = "queuedJoinRosters")]
+    queued_join_rosters: Vec<QueuedJoinRoster>,
+    #[serde(default, rename = "signedRoster", skip_serializing_if = "Option::is_none")]
+    signed_roster: Option<SignedRoster>,
+}
+
+impl MobileTunnelLaunchConfig {
+    fn from_data_dir(data_dir: &str) -> Result<Self> {
+        let tunnel = MobileTunnelConfig::from_data_dir(data_dir)?;
+        let app = mobile_app_config(&tunnel)?;
+        let queued_join_rosters = non_empty_path(&tunnel.config_path)
+            .map(|config_path| {
+                load_join_rosters(&config_path)
+                    .into_iter()
+                    .filter_map(|(path, queued)| {
+                        if !join_roster_delivery_expired(&queued, unix_timestamp()) {
+                            return Some(queued);
+                        }
+                        if let Err(error) = fs::remove_file(&path) {
+                            tracing::warn!(
+                                ?error,
+                                "mobile: failed to remove expired queued join approval"
+                            );
+                        }
+                        None
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Self {
+            tunnel,
+            queued_join_rosters,
+            signed_roster: mobile_admin_signed_roster(&app)?,
+        })
+    }
+}
+
+fn mobile_admin_signed_roster(app: &AppConfig) -> Result<Option<SignedRoster>> {
+    let Some(network) = app.active_network_opt() else {
+        return Ok(None);
+    };
+    let signer = app.own_nostr_pubkey_hex()?;
+    if network.shared_roster_updated_at == 0
+        || !normalize_nostr_pubkey(&network.shared_roster_signed_by)
+            .is_ok_and(|signed_by| signed_by == signer)
+        || !network.admins.iter().any(|admin| admin == &signer)
+    {
+        return Ok(None);
+    }
+    let shared = app.shared_network_roster(&network.id)?;
+    if shared.network_id.is_empty() {
+        return Ok(None);
+    }
+    SignedRoster::sign(
+        shared.network_id,
+        NetworkRoster {
+            network_name: shared.name,
+            devices: shared.devices,
+            admins: shared.admins,
+            aliases: shared.aliases,
+            signed_at: shared.updated_at,
+        },
+        &app.nostr_keys()?,
+    )
+    .map(Some)
+}
+
 fn default_true() -> bool {
     true
 }
@@ -276,16 +347,36 @@ impl MobileTunnelConfig {
     #[allow(clippy::too_many_lines)]
     pub(crate) fn from_app_with_config_path(app: &AppConfig, config_path: &Path) -> Result<Self> {
         let own_pubkey = app.own_nostr_pubkey_hex()?;
-        let network_id = app.effective_network_id();
         let mut peers = Vec::new();
         let mut route_targets = Vec::new();
+        let manual_roster_pending = app.active_network_opt().is_some_and(|network| {
+            network.shared_roster_updated_at == 0
+                && network.shared_roster_signed_by.is_empty()
+                && !network.join_request_admin.is_empty()
+                && network.join_request_admin != own_pubkey
+                && network.outbound_join_request.is_none()
+        });
+        // Until the configured admin signs the roster, manual join is an
+        // onboarding endpoint rather than a member of that mesh. Advertising
+        // the requested mesh id/local route early can make transit learn a
+        // circular route between the two addressless configured peers and
+        // prevent the signed bootstrap roster from reaching the joiner.
+        let network_id = if manual_roster_pending {
+            String::new()
+        } else {
+            app.effective_network_id()
+        };
         let participant_pubkeys = app
             .participant_pubkeys_hex()
             .into_iter()
             .collect::<HashSet<_>>();
 
-        for participant in app
-            .active_network_signal_pubkeys_hex()
+        let signal_pubkeys = if manual_roster_pending {
+            Vec::new()
+        } else {
+            app.active_network_signal_pubkeys_hex()
+        };
+        for participant in signal_pubkeys
             .into_iter()
             .filter(|participant| participant != &own_pubkey)
         {
@@ -487,13 +578,18 @@ fn persisted_app_config_toml(app: &AppConfig, config_path: &Path) -> Result<Stri
 }
 
 pub(crate) fn tunnel_config_json(data_dir: &str) -> String {
-    let mut config =
-        MobileTunnelConfig::from_data_dir(data_dir).unwrap_or_else(|error| MobileTunnelConfig {
-            error: error.to_string(),
-            ..empty_config()
-        });
-    config.redact_for_launch_configuration();
-    serde_json::to_string(&config).unwrap_or_else(|error| {
+    let mut launch = MobileTunnelLaunchConfig::from_data_dir(data_dir).unwrap_or_else(|error| {
+        MobileTunnelLaunchConfig {
+            tunnel: MobileTunnelConfig {
+                error: error.to_string(),
+                ..empty_config()
+            },
+            queued_join_rosters: Vec::new(),
+            signed_roster: None,
+        }
+    });
+    launch.tunnel.redact_for_launch_configuration();
+    serde_json::to_string(&launch).unwrap_or_else(|error| {
         format!(
             r#"{{"error":"{}"}}"#,
             error.to_string().replace(['\\', '"'], "")
@@ -502,13 +598,18 @@ pub(crate) fn tunnel_config_json(data_dir: &str) -> String {
 }
 
 pub(crate) fn tunnel_provider_options_config_json(data_dir: &str) -> String {
-    let mut config =
-        MobileTunnelConfig::from_data_dir(data_dir).unwrap_or_else(|error| MobileTunnelConfig {
-            error: error.to_string(),
-            ..empty_config()
-        });
-    config.detach_from_persisted_config_path();
-    serde_json::to_string(&config).unwrap_or_else(|error| {
+    let mut launch = MobileTunnelLaunchConfig::from_data_dir(data_dir).unwrap_or_else(|error| {
+        MobileTunnelLaunchConfig {
+            tunnel: MobileTunnelConfig {
+                error: error.to_string(),
+                ..empty_config()
+            },
+            queued_join_rosters: Vec::new(),
+            signed_roster: None,
+        }
+    });
+    launch.tunnel.detach_from_persisted_config_path();
+    serde_json::to_string(&launch).unwrap_or_else(|error| {
         format!(
             r#"{{"error":"{}"}}"#,
             error.to_string().replace(['\\', '"'], "")

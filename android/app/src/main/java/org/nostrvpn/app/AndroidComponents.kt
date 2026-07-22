@@ -242,6 +242,47 @@ private fun DeviceDetailDialog(
     }
 }
 
+@Composable
+internal fun AddParticipantForm(network: NetworkState, dispatch: (JSONObject) -> Unit) {
+    var deviceId by remember(network.id) { mutableStateOf("") }
+    var alias by remember(network.id) { mutableStateOf("") }
+    val trimmedDeviceId = deviceId.trim()
+    val showError = trimmedDeviceId.isNotEmpty() && !isValidDeviceId(trimmedDeviceId)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedTextField(
+            value = deviceId,
+            onValueChange = { deviceId = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Device ID") },
+            isError = showError,
+            supportingText = if (showError) ({ Text("Not a valid device ID") }) else null,
+        )
+        OutlinedTextField(
+            value = alias,
+            onValueChange = { alias = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Name") },
+        )
+        Button(
+            enabled = trimmedDeviceId.isNotEmpty() && !showError,
+            onClick = {
+                dispatch(
+                    NativeActions.addParticipant(
+                        network.id,
+                        trimmedDeviceId,
+                        alias.trim().ifBlank { null },
+                    ),
+                )
+                deviceId = ""
+                alias = ""
+            },
+        ) {
+            Text("Add")
+        }
+    }
+}
 private val BECH32_BODY_CHARSET: Set<Char> = "qpzry9x8gf2tvdw0s3jn54khce6mua7l".toSet()
 
 internal data class ScannedDeviceLink(

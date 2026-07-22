@@ -59,6 +59,7 @@ accept_vpn_dialog="${NVPN_ANDROID_ACCEPT_VPN_DIALOG:-0}"
 vpn_cycle=0
 serial="${NVPN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
 PACKAGE_UID=""
+vpn_cleanup_armed=0
 
 usage() {
   cat >&2 <<'EOF'
@@ -105,9 +106,9 @@ answer. Public DNS and Internet reachability are checked before connect, while
 the exit is active, and after disconnect. The Android VPN network must advertise
 the local authenticated DNS stub (10.44.0.53 by default).
 
-After a successful --vpn-cycle pass, the script disconnects the debug VPN so
-devices are left clean for the next smoke. Use --leave-vpn-active to preserve a
-passing tunnel for manual inspection; failing runs still preserve their state.
+After a --vpn-cycle pass or failure, the script disconnects the debug VPN so
+devices are left clean for the next smoke. Use --leave-vpn-active to preserve
+the tunnel for explicit manual inspection.
 EOF
 }
 
@@ -378,7 +379,7 @@ sys.exit(1)
 }
 
 run_android_direct_network_probe() {
-  local label="$1" result_path start now attempt
+  local label="$1" result_path start now attempt always_on_app lockdown
   [[ -n "$EXIT_PROBE_HOST" ]] || return 0
   result_path="$(android_network_probe_path "$label")"
   mkdir -p "$RUNTIME_STATE_RESULT_DIR"
@@ -386,9 +387,10 @@ run_android_direct_network_probe() {
     echo "Android $label Direct probe failed: VPN state is still present" >&2
     return 1
   fi
-  if [[ "$("$ADB" -s "$serial" shell settings get secure always_on_vpn_app 2>/dev/null | tr -d '\r')" == "$PACKAGE_NAME" \
-    && "$("$ADB" -s "$serial" shell settings get secure always_on_vpn_lockdown 2>/dev/null | tr -d '\r')" == "1" ]]; then
-    echo "Android $label Direct probe cannot run while system always-on VPN lockdown is enabled for $PACKAGE_NAME" >&2
+  always_on_app="$("$ADB" -s "$serial" shell settings get secure always_on_vpn_app 2>/dev/null | tr -d '\r')"
+  lockdown="$("$ADB" -s "$serial" shell settings get secure always_on_vpn_lockdown 2>/dev/null | tr -d '\r')"
+  if [[ -n "$always_on_app" && "$always_on_app" != "null" && "$lockdown" == "1" ]]; then
+    echo "Android $label Direct probe cannot run while system always-on VPN lockdown is enabled for $always_on_app" >&2
     return 1
   fi
   start="$(date +%s)"
@@ -1239,6 +1241,7 @@ cleanup_android_vpn_after_pass() {
   truthy "$cleanup_after_vpn_cycle" || return 0
   start_main_activity --es "$DEBUG_ACTION_EXTRA" disconnect
   if wait_until "$VPN_STOP_WAIT_SECS" vpn_inactive; then
+    vpn_cleanup_armed=0
     echo "Android VPN cleanup passed: debug disconnect left no active VPN service/network"
     return 0
   fi
@@ -1246,6 +1249,28 @@ cleanup_android_vpn_after_pass() {
   echo "Android smoke failed: VPN remained active after post-pass cleanup." >&2
   return 1
 }
+
+cleanup_android_vpn_on_exit() {
+  local status="$?"
+  trap - EXIT
+  if [[ "$vpn_cleanup_armed" -eq 1 && -n "${ADB:-}" && -n "$serial" ]]; then
+    start_main_activity --es "$DEBUG_ACTION_EXTRA" disconnect >/dev/null 2>&1 || true
+    if ! wait_until "$VPN_STOP_WAIT_SECS" vpn_inactive; then
+      "$ADB" -s "$serial" shell am force-stop "$PACKAGE_NAME" >/dev/null 2>&1 || true
+    fi
+    if wait_until "$VPN_STOP_WAIT_SECS" vpn_inactive; then
+      echo "Android VPN emergency cleanup verified: no active test service/network"
+    else
+      echo "Android VPN emergency cleanup failed; disable the VPN in Android Settings before replacing the app." >&2
+      if [[ "$status" -eq 0 ]]; then
+        status=1
+      fi
+    fi
+  fi
+  exit "$status"
+}
+
+trap cleanup_android_vpn_on_exit EXIT
 
 android_sdk() {
   "$ADB" -s "$serial" shell getprop ro.build.version.sdk | tr -d '\r'
@@ -1446,6 +1471,9 @@ if [[ "$vpn_cycle" -eq 1 ]]; then
   fi
   if ! run_android_direct_network_probe before-connect; then
     exit 1
+  fi
+  if truthy "$cleanup_after_vpn_cycle"; then
+    vpn_cleanup_armed=1
   fi
   start_main_activity --es "$DEBUG_ACTION_EXTRA" connect
   maybe_accept_vpn_dialog

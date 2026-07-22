@@ -9,7 +9,7 @@ use nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap;
 use nostr_vpn_core::join_delivery::{
     join_roster_delivery_expired, load_join_rosters, record_join_roster_attempt,
 };
-use nostr_vpn_core::join_requests::AppliedNostrJoinRoster;
+use nostr_vpn_core::join_requests::{AppliedNostrJoinRoster, manual_join_request_token};
 
 use crate::mobile_tunnel::{MobileTunnel, MobileTunnelConfig};
 
@@ -17,6 +17,51 @@ use crate::mobile_tunnel::{MobileTunnel, MobileTunnelConfig};
 pub struct PreparedJoinApproval {
     pub updated_config: AppConfig,
     pub join_roster: JoinRosterControl,
+}
+
+pub fn prepare_manual_join_delivery(
+    config: &AppConfig,
+    network_entry_id: &str,
+    recipient: &str,
+) -> Result<JoinRosterControl> {
+    let signer_keys = config.nostr_keys()?;
+    let signer = signer_keys.public_key().to_hex();
+    let recipient = normalize_nostr_pubkey(recipient)?;
+    let network = config
+        .network_by_id(network_entry_id)
+        .ok_or_else(|| anyhow!("network not found"))?;
+    if !network.admins.iter().any(|admin| admin == &signer) {
+        return Err(anyhow!("active network is not administered by this device"));
+    }
+    if !network
+        .devices
+        .iter()
+        .chain(network.admins.iter())
+        .any(|member| member == &recipient)
+    {
+        return Err(anyhow!(
+            "manual join recipient is not in the network roster"
+        ));
+    }
+    let shared = config.shared_network_roster(network_entry_id)?;
+    if shared.updated_at == 0 {
+        return Err(anyhow!("manual join roster has no signed update timestamp"));
+    }
+    let signed_roster = SignedRoster::sign(
+        shared.network_id.clone(),
+        NetworkRoster {
+            network_name: shared.name,
+            devices: shared.devices,
+            admins: shared.admins,
+            aliases: shared.aliases,
+            signed_at: shared.updated_at,
+        },
+        &signer_keys,
+    )
+    .context("failed to sign manual join network roster")?;
+    let token = manual_join_request_token(&shared.network_id, &signer, &recipient)?;
+    JoinRosterControl::new(signed_roster, &token)
+        .context("failed to bind roster to manual join identifiers")
 }
 
 pub fn prepare_join_approval(
@@ -363,5 +408,69 @@ mod tests {
             label: None,
         };
         assert!(prepare_join_approval(&admin, &network_id, &bootstrap, REQUESTED_AT + 1).is_err());
+    }
+
+    #[test]
+    fn manual_join_delivery_requires_the_configured_admin_and_exact_identifier_tuple() {
+        let joiner_keys = Keys::generate();
+        let joiner = joiner_keys.public_key().to_hex();
+        let (mut admin, network_entry_id) = approval_admin();
+        admin
+            .add_participant_to_network(&network_entry_id, &joiner)
+            .expect("preauthorize manual joiner");
+        let delivery = prepare_manual_join_delivery(&admin, &network_entry_id, &joiner)
+            .expect("prepare manual delivery");
+        let mesh_network_id = admin.networks[0].network_id.clone();
+        let admin_pubkey = admin.own_nostr_pubkey_hex().expect("admin pubkey");
+
+        let mut joining = AppConfig::generated_without_networks();
+        joining.nostr.secret_key = joiner_keys.secret_key().to_secret_hex();
+        joining.nostr.public_key = joiner.clone();
+        joining
+            .add_manual_join_network(&admin_pubkey, &mesh_network_id)
+            .expect("configure manual join");
+        let signed_at = delivery.signed_roster.signed_at();
+        assert_eq!(
+            joining
+                .apply_manual_join_roster(&delivery, signed_at)
+                .expect("apply exact manual delivery"),
+            Some(mesh_network_id.clone())
+        );
+        assert!(joining.active_network().shared_roster_updated_at > 0);
+        assert_eq!(
+            joining
+                .apply_manual_join_roster(&delivery, signed_at)
+                .expect("confirmed network ignores replay"),
+            None
+        );
+
+        let wrong_admin = Keys::generate().public_key().to_hex();
+        let mut untrusted = AppConfig::generated_without_networks();
+        untrusted.nostr.secret_key = joiner_keys.secret_key().to_secret_hex();
+        untrusted.nostr.public_key = joiner;
+        untrusted
+            .add_manual_join_network(&wrong_admin, &mesh_network_id)
+            .expect("configure different manual admin");
+        assert_eq!(
+            untrusted
+                .apply_manual_join_roster(&delivery, signed_at)
+                .expect("unconfigured signer is ignored"),
+            None
+        );
+
+        let mut wrong_token = delivery;
+        wrong_token.request_secret.push('x');
+        let mut exact = AppConfig::generated_without_networks();
+        exact.nostr.secret_key = joiner_keys.secret_key().to_secret_hex();
+        exact.nostr.public_key = joiner_keys.public_key().to_hex();
+        exact
+            .add_manual_join_network(&admin_pubkey, &mesh_network_id)
+            .expect("configure exact manual admin");
+        assert!(
+            exact
+                .apply_manual_join_roster(&wrong_token, signed_at)
+                .is_err(),
+            "wrong tuple token must be rejected"
+        );
     }
 }

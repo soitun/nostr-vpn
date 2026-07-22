@@ -160,6 +160,15 @@ impl NativeAppRuntime {
                 npub,
                 alias,
             } => {
+                let was_participant = normalize_nostr_pubkey(&npub).is_ok_and(|candidate| {
+                    self.config.network_by_id(&network_id).is_some_and(|network| {
+                        network
+                            .devices
+                            .iter()
+                            .chain(network.admins.iter())
+                            .any(|participant| participant == &candidate)
+                    })
+                });
                 let normalized = self.config.add_participant_to_network(&network_id, &npub)?;
                 if let Some(alias) = alias
                     .as_deref()
@@ -168,6 +177,11 @@ impl NativeAppRuntime {
                 {
                     self.config.set_peer_alias(&normalized, alias)?;
                 }
+                if !was_participant {
+                    let delivery =
+                        prepare_manual_join_delivery(&self.config, &network_id, &normalized)?;
+                    self.queue_join_roster_delivery_to(&normalized, &delivery)?;
+                }
                 self.save_reload_and_refresh()
             }
             NativeAppAction::AddAdmin { network_id, npub } => {
@@ -175,6 +189,16 @@ impl NativeAppRuntime {
                 self.save_reload_and_refresh()
             }
             NativeAppAction::ImportJoinRequest { request } => self.import_join_request(&request),
+            NativeAppAction::ManualAddNetwork {
+                admin_npub,
+                mesh_network_id,
+            } => {
+                self.manual_add_network(&admin_npub, &mesh_network_id)?;
+                if !self.vpn_enabled {
+                    self.connect_vpn()?;
+                }
+                Ok(())
+            }
             NativeAppAction::RemoveParticipant { network_id, npub } => {
                 self.config
                     .remove_participant_from_network(&network_id, &npub)?;
@@ -378,6 +402,16 @@ impl NativeAppRuntime {
         self.import_parsed_join_request(&parsed.bootstrap)
     }
 
+    fn manual_add_network(&mut self, admin_npub: &str, mesh_network_id: &str) -> Result<()> {
+        // Manual join trusts the two identifiers exchanged out of band until
+        // the admin's signed roster confirms this device as a member. The
+        // locally generated join secret remains an internal config invariant
+        // and is never presented as the admin network's secret.
+        self.config
+            .add_manual_join_network(admin_npub, mesh_network_id)?;
+        self.save_reload_and_refresh()
+    }
+
     fn import_parsed_join_request(
         &mut self,
         bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
@@ -407,9 +441,18 @@ impl NativeAppRuntime {
         bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
         join_roster: &nostr_vpn_core::fips_control::JoinRosterControl,
     ) -> Result<()> {
+        self.queue_join_roster_delivery_to(&bootstrap.device_app_key_npub, join_roster)
+    }
+
+    #[cfg(test)]
+    fn queue_join_roster_delivery_to(
+        &mut self,
+        recipient: &str,
+        join_roster: &nostr_vpn_core::fips_control::JoinRosterControl,
+    ) -> Result<()> {
         nostr_vpn_core::join_delivery::queue_join_roster(
             &self.config_path,
-            &bootstrap.device_app_key_npub,
+            recipient,
             join_roster,
         )?;
         self.queued_join_rosters.push(join_roster.clone());
@@ -418,13 +461,22 @@ impl NativeAppRuntime {
 
     #[cfg(not(test))]
     fn queue_join_roster_delivery(
-        &self,
+        &mut self,
         bootstrap: &nostr_vpn_core::identity_bridge::NostrIdentityDeviceApprovalBootstrap,
+        join_roster: &nostr_vpn_core::fips_control::JoinRosterControl,
+    ) -> Result<()> {
+        self.queue_join_roster_delivery_to(&bootstrap.device_app_key_npub, join_roster)
+    }
+
+    #[cfg(not(test))]
+    fn queue_join_roster_delivery_to(
+        &mut self,
+        recipient: &str,
         join_roster: &nostr_vpn_core::fips_control::JoinRosterControl,
     ) -> Result<()> {
         nostr_vpn_core::join_delivery::queue_join_roster(
             &self.config_path,
-            &bootstrap.device_app_key_npub,
+            recipient,
             join_roster,
         )?;
         Ok(())

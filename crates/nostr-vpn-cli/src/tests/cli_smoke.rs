@@ -59,6 +59,47 @@ fn clap_parses_join_request_wait_controls() {
     assert!(args.reset);
 }
 
+#[tokio::test]
+async fn manual_join_command_persists_the_admin_and_network_for_the_joiner() {
+    use nostr_sdk::prelude::{Keys, ToBech32};
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!("nvpn-manual-join-cli-{nonce}"));
+    let config_path = directory.join("config.toml");
+    let admin_npub = Keys::generate()
+        .public_key()
+        .to_bech32()
+        .expect("admin npub");
+    let admin_hex =
+        nostr_vpn_core::config::normalize_nostr_pubkey(&admin_npub).expect("normalize admin");
+
+    let cli = Cli::parse_from([
+        "nvpn",
+        "join-manual",
+        "--admin-device-id",
+        &admin_npub,
+        "--network-id",
+        "8d4f-34f5-425b-c50e",
+        "--config",
+        config_path.to_str().expect("config path"),
+        "--json",
+    ]);
+    crate::run_command(cli.command)
+        .await
+        .expect("run manual join command");
+
+    let saved = nostr_vpn_core::config::AppConfig::load(&config_path).expect("load config");
+    let network = saved.active_network();
+    assert_eq!(network.network_id, "8d4f34f5425bc50e");
+    assert_eq!(network.devices, vec![admin_hex.clone()]);
+    assert_eq!(network.admins, vec![admin_hex]);
+    assert!(network.outbound_join_request.is_none());
+    let _ = std::fs::remove_dir_all(directory);
+}
+
 #[test]
 fn daemon_parses_paired_fips_ethernet_options() {
     let cli = Cli::parse_from([
@@ -152,6 +193,7 @@ fn clap_includes_tailscale_style_commands() {
         "resume",
         "connect",
         "join-request",
+        "join-manual",
         "status",
         "set",
         "ping",

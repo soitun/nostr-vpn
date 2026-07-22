@@ -40,6 +40,46 @@ impl AppConfig {
         Ok(())
     }
 
+    /// Join an existing network using identifiers exchanged directly with an
+    /// admin. The admin must add this device to the same network separately.
+    pub fn add_manual_join_network(
+        &mut self,
+        admin_device_id: &str,
+        mesh_network_id: &str,
+    ) -> Result<String> {
+        let admin = normalize_nostr_pubkey(admin_device_id.trim())?;
+        let mesh_id = normalize_runtime_network_id(mesh_network_id);
+        if mesh_id.is_empty() {
+            return Err(anyhow::anyhow!("network id is empty"));
+        }
+        if self
+            .networks
+            .iter()
+            .any(|network| normalize_runtime_network_id(&network.network_id) == mesh_id)
+        {
+            return Err(anyhow::anyhow!("network id is already configured"));
+        }
+
+        let network_id = self.add_network("");
+        self.set_network_enabled(&network_id, true)?;
+        self.set_network_mesh_id(&network_id, &mesh_id)?;
+        let network = self
+            .network_by_id_mut(&network_id)
+            .ok_or_else(|| anyhow::anyhow!("network not found"))?;
+        // Trust only the two identifiers exchanged out of band until this
+        // device appears in the admin's signed roster.
+        network.devices = vec![admin.clone()];
+        network.admins = vec![admin.clone()];
+        network.join_request_admin.clone_from(&admin);
+        network.outbound_join_request = None;
+        network.inbound_join_requests.clear();
+        network.shared_roster_updated_at = 0;
+        network.shared_roster_signed_by.clear();
+        self.clear_pending_nostr_join_request();
+        let _ = self.set_peer_alias(&admin, "admin");
+        Ok(network_id)
+    }
+
     pub fn set_network_enabled(&mut self, network_id: &str, enabled: bool) -> Result<()> {
         let index = self
             .networks

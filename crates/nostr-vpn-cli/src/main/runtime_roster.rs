@@ -44,28 +44,25 @@ fn persist_join_roster(
     control: &JoinRosterControl,
     vpn_status: &mut String,
 ) -> Result<Option<String>> {
-    if join_roster_is_durably_persisted(config_path, control)? {
-        return Ok(None);
-    }
-    let Some(applied) = app.apply_nostr_join_roster(control, unix_timestamp())? else {
+    let Some(applied_network_id) =
+        nostr_vpn_core::join_roster_persistence::apply_join_roster_durably(
+            app,
+            config_path,
+            control,
+            unix_timestamp(),
+        )?
+    else {
         return Ok(None);
     };
-    let signed_roster = &control.signed_roster;
-    upsert_signed_roster(
-        &signed_rosters_file_path(config_path),
-        signed_roster.clone(),
-    )?;
-    maybe_autoconfigure_node(app);
-    app.save(config_path)?;
     let network_name = app
         .networks
         .iter()
         .find(|network| {
             normalize_runtime_network_id(&network.network_id)
-                == normalize_runtime_network_id(&applied.network_id)
+                == normalize_runtime_network_id(&applied_network_id)
         })
         .map(|network| network.name.clone())
-        .unwrap_or(applied.network_id);
+        .unwrap_or(applied_network_id);
     *vpn_status = format!("Join approved for {network_name}.");
     Ok(Some(network_name))
 }
@@ -74,22 +71,10 @@ fn join_roster_is_durably_persisted(
     config_path: &Path,
     control: &JoinRosterControl,
 ) -> Result<bool> {
-    let network_id = control.signed_roster.network_id()?;
-    let roster_event_id = control.signed_roster.artifact_hash();
-    let persisted = AppConfig::load(config_path)?;
-    let original_request_is_pending = persisted
-        .pending_nostr_join_request
-        .as_ref()
-        .is_some_and(|pending| pending.request.request_secret == control.request_secret);
-    if original_request_is_pending
-        || !signed_roster_is_current_for_app(&persisted, &network_id, &control.signed_roster)
-    {
-        return Ok(false);
-    }
-    let store = load_signed_rosters(&signed_rosters_file_path(config_path))?;
-    Ok(store
-        .latest_for(&network_id)
-        .is_some_and(|signed| signed.artifact_hash() == roster_event_id))
+    nostr_vpn_core::join_roster_persistence::join_roster_is_durably_persisted(
+        config_path,
+        control,
+    )
 }
 
 fn split_ready_fips_roster_recipients(recipients: Vec<String>) -> (Vec<String>, HashSet<String>) {

@@ -543,7 +543,73 @@ extension RootView {
                 detailValueRow("Your Device ID", state.ownNpub)
             }
 
+            DisclosureGroup("Manual join", isExpanded: $manualJoinExpanded) {
+                manualJoinFields
+                    .padding(.top, 6)
+            }
+
             advertiseJoinRequestSection
+        }
+    }
+
+    var manualJoinFields: some View {
+        let admin = manualJoinAdminId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mesh = normalizeNetworkIdInput(manualJoinMeshId)
+        let invalid = !admin.isEmpty && !isValidDeviceId(admin)
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Give the admin your Device ID. Enter their Device ID and Network ID here; they must add your Device ID too.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            detailValueRow("Your Device ID", state.ownNpub)
+            TextField("Admin Device ID", text: $manualJoinAdminId)
+                .textFieldStyle(.roundedBorder)
+            if invalid {
+                Text("Not a valid device ID")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            TextField("Network ID", text: $manualJoinMeshId)
+                .textFieldStyle(.roundedBorder)
+            Button("Add manually") {
+                manager.manualAddNetwork(adminNpub: admin, meshNetworkId: mesh)
+                manualJoinAdminId = ""
+                manualJoinMeshId = ""
+                manualJoinExpanded = false
+                finishCreateNetwork()
+            }
+            .disabled(admin.isEmpty || mesh.isEmpty || invalid || manager.actionInFlight)
+        }
+    }
+
+    func manualAdminSection(_ network: NativeNetworkState) -> some View {
+        let deviceId = manualJoinDeviceId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let invalid = !deviceId.isEmpty && !isValidDeviceId(deviceId)
+        return surface {
+            sectionHeader("For Manual Join", systemImage: "person.2.badge.gearshape")
+            Text("Share these values with the joining device, then add its Device ID below.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            detailValueRow("Admin Device ID", state.ownNpub)
+            detailValueRow("Network ID", network.networkId, displayValue: displayNetworkId(network.networkId))
+            TextField("Joining Device ID", text: $manualJoinDeviceId)
+                .textFieldStyle(.roundedBorder)
+            if invalid {
+                Text("Not a valid device ID")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            TextField("Name", text: $manualJoinDeviceName)
+                .textFieldStyle(.roundedBorder)
+            Button("Add by Device ID") {
+                manager.addParticipant(
+                    networkId: network.id,
+                    npub: deviceId,
+                    alias: manualJoinDeviceName
+                )
+                manualJoinDeviceId = ""
+                manualJoinDeviceName = ""
+            }
+            .disabled(deviceId.isEmpty || invalid || manager.actionInFlight)
         }
     }
 

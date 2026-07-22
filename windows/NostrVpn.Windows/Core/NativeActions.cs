@@ -16,6 +16,7 @@ public static class NativeActions
     public static string SetNetworkMeshId(string networkId, string meshId) => AppCoreClient.Action(new { type = "set_network_mesh_id", networkId, meshId });
     public static string SetNetworkEnabled(string networkId, bool enabled) => AppCoreClient.Action(new { type = "set_network_enabled", networkId, enabled });
     public static string ImportJoinRequest(string request) => AppCoreClient.Action(new { type = "import_join_request", request });
+    public static string ManualAddNetwork(string adminNpub, string meshNetworkId) => AppCoreClient.Action(new { type = "manual_add_network", adminNpub, meshNetworkId });
     public static string AcceptJoinRequest(string networkId, string requesterNpub) => AppCoreClient.Action(new { type = "accept_join_request", networkId, requesterNpub });
     public static string StartJoinRequestBroadcast() => AppCoreClient.Action(new { type = "start_join_request_broadcast" });
     public static string StopJoinRequestBroadcast() => AppCoreClient.Action(new { type = "stop_join_request_broadcast" });

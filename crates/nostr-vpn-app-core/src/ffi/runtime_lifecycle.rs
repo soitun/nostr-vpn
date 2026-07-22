@@ -1,4 +1,5 @@
 impl NativeAppRuntime {
+    #[cfg(test)]
     fn new(data_dir: &str, app_version: String) -> Result<Self> {
         let config_path = native_config_path(data_dir);
         Self::new_with_config_path(config_path, app_version, None)
@@ -159,6 +160,17 @@ impl NativeAppRuntime {
             #[cfg(target_os = "macos")]
             privileged_command_runner: None,
         }
+    }
+
+    fn from_startup_error_for_config(
+        error: &anyhow::Error,
+        config_path: PathBuf,
+        app_version: String,
+    ) -> Self {
+        let mut runtime = Self::from_startup_error(error);
+        runtime.config_path = config_path;
+        runtime.app_version = app_version;
+        runtime
     }
 
     fn current_join_request_link(&self) -> String {

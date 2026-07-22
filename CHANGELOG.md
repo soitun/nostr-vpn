@@ -4,6 +4,48 @@ All notable changes to this project are documented in this file.
 
 ## Unreleased
 
+## 4.1.4 - 2026-07-22
+
+### Changed
+
+- Reuse one verified iOS device build across physical idle, WireGuard exit,
+  and phone-to-phone join lanes instead of rebuilding it for every lane.
+- Record the release gate against a 30-minute warm-run wall-clock target while
+  keeping contention-sensitive performance and physical-device checks serial.
+- Preserve reusable Docker build metadata for the shared node and Linux GUI
+  images, and route final Windows packaging through the configured SSH jump.
+- Exercise every exit-DNS settings option through saved configuration and the
+  native mobile packet path, and require a physical Android device for the
+  Android/iOS WireGuard exit gate instead of silently accepting an emulator.
+
+### Fixed
+
+- Restore manual out-of-band network joining on Android, iOS, macOS, Windows,
+  Linux, web, and CLI: the joining device can enter the admin Device ID and
+  Network ID, while the admin can share those values and add the joiner's
+  Device ID.
+- Cover both the signed join-request flow and the explicit manual flow on both
+  sides in the cross-platform release gate.
+- Deliver a mobile QR approval from the durable outbox through the running
+  tunnel instead of leaving it queued forever, and restart Android/iOS tunnels
+  after approval and roster changes.
+- Retry idempotent join-roster delivery while a newly started mobile route is
+  forming, while treating only the joiner's durable application receipt as
+  success, so manual joins complete in seconds in either phone direction.
+- Use one roster-application path on desktop and mobile, and gate both
+  desktop-admin/mobile-joiner and mobile-admin/desktop-joiner receipt flows.
+- Carry an admin-signed roster into sandboxed mobile tunnel launches so manual
+  admin-side additions propagate on both Android and iOS.
+- Gate physical QR approval in both directions between iOS and Android, using
+  the real action, tunnel restart, signed-roster delivery, receipt, and config
+  handoff paths; exercise both mobile admin/joiner combinations for manual
+  out-of-band joining in the same physical gate.
+- Always await and verify physical iOS packet-tunnel cleanup, including failed
+  probes, and refuse an in-place development build replacement while the
+  installed app cannot confirm that its tunnel is off.
+- Stop Android's VPN service on every explicit disconnect action, even when a
+  backgrounded activity has stale UI state after a long-running tunnel test.
+
 ## 4.1.3 - 2026-07-22
 
 ### Added

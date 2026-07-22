@@ -3,6 +3,10 @@ services:
     build:
       context: ..
       dockerfile: linux/Dockerfile
+      cache_from:
+        - type=local,src=${NVPN_LINUX_BUILDX_CACHE_DIR:-../.buildx-cache/linux-gui}
+      cache_to:
+        - type=local,dest=${NVPN_LINUX_BUILDX_CACHE_DIR:-../.buildx-cache/linux-gui},mode=max
     image: nostr-vpn-linux-dev
     container_name: nostr-vpn-linux-dev
     command: ["sleep", "infinity"]
