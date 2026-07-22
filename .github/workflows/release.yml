@@ -92,6 +92,9 @@ jobs:
           # no configured VM and skips it without consuming build resources.
           NVPN_RELEASE_GATE_WINDOWS_GUI_SMOKE: 'auto'
           NVPN_RELEASE_GATE_WINDOWS_WG_EXIT_E2E: '0'
+          # Hosted runners have no stable latency baseline. The mandatory local
+          # release gate measures this after its contention-sensitive join.
+          NVPN_RELEASE_GATE_QR_JOIN_LATENCY: '0'
         run: ./scripts/release-gate.sh
 
   build-cli:

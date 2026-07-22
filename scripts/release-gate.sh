@@ -549,6 +549,15 @@ run_docker_signal_gates() {
     ./scripts/e2e-fips-roaming-docker.sh
 }
 
+run_mobile_qr_join_latency_gate() {
+  if release_gate_mode_disabled "${NVPN_RELEASE_GATE_QR_JOIN_LATENCY:-1}"; then
+    echo "Skipping mobile QR-join latency gate on this uncalibrated host."
+    return 0
+  fi
+  release_cargo_test_filter nostr-vpn-app-core \
+    websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin
+}
+
 run_userspace_wireguard_exit_docker_gate() {
   # The kernel and userspace fixtures use the same Compose topology. Give the
   # userspace copy its own benchmark-network subnets so Docker can create both
@@ -648,8 +657,7 @@ main() {
     export NVPN_PERF_SKIP_BUILD=1
   fi
 
-  release_cargo_test_filter nostr-vpn-app-core \
-    websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin
+  run_mobile_qr_join_latency_gate
 
   # Routed idle CPU and roaming remain serial. The remaining functional Docker
   # projects have isolated names/subnets and no timing assertions, so overlap
