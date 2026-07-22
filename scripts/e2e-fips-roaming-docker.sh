@@ -191,13 +191,14 @@ block_direct_alice_bob_udp() {
   "${COMPOSE[@]}" exec -T node-a sh -s -- "$NVPN_E2E_NODE_B_UNDERLAY_IP" <<'SH'
 set -eu
 peer_ip="$1"
-iptables -C OUTPUT -p udp -d "$peer_ip" -j DROP 2>/dev/null || iptables -I OUTPUT -p udp -d "$peer_ip" -j DROP
+# Drop inbound packets only. OUTPUT DROP and unreachable routes can make Linux
+# cache EPERM on an existing UDP socket after the rule/route is restored, which
+# tests a poisoned local socket rather than a mobile/Wi-Fi path outage.
 iptables -C INPUT -p udp -s "$peer_ip" -j DROP 2>/dev/null || iptables -I INPUT -p udp -s "$peer_ip" -j DROP
 SH
   "${COMPOSE[@]}" exec -T node-b sh -s -- "$NVPN_E2E_NODE_A_UNDERLAY_IP" <<'SH'
 set -eu
 peer_ip="$1"
-iptables -C OUTPUT -p udp -d "$peer_ip" -j DROP 2>/dev/null || iptables -I OUTPUT -p udp -d "$peer_ip" -j DROP
 iptables -C INPUT -p udp -s "$peer_ip" -j DROP 2>/dev/null || iptables -I INPUT -p udp -s "$peer_ip" -j DROP
 SH
 }
@@ -206,44 +207,12 @@ unblock_direct_alice_bob_udp() {
   "${COMPOSE[@]}" exec -T node-a sh -s -- "$NVPN_E2E_NODE_B_UNDERLAY_IP" <<'SH'
 set -eu
 peer_ip="$1"
-while iptables -D OUTPUT -p udp -d "$peer_ip" -j DROP 2>/dev/null; do :; done
 while iptables -D INPUT -p udp -s "$peer_ip" -j DROP 2>/dev/null; do :; done
 SH
   "${COMPOSE[@]}" exec -T node-b sh -s -- "$NVPN_E2E_NODE_A_UNDERLAY_IP" <<'SH'
 set -eu
 peer_ip="$1"
-while iptables -D OUTPUT -p udp -d "$peer_ip" -j DROP 2>/dev/null; do :; done
 while iptables -D INPUT -p udp -s "$peer_ip" -j DROP 2>/dev/null; do :; done
-SH
-}
-
-make_direct_alice_bob_unreachable() {
-  "${COMPOSE[@]}" exec -T node-a sh -s -- "$NVPN_E2E_NODE_B_UNDERLAY_IP" <<'SH'
-set -eu
-peer_ip="$1"
-ip route replace unreachable "$peer_ip/32" metric 1
-ip route flush cache 2>/dev/null || true
-SH
-  "${COMPOSE[@]}" exec -T node-b sh -s -- "$NVPN_E2E_NODE_A_UNDERLAY_IP" <<'SH'
-set -eu
-peer_ip="$1"
-ip route replace unreachable "$peer_ip/32" metric 1
-ip route flush cache 2>/dev/null || true
-SH
-}
-
-restore_direct_alice_bob_route() {
-  "${COMPOSE[@]}" exec -T node-a sh -s -- "$NVPN_E2E_NODE_B_UNDERLAY_IP" <<'SH'
-set -eu
-peer_ip="$1"
-ip route del unreachable "$peer_ip/32" 2>/dev/null || ip route del "$peer_ip/32" 2>/dev/null || true
-ip route flush cache 2>/dev/null || true
-SH
-  "${COMPOSE[@]}" exec -T node-b sh -s -- "$NVPN_E2E_NODE_A_UNDERLAY_IP" <<'SH'
-set -eu
-peer_ip="$1"
-ip route del unreachable "$peer_ip/32" 2>/dev/null || ip route del "$peer_ip/32" 2>/dev/null || true
-ip route flush cache 2>/dev/null || true
 SH
 }
 
@@ -695,7 +664,6 @@ assert_no_transit_roster_peer() {
 
 run_roam_flap() {
   local flap_name="$1"
-  local flap_mode="${2:-drop}"
   local alice_direct_addr="$NVPN_E2E_NODE_B_UNDERLAY_IP:51820"
   local bob_direct_addr="$NVPN_E2E_NODE_A_UNDERLAY_IP:51820"
   local alice_probe="/tmp/${flap_name}-alice-payload-probe.log"
@@ -704,24 +672,13 @@ run_roam_flap() {
   local bob_marker="${flap_name}-bob-$(date +%s)"
   local churn_started
 
-  echo "--- $flap_name: churn direct Alice<->Bob path ($flap_mode), expect FIPS fallback plus direct probe ---"
+  echo "--- $flap_name: drop direct Alice<->Bob path, expect FIPS fallback plus direct probe ---"
   mark_daemon_log node-a "$alice_marker"
   mark_daemon_log node-b "$bob_marker"
   start_payload_probe node-a "$BOB_TUNNEL_IP" "$alice_probe"
   start_payload_probe node-b "$ALICE_TUNNEL_IP" "$bob_probe"
   churn_started="$(date +%s)"
-  case "$flap_mode" in
-    drop)
-      block_direct_alice_bob_udp
-      ;;
-    route-unreachable)
-      make_direct_alice_bob_unreachable
-      ;;
-    *)
-      echo "fips roaming e2e failed: unsupported flap mode '$flap_mode'" >&2
-      exit 2
-      ;;
-  esac
+  block_direct_alice_bob_udp
 
   local alice_fallback bob_fallback
   alice_fallback="$(wait_for_fallback_probe_peer node-a "$BOB_NPUB" "$alice_direct_addr" "alice during $flap_name" "$FALLBACK_DEADLINE_SECS" "$churn_started")"
@@ -741,14 +698,7 @@ run_roam_flap() {
   echo "--- $flap_name: restore LAN/direct path, expect quick upgrade away from fallback ---"
   local restore_started
   restore_started="$(date +%s)"
-  case "$flap_mode" in
-    drop)
-      unblock_direct_alice_bob_udp
-      ;;
-    route-unreachable)
-      restore_direct_alice_bob_route
-      ;;
-  esac
+  unblock_direct_alice_bob_udp
 
   local alice_direct bob_direct
   alice_direct="$(wait_for_direct_peer node-a "$BOB_NPUB" "$alice_direct_addr" "alice after $flap_name restore" "$DIRECT_RECOVERY_DEADLINE_SECS" "$restore_started")"
@@ -976,7 +926,6 @@ fi
 if [[ "$SCENARIOS" == "all" || "$SCENARIOS" == "fallback" ]]; then
   run_roam_flap "mobile-flap-1"
   run_roam_flap "mobile-flap-2"
-  run_roam_flap "route-unreachable-flap" "route-unreachable"
 fi
 if [[ "$SCENARIOS" == "all" || "$SCENARIOS" == "network-change" ]]; then
   docker network create --driver bridge --subnet "$ROAM_UNDERLAY_SUBNET" "$ROAM_NETWORK_NAME" >/dev/null
@@ -1003,9 +952,9 @@ echo "--- Initial UDP payload ---"
 "${COMPOSE[@]}" exec -T node-b sh -lc 'cat /tmp/bob-roaming-initial-udp.out'
 
 if [[ "$SCENARIOS" == "all" ]]; then
-  echo "fips roaming docker e2e passed: direct LAN path established, loaded-latency probes stayed bounded, mobile/WiFi-style direct drops and a route-unreachable flap used FIPS fallback, a live daemon moved between interface/address/gateway/bridge underlays in both directions, continuous payload recovered during churn, and each restore upgraded back to direct"
+  echo "fips roaming docker e2e passed: direct LAN path established, loaded-latency probes stayed bounded, repeated mobile/WiFi-style direct drops used FIPS fallback, a live daemon moved between interface/address/gateway/bridge underlays in both directions, continuous payload recovered during churn, and each restore upgraded back to direct"
 elif [[ "$SCENARIOS" == "fallback" ]]; then
-  echo "fips roaming docker e2e passed: repeated direct drops and a route-unreachable flap used FIPS fallback, continuous bidirectional payload recovered, and each restore upgraded back to direct"
+  echo "fips roaming docker e2e passed: repeated direct drops used FIPS fallback, continuous bidirectional payload recovered, and each restore upgraded back to direct"
 elif [[ "$SCENARIOS" == "latency" ]]; then
   echo "fips roaming docker e2e passed: direct LAN path established and the focused loaded-latency probe stayed bounded"
 else
