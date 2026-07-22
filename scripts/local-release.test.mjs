@@ -292,6 +292,27 @@ test('dispatched release notes record the checked-out tag source commit', () => 
   assert.doesNotMatch(workflow, /--commit "\$\{GITHUB_SHA\}"/)
 })
 
+test('GitHub platform builds run beside verification and join before release', () => {
+  const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
+  const releaseJobStart = workflow.indexOf('  release:')
+  const releaseJob = workflow.slice(releaseJobStart)
+
+  assert.ok(releaseJobStart >= 0)
+  assert.doesNotMatch(workflow, /^    needs: verify$/m)
+  assert.match(releaseJob, /needs:\n      - verify/)
+  for (const job of [
+    'build-cli',
+    'build-macos-app',
+    'build-linux-app',
+    'build-windows-app',
+    'build-android-app',
+    'build-startos',
+  ]) {
+    assert.match(releaseJob, new RegExp(`needs\\.${job}\\.result == 'success'`))
+    assert.match(releaseJob, new RegExp(`- ${job}`))
+  }
+})
+
 test('GitHub release requires and publishes both StartOS package architectures', () => {
   const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
   const startosJobStart = workflow.indexOf('  build-startos:')
