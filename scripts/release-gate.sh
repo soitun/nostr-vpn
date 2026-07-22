@@ -232,7 +232,12 @@ run_rust_validation_lane() {
   run_local_fips_regression_tests
   release_cargo clippy "${release_cargo_lock_args[@]}" --workspace --all-targets -- -D warnings
   export RUST_MIN_STACK="${RUST_MIN_STACK:-8388608}"
-  release_cargo test "${release_cargo_lock_args[@]}" --workspace -- --test-threads=1
+  # This fixture contains a strict end-to-end latency assertion. Keep it out of
+  # the workspace suite while the cold Docker image may be compiling, then run
+  # and measure it once after joining that build below.
+  release_cargo test "${release_cargo_lock_args[@]}" --workspace -- \
+    --test-threads=1 \
+    --skip websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin
   # Mobile VPN basics run without requiring a device/emulator: join over FIPS,
   # MagicDNS from TUN, exit DNS policy, and Android WG socket startup ordering.
   release_cargo_test_filter nostr-vpn-app-core mobile_join_request_sends_and_records_over_real_fips_endpoint
@@ -538,8 +543,6 @@ run_docker_signal_gates() {
     return
   fi
 
-  release_cargo_test_filter nostr-vpn-app-core \
-    websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin
   NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_ROUTED_UDP_DISCOVERY_POLICY:-open}" \
     ./scripts/e2e-fips-routed-udp-docker.sh
   NVPN_FIPS_NOSTR_DISCOVERY_POLICY="${NVPN_FIPS_NOSTR_DISCOVERY_POLICY:-configured_only}" \
@@ -644,6 +647,9 @@ main() {
     export NVPN_E2E_SKIP_NODE_BUILD=1
     export NVPN_PERF_SKIP_BUILD=1
   fi
+
+  release_cargo_test_filter nostr-vpn-app-core \
+    websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin
 
   # Routed idle CPU and roaming remain serial. The remaining functional Docker
   # projects have isolated names/subnets and no timing assertions, so overlap

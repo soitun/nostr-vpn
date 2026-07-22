@@ -77,6 +77,8 @@ grep -Fq 'NVPN_WG_EXIT_USERSPACE_INTERNET_SUBNET' "$release_gate" \
   || fail "parallel userspace WireGuard fixture has no isolated subnet"
 grep -Fq 'Release gate test selector matched no passing test' "$release_gate" \
   || fail "focused release-gate tests can pass with an empty selector"
+grep -Fq -- '--skip websocket_seed_router_delivers_join_roster_to_guest_without_preconfigured_admin' "$release_gate" \
+  || fail "the strict QR-join latency gate still runs during the cold Docker build"
 if grep -Eq '(windows_platform_lane_requested|docker_release_gates_enabled) \|\| return$' "$release_gate"; then
   fail "a disabled optional lane returns failure under set -e"
 fi
