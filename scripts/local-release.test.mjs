@@ -272,15 +272,19 @@ test('Linux desktop package bundles nvpn CLI helper', () => {
 
 test('Linux release reclaims Docker smoke storage before host packaging', () => {
   const workflow = readFileSync(join(process.cwd(), '.github/workflows/release.yml'), 'utf8')
+  const verifyJobStart = workflow.indexOf('  verify:')
   const linuxJobStart = workflow.indexOf('  build-linux-app:')
   const linuxJobEnd = workflow.indexOf('  build-windows-app:', linuxJobStart)
+  const verifyJob = workflow.slice(verifyJobStart, workflow.indexOf('  build-cli:', verifyJobStart))
   const linuxJob = workflow.slice(linuxJobStart, linuxJobEnd)
+  const buildx = linuxJob.indexOf('uses: docker/setup-buildx-action@v3')
   const smoke = linuxJob.indexOf('- name: Smoke launch Linux GUI')
   const cleanup = linuxJob.indexOf('- name: Reclaim Linux GUI smoke storage')
   const desktopPackage = linuxJob.indexOf('- name: Build Linux desktop package')
 
-  assert.ok(linuxJobStart >= 0 && linuxJobEnd > linuxJobStart)
-  assert.ok(smoke >= 0 && cleanup > smoke && desktopPackage > cleanup)
+  assert.ok(verifyJobStart >= 0 && linuxJobStart >= 0 && linuxJobEnd > linuxJobStart)
+  assert.match(verifyJob, /uses: docker\/setup-buildx-action@v3/)
+  assert.ok(buildx >= 0 && smoke > buildx && cleanup > smoke && desktopPackage > cleanup)
   assert.match(linuxJob, /docker compose down --volumes --remove-orphans/)
   assert.match(linuxJob, /docker system prune --all --force --volumes/)
 })

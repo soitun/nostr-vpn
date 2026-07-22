@@ -53,6 +53,9 @@ jobs:
 
           df -h /
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -388,6 +391,9 @@ jobs:
         with:
           cache-bin: false
           save-if: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Install Linux native package dependencies
         run: |
