@@ -66,6 +66,17 @@ exit 0
 EOF
 chmod +x "$FIXTURE/bin/xcrun"
 
+cat >"$FIXTURE/bin/uname" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-s" ]]; then
+  printf 'Darwin\n'
+  exit 0
+fi
+exec /usr/bin/uname "$@"
+EOF
+chmod +x "$FIXTURE/bin/uname"
+
 COMMON_ENV=(
   PATH="$FIXTURE/bin:$PATH"
   NVPN_IOS_DEVICE=test-device
