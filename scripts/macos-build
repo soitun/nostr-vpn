@@ -570,12 +570,27 @@ developer_id_identity() {
     return 0
   fi
   security find-identity -v -p codesigning 2>/dev/null \
-    | awk -F '"' '/Developer ID Application:/ { print $2; exit }'
+    | awk '/Developer ID Application:/ { print $2; exit }'
 }
 
 verify_signing_identity() {
   local identity="$1"
-  security find-identity -v -p codesigning | grep -Fq "\"$identity\"" || {
+  local matches
+  if [[ "$identity" =~ ^[[:xdigit:]]{40}$ ]]; then
+    matches="$(security find-identity -v -p codesigning \
+      | awk -v identity="$identity" '$2 == identity && /Developer ID Application:/ { count++ } END { print count + 0 }')"
+  else
+    matches="$(security find-identity -v -p codesigning \
+      | awk -F '"' -v identity="$identity" '$2 == identity && /Developer ID Application:/ { count++ } END { print count + 0 }')"
+  fi
+  if [[ "$matches" == "1" ]]; then
+    return 0
+  fi
+  if [[ "$matches" -gt 1 ]]; then
+    echo "Developer ID signing identity is ambiguous; configure its SHA-1 fingerprint: $identity" >&2
+    exit 1
+  fi
+  {
     echo "Developer ID signing identity not found in keychain: $identity" >&2
     exit 1
   }
