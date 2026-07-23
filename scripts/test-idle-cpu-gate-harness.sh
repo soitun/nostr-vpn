@@ -231,8 +231,8 @@ grep -Fq 'NVPN_MACOS_SWIFTC_MAXIMUM_DETERMINISM:-1' "$ROOT_DIR/scripts/macos-bui
   || fail "macOS release build does not serialize Swift driver jobs"
 grep -Fq 'build >&2' "$ROOT_DIR/scripts/macos-build" \
   || fail "macOS release build can discard Xcode diagnostics"
-grep -Fq 'docker exec "$container_name" true' "$ROOT_DIR/tools/run-linux" \
-  || fail "Linux runner readiness still depends on the wedged Compose exec path"
+grep -Fq 'docker exec "$container_name" test -f /tmp/nostr-vpn-dev-ready' "$ROOT_DIR/tools/run-linux" \
+  || fail "Linux runner readiness does not use the direct initialized-container probe"
 grep -Fq '"${container_exec[@]}" "$container_name" /usr/local/bin/dev-entrypoint "$@"' "$ROOT_DIR/tools/run-linux" \
   || fail "Linux runner command still depends on the wedged Compose exec path"
 grep -Fq 'docker compose logs --no-color --tail 200 nostr-vpn-linux' "$ROOT_DIR/tools/run-linux" \
