@@ -45,6 +45,7 @@ cat >/etc/profile.d/nostr-vpn-dbus.sh <<EOF
 export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
 EOF
 chmod 0644 /etc/profile.d/nostr-vpn-dbus.sh
+touch /tmp/nostr-vpn-dev-ready
 
 if [ "$#" -eq 0 ]; then
     exec bash

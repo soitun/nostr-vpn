@@ -70,6 +70,10 @@ grep -Fq 'type=local,src=${NVPN_LINUX_BUILDX_CACHE_DIR:-../.buildx-cache/linux-g
   || fail "Linux GUI image does not import its local BuildKit cache"
 grep -Fq 'type=local,dest=${NVPN_LINUX_BUILDX_CACHE_DIR:-../.buildx-cache/linux-gui},mode=max' "$ROOT_DIR/linux/docker-compose.yml" \
   || fail "Linux GUI image does not export a complete local BuildKit cache"
+grep -Fq 'test -f /tmp/nostr-vpn-dev-ready' "$ROOT_DIR/tools/run-linux" \
+  || fail "Linux GUI runner can race the container desktop initializer"
+grep -Fq 'touch /tmp/nostr-vpn-dev-ready' "$ROOT_DIR/linux/scripts/dev-entrypoint.sh" \
+  || fail "Linux GUI container does not publish completed desktop initialization"
 
 docker_wait_line="$(grep -n 'release_gate_parallel_wait "$docker_build_lane"' "$release_gate" | cut -d: -f1)"
 signal_line="$(grep -n '^  run_docker_signal_gates$' "$release_gate" | cut -d: -f1)"
