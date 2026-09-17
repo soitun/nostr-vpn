@@ -19,7 +19,10 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
         XCTAssertEqual(environment["NVPN_RELEASE_JOIN_BLACKBOX"], "1")
         XCTAssertTrue(app.launchArguments.isEmpty, "Release join gate must not pass app arguments")
         XCTAssertTrue(app.launchEnvironment.isEmpty, "Release join gate must not pass app environment")
-        app.launch()
+        // XCTest launch terminates the existing app and its PacketTunnel.
+        // Keep the carrier established by the preceding join phase alive;
+        // durability checks explicitly terminate and relaunch after delivery.
+        app.activate()
         try dismissSystemPromptsIfPresent()
     }
 
@@ -110,7 +113,7 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
         let imageFilename = try required("NVPN_RELEASE_JOIN_IMAGE_FILENAME")
         let expectedImageSHA = try required("NVPN_RELEASE_JOIN_IMAGE_SHA256")
         XCTAssertTrue(app.launchEnvironment.isEmpty)
-        // Each XCTest launches the app again; require its live carrier before approval.
+        // Require the existing carrier before approval.
         try normalizeAndRequireJoinCarrier()
         openLinkDevice()
         let scan = element("join-request-scan-open")
@@ -224,7 +227,7 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
 
     func testManualAdminAddRequiresRosterProgress() throws {
         let joiner = try requiredNpub("NVPN_RELEASE_JOIN_JOINER_ID")
-        // Each XCTest launches the app again; require its live carrier before approval.
+        // Require the existing carrier before approval.
         try normalizeAndRequireJoinCarrier()
         openLinkDevice()
         replaceText(scrollTo("manual-admin-joiner-id"), with: joiner)
@@ -380,6 +383,12 @@ final class NostrVpnReleaseJoinUITests: XCTestCase {
     }
 
     private func normalizeAndRequireJoinCarrier() throws {
+        // Activating the retained app also retains its last presented sheet.
+        let linkDevice = app.navigationBars["Link Device"]
+        if linkDevice.exists {
+            linkDevice.buttons["Done"].tap()
+            XCTAssertTrue(waitUntil(timeout: 5) { !linkDevice.exists })
+        }
         let settings = app.tabBars.buttons["Settings"]
         XCTAssertTrue(settings.waitForExistence(timeout: 5), "Settings tab was unavailable")
         settings.tap()

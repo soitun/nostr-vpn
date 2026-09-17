@@ -222,13 +222,18 @@ release_join_android_tap_visible() {
 }
 
 release_join_android_scroll() {
-  local size width height
+  local size width height target duration=220
   size="$("${ADB[@]}" shell wm size | tr -d '\r' | sed -n 's/^Physical size: //p')"
   width="${size%x*}"
   height="${size#*x}"
+  target="$((height / 3))"
+  if [[ "${1:-}" == checkbox-label ]]; then
+    target="$((height * 3 / 5))"
+    duration=400
+  fi
   "${ADB[@]}" shell input swipe \
     "$((width / 2))" "$((height * 4 / 5))" \
-    "$((width / 2))" "$((height / 3))" 220
+    "$((width / 2))" "$target" "$duration"
 }
 
 release_join_android_scroll_to() {
@@ -244,7 +249,7 @@ release_join_android_scroll_to() {
     then
       return 0
     fi
-    release_join_android_scroll >/dev/null
+    release_join_android_scroll "$kind" >/dev/null
     sleep 0.2
   done
   return 1
@@ -309,7 +314,8 @@ release_join_android_open_network_setup() {
     if release_join_android_query_dumped description 'Create Network' center >/dev/null 2>&1; then
       return 0
     fi
-    if release_join_android_query_dumped text '▾' center >/dev/null 2>&1; then
+    if release_join_android_query_dumped network-picker 'Turn VPN ' center >/dev/null 2>&1; then
+      release_join_android_normalize_carrier || return 1
       # A preceding exit test may have retained a now-stopped fixture. Select
       # native internet through the UI, without erasing its saved configuration.
       release_join_android_tap_center description 'Internet tab' || return 1
@@ -319,7 +325,7 @@ release_join_android_open_network_setup() {
         release_join_android_tap_center description 'Internet source This device' || return 1
         release_join_android_wait_query text 'This device' || return 1
       fi
-      release_join_android_tap_center text '▾' || return 1
+      release_join_android_tap_center network-picker 'Turn VPN ' || return 1
       release_join_android_scroll_to text 'Add network' visible-center || return 1
       release_join_android_tap_visible text 'Add network' || return 1
       release_join_android_wait_query description 'Create Network'
@@ -329,6 +335,27 @@ release_join_android_open_network_setup() {
   done
   echo 'Android did not expose its public network setup controls' >&2
   return 1
+}
+
+release_join_android_normalize_carrier() {
+  local label checked
+  release_join_android_tap_center description 'Settings tab' || return 1
+  for label in \
+    'Connect to non-roster FIPS peers' \
+    'Find peers over Nostr relays' \
+    'Use bootstrap servers'
+  do
+    release_join_android_scroll_to checkbox-label "$label" || return 1
+    checked="$(release_join_android_query_dumped checkbox-label "$label" checked)" \
+      || return 1
+    if [[ "$checked" != true ]]; then
+      release_join_android_tap checkbox-label "$label" || return 1
+      [[ "$(release_join_android_query checkbox-label "$label" checked)" == true ]] || {
+        echo "Android join prerequisite did not turn on: $label" >&2
+        return 1
+      }
+    fi
+  done
 }
 
 release_join_android_tap_center() {
@@ -1008,8 +1035,8 @@ release_join_ios_stop_runner() {
     ios_release_network_stop_forced_xctrunner "$device"
 }
 
-# XCTest setUp calls app.launch(), which terminates an existing app instance.
-# A preceding CoreDevice restart only repeats that launch and waits on teardown.
+# XCTest setUp activates the existing app to preserve its live join carrier.
+# Do not restart it here; the tests verify relaunch durability after delivery.
 release_join_ios_start_test() {
   local test_name="$1" log="$2"
   shift 2
