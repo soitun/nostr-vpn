@@ -19,17 +19,9 @@ extension RootView {
     var internetChoiceSettings: some View {
         return surface {
             sectionHeader("Connect through", systemImage: "network")
-            Label(
-                state.exitNodeStatusText,
-                systemImage: state.exitNodeActive ? "checkmark.circle.fill"
-                    : state.exitNodeBlocked ? "exclamationmark.circle.fill" : "network"
-            )
-                .font(.callout)
-                .foregroundStyle(state.exitNodeBlocked ? Color.red
-                    : state.exitNodeActive ? Color.green : Color.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("internet-source-status")
+            if state.internetSource != "paid_automatic" || !paidRouteMarketAvailable {
+                internetSourceStatus
+            }
             VStack(spacing: 8) {
                 routeChoice(
                     title: "This device",
@@ -47,17 +39,22 @@ extension RootView {
                         selected: state.internetSource == "paid_automatic",
                         enabled: true,
                         details: {
-                            if state.internetSource == "paid_automatic" && !state.exitNode.isEmpty {
-                                HStack(spacing: 14) {
-                                    if state.exitNodeActive,
-                                       let session = state.paidRouteMarket.sessions.first(where: { $0.sellerNpub == state.exitNode && $0.canRate }) {
-                                        paidExitRatingButtons(seller: session.sellerNpub, rating: session.personalRating)
+                            if state.internetSource == "paid_automatic" {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    internetSourceStatus
+                                    if !state.exitNode.isEmpty {
+                                        HStack(spacing: 14) {
+                                            if state.exitNodeActive,
+                                               let session = state.paidRouteMarket.sessions.first(where: { $0.sellerNpub == state.exitNode && $0.canRate }) {
+                                                paidExitRatingButtons(seller: session.sellerNpub, rating: session.personalRating)
+                                            }
+                                            Button("Try another") { manager.reselectPaidExit() }
+                                                .disabled(manager.actionInFlight)
+                                                .help("Choose another automatic paid exit")
+                                                .accessibilityIdentifier("paid-exit-reselect")
+                                            Spacer()
+                                        }
                                     }
-                                    Button("Try another") { manager.reselectPaidExit() }
-                                        .disabled(manager.actionInFlight)
-                                        .help("Choose another automatic paid exit")
-                                        .accessibilityIdentifier("paid-exit-reselect")
-                                    Spacer()
                                 }
                                 .padding(.leading, 34)
                                 .padding(.trailing, 10)
@@ -98,6 +95,20 @@ extension RootView {
                 }
             }
         }
+    }
+
+    var internetSourceStatus: some View {
+        Label(
+            state.exitNodeStatusText,
+            systemImage: state.exitNodeActive ? "checkmark.circle.fill"
+                : state.exitNodeBlocked ? "exclamationmark.circle.fill" : "network"
+        )
+        .font(.callout)
+        .foregroundStyle(state.exitNodeBlocked ? Color.red
+            : state.exitNodeActive ? Color.green : Color.secondary)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .accessibilityIdentifier("internet-source-status")
     }
 
     func trustedDeviceInternetSettings(_ network: NativeNetworkState, search: Binding<String>) -> some View {
