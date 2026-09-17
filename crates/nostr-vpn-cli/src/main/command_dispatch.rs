@@ -355,6 +355,12 @@ async fn run_command(command: Command) -> Result<()> {
                             println!("daemon_fips_core_version: {}", state.fips_core_version);
                         }
                         println!("vpn_status: {}", state.vpn_status);
+                        println!(
+                            "fips_peers: {} connected ({} direct roster, {} other)",
+                            state.fips_direct_roster_peer_count + state.fips_other_peer_count,
+                            state.fips_direct_roster_peer_count,
+                            state.fips_other_peer_count,
+                        );
                     }
                 } else {
                     println!("daemon: stopped");

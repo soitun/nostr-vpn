@@ -415,35 +415,27 @@ pub(crate) fn build_daemon_runtime_state(input: DaemonRuntimeStateInput<'_>) -> 
             .filter(|status| status.connected)
             .count()
     };
-    let fips_direct_roster_peer_count = if !vpn_active {
-        0
-    } else {
-        fips_peer_statuses
-            .iter()
-            .filter(|status| Some(status.pubkey.as_str()) != own_pubkey.as_deref())
-            .filter(|status| participant_pubkeys.contains(&status.pubkey))
-            .filter(|status| status.connected)
-            .filter(|status| {
-                status
-                    .transport_addr
-                    .as_deref()
-                    .is_some_and(|addr| !addr.trim().is_empty())
-            })
-            .count()
-    };
-    // Pre-pairing nodes have no active roster yet, but their FIPS transport is
-    // already running so an admin can deliver the first signed roster. Keep
-    // those non-roster links visible while VPN service is enabled.
-    let fips_other_peer_count = if !vpn_enabled {
-        0
-    } else {
-        fips_peer_statuses
-            .iter()
-            .filter(|status| Some(status.pubkey.as_str()) != own_pubkey.as_deref())
-            .filter(|status| !participant_pubkeys.contains(&status.pubkey))
-            .filter(|status| status.connected)
-            .count()
-    };
+    // FIPS can remain connected for bootstrap, transit, and pairing while
+    // client VPN traffic is paused. Transport counts follow the live snapshot;
+    // connected_peer_count and peer reachability above describe VPN access.
+    let fips_direct_roster_peer_count = fips_peer_statuses
+        .iter()
+        .filter(|status| Some(status.pubkey.as_str()) != own_pubkey.as_deref())
+        .filter(|status| participant_pubkeys.contains(&status.pubkey))
+        .filter(|status| status.connected)
+        .filter(|status| {
+            status
+                .transport_addr
+                .as_deref()
+                .is_some_and(|addr| !addr.trim().is_empty())
+        })
+        .count();
+    let fips_other_peer_count = fips_peer_statuses
+        .iter()
+        .filter(|status| Some(status.pubkey.as_str()) != own_pubkey.as_deref())
+        .filter(|status| !participant_pubkeys.contains(&status.pubkey))
+        .filter(|status| status.connected)
+        .count();
     let mesh_ready = vpn_active;
     let health = build_health_issues(app, vpn_active, mesh_ready, network, port_mapping, &peers);
     let (open_file_descriptor_count, open_file_descriptor_types) =
