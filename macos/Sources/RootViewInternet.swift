@@ -45,23 +45,27 @@ extension RootView {
                         title: "Paid Internet · Automatic",
                         subtitle: "Automatically choose a verified provider · Experimental",
                         selected: state.internetSource == "paid_automatic",
-                        enabled: true
+                        enabled: true,
+                        details: {
+                            if state.internetSource == "paid_automatic" && !state.exitNode.isEmpty {
+                                HStack(spacing: 14) {
+                                    if state.exitNodeActive,
+                                       let session = state.paidRouteMarket.sessions.first(where: { $0.sellerNpub == state.exitNode && $0.canRate }) {
+                                        paidExitRatingButtons(seller: session.sellerNpub, rating: session.personalRating)
+                                    }
+                                    Button("Try another") { manager.reselectPaidExit() }
+                                        .disabled(manager.actionInFlight)
+                                        .help("Choose another automatic paid exit")
+                                        .accessibilityIdentifier("paid-exit-reselect")
+                                    Spacer()
+                                }
+                                .padding(.leading, 34)
+                                .padding(.trailing, 10)
+                                .padding(.bottom, 12)
+                            }
+                        }
                     ) {
                         manager.selectPaidAutomaticExit()
-                    }
-
-                    if state.internetSource == "paid_automatic" && !state.exitNode.isEmpty {
-                        HStack(spacing: 14) {
-                            if state.exitNodeActive,
-                               let session = state.paidRouteMarket.sessions.first(where: { $0.sellerNpub == state.exitNode && $0.canRate }) {
-                                paidExitRatingButtons(seller: session.sellerNpub, rating: session.personalRating)
-                            }
-                            Button("Try another") { manager.reselectPaidExit() }
-                                .disabled(manager.actionInFlight)
-                                .accessibilityIdentifier("paid-exit-reselect")
-                            Spacer()
-                        }
-                        .padding(.horizontal, 12)
                     }
 
                     routeChoice(
@@ -277,46 +281,56 @@ extension RootView {
         return "The same connection this Mac already uses"
     }
 
-    func routeChoice(
+    func routeChoice<Details: View>(
         title: String,
         subtitle: String,
         selected: Bool,
         enabled: Bool,
+        @ViewBuilder details: () -> Details = { EmptyView() },
         action: @escaping () -> Void
     ) -> some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                    .overlay(alignment: .bottomTrailing) {
-                        if selected, let color = InternetExitIndicator(
-                            vpnEnabled: state.vpnEnabled, source: state.internetSource,
-                            active: state.exitNodeActive,
-                            needsAttention: state.exitNodeNeedsAttention).color {
-                            Circle().fill(Color(nsColor: color))
-                                .frame(width: 6, height: 6)
-                                .overlay(Circle().stroke(Color(nsColor: .textBackgroundColor), lineWidth: 1))
-                                .offset(x: 3, y: 1)
-                                .help(state.exitNodeStatusText)
-                                .accessibilityLabel(state.exitNodeStatusText)
-                                .accessibilityIdentifier("selected-internet-source-status")
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: action) {
+                HStack(spacing: 8) {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .frame(width: 16)
+                        .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                        .overlay(alignment: .bottomTrailing) {
+                            if selected, let color = InternetExitIndicator(
+                                vpnEnabled: state.vpnEnabled, source: state.internetSource,
+                                active: state.exitNodeActive,
+                                needsAttention: state.exitNodeNeedsAttention).color {
+                                Circle().fill(Color(nsColor: color))
+                                    .frame(width: 6, height: 6)
+                                    .overlay(Circle().stroke(Color(nsColor: .textBackgroundColor), lineWidth: 1))
+                                    .offset(x: 3, y: 1)
+                                    .help(state.exitNodeStatusText)
+                                    .accessibilityLabel(state.exitNodeStatusText)
+                                    .accessibilityIdentifier("selected-internet-source-status")
+                            }
                         }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(title)
+                            .foregroundStyle(.primary)
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Spacer()
                 }
-                Spacer()
+                .padding(.horizontal, 10)
+                .padding(.vertical, 9)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 9)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            .buttonStyle(.plain)
+            .disabled(!enabled || manager.actionInFlight)
+            details()
         }
-        .buttonStyle(.plain)
-        .disabled(!enabled || manager.actionInFlight)
+        .background(
+            selected ? Color.accentColor.opacity(0.1) : Color(nsColor: .textBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(title)
         .opacity(enabled ? 1 : 0.55)
     }
 }
