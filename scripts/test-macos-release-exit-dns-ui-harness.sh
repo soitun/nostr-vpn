@@ -192,14 +192,13 @@ sidebar_calls = re.findall(
     driver,
 )
 if sidebar_calls != [
-    "sidebar-internet",
     "sidebar-devices",
-    "sidebar-internet",
+    "sidebar-sharing",
     "sidebar-internet",
     "sidebar-internet",
 ]:
     raise SystemExit(
-        "macOS DNS AX sidebar retry is not limited to the five idempotent "
+        "macOS DNS AX sidebar retry is not limited to the four idempotent "
         f"navigation actions: {sidebar_calls}"
     )
 wait_window_body = driver[

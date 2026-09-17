@@ -542,19 +542,9 @@ func createNetworkIfNeeded(
     _ application: AXUIElement,
     pid: pid_t
 ) throws -> Bool {
-    try pressSidebar(application, "sidebar-internet", pid: pid)
-    for _ in 0..<10 {
-        if findNow(application, identifier: "exit-dns-mode") != nil {
-            return false
-        }
-        postKey(to: pid, keyCode: 121) // Page Down.
-        Thread.sleep(forTimeInterval: 0.15)
-    }
     try pressSidebar(application, "sidebar-devices", pid: pid)
     guard findNow(application, identifier: "network-setup-create") != nil else {
-        throw DriverError.invalidState(
-            "Exit DNS controls are absent, but the shipped UI is not in first-run network setup"
-        )
+        return false
     }
     try press(
         application,
@@ -569,8 +559,6 @@ func createNetworkIfNeeded(
     )
     try press(application, "network-create-submit")
     _ = try find(application, identifier: "sidebar-internet")
-    try pressSidebar(application, "sidebar-internet", pid: pid)
-    _ = try reveal(application, identifier: "exit-dns-mode", pid: pid)
     return true
 }
 
@@ -579,13 +567,8 @@ func openPaidExitSeller(
     pid: pid_t
 ) throws -> Bool {
     let created = try createNetworkIfNeeded(application, pid: pid)
-    try pressSidebar(application, "sidebar-internet", pid: pid)
-    _ = try reveal(application, identifier: "paid-exit-seller-open", pid: pid)
-    try press(
-        application,
-        "paid-exit-seller-open",
-        successIdentifier: "paid-exit-seller-enabled"
-    )
+    try pressSidebar(application, "sidebar-sharing", pid: pid)
+    _ = try reveal(application, identifier: "paid-exit-seller-enabled", pid: pid)
     return created
 }
 
@@ -930,6 +913,8 @@ func run() throws {
     }
     let spec = try DnsCase.named(args[3])
     let networkCreated = try createNetworkIfNeeded(application, pid: pid)
+    try pressSidebar(application, "sidebar-internet", pid: pid)
+    try press(application, "internet-settings-open", successIdentifier: "exit-dns-mode")
     _ = try reveal(application, identifier: "exit-dns-mode", pid: pid)
     if phase == "apply" {
         _ = try selectPicker(

@@ -53,6 +53,7 @@ struct RootView: View {
     @State var paidExitAdvancedTermsExpanded = RootView.initialPaidExitAdvancedTermsExpanded()
     @State var paidExitListingAdvancedExpanded = false
     @State var wireGuardUpstreamExpanded = RootView.initialWireGuardUpstreamExpanded()
+    @State var connectionSettingsPresented = RootView.initialWireGuardUpstreamExpanded()
     @State var paidRouteOfferCountryFilter = "all"
     @State var paidRouteOfferSort = "quality"
     @AppStorage("paidRouteHistoryClearedBeforeUnix") var paidRouteHistoryClearedBeforeUnix = 0.0
@@ -107,7 +108,7 @@ struct RootView: View {
     static func initialSidebarItem() -> SidebarItem {
         let arguments = Set(CommandLine.arguments)
         if arguments.contains("--nvpn-screenshot-paid-seller") {
-            return .sellExit
+            return .sharing
         }
         if arguments.contains("--nvpn-screenshot-paid-market") {
             return .publicExits
@@ -209,6 +210,9 @@ struct RootView: View {
         }
         .sheet(isPresented: $addNetworkPresented) {
             addNetworkSheetContent
+        }
+        .sheet(isPresented: $connectionSettingsPresented) {
+            connectionSettingsSheet
         }
         .sheet(isPresented: $addDevicePresented) {
             if let network = shownNetwork, network.enabled {
@@ -527,9 +531,22 @@ struct RootView: View {
     var sidebar: some View {
         VStack(alignment: .leading, spacing: 5) {
             sidebarButton(.devices, "Devices", "circle.grid.2x2.fill")
-            sidebarButton(.internet, "Internet", "network")
+
+            Text("Internet")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.top, 18)
+                .padding(.bottom, 3)
+            sidebarButton(.internet, "Connection", "network")
+            if paidRouteMarketAvailable {
+                sidebarButton(.publicExits, "Providers", "globe")
+            }
+            sidebarButton(.sharing, "Sharing", "antenna.radiowaves.left.and.right")
+
             if paidRouteMarketAvailable {
                 sidebarButton(.wallet, walletSidebarTitle, "creditcard.fill")
+                    .padding(.top, 18)
             }
             sidebarButton(.settings, "Settings", "gearshape")
             Spacer(minLength: 0)
@@ -594,17 +611,27 @@ struct RootView: View {
             }
         case .internet:
             pageScroll {
-                pageTitle("Internet", "network")
+                HStack {
+                    pageTitle("Connection", "network")
+                    Spacer()
+                    Button {
+                        connectionSettingsPresented = true
+                    } label: {
+                        Image(systemName: "slider.horizontal.3")
+                    }
+                    .help("Connection settings")
+                    .accessibilityLabel("Connection settings")
+                    .accessibilityIdentifier("internet-settings-open")
+                }
                 if let shownNetwork {
                     internetSection(shownNetwork)
                 } else {
                     internetChoiceSettings
-                    wireGuardExitSettings
                 }
             }
         case .publicExits:
             pageScroll {
-                pageTitle("Buy Internet", "cart.fill")
+                pageTitle("Providers", "globe")
                 Text("Experimental")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -615,18 +642,19 @@ struct RootView: View {
                     .accessibilityIdentifier("paid-exit-current-internet")
                 paidRouteMarketSettings
             }
-        case .sellExit:
+        case .sharing:
             pageScroll {
-                pageTitle("Sell Internet", "bitcoinsign.circle.fill")
-                Text("Experimental")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                paidExitSellerSettings
+                pageTitle("Sharing", "antenna.radiowaves.left.and.right")
+                shareInternetSettings
+                if paidExitSellerAvailable {
+                    paidExitSellerSettings
+                }
             }
         case .wallet:
             pageScroll {
                 pageTitle("Wallet", "creditcard.fill")
                 paidRouteWalletSettings
+                paidExitUsageSummary
             }
         case .settings:
             pageScroll {
@@ -640,9 +668,7 @@ struct RootView: View {
         switch item {
         case .publicExits, .wallet:
             return paidRouteMarketAvailable
-        case .sellExit:
-            return paidExitSellerAvailable
-        case .devices, .internet, .settings:
+        case .devices, .internet, .sharing, .settings:
             return true
         }
     }
@@ -666,6 +692,7 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
+        .id(visibleSidebarItem)
     }
 
     func pageTitle(_ title: String, _ systemImage: String) -> some View {

@@ -265,17 +265,10 @@ extension RootView {
         .disabled(disabled)
     }
 
-    var wireGuardExitSettings: some View {
-        surface {
-            sectionHeader("WireGuard Upstream", systemImage: "network")
-            wireGuardUpstreamEditor
-        }
-    }
-
     var wireGuardUpstreamSettings: some View {
         surface {
             disclosureSection(
-                title: "Upstream VPN",
+                title: "WireGuard VPN",
                 systemImage: "network",
                 isExpanded: $wireGuardUpstreamExpanded,
                 font: .headline

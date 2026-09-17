@@ -28,12 +28,9 @@ extension RootView {
         let market = state.paidRouteMarket
         let visibleSessions = paidRouteVisibleSessions(market.sessions)
         return VStack(alignment: .leading, spacing: 14) {
-            paidExitUsageSummary
+            paidRouteOfferDiscoverySection(market)
             if market.supported && (!visibleSessions.isEmpty || !market.lastPaymentAction.kind.isEmpty) {
                 paidRouteActiveSessionSection(market, sessions: visibleSessions)
-                paidRouteOfferDiscoverySection(market)
-            } else {
-                paidRouteOfferDiscoverySection(market)
             }
         }
     }

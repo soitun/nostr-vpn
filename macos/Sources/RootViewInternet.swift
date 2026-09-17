@@ -12,17 +12,13 @@ extension RootView {
     func internetSection(_ network: NativeNetworkState, search: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             internetChoiceSettings
-            paidExitUsageSummary
             trustedDeviceInternetSettings(network, search: search)
-            shareInternetSettings
-            wireGuardUpstreamSettings
-            exitDnsSettings
         }
     }
 
     var internetChoiceSettings: some View {
         return surface {
-            sectionHeader("Use Internet", systemImage: "network")
+            sectionHeader("Connect through", systemImage: "network")
             Label(
                 state.exitNodeStatusText,
                 systemImage: state.exitNodeActive ? "checkmark.circle.fill"
@@ -47,9 +43,7 @@ extension RootView {
                 if paidRouteMarketAvailable {
                     routeChoice(
                         title: "Paid Internet · Automatic",
-                        subtitle: state.internetSource == "paid_automatic"
-                            ? "Experimental · \(state.exitNodeStatusText)"
-                            : "Experimental · Choose a reasonably priced provider that passes verification",
+                        subtitle: "Automatically choose a verified provider · Experimental",
                         selected: state.internetSource == "paid_automatic",
                         enabled: true
                     ) {
@@ -72,9 +66,7 @@ extension RootView {
 
                     routeChoice(
                         title: "Paid Internet · Manual",
-                        subtitle: state.internetSource == "paid_manual"
-                            ? "Experimental · \(state.exitNodeStatusText)"
-                            : "Experimental · Browse and choose a provider",
+                        subtitle: "Browse and choose a provider · Experimental",
                         selected: state.internetSource == "paid_manual",
                         enabled: true
                     ) {
@@ -83,21 +75,23 @@ extension RootView {
                     }
                 }
 
-                routeChoice(
-                    title: "Upstream VPN",
-                    subtitle: wireguardUpstreamSubtitle,
-                    selected: state.internetSource == "wireguard",
-                    enabled: state.wireguardExitConfigured
-                ) {
-                    manager.selectWireGuardUpstreamExit()
+                HStack(spacing: 12) {
+                    routeChoice(
+                        title: "WireGuard VPN",
+                        subtitle: wireguardUpstreamSubtitle,
+                        selected: state.internetSource == "wireguard",
+                        enabled: state.wireguardExitConfigured
+                    ) {
+                        manager.selectWireGuardUpstreamExit()
+                    }
+                    if !state.wireguardExitConfigured {
+                        Button("Set up") {
+                            wireGuardUpstreamExpanded = true
+                            connectionSettingsPresented = true
+                        }
+                        .accessibilityIdentifier("internet-wireguard-setup")
+                    }
                 }
-
-                Divider()
-                Toggle("Block internet if selected source disconnects", isOn: Binding(
-                    get: { state.exitNodeLeakProtection },
-                    set: { manager.setExitNodeLeakProtection($0) }
-                ))
-                .disabled(manager.actionInFlight)
             }
         }
     }
@@ -109,7 +103,7 @@ extension RootView {
         let peerExitCandidates = exitNodeCandidates(network, search: activeSearch)
 
         return surface {
-            sectionHeader("Private VPN Device", systemImage: "lock.shield.fill")
+            sectionHeader("Trusted devices", systemImage: "lock.shield.fill")
             if showSearch {
                 TextField("Search devices", text: search)
                     .textFieldStyle(.roundedBorder)
@@ -142,7 +136,7 @@ extension RootView {
     var shareInternetSettings: some View {
         surface {
             HStack(spacing: 12) {
-                sectionHeader("Share with Trusted Devices", systemImage: "lock.shield.fill")
+                sectionHeader("Trusted devices", systemImage: "lock.shield.fill")
                 Spacer(minLength: 16)
                 Toggle("", isOn: Binding(
                     get: { state.advertiseExitNode },
@@ -150,28 +144,44 @@ extension RootView {
                 ))
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .accessibilityLabel("Share with trusted devices")
                 .disabled(manager.actionInFlight)
             }
             Text("Only devices in \(shownNetworkLabel) can use it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
 
-            if paidExitSellerAvailable {
-                Divider()
-                Button {
-                    selectedSidebarItem = .sellExit
-                } label: {
-                    Label("Sell Internet · Experimental", systemImage: "bitcoinsign.circle.fill")
+    var connectionSettingsSheet: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            sheetTitleBar("Connection settings", systemImage: "slider.horizontal.3") {
+                connectionSettingsPresented = false
+            }
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    surface {
+                        Toggle("Block internet if selected source disconnects", isOn: Binding(
+                            get: { state.exitNodeLeakProtection },
+                            set: { manager.setExitNodeLeakProtection($0) }
+                        ))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .disabled(manager.actionInFlight)
+                    }
+                    wireGuardUpstreamSettings
+                    exitDnsSettings
                 }
-                .accessibilityIdentifier("paid-exit-seller-open")
-                .buttonStyle(.bordered)
+                .padding(18)
             }
         }
+        .frame(width: 600, height: 580)
     }
 
     var exitDnsSettings: some View {
         surface {
             sectionHeader("Exit DNS", systemImage: "lock.shield")
+                .frame(maxWidth: .infinity, alignment: .leading)
             Text("MagicDNS stays local. Public DNS follows this policy while an internet exit is active.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -18,6 +18,7 @@ def require(label: str, text: str, needles: list[str]) -> None:
 
 
 macos = read(
+    "macos/Sources/RootView.swift",
     "macos/Sources/RootViewInternet.swift",
     "macos/Sources/RootViewPaidMarket.swift",
     "macos/Sources/RootViewWallet.swift",

@@ -664,7 +664,7 @@ enum SidebarItem: Hashable {
     case devices
     case internet
     case publicExits
-    case sellExit
+    case sharing
     case wallet
     case settings
 }
