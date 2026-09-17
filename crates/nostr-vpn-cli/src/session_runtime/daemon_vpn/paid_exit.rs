@@ -562,9 +562,11 @@ pub(super) fn flush_fips_paid_route_usage(
         let mut buyer_delta = PaidRouteUsage::default();
         if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() {
             let mut usage_delta = runtime.drain_paid_route_usage(&seller_pubkey)?;
-            usage_delta.active_millis = usage_delta
-                .active_millis
-                .saturating_add(active_millis_delta);
+            if runtime.client_dataplane_enabled() {
+                usage_delta.active_millis = usage_delta
+                    .active_millis
+                    .saturating_add(active_millis_delta);
+            }
             buyer_delta = usage_delta.clone();
             if !usage_delta.is_empty() {
                 changed |= store

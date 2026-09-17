@@ -9,19 +9,13 @@ struct SyncFipsPrivateRuntimeContext<'a> {
     recent_peers: Option<&'a nostr_vpn_core::recent_peers::RecentPeerEndpoints>,
     ethernet_underlay: Option<&'a crate::fips_private_mesh::FipsEthernetUnderlayConfig>,
     vpn_enabled: bool,
-    expected_peers: usize,
     join_roster_deliveries: Vec<tokio::task::JoinHandle<bool>>,
 }
 async fn sync_fips_private_runtime(
     runtime: &mut Option<crate::fips_private_mesh::FipsPrivateTunnelRuntime>,
     context: SyncFipsPrivateRuntimeContext<'_>,
 ) -> Result<bool> {
-    if !fips_private_runtime_active_for_config(
-        context.app,
-        context.config_path,
-        context.vpn_enabled,
-        context.expected_peers,
-    )? {
+    if !fips_private_runtime_active(context.app, context.vpn_enabled) {
         let runtime_replaced = runtime.is_some();
         finish_join_roster_deliveries_before_runtime_sync(
             context.join_roster_deliveries,
@@ -739,7 +733,7 @@ async fn complete_fips_link_event_refresh(context: FipsLinkRefreshCompletion<'_>
         daemon_vpn_idle_status(
             context.vpn_enabled,
             context.expected_peers,
-            context.app.join_requests_enabled(),
+            fips_server_runtime_active(context.app),
         )
         .to_string()
     }
@@ -758,7 +752,7 @@ async fn rebuild_fips_tunnel_runtime_after_control_failure(
         .as_ref()
         .map(|runtime| runtime.peer_endpoint_hints())
         .unwrap_or_default();
-    let config = fips_tunnel_config_from_app_async(FipsTunnelConfigInput {
+    let mut config = fips_tunnel_config_from_app_async(FipsTunnelConfigInput {
         app: context.app,
         config_path: context.config_path,
         network_id: context.network_id,
@@ -771,6 +765,9 @@ async fn rebuild_fips_tunnel_runtime_after_control_failure(
         ethernet_underlay: context.ethernet_underlay,
     })
     .await?;
+    if !context.client_dataplane_enabled {
+        config.disable_client_dataplane();
+    }
     let endpoint_peer_signature = endpoint_peer_signature(&config.endpoint_peers);
 
     if let Some(existing) = runtime.take() {

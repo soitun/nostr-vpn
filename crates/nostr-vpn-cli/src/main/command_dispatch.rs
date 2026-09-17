@@ -108,6 +108,7 @@ async fn run_command(command: Command) -> Result<()> {
             maybe_autoconfigure_node(&mut app);
             app.save(&config_path)?;
             reload_running_daemon_after_save(&config_path)?;
+            network_signaling::resume_running_daemon_for_join(&config_path)?;
 
             let own_device_id = app.nostr.public_key.clone();
             let admin_device_id = normalize_nostr_pubkey(&args.admin_device_id)?;

@@ -216,7 +216,6 @@ const DAEMON_STATE_RUNNING_MAX_FUTURE_SKEW_SECS: u64 = 2;
 const DAEMON_PEER_STATUS_MAX_FUTURE_SKEW_SECS: u64 = 2;
 const MAJOR_LINK_CHANGE_TIME_JUMP_SECS: u64 = 30;
 const WAITING_FOR_PARTICIPANTS_STATUS: &str = "Waiting for participants";
-const LISTENING_FOR_JOIN_REQUESTS_STATUS: &str = "Listening for join requests";
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub(crate) struct DaemonJoinRequestIpcRequest {

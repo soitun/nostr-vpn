@@ -154,7 +154,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             recent_peers: Some(&recent_peers),
                             ethernet_underlay: ethernet_underlay.as_ref(),
                             vpn_enabled,
-                            expected_peers,
                         },
                     )
                     .await
@@ -444,7 +443,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         expected_peers = expected_peer_count(&app);
                         if !daemon_vpn_active(vpn_enabled, expected_peers) {
                             vpn_status = daemon_vpn_idle_status(
-                                vpn_enabled, expected_peers, app.join_requests_enabled(),
+                                vpn_enabled, expected_peers, fips_server_runtime_active(&app),
                             ).to_string();
                         }
                     }
@@ -463,7 +462,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             recent_peers: Some(&recent_peers),
                             ethernet_underlay: ethernet_underlay.as_ref(),
                             vpn_enabled,
-                            expected_peers,
                         },
                     )
                     .await
@@ -497,6 +495,18 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                 let mut control_result = match request {
                     DaemonControlRequest::Stop => break,
                     DaemonControlRequest::Pause => {
+                        #[cfg(feature = "paid-exit")]
+                        if let Some(runtime) = fips_tunnel_runtime.as_ref() {
+                            let active_millis = u64::try_from(
+                                last_paid_exit_usage_flush_at.elapsed().as_millis(),
+                            ).unwrap_or(u64::MAX);
+                            if let Err(error) = flush_fips_paid_route_usage(
+                                runtime, &app, &config_path, unix_timestamp(), active_millis,
+                            ) {
+                                eprintln!("paid-exit: failed to record final usage before pause: {error}");
+                            }
+                            last_paid_exit_usage_flush_at = Instant::now();
+                        }
                         vpn_enabled = false;
                         let persist_result =
                             persist_desired_daemon_vpn_enabled_in_config(
@@ -504,11 +514,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                 &config_path,
                                 vpn_enabled,
                             );
-                        let join_requests_active = app.join_requests_enabled();
+                        let server_active = fips_server_runtime_active(&app);
                         vpn_status = daemon_vpn_idle_status(
                             vpn_enabled,
                             expected_peers,
-                            join_requests_active,
+                            server_active,
                         )
                         .to_string();
                         persist_result.map(|_| ())
@@ -527,7 +537,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                             vpn_status = daemon_vpn_idle_status(
                                 vpn_enabled,
                                 expected_peers,
-                                app.join_requests_enabled(),
+                                fips_server_runtime_active(&app),
                             )
                             .to_string();
                         }
@@ -606,20 +616,18 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                                         if let Some(rt) = magic_dns_runtime.as_ref() {
                                             rt.refresh_records(&app);
                                         }
-                                        let join_requests_active = app.join_requests_enabled();
+                                        let server_active = fips_server_runtime_active(&app);
                                         let vpn_active =
                                             daemon_vpn_active(vpn_enabled, expected_peers);
                                         vpn_status = if vpn_active {
                                             "Config reloaded".to_string()
-                                        } else if vpn_enabled {
+                                        } else {
                                             daemon_vpn_idle_status(
                                                 vpn_enabled,
                                                 expected_peers,
-                                                join_requests_active,
+                                                server_active,
                                             )
                                             .to_string()
-                                        } else {
-                                            "Config reloaded (paused)".to_string()
                                         };
                                         Ok(())
                                     }
@@ -708,7 +716,6 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         recent_peers: Some(&recent_peers),
                         ethernet_underlay: ethernet_underlay.as_ref(),
                         vpn_enabled,
-                        expected_peers,
                     },
                 )
                 .await
@@ -723,6 +730,11 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         (false, false)
                     }
                 };
+                #[cfg(feature = "paid-exit")]
+                if fips_runtime_replaced || matches!(request, DaemonControlRequest::Resume) {
+                    // A newly started endpoint has no usage from its offline interval.
+                    last_paid_exit_usage_flush_at = Instant::now();
+                }
                 refresh_or_start_split_magic_dns(&mut magic_dns_runtime, &app);
                 if publish_fips_roster_after_control
                     && let Some(runtime) = fips_tunnel_runtime.as_ref()

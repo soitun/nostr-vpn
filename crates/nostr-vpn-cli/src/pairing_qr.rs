@@ -59,6 +59,7 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
     if args.no_wait {
         return Ok(());
     }
+    let resumed_for_join = crate::network_signaling::resume_running_daemon_for_join(&config_path)?;
     println!("Waiting for an admin to approve this join request (Ctrl-C to stop waiting).");
 
     let mut poll = tokio::time::interval(Duration::from_millis(500));
@@ -66,6 +67,12 @@ pub(crate) async fn run_join_request(args: JoinRequestArgs) -> Result<()> {
     loop {
         tokio::select! {
             result = tokio::signal::ctrl_c() => {
+                if resumed_for_join {
+                    crate::control_daemon(
+                        crate::ControlArgs { config: Some(config_path.clone()) },
+                        crate::DaemonControlRequest::Pause,
+                    ).context("failed to turn VPN back off after joining was cancelled")?;
+                }
                 result.context("failed to wait for Ctrl-C")?;
                 println!("Stopped waiting; the existing join request remains valid.");
                 return Ok(());
@@ -149,7 +156,7 @@ impl RequestReachability {
                 "nVPN daemon status is unavailable; the join request is still ready to share."
             }
             Self::NoFipsPeers => {
-                "No active FIPS connections; an admin cannot deliver approval yet. The join request is still ready to share."
+                "No active FIPS connections; turn VPN on to receive approval. The join request is still ready to share."
             }
             Self::FipsReachable => {
                 "FIPS connection active; approval can be delivered immediately after an admin accepts."

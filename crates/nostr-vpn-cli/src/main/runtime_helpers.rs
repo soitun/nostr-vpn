@@ -61,27 +61,16 @@ fn fips_host_runtime_active(app: &AppConfig) -> bool {
     }
 }
 
-fn fips_private_runtime_active(app: &AppConfig, vpn_enabled: bool, expected_peers: usize) -> bool {
-    daemon_vpn_active(vpn_enabled, expected_peers)
-        || fips_host_runtime_active(app)
-        || paid_exit_fips_runtime_active(app)
-        || app.join_requests_enabled()
-        || app
-            .active_network_opt()
-            .and_then(|network| network.outbound_join_request.as_ref())
-            .is_some()
-        || app.pending_nostr_join_request.is_some()
-        || app.has_fips_static_peer_endpoints()
+fn fips_server_runtime_active(app: &AppConfig) -> bool {
+    fips_host_runtime_active(app)
+        || !app.fips_websocket_bind_addr.trim().is_empty()
+        || cfg!(feature = "paid-exit") && app.paid_exit.enabled
 }
 
-fn fips_private_runtime_active_for_config(
-    app: &AppConfig,
-    config_path: &Path,
-    vpn_enabled: bool,
-    expected_peers: usize,
-) -> Result<bool> {
-    Ok(fips_private_runtime_active(app, vpn_enabled, expected_peers)
-        || !load_pending_fips_control_recipients(config_path)?.is_empty())
+fn fips_private_runtime_active(app: &AppConfig, vpn_enabled: bool) -> bool {
+    // Saved peers, join tokens, and queued messages are not permission to
+    // connect while paused. Only an explicitly configured server runs then.
+    vpn_enabled || fips_server_runtime_active(app)
 }
 
 pub(crate) fn paid_exit_fips_runtime_active(app: &AppConfig) -> bool {
@@ -102,12 +91,12 @@ pub(crate) fn paid_exit_fips_runtime_active(app: &AppConfig) -> bool {
 fn daemon_vpn_idle_status(
     vpn_enabled: bool,
     expected_peers: usize,
-    join_requests_active: bool,
+    server_active: bool,
 ) -> &'static str {
     if vpn_enabled && expected_peers == 0 {
         WAITING_FOR_PARTICIPANTS_STATUS
-    } else if join_requests_active {
-        LISTENING_FOR_JOIN_REQUESTS_STATUS
+    } else if server_active {
+        "VPN paused; FIPS server active"
     } else {
         "Paused"
     }

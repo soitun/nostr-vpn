@@ -100,12 +100,7 @@ loop {
             let maintain_fips = if vpn_active {
                 fips_tunnel_runtime.is_some()
             } else {
-                fips_private_runtime_active_for_config(
-                    &app,
-                    &config_path,
-                    vpn_enabled,
-                    expected_peers,
-                )?
+                fips_private_runtime_active(&app, vpn_enabled)
             };
             if maintain_fips {
                 maintain_fips_heartbeat(FipsHeartbeatContext {
@@ -315,12 +310,7 @@ loop {
                 network_changed_at = Some(unix_timestamp());
             }
             let fips_result = if fips_tunnel_runtime.is_some()
-                || fips_private_runtime_active_for_config(
-                    &app,
-                    &config_path,
-                    vpn_enabled,
-                    expected_peers,
-                )?
+                || fips_private_runtime_active(&app, vpn_enabled)
             {
                 refresh_fips_tunnel_runtime_after_link_event(
                     &mut fips_tunnel_runtime,
