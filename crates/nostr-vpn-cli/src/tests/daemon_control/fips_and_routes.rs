@@ -331,7 +331,7 @@ fn macos_paid_exit_endpoint_bypass_targets_are_deterministic_host_routes() {
     ];
 
     assert_eq!(
-        crate::macos_network::macos_endpoint_bypass_targets_for_hosts(&hosts),
+        crate::macos_network::macos_endpoint_bypass_targets_for_hosts(&hosts, None, &[]),
         vec!["203.0.113.7/32", "65.109.48.91/32"]
     );
 }

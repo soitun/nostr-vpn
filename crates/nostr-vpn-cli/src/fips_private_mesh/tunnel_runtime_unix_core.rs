@@ -602,7 +602,12 @@ impl FipsPrivateTunnelRuntime {
         config: &FipsPrivateTunnelConfig,
     ) -> Result<(bool, Option<crate::MacosRouteSpec>)> {
         let hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
-        let routes = crate::macos_network::macos_endpoint_bypass_targets_for_hosts(&hosts);
+        let interfaces = netdev::get_interfaces();
+        let routes = crate::macos_network::macos_endpoint_bypass_targets_for_hosts(
+            &hosts,
+            self.endpoint_bypass_underlay.as_ref(),
+            &interfaces,
+        );
         let force_underlay_refresh = self.macos_underlay_refresh_pending
             || self.config.underlay_interface != config.underlay_interface;
         // Peer heartbeats are frequent and normally leave both bypasses and
@@ -651,6 +656,11 @@ impl FipsPrivateTunnelRuntime {
                 None
             }
         };
+        let routes = crate::macos_network::macos_endpoint_bypass_targets_for_hosts(
+            &hosts,
+            underlay.as_ref(),
+            &interfaces,
+        );
         self.reconcile_macos_endpoint_bypass_routes(
             underlay.as_ref().map_or(&[], |_| routes.as_slice()),
             underlay.as_ref(),
@@ -672,42 +682,26 @@ impl FipsPrivateTunnelRuntime {
         // even if an earlier post-apply journal update was interrupted.
         self.persist_network_cleanup_ownership()?;
         let mut failures = Vec::new();
-        let desired = routes
-            .iter()
-            .cloned()
-            .collect::<std::collections::HashSet<_>>();
-        let underlay_changed = self.endpoint_bypass_underlay.as_ref() != underlay;
-        let current_underlay = self.endpoint_bypass_underlay.clone();
-        let current_gateway = current_underlay
-            .as_ref()
-            .and_then(|owner| owner.gateway.as_deref());
-        let current_interface = current_underlay
-            .as_ref()
-            .map(|owner| owner.interface.as_str());
-        let stale = self
-            .endpoint_bypass_routes
-            .iter()
-            .filter(|route| underlay_changed || !desired.contains(*route))
-            .cloned()
-            .collect::<Vec<_>>();
-        for route in stale {
-            if let Err(error) =
-                crate::delete_macos_managed_route(&route, current_gateway, current_interface)
-                && !crate::daemon_runtime::macos_route_delete_error_is_absent(&error.to_string())
-            {
-                failures.push(format!("remove endpoint bypass route {route}: {error:#}"));
-            }
-        }
-        if !failures.is_empty() {
-            return Err(anyhow!(failures.join("; ")));
-        }
-        if underlay_changed {
-            self.endpoint_bypass_routes.clear();
-            self.endpoint_bypass_underlay = None;
-        } else {
-            self.endpoint_bypass_routes
-                .retain(|route| desired.contains(route));
-        }
+        remove_obsolete_macos_endpoint_bypasses(
+            &mut self.endpoint_bypass_routes,
+            &mut self.endpoint_bypass_underlay,
+            routes,
+            underlay,
+            |route, owner| {
+                let result = crate::delete_macos_managed_route(
+                    route,
+                    owner.and_then(|owner| owner.gateway.as_deref()),
+                    owner.map(|owner| owner.interface.as_str()),
+                );
+                match result {
+                    Err(error)
+                        if crate::daemon_runtime::macos_route_delete_error_is_absent(
+                            &error.to_string(),
+                        ) => Ok(()),
+                    result => result,
+                }
+            },
+        )?;
         // Journal every exact desired route and underlay before the first
         // route add. Replaying this intent is safe if the crash happened
         // before an add because cleanup verifies exact route ownership and

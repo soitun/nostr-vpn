@@ -1,4 +1,23 @@
 #[test]
+fn macos_lan_bypass_cleanup_preserves_neighbors_and_foreign_routes() {
+    for (row, owned) in [
+        ("192.0.2.20 192.0.2.1 UGHSI en0", true),
+        ("192.0.2.20 192.0.2.1 UGHS en0", true),
+        ("192.0.2 link#7 UCS en0", false),
+        ("192.0.2.20 aa:bb:cc:dd:ee:ff UHLWI en0", false),
+        ("192.0.2.20 192.0.2.2 UGHS en0", false),
+        ("192.0.2.20 192.0.2.1 UGHS en7", false),
+        ("192.0.2.21 192.0.2.1 UGHS en0", false),
+    ] {
+        assert_eq!(
+            macos_managed_route_present(row, "192.0.2.20/32", Some("192.0.2.1"), Some("en0"),),
+            owned,
+            "cleanup must match the exact recorded route: {row}",
+        );
+    }
+}
+
+#[test]
 fn macos_default_routes_from_netstat_finds_underlay_and_utun_routes() {
     let routes = macos_default_routes_from_netstat(
         "Routing tables\n\

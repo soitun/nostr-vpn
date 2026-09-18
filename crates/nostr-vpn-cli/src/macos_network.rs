@@ -199,9 +199,25 @@ pub(crate) fn macos_underlay_default_route_needs_restore(routes: &[MacosRouteSpe
 }
 
 #[cfg(any(target_os = "macos", test))]
-pub(crate) fn macos_endpoint_bypass_targets_for_hosts(hosts: &[Ipv4Addr]) -> Vec<String> {
+pub(crate) fn macos_endpoint_bypass_targets_for_hosts(
+    hosts: &[Ipv4Addr],
+    underlay: Option<&MacosRouteSpec>,
+    interfaces: &[netdev::Interface],
+) -> Vec<String> {
+    let interface = underlay.and_then(|underlay| {
+        interfaces
+            .iter()
+            .find(|interface| interface.name == underlay.interface)
+    });
     let mut targets = hosts
         .iter()
+        // Connected prefixes already beat the tunnel's split defaults. A
+        // gateway /32 would override ARP and divert all traffic to a LAN peer.
+        .filter(|host| {
+            !interface.is_some_and(|interface| {
+                interface.ipv4.iter().any(|network| network.contains(*host))
+            })
+        })
         .map(|host| format!("{host}/32"))
         .collect::<Vec<_>>();
     targets.sort();
