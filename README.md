@@ -59,11 +59,9 @@ For startup at boot, run `sudo nvpn service install`; on Windows, run `nvpn serv
 
 ## Paid Exits
 
-Buy or sell VPN bandwidth for Bitcoin. Providers advertise per-byte prices over Nostr; buyers fund a Cashu Spilman payment channel and send signed payment updates as they use bandwidth. Uploads are billed as sent, UDP downloads only for replies to your traffic, and TCP downloads only once acknowledged, without double-counting retransmissions.
+Buy or sell VPN bandwidth for Bitcoin. Providers advertise per-byte prices over Nostr; buyers fund Cashu Spilman channels and sign payment updates as they use bandwidth. Uploads count as sent; UDP replies and acknowledged TCP downloads count too, without double-billing TCP retransmissions. Choose a provider manually or automatically using connection quality, trusted ratings, and price.
 
-Choose a provider manually or let the app select based on connection quality, trusted ratings, and price.
-
-DNS is encrypted by default. Exit providers can still see destination IPs and unencrypted traffic, so use HTTPS for sensitive data. See the [protocol](docs/protocol.md#paid-exits) for payment and privacy details.
+DNS is encrypted by default, but exits still see destination IPs and unencrypted traffic. Use HTTPS for sensitive data. See [payment and privacy details](docs/protocol.md#paid-exits).
 
 ## Build and Verify
 
