@@ -281,13 +281,23 @@ PROXY_BASE="http://127.0.0.1:$PROXY_PORT" \
 SCANNER_BASE="http://127.0.0.1:$SCANNER_PORT" \
 AUTH_PORT="$AUTH_PORT" TEST_PASSWORD="$PASSWORD" \
   pnpm --dir "$ROOT_DIR/web/control-panel" exec node --input-type=module - <<'JS'
-import { chromium } from '@playwright/test'
+import { chromium, expect } from '@playwright/test'
 
 const proxy = process.env.PROXY_BASE
 const scanner = process.env.SCANNER_BASE
 const authPort = process.env.AUTH_PORT
 const browser = await chromium.launch({ headless: true })
 let context
+const enableVpn = async (page, base) => {
+  // QR approval requires an active carrier; paused clients do not run FIPS.
+  await page.getByRole('button', { name: 'Turn VPN on', exact: true }).click()
+  await expect.poll(async () => {
+    const response = await context.request.post(`${base}/api/tick`)
+    if (!response.ok()) return false
+    const state = await response.json()
+    return state.vpnEnabled && !String(state.vpnStatus).startsWith('Turning VPN')
+  }, { timeout: 20_000 }).toBe(true)
+}
 try {
   context = await browser.newContext()
   const page = await context.newPage()
@@ -328,7 +338,7 @@ try {
     if (String(state.joinRequestQrCodeOrLink ?? '').startsWith('nvpn://join-request/')) break
     await new Promise((resolve) => setTimeout(resolve, 200))
   } while (Date.now() < deadline)
-  const request = String(state.joinRequestQrCodeOrLink ?? '')
+  let request = String(state.joinRequestQrCodeOrLink ?? '')
   const requesterNpub = String(state.ownNpub ?? '')
   if (!request.startsWith('nvpn://join-request/')) {
     throw new Error('unjoined Umbrel did not expose a signed join request')
@@ -340,7 +350,9 @@ try {
   await page.goto(`${proxy}/`, { waitUntil: 'domcontentloaded' })
   await page.getByRole('button', { name: 'Add Network' }).click()
   await page.getByRole('button', { name: 'Join Network', exact: true }).click()
+  await expect.poll(async () => (await tick()).vpnEnabled, { timeout: 20_000 }).toBe(true)
   await page.getByRole('img', { name: 'QR code' }).waitFor({ state: 'visible' })
+  request = String((await tick()).joinRequestQrCodeOrLink ?? '')
   const copy = page.getByRole('button', { name: 'Copy Join request' })
   await copy.waitFor({ state: 'visible' })
   if (await copy.isDisabled()) throw new Error('join request copy action is disabled')
@@ -357,6 +369,7 @@ try {
   const scannerPage = await context.newPage()
   await scannerPage.goto(`${scanner}/`, { waitUntil: 'domcontentloaded' })
   await scannerPage.getByRole('heading', { name: 'Nostr VPN' }).waitFor({ state: 'visible' })
+  await enableVpn(scannerPage, scanner)
   await scannerPage.getByRole('button', { name: 'Add Device' }).click()
   await scannerPage.getByPlaceholder('Paste a join request to continue').fill(request)
   const confirm = scannerPage.getByRole('dialog', { name: 'Add Device?' })

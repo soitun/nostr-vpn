@@ -20,6 +20,7 @@ support paid exits.
 - Keep background refund recovery from blocking new payments and active paid
   Internet connections.
 - Keep wallet mints reachable when a paid connection runs out of credit.
+- Start the web connection when joining a first network so QR approvals can arrive.
 
 ### Improved
 
