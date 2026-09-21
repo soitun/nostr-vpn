@@ -340,7 +340,7 @@ extension AppManager {
             wireguardExitPrivateKey: "demo-private-key",
             wireguardExitPeerPublicKey: "demo-peer-key",
             wireguardExitPeerPresharedKey: "",
-            wireguardExitEndpoint: "demo-wireguard.invalid:51820",
+            wireguardExitEndpoint: "203.0.113.20:51820",
             wireguardExitAllowedIps: "0.0.0.0/0",
             wireguardExitDns: "1.1.1.1",
             wireguardExitMtu: 1280,
