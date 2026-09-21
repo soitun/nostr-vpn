@@ -235,6 +235,11 @@ final class AppManager: ObservableObject {
         if actionInFlight || serviceSettling || updateChecking || updateInstalling {
             return 1_000_000_000
         }
+        if state.vpnEnabled,
+           activeNetwork?.participants.contains(where: { !$0.rosterAccepted }) == true {
+            // Approval arrives asynchronously; keep the pending join responsive.
+            return 1_000_000_000
+        }
         if paidRouteLiveRefreshWanted {
             return Self.paidRouteRefreshIntervalNanoseconds
         }

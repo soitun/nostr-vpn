@@ -21,6 +21,7 @@ support paid exits.
   Internet connections.
 - Keep wallet mints reachable when a paid connection runs out of credit.
 - Start the web connection when joining a first network so QR approvals can arrive.
+- Refresh pending joins promptly on macOS when approval arrives.
 
 ### Improved
 
