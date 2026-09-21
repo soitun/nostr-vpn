@@ -207,8 +207,7 @@ impl FipsPrivateTunnelRuntime {
         self.persist_network_cleanup_ownership()?;
 
         let endpoint_bypass_specs = if original_route_targets_require_bypass || strict_exit {
-            let mut bypass_hosts = config.control_plane_bypass_hosts.clone();
-            bypass_hosts.extend(peer_endpoint_hosts);
+            let mut bypass_hosts = peer_endpoint_hosts;
             bypass_hosts.sort_unstable();
             bypass_hosts.dedup();
             crate::linux_bypass_route_specs_for_hosts(

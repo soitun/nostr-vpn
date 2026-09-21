@@ -157,6 +157,7 @@ impl FipsPrivateTunnelRuntime {
         config: &FipsPrivateTunnelConfig,
     ) -> Result<Vec<Ipv4Addr>> {
         let mut hosts = config.endpoint_hint_ipv4_hosts();
+        hosts.extend(config.control_plane_bypass_hosts.iter().copied());
         hosts.extend(
             self.mesh
                 .peer_transport_ipv4_hosts()
@@ -292,8 +293,7 @@ impl FipsPrivateTunnelRuntime {
                 return Ok(());
             }
             let config = self.config.clone();
-            let mut bypass_hosts = config.control_plane_bypass_hosts.clone();
-            bypass_hosts.extend(self.endpoint_bypass_ipv4_hosts(&config).await?);
+            let bypass_hosts = self.endpoint_bypass_ipv4_hosts(&config).await?;
             if linux_endpoint_bypass_hosts_unchanged(
                 &self.endpoint_bypass_routes,
                 &bypass_hosts,

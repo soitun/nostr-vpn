@@ -522,6 +522,32 @@ fn fips_tunnel_config_from_app(
             config.local_exit_forwarding_routes = runtime_local_exit_forwarding_routes(app);
         }
         config.paid_route_store_path = paid_route_store_file_path(config_path);
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        if (ethernet_underlay.is_none() || underlay_interface.is_some())
+            && matches!(
+                app.internet_source,
+                InternetSource::PaidAutomatic | InternetSource::PaidManual
+            )
+        {
+            // Payment must remain possible when the purchased route has no
+            // credit or its provider cannot reach a mint. Only locally added
+            // wallet mints qualify; public offers cannot add bypass routes.
+            let store = load_paid_route_store(&config.paid_route_store_path)?;
+            for mint in &store.wallet.mints {
+                let url = reqwest::Url::parse(&mint.url)?;
+                let addresses = url
+                    .socket_addrs(|| None)
+                    .context("failed to resolve wallet mint for payment routing")?;
+                config
+                    .control_plane_bypass_hosts
+                    .extend(addresses.into_iter().filter_map(|addr| match addr.ip() {
+                        std::net::IpAddr::V4(ip) => Some(ip),
+                        std::net::IpAddr::V6(_) => None,
+                    }));
+            }
+            config.control_plane_bypass_hosts.sort_unstable();
+            config.control_plane_bypass_hosts.dedup();
+        }
         if let Some(seller_pubkey) = app.public_paid_exit_node_pubkey_hex() {
             let store = load_paid_route_store(&config.paid_route_store_path)?;
             config.require_public_paid_exit_admission(
