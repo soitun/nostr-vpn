@@ -30,6 +30,8 @@ support paid exits.
 - Use the selected fiat currency for prices, balances, fees, and payment summaries,
   with enough precision for small bandwidth prices and a Bitcoin fallback when
   exchange rates are unavailable.
+- Show Internet-sharing readiness in the macOS sidebar and menu bar, with the
+  selected Internet connection and sharing status available in the tray menu.
 
 ## 4.1.14 - 2026-09-17
 
