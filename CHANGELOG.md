@@ -2,6 +2,25 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.15 - 2026-09-21
+
+### Release notes
+
+This release improves VPN pause behavior and simplifies Internet connection
+controls on macOS. iOS does not support paid exits.
+
+### Fixed
+
+- Stop client FIPS networking when the VPN is paused and accurately report
+  remaining FIPS connections.
+- Keep macOS LAN peers off gateway bypass routes so local connections retain
+  their direct routes.
+
+### Improved
+
+- Simplify macOS Internet navigation and keep automatic-exit status and provider
+  actions together with the selected connection.
+
 ## 4.1.14 - 2026-09-17
 
 ### Release notes
