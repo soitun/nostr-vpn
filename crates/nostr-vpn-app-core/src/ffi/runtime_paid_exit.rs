@@ -1,7 +1,6 @@
 #[cfg(feature = "paid-exit")]
 mod paid_exit {
     use std::collections::HashSet;
-    use std::fmt::Write as _;
     use std::io::Write as _;
     use std::process::Stdio;
 
@@ -63,11 +62,27 @@ mod paid_exit {
             assert_eq!(paid_route_price_text(1_250), "1.25 sat/GB");
             assert_eq!(paid_route_price_text(1), "0.001 sat/GB");
             assert_eq!(
-                paid_route_price_text_with_fiat(25_000, Some(80_000.0), "EUR", false),
-                "25 sat/GB · ≈ 0.02 EUR/GB"
+                paid_route_price_text_with_fiat(25_000, Some(80_000.0), "EUR"),
+                "≈ 0.02 EUR/GB"
             );
             assert_eq!(
-                paid_route_price_text_with_fiat(25_000, Some(80_000.0), "EUR", true),
+                paid_route_price_text_with_fiat(25_000, None, "EUR"),
+                "25 sat/GB"
+            );
+            assert_eq!(
+                paid_route_price_text_with_fiat(25_000, Some(100_000.0), "USD"),
+                "≈ 0.025 USD/GB"
+            );
+            assert_eq!(
+                paid_route_price_text_with_fiat(0, Some(80_000.0), "EUR"),
+                "free"
+            );
+            assert_eq!(
+                paid_route_price_text_with_fiat(1, Some(10_000.0), "USD"),
+                "<0.000001 USD/GB"
+            );
+            assert_eq!(
+                paid_route_price_text_with_fiat(25_000, Some(f64::NAN), "USD"),
                 "25 sat/GB"
             );
         }
@@ -88,6 +103,38 @@ mod paid_exit {
                 ),
                 "Connection failed"
             );
+        }
+
+        #[test]
+        fn fiat_presentation_updates_channel_and_session_amounts_without_changing_accounting() {
+            let mut channels = vec![NativePaidRouteChannelState {
+                capacity_sat: 250,
+                paid_msat: 25_000,
+                ..NativePaidRouteChannelState::default()
+            }];
+            let mut sessions = vec![NativePaidRouteSessionState {
+                lifecycle_status: "active".into(),
+                access_state: "paid".into(),
+                usage_text: "1 GB used".into(),
+                paid_msat: 25_000,
+                amount_due_msat: 30_000,
+                unpaid_msat: 5_000,
+                channel_balance_msat: 225_000,
+                ..NativePaidRouteSessionState::default()
+            }];
+            apply_paid_route_currency(&mut channels, &mut sessions, &|msat| {
+                crate::exchange_rate::format_fiat_msat(msat, 80_000.0, "EUR")
+            });
+            assert_eq!(channels[0].capacity_text, "≈ 0.2 EUR");
+            assert_eq!(channels[0].capacity_sat, 250);
+            assert_eq!(sessions[0].paid_text, "≈ 0.02 EUR paid");
+            assert_eq!(sessions[0].amount_due_text, "≈ 0.024 EUR due");
+            assert_eq!(sessions[0].unpaid_text, "≈ 0.004 EUR behind");
+            assert_eq!(sessions[0].channel_balance_text, "≈ 0.18 EUR in channel");
+            assert_eq!(sessions[0].detail_text, "Paid, 1 GB used, ≈ 0.024 EUR due");
+            assert_eq!(sessions[0].paid_msat, 25_000);
+            assert_eq!(sessions[0].amount_due_msat, 30_000);
+            assert_eq!(sessions[0].unpaid_msat, 5_000);
         }
 
         #[test]

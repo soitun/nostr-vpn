@@ -102,7 +102,7 @@ internal fun PaidRouteMarketCard(
                     )
                 }
                 if (state.walletFiatEnabled && market.wallet.fiatBalanceText.isNotBlank()) {
-                    Text("≈ ${market.wallet.fiatBalanceText}", color = Muted, style = MaterialTheme.typography.bodySmall)
+                    Text(formatPaidRouteMsat(market.wallet.totalBalanceMsat), color = Muted, style = MaterialTheme.typography.bodySmall)
                 }
                 if (mode == PaidRouteCardMode.Wallet && market.wallet.exchangeRateText.isNotBlank()) {
                     Text(
