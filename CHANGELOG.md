@@ -7,7 +7,8 @@ All notable changes to this project are documented in this file.
 ### Release notes
 
 This release improves VPN pause behavior, keeps background refunds from delaying
-Internet payments, and simplifies connection controls on macOS. iOS does not
+Internet payments, and simplifies connection controls on macOS. Prices and
+balances use your selected currency when Show fiat is enabled. iOS does not
 support paid exits.
 
 ### Fixed
@@ -18,6 +19,7 @@ support paid exits.
   their direct routes.
 - Keep background refund recovery from blocking new payments and active paid
   Internet connections.
+- Keep wallet mints reachable when a paid connection runs out of credit.
 
 ### Improved
 
@@ -25,6 +27,9 @@ support paid exits.
   actions together with the selected connection.
 - Hide paid-exit diagnostics behind expandable provider and connection rows on
   macOS, while keeping purchase, disconnect, and rating controls directly usable.
+- Use the selected fiat currency for prices, balances, fees, and payment summaries,
+  with enough precision for small bandwidth prices and a Bitcoin fallback when
+  exchange rates are unavailable.
 
 ## 4.1.14 - 2026-09-17
 
