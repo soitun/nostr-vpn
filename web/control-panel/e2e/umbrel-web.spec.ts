@@ -394,6 +394,14 @@ test('API supports the Umbrel web config action surface', async ({ request }) =>
   workNetwork = byName(state, 'E2E Renamed');
   expect(workNetwork.participants.some((participant) => participant.npub === peerNpub)).toBeTruthy();
 
+  // Adding the first participant starts the VPN asynchronously. Let that
+  // transition finish before sending a second daemon configuration request.
+  await expect
+    .poll(async () => (await postJson<UiState>(request, '/api/tick')).vpnActive, {
+      timeout: 20_000,
+    })
+    .toBe(true);
+
   state = await postJson<UiState>(request, '/api/set_participant_alias', {
     npub: peerNpub,
     alias: 'Peer Renamed',
