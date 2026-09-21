@@ -263,6 +263,7 @@ extension RootView {
                         .foregroundStyle(.orange)
                 }
             }
+            .padding(.leading, 6)
             .contentShape(Rectangle())
             .onTapGesture { expanded.wrappedValue.toggle() }
         }
@@ -445,6 +446,7 @@ extension RootView {
                         .disabled(manager.actionInFlight)
                 }
             }
+            .padding(.leading, 6)
             .contentShape(Rectangle())
             .onTapGesture { expanded.wrappedValue.toggle() }
         }
