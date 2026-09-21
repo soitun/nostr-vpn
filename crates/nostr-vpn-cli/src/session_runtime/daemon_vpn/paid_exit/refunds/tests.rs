@@ -390,8 +390,8 @@
         assert!(
             SharedSpilmanClientStoreLock::try_acquire(&client_store_path)
                 .expect("probe Spilman client lock")
-                .is_none(),
-            "daemon Cashu operations must not race the refund worker"
+                .is_some(),
+            "an HTTP refund request must not prevent foreground channel funding"
         );
         let control_tick_started = Instant::now();
         assert!(
@@ -416,6 +416,11 @@
         let hanging = store.channels.get("a-hanging").expect("hanging channel");
         assert_eq!(hanging.status, PaidRouteLifecycleStatus::Closing);
         assert!(hanging.error.contains("timed out after 750 ms"));
+        assert_eq!(
+            store.buyer_mint_failure_retry_at(&mint_url),
+            0,
+            "the local refund deadline must not label the mint unavailable for new payments"
+        );
         let complete = store.channels.get("b-complete").expect("complete channel");
         assert_eq!(complete.status, PaidRouteLifecycleStatus::Closed);
         assert!(complete.error.is_empty());
