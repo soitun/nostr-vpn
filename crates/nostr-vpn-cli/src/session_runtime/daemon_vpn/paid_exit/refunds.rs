@@ -7,8 +7,19 @@ use cashu::nuts::{Proof, SecretKey};
 use cdk_spilman::ClientStorage;
 use serde::Serialize;
 
-const PAID_EXIT_BUYER_REFUND_ATTEMPT_TIMEOUT_SECS: u64 = 3;
+const PAID_EXIT_BUYER_REFUND_ATTEMPT_TIMEOUT_SECS: u64 = 30;
 const PAID_EXIT_BUYER_REFUND_RETRY_SECS: u64 = 10;
+
+#[derive(Debug)]
+struct RefundWorkDeferred(String);
+
+impl std::fmt::Display for RefundWorkDeferred {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for RefundWorkDeferred {}
 
 #[derive(Debug, Default)]
 pub(super) struct PaidExitBuyerRefundRecovery {
@@ -98,11 +109,7 @@ impl PaidExitBuyerRefundRuntime {
         if let Err(error) = self.poll_and_log(config_path, false, foreground_funding) {
             eprintln!("paid-exit: buyer refund recovery failed: {error}");
         }
-        let pending_control_request = if self.active_channel_id.is_some() {
-            None
-        } else {
-            take_daemon_control_request(config_path)
-        };
+        let pending_control_request = take_daemon_control_request(config_path);
         if allow_background_maintenance
             && pending_control_request.is_none()
             && !daemon_control_file_path(config_path).exists()
@@ -374,10 +381,10 @@ async fn attempt_paid_exit_buyer_refund(
     )
     .await;
     let restore = match restore {
-        Err(_) => Err(anyhow!(
+        Err(_) => Err(anyhow::Error::new(RefundWorkDeferred(format!(
             "Cashu refund recovery timed out after {} ms",
             attempt_timeout.as_millis()
-        )),
+        )))),
         Ok(result) => result,
     };
     let outcome = match restore {
@@ -448,6 +455,7 @@ impl RefundMintConnection {
             .client
             .post(format!("{}{path}", self.mint_url))
             .json(request)
+            .timeout(Duration::from_secs(10))
             .send()
             .await?;
         cashu_service::check_mint_response(response)?
@@ -493,9 +501,8 @@ async fn restore_spilman_refund_through_daemon_wallet(
         return Err(anyhow!("missing Cashu Spilman channel id"));
     }
     let data_dir = paid_exit_wallet_data_dir(config_path);
-    let (mut storage, storage_errors) =
-        cashu_service::FileSpilmanClientStorage::load_with_lock(client_store_lock)
-            .map_err(|error| anyhow!(error))?;
+    let (storage, _) = cashu_service::FileSpilmanClientStorage::load_with_lock(client_store_lock)
+        .map_err(|error| anyhow!(error))?;
     let funding = storage
         .get_funding(channel_id)
         .cloned()
@@ -517,6 +524,10 @@ async fn restore_spilman_refund_through_daemon_wallet(
             0,
         ));
     }
+    // Funding parameters are immutable. Do not hold the channel-store lock
+    // across mint I/O or while queuing a wallet import: a foreground opening
+    // may otherwise hold the wallet queue while waiting for this same lock.
+    drop(storage);
 
     let original_keyset = cdk_spilman::parse_keyset_info_from_json(&funding.keyset_info_json)
         .map_err(|error| anyhow!(error))?;
@@ -539,12 +550,6 @@ async fn restore_spilman_refund_through_daemon_wallet(
     }
     let sender_secret = SecretKey::from_hex(&sender_key.secret_hex)?;
     *contacted_mint = true;
-    let output_keyset_json =
-        cashu_service::fetch_spilman_keyset_info_json(&funding.mint_url, &unit, None)
-            .await
-            .map_err(|error| anyhow!(error))?;
-    let output_keyset = cdk_spilman::parse_keyset_info_from_json(&output_keyset_json)
-        .map_err(|error| anyhow!(error))?;
     let mint = RefundMintConnection::new(&funding.mint_url);
     let funding_state = channel.check_funding_token_state(&mint).await?;
     if funding_state.state != cashu::nuts::State::Spent {
@@ -560,6 +565,13 @@ async fn restore_spilman_refund_through_daemon_wallet(
             },
         );
     }
+
+    let output_keyset_json =
+        cashu_service::fetch_spilman_keyset_info_json(&funding.mint_url, &unit, None)
+            .await
+            .map_err(|error| anyhow!(error))?;
+    let output_keyset = cdk_spilman::parse_keyset_info_from_json(&output_keyset_json)
+        .map_err(|error| anyhow!(error))?;
 
     let sender = cdk_spilman::SpilmanChannelSender::new(sender_secret, channel);
     let mut proofs = cashu_service::restore_sender_proofs_from_issued_keyset(
@@ -597,6 +609,16 @@ async fn restore_spilman_refund_through_daemon_wallet(
         .context("daemon returned an invalid Cashu refund import response")?;
         imported.amount_sat
     };
+    let lock = SharedSpilmanClientStoreLock::try_acquire(spilman_client_store_path(&data_dir))
+        .map_err(|error| anyhow!(error))?
+        .ok_or_else(|| {
+            anyhow::Error::new(RefundWorkDeferred(
+                "Cashu refund recovered; waiting to record channel completion".to_string(),
+            ))
+        })?;
+    let (mut storage, storage_errors) =
+        cashu_service::FileSpilmanClientStorage::load_with_lock(lock)
+            .map_err(|error| anyhow!(error))?;
     storage.set_closed(channel_id);
     storage.mark_refund_witnesses_persisted(channel_id);
     storage.mark_refund_proofs_validated(channel_id);
@@ -654,7 +676,10 @@ fn apply_paid_exit_buyer_refund_attempt(
             store.defer_buyer_mint_retry(
                 &mint_url,
                 unix_timestamp(),
-                error.is_some(),
+                // A local work deadline or busy store says nothing about the
+                // mint's availability. Keep retrying the refund without
+                // blocking unrelated foreground payments at the same mint.
+                error.is_some_and(|error| !error.is::<RefundWorkDeferred>()),
                 error
                     .and_then(|error| error.downcast_ref::<cashu_service::MintRetryAfter>())
                     .map(|delay| delay.0),

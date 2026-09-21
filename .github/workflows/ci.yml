@@ -34,6 +34,9 @@ jobs:
         with:
           node-version: 24
 
+      - name: Install release tooling dependencies
+        run: brew install ripgrep
+
       - name: Test release tooling contracts
         run: ./scripts/test-release-tooling-contracts.sh
 

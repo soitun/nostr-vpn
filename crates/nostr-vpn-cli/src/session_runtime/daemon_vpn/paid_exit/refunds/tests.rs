@@ -390,8 +390,8 @@
         assert!(
             SharedSpilmanClientStoreLock::try_acquire(&client_store_path)
                 .expect("probe Spilman client lock")
-                .is_none(),
-            "daemon Cashu operations must not race the refund worker"
+                .is_some(),
+            "an HTTP refund request must not prevent foreground channel funding"
         );
         let control_tick_started = Instant::now();
         assert!(
@@ -403,6 +403,12 @@
         assert!(
             control_tick_started.elapsed() < attempt_timeout / 2,
             "an in-flight refund blocked a control or roaming tick"
+        );
+        write_daemon_control_request(&config_path, DaemonControlRequest::Reload).unwrap();
+        assert_eq!(
+            runtime.before_tick(&config_path, false, false),
+            Some(DaemonControlRequest::Reload),
+            "an in-flight mint request must not delay Internet mode changes"
         );
 
         let first = wait_for_recovery(&mut runtime, &config_path).await;
@@ -416,6 +422,11 @@
         let hanging = store.channels.get("a-hanging").expect("hanging channel");
         assert_eq!(hanging.status, PaidRouteLifecycleStatus::Closing);
         assert!(hanging.error.contains("timed out after 750 ms"));
+        assert_eq!(
+            store.buyer_mint_failure_retry_at(&mint_url),
+            0,
+            "the local refund deadline must not label the mint unavailable for new payments"
+        );
         let complete = store.channels.get("b-complete").expect("complete channel");
         assert_eq!(complete.status, PaidRouteLifecycleStatus::Closed);
         assert!(complete.error.is_empty());
@@ -576,4 +587,89 @@
             }
             server.await.unwrap();
         }
+    }
+
+    #[tokio::test]
+    async fn healthy_multi_request_refund_can_finish_after_three_seconds() {
+        let directory = TestDirectory::new();
+        let config_path = directory.0.join("config.toml");
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mint_url = format!("http://{}", listener.local_addr().unwrap());
+        let funding = test_spilman_funding(&directory.0, &mint_url);
+        let keyset: serde_json::Value = serde_json::from_str(&funding.keyset_info_json).unwrap();
+        let keyset_id = keyset["keysetId"].as_str().unwrap().to_string();
+        let mint = tokio::spawn(async move {
+            let mut paths = Vec::new();
+            for _ in 0..5 {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let (header_end, length) = loop {
+                    let mut chunk = [0; 4096];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    assert!(read > 0);
+                    bytes.extend_from_slice(&chunk[..read]);
+                    if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                        let headers = String::from_utf8_lossy(&bytes[..end]);
+                        let length = headers.lines().find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().unwrap())
+                        }).unwrap_or(0);
+                        break (end + 4, length);
+                    }
+                };
+                while bytes.len() < header_end + length {
+                    let mut chunk = [0; 4096];
+                    let read = stream.read(&mut chunk).await.unwrap();
+                    assert!(read > 0);
+                    bytes.extend_from_slice(&chunk[..read]);
+                }
+                let headers = String::from_utf8_lossy(&bytes[..header_end]);
+                let path = headers.split_whitespace().nth(1).unwrap().to_string();
+                let response = if path == "/v1/checkstate" {
+                    let body: serde_json::Value = serde_json::from_slice(&bytes[header_end..]).unwrap();
+                    let states = body["Ys"].as_array().unwrap().iter()
+                        .map(|y| serde_json::json!({"Y": y, "state": "SPENT"}))
+                        .collect::<Vec<_>>();
+                    serde_json::json!({"states": states})
+                } else if path == "/v1/keysets" {
+                    serde_json::json!({"keysets": [{"id": keyset_id, "unit": "sat", "active": true, "input_fee_ppk": 0}]})
+                } else if path.starts_with("/v1/keys/") {
+                    serde_json::json!({"keysets": [{"id": keyset_id, "unit": "sat", "keys": keyset["keys"]}]})
+                } else {
+                    assert_eq!(path, "/v1/restore");
+                    serde_json::json!({"outputs": [], "signatures": []})
+                };
+                paths.push(path);
+                // Each request is healthy; their total exceeds the old whole-work budget.
+                tokio::time::sleep(Duration::from_millis(700)).await;
+                let body = response.to_string();
+                stream.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes()).await.unwrap();
+            }
+            paths
+        });
+        let (mut storage, errors) = FileSpilmanClientStorage::load(spilman_client_store_path(&directory.0)).unwrap();
+        storage.save_funding("slow-healthy", funding);
+        errors.ensure_ok().unwrap();
+        drop(storage);
+        let mut record = channel("slow-healthy", PaidRouteChannelRole::Buyer, PaidRouteLifecycleStatus::Closing);
+        record.mint_url = mint_url.clone();
+        update_paid_route_store(&paid_route_store_file_path(&config_path), |store| {
+            store.upsert_channel(record);
+            Ok(())
+        }).unwrap();
+        let mut runtime = PaidExitBuyerRefundRuntime::new().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let recovery = loop {
+            if let Some(result) = runtime.poll(&config_path, true).unwrap() { break result; }
+            assert!(Instant::now() < deadline, "healthy refund never completed");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert_eq!(recovery.complete_count, 1);
+        assert_eq!(recovery.error_count, 0);
+        let paths = mint.await.unwrap();
+        assert_eq!(paths.first().unwrap(), "/v1/checkstate");
+        let store = load_paid_route_store(&paid_route_store_file_path(&config_path)).unwrap();
+        assert_eq!(store.channels["slow-healthy"].status, PaidRouteLifecycleStatus::Closed);
+        assert_eq!(store.buyer_mint_failure_retry_at(&mint_url), 0);
     }

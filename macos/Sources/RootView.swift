@@ -54,6 +54,8 @@ struct RootView: View {
     @State var paidExitListingAdvancedExpanded = false
     @State var wireGuardUpstreamExpanded = RootView.initialWireGuardUpstreamExpanded()
     @State var connectionSettingsPresented = RootView.initialWireGuardUpstreamExpanded()
+    @State var expandedPaidRouteOffers: Set<String> = []
+    @State var expandedPaidRouteSessions: Set<String> = []
     @State var paidRouteOfferCountryFilter = "all"
     @State var paidRouteOfferSort = "quality"
     @AppStorage("paidRouteHistoryClearedBeforeUnix") var paidRouteHistoryClearedBeforeUnix = 0.0
@@ -632,6 +634,7 @@ struct RootView: View {
         case .publicExits:
             pageScroll {
                 pageTitle("Providers", "globe")
+                    .labelStyle(.titleOnly)
                 Text("Experimental")
                     .font(.caption)
                     .foregroundStyle(.secondary)

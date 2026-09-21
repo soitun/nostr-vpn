@@ -19,9 +19,6 @@ extension RootView {
     var internetChoiceSettings: some View {
         return surface {
             sectionHeader("Connect through", systemImage: "network")
-            if state.internetSource != "paid_automatic" || !paidRouteMarketAvailable {
-                internetSourceStatus
-            }
             VStack(spacing: 8) {
                 routeChoice(
                     title: "This device",
@@ -41,7 +38,6 @@ extension RootView {
                         details: {
                             if state.internetSource == "paid_automatic" {
                                 VStack(alignment: .leading, spacing: 8) {
-                                    internetSourceStatus
                                     if !state.exitNode.isEmpty {
                                         HStack(spacing: 14) {
                                             if state.exitNodeActive,
@@ -334,6 +330,12 @@ extension RootView {
             }
             .buttonStyle(.plain)
             .disabled(!enabled || manager.actionInFlight)
+            if selected && state.internetSource != "direct" {
+                internetSourceStatus
+                    .padding(.leading, 34)
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 9)
+            }
             details()
         }
         .background(
