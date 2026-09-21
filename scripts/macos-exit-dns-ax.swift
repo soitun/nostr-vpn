@@ -264,6 +264,11 @@ func pressAndWaitForSaveCompletion(
     guard boolAttribute(save, kAXEnabledAttribute) == true else {
         throw DriverError.invalidState("Exit DNS save was not actionable")
     }
+    // The settings form is itself a sheet. Only new or nested modals are errors.
+    let settingsSheet = descendants(application).last { element in
+        stringAttribute(element, kAXRoleAttribute) == kAXSheetRole
+            && descendants(element).contains { CFEqual($0, save) }
+    }
     try pressElement(save, label: identifier)
 
     let inFlightProbeDeadline = Date().addingTimeInterval(5)
@@ -283,7 +288,7 @@ func pressAndWaitForSaveCompletion(
                 "Exit DNS save was not actionable after the completion probe"
             )
         }
-        if let modalText = blockingModalText(application) {
+        if let modalText = blockingModalText(application, ignoring: settingsSheet) {
             throw DriverError.invalidState(
                 "Exit DNS save failed: \(modalText)"
             )
@@ -296,7 +301,7 @@ func pressAndWaitForSaveCompletion(
         if let current = findNow(application, identifier: identifier),
            boolAttribute(current, kAXEnabledAttribute) == true {
             Thread.sleep(forTimeInterval: 0.15)
-            if let modalText = blockingModalText(application) {
+            if let modalText = blockingModalText(application, ignoring: settingsSheet) {
                 throw DriverError.invalidState(
                     "Exit DNS save failed: \(modalText)"
                 )
@@ -321,10 +326,14 @@ func pressAndWaitForSellerSaveCompletion(_ application: AXUIElement) throws {
     }
 }
 
-func blockingModalText(_ application: AXUIElement) -> String? {
+func blockingModalText(
+    _ application: AXUIElement,
+    ignoring expectedSheet: AXUIElement? = nil
+) -> String? {
     guard let modal = descendants(application).first(where: { element in
         let role = stringAttribute(element, kAXRoleAttribute)
         return visible(element) && (role == kAXSheetRole || role == "AXDialog")
+            && !(expectedSheet.map { CFEqual(element, $0) } ?? false)
     }) else {
         return nil
     }
