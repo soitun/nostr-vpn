@@ -6,8 +6,9 @@ All notable changes to this project are documented in this file.
 
 ### Release notes
 
-This release improves VPN pause behavior and simplifies Internet connection
-controls on macOS. iOS does not support paid exits.
+This release improves VPN pause behavior, keeps background refunds from delaying
+Internet payments, and simplifies connection controls on macOS. iOS does not
+support paid exits.
 
 ### Fixed
 
@@ -15,11 +16,15 @@ controls on macOS. iOS does not support paid exits.
   remaining FIPS connections.
 - Keep macOS LAN peers off gateway bypass routes so local connections retain
   their direct routes.
+- Keep background refund recovery from blocking new payments and active paid
+  Internet connections.
 
 ### Improved
 
 - Simplify macOS Internet navigation and keep automatic-exit status and provider
   actions together with the selected connection.
+- Hide paid-exit diagnostics behind expandable provider and connection rows on
+  macOS, while keeping purchase, disconnect, and rating controls directly usable.
 
 ## 4.1.14 - 2026-09-17
 
