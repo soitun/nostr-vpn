@@ -2282,6 +2282,7 @@ public func FfiConverterTypeNativeOutboundJoinRequestState_lower(_ value: Native
 public struct NativePaidExitSellerState {
     public var supported: Bool
     public var enabled: Bool
+    public var ready: Bool
     public var statusText: String
     public var providerLink: String
     public var upstream: String
@@ -2323,9 +2324,10 @@ public struct NativePaidExitSellerState {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(supported: Bool, enabled: Bool, statusText: String, providerLink: String, upstream: String, privateVpnAccess: String, internetText: String, publicIpText: String, priceText: String, priceMsatPerGb: UInt64, acceptedMints: [String], maxChannelCapacitySat: UInt64, channelExpirySecs: UInt64, channelExpiryText: String, settlementText: String, freeProbeUnits: UInt64, freeProbeText: String, graceUnits: UInt64, graceText: String, countryCode: String, networkClass: String, asn: UInt32, ipv4: Bool, ipv6: Bool, channelCreditMsat: UInt64, channelCreditText: String, channelCreditTitleText: String, channelCreditHelpText: String, currentConnectionCount: UInt64, pastConnectionCount: UInt64, totalBillableBytes: UInt64, totalTrafficText: String, totalPaidMsat: UInt64, totalPaidText: String, totalDueMsat: UInt64, totalDueText: String, totalUnpaidMsat: UInt64, totalUnpaidText: String, channels: [NativePaidRouteChannelState], sessions: [NativePaidRouteSessionState]) {
+    public init(supported: Bool, enabled: Bool, ready: Bool, statusText: String, providerLink: String, upstream: String, privateVpnAccess: String, internetText: String, publicIpText: String, priceText: String, priceMsatPerGb: UInt64, acceptedMints: [String], maxChannelCapacitySat: UInt64, channelExpirySecs: UInt64, channelExpiryText: String, settlementText: String, freeProbeUnits: UInt64, freeProbeText: String, graceUnits: UInt64, graceText: String, countryCode: String, networkClass: String, asn: UInt32, ipv4: Bool, ipv6: Bool, channelCreditMsat: UInt64, channelCreditText: String, channelCreditTitleText: String, channelCreditHelpText: String, currentConnectionCount: UInt64, pastConnectionCount: UInt64, totalBillableBytes: UInt64, totalTrafficText: String, totalPaidMsat: UInt64, totalPaidText: String, totalDueMsat: UInt64, totalDueText: String, totalUnpaidMsat: UInt64, totalUnpaidText: String, channels: [NativePaidRouteChannelState], sessions: [NativePaidRouteSessionState]) {
         self.supported = supported
         self.enabled = enabled
+        self.ready = ready
         self.statusText = statusText
         self.providerLink = providerLink
         self.upstream = upstream
@@ -2378,6 +2380,9 @@ extension NativePaidExitSellerState: Equatable, Hashable {
             return false
         }
         if lhs.enabled != rhs.enabled {
+            return false
+        }
+        if lhs.ready != rhs.ready {
             return false
         }
         if lhs.statusText != rhs.statusText {
@@ -2500,6 +2505,7 @@ extension NativePaidExitSellerState: Equatable, Hashable {
     public func hash(into hasher: inout Hasher) {
         hasher.combine(supported)
         hasher.combine(enabled)
+        hasher.combine(ready)
         hasher.combine(statusText)
         hasher.combine(providerLink)
         hasher.combine(upstream)
@@ -2552,6 +2558,7 @@ public struct FfiConverterTypeNativePaidExitSellerState: FfiConverterRustBuffer 
             try NativePaidExitSellerState(
                 supported: FfiConverterBool.read(from: &buf),
                 enabled: FfiConverterBool.read(from: &buf),
+                ready: FfiConverterBool.read(from: &buf),
                 statusText: FfiConverterString.read(from: &buf),
                 providerLink: FfiConverterString.read(from: &buf),
                 upstream: FfiConverterString.read(from: &buf),
@@ -2596,6 +2603,7 @@ public struct FfiConverterTypeNativePaidExitSellerState: FfiConverterRustBuffer 
     public static func write(_ value: NativePaidExitSellerState, into buf: inout [UInt8]) {
         FfiConverterBool.write(value.supported, into: &buf)
         FfiConverterBool.write(value.enabled, into: &buf)
+        FfiConverterBool.write(value.ready, into: &buf)
         FfiConverterString.write(value.statusText, into: &buf)
         FfiConverterString.write(value.providerLink, into: &buf)
         FfiConverterString.write(value.upstream, into: &buf)

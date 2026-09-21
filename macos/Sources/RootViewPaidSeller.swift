@@ -60,7 +60,9 @@ extension RootView {
 
     var paidExitSellerStatusBadges: some View {
         HStack(spacing: 8) {
-            badge(state.paidExitSeller.enabled ? "Selling" : "Off", style: state.paidExitSeller.enabled ? .ok : .muted)
+            badge(state.paidExitSeller.enabled ? (state.paidExitSeller.ready ? "Ready" : "Waiting") : "Off",
+                  style: state.paidExitSeller.enabled ? (state.paidExitSeller.ready ? .ok : .warn) : .muted)
+                .help(state.paidExitSeller.statusText)
             badge(fallbackText(state.paidExitSeller.internetText, paidExitCurrentInternetTitle), style: .muted)
             if !state.paidExitSeller.publicIpText.isEmpty {
                 badge("Public IP \(state.paidExitSeller.publicIpText)", style: .muted)

@@ -133,6 +133,8 @@ pub struct NativeRelayState {
 pub struct NativePaidExitSellerState {
     pub supported: bool,
     pub enabled: bool,
+    #[serde(default)]
+    pub ready: bool,
     pub status_text: String,
     pub provider_link: String,
     pub upstream: String,

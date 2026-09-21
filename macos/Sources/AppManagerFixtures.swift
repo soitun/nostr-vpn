@@ -350,8 +350,9 @@ extension AppManager {
             walletFiatCurrency: "USD",
             paidExitSeller: NativePaidExitSellerState(
                 supported: true,
-                enabled: true,
-                statusText: "Selling public internet",
+                enabled: sellerScreenshot,
+                ready: sellerScreenshot,
+                statusText: sellerScreenshot ? "Selling internet is ready" : "Selling internet is off",
                 providerLink: "nvpn://paid-exit/npub1paidexitfinlanddemo?maxMsatPerGb=25000&mint=https%3A%2F%2Fmint.minibits.cash%2FBitcoin",
                 upstream: "host_default",
                 privateVpnAccess: "denied",

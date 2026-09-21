@@ -1,6 +1,6 @@
 import AppKit
 
-/// Shared by the Internet sidebar, its menu item, and the menu bar badge.
+/// Shared by the connection and selling rows, and the menu bar badge.
 /// The backend supplies attention separately from translated status copy.
 enum InternetExitIndicator: Equatable {
     case hidden, connecting, connected, attention
@@ -15,6 +15,21 @@ enum InternetExitIndicator: Equatable {
         } else {
             self = .connecting
         }
+    }
+
+    init(sellingEnabled: Bool, ready: Bool) {
+        self = !sellingEnabled ? .hidden : ready ? .connected : .connecting
+    }
+
+    static func tray(connection: Self, selling: Self, vpnEnabled: Bool, vpnActive: Bool) -> Self {
+        if connection == .attention { return .attention }
+        if connection == .connecting || selling == .connecting || (vpnEnabled && !vpnActive) {
+            return .connecting
+        }
+        if connection == .connected || selling == .connected || (vpnEnabled && vpnActive) {
+            return .connected
+        }
+        return .hidden
     }
 
     var color: NSColor? {
