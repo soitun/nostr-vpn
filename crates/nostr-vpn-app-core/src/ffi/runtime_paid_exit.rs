@@ -63,7 +63,7 @@ mod paid_exit {
             assert_eq!(paid_route_price_text(1), "0.001 sat/GB");
             assert_eq!(
                 paid_route_price_text_with_fiat(25_000, Some(80_000.0), "EUR"),
-                "≈ 0.02 EUR/GB"
+                "≈ €0.02/GB"
             );
             assert_eq!(
                 paid_route_price_text_with_fiat(25_000, None, "EUR"),
@@ -71,7 +71,7 @@ mod paid_exit {
             );
             assert_eq!(
                 paid_route_price_text_with_fiat(25_000, Some(100_000.0), "USD"),
-                "≈ 0.025 USD/GB"
+                "≈ $0.025/GB"
             );
             assert_eq!(
                 paid_route_price_text_with_fiat(0, Some(80_000.0), "EUR"),
@@ -79,11 +79,19 @@ mod paid_exit {
             );
             assert_eq!(
                 paid_route_price_text_with_fiat(1, Some(10_000.0), "USD"),
-                "<0.000001 USD/GB"
+                "<$0.000001/GB"
             );
             assert_eq!(
                 paid_route_price_text_with_fiat(25_000, Some(f64::NAN), "USD"),
                 "25 sat/GB"
+            );
+            assert_eq!(
+                paid_route_price_text_with_fiat(1_000, Some(8_000_000.0), "JPY"),
+                "≈ ¥0.08/GB"
+            );
+            assert_eq!(
+                crate::exchange_rate::format_fiat_msat(1_000, 8_000_000.0, "JPY"),
+                "<¥1"
             );
         }
 
@@ -125,13 +133,13 @@ mod paid_exit {
             apply_paid_route_currency(&mut channels, &mut sessions, &|msat| {
                 crate::exchange_rate::format_fiat_msat(msat, 80_000.0, "EUR")
             });
-            assert_eq!(channels[0].capacity_text, "≈ 0.2 EUR");
+            assert_eq!(channels[0].capacity_text, "≈ €0.20");
             assert_eq!(channels[0].capacity_sat, 250);
-            assert_eq!(sessions[0].paid_text, "≈ 0.02 EUR paid");
-            assert_eq!(sessions[0].amount_due_text, "≈ 0.024 EUR due");
-            assert_eq!(sessions[0].unpaid_text, "≈ 0.004 EUR behind");
-            assert_eq!(sessions[0].channel_balance_text, "≈ 0.18 EUR in channel");
-            assert_eq!(sessions[0].detail_text, "Paid, 1 GB used, ≈ 0.024 EUR due");
+            assert_eq!(sessions[0].paid_text, "≈ €0.02 paid");
+            assert_eq!(sessions[0].amount_due_text, "≈ €0.02 due");
+            assert_eq!(sessions[0].unpaid_text, "≈ €0.004 behind");
+            assert_eq!(sessions[0].channel_balance_text, "≈ €0.18 in channel");
+            assert_eq!(sessions[0].detail_text, "Paid, 1 GB used, ≈ €0.02 due");
             assert_eq!(sessions[0].paid_msat, 25_000);
             assert_eq!(sessions[0].amount_due_msat, 30_000);
             assert_eq!(sessions[0].unpaid_msat, 5_000);

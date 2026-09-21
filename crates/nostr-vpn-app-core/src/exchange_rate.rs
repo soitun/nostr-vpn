@@ -205,19 +205,39 @@ pub(crate) fn apply_exchange_rate(
     }
 }
 
-#[allow(clippy::cast_precision_loss)]
 pub(crate) fn format_fiat_msat(msat: u64, rate: f64, currency: &str) -> String {
+    format_fiat(msat, rate, currency, false)
+}
+
+pub(crate) fn format_fiat_price_msat(msat: u64, rate: f64, currency: &str) -> String {
+    format_fiat(msat, rate, currency, true)
+}
+
+#[allow(clippy::cast_precision_loss)]
+fn format_fiat(msat: u64, rate: f64, currency: &str, price: bool) -> String {
     let value = msat as f64 / 100_000_000_000.0 * rate;
+    let symbol = match currency {
+        "USD" => "$",
+        "EUR" => "€",
+        "GBP" => "£",
+        "JPY" => "¥",
+        "CAD" => "CA$",
+        "AUD" => "A$",
+        _ => "CHF ",
+    };
     if msat > 0 && value < 0.000_001 {
-        return format!("<0.000001 {currency}");
+        return format!("<{symbol}0.000001");
     }
-    let decimals = if value > 0.0 && value < 1.0 {
+    let decimals = if value > 0.0 && value < if price { 1.0 } else { 0.01 } {
         6
     } else if currency == "JPY" {
         0
     } else {
         2
     };
+    if decimals == 0 && value > 0.0 && value < 1.0 {
+        return format!("<{symbol}1");
+    }
     let mut value = format!("{value:.decimals$}");
     if decimals == 6 {
         while value.ends_with('0') {
@@ -227,7 +247,7 @@ pub(crate) fn format_fiat_msat(msat: u64, rate: f64, currency: &str) -> String {
             value.pop();
         }
     }
-    format!("≈ {value} {currency}")
+    format!("≈ {symbol}{value}")
 }
 
 impl Inner {
@@ -519,13 +539,13 @@ mod tests {
             stale: true,
         };
         apply_exchange_rate(&mut wallet, &snapshot);
-        assert_eq!(wallet.total_balance_text, "≈ 0.1004 EUR");
-        assert_eq!(wallet.navigation_balance_text, "≈ 0.1004 EUR");
-        assert_eq!(wallet.channel_balance_text, "≈ 0.2 EUR in channels");
-        assert_eq!(wallet.mints[0].balance_text, "≈ 0.1004 EUR");
+        assert_eq!(wallet.total_balance_text, "≈ €0.10");
+        assert_eq!(wallet.navigation_balance_text, "≈ €0.10");
+        assert_eq!(wallet.channel_balance_text, "≈ €0.20 in channels");
+        assert_eq!(wallet.mints[0].balance_text, "≈ €0.10");
         assert!(wallet.mints[1].balance_text.is_empty());
-        assert_eq!(wallet.last_action.amount_text, "≈ 0.1 EUR");
-        assert_eq!(wallet.last_action.fee_text, "≈ 0.0008 EUR fee");
+        assert_eq!(wallet.last_action.amount_text, "≈ €0.10");
+        assert_eq!(wallet.last_action.fee_text, "≈ €0.0008 fee");
         assert_eq!(wallet.exchange_rate_status, "Using last rate");
         assert_eq!(wallet.total_balance_msat, 125_500);
         assert_eq!(wallet.last_action.amount_sat, 125);

@@ -44,7 +44,7 @@ fn paid_route_price_text_with_fiat(
     }
     format!(
         "{}/GB",
-        crate::exchange_rate::format_fiat_msat(price_msat_per_gb, rate, currency.trim())
+        crate::exchange_rate::format_fiat_price_msat(price_msat_per_gb, rate, currency.trim())
     )
 }
 
