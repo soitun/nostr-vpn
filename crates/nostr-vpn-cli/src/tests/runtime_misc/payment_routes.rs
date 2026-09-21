@@ -3,8 +3,9 @@ use nostr_vpn_core::paid_route_store::update_paid_route_store;
 
 #[test]
 fn paid_modes_keep_wallet_mints_reachable_outside_the_route_they_fund() {
-    let dir = tempfile::tempdir().unwrap();
-    let config_path = dir.path().join("config.toml");
+    let dir = std::env::temp_dir().join(format!("nvpn-mint-routes-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let config_path = dir.join("config.toml");
     let mint = "https://198.51.100.42/Bitcoin";
     update_paid_route_store(&paid_route_store_file_path(&config_path), |store| {
         store.upsert_wallet_mint(mint, "Payment mint", Some(100_000), 1);
@@ -66,4 +67,5 @@ fn paid_modes_keep_wallet_mints_reachable_outside_the_route_they_fund() {
         !build(&app).control_plane_bypass_hosts.contains(&mint_ip),
         "removing a wallet mint must withdraw its bypass"
     );
+    std::fs::remove_dir_all(dir).unwrap();
 }
