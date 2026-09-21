@@ -208,7 +208,7 @@ PY
   release_join_android_wait_query() { trace "wait:$1:$2"; }
   release_join_android_tap_center() { trace "tap:$1:$2"; }
   release_join_android_tap_visible() { trace "tap:$1:$2"; }
-  release_join_android_scroll_to() { trace "scroll:$1:$2"; }
+  release_join_android_scroll_to() { trace "scroll:$1:$2${4:+:$4}"; }
   release_join_android_normalize_carrier() { trace normalize-carrier; }
   release_join_android_query() {
     [[ "$1:$2" == 'text:This device' && "$scenario" == saved-direct ]]
@@ -229,6 +229,7 @@ PY
       grep -Fxq normalize-carrier "$tmp/calls"
       [[ $(grep -n normalize-carrier "$tmp/calls" | cut -d: -f1) -lt $(grep -n 'tap:text:Add network' "$tmp/calls" | cut -d: -f1) ]]
       grep -Fxq 'tap:description:Internet tab' "$tmp/calls"
+      grep -Fxq 'scroll:resource:internet-source-picker:backward' "$tmp/calls"
       if [[ "$scenario" == saved-wireguard ]]; then
         grep -Fxq 'tap:description:Internet source This device' "$tmp/calls"
         [[ $(grep -n 'tap:description:Internet source This device' "$tmp/calls" | cut -d: -f1) -lt $(grep -n 'tap:text:Add network' "$tmp/calls" | cut -d: -f1) ]]
@@ -2096,4 +2097,37 @@ PY
     echo 'Android join setup accepted a prerequisite that stayed disabled' >&2
     exit 1
   fi
+)
+
+
+# Switching from scrolled Settings retains the list offset on Internet. Exercise
+# the real scroll driver against a viewport that starts below the source picker.
+(
+  source "$ROOT/scripts/lib-mobile-release-join-ui.sh"
+  scroll_tmp="$(mktemp -d "${TMPDIR:-/tmp}/nvpn-join-scroll.XXXXXX")"
+  trap 'rm -rf "$scroll_tmp"' EXIT
+  printf '2\n' >"$scroll_tmp/offset"
+  ADB=(scroll_adb)
+  scroll_adb() {
+    if [[ "$*" == 'shell wm size' ]]; then
+      printf 'Physical size: 1080x2400\n'
+    elif [[ "$1 $2 $3" == 'shell input swipe' ]]; then
+      local offset
+      offset="$(cat "$scroll_tmp/offset")"
+      if (($5 < $7)); then
+        offset=$((offset - 1))
+      else
+        offset=$((offset + 1))
+      fi
+      ((offset >= 0)) || offset=0
+      ((offset <= 2)) || offset=2
+      printf '%s\n' "$offset" >"$scroll_tmp/offset"
+    else
+      return 2
+    fi
+  }
+  release_join_android_query() { [[ "$(cat "$scroll_tmp/offset")" == 0 ]]; }
+  sleep() { :; }
+  release_join_android_scroll_to resource internet-source-picker safe-center backward
+  [[ "$(cat "$scroll_tmp/offset")" == 0 ]]
 )

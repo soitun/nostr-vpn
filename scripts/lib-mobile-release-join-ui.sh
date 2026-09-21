@@ -222,25 +222,35 @@ release_join_android_tap_visible() {
 }
 
 release_join_android_scroll() {
-  local size width height target duration=220
+  local size width height start target duration=220 direction="${2:-forward}"
   size="$("${ADB[@]}" shell wm size | tr -d '\r' | sed -n 's/^Physical size: //p')"
   width="${size%x*}"
   height="${size#*x}"
+  start="$((height * 4 / 5))"
   target="$((height / 3))"
   if [[ "${1:-}" == checkbox-label ]]; then
     target="$((height * 3 / 5))"
     duration=400
   fi
+  if [[ "$direction" == backward ]]; then
+    local previous_start="$start"
+    start="$target"
+    target="$previous_start"
+  fi
   "${ADB[@]}" shell input swipe \
-    "$((width / 2))" "$((height * 4 / 5))" \
+    "$((width / 2))" "$start" \
     "$((width / 2))" "$target" "$duration"
 }
 
 release_join_android_scroll_to() {
-  local kind="$1" expected="$2" visibility="${3:-safe-center}"
+  local kind="$1" expected="$2" visibility="${3:-safe-center}" direction="${4:-forward}"
   local attempts
   case "$visibility" in
     safe-center|visible-center) ;;
+    *) return 2 ;;
+  esac
+  case "$direction" in
+    forward|backward) ;;
     *) return 2 ;;
   esac
   for ((attempts = 0; attempts < 12; attempts++)); do
@@ -249,7 +259,7 @@ release_join_android_scroll_to() {
     then
       return 0
     fi
-    release_join_android_scroll "$kind" >/dev/null
+    release_join_android_scroll "$kind" "$direction" >/dev/null
     sleep 0.2
   done
   return 1
@@ -319,7 +329,8 @@ release_join_android_open_network_setup() {
       # A preceding exit test may have retained a now-stopped fixture. Select
       # native internet through the UI, without erasing its saved configuration.
       release_join_android_tap_center description 'Internet tab' || return 1
-      release_join_android_scroll_to resource internet-source-picker || return 1
+      # The shared list retains Settings' scroll offset; the picker is above it.
+      release_join_android_scroll_to resource internet-source-picker safe-center backward || return 1
       if ! release_join_android_query text 'This device' center >/dev/null 2>&1; then
         release_join_android_tap_center resource internet-source-picker || return 1
         release_join_android_tap_center description 'Internet source This device' || return 1
