@@ -601,7 +601,10 @@ impl FipsPrivateTunnelRuntime {
         &mut self,
         config: &FipsPrivateTunnelConfig,
     ) -> Result<(bool, Option<crate::MacosRouteSpec>)> {
-        let hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
+        let mut hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
+        hosts.extend(config.control_plane_bypass_hosts.iter().copied());
+        hosts.sort_unstable();
+        hosts.dedup();
         let interfaces = netdev::get_interfaces();
         let routes = crate::macos_network::macos_endpoint_bypass_targets_for_hosts(
             &hosts,

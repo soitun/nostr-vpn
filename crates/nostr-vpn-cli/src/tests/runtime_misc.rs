@@ -870,3 +870,7 @@ fn fips_pending_roster_recovery_ignores_connected_non_roster_transit() {
 
 #[path = "runtime_misc/exit_forwarding.rs"]
 mod exit_forwarding;
+
+#[cfg(all(feature = "paid-exit", any(target_os = "linux", target_os = "macos")))]
+#[path = "runtime_misc/payment_routes.rs"]
+mod payment_routes;

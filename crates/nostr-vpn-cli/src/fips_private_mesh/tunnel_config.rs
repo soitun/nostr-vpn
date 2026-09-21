@@ -561,7 +561,7 @@ impl FipsPrivateTunnelConfig {
             open_discovery_restart_max_pending,
             open_discovery_max_pending,
             mesh_mtu: private_mesh_mtu_from_app(Some(app)),
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
             control_plane_bypass_hosts: Vec::new(),
         })
     }
