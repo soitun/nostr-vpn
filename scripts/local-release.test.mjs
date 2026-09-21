@@ -1389,12 +1389,25 @@ case "$1" in
   status)
     ;;
   add)
+    if [ "$2" = --no-ignore ]; then
+      : > "$FAKE_HTREE_LOG.include-ignored"
+    else
+      rm -f "$FAKE_HTREE_LOG.include-ignored"
+    fi
     printf 'url: %s\\n' "$FAKE_HTREE_CID"
     ;;
   push)
     ;;
   cat)
     relative="\${2#*/}"
+    case "$relative" in
+      *.s9pk)
+        [ -f "$FAKE_HTREE_LOG.include-ignored" ] || {
+          echo "Path not found in directory: $relative" >&2
+          exit 1
+        }
+        ;;
+    esac
     if [ "\${FAKE_HTREE_MUTATE_METADATA:-}" = "$relative" ]; then
       LC_ALL=C /usr/bin/sed '1s/^./X/' "$FAKE_HTREE_STAGE/$relative"
     else
@@ -1513,7 +1526,7 @@ printf '{"id":"nostr-vpn","version":"4.1.5:0","virtualNetworking":true,"images":
     'user',
     'status',
     'release publish --help',
-    `add ${stage}`,
+    `add --no-ignore ${stage}`,
     'user',
     'status',
     'release publish --help',

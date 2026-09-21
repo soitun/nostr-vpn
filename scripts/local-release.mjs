@@ -1990,7 +1990,8 @@ function publishRelease({
   if (!draft) {
     validatePromotableReleaseManifest(manifest)
   }
-  const addOutput = run('htree', ['add', stageDir], { capture: true, dryRun })
+  // The validated stage is an exact allowlist; Git ignores must not omit assets.
+  const addOutput = run('htree', ['add', '--no-ignore', stageDir], { capture: true, dryRun })
   const match = addOutput.match(/^\s*url:\s*(\S+)/m)
   if (!match) {
     throw new Error('Could not parse htree add output for release CID.')
