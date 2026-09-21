@@ -157,7 +157,6 @@ impl FipsPrivateTunnelRuntime {
         config: &FipsPrivateTunnelConfig,
     ) -> Result<Vec<Ipv4Addr>> {
         let mut hosts = config.endpoint_hint_ipv4_hosts();
-        hosts.extend(config.control_plane_bypass_hosts.iter().copied());
         hosts.extend(
             self.mesh
                 .peer_transport_ipv4_hosts()
@@ -293,7 +292,8 @@ impl FipsPrivateTunnelRuntime {
                 return Ok(());
             }
             let config = self.config.clone();
-            let bypass_hosts = self.endpoint_bypass_ipv4_hosts(&config).await?;
+            let mut bypass_hosts = config.control_plane_bypass_hosts.clone();
+            bypass_hosts.extend(self.endpoint_bypass_ipv4_hosts(&config).await?);
             if linux_endpoint_bypass_hosts_unchanged(
                 &self.endpoint_bypass_routes,
                 &bypass_hosts,
@@ -601,7 +601,10 @@ impl FipsPrivateTunnelRuntime {
         &mut self,
         config: &FipsPrivateTunnelConfig,
     ) -> Result<(bool, Option<crate::MacosRouteSpec>)> {
-        let hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
+        let mut hosts = self.endpoint_bypass_ipv4_hosts(config).await?;
+        hosts.extend(config.control_plane_bypass_hosts.iter().copied());
+        hosts.sort_unstable();
+        hosts.dedup();
         let interfaces = netdev::get_interfaces();
         let routes = crate::macos_network::macos_endpoint_bypass_targets_for_hosts(
             &hosts,
