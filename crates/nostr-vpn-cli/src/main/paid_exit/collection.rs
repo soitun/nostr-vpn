@@ -1,4 +1,3 @@
-
 #[derive(Debug, Default)]
 pub(crate) struct PaidExitApplyFipsPaymentsResult {
     pub(crate) received_count: usize,
@@ -34,9 +33,7 @@ pub(crate) fn paid_exit_apply_fips_payments(
             let mut changed = false;
             let mut acknowledgments = Vec::new();
             for (sender_pubkey, id, envelope) in payments {
-                if normalize_nostr_pubkey(&envelope.buyer).ok().as_deref()
-                    != Some(&sender_pubkey)
-                {
+                if normalize_nostr_pubkey(&envelope.buyer).ok().as_deref() != Some(&sender_pubkey) {
                     error_count += 1;
                     continue;
                 }
@@ -82,6 +79,14 @@ struct PaidExitCollectChannelOutcome {
     changed: bool,
 }
 
+#[cfg(test)]
+#[path = "collection_tests.rs"]
+mod seller_collection_tests;
+
+#[path = "collection_runtime.rs"]
+mod collection_runtime;
+pub(crate) use collection_runtime::PaidExitSellerCollector;
+
 async fn paid_exit_collect_channel_with_receiver(
     receiver: &FileSpilmanPaymentReceiver,
     config_path: &Path,
@@ -93,27 +98,69 @@ async fn paid_exit_collect_channel_with_receiver(
         .await
         .map_err(|error| anyhow!("{error}"))?;
 
-    let changed = update_paid_route_store(store_path, |store| {
-        store.mark_seller_channel_closed(
-            &close.channel_id,
-            close.closed_amount.saturating_mul(1_000),
-            unix_timestamp(),
-        )
-    })?;
+    paid_exit_finish_seller_collection(close, config_path, store_path, false).await
+}
+
+async fn paid_exit_finish_seller_collection(
+    close: CashuSpilmanReceiverCloseResult,
+    config_path: &Path,
+    store_path: &Path,
+    local_wallet_worker: bool,
+) -> Result<PaidExitCollectChannelOutcome> {
+    let proofs: Vec<cashu::nuts::Proof> = if close.receiver_proofs_json.trim().is_empty() {
+        Vec::new()
+    } else {
+        serde_json::from_str(&close.receiver_proofs_json).context("invalid seller close receipt")?
+    };
+    let proof_total = proofs
+        .iter()
+        .try_fold(0_u64, |total, proof| {
+            total.checked_add(u64::from(proof.amount))
+        })
+        .context("seller close receipt amount overflow")?;
+    anyhow::ensure!(
+        proof_total == close.receiver_sum,
+        "seller close receipt does not match its wallet proceeds"
+    );
     let wallet_collect = if close.receiver_proofs_json.trim().is_empty() {
         None
     } else {
-        let imported: cashu_service::CashuReceivedPayment = daemon_cashu_wallet_request(
-                config_path,
-                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::ImportProofs {
-                    mint_url: close.mint_url.clone(),
-                    unit: close.unit.clone(),
-                    proofs_json: close.receiver_proofs_json.clone(),
-                },
-            )
-            .await?;
+        let command = crate::cashu_wallet_daemon::DaemonCashuWalletCommand::ImportProofs {
+            mint_url: close.mint_url.clone(),
+            unit: close.unit.clone(),
+            proofs_json: close.receiver_proofs_json.clone(),
+        };
+        let imported: cashu_service::CashuReceivedPayment = if local_wallet_worker {
+            serde_json::from_value(
+                crate::cashu_wallet_daemon::request_daemon_cashu_wallet_worker(
+                    config_path,
+                    command,
+                )
+                .await?,
+            )?
+        } else {
+            daemon_cashu_wallet_request(config_path, command).await?
+        };
         Some(json!(imported))
     };
+
+    // The receiver persists its close receipt before returning. Import its
+    // proofs idempotently before removing this channel from due collections;
+    // a crash or failed IPC response must leave the receipt retryable.
+    let changed = update_paid_route_store(store_path, |store| {
+        let mut changed = store.mark_seller_channel_closed(
+            &close.channel_id,
+            close.closed_amount.saturating_mul(1_000),
+            unix_timestamp(),
+        )?;
+        if let Some(channel) = store.channels.get_mut(&close.channel_id)
+            && !channel.error.is_empty()
+        {
+            channel.error.clear();
+            changed = true;
+        }
+        Ok(changed)
+    })?;
 
     Ok(PaidExitCollectChannelOutcome {
         close,
@@ -144,12 +191,12 @@ async fn paid_exit_collect_command(args: PaidExitCollectArgs) -> Result<()> {
     let mut changed = outcome.changed;
     let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(
         crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
-        &config_path,
-        crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
-            refresh_quotes: false,
-        },
-    )
-    .await?,
+            &config_path,
+            crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+                refresh_quotes: false,
+            },
+        )
+        .await?,
     )?;
     let (wallet_changed, store) = update_paid_route_store(&store_path, |store| {
         let changed = sync_paid_exit_wallet_store_from_cashu(store, &overview, unix_timestamp());
@@ -276,12 +323,12 @@ async fn paid_exit_collect_due_command(args: PaidExitCollectDueArgs) -> Result<(
     } else {
         let overview = crate::cashu_wallet_daemon::decode_daemon_cashu_wallet_overview(
             crate::cashu_wallet_daemon::request_daemon_cashu_wallet(
-            &config_path,
-            crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
-                refresh_quotes: false,
-            },
-        )
-        .await?,
+                &config_path,
+                crate::cashu_wallet_daemon::DaemonCashuWalletCommand::Overview {
+                    refresh_quotes: false,
+                },
+            )
+            .await?,
         )?;
         changed |= update_paid_route_store(&store_path, |store| {
             Ok(sync_paid_exit_wallet_store_from_cashu(
