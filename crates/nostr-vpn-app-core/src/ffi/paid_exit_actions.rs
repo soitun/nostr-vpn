@@ -68,6 +68,7 @@ impl NativeAppRuntime {
             &self.paid_route_wallet_last_action,
             &self.paid_route_payment_last_action,
         );
+        state.wallet.history = self.paid_route_wallet_history.clone();
         if app.is_some_and(|app| app.wallet_fiat_enabled) {
             let snapshot = self.exchange_rate_service.snapshot();
             for offer in state.offers.iter_mut().chain(&mut state.visible_offers) {

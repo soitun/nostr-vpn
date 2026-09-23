@@ -98,6 +98,7 @@ pub enum NativeAppAction {
     RefreshPaidRouteWallet {
         refresh: bool,
     },
+    RefreshPaidRouteWalletHistory,
     TopUpPaidRouteWallet {
         mint_url: Option<String>,
         amount_sat: u64,

@@ -279,6 +279,9 @@ impl NativeAppRuntime {
             NativeAppAction::RefreshPaidRouteWallet { refresh } => {
                 self.refresh_paid_route_wallet(refresh)
             }
+            NativeAppAction::RefreshPaidRouteWalletHistory => {
+                self.refresh_paid_route_wallet_history()
+            }
             NativeAppAction::TopUpPaidRouteWallet {
                 mint_url,
                 amount_sat,

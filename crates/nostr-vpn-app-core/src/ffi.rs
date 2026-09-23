@@ -35,7 +35,8 @@ use crate::native_state::{
     NativeNetworkSummary, NativeOutboundJoinRequestState, NativePaidExitSellerState,
     NativePaidRouteMarketFilterState, NativePaidRouteMarketState,
     NativePaidRoutePaymentActionState, NativePaidRouteWalletActionState,
-    NativePaidRouteWalletState, NativeParticipantState, NativePortMappingStatus, NativeProbeStatus,
+    NativePaidRouteWalletHistoryState, NativePaidRouteWalletState,
+    NativeParticipantState, NativePortMappingStatus, NativeProbeStatus,
     NativeRelayState,
 };
 use crate::platform::current_runtime_capabilities;
@@ -198,6 +199,7 @@ struct NativeAppRuntime {
     last_service_status_refresh_at: Option<Instant>,
     paid_route_market_filter: NativePaidRouteMarketFilterState,
     paid_route_wallet_last_action: NativePaidRouteWalletActionState,
+    paid_route_wallet_history: NativePaidRouteWalletHistoryState,
     #[cfg(feature = "paid-exit")]
     paid_route_wallet_next_refresh_at: Option<Instant>,
     #[cfg(all(feature = "paid-exit", any(target_os = "ios", target_os = "android")))]
@@ -271,6 +273,7 @@ include!("ffi/helpers.rs");
 #[cfg(test)]
 mod tests {
     include!("ffi/tests_core.rs");
+    include!("ffi/tests_wallet_history.rs");
     include!("ffi/tests_network.rs");
     include!("ffi/tests_network_join_actions.rs");
     include!("ffi/tests_service.rs");

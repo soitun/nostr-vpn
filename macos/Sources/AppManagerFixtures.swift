@@ -495,6 +495,27 @@ extension AppManager {
                             lastCheckedUnix: fixtureNow - 120
                         )
                     ],
+                    history: NativePaidRouteWalletHistoryState(
+                        loaded: true,
+                        error: "",
+                        entries: [
+                            NativePaidRouteWalletActivityState(
+                                id: "history-pending", kind: "top_up", status: "pending",
+                                mintUrl: "https://mint.coinos.io", amountSat: 1000, feeSat: 0,
+                                createdAtUnix: fixtureNow - 60
+                            ),
+                            NativePaidRouteWalletActivityState(
+                                id: "history-payment", kind: "lightning_payment", status: "complete",
+                                mintUrl: "https://mint.minibits.cash/Bitcoin", amountSat: 10, feeSat: 1,
+                                createdAtUnix: fixtureNow - 3600
+                            ),
+                            NativePaidRouteWalletActivityState(
+                                id: "history-expired", kind: "top_up", status: "expired",
+                                mintUrl: "https://mint.minibits.cash/Bitcoin", amountSat: 100, feeSat: 0,
+                                createdAtUnix: fixtureNow - 86400
+                            )
+                        ]
+                    ),
                     lastAction: NativePaidRouteWalletActionState(
                         kind: "topup",
                         statusText: "Invoice ready",

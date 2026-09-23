@@ -48,6 +48,7 @@ mod paid_exit {
     include!("paid_exit_actions.rs");
     include!("paid_exit_manual_provider.rs");
     include!("paid_exit_wallet_helpers.rs");
+    include!("paid_exit_wallet_history.rs");
     include!("paid_exit_state.rs");
     include!("paid_exit_text.rs");
     include!("paid_exit_json.rs");
@@ -360,6 +361,10 @@ impl NativeAppRuntime {
     }
 
     fn refresh_paid_route_wallet(&mut self, _refresh: bool) -> Result<()> {
+        self.paid_exit_not_built()
+    }
+
+    fn refresh_paid_route_wallet_history(&mut self) -> Result<()> {
         self.paid_exit_not_built()
     }
 

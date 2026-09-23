@@ -203,7 +203,29 @@ pub struct NativePaidRouteWalletState {
     pub exchange_rate_stale: bool,
     pub exchange_rate_updated_at_unix: u64,
     pub mints: Vec<NativePaidRouteWalletMintState>,
+    #[serde(default)]
+    pub history: NativePaidRouteWalletHistoryState,
     pub last_action: NativePaidRouteWalletActionState,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePaidRouteWalletHistoryState {
+    pub loaded: bool,
+    pub error: String,
+    pub entries: Vec<NativePaidRouteWalletActivityState>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePaidRouteWalletActivityState {
+    pub id: String,
+    pub kind: String,
+    pub status: String,
+    pub mint_url: String,
+    pub amount_sat: u64,
+    pub fee_sat: u64,
+    pub created_at_unix: u64,
 }
 
 #[derive(uniffi::Record, Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]

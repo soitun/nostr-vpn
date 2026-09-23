@@ -164,6 +164,10 @@ extension AppManager {
         dispatch(.refreshPaidRouteWallet(refresh: true), status: "Refreshing wallet")
     }
 
+    func refreshPaidRouteWalletHistory() {
+        dispatch(.refreshPaidRouteWalletHistory, status: "Loading history")
+    }
+
     func receivePaidRouteWalletToken(_ token: String) {
         let trimmed = token.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
