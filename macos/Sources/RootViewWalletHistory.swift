@@ -41,6 +41,7 @@ extension RootView {
             }
             .padding(.top, 8)
         }
+        .disabled(manager.actionInFlight)
         .onChange(of: paidRouteWalletHistoryExpanded) { _, expanded in
             if expanded { manager.refreshPaidRouteWalletHistory() }
         }
