@@ -339,7 +339,9 @@ extension RootView {
     func paidRouteMintRow(_ mint: NativePaidRouteWalletMintState) -> some View {
         HStack(spacing: 10) {
             Button {
-                manager.setPaidRouteDefaultMint(mint.url)
+                if !mint.isDefault {
+                    manager.setPaidRouteDefaultMint(mint.url)
+                }
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: mint.isDefault ? "star.fill" : "star")
@@ -357,7 +359,7 @@ extension RootView {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .disabled(manager.actionInFlight || mint.isDefault)
+            .disabled(manager.actionInFlight)
             .help(mint.isDefault ? "Default wallet mint" : "Use as default wallet mint")
             .accessibilityLabel("\(mint.url), \(mint.isDefault ? "default wallet mint" : "use as default wallet mint")")
 
