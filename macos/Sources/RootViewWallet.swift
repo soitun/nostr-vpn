@@ -339,23 +339,26 @@ extension RootView {
             Button {
                 manager.setPaidRouteDefaultMint(mint.url)
             } label: {
-                Image(systemName: mint.isDefault ? "star.fill" : "star")
-                    .foregroundStyle(mint.isDefault ? .yellow : .secondary)
+                HStack(spacing: 10) {
+                    Image(systemName: mint.isDefault ? "star.fill" : "star")
+                        .foregroundStyle(mint.isDefault ? .yellow : .secondary)
+                    Text(mint.url)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Spacer(minLength: 12)
+                    if mint.balanceKnown {
+                        Text(fallbackText(mint.balanceText, formatPaidRouteMsat(mint.balanceMsat)))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .disabled(manager.actionInFlight || mint.isDefault)
             .help(mint.isDefault ? "Default wallet mint" : "Use as default wallet mint")
-            .accessibilityLabel(mint.isDefault ? "Default wallet mint" : "Use as default wallet mint")
+            .accessibilityLabel("\(mint.url), \(mint.isDefault ? "default wallet mint" : "use as default wallet mint")")
 
-            Text(mint.url)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 12)
-            if mint.balanceKnown {
-                Text(fallbackText(mint.balanceText, formatPaidRouteMsat(mint.balanceMsat)))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
             Button {
                 manager.removePaidRouteWalletMint(mint.url)
             } label: {
