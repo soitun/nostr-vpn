@@ -349,7 +349,7 @@ fn paid_route_session_state_with_decision(
         lifecycle_status,
         access_state,
         &usage_text,
-        amount_due_msat,
+        &paid_route_due_text(amount_due_msat),
     );
     let realized_exit_ip = session.realized_exit_ip.clone().unwrap_or_default();
     let location_text = paid_route_location_text(&realized_exit_ip, &country_claim);

@@ -57,14 +57,14 @@
         };
 
         assert_eq!(
-            paid_exit::paid_exit_seller_status_text(
+            paid_exit::paid_exit_seller_status(
                 &app,
                 Some(&daemon_state),
                 &app.paid_exit,
                 false,
                 true,
             ),
-            "Selling internet is ready"
+            (true, "Selling internet is ready".to_string())
         );
     }
 
@@ -76,14 +76,14 @@
         app.set_internet_source(InternetSource::WireGuard);
 
         assert_eq!(
-            paid_exit::paid_exit_seller_status_text(
+            paid_exit::paid_exit_seller_status(
                 &app,
                 Some(&DaemonRuntimeState::default()),
                 &app.paid_exit,
                 false,
                 true,
             ),
-            "Configure WireGuard upstream before advertising"
+            (false, "Configure WireGuard upstream before advertising".to_string())
         );
 
         let peer = Keys::generate().public_key().to_hex();
@@ -94,14 +94,14 @@
         app.select_private_exit_node(&peer)
             .expect("select private exit");
         assert_eq!(
-            paid_exit::paid_exit_seller_status_text(
+            paid_exit::paid_exit_seller_status(
                 &app,
                 Some(&DaemonRuntimeState::default()),
                 &app.paid_exit,
                 true,
                 true,
             ),
-            "Waiting for the selected private exit"
+            (false, "Waiting for the selected private exit".to_string())
         );
     }
 
@@ -120,14 +120,14 @@
 
         assert!(effective_config_relays(&app).is_empty());
         assert_eq!(
-            paid_exit::paid_exit_seller_status_text(
+            paid_exit::paid_exit_seller_status(
                 &app,
                 Some(&daemon_state),
                 &app.paid_exit,
                 false,
                 true,
             ),
-            "Selling internet is ready"
+            (true, "Selling internet is ready".to_string())
         );
     }
 

@@ -404,6 +404,37 @@ assert_buyer_egress_source() {
     cat "$capture" >&2 || true
     exit 1
   fi
+  "${COMPOSE[@]}" exec -T node-b python3 - "$PAID_EXIT_RESALE_TARGET" "$PAID_EXIT_PROBE_PORT" "$expected_source" <<'PY'
+import json
+import ipaddress
+import pathlib
+import subprocess
+import sys
+import time
+import urllib.request
+
+host, port, expected_source = sys.argv[1:]
+base = f'http://{host}:{port}'
+store_path = pathlib.Path('/root/.config/nvpn/paid-routes.json')
+def billable_bytes():
+    store = json.loads(store_path.read_text())
+    return sum(record['session']['usage'].get('billable_bytes', 0) for record in store['sessions'].values())
+before = billable_bytes()
+with urllib.request.urlopen(base + '/source-ip', timeout=10) as response:
+    source = json.load(response)['ip']
+assert source == expected_source, f'TCP used {source}, expected {expected_source}'
+with urllib.request.urlopen(base + '/down?bytes=131072', timeout=10) as response:
+    assert response.read() == b'0' * 131072, 'resold download was corrupted'
+with urllib.request.urlopen(base + '/up', data=b'resold-uplink' * 4096, timeout=10) as response:
+    assert response.read() == b'ok', 'resold upload failed'
+answer = subprocess.check_output(['dig', '+short', '+time=3', '+tries=1', 'example.com', 'A'], text=True, timeout=5).strip()
+assert answer and ipaddress.ip_address(answer.splitlines()[-1]).version == 4, 'resold DNS failed'
+deadline = time.monotonic() + 15
+while billable_bytes() <= before and time.monotonic() < deadline:
+    time.sleep(0.25)
+assert billable_bytes() > before, 'resold traffic was not metered'
+PY
+  echo "Paid buyer $label uplink: ICMP and TCP egress, upload, download, DNS, metering passed"
 }
 
 assert_buyer_egress_blocked() {
@@ -416,6 +447,20 @@ assert_buyer_egress_blocked() {
     else
       consecutive_failures="$((consecutive_failures + 1))"
       if ((consecutive_failures >= 3)); then
+        "${COMPOSE[@]}" exec -T node-b python3 - "$PAID_EXIT_RESALE_TARGET" "$PAID_EXIT_PROBE_PORT" <<'PY'
+import sys
+import urllib.error
+import urllib.request
+
+try:
+    urllib.request.urlopen(f'http://{sys.argv[1]}:{sys.argv[2]}/source-ip', timeout=5)
+except urllib.error.HTTPError:
+    raise SystemExit('TCP response received after the seller upstream failed')
+except OSError:
+    pass
+else:
+    raise SystemExit('TCP traffic leaked after the seller upstream failed')
+PY
         return 0
       fi
     fi
@@ -492,6 +537,11 @@ run_spilman_resale_matrix() {
   "${COMPOSE[@]}" exec -T node-a ip route get "$PAID_EXIT_RESALE_TARGET" | grep -Fq 'dev nvpn-wg-exit'
   assert_buyer_egress_source "$WG_UPSTREAM_IP" wireguard
 
+  "${COMPOSE[@]}" exec -T wireguard-upstream ip link del wg0
+  assert_buyer_egress_blocked WireGuard
+
+  configure_paid_exit_wireguard_upstream
+  assert_buyer_egress_source "$WG_UPSTREAM_IP" wireguard-restored
   "${COMPOSE[@]}" exec -T wireguard-upstream ip link del wg0
   assert_buyer_egress_blocked WireGuard
 

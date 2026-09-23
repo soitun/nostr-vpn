@@ -15,6 +15,7 @@ let defaultUpdatePollIntervalNanoseconds: UInt64 = 6 * 60 * 60 * 1_000_000_000
 final class AppManager: ObservableObject {
     @Published var state: NativeAppState
     @Published var paidExitChooserRequested = false
+    @Published var sellingSettingsRequested = false
     @Published var actionInFlight = false
     @Published var actionStatus = ""
     @Published var actionError = ""
@@ -232,6 +233,11 @@ final class AppManager: ObservableObject {
 
     var refreshIntervalNanoseconds: UInt64 {
         if actionInFlight || serviceSettling || updateChecking || updateInstalling {
+            return 1_000_000_000
+        }
+        if state.vpnEnabled,
+           activeNetwork?.participants.contains(where: { !$0.rosterAccepted }) == true {
+            // Approval arrives asynchronously; keep the pending join responsive.
             return 1_000_000_000
         }
         if paidRouteLiveRefreshWanted {

@@ -135,26 +135,54 @@
         };
 
         assert_eq!(
-            paid_exit::paid_exit_seller_status_text(
+            paid_exit::paid_exit_seller_status(
                 &app,
                 Some(&daemon_state),
                 &app.paid_exit,
                 true,
                 true,
             ),
-            "Waiting for the WireGuard handshake"
+            (false, "Waiting for the WireGuard handshake".to_string())
         );
 
         daemon_state.wireguard_exit_ready = true;
         assert_eq!(
-            paid_exit::paid_exit_seller_status_text(
+            paid_exit::paid_exit_seller_status(
                 &app,
                 Some(&daemon_state),
                 &app.paid_exit,
                 true,
                 true,
             ),
-            "Selling internet is ready"
+            (true, "Selling internet is ready".to_string())
+        );
+
+        // Losing the tunnel must turn a previously green seller amber.
+        daemon_state.wireguard_exit_ready = false;
+        assert!(
+            !paid_exit::paid_exit_seller_status(&app, Some(&daemon_state), &app.paid_exit, true, true,)
+                .0
+        );
+        daemon_state.wireguard_exit_ready = true;
+        daemon_state.paid_exit_seller_ready = false;
+        assert!(
+            !paid_exit::paid_exit_seller_status(&app, Some(&daemon_state), &app.paid_exit, true, true,)
+                .0
+        );
+        daemon_state.paid_exit_seller_ready = true;
+        app.paid_exit.channel.accepted_mints.clear();
+        assert!(
+            !paid_exit::paid_exit_seller_status(&app, Some(&daemon_state), &app.paid_exit, true, true,)
+                .0
+        );
+        app.paid_exit
+            .channel
+            .accepted_mints
+            .push("https://mint.example".to_string());
+        app.paid_exit.enabled = false;
+        assert_eq!(
+            paid_exit::paid_exit_seller_status(&app, Some(&daemon_state), &app.paid_exit, true, true,),
+            (false, "Selling internet is off".to_string())
         );
     }
 

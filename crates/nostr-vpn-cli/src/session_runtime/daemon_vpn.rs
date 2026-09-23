@@ -94,6 +94,8 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
     #[cfg(feature = "paid-exit")]
     let mut paid_exit_buyer_refunds = PaidExitBuyerRefundRuntime::new()?;
     #[cfg(feature = "paid-exit")]
+    let mut paid_exit_seller_collector = PaidExitSellerCollector::new();
+    #[cfg(feature = "paid-exit")]
     let mut paid_exit_offer_publisher =
         PaidExitOfferPublisher::load(&app, &config_path, unix_timestamp());
     let mut last_recent_peer_refresh_signature = None;
@@ -117,6 +119,16 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
             let pending_control_request = take_daemon_control_request(&config_path);
             let state_background_ready =
                 $background_ready && pending_control_request.is_none();
+            #[cfg(feature = "paid-exit")]
+            let seller_collection_changed = match paid_exit_seller_collector.poll(
+                &app, &config_path, state_background_ready,
+            ) {
+                Ok(changed) => changed,
+                Err(error) => {
+                    eprintln!("paid-exit: seller collection maintenance failed: {error}");
+                    false
+                }
+            };
             if state_background_ready {
                 if let Err(error) = app.ensure_pending_nostr_join_request(unix_timestamp()) {
                     eprintln!("daemon: failed to rotate expired join request: {error}");
@@ -333,7 +345,7 @@ pub(crate) async fn daemon_vpn(args: DaemonArgs) -> Result<()> {
                         active_millis_delta,
                     ) {
                         Ok(flush) => {
-                            if flush.seller_admission_changed
+                            if (flush.seller_admission_changed || seller_collection_changed)
                                 && let Err(error) = refresh_fips_tunnel_config(
                                     runtime,
                                     &app,

@@ -29,20 +29,20 @@ fn paid_exit_seller_state(
     let (store_status, channels, sessions, traffic_summary) =
         paid_exit_seller_store_state(&config, supported, store_path);
     let channel_credit_msat = paid_exit_seller_channel_credit_msat(&sessions);
-    let status_text = append_paid_exit_seller_store_status(
-        paid_exit_seller_status_text(
-            app,
-            daemon_state,
-            &config,
-            app.wireguard_exit.configured(),
-            supported,
-        ),
-        store_status,
+    let (ready, status_text) = paid_exit_seller_status(
+        app,
+        daemon_state,
+        &config,
+        app.wireguard_exit.configured(),
+        supported,
     );
+    let ready = ready && store_status.is_empty();
+    let status_text = append_paid_exit_seller_store_status(status_text, store_status);
 
     NativePaidExitSellerState {
         supported,
         enabled: supported && config.enabled,
+        ready,
         status_text,
         provider_link: app
             .own_nostr_pubkey_hex()
@@ -290,14 +290,14 @@ fn append_paid_exit_seller_store_status(config_status: String, store_status: Str
     }
 }
 
-pub(super) fn paid_exit_seller_status_text(
+pub(super) fn paid_exit_seller_status(
     app: &AppConfig,
     daemon_state: Option<&DaemonRuntimeState>,
     config: &PaidExitConfig,
     wireguard_exit_configured: bool,
     supported: bool,
-) -> String {
-    if !supported {
+) -> (bool, String) {
+    let status = if !supported {
         "Selling internet is not supported on this platform".to_string()
     } else if !config.enabled {
         "Selling internet is off".to_string()
@@ -332,10 +332,14 @@ pub(super) fn paid_exit_seller_status_text(
     } else if config.channel.accepted_mints.is_empty() {
         "Selling internet is on; add accepted mints before advertising".to_string()
     } else if config.pricing.price_msat_per_gb == 0 {
-        "Selling internet is on with a free/dev price".to_string()
+        return (
+            true,
+            "Selling internet is on with a free/dev price".to_string(),
+        );
     } else {
-        "Selling internet is ready".to_string()
-    }
+        return (true, "Selling internet is ready".to_string());
+    };
+    (false, status)
 }
 
 fn paid_exit_seller_internet_text(app: &AppConfig) -> String {

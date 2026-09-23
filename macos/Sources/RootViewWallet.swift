@@ -111,8 +111,9 @@ extension RootView {
 
             if state.walletFiatEnabled {
                 if !wallet.fiatBalanceText.isEmpty {
-                    Text(wallet.fiatBalanceText)
-                        .font(.headline)
+                    Text(formatPaidRouteMsat(wallet.totalBalanceMsat))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 if !wallet.exchangeRateText.isEmpty {

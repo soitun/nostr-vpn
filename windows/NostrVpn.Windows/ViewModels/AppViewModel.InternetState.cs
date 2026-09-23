@@ -258,7 +258,9 @@ public sealed partial class AppViewModel
         ? "Wallet"
         : $"Wallet {State.PaidRouteMarket.Wallet.NavigationBalanceText}";
 
-    public string PaidRouteWalletFiatText => State.PaidRouteMarket.Wallet.FiatBalanceText;
+    public string PaidRouteWalletSecondaryBalanceText => string.IsNullOrWhiteSpace(State.PaidRouteMarket.Wallet.FiatBalanceText)
+        ? ""
+        : FormatPaidRouteMsat(State.PaidRouteMarket.Wallet.TotalBalanceMsat);
 
     public string PaidRouteWalletRateText => string.IsNullOrWhiteSpace(State.PaidRouteMarket.Wallet.ExchangeRateText)
         ? ""

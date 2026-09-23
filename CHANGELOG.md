@@ -2,6 +2,39 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.15 - 2026-09-21
+
+### Release notes
+
+This release improves VPN pause behavior, keeps background refunds from delaying
+Internet payments, and simplifies connection controls on macOS. Prices and
+balances use your selected currency when Show fiat is enabled. iOS does not
+support paid exits.
+
+### Fixed
+
+- Stop client FIPS networking when the VPN is paused and accurately report
+  remaining FIPS connections.
+- Keep macOS LAN peers off gateway bypass routes so local connections retain
+  their direct routes.
+- Keep background refund recovery from blocking new payments and active paid
+  Internet connections.
+- Keep wallet mints reachable when a paid connection runs out of credit.
+- Start the web connection when joining a first network so QR approvals can arrive.
+- Refresh pending joins promptly on macOS when approval arrives.
+
+### Improved
+
+- Simplify macOS Internet navigation and keep automatic-exit status and provider
+  actions together with the selected connection.
+- Hide paid-exit diagnostics behind expandable provider and connection rows on
+  macOS, while keeping purchase, disconnect, and rating controls directly usable.
+- Use the selected fiat currency for prices, balances, fees, and payment summaries,
+  with enough precision for small bandwidth prices and a Bitcoin fallback when
+  exchange rates are unavailable.
+- Show Internet-sharing readiness in the macOS sidebar and menu bar, with the
+  selected Internet connection and sharing status available in the tray menu.
+
 ## 4.1.14 - 2026-09-17
 
 ### Release notes

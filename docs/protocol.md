@@ -136,6 +136,15 @@ by the buyer, without billing retransmitted bytes twice; other inbound protocols
 are not billed. Signed payment updates and acknowledgements use FIPS control,
 while durable channel/session state governs whether routing remains admitted.
 
+While the daemon runs, expired seller channels with pending signed credit are
+collected automatically into the existing wallet. Collection runs independently
+of VPN control work, retries failures with backoff, and resumes after a restart.
+A completed mint settlement is not marked collected locally until its proceeds
+have been imported into the wallet. Disabling new sales does not abandon already
+earned credit; live channels and buyer channels are not collected by this worker.
+Pending credit is not a spendable wallet balance or a guarantee that an expired
+channel can still be redeemed at its mint.
+
 ## Exit DNS And Inbound Safety
 
 MagicDNS names are always answered locally. With an active exit, `automatic`

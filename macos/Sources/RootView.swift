@@ -191,6 +191,12 @@ struct RootView: View {
                 manager.paidExitChooserRequested = false
             }
         }
+        .onChange(of: manager.sellingSettingsRequested, initial: true) { _, requested in
+            if requested {
+                selectedSidebarItem = .sharing
+                manager.sellingSettingsRequested = false
+            }
+        }
         .onChange(of: state.rev) { _, _ in
             syncDrafts()
             normalizeSidebarSelection()
@@ -565,6 +571,18 @@ struct RootView: View {
         return balance.isEmpty ? "Wallet" : "Wallet \(balance)"
     }
 
+    func sidebarIndicator(_ item: SidebarItem) -> InternetExitIndicator {
+        if item == .sharing {
+            return InternetExitIndicator(sellingEnabled: state.paidExitSeller.enabled, ready: state.paidExitSeller.ready)
+        }
+        if item == .internet {
+            return InternetExitIndicator(
+                vpnEnabled: state.vpnEnabled, source: state.internetSource,
+                active: state.exitNodeActive, needsAttention: state.exitNodeNeedsAttention)
+        }
+        return .hidden
+    }
+
     func sidebarButton(_ item: SidebarItem, _ title: String, _ systemImage: String) -> some View {
         let selected = visibleSidebarItem == item
         return Button {
@@ -576,10 +594,7 @@ struct RootView: View {
                 } icon: {
                     Image(systemName: systemImage)
                         .overlay(alignment: .bottomTrailing) {
-                            if item == .internet, let color = InternetExitIndicator(
-                                vpnEnabled: state.vpnEnabled, source: state.internetSource,
-                                active: state.exitNodeActive,
-                                needsAttention: state.exitNodeNeedsAttention).color {
+                            if let color = sidebarIndicator(item).color {
                                 Circle().fill(Color(nsColor: color))
                                     .frame(width: 6, height: 6)
                                     .overlay(Circle().stroke(selected ? Color.accentColor : Color(nsColor: .windowBackgroundColor), lineWidth: 1))
@@ -600,7 +615,9 @@ struct RootView: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("sidebar-\(item)")
-        .accessibilityLabel(item == .internet ? "\(title), \(state.exitNodeStatusText)" : title)
+        .help(item == .sharing ? state.paidExitSeller.statusText : title)
+        .accessibilityLabel(item == .internet ? "\(title), \(state.exitNodeStatusText)"
+            : item == .sharing ? "\(title), \(state.paidExitSeller.statusText)" : title)
     }
 
     @ViewBuilder

@@ -51,8 +51,19 @@ impl NativeAppRuntime {
                 state.price_msat_per_gb,
                 snapshot.rate,
                 snapshot.currency.as_str(),
-                snapshot.stale,
             );
+            if let Some(rate) = snapshot.rate.filter(|rate| rate.is_finite() && *rate > 0.0) {
+                let amount = |msat| {
+                    crate::exchange_rate::format_fiat_msat(msat, rate, snapshot.currency.as_str())
+                };
+                state.channel_credit_text = amount(state.channel_credit_msat);
+                state.total_paid_text = format!("{} paid", amount(state.total_paid_msat));
+                state.total_due_text = format!("{} due", amount(state.total_due_msat));
+                if state.total_unpaid_msat > 0 {
+                    state.total_unpaid_text = format!("{} behind", amount(state.total_unpaid_msat));
+                }
+                apply_paid_route_currency(&mut state.channels, &mut state.sessions, &amount);
+            }
         }
         state
     }
@@ -76,8 +87,21 @@ impl NativeAppRuntime {
                     offer.price_msat_per_gb,
                     snapshot.rate,
                     snapshot.currency.as_str(),
-                    snapshot.stale,
                 );
+            }
+            if let Some(rate) = snapshot.rate.filter(|rate| rate.is_finite() && *rate > 0.0) {
+                let amount = |msat| {
+                    crate::exchange_rate::format_fiat_msat(msat, rate, snapshot.currency.as_str())
+                };
+                apply_paid_route_currency(&mut state.channels, &mut state.sessions, &amount);
+                let action = &mut state.last_payment_action;
+                if !action.kind.is_empty() {
+                    action.paid_text = format!("{} paid", amount(action.paid_msat));
+                    action.amount_due_text = format!("{} due", amount(action.amount_due_msat));
+                    if action.unpaid_msat > 0 {
+                        action.unpaid_text = format!("{} behind", amount(action.unpaid_msat));
+                    }
+                }
             }
         }
         state
