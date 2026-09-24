@@ -2,6 +2,29 @@
 
 All notable changes to this project are documented in this file.
 
+## 4.1.16 - 2026-09-24
+
+### Release notes
+
+This release automatically collects pending earnings from expired seller
+channels and adds local wallet transaction history on macOS. iOS does not
+support paid exits.
+
+### Improved
+
+- Automatically collect expired seller channels into the wallet while the daemon
+  runs, retry failed collections, and resume after a restart. Collection continues
+  for existing channels when new sales are disabled.
+- Show local wallet transaction history in an expandable section on macOS and
+  wait for pending wallet actions before refreshing it.
+- Make the full wallet mint row selectable on macOS and keep the selected mint
+  readable.
+
+### Fixed
+
+- Mark seller credit as collected only after the settled funds have been imported
+  into the wallet, preserving retries after an interrupted collection.
+
 ## 4.1.15 - 2026-09-21
 
 ### Release notes
