@@ -922,8 +922,7 @@ func run() throws {
     }
     let spec = try DnsCase.named(args[3])
     let networkCreated = try createNetworkIfNeeded(application, pid: pid)
-    try pressSidebar(application, "sidebar-internet", pid: pid)
-    try press(application, "internet-settings-open", successIdentifier: "exit-dns-mode")
+    try pressSidebar(application, "sidebar-settings", pid: pid)
     _ = try reveal(application, identifier: "exit-dns-mode", pid: pid)
     if phase == "apply" {
         _ = try selectPicker(
