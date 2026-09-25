@@ -54,7 +54,7 @@ struct RootView: View {
     @State var paidExitAdvancedTermsExpanded = RootView.initialPaidExitAdvancedTermsExpanded()
     @State var paidExitListingAdvancedExpanded = false
     @State var wireGuardUpstreamExpanded = RootView.initialWireGuardUpstreamExpanded()
-    @State var connectionSettingsPresented = RootView.initialWireGuardUpstreamExpanded()
+    @State var settingsScrollToWireGuard = RootView.initialWireGuardUpstreamExpanded()
     @State var expandedPaidRouteOffers: Set<String> = []
     @State var expandedPaidRouteSessions: Set<String> = []
     @State var paidRouteOfferCountryFilter = "all"
@@ -120,11 +120,11 @@ struct RootView: View {
             return .wallet
         }
         if arguments.contains("--nvpn-screenshot-paid-automatic")
-            || arguments.contains("--nvpn-screenshot-exit-nodes")
-            || arguments.contains("--nvpn-screenshot-upstream") {
+            || arguments.contains("--nvpn-screenshot-exit-nodes") {
             return .internet
         }
-        if arguments.contains("--nvpn-screenshot-settings") {
+        if arguments.contains("--nvpn-screenshot-settings")
+            || arguments.contains("--nvpn-screenshot-upstream") {
             return .settings
         }
         return .devices
@@ -219,9 +219,6 @@ struct RootView: View {
         }
         .sheet(isPresented: $addNetworkPresented) {
             addNetworkSheetContent
-        }
-        .sheet(isPresented: $connectionSettingsPresented) {
-            connectionSettingsSheet
         }
         .sheet(isPresented: $addDevicePresented) {
             if let network = shownNetwork, network.enabled {
@@ -631,18 +628,7 @@ struct RootView: View {
             }
         case .internet:
             pageScroll {
-                HStack {
-                    pageTitle("Connection", "network")
-                    Spacer()
-                    Button {
-                        connectionSettingsPresented = true
-                    } label: {
-                        Image(systemName: "slider.horizontal.3")
-                    }
-                    .help("Connection settings")
-                    .accessibilityLabel("Connection settings")
-                    .accessibilityIdentifier("internet-settings-open")
-                }
+                pageTitle("Connection", "network")
                 if let shownNetwork {
                     internetSection(shownNetwork)
                 } else {
@@ -678,10 +664,7 @@ struct RootView: View {
                 paidExitUsageSummary
             }
         case .settings:
-            pageScroll {
-                pageTitle("Settings", "gearshape")
-                settingsSection
-            }
+            settingsPane
         }
     }
 

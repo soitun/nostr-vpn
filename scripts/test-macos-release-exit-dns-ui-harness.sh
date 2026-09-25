@@ -195,7 +195,7 @@ if sidebar_calls != [
     "sidebar-devices",
     "sidebar-sharing",
     "sidebar-internet",
-    "sidebar-internet",
+    "sidebar-settings",
 ]:
     raise SystemExit(
         "macOS DNS AX sidebar retry is not limited to the four idempotent "
