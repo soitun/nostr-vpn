@@ -76,7 +76,7 @@ fn paid_route_wallet_state(
         exchange_rate_stale: false,
         exchange_rate_updated_at_unix: 0,
         mints,
-        history: Default::default(),
+        history: NativePaidRouteWalletHistoryState::default(),
         last_action: last_action.clone(),
     }
 }

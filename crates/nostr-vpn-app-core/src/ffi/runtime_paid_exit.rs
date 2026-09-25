@@ -25,7 +25,7 @@ mod paid_exit {
 
     use crate::native_state::{
         NativePaidRouteChannelState, NativePaidRouteOfferState, NativePaidRouteSessionState,
-        NativePaidRouteWalletMintState,
+        NativePaidRouteWalletHistoryState, NativePaidRouteWalletMintState,
     };
 
     use super::{
