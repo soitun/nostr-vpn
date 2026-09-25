@@ -19,6 +19,7 @@ local wallet transaction history on macOS. iOS does not support paid exits.
   wait for pending wallet actions before refreshing it.
 - Make the full wallet mint row selectable on macOS and keep the selected mint
   readable.
+- Put connection protection, DNS options, and WireGuard setup in macOS Settings.
 
 ### Fixed
 
