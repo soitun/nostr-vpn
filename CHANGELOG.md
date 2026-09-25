@@ -2,13 +2,13 @@
 
 All notable changes to this project are documented in this file.
 
-## 4.1.16 - 2026-09-24
+## 4.1.16 - 2026-09-25
 
 ### Release notes
 
-This release automatically collects pending earnings from expired seller
-channels and adds local wallet transaction history on macOS. iOS does not
-support paid exits.
+This release fixes discovery of private exit nodes on iOS and Android,
+automatically collects pending earnings from expired seller channels, and adds
+local wallet transaction history on macOS. iOS does not support paid exits.
 
 ### Improved
 
@@ -22,6 +22,8 @@ support paid exits.
 
 ### Fixed
 
+- Show private exit nodes on iOS and Android before they are selected, using
+  their current authenticated Internet-sharing announcements.
 - Mark seller credit as collected only after the settled funds have been imported
   into the wallet, preserving retries after an interrupted collection.
 
