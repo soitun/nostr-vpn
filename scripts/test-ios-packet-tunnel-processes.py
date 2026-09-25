@@ -39,6 +39,9 @@ if mode == 'app-duplicate': print('8 Nostr VPN')
             output = root / "receipt.json"
             env = {**os.environ, "PATH": f"{root}:{os.environ['PATH']}",
                    "INVENTORY_TEST_MODE": mode, "INVENTORY_TEST_COUNTER": str(root / "count")}
+            # The stopping case needs two Python process launches plus a poll
+            # interval, including when release builds are consuming CPU.
+            inventory_timeout = 3 if mode == "stopping" else 1
             started = time.monotonic()
             operation = (
                 'IOS_RELEASE_NETWORK_PREPARED=1; IOS_RELEASE_NETWORK_DEVICE=fixture-device; '
@@ -46,7 +49,7 @@ if mode == 'app-duplicate': print('8 Nostr VPN')
                 'ios_release_network_disconnect_cleanup_inner() { echo cleanup-required >&2; return 9; }; '
                 'ios_release_network_disconnect_cleanup 1'
                 if baseline else
-                'ios_release_network_require_packet_tunnel_stopped fixture-device "$2" 1'
+                f'ios_release_network_require_packet_tunnel_stopped fixture-device "$2" {inventory_timeout}'
             )
             if baseline:
                 output = root / "mobile-ios-release-baseline-packet-tunnel-processes.json"
@@ -61,7 +64,7 @@ if mode == 'app-duplicate': print('8 Nostr VPN')
                 'ROOT="$1"; source "$ROOT/scripts/lib-mobile-ios-release-network.sh"; '
                 + operation,
                 "inventory-test", str(ROOT), str(output), str(root),
-            ], env=env, capture_output=True, text=True, timeout=9 if baseline else 4)
+            ], env=env, capture_output=True, text=True, timeout=9 if baseline else inventory_timeout + 3)
             receipt = json.loads(output.read_text()) if output.exists() else None
             return result, receipt, time.monotonic() - started
 
