@@ -279,6 +279,7 @@ mod tests {
     include!("ffi/tests_service_wireguard.rs");
     include!("ffi/tests_internet_mode_switches.rs");
     include!("ffi/tests_exit_dns.rs");
+    #[cfg(feature = "paid-exit")]
     include!("ffi/tests_service_paid_exit_config.rs");
     include!("ffi/tests_service_paid_exit_buy.rs");
     include!("ffi/tests_service_macos.rs");
