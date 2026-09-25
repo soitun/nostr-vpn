@@ -25,6 +25,8 @@ local wallet transaction history on macOS. iOS does not support paid exits.
 
 - Show private exit nodes on iOS and Android before they are selected, using
   their current authenticated Internet-sharing announcements.
+- Avoid unnecessary STUN DNS lookups delaying Linux route changes when Nostr
+  peer discovery and WebRTC are disabled.
 - Mark seller credit as collected only after the settled funds have been imported
   into the wallet, preserving retries after an interrupted collection.
 
