@@ -425,6 +425,8 @@ counter_poll="$(sed -n '/^stable_dns_counters() {$/,/^}$/p' "$LINUX_HOST_ENTRY")
 for scenario in quiet delayed changing unavailable; do
   (
     eval "$counter_poll"
+    # Unset Bash's special timer so this fixture advances only via sleep().
+    unset SECONDS
     SECONDS=0
     sleep() { SECONDS=$((SECONDS + 1)); }
     fail() { return 1; }
