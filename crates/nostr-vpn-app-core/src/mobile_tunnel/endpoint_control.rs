@@ -21,6 +21,9 @@ fn default_fips_peer_address_priority() -> u8 {
 
 #[derive(Debug, Clone, Default)]
 struct MobilePeerPresence {
+    advertised_routes: Vec<String>,
+    capabilities_signed_at: u64,
+    capabilities_received_at: Option<u64>,
     last_seen_at: Option<u64>,
     last_control_seen_at: Option<u64>,
     last_data_seen_at: Option<u64>,
@@ -186,6 +189,19 @@ async fn handle_mobile_control_frame(
             apply_mobile_roster_frame(control, signed_roster.as_deref()).await?;
         }
         FipsControlFrame::Capabilities { capabilities, .. } => {
+            {
+                let mut presence = control
+                    .presence
+                    .write()
+                    .map_err(|_| anyhow!("mobile FIPS presence lock poisoned"))?;
+                let peer = presence.entry(source_pubkey.clone()).or_default();
+                if peer.capabilities_signed_at <= capabilities.signed_at {
+                    peer.advertised_routes
+                        .clone_from(&capabilities.advertised_routes);
+                    peer.capabilities_signed_at = capabilities.signed_at;
+                    peer.capabilities_received_at = Some(unix_timestamp());
+                }
+            }
             if update_mobile_peer_hints(control.peer_hints, &source_pubkey, &capabilities)? {
                 sync_mobile_config_peer_hints(control.config_state, control.peer_hints)?;
                 persist_mobile_peer_hints(

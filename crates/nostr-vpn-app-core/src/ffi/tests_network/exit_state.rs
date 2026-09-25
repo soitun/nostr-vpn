@@ -195,6 +195,7 @@
         );
     }
 
+    #[cfg(feature = "paid-exit")]
     #[test]
     fn automatic_exit_confirmation_tracks_selection_probe_and_live_connection() {
         use nostr_vpn_core::paid_route_store::{
@@ -297,6 +298,7 @@
         let _ = fs::remove_dir_all(dir);
     }
 
+    #[cfg(feature = "paid-exit")]
     fn assert_paid_exit_funding_status(runtime: &mut NativeAppRuntime, session_id: &str, channel_id: &str, now: u64) {
         use nostr_vpn_core::paid_route_store::update_paid_route_store;
         update_paid_route_store(&nostr_vpn_core::paid_route_store::paid_route_store_file_path(&runtime.config_path), |store| {

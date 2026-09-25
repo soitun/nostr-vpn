@@ -262,17 +262,10 @@ fn mobile_runtime_state_with_tun_counters(
             Some((participant, peer))
         })
         .collect::<HashMap<_, _>>();
-    let peer_config_by_participant = config
-        .peers
-        .iter()
-        .map(|peer| (peer.participant_pubkey.clone(), peer))
-        .collect::<HashMap<_, _>>();
-
     let peers = mesh
         .peer_statuses()
         .into_iter()
         .map(|status| {
-            let peer_config = peer_config_by_participant.get(&status.pubkey);
             let link = link_by_participant.get(&status.pubkey);
             let peer_presence = presence.get(&status.pubkey);
             let last_seen_at = peer_presence.and_then(|presence| presence.last_seen_at);
@@ -286,13 +279,19 @@ fn mobile_runtime_state_with_tun_counters(
             });
             let link_connected = link.is_some_and(|peer| peer.connected);
             let reachable = presence_connected || link_connected;
-            let advertised_routes = peer_config
-                .map(|peer| peer.allowed_ips.clone())
+            // Allowed IPs express our route selection, not the peer's offer.
+            // Retain received capabilities so exits are discoverable before
+            // selection and disappear when sharing is withdrawn or expires.
+            let advertised_routes = peer_presence
+                .filter(|peer| {
+                    peer.capabilities_received_at.is_some_and(|received_at| {
+                        mobile_timestamp_within_grace(now, received_at, MOBILE_PEER_CAPS_GRACE_SECS)
+                    })
+                })
+                .map(|peer| peer.advertised_routes.clone())
                 .unwrap_or_default();
-            let tunnel_ip = advertised_routes
-                .first()
-                .map(|route| strip_cidr(route).to_string())
-                .or_else(|| derive_mesh_tunnel_ip(&config.network_id, &status.pubkey))
+            let tunnel_ip = derive_mesh_tunnel_ip(&config.network_id, &status.pubkey)
+                .map(|ip| strip_cidr(&ip).to_string())
                 .unwrap_or_default();
 
             DaemonPeerState {
