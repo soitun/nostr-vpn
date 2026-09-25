@@ -443,16 +443,13 @@ exit 0
             "exit must be visible before selection"
         );
 
-        runtime.dispatch(
-            serde_json::from_value(serde_json::json!({
-                "type": "update_settings",
-                "patch": {
-                    "internetSource": "private_vpn",
-                    "exitNode": participant.npub,
-                },
-            }))
-            .expect("private exit selection action"),
-        );
+        runtime.dispatch(NativeAppAction::UpdateSettings {
+            patch: SettingsPatch {
+                internet_source: Some("private_vpn".to_string()),
+                exit_node: Some(participant.npub.clone()),
+                ..SettingsPatch::default()
+            },
+        });
         assert_eq!(runtime.config.exit_node, peer);
         assert_eq!(runtime.config.internet_source, InternetSource::PrivateVpn);
         assert_eq!(
